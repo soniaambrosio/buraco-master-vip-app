@@ -29,6 +29,41 @@ jobs:
       - name: Overlay custom screen
         run: cp app/lib/main.dart app_build/lib/main.dart
 
+      - name: Fetch logo (splash) from live app and add as asset
+        run: |
+          mkdir -p app_build/assets
+          curl -sSL "https://soniaambrosio.github.io/buraco-master-vip/app.html" -o /tmp/app.html
+          python3 - <<'PY'
+          import re, base64, sys
+          h = open('/tmp/app.html', encoding='utf-8', errors='ignore').read()
+          i = h.find('id="splash"')
+          seg = h[i:i+400000] if i >= 0 else h
+          m = re.search(r"data:image/(?:jpeg|png|webp);base64,([A-Za-z0-9+/=]+)", seg)
+          if not m:
+              print("ERRO: nao encontrei a logo do splash no app.html"); sys.exit(1)
+          data = base64.b64decode(m.group(1))
+          if len(data) < 10000:
+              print("ERRO: imagem extraida muito pequena (%d bytes)" % len(data)); sys.exit(1)
+          open('app_build/assets/splash.jpg', 'wb').write(data)
+          print("Logo extraida: %d bytes" % len(data))
+          PY
+
+      - name: Declare asset in pubspec
+        run: |
+          python3 - <<'PY'
+          p = 'app_build/pubspec.yaml'
+          s = open(p).read()
+          needle = '  uses-material-design: true'
+          add = needle + '\n  assets:\n    - assets/splash.jpg'
+          if 'assets/splash.jpg' not in s:
+              if needle in s:
+                  s = s.replace(needle, add, 1)
+              else:
+                  s = s.rstrip() + '\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/splash.jpg\n'
+          open(p, 'w').write(s)
+          print("pubspec atualizado")
+          PY
+
       - name: Build debug APK
         run: cd app_build && flutter build apk --debug
 
