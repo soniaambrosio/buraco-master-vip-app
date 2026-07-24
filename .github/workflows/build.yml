@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -79,3 +82,11 @@ jobs:
           name: bmv-teste-apk
           path: app_build/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish APK as Release (link direto pro celular)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app_build/build/app/outputs/flutter-apk/app-debug.apk BMV-Teste.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest BMV-Teste.apk --title "BMV Teste (mais recente)" --notes "APK mais recente do Buraco Master VIP (teste nativo). Abra este link no celular para instalar."
