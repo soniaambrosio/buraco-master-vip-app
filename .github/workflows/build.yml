@@ -24,10 +24,16 @@ jobs:
           channel: stable
 
       - name: Scaffold Flutter project
-        run: flutter create --org com.buracomastervip --project-name buraco_master_vip app_build
+        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
 
       - name: Overlay custom screen
         run: cp app/lib/main.dart app_build/lib/main.dart
+
+      - name: Set app display name to BMV Teste
+        run: |
+          sed -i 's/android:label="[^"]*"/android:label="BMV Teste"/' app_build/android/app/src/main/AndroidManifest.xml
+          echo "Label ajustado:"
+          grep -o 'android:label="[^"]*"' app_build/android/app/src/main/AndroidManifest.xml
 
       - name: Fetch logo (splash) from live app and add as asset
         run: |
@@ -70,6 +76,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: buraco-master-vip-apk
+          name: bmv-teste-apk
           path: app_build/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
