@@ -1,6 +1,9 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 // Paleta da casa
 const _dourado = Color(0xFFEFB94A);
@@ -11,7 +14,26 @@ const _fundoBaixo = Color(0xFF000000);
 const _cardBg = Color(0xFF1C130C);
 const _cardBorda = Color(0x33EFB94A);
 
-void main() => runApp(const BuracoApp());
+// Google Sign-In (serverClientId = Web client do Firebase)
+final GoogleSignIn _gsi = GoogleSignIn(
+  scopes: const ['email'],
+  serverClientId:
+      '203886484007-a5e1ob9b7uequoffj6u76h5vltici9a4.apps.googleusercontent.com',
+);
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: const FirebaseOptions(
+      apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
+      appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
+      messagingSenderId: '203886484007',
+      projectId: 'buraco-master-vip',
+      storageBucket: 'buraco-master-vip.firebasestorage.app',
+    ),
+  );
+  runApp(const BuracoApp());
+}
 
 class BuracoApp extends StatelessWidget {
   const BuracoApp({super.key});
@@ -190,6 +212,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _banner = true;
+  User? _user;
+  bool _entrando = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = FirebaseAuth.instance.currentUser;
+    FirebaseAuth.instance.authStateChanges().listen((u) {
+      if (mounted) setState(() => _user = u);
+    });
+  }
 
   void _breve(String o) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -199,6 +232,35 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: const Color(0xFF2A1B0E),
       ),
     );
+  }
+
+  Future<void> _entrarGoogle() async {
+    setState(() => _entrando = true);
+    try {
+      final acc = await _gsi.signIn();
+      if (acc == null) {
+        setState(() => _entrando = false);
+        return;
+      }
+      final auth = await acc.authentication;
+      final cred = GoogleAuthProvider.credential(
+          idToken: auth.idToken, accessToken: auth.accessToken);
+      await FirebaseAuth.instance.signInWithCredential(cred);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não consegui entrar: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => _entrando = false);
+  }
+
+  Future<void> _sair() async {
+    try {
+      await _gsi.signOut();
+    } catch (_) {}
+    await FirebaseAuth.instance.signOut();
   }
 
   @override
@@ -237,7 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           style: TextStyle(color: Colors.white54, fontSize: 13)),
                       const SizedBox(height: 18),
                       _cardPerfil(),
-                      if (_banner) ...[
+                      if (_banner && _user != null) ...[
                         const SizedBox(height: 12),
                         _bannerBoasVindas(),
                       ],
@@ -276,6 +338,45 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
   Widget _cardPerfil() {
+    final u = _user;
+    if (u == null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: _cardDeco,
+        child: Column(
+          children: [
+            const Text('🔐', style: TextStyle(fontSize: 30)),
+            const SizedBox(height: 8),
+            const Text('Entre com sua conta Google',
+                style: TextStyle(color: _dourado, fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text('pra salvar seu progresso e jogar online',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white60, fontSize: 12)),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _entrando ? null : _entrarGoogle,
+                icon: _entrando
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3A2606)))
+                    : const Text('G', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Color(0xFF3A2606))),
+                label: const Text('Entrar com Google',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _dourado,
+                  foregroundColor: const Color(0xFF3A2606),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: _cardDeco,
@@ -284,30 +385,44 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             width: 58,
             height: 58,
-            alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0xFF3A2606),
               border: Border.all(color: _dourado, width: 2),
+              image: u.photoURL != null
+                  ? DecorationImage(image: NetworkImage(u.photoURL!), fit: BoxFit.cover)
+                  : null,
             ),
-            child: const Text('👩', style: TextStyle(fontSize: 30)),
+            alignment: Alignment.center,
+            child: u.photoURL == null
+                ? const Text('👑', style: TextStyle(fontSize: 28))
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text('Sônia Rainha',
-                    style: TextStyle(color: _dourado, fontSize: 18, fontWeight: FontWeight.bold)),
-                SizedBox(height: 2),
-                Text('Nível 42 · Liga Diamante',
-                    style: TextStyle(color: Colors.white60, fontSize: 13)),
+              children: [
+                Text(u.displayName ?? 'Jogador(a)',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: _dourado, fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 2),
+                Text(u.email ?? 'conectado',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                const SizedBox(height: 2),
+                const Text('🪙 1.000  ·  Liga Diamante',
+                    style: TextStyle(color: _douradoClaro, fontSize: 12, fontWeight: FontWeight.w600)),
               ],
             ),
           ),
-          const Text('🪙 ', style: TextStyle(fontSize: 16)),
-          const Text('12.480',
-              style: TextStyle(color: _douradoClaro, fontSize: 16, fontWeight: FontWeight.bold)),
+          IconButton(
+            onPressed: _sair,
+            tooltip: 'Sair',
+            icon: const Icon(Icons.logout, color: Colors.white38, size: 20),
+          ),
         ],
       ),
     );
@@ -326,11 +441,9 @@ class _HomeScreenState extends State<HomeScreen> {
           const Expanded(
             child: Text.rich(
               TextSpan(children: [
-                TextSpan(text: '🎁 '),
-                TextSpan(text: 'Bem-vinda! ', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                TextSpan(text: 'Você ganhou ', style: TextStyle(color: Colors.white70)),
-                TextSpan(text: '1.000 moedas', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                TextSpan(text: ' de boas-vindas 🪙', style: TextStyle(color: Colors.white70)),
+                TextSpan(text: '🎉 '),
+                TextSpan(text: 'Login de verdade funcionando! ', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                TextSpan(text: 'sua conta Google está conectada.', style: TextStyle(color: Colors.white70)),
               ]),
               style: TextStyle(fontSize: 14),
             ),
