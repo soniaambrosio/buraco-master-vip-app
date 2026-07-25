@@ -26,16 +26,30 @@ jobs:
         with:
           channel: stable
 
+      - name: Install fixed debug keystore (para SHA-1 estavel / login Google)
+        run: |
+          mkdir -p ~/.android
+          base64 -d keystore/debug.keystore.b64 > ~/.android/debug.keystore
+          echo "keystore instalado"
+
       - name: Scaffold Flutter project
         run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
 
       - name: Overlay custom screen
         run: cp app/lib/main.dart app_build/lib/main.dart
 
+      - name: Add Firebase + Google Sign-In deps
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1"
+
+      - name: Bump minSdk to 23 (Firebase)
+        run: |
+          f=app_build/android/app/build.gradle.kts
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
+          grep -n "minSdk" "$f" || true
+
       - name: Set app display name to BMV Teste
         run: |
           sed -i 's/android:label="[^"]*"/android:label="BMV Teste"/' app_build/android/app/src/main/AndroidManifest.xml
-          echo "Label ajustado:"
           grep -o 'android:label="[^"]*"' app_build/android/app/src/main/AndroidManifest.xml
 
       - name: Fetch logo (splash) from live app and add as asset
