@@ -839,6 +839,19 @@ class Jogo {
     return true;
   }
 
+  // PEGAR O LIXO INTEIRO. No ABERTO a compra é livre: sem trava de "carta com mola"
+  // e sem obrigação de usar o topo (regra confirmada). Leva o monte de descarte todo
+  // pra mão. (fatia 3)
+  Map<String, dynamic> comprarLixo(int assento) {
+    if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
+    if (lixo.isEmpty) return {'ok': false, 'erro': 'o lixo está vazio'};
+    final qtd = lixo.length;
+    maos[assento].addAll(lixo);
+    lixo = [];
+    jaComprou = true;
+    return {'ok': true, 'qtd': qtd};
+  }
+
   Map<String, dynamic> baixar(int assento, List<String> ids) {
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
     if (ids.length < 3) return {'ok': false, 'erro': 'um jogo tem no mínimo 3 cartas'};
@@ -924,13 +937,184 @@ class Jogo {
     jaComprou = false;
   }
 
-  // ROBÔ simples (fatia 2): compra do monte e descarta ao acaso (ainda não baixa)
+  // ============ IA DO ROBÔ (fatia 3 — porte de motor/bot.js) ============
+  static int _pontos(Carta c) {
+    if (c.valor == 'A') return 15;
+    if (c.valor == 'JOKER') return 50;
+    if (c.valor == '2') return 10;
+    if (['8', '9', '10', 'J', 'Q', 'K'].contains(c.valor)) return 10;
+    return 5; // 3..7
+  }
+
+  static const int _minJogoPraGastarCuringa = 5;
+
+  // maior corrida do mesmo naipe; usa no máx. 1 curinga se permitir3ComCuringa
+  List<Carta>? _melhorCorrida(List<Carta> mao, bool permitir3ComCuringa) {
+    const naipes = ['copas', 'ouros', 'paus', 'espadas'];
+    List<Carta>? melhor;
+    int idxBaixo(String v) => _ordem.indexOf(v);
+    int idxAlto(String v) => v == 'A' ? _ordem.length : _ordem.indexOf(v);
+    for (final naipe in naipes) {
+      final cartasDoNaipe = mao.where((c) => c.naipe == naipe).toList();
+      final temAs = cartasDoNaipe.any((c) => c.valor == 'A');
+      final mapeamentos = temAs ? <int Function(String)>[idxBaixo, idxAlto] : <int Function(String)>[idxBaixo];
+      for (final mapa in mapeamentos) {
+        final doNaipe = cartasDoNaipe.toList()..sort((a, b) => mapa(a.valor) - mapa(b.valor));
+        final curingasMesmoNaipe = mao.where((c) => c.ehCoringa && c.valor == '2' && c.naipe == naipe).toList();
+        final doisOutroNaipe = mao.where((c) => c.ehCoringa && c.valor == '2' && c.naipe != naipe).toList();
+        final jokers = mao.where((c) => c.valor == 'JOKER').toList();
+        final curingasOrdenados = [...curingasMesmoNaipe, ...doisOutroNaipe, ...jokers];
+        final unicas = <Carta>[];
+        final vistos = <String>{};
+        for (final c in doNaipe) {
+          if (!vistos.contains(c.valor)) { unicas.add(c); vistos.add(c.valor); }
+        }
+        if (unicas.isEmpty) continue;
+        for (int i = 0; i < unicas.length; i++) {
+          final seq = <Carta>[unicas[i]];
+          int curingasUsados = 0;
+          final idsNaSeq = <String>{unicas[i].id};
+          for (int j = i + 1; j < unicas.length; j++) {
+            final distancia = mapa(unicas[j].valor) - mapa(seq.last.valor);
+            if (distancia == 1) {
+              seq.add(unicas[j]); idsNaSeq.add(unicas[j].id);
+            } else if (distancia == 2 && curingasUsados < 1 && permitir3ComCuringa) {
+              Carta? cur;
+              for (final c in curingasOrdenados) { if (!idsNaSeq.contains(c.id)) { cur = c; break; } }
+              if (cur == null) break;
+              seq.add(cur); idsNaSeq.add(cur.id);
+              seq.add(unicas[j]); idsNaSeq.add(unicas[j].id);
+              curingasUsados++;
+            } else {
+              break;
+            }
+          }
+          if (seq.length == 2 && curingasUsados < 1 && permitir3ComCuringa) {
+            Carta? curPonta;
+            for (final c in curingasOrdenados) { if (!idsNaSeq.contains(c.id)) { curPonta = c; break; } }
+            if (curPonta != null) { seq.add(curPonta); idsNaSeq.add(curPonta.id); curingasUsados++; }
+          }
+          if (seq.length >= 3) {
+            final usaCuringaComoTapa = curingasUsados > 0;
+            if (usaCuringaComoTapa && !permitir3ComCuringa) continue;
+            final res = validarSequencia(seq);
+            if (res['valido'] == true && (melhor == null || seq.length > melhor!.length)) melhor = seq;
+          }
+        }
+      }
+    }
+    return melhor;
+  }
+
+  List<Carta>? _escolherCorrida(List<Carta> mao, bool permissivo) {
+    final comCuringa = _melhorCorrida(mao, true);
+    if (permissivo) return comCuringa;
+    final semCuringa = _melhorCorrida(mao, false);
+    final tamSem = semCuringa?.length ?? 0;
+    final tamCom = comCuringa?.length ?? 0;
+    if (tamSem >= 3 && tamSem >= tamCom) return semCuringa;
+    if (tamCom >= _minJogoPraGastarCuringa) return comCuringa;
+    return tamSem >= 3 ? semCuringa : null;
+  }
+
+  // agrupa a mão em jogos (guloso) + anexa curinga órfão na ponta do maior jogo
+  Map<String, dynamic> _agruparMao(List<Carta> mao, bool permissivo) {
+    final jogos = <List<Carta>>[];
+    var restantes = mao.toList();
+    bool progrediu = true;
+    while (progrediu) {
+      progrediu = false;
+      final melhor = _escolherCorrida(restantes, permissivo);
+      if (melhor != null && melhor.length >= 3) {
+        jogos.add(melhor);
+        final usados = melhor.map((c) => c.id).toSet();
+        restantes = restantes.where((c) => !usados.contains(c.id)).toList();
+        progrediu = true;
+      }
+    }
+    bool podeAnexar(Carta c) => permissivo || c.valor == '2';
+    final minParaAnexar = permissivo ? 3 : _minJogoPraGastarCuringa - 1;
+    Carta? orfao;
+    for (final c in restantes) { if (c.ehCoringa && podeAnexar(c)) { orfao = c; break; } }
+    while (orfao != null) {
+      final alvos = jogos.where((j) => j.length >= minParaAnexar && !j.any((c) => c.ehCoringa) && j.map((c) => c.valor).toSet().length > 1).toList()
+        ..sort((a, b) => b.length - a.length);
+      if (alvos.isEmpty) break;
+      alvos.first.add(orfao);
+      final oid = orfao.id;
+      restantes = restantes.where((c) => c.id != oid).toList();
+      orfao = null;
+      for (final c in restantes) { if (c.ehCoringa && podeAnexar(c)) { orfao = c; break; } }
+    }
+    return {'jogos': jogos, 'sobra': restantes};
+  }
+
+  int _vizinhos(List<Carta> mao, Carta carta) {
+    if (carta.ehCoringa) return 99;
+    int n = 0;
+    for (final c in mao) {
+      if (c.id == carta.id || c.ehCoringa) continue;
+      if (c.naipe == carta.naipe && (_ordem.indexOf(c.valor) - _ordem.indexOf(carta.valor)).abs() <= 2) n++;
+    }
+    return n;
+  }
+
+  // descarte SEGURO: protege combos em formação, evita curinga, evita servir ao adversário
+  Carta _decidirDescarte(List<Carta> mao, List<List<Carta>> jogosAdversario) {
+    final sobra = _agruparMao(mao, true)['sobra'] as List<Carta>;
+    final candidatas = sobra.isNotEmpty ? sobra : mao.toList();
+    final semCuringa = candidatas.where((c) => !c.ehCoringa).toList();
+    var pool = semCuringa.isNotEmpty ? semCuringa : candidatas;
+    bool ehPerigosa(Carta carta) => jogosAdversario.any((j) => validarSequencia([...j, carta])['valido'] == true);
+    final seguras = pool.where((c) => !ehPerigosa(c)).toList();
+    if (seguras.isNotEmpty) pool = seguras;
+    pool.sort((a, b) {
+      final pa = _pontos(a), pb = _pontos(b);
+      if (pa != pb) return pa - pb;
+      return _vizinhos(mao, a) - _vizinhos(mao, b);
+    });
+    return pool.first;
+  }
+
+  // ROBÔ (fatia 3): compra, BAIXA os jogos possíveis, ESTENDE cartas soltas e descarta com critério
   void botJoga(int assento) {
     if (rodadaEncerrada || vez != assento) return;
-    comprarMonte(assento);
-    if (maos[assento].isEmpty) return;
-    final i = _rnd.nextInt(maos[assento].length);
-    descartar(assento, maos[assento][i].id);
+    if (!jaComprou) comprarMonte(assento);
+    if (rodadaEncerrada) return;
+    final dupla = _duplaKey(assento);
+
+    // 1) baixa os jogos que dá (baixar() já respeita a trava/validade)
+    final grupos = _agruparMao(maos[assento], false)['jogos'] as List<List<Carta>>;
+    for (final g in grupos) {
+      if (rodadaEncerrada) break;
+      if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue; // mão mudou (pegou morto)
+      baixar(assento, g.map((c) => c.id).toList());
+    }
+
+    // 2) estende cartas soltas nos jogos da dupla
+    bool progrediu = true;
+    while (progrediu && !rodadaEncerrada) {
+      progrediu = false;
+      final jogos = jogosDupla[dupla]!;
+      for (int i = 0; i < jogos.length; i++) {
+        Carta? achou;
+        for (final c in maos[assento]) {
+          if (_validarJogoMesa([...jogos[i], c])['valido'] == true) { achou = c; break; }
+        }
+        if (achou != null && estender(assento, i, [achou.id])['ok'] == true) { progrediu = true; break; }
+      }
+    }
+
+    if (rodadaEncerrada || maos[assento].isEmpty) return;
+
+    // 3) descarta (encerra a vez)
+    final adv = jogosDupla[dupla == 'nos' ? 'eles' : 'nos']!;
+    final alvo = _decidirDescarte(maos[assento], adv);
+    if (descartar(assento, alvo.id) != null) {
+      for (final c in maos[assento].toList()) {
+        if (descartar(assento, c.id) == null) return;
+      }
+    }
   }
 }
 
@@ -1005,7 +1189,14 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Future<void> _tapLixo() async {
-    if (!_minhaVezAtiva || !_j.jaComprou) return;
+    if (!_minhaVezAtiva) return;
+    if (!_j.jaComprou) {
+      // antes de comprar: tocar no lixo PEGA o monte de descarte inteiro
+      final res = _j.comprarLixo(0);
+      if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
+      setState(() { _sel.clear(); _msg = 'Você pegou o LIXO (${res['qtd']} cartas)! Baixe/estenda e depois descarte.'; });
+      return;
+    }
     if (_sel.length != 1) { setState(() => _msg = 'Toque em UMA carta e depois no lixo pra descartar'); return; }
     final id = _j.maos[0][_sel.first].id;
     final err = _j.descartar(0, id);
@@ -1053,7 +1244,7 @@ class _MesaScreenState extends State<MesaScreen> {
     if (_msg != null) return _msg!;
     if (_j.rodadaEncerrada) return _j.duplaQueBateu == 'nos' ? '🎉 Rodada encerrada — NÓS batemos!' : 'Rodada encerrada';
     if (!_j.suaVez) return 'Vez de ${_j.apelidos[_j.vez]}...';
-    if (!_j.jaComprou) return 'Sua vez — toque no MONTE pra comprar';
+    if (!_j.jaComprou) return _j.lixo.isEmpty ? 'Sua vez — toque no MONTE pra comprar' : 'Sua vez — MONTE compra 1 · LIXO pega tudo';
     if (_sel.length >= 3) return 'Toque na área NÓS pra BAIXAR, ou num jogo pra estender';
     if (_sel.length == 1) return 'Toque no LIXO pra descartar, ou num jogo pra estender';
     return 'Selecione cartas: 3+ pra baixar · 1 pra descartar';
@@ -1270,6 +1461,8 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _midBox() {
     final podeComprar = _minhaVezAtiva && !_j.jaComprou;
     final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
+    final podePegarLixo = _minhaVezAtiva && !_j.jaComprou && _j.lixo.isNotEmpty;
+    final lixoDestaque = podeDescartar || podePegarLixo;
     final topo = _j.lixoTopo;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
@@ -1278,7 +1471,7 @@ class _MesaScreenState extends State<MesaScreen> {
       child: Row(children: [
         GestureDetector(onTap: _tapMonte, child: _pileco(pile: _back(destaque: podeComprar), label: 'monte', pill: '${_j.monte.length}')),
         const SizedBox(width: 9),
-        GestureDetector(onTap: _tapLixo, child: _pileco(pile: topo == null ? _ghost(destaque: podeDescartar) : _lixoCarta(topo, podeDescartar), label: 'lixo', pill: '${_j.lixo.length}')),
+        GestureDetector(onTap: _tapLixo, child: _pileco(pile: topo == null ? _ghost(destaque: lixoDestaque) : _lixoCarta(topo, lixoDestaque), label: 'lixo', pill: '${_j.lixo.length}')),
         const Spacer(),
         _pileco(pile: SizedBox(width: 55, height: 48, child: Stack(children: [_back(), Positioned(left: 21, child: _back())])), label: 'mortos', pill: '${_j.mortos.length}'),
       ]),
