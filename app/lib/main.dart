@@ -677,6 +677,7 @@ class Jogo {
     mortoPego = {'nos': false, 'eles': false};
     jogosDupla = {'nos': [], 'eles': []};
     vez = 0; jaComprou = false; rodadaEncerrada = false; duplaQueBateu = null; rodada += 1;
+    ordenar(0); // mão do jogador já começa organizada
   }
 
   // ---------- VALIDAÇÃO DE SEQUÊNCIA / CANASTRA (porte de canastra.js) ----------
@@ -850,6 +851,19 @@ class Jogo {
     lixo = [];
     jaComprou = true;
     return {'ok': true, 'qtd': qtd};
+  }
+
+  // ORGANIZAR A MÃO: agrupa por naipe (cores alternadas p/ leitura) e ordena por
+  // sequência (A,2,3…K). O 2 fica na posição natural dele dentro do naipe (ajuda a
+  // enxergar A-2-3); coringas sem naipe (JOKER) vão pro fim.
+  static const _naipeOrdem = {'copas': 0, 'espadas': 1, 'ouros': 2, 'paus': 3};
+  void ordenar(int assento) {
+    maos[assento].sort((a, b) {
+      final na = a.naipe == null ? 99 : (_naipeOrdem[a.naipe] ?? 98);
+      final nb = b.naipe == null ? 99 : (_naipeOrdem[b.naipe] ?? 98);
+      if (na != nb) return na - nb;
+      return _ordem.indexOf(a.valor) - _ordem.indexOf(b.valor);
+    });
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
@@ -1185,7 +1199,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   void _tapMonte() {
     if (!_minhaVezAtiva || _j.jaComprou) return;
-    setState(() { _j.comprarMonte(0); _msg = null; });
+    setState(() { _j.comprarMonte(0); _j.ordenar(0); _msg = null; });
   }
 
   Future<void> _tapLixo() async {
@@ -1194,6 +1208,7 @@ class _MesaScreenState extends State<MesaScreen> {
       // antes de comprar: tocar no lixo PEGA o monte de descarte inteiro
       final res = _j.comprarLixo(0);
       if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
+      _j.ordenar(0);
       setState(() { _sel.clear(); _msg = 'Você pegou o LIXO (${res['qtd']} cartas)! Baixe/estenda e depois descarte.'; });
       return;
     }
@@ -1211,6 +1226,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final ids = _sel.map((i) => _j.maos[0][i].id).toList();
     final res = _j.baixar(0, ids);
     if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
+    _j.ordenar(0);
     setState(() {
       _sel.clear();
       _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo baixado! 🎴');
@@ -1223,6 +1239,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final ids = _sel.map((i) => _j.maos[0][i].id).toList();
     final res = _j.estender(0, indiceJogo, ids);
     if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
+    _j.ordenar(0);
     setState(() {
       _sel.clear();
       _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo estendido! ➕');
