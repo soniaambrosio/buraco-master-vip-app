@@ -8,6 +8,21 @@ on:
 permissions:
   contents: write
 
+# ============================================================================
+# ASSINATURA FIXA DE TESTE (resolve INSTALL_FAILED_UPDATE_INCOMPATIBLE)
+# - Keystore permanente: keystore/buraco-master-vip-test.jks.b64  (alias: bmv-test)
+# - Mesma chave do debug fixo antigo -> MESMO SHA-1 -> login Google segue valendo.
+# - Senhas vêm por ENV (abaixo) e viram key.properties no CI. NUNCA ficam no gradle.
+# - applicationId de teste fixo: com.buracomastervip.poc.buraco_master_vip
+# - versionCode = número do run (incrementa a cada build).
+# Produção fica numa config SEPARADA (ver bloco comentado no fim do patch do gradle).
+# ============================================================================
+env:
+  BMV_KEY_ALIAS: bmv-test
+  BMV_STORE_PASSWORD: bmvtest2026
+  BMV_KEY_PASSWORD: bmvtest2026
+  BMV_APPLICATION_ID: com.buracomastervip.poc.buraco_master_vip
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,12 +41,6 @@ jobs:
         with:
           channel: stable
 
-      - name: Install fixed debug keystore (para SHA-1 estavel / login Google)
-        run: |
-          mkdir -p ~/.android
-          base64 -d keystore/debug.keystore.b64 > ~/.android/debug.keystore
-          echo "keystore instalado"
-
       - name: Scaffold Flutter project
         run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
 
@@ -46,6 +55,93 @@ jobs:
           f=app_build/android/app/build.gradle.kts
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
           grep -n "minSdk" "$f" || true
+
+      - name: Install fixed TEST keystore (assinatura estável / SHA-1 do login Google)
+        run: |
+          base64 -d keystore/buraco-master-vip-test.jks.b64 > app_build/android/app/buraco-master-vip-test.jks
+          echo "keystore de teste instalado: $(ls -l app_build/android/app/buraco-master-vip-test.jks | awk '{print $5}') bytes"
+
+      - name: Write key.properties (senhas por ENV, nunca no build.gradle)
+        run: |
+          cat > app_build/android/key.properties <<EOF
+          storeFile=${GITHUB_WORKSPACE}/app_build/android/app/buraco-master-vip-test.jks
+          storePassword=${BMV_STORE_PASSWORD}
+          keyAlias=${BMV_KEY_ALIAS}
+          keyPassword=${BMV_KEY_PASSWORD}
+          EOF
+          echo "key.properties criado (senhas ocultas):"
+          sed 's/Password=.*/Password=***/' app_build/android/key.properties
+
+      - name: Patch build.gradle.kts (signingConfig 'test' + versionCode incremental)
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          p = 'app_build/android/app/build.gradle.kts'
+          s = open(p, encoding='utf-8').read()
+          vc = os.environ.get('VERSION_CODE', '1')
+
+          # 1) imports no topo do arquivo
+          imports = 'import java.util.Properties\nimport java.io.FileInputStream\n'
+          if 'import java.util.Properties' not in s:
+              s = imports + s
+
+          # 2) carrega key.properties logo antes de `android {`
+          loader = (
+              'val keystoreProperties = Properties()\n'
+              'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+              'if (keystorePropertiesFile.exists()) {\n'
+              '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+              '}\n\n'
+          )
+          if 'val keystoreProperties' not in s:
+              s = re.sub(r'\nandroid\s*\{', '\n' + loader + 'android {', s, count=1)
+
+          # 3) signingConfigs { create("test") { ... } } logo apos `android {`
+          signing = (
+              '\n    signingConfigs {\n'
+              '        create("test") {\n'
+              '            keyAlias = keystoreProperties["keyAlias"] as String\n'
+              '            keyPassword = keystoreProperties["keyPassword"] as String\n'
+              '            storeFile = file(keystoreProperties["storeFile"] as String)\n'
+              '            storePassword = keystoreProperties["storePassword"] as String\n'
+              '        }\n'
+              '    }\n'
+          )
+          if 'create("test")' not in s:
+              s = re.sub(r'android\s*\{', 'android {' + signing, s, count=1)
+
+          # 4) todos os buildTypes (debug e release) usam a assinatura 'test'
+          novo_buildtypes = (
+              '    buildTypes {\n'
+              '        getByName("debug") {\n'
+              '            signingConfig = signingConfigs.getByName("test")\n'
+              '        }\n'
+              '        getByName("release") {\n'
+              '            signingConfig = signingConfigs.getByName("test")\n'
+              '        }\n'
+              '    }\n'
+          )
+          if re.search(r'buildTypes\s*\{.*?\n    \}\n', s, flags=re.DOTALL):
+              s = re.sub(r'buildTypes\s*\{.*?\n    \}\n', novo_buildtypes, s, count=1, flags=re.DOTALL)
+          else:
+              # fallback: injeta antes do fechamento do bloco android
+              s = s.rstrip()
+              s = s[:s.rfind('}')] + '\n' + novo_buildtypes + '}\n'
+
+          # 5) versionCode incremental (numero do run)
+          s = re.sub(r'versionCode = flutter\.versionCode', f'versionCode = {vc}', s)
+          s = re.sub(r'versionCode\s+flutter\.versionCode', f'versionCode = {vc}', s)
+
+          open(p, 'w', encoding='utf-8').write(s)
+          print("build.gradle.kts patchado. versionCode =", vc)
+          print("---- trechos relevantes ----")
+          for m in ['create("test")', 'signingConfig = signingConfigs.getByName("test")', f'versionCode = {vc}']:
+              print("OK" if m in s else "FALTOU", '->', m)
+          PY
+          echo "===== build.gradle.kts final ====="
+          cat app_build/android/app/build.gradle.kts
 
       - name: Set app display name to BMV Teste
         run: |
@@ -87,8 +183,22 @@ jobs:
           print("pubspec atualizado")
           PY
 
-      - name: Build debug APK
+      - name: Build debug APK (assinado com a config 'test')
         run: cd app_build && flutter build apk --debug
+
+      - name: Signing report (confirma a assinatura final)
+        run: |
+          cd app_build/android
+          ./gradlew :app:signingReport --console=plain | tee /tmp/signingReport.txt || true
+          echo "================= RESUMO DA ASSINATURA ================="
+          echo "applicationId: ${BMV_APPLICATION_ID}"
+          echo "versionCode:   ${{ github.run_number }}"
+          echo "APK:           app_build/build/app/outputs/flutter-apk/app-debug.apk"
+          echo "--- SHA-1 / SHA-256 do APK gerado ---"
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort | tail -1)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs ../build/app/outputs/flutter-apk/app-debug.apk | grep -iE "SHA-1|SHA-256" || true
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
