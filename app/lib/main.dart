@@ -585,26 +585,150 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ===================== MESA DE JOGO (partida) — VERDE APROVADA =====================
-// Porte fiel de claude/mesa-verde-APROVADA.html. Interação 100% no toque (sem botões).
-// Visual primeiro; lógica da partida entra na fatia seguinte.
+// ===================== MESA DE JOGO (partida) — VERDE + MOTOR (fatia 1) =====================
+// Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovada pela Sônia).
+// Lógica (fatia 1): motor enxuto portado do motor testado (carta.js/jogo.js):
+//   baralho 108, distribuição (11/mão, 2 mortos), comprar do monte, descartar,
+//   passar a vez + robôs simples (compram e descartam). Interação 100% no toque.
+//   Baixar/estender/canastra/bater e a IA esperta entram nas próximas fatias.
 
+// ---------- MODELO ----------
 class Carta {
-  final String valor;
-  final String naipe;
-  final bool curinga;
-  const Carta(this.valor, this.naipe, {this.curinga = false});
-  bool get vermelho => naipe == '♥' || naipe == '♦';
+  final String id;
+  final String? naipe; // 'copas','ouros','paus','espadas' | null (joker)
+  final String valor; // 'A'..'K' | 'JOKER'
+  final bool ehCoringa;
+  const Carta(this.id, this.naipe, this.valor, this.ehCoringa);
 }
 
-// tipo de faixa do jogo
-enum Sash { nenhuma, limpa, suja, n500 }
+const _naipeSimb = {'copas': '♥', 'ouros': '♦', 'paus': '♣', 'espadas': '♠'};
+bool _cartaVermelha(Carta c) => c.naipe == 'copas' || c.naipe == 'ouros';
+String _cartaSimb(Carta c) => c.ehCoringa ? '★' : (_naipeSimb[c.naipe] ?? '');
+String _cartaRotulo(Carta c) => c.ehCoringa ? '★' : c.valor;
 
-class Meld {
-  final List<Carta> cartas;
-  final Sash sash;
-  final int cnt;
-  const Meld(this.cartas, this.sash, this.cnt);
+// ---------- MOTOR ENXUTO (fatia 1) ----------
+class Jogo {
+  final _rnd = Random();
+  int _cont = 0;
+  static const _naipes = ['copas', 'ouros', 'paus', 'espadas'];
+  static const _valores = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+  static const cartasPorMao = 11;
+  static const cartasPorMorto = 11;
+
+  List<List<Carta>> maos = [[], [], [], []];
+  List<Carta> monte = [];
+  List<List<Carta>> mortos = [];
+  List<Carta> lixo = [];
+  List<bool> mortoPego = [false, false]; // [nos, eles]
+  int vez = 0;
+  bool jaComprou = false;
+  bool rodadaEncerrada = false;
+  int rodada = 0;
+
+  final List<String> apelidos;
+  final List<String> avatares;
+  final List<String> mascotes;
+  Jogo(this.apelidos, this.avatares, this.mascotes) {
+    _distribuir();
+  }
+
+  int _dupla(int assento) => assento % 2; // 0/2 -> 0 (nós); 1/3 -> 1 (eles)
+  Carta? get lixoTopo => lixo.isEmpty ? null : lixo.last;
+  bool get suaVez => vez == 0;
+
+  String _novoId() => 'c${++_cont}';
+
+  List<Carta> _gerarBaralho() {
+    final cs = <Carta>[];
+    for (var b = 0; b < 2; b++) {
+      for (final n in _naipes) {
+        for (final v in _valores) {
+          cs.add(Carta(_novoId(), n, v, v == '2'));
+        }
+      }
+      cs.add(Carta(_novoId(), null, 'JOKER', true));
+      cs.add(Carta(_novoId(), null, 'JOKER', true));
+    }
+    return cs;
+  }
+
+  void _embaralhar(List<Carta> cs) {
+    for (var i = cs.length - 1; i > 0; i--) {
+      final j = _rnd.nextInt(i + 1);
+      final t = cs[i];
+      cs[i] = cs[j];
+      cs[j] = t;
+    }
+  }
+
+  List<Carta> _tirar(List<Carta> pool, int n) {
+    final out = pool.sublist(0, n);
+    pool.removeRange(0, n);
+    return out;
+  }
+
+  void _distribuir() {
+    final pool = _gerarBaralho();
+    _embaralhar(pool);
+    maos = [for (var a = 0; a < 4; a++) _tirar(pool, cartasPorMao)];
+    mortos = [_tirar(pool, cartasPorMorto), _tirar(pool, cartasPorMorto)];
+    monte = pool;
+    lixo = [];
+    mortoPego = [false, false];
+    vez = 0;
+    jaComprou = false;
+    rodadaEncerrada = false;
+    rodada += 1;
+  }
+
+  // COMPRA do monte. Repõe do morto se esgotar. Retorna true se ok.
+  bool comprarMonte(int assento) {
+    if (rodadaEncerrada || vez != assento || jaComprou) return false;
+    if (monte.isEmpty) {
+      if (mortos.isNotEmpty) {
+        monte = mortos.removeAt(0);
+      } else {
+        rodadaEncerrada = true;
+        return false;
+      }
+    }
+    maos[assento].add(monte.removeAt(0));
+    jaComprou = true;
+    return true;
+  }
+
+  // DESCARTE (encerra a vez). Fatia 1: sem batida/canastra (a mão não zera
+  // porque ainda não dá pra baixar). Pega-morto fica pra quando houver baixada.
+  bool descartar(int assento, String idCarta) {
+    if (rodadaEncerrada || vez != assento || !jaComprou) return false;
+    final idx = maos[assento].indexWhere((c) => c.id == idCarta);
+    if (idx == -1) return false;
+    final c = maos[assento].removeAt(idx);
+    lixo.add(c);
+    _passarVez();
+    return true;
+  }
+
+  void _passarVez() {
+    if (monte.isEmpty) {
+      if (mortos.isEmpty) {
+        rodadaEncerrada = true;
+        return;
+      }
+      monte = mortos.removeAt(0);
+    }
+    vez = (vez + 1) % 4;
+    jaComprou = false;
+  }
+
+  // ROBÔ simples (fatia 1): compra do monte e descarta uma carta ao acaso.
+  void botJoga(int assento) {
+    if (rodadaEncerrada || vez != assento) return;
+    comprarMonte(assento);
+    if (maos[assento].isEmpty) return;
+    final i = _rnd.nextInt(maos[assento].length);
+    descartar(assento, maos[assento][i].id);
+  }
 }
 
 // paleta da mesa verde
@@ -621,9 +745,21 @@ const _mBox = Color(0xFF0C3729);
 const _mRail = Color(0xFF6F5324);
 
 Color _corCarta(Carta c) =>
-    c.curinga ? const Color(0xFFB8860B) : (c.vermelho ? _mRed : _mBlack);
+    c.ehCoringa ? const Color(0xFFB8860B) : (_cartaVermelha(c) ? _mRed : _mBlack);
 
-// textura cross-hatch do feltro (linhas finas 45°/-45°, bem sutis)
+// faixa de jogo (melds ainda são exemplo visual — baixar entra na fatia 2)
+enum Sash { nenhuma, limpa, suja, n500 }
+
+class MeldEx {
+  final List<Carta> cartas;
+  final Sash sash;
+  final int cnt;
+  const MeldEx(this.cartas, this.sash, this.cnt);
+}
+
+Carta _c(String v, String n) => Carta('x', n, v, v == '2');
+
+// textura cross-hatch do feltro
 class _CrossHatch extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -655,32 +791,63 @@ class MesaScreen extends StatefulWidget {
 }
 
 class _MesaScreenState extends State<MesaScreen> {
-  // mão do jogador (a 2ª começa selecionada, como na HTML aprovada)
-  final List<Carta> _mao = const [
-    Carta('K', '♥'),
-    Carta('A', '♠'),
-    Carta('5', '♦'),
-    Carta('J', '♦'),
-    Carta('Q', '♦'),
-    Carta('K', '♦'),
-    Carta('7', '♣'),
-    Carta('3', '♠'),
-  ];
-  int _sel = 1;
+  late Jogo _j;
+  int _sel = -1;
+  bool _botsRodando = false;
 
-  final List<Meld> _eles = const [
-    Meld([Carta('A','♣'),Carta('2','♣'),Carta('3','♣'),Carta('4','♣'),Carta('5','♣'),Carta('6','♣'),Carta('7','♣'),Carta('8','♣'),Carta('9','♣'),Carta('10','♣')], Sash.limpa, 10),
-    Meld([Carta('2','♠'),Carta('3','♠'),Carta('4','♠'),Carta('5','♠'),Carta('6','♠'),Carta('7','♠'),Carta('8','♠')], Sash.limpa, 7),
-    Meld([Carta('2','♦'),Carta('6','♦'),Carta('7','♦'),Carta('8','♦'),Carta('9','♦'),Carta('10','♦')], Sash.nenhuma, 6),
-    Meld([Carta('Q','♣'),Carta('K','♣'),Carta('A','♣')], Sash.nenhuma, 3),
+  // exemplos visuais de melds (fatia 2 liga de verdade)
+  final List<MeldEx> _elesEx = [
+    MeldEx([_c('A','paus'),_c('2','paus'),_c('3','paus'),_c('4','paus'),_c('5','paus'),_c('6','paus'),_c('7','paus'),_c('8','paus'),_c('9','paus'),_c('10','paus')], Sash.limpa, 10),
+    MeldEx([_c('Q','paus'),_c('K','paus'),_c('A','paus')], Sash.nenhuma, 3),
   ];
-  final List<Meld> _nos = const [
-    Meld([Carta('A','♠'),Carta('2','♠'),Carta('3','♠'),Carta('4','♠'),Carta('5','♠'),Carta('6','♠'),Carta('7','♠'),Carta('8','♠'),Carta('9','♠'),Carta('10','♠'),Carta('J','♠'),Carta('Q','♠'),Carta('K','♠')], Sash.n500, 13),
-    Meld([Carta('3','♦'),Carta('4','♦'),Carta('5','♦'),Carta('6','♦'),Carta('7','♦'),Carta('8','♦'),Carta('9','♦')], Sash.suja, 7),
-    Meld([Carta('3','♥'),Carta('4','♥'),Carta('5','♥'),Carta('6','♥'),Carta('7','♥'),Carta('8','♥'),Carta('9','♥'),Carta('10','♥')], Sash.suja, 8),
-    Meld([Carta('5','♣'),Carta('6','♣'),Carta('7','♣')], Sash.nenhuma, 3),
-    Meld([Carta('Q','♦'),Carta('K','♦'),Carta('A','♦')], Sash.nenhuma, 4),
+  final List<MeldEx> _nosEx = [
+    MeldEx([_c('3','ouros'),_c('4','ouros'),_c('5','ouros'),_c('6','ouros'),_c('7','ouros'),_c('8','ouros'),_c('9','ouros')], Sash.suja, 7),
+    MeldEx([_c('5','paus'),_c('6','paus'),_c('7','paus')], Sash.nenhuma, 3),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _j = Jogo(
+      const ['você', 'Cláudia', 'Mateus', 'Sofia'],
+      const ['👑', '🙂', '😎', 'RN'],
+      const ['🐶', '🐰', '🦊', '🐱'],
+    );
+  }
+
+  void _tapMonte() {
+    if (_botsRodando || !_j.suaVez || _j.jaComprou || _j.rodadaEncerrada) return;
+    setState(() => _j.comprarMonte(0));
+  }
+
+  Future<void> _tapLixo() async {
+    if (_botsRodando || !_j.suaVez || !_j.jaComprou) return;
+    if (_sel < 0 || _sel >= _j.maos[0].length) return;
+    final id = _j.maos[0][_sel].id;
+    setState(() {
+      _j.descartar(0, id);
+      _sel = -1;
+    });
+    await _rodarBots();
+  }
+
+  Future<void> _rodarBots() async {
+    _botsRodando = true;
+    while (_j.vez != 0 && !_j.rodadaEncerrada) {
+      await Future.delayed(const Duration(milliseconds: 700));
+      _j.botJoga(_j.vez);
+      if (mounted) setState(() {});
+    }
+    _botsRodando = false;
+    if (mounted) setState(() {});
+  }
+
+  String get _dica {
+    if (_j.rodadaEncerrada) return 'Rodada encerrada';
+    if (!_j.suaVez) return 'Vez de ${_j.apelidos[_j.vez]}...';
+    if (!_j.jaComprou) return 'Sua vez — toque no MONTE para comprar';
+    return 'Escolha uma carta e toque no LIXO para descartar';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -698,36 +865,26 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
-  // ---------- header ----------
   Widget _header() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 6),
       child: Row(
         children: [
-          const Text('♛ ',
-              style: TextStyle(color: _mGold, fontSize: 15, fontWeight: FontWeight.w800)),
-          const Text('BURACO MASTER VIP',
-              style: TextStyle(color: Color(0xFFEAD9A8), fontSize: 12, fontWeight: FontWeight.w800)),
+          const Text('♛ ', style: TextStyle(color: _mGold, fontSize: 15, fontWeight: FontWeight.w800)),
+          const Text('BURACO MASTER VIP', style: TextStyle(color: Color(0xFFEAD9A8), fontSize: 12, fontWeight: FontWeight.w800)),
           Expanded(
             child: Center(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                      colors: [Color(0xFF2A2113), Color(0xFF181109)]),
+                  gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF2A2113), Color(0xFF181109)]),
                   border: Border.all(color: _mGold, width: 1.5),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Text('meta 1500',
-                        style: TextStyle(color: _mGoldHi, fontSize: 12, fontWeight: FontWeight.w800)),
-                    Text('ABERTO · rodada 1',
-                        style: TextStyle(color: Color(0xFFC9B98F), fontSize: 9)),
-                  ],
-                ),
+                child: Column(mainAxisSize: MainAxisSize.min, children: const [
+                  Text('meta 1500', style: TextStyle(color: _mGoldHi, fontSize: 12, fontWeight: FontWeight.w800)),
+                  Text('ABERTO · rodada 1', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 9)),
+                ]),
               ),
             ),
           ),
@@ -741,15 +898,10 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _hIcon(String s) => Container(
         width: 26, height: 26, alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF241A10),
-          border: Border.all(color: const Color(0x44EFB94A)),
-        ),
+        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF241A10), border: Border.all(color: const Color(0x44EFB94A))),
         child: Text(s, style: const TextStyle(fontSize: 12, color: Color(0xFFD9C79A))),
       );
 
-  // ---------- mesa (feltro) ----------
   Widget _mesa() {
     return Container(
       margin: const EdgeInsets.fromLTRB(8, 3, 8, 0),
@@ -757,148 +909,87 @@ class _MesaScreenState extends State<MesaScreen> {
       decoration: BoxDecoration(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         border: Border.all(color: _mRail, width: 2),
-        gradient: const RadialGradient(
-          center: Alignment(0, -0.2),
-          radius: 0.95,
-          colors: [Color(0xFF1D7059), Color(0xFF175946), Color(0xFF103528)],
-          stops: [0, 0.55, 1],
-        ),
+        gradient: const RadialGradient(center: Alignment(0, -0.2), radius: 0.95, colors: [Color(0xFF1D7059), Color(0xFF175946), Color(0xFF103528)], stops: [0, 0.55, 1]),
       ),
       child: Stack(
         children: [
           Positioned.fill(child: CustomPaint(painter: _CrossHatch())),
-          // marca d'água
-          const Positioned(
-            top: 0, left: 0, right: 0, bottom: 0,
-            child: Center(
-              child: Text('♛',
-                  style: TextStyle(fontSize: 110, color: Color(0x0DFFFFFF))),
-            ),
-          ),
-          // conteúdo em coluna
+          const Positioned(top: 0, left: 0, right: 0, bottom: 0, child: Center(child: Text('♛', style: TextStyle(fontSize: 110, color: Color(0x0DFFFFFF))))),
           Padding(
             padding: const EdgeInsets.fromLTRB(7, 6, 7, 18),
             child: Column(
               children: [
                 _teamRow(eles: true),
-                Expanded(child: _meldsBox(_eles)),
+                Expanded(child: _meldsBox(_elesEx)),
                 _midBox(),
                 _teamRow(eles: false),
-                Expanded(child: _meldsBox(_nos)),
+                Expanded(child: _meldsBox(_nosEx)),
               ],
             ),
           ),
-          // dica
-          const Positioned(
-            left: 0, right: 0, bottom: 72,
-            child: Text('Lacuna na sequência maior que o número de curingas disponível',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFFE7D9B0), fontSize: 11, fontWeight: FontWeight.w600)),
-          ),
-          // mão
-          Positioned(left: 0, right: 0, bottom: 0, height: 120, child: _hand()),
+          Positioned(left: 0, right: 0, bottom: 72, child: Text(_dica, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFE7D9B0), fontSize: 11, fontWeight: FontWeight.w600))),
+          Positioned(left: 0, right: 0, bottom: 0, height: 128, child: _hand()),
         ],
       ),
     );
   }
 
-  // ---------- linha de time (ELES/NÓS) ----------
   Widget _teamRow({required bool eles}) {
     final ptsCor = eles ? const Color(0xFFE7B7A6) : const Color(0xFF8FE0B0);
     final dotCor = eles ? const Color(0xFFD9483F) : const Color(0xFF37C98A);
     final dot = eles ? '●' : '◆';
     final ptsTxt = eles ? 'ELES 610 pts' : 'NÓS 1125 pts';
+    // assentos: 0=você(nós), 1=Cláudia(eles), 2=Mateus(nós), 3=Sofia(eles)
     final chipL = eles
-        ? _chip(masc: '🐰', ava: '🙂', nome: 'Cláudia', num: '#2', dir: false)
-        : _chip(masc: '🦊', ava: '😎', nome: 'Mateus', num: '#4', dir: false);
+        ? _chip(a: 1, dir: false)
+        : _chip(a: 2, dir: false);
     final chipR = eles
-        ? _chip(masc: '🐱', ava: 'RN', nome: 'Sofia', num: '#3', dir: true)
-        : _chip(masc: '🐶', ava: '👑', nome: 'você', num: '#7', dir: true, play: true, nCartas: '21');
+        ? _chip(a: 3, dir: true)
+        : _chip(a: 0, dir: true, play: true);
     return SizedBox(
       height: 46,
       child: Stack(
         alignment: Alignment.center,
         children: [
           Positioned(left: 6, child: chipL),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('$dot ', style: TextStyle(color: dotCor, fontSize: 10)),
-                  Text(ptsTxt,
-                      style: TextStyle(color: ptsCor, fontSize: 13.5, fontWeight: FontWeight.w800)),
-                ],
-              ),
-              const SizedBox(height: 2),
-              _vulnPill(),
-            ],
-          ),
+          Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('$dot ', style: TextStyle(color: dotCor, fontSize: 10)),
+              Text(ptsTxt, style: TextStyle(color: ptsCor, fontSize: 13.5, fontWeight: FontWeight.w800)),
+            ]),
+          ]),
           Positioned(right: 6, child: chipR),
         ],
       ),
     );
   }
 
-  Widget _vulnPill() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-            begin: Alignment.topCenter, end: Alignment.bottomCenter,
-            colors: [Color(0xFFC8463D), Color(0xFF9C302E)]),
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: const Color(0xFFFFDD93)),
-        boxShadow: const [
-          BoxShadow(color: Color(0xD9FFC45C), blurRadius: 12, spreadRadius: 3),
-        ],
-      ),
-      child: const Text('⚡ vulnerável +75',
-          style: TextStyle(color: Color(0xFFFFF2EE), fontSize: 9, fontWeight: FontWeight.w800)),
-    );
-  }
-
-  Widget _chip({
-    required String masc,
-    required String ava,
-    required String nome,
-    required String num,
-    required bool dir,
-    bool play = false,
-    String? nCartas,
-  }) {
+  Widget _chip({required int a, required bool dir, bool play = false}) {
+    final ehVez = _j.vez == a && !_j.rodadaEncerrada;
     final avatar = Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.center,
       children: [
         Positioned(
-          bottom: -6,
-          left: dir ? null : -8,
-          right: dir ? -8 : null,
+          bottom: -6, left: dir ? null : -8, right: dir ? -8 : null,
           child: Container(
             width: 23, height: 23, alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(6),
-              gradient: const RadialGradient(
-                  center: Alignment(-0.2, -0.3),
-                  colors: [Color(0xFF4A3416), Color(0xFF231607)]),
+              gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]),
               border: Border.all(color: const Color(0x66EFB94A)),
             ),
-            child: Text(masc, style: const TextStyle(fontSize: 13)),
+            child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 13)),
           ),
         ),
         Container(
           width: 26, height: 26, alignment: Alignment.center,
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xFF2A1C10),
-            border: Border.all(color: play ? _mGoldHi : _mGold, width: 2),
-            boxShadow: play
-                ? const [BoxShadow(color: Color(0x88EFB94A), blurRadius: 6)]
-                : null,
+            shape: BoxShape.circle, color: const Color(0xFF2A1C10),
+            border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 2.4 : 2),
+            boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 9)] : null,
           ),
-          child: Text(ava, style: const TextStyle(fontSize: 11, color: _mGoldHi)),
+          child: Text(_j.avatares[a], style: const TextStyle(fontSize: 11, color: _mGoldHi)),
         ),
       ],
     );
@@ -906,99 +997,66 @@ class _MesaScreenState extends State<MesaScreen> {
       crossAxisAlignment: dir ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(nome,
-            style: const TextStyle(color: Color(0xFFEDE3CC), fontSize: 11, fontWeight: FontWeight.w600)),
-        Text(num, style: const TextStyle(color: Color(0xFFB9AD8E), fontSize: 9)),
+        Text(_j.apelidos[a], style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 11, fontWeight: FontWeight.w600)),
+        Text('#${a + 1}', style: const TextStyle(color: Color(0xFFB9AD8E), fontSize: 9)),
       ],
     );
     final children = <Widget>[];
     if (dir) {
       children.add(label);
-      if (nCartas != null) {
-        children.add(const SizedBox(width: 5));
-        children.add(_cpill(nCartas));
-        children.add(const SizedBox(width: 5));
-      } else {
-        children.add(const SizedBox(width: 6));
-      }
+      children.add(const SizedBox(width: 5));
+      children.add(_cpill('${_j.maos[a].length}'));
+      children.add(const SizedBox(width: 5));
       children.add(avatar);
     } else {
       children.add(avatar);
       children.add(const SizedBox(width: 6));
       children.add(label);
+      children.add(const SizedBox(width: 5));
+      children.add(_cpill('${_j.maos[a].length}'));
     }
     return Row(mainAxisSize: MainAxisSize.min, children: children);
   }
 
   Widget _cpill(String s) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        decoration: BoxDecoration(
-          color: _mPill,
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: const Color(0x1AFFFFFF)),
-        ),
-        child: Text(s,
-            style: const TextStyle(color: _mPillTx, fontSize: 8.5, fontWeight: FontWeight.w800)),
+        decoration: BoxDecoration(color: _mPill, borderRadius: BorderRadius.circular(9), border: Border.all(color: const Color(0x1AFFFFFF))),
+        child: Text(s, style: const TextStyle(color: _mPillTx, fontSize: 8.5, fontWeight: FontWeight.w800)),
       );
 
-  // ---------- caixa de jogos (melds) — mesmo tamanho, com scroll ----------
-  Widget _meldsBox(List<Meld> melds) {
+  Widget _meldsBox(List<MeldEx> melds) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
       padding: const EdgeInsets.fromLTRB(6, 6, 10, 6),
       clipBehavior: Clip.hardEdge,
-      decoration: BoxDecoration(
-        color: _mBox,
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))],
-      ),
+      decoration: BoxDecoration(color: _mBox, borderRadius: BorderRadius.circular(10), boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))]),
       child: SingleChildScrollView(
-        child: Wrap(
-          spacing: 7,
-          runSpacing: 8,
-          children: [for (final m in melds) _meld(m)],
-        ),
+        child: Wrap(spacing: 7, runSpacing: 8, children: [for (final m in melds) _meld(m)]),
       ),
     );
   }
 
-  Widget _meld(Meld m) {
+  Widget _meld(MeldEx m) {
     final lab = {Sash.limpa: 'LIMPA', Sash.suja: 'SUJA', Sash.n500: '500'}[m.sash];
     return SizedBox(
-      // largura do quadro + folga p/ selo de contagem
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Container(
             margin: const EdgeInsets.only(bottom: 5),
             padding: const EdgeInsets.fromLTRB(3, 2, 3, 0),
-            decoration: BoxDecoration(
-              color: const Color(0x0DFFFFFF),
-              border: Border.all(color: const Color(0x1CFFFFFF)),
-              borderRadius: BorderRadius.circular(5),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [for (final c in m.cartas) _mcard(c)],
-            ),
+            decoration: BoxDecoration(color: const Color(0x0DFFFFFF), border: Border.all(color: const Color(0x1CFFFFFF)), borderRadius: BorderRadius.circular(5)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [for (final c in m.cartas) _mcard(c)]),
           ),
-          // selo de contagem
           Positioned(
             top: -5, right: -5,
             child: Container(
-              constraints: const BoxConstraints(minWidth: 15),
-              height: 15, alignment: Alignment.center,
+              constraints: const BoxConstraints(minWidth: 15), height: 15, alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: _mMaroon1,
-                borderRadius: BorderRadius.circular(5),
-                border: Border.all(color: const Color(0x44000000)),
-              ),
-              child: Text('${m.cnt}',
-                  style: const TextStyle(color: Color(0xFFF6E8DF), fontSize: 8.5, fontWeight: FontWeight.w800)),
+              decoration: BoxDecoration(color: _mMaroon1, borderRadius: BorderRadius.circular(5), border: Border.all(color: const Color(0x44000000))),
+              child: Text('${m.cnt}', style: const TextStyle(color: Color(0xFFF6E8DF), fontSize: 8.5, fontWeight: FontWeight.w800)),
             ),
           ),
-          // faixa LIMPA/SUJA/500
           if (lab != null)
             Positioned(
               left: 4, right: 4, bottom: 0, height: 12,
@@ -1007,15 +1065,10 @@ class _MesaScreenState extends State<MesaScreen> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(3),
                   gradient: m.sash == Sash.suja
-                      ? const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                          colors: [Color(0xFFB8433C), Color(0xFF9C302E)])
-                      : const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                          colors: [Color(0xFFFFF2CF), Color(0xFFE6BA5F), Color(0xFFC68F36)], stops: [0, 0.6, 1]),
+                      ? const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFB8433C), Color(0xFF9C302E)])
+                      : const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFF2CF), Color(0xFFE6BA5F), Color(0xFFC68F36)], stops: [0, 0.6, 1]),
                 ),
-                child: Text(lab,
-                    style: TextStyle(
-                        color: m.sash == Sash.suja ? const Color(0xFFFBE3DF) : const Color(0xFF5A3D0C),
-                        fontSize: 8, fontWeight: FontWeight.w800)),
+                child: Text(lab, style: TextStyle(color: m.sash == Sash.suja ? const Color(0xFFFBE3DF) : const Color(0xFF5A3D0C), fontSize: 8, fontWeight: FontWeight.w800)),
               ),
             ),
         ],
@@ -1028,50 +1081,40 @@ class _MesaScreenState extends State<MesaScreen> {
     return Container(
       width: 20, height: 32,
       padding: const EdgeInsets.only(top: 1),
-      decoration: const BoxDecoration(
-        color: _mCard,
-        border: Border(right: BorderSide(color: Color(0x22000000), width: 0.5)),
-        borderRadius: BorderRadius.all(Radius.circular(2)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(c.valor,
-              style: TextStyle(color: cor, fontSize: c.valor.length > 1 ? 9 : 11, fontWeight: FontWeight.w800, height: 1)),
-          Text(c.naipe, style: TextStyle(color: cor, fontSize: 8, height: 1)),
-        ],
-      ),
+      decoration: const BoxDecoration(color: _mCard, border: Border(right: BorderSide(color: Color(0x22000000), width: 0.5)), borderRadius: BorderRadius.all(Radius.circular(2))),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(_cartaRotulo(c), style: TextStyle(color: cor, fontSize: _cartaRotulo(c).length > 1 ? 9 : 11, fontWeight: FontWeight.w800, height: 1)),
+        Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 8, height: 1)),
+      ]),
     );
   }
 
-  // ---------- faixa do meio: monte + lixo | mortos ----------
   Widget _midBox() {
+    final podeComprar = _j.suaVez && !_j.jaComprou && !_j.rodadaEncerrada && !_botsRodando;
+    final podeDescartar = _j.suaVez && _j.jaComprou && _sel >= 0 && !_botsRodando;
+    final topo = _j.lixoTopo;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: _mBox,
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))],
-      ),
+      decoration: BoxDecoration(color: _mBox, borderRadius: BorderRadius.circular(10), boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))]),
       child: Row(
         children: [
-          _pileco(
-            pile: _back(check: true),
-            label: 'monte', pill: '10',
+          GestureDetector(
+            onTap: _tapMonte,
+            child: _pileco(pile: _back(destaque: podeComprar), label: 'monte', pill: '${_j.monte.length}'),
           ),
           const SizedBox(width: 9),
-          _pileco(pile: _ghost(), label: 'lixo', pill: '0'),
+          GestureDetector(
+            onTap: _tapLixo,
+            child: _pileco(
+              pile: topo == null ? _ghost(destaque: podeDescartar) : _lixoCarta(topo, podeDescartar),
+              label: 'lixo', pill: '${_j.lixo.length}',
+            ),
+          ),
           const Spacer(),
           _pileco(
-            pile: SizedBox(
-              width: 55, height: 48,
-              child: Stack(children: [
-                _back(),
-                Positioned(left: 21, child: _back()),
-              ]),
-            ),
-            label: 'mortos', pill: '2',
+            pile: SizedBox(width: 55, height: 48, child: Stack(children: [_back(), Positioned(left: 21, child: _back())])),
+            label: 'mortos', pill: '${_j.mortos.length}',
           ),
         ],
       ),
@@ -1079,70 +1122,64 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _pileco({required Widget pile, required String label, required String pill}) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        pile,
-        const SizedBox(height: 2),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(label, style: const TextStyle(color: Color(0xFFCFE6D8), fontSize: 9.5)),
-            const SizedBox(width: 4),
-            _cpill(pill),
-          ],
-        ),
-      ],
-    );
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      pile,
+      const SizedBox(height: 2),
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(label, style: const TextStyle(color: Color(0xFFCFE6D8), fontSize: 9.5)),
+        const SizedBox(width: 4),
+        _cpill(pill),
+      ]),
+    ]);
   }
 
-  Widget _back({bool check = false}) {
-    final card = Container(
+  Widget _back({bool destaque = false}) {
+    return Container(
       width: 34, height: 48, alignment: Alignment.center,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [_mMaroon1, _mMaroon2]),
+        gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_mMaroon1, _mMaroon2]),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: _mGold, width: 1.4),
-        boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 3, offset: Offset(0, 1))],
+        border: Border.all(color: destaque ? _mGoldHi : _mGold, width: destaque ? 2 : 1.4),
+        boxShadow: destaque ? const [BoxShadow(color: Color(0x99EFB94A), blurRadius: 8)] : const [BoxShadow(color: Color(0x66000000), blurRadius: 3, offset: Offset(0, 1))],
       ),
       child: Container(
         width: 19, height: 34, alignment: Alignment.center,
-        decoration: BoxDecoration(
-          border: Border.all(color: const Color(0x55EFB94A)),
-          borderRadius: BorderRadius.circular(4),
-        ),
+        decoration: BoxDecoration(border: Border.all(color: const Color(0x55EFB94A)), borderRadius: BorderRadius.circular(4)),
         child: const Text('👑', style: TextStyle(fontSize: 12)),
       ),
     );
-    if (!check) return card;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        card,
-        const Positioned(
-          top: -6, left: -4,
-          child: Text('✓',
-              style: TextStyle(color: Color(0xFF9FE06A), fontSize: 16, fontWeight: FontWeight.w900)),
-        ),
-      ],
+  }
+
+  Widget _lixoCarta(Carta c, bool destaque) {
+    final cor = _corCarta(c);
+    return Container(
+      width: 34, height: 48,
+      padding: const EdgeInsets.only(left: 3, top: 2),
+      decoration: BoxDecoration(
+        color: _mCard, borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: destaque ? _mGoldHi : const Color(0x55000000), width: destaque ? 2 : 1),
+        boxShadow: destaque ? const [BoxShadow(color: Color(0x99EFB94A), blurRadius: 8)] : const [BoxShadow(color: Color(0x55000000), blurRadius: 3, offset: Offset(0, 1))],
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_cartaRotulo(c), style: TextStyle(color: cor, fontSize: 13, fontWeight: FontWeight.w800, height: 1)),
+        Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 11, height: 1)),
+      ]),
     );
   }
 
-  Widget _ghost() => Container(
+  Widget _ghost({bool destaque = false}) => Container(
         width: 34, height: 48,
         decoration: BoxDecoration(
-          color: const Color(0x0DFFFFFF),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0x3AFFFFFF), width: 1.4),
+          color: const Color(0x0DFFFFFF), borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: destaque ? _mGoldHi : const Color(0x3AFFFFFF), width: destaque ? 2 : 1.4),
         ),
       );
 
-  // ---------- mão (cartas sobrepostas; a selecionada sobe e mostra o naipe grande) ----------
   Widget _hand() {
     const step = 26.0, cw = 50.0, ch = 84.0;
-    final n = _mao.length;
+    final mao = _j.maos[0];
+    final n = mao.length;
+    if (n == 0) return const SizedBox();
     final totalW = cw + (n - 1) * step;
     return LayoutBuilder(builder: (context, cons) {
       final base = (cons.maxWidth - totalW) / 2;
@@ -1153,11 +1190,10 @@ class _MesaScreenState extends State<MesaScreen> {
             Positioned(
               left: base + i * step,
               bottom: i == _sel ? 20 : -26,
-              width: cw,
-              height: ch,
+              width: cw, height: ch,
               child: GestureDetector(
-                onTap: () => setState(() => _sel = i),
-                child: _handCard(_mao[i], i == _sel),
+                onTap: () => setState(() => _sel = (_sel == i ? -1 : i)),
+                child: _handCard(mao[i], i == _sel),
               ),
             ),
         ],
@@ -1169,32 +1205,21 @@ class _MesaScreenState extends State<MesaScreen> {
     final cor = _corCarta(c);
     return Container(
       decoration: BoxDecoration(
-        color: _mCard,
-        borderRadius: BorderRadius.circular(9),
+        color: _mCard, borderRadius: BorderRadius.circular(9),
         border: Border.all(color: sel ? _mGoldHi : const Color(0x33000000), width: sel ? 2 : 1),
-        boxShadow: [
-          BoxShadow(color: const Color(0x77000000), blurRadius: sel ? 14 : 8, offset: const Offset(0, -3)),
-        ],
+        boxShadow: [BoxShadow(color: const Color(0x77000000), blurRadius: sel ? 14 : 8, offset: const Offset(0, -3))],
       ),
       clipBehavior: Clip.hardEdge,
       child: Stack(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(5, 4, 5, 4),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(c.valor,
-                    style: TextStyle(color: cor, fontSize: 19, fontWeight: FontWeight.w800, height: 1)),
-                Text(c.naipe, style: TextStyle(color: cor, fontSize: 15, height: 1)),
-              ],
-            ),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_cartaRotulo(c), style: TextStyle(color: cor, fontSize: 19, fontWeight: FontWeight.w800, height: 1)),
+              Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 15, height: 1)),
+            ]),
           ),
-          if (sel)
-            Center(
-              child: Text(c.naipe, style: TextStyle(color: cor, fontSize: 30)),
-            ),
+          if (sel) Center(child: Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 30))),
         ],
       ),
     );
