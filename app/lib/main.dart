@@ -4,6 +4,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:typed_data';
+import 'package:audioplayers/audioplayers.dart';
 
 // Paleta da casa
 const _dourado = Color(0xFFEFB94A);
@@ -1178,6 +1180,10 @@ class _MesaScreenState extends State<MesaScreen> {
   bool _botsRodando = false;
   String? _msg;
 
+  // --- ÁUDIO (recriado do projeto anterior: deslize de carta + arpejo de sucesso) ---
+  AudioPlayer? _pMover, _pSucesso;
+  Uint8List? _wMover, _wSucesso;
+
   @override
   void initState() {
     super.initState();
@@ -1186,6 +1192,31 @@ class _MesaScreenState extends State<MesaScreen> {
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
     );
+    try {
+      _wMover = _genDeslize();
+      _wSucesso = _genArpejo();
+      _pMover = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
+      _pSucesso = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
+    } catch (_) {/* sem áudio, o jogo segue normal */}
+  }
+
+  @override
+  void dispose() {
+    _pMover?.dispose();
+    _pSucesso?.dispose();
+    super.dispose();
+  }
+
+  void _somMover() {
+    final b = _wMover, p = _pMover;
+    if (b == null || p == null) return;
+    try { p.stop(); p.play(BytesSource(b), volume: 0.9); } catch (_) {}
+  }
+
+  void _somSucesso() {
+    final b = _wSucesso, p = _pSucesso;
+    if (b == null || p == null) return;
+    try { p.stop(); p.play(BytesSource(b), volume: 0.9); } catch (_) {}
   }
 
   bool get _minhaVezAtiva => _j.suaVez && !_j.rodadaEncerrada && !_botsRodando;
@@ -1200,6 +1231,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void _tapMonte() {
     if (!_minhaVezAtiva || _j.jaComprou) return;
     setState(() { _j.comprarMonte(0); _j.ordenar(0); _msg = null; });
+    _somMover();
   }
 
   Future<void> _tapLixo() async {
@@ -1209,6 +1241,7 @@ class _MesaScreenState extends State<MesaScreen> {
       final res = _j.comprarLixo(0);
       if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
       _j.ordenar(0);
+      _somMover();
       setState(() { _sel.clear(); _msg = 'Você pegou o LIXO (${res['qtd']} cartas)! Baixe/estenda e depois descarte.'; });
       return;
     }
@@ -1216,6 +1249,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final id = _j.maos[0][_sel.first].id;
     final err = _j.descartar(0, id);
     if (err != null) { setState(() => _msg = err); return; }
+    _somMover();
     setState(() { _sel.clear(); _msg = null; });
     await _rodarBots();
   }
@@ -1227,6 +1261,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final res = _j.baixar(0, ids);
     if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
     _j.ordenar(0);
+    _somSucesso();
     setState(() {
       _sel.clear();
       _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo baixado! 🎴');
@@ -1240,6 +1275,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final res = _j.estender(0, indiceJogo, ids);
     if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
     _j.ordenar(0);
+    if (res['bateu'] == true) { _somSucesso(); } else { _somMover(); }
     setState(() {
       _sel.clear();
       _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo estendido! ➕');
@@ -1251,6 +1287,7 @@ class _MesaScreenState extends State<MesaScreen> {
     while (_j.vez != 0 && !_j.rodadaEncerrada) {
       await Future.delayed(const Duration(milliseconds: 650));
       _j.botJoga(_j.vez);
+      _somMover();
       if (mounted) setState(() {});
     }
     _botsRodando = false;
@@ -1293,23 +1330,26 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _header() {
+    // título numa linha; meta · aberto · rodada em linha abaixo (compacto -> sobra mais mesa)
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 6),
-      child: Row(children: [
-        const Text('♛ ', style: TextStyle(color: _mGold, fontSize: 15, fontWeight: FontWeight.w800)),
-        const Text('BURACO MASTER VIP', style: TextStyle(color: Color(0xFFEAD9A8), fontSize: 12, fontWeight: FontWeight.w800)),
-        Expanded(child: Center(child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF2A2113), Color(0xFF181109)]),
-            border: Border.all(color: _mGold, width: 1.5), borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: const [
-            Text('meta 1500', style: TextStyle(color: _mGoldHi, fontSize: 12, fontWeight: FontWeight.w800)),
-            Text('ABERTO · rodada 1', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 9)),
+      padding: const EdgeInsets.fromLTRB(12, 7, 12, 3),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          const Text('♛ ', style: TextStyle(color: _mGold, fontSize: 16, fontWeight: FontWeight.w800)),
+          const Text('BURACO MASTER VIP', style: TextStyle(color: Color(0xFFEAD9A8), fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 0.4)),
+          const Spacer(),
+          _hIcon('☰'), const SizedBox(width: 6), _hIcon('💬'),
+        ]),
+        const Padding(
+          padding: EdgeInsets.only(left: 20, top: 1),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('meta 1500', style: TextStyle(color: _mGoldHi, fontSize: 11.5, fontWeight: FontWeight.w800)),
+            Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
+            Text('ABERTO', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 11, fontWeight: FontWeight.w700)),
+            Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
+            Text('rodada 1', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 11)),
           ]),
-        ))),
-        _hIcon('☰'), const SizedBox(width: 5), _hIcon('💬'),
+        ),
       ]),
     );
   }
@@ -1342,9 +1382,9 @@ class _MesaScreenState extends State<MesaScreen> {
             Expanded(child: _meldsBox('nos')),
           ]),
         ),
-        Positioned(left: 8, right: 8, bottom: 72, child: Text(_dica, textAlign: TextAlign.center,
-            style: TextStyle(color: _msg != null ? _mGoldHi : const Color(0xFFE7D9B0), fontSize: 11, fontWeight: FontWeight.w700, shadows: const [Shadow(color: Colors.black, blurRadius: 3)]))),
-        Positioned(left: 0, right: 0, bottom: 0, height: 128, child: _hand()),
+        Positioned(left: 8, right: 8, bottom: 96, child: Text(_dica, textAlign: TextAlign.center,
+            style: TextStyle(color: _msg != null ? _mGoldHi : const Color(0xFFE7D9B0), fontSize: 11.5, fontWeight: FontWeight.w700, shadows: const [Shadow(color: Colors.black, blurRadius: 3)]))),
+        Positioned(left: 0, right: 0, bottom: 0, height: 158, child: _hand()),
       ]),
     );
   }
@@ -1376,31 +1416,39 @@ class _MesaScreenState extends State<MesaScreen> {
     final ehVez = _j.vez == a && !_j.rodadaEncerrada;
     final avatar = Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
       Positioned(
-        bottom: -6, left: dir ? null : -8, right: dir ? -8 : null,
+        bottom: -7, left: dir ? null : -10, right: dir ? -10 : null,
         child: Container(
-          width: 23, height: 23, alignment: Alignment.center,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]), border: Border.all(color: const Color(0x66EFB94A))),
-          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 13)),
+          width: 29, height: 29, alignment: Alignment.center,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]), border: Border.all(color: const Color(0x66EFB94A))),
+          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 16)),
         ),
       ),
       Container(
-        width: 26, height: 26, alignment: Alignment.center,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF2A1C10), border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 2.4 : 2), boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 9)] : null),
-        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 11, color: _mGoldHi)),
+        width: 33, height: 33, alignment: Alignment.center,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF2A1C10), border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 2.6 : 2), boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 10)] : null),
+        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 14, color: _mGoldHi)),
       ),
     ]);
-    final label = Column(crossAxisAlignment: dir ? CrossAxisAlignment.end : CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-      SizedBox(width: 56, child: Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 11, fontWeight: FontWeight.w600))),
-      Text('#${a + 1}', style: const TextStyle(color: Color(0xFFB9AD8E), fontSize: 9)),
-    ]);
+    final label = SizedBox(
+      width: 50,
+      child: Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 12, fontWeight: FontWeight.w700)),
+    );
     final children = <Widget>[];
     if (dir) {
-      children.addAll([label, const SizedBox(width: 5), _cpill('${_j.maos[a].length}'), const SizedBox(width: 5), avatar]);
+      children.addAll([label, const SizedBox(width: 5), _countBadge(_j.maos[a].length), const SizedBox(width: 6), avatar]);
     } else {
-      children.addAll([avatar, const SizedBox(width: 6), label, const SizedBox(width: 5), _cpill('${_j.maos[a].length}')]);
+      children.addAll([avatar, const SizedBox(width: 7), label, const SizedBox(width: 5), _countBadge(_j.maos[a].length)]);
     }
     return Row(mainAxisSize: MainAxisSize.min, children: children);
   }
+
+  // contagem de cartas do jogador — mesmo estilo do selo de contagem dos jogos na mesa
+  Widget _countBadge(int n) => Container(
+        constraints: const BoxConstraints(minWidth: 19), height: 18, alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        decoration: BoxDecoration(color: _mMaroon1, borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0x55000000))),
+        child: Text('$n', style: const TextStyle(color: Color(0xFFF6E8DF), fontSize: 11, fontWeight: FontWeight.w800)),
+      );
 
   Widget _cpill(String s) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -1442,9 +1490,9 @@ class _MesaScreenState extends State<MesaScreen> {
       child: Stack(clipBehavior: Clip.none, children: [
         Container(
           margin: const EdgeInsets.only(bottom: 5),
-          padding: const EdgeInsets.fromLTRB(3, 2, 3, 0),
-          decoration: BoxDecoration(color: const Color(0x0DFFFFFF), border: Border.all(color: const Color(0x1CFFFFFF)), borderRadius: BorderRadius.circular(5)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [for (final c in cartas) _mcard(c)]),
+          padding: const EdgeInsets.fromLTRB(3, 3, 3, 2),
+          decoration: BoxDecoration(color: const Color(0x0DFFFFFF), border: Border.all(color: const Color(0x1CFFFFFF)), borderRadius: BorderRadius.circular(6)),
+          child: _meldCards(cartas),
         ),
         Positioned(top: -5, right: -5, child: Container(
           constraints: const BoxConstraints(minWidth: 15), height: 15, alignment: Alignment.center,
@@ -1463,14 +1511,33 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // jogo baixado em "leque": cartas sobrepostas, mostrando o canto (valor+naipe).
+  // cabe sequências longas sem estourar e fica com cara de jogo de verdade.
+  Widget _meldCards(List<Carta> cartas) {
+    const peek = 16.0, cw = 25.0, ch = 40.0;
+    final k = cartas.length;
+    final totalW = (k - 1) * peek + cw;
+    return SizedBox(
+      width: totalW, height: ch,
+      child: Stack(clipBehavior: Clip.none, children: [
+        for (int i = 0; i < k; i++) Positioned(left: i * peek, child: _mcard(cartas[i])),
+      ]),
+    );
+  }
+
   Widget _mcard(Carta c) {
     final cor = _corCarta(c);
     return Container(
-      width: 20, height: 32, padding: const EdgeInsets.only(top: 1),
-      decoration: const BoxDecoration(color: _mCard, border: Border(right: BorderSide(color: Color(0x22000000), width: 0.5)), borderRadius: BorderRadius.all(Radius.circular(2))),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(_cartaRotulo(c), style: TextStyle(color: cor, fontSize: _cartaRotulo(c).length > 1 ? 9 : 11, fontWeight: FontWeight.w800, height: 1)),
-        Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 8, height: 1)),
+      width: 25, height: 40,
+      decoration: BoxDecoration(
+        color: _mCard, borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: const Color(0x33000000), width: 0.7),
+        boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 2, offset: Offset(1, 1))],
+      ),
+      padding: const EdgeInsets.only(left: 2, top: 1),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_cartaRotulo(c), style: TextStyle(color: cor, fontSize: _cartaRotulo(c).length > 1 ? 11 : 14, fontWeight: FontWeight.w800, height: 1)),
+        Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 12, height: 1)),
       ]),
     );
   }
@@ -1536,18 +1603,22 @@ class _MesaScreenState extends State<MesaScreen> {
       );
 
   Widget _hand() {
-    const step = 26.0, cw = 50.0, ch = 84.0;
     final mao = _j.maos[0];
     final n = mao.length;
     if (n == 0) return const SizedBox();
-    final totalW = cw + (n - 1) * step;
+    const cw = 60.0, ch = 104.0;
     return LayoutBuilder(builder: (context, cons) {
+      // passo dinâmico: espalha a mão na largura, mas sem passar de 34 px por carta
+      final maxW = cons.maxWidth - 16;
+      double step = n > 1 ? ((maxW - cw) / (n - 1)) : 0;
+      if (step > 34) step = 34;
+      final totalW = cw + (n - 1) * step;
       final base = (cons.maxWidth - totalW) / 2;
       return Stack(clipBehavior: Clip.none, children: [
         for (int i = 0; i < n; i++)
           Positioned(
             left: base + i * step,
-            bottom: _sel.contains(i) ? 20 : -26,
+            bottom: _sel.contains(i) ? 22 : -30,
             width: cw, height: ch,
             child: GestureDetector(onTap: () => _tapCard(i), child: _handCard(mao[i], _sel.contains(i))),
           ),
@@ -1557,21 +1628,94 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _handCard(Carta c, bool sel) {
     final cor = _corCarta(c);
+    final rot = _cartaRotulo(c);
+    final simb = _cartaSimb(c);
     return Container(
-      decoration: BoxDecoration(color: _mCard, borderRadius: BorderRadius.circular(9), border: Border.all(color: sel ? _mGoldHi : const Color(0x33000000), width: sel ? 2 : 1), boxShadow: [BoxShadow(color: const Color(0x77000000), blurRadius: sel ? 14 : 8, offset: const Offset(0, -3))]),
+      decoration: BoxDecoration(
+        color: _mCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: sel ? _mGoldHi : const Color(0x44000000), width: sel ? 2.4 : 1),
+        boxShadow: [BoxShadow(color: Color(sel ? 0x99000000 : 0x77000000), blurRadius: sel ? 16 : 9, offset: const Offset(0, -3))],
+      ),
       clipBehavior: Clip.hardEdge,
       child: Stack(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(5, 4, 5, 4),
+        // canto superior esquerdo: valor + naipe
+        Positioned(
+          top: 5, left: 6,
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_cartaRotulo(c), style: TextStyle(color: cor, fontSize: 19, fontWeight: FontWeight.w800, height: 1)),
-            Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 15, height: 1)),
+            Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 20 : 24, fontWeight: FontWeight.w800, height: 0.95)),
+            Text(simb, style: TextStyle(color: cor, fontSize: 17, height: 1)),
           ]),
         ),
-        if (sel) Center(child: Text(_cartaSimb(c), style: TextStyle(color: cor, fontSize: 30))),
+        // naipe grande no centro (dá o "corpo" de carta de verdade)
+        Center(child: Text(simb, style: TextStyle(color: cor.withOpacity(0.9), fontSize: 40))),
+        // canto inferior direito espelhado
+        Positioned(
+          bottom: 5, right: 6,
+          child: Transform.rotate(
+            angle: 3.14159,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 13 : 16, fontWeight: FontWeight.w800, height: 0.95)),
+              Text(simb, style: TextStyle(color: cor, fontSize: 12, height: 1)),
+            ]),
+          ),
+        ),
       ]),
     );
   }
 }
 
 enum Sash { nenhuma, limpa, suja, n500 }
+
+// ===================== ÁUDIO SINTETIZADO (WAV em memória, sem asset) =====================
+// Recria os sons do projeto anterior (Web Audio) direto em bytes WAV PCM 16-bit mono.
+const int _sr = 44100;
+
+Uint8List _wav(List<int> s16) {
+  final b = <int>[];
+  void s(String x) => b.addAll(x.codeUnits);
+  void u32(int v) => b.addAll([v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >> 24) & 255]);
+  void u16(int v) => b.addAll([v & 255, (v >> 8) & 255]);
+  final dl = s16.length * 2;
+  s('RIFF'); u32(36 + dl); s('WAVE');
+  s('fmt '); u32(16); u16(1); u16(1); u32(_sr); u32(_sr * 2); u16(2); u16(16);
+  s('data'); u32(dl);
+  for (final v in s16) { u16(v < 0 ? v + 65536 : v); }
+  return Uint8List.fromList(b);
+}
+
+int _clamp16(double v) {
+  var i = (v * 32767).round();
+  if (i > 32767) i = 32767;
+  if (i < -32768) i = -32768;
+  return i;
+}
+
+// deslize de UMA carta: ruído curto que decai (o "atrito" na mesa)
+Uint8List _genDeslize() {
+  final rnd = Random(7);
+  final n = (_sr * 0.09).round();
+  final out = List<int>.filled(n, 0);
+  for (var i = 0; i < n; i++) {
+    final env = (1 - i / n);
+    out[i] = _clamp16((rnd.nextDouble() * 2 - 1) * env * env * 0.5);
+  }
+  return _wav(out);
+}
+
+// arpejo maior (dó-mi-sol-dó) = "conquista" ao baixar/canastra/bater
+Uint8List _genArpejo() {
+  const notas = [523.25, 659.25, 783.99, 1046.5];
+  final total = (_sr * 0.6).round();
+  final s = List<double>.filled(total, 0.0);
+  for (var k = 0; k < notas.length; k++) {
+    final start = (_sr * 0.075 * k).round();
+    final dur = (_sr * 0.4).round();
+    for (var i = 0; i < dur && start + i < total; i++) {
+      final t = i / _sr;
+      final env = exp(-t * 7);
+      s[start + i] += sin(2 * pi * notas[k] * t) * env * 0.16;
+    }
+  }
+  return _wav([for (final v in s) _clamp16(v)]);
+}
