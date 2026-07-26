@@ -47,8 +47,8 @@ jobs:
       - name: Overlay custom screen
         run: cp app/lib/main.dart app_build/lib/main.dart
 
-      - name: Add Firebase + Google Sign-In deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1"
+      - name: Add Firebase + Google Sign-In + Audio deps
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
 
       - name: Bump minSdk to 23 (Firebase)
         run: |
