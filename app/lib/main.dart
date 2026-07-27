@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'pages/perfil_page.dart';
 
 // Paleta da casa
 const _dourado = Color(0xFFEFB94A);
@@ -223,6 +224,16 @@ class _HomeScreenState extends State<HomeScreen> {
     FirebaseAuth.instance.authStateChanges().listen((u) {
       if (mounted) setState(() => _user = u);
     });
+  }
+
+  void _abrirPerfil() {
+    // Fase 1 da colaboração: a UI é do Codex (PerfilScreen); o carregamento de
+    // dados, estados e callbacks reais vivem no PerfilPage (Claude).
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const PerfilPage(),
+      ),
+    );
   }
 
   void _breve(String o) {
@@ -533,7 +544,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _tile(String emoji, String label) {
     return GestureDetector(
-      onTap: () => _breve(label),
+      onTap: label == 'Perfil' ? _abrirPerfil : () => _breve(label),
       child: Container(
         decoration: _cardDeco,
         child: Column(
@@ -551,19 +562,30 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _bottomNav() {
-    Widget item(String emoji, String label, bool ativo) {
+    Widget item(
+      String emoji,
+      String label,
+      bool ativo, {
+      VoidCallback? onTap,
+    }) {
       return Expanded(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(emoji, style: const TextStyle(fontSize: 20)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                    color: ativo ? _dourado : Colors.white38,
-                    fontSize: 11,
-                    fontWeight: ativo ? FontWeight.bold : FontWeight.normal)),
-          ],
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 1),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 20)),
+                const SizedBox(height: 2),
+                Text(label,
+                    style: TextStyle(
+                        color: ativo ? _dourado : Colors.white38,
+                        fontSize: 11,
+                        fontWeight: ativo ? FontWeight.bold : FontWeight.normal)),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -577,9 +599,9 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         children: [
           item('🏠', 'Início', true),
-          item('🏆', 'Ranking', false),
-          item('🛍️', 'Loja', false),
-          item('👤', 'Perfil', false),
+          item('🏆', 'Ranking', false, onTap: () => _breve('Ranking')),
+          item('🛍️', 'Loja', false, onTap: () => _breve('Loja VIP')),
+          item('👤', 'Perfil', false, onTap: _abrirPerfil),
         ],
       ),
     );
