@@ -988,7 +988,8 @@ class _PerfilScreenState extends State<PerfilScreen> {
           if (vm.ehMeuPerfil) ...[
             Expanded(
               child: _botaoAcao(
-                label: '✏️  Editar perfil',
+                icon: Icons.edit_rounded,
+                label: 'Editar perfil',
                 primario: true,
                 onTap: widget.onEditarPerfil,
               ),
@@ -997,7 +998,8 @@ class _PerfilScreenState extends State<PerfilScreen> {
           ],
           Expanded(
             child: _botaoAcao(
-              label: '🔗  Compartilhar',
+              icon: Icons.link_rounded,
+              label: 'Compartilhar',
               primario: false,
               onTap: widget.onCompartilhar,
             ),
@@ -1008,17 +1010,20 @@ class _PerfilScreenState extends State<PerfilScreen> {
   }
 
   Widget _botaoAcao({
+    required IconData icon,
     required String label,
     required bool primario,
     required VoidCallback onTap,
   }) {
+    final corConteudo = primario ? const Color(0xFF3A2606) : _ouro;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             gradient: primario
@@ -1026,15 +1031,24 @@ class _PerfilScreenState extends State<PerfilScreen> {
                 : null,
             border: primario ? null : Border.all(color: _ouro.withValues(alpha: .50), width: 1.4),
           ),
-          child: Text(
-            label,
-            maxLines: 1,
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: primario ? const Color(0xFF3A2606) : _ouro,
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: corConteudo, size: 20),
+                const SizedBox(width: 7),
+                Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: corConteudo,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
