@@ -629,7 +629,15 @@ class Jogo {
   bool jaComprou = false;
   bool rodadaEncerrada = false;
   String? duplaQueBateu;
+  int? assentoQueBateu;
   int rodada = 0;
+
+  // ===== FATIA 4: PLACAR / FIM DE RODADA / FIM DE PARTIDA =====
+  int metaPontos = 1500;
+  Map<String, int> placar = {'nos': 0, 'eles': 0};
+  bool encerrada = false; // partida acabou (bateu a meta)
+  Map<String, dynamic>? pontosRodada; // detalhamento da última rodada contada
+  bool _rodadaContada = false;
 
   final List<String> apelidos;
   final List<String> avatares;
@@ -678,8 +686,67 @@ class Jogo {
     lixo = [];
     mortoPego = {'nos': false, 'eles': false};
     jogosDupla = {'nos': [], 'eles': []};
-    vez = 0; jaComprou = false; rodadaEncerrada = false; duplaQueBateu = null; rodada += 1;
+    vez = 0; jaComprou = false; rodadaEncerrada = false; duplaQueBateu = null; assentoQueBateu = null; rodada += 1;
+    _rodadaContada = false; pontosRodada = null;
     ordenar(0); // mão do jogador já começa organizada
+  }
+
+  // ===== PONTUAÇÃO (porte fiel de motor/jogo.js: pontuarDuplaJogo + contarPontos) =====
+  // canastra: as_a_as=1000, de_500=500, limpa=200, suja=100; + cartas baixadas;
+  // + bônus de batida (100); − cartas na mão; − morto não pego (−100, só se ALGUÉM pegou).
+  Map<String, dynamic> _pontuarDupla(String dupla,
+      {required bool bateu, required bool mortoPegoDupla, required int cartasNaMao, required bool algumPegouMorto}) {
+    int pontosCanastras = 0, pontosCartas = 0;
+    final det = {'asAas': 0, 'de500': 0, 'limpas': 0, 'sujas': 0, 'baixadas': 0};
+    for (final meld in jogosDupla[dupla]!) {
+      if (meld.length >= 7) {
+        final res = validarSequencia(meld);
+        if (res['valido'] == true) {
+          switch (res['tipo']) {
+            case 'as_a_as': pontosCanastras += 1000; det['asAas'] = det['asAas']! + 1; break;
+            case 'de_500': pontosCanastras += 500; det['de500'] = det['de500']! + 1; break;
+            case 'limpa': pontosCanastras += 200; det['limpas'] = det['limpas']! + 1; break;
+            case 'suja': pontosCanastras += 100; det['sujas'] = det['sujas']! + 1; break;
+          }
+        }
+      }
+      for (final c in meld) pontosCartas += _pontos(c);
+    }
+    det['baixadas'] = pontosCartas;
+    final bonusBatida = bateu ? 100 : 0;
+    final penalidadeMorto = (!mortoPegoDupla && algumPegouMorto) ? -100 : 0;
+    final descontoMao = -cartasNaMao;
+    final total = pontosCanastras + pontosCartas + bonusBatida + descontoMao + penalidadeMorto;
+    return {'total': total, 'canastras': pontosCanastras, 'bonusBatida': bonusBatida,
+      'penalidadeMorto': penalidadeMorto, 'descontoMao': descontoMao, 'detalhe': det};
+  }
+
+  // Conta as duas duplas, soma no placar e marca a partida encerrada se bateu a meta.
+  // Auto-protegida: só conta uma vez por rodada.
+  void contarPontos() {
+    if (_rodadaContada || !rodadaEncerrada) return;
+    _rodadaContada = true;
+    final algumPegouMorto = mortoPego['nos']! || mortoPego['eles']!;
+    final res = <String, dynamic>{};
+    for (final dupla in ['nos', 'eles']) {
+      final assentos = dupla == 'nos' ? [0, 2] : [1, 3];
+      final cartasNaMao = assentos.fold<int>(0, (s, a) => s + maos[a].fold<int>(0, (t, c) => t + _pontos(c)));
+      final r = _pontuarDupla(dupla,
+          bateu: duplaQueBateu == dupla,
+          mortoPegoDupla: mortoPego[dupla]!,
+          cartasNaMao: cartasNaMao,
+          algumPegouMorto: algumPegouMorto);
+      res[dupla] = r;
+      placar[dupla] = placar[dupla]! + (r['total'] as int);
+    }
+    pontosRodada = res;
+    if (placar['nos']! >= metaPontos || placar['eles']! >= metaPontos) encerrada = true;
+  }
+
+  // Nova rodada: mantém o placar, redistribui tudo o resto.
+  void novaRodada() {
+    if (encerrada) return;
+    _distribuir();
   }
 
   // ---------- VALIDAÇÃO DE SEQUÊNCIA / CANASTRA (porte de canastra.js) ----------
@@ -825,7 +892,7 @@ class Jogo {
       return {'pegouMorto': true};
     }
     if (duplaPodeBater(dupla)) {
-      rodadaEncerrada = true; duplaQueBateu = dupla;
+      rodadaEncerrada = true; duplaQueBateu = dupla; assentoQueBateu = assento;
       return {'bateu': true};
     }
     return null;
@@ -937,7 +1004,7 @@ class Jogo {
         _passarVez();
         return null;
       }
-      rodadaEncerrada = true; duplaQueBateu = dupla;
+      rodadaEncerrada = true; duplaQueBateu = dupla; assentoQueBateu = assento;
       return null;
     }
     _passarVez();
@@ -1250,6 +1317,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final err = _j.descartar(0, id);
     if (err != null) { setState(() => _msg = err); return; }
     _somMover();
+    if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() { _sel.clear(); _msg = null; });
     await _rodarBots();
   }
@@ -1262,6 +1330,7 @@ class _MesaScreenState extends State<MesaScreen> {
     if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
     _j.ordenar(0);
     _somSucesso();
+    if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() {
       _sel.clear();
       _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo baixado! 🎴');
@@ -1276,6 +1345,7 @@ class _MesaScreenState extends State<MesaScreen> {
     if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); return; }
     _j.ordenar(0);
     if (res['bateu'] == true) { _somSucesso(); } else { _somMover(); }
+    if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() {
       _sel.clear();
       _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo estendido! ➕');
@@ -1291,6 +1361,7 @@ class _MesaScreenState extends State<MesaScreen> {
       if (mounted) setState(() {});
     }
     _botsRodando = false;
+    if (_j.rodadaEncerrada) _j.contarPontos();
     if (mounted) setState(() {});
   }
 
@@ -1340,14 +1411,14 @@ class _MesaScreenState extends State<MesaScreen> {
           const Spacer(),
           _hIcon('☰'), const SizedBox(width: 6), _hIcon('💬'),
         ]),
-        const Padding(
-          padding: EdgeInsets.only(left: 20, top: 1),
+        Padding(
+          padding: const EdgeInsets.only(left: 20, top: 1),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('meta 1500', style: TextStyle(color: _mGoldHi, fontSize: 11.5, fontWeight: FontWeight.w800)),
-            Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
-            Text('ABERTO', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 11, fontWeight: FontWeight.w700)),
-            Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
-            Text('rodada 1', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 11)),
+            Text('meta ${_j.metaPontos}', style: const TextStyle(color: _mGoldHi, fontSize: 11.5, fontWeight: FontWeight.w800)),
+            const Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
+            const Text('ABERTO', style: TextStyle(color: Color(0xFFC9B98F), fontSize: 11, fontWeight: FontWeight.w700)),
+            const Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
+            Text('rodada ${_j.rodada}', style: const TextStyle(color: Color(0xFFC9B98F), fontSize: 11)),
           ]),
         ),
       ]),
@@ -1392,15 +1463,127 @@ class _MesaScreenState extends State<MesaScreen> {
         Positioned(left: 8, right: 8, bottom: 96, child: Text(_dica, textAlign: TextAlign.center,
             style: TextStyle(color: _msg != null ? _mGoldHi : const Color(0xFFE7D9B0), fontSize: 11.5, fontWeight: FontWeight.w700, shadows: const [Shadow(color: Colors.black, blurRadius: 3)]))),
         Positioned(left: 0, right: 0, bottom: 0, height: 158, child: _hand()),
+        if (_j.rodadaEncerrada) Positioned.fill(child: _overlayFimRodada()),
       ]),
     );
   }
+
+  // ===== OVERLAY DE FIM DE RODADA / FIM DE PARTIDA (Fatia 4) =====
+  Widget _overlayFimRodada() {
+    final venceu = _j.encerrada;
+    final linhaNos = _linhaPlacar('nos');
+    final linhaEles = _linhaPlacar('eles');
+    String titulo;
+    if (venceu) {
+      final nosVenceu = _j.placar['nos']! >= _j.placar['eles']!;
+      titulo = nosVenceu ? '🏆 NÓS vencemos a partida!' : '😢 ELES venceram a partida';
+    } else if (_j.duplaQueBateu == 'nos') {
+      titulo = '🎉 NÓS batemos!';
+    } else if (_j.duplaQueBateu == 'eles') {
+      titulo = 'ELES bateram';
+    } else {
+      titulo = 'Rodada encerrada (baralho esgotou)';
+    }
+    return GestureDetector(
+      onTap: () {}, // bloqueia toques na mesa atrás
+      child: Container(
+        color: const Color(0xCC000000),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF20313A), Color(0xFF14232B)]),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _mGold, width: 1.6),
+            boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 20)],
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('♛  ${venceu ? 'FIM DE PARTIDA' : 'Rodada ${_j.rodada}'}', style: const TextStyle(color: _mGoldHi, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
+            const SizedBox(height: 6),
+            Text(titulo, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFF1E7CC), fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 14),
+            linhaNos,
+            const SizedBox(height: 8),
+            linhaEles,
+            const SizedBox(height: 16),
+            _botaoOverlay(
+              venceu ? '🔄  Nova partida' : '▶  Próxima rodada',
+              () => setState(() {
+                if (venceu) {
+                  _j = Jogo(
+                    const ['você', 'Cláudia', 'Mateus', 'Sofia'],
+                    const ['👑', '🙂', '😎', 'RN'],
+                    const ['🐶', '🐰', '🦊', '🐱'],
+                  );
+                } else {
+                  _j.novaRodada();
+                }
+                _sel.clear();
+                _msg = null;
+              }),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _linhaPlacar(String dupla) {
+    final r = _j.pontosRodada?[dupla] as Map<String, dynamic>?;
+    final det = r?['detalhe'] as Map?;
+    final ganhou = (r?['total'] as int?) ?? 0;
+    final eles = dupla == 'eles';
+    final nome = eles ? 'ELES' : 'NÓS';
+    final cor = eles ? const Color(0xFFE7B7A6) : const Color(0xFF8FE0B0);
+    final partes = <String>[];
+    if (det != null) {
+      if ((det['asAas'] ?? 0) > 0) partes.add('${det['asAas']}×1000');
+      if ((det['de500'] ?? 0) > 0) partes.add('${det['de500']}×500');
+      if ((det['limpas'] ?? 0) > 0) partes.add('${det['limpas']} limpa');
+      if ((det['sujas'] ?? 0) > 0) partes.add('${det['sujas']} suja');
+      partes.add('cartas ${det['baixadas'] ?? 0}');
+      if ((r?['bonusBatida'] as int? ?? 0) != 0) partes.add('bateu +100');
+      if ((r?['penalidadeMorto'] as int? ?? 0) != 0) partes.add('s/ morto −100');
+      if ((r?['descontoMao'] as int? ?? 0) != 0) partes.add('mão ${r!['descontoMao']}');
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(color: const Color(0x14FFFFFF), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0x22FFFFFF))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Row(children: [
+            Text('$nome  ', style: TextStyle(color: cor, fontSize: 14, fontWeight: FontWeight.w800)),
+            Text('${ganhou >= 0 ? '+' : ''}$ganhou', style: TextStyle(color: ganhou >= 0 ? const Color(0xFF9BE7BE) : const Color(0xFFE79B9B), fontSize: 14, fontWeight: FontWeight.w800)),
+          ]),
+          Text('total ${_j.placar[dupla]}', style: const TextStyle(color: _mGoldHi, fontSize: 14, fontWeight: FontWeight.w900)),
+        ]),
+        if (partes.isNotEmpty) Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: Text(partes.join(' · '), style: const TextStyle(color: Color(0x99FFFFFF), fontSize: 10.5)),
+        ),
+      ]),
+    );
+  }
+
+  Widget _botaoOverlay(String txt, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFF2CF), Color(0xFFE6BA5F), Color(0xFFC68F36)], stops: [0, 0.6, 1]),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 8, offset: Offset(0, 2))],
+          ),
+          child: Text(txt, style: const TextStyle(color: Color(0xFF4A3208), fontSize: 15, fontWeight: FontWeight.w900)),
+        ),
+      );
 
   Widget _teamRow({required bool eles}) {
     final ptsCor = eles ? const Color(0xFFE7B7A6) : const Color(0xFF8FE0B0);
     final dotCor = eles ? const Color(0xFFD9483F) : const Color(0xFF37C98A);
     final dot = eles ? '●' : '◆';
-    final ptsTxt = eles ? 'ELES 610 pts' : 'NÓS 1125 pts';
+    final ptsTxt = eles ? 'ELES ${_j.placar['eles']} pts' : 'NÓS ${_j.placar['nos']} pts';
     final chipL = eles ? _chip(a: 1, dir: false) : _chip(a: 2, dir: false);
     final chipR = eles ? _chip(a: 3, dir: true) : _chip(a: 0, dir: true, play: true);
     return Padding(
