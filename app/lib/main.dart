@@ -1374,13 +1374,18 @@ class _MesaScreenState extends State<MesaScreen> {
         const Positioned(top: 0, left: 0, right: 0, bottom: 0, child: Center(child: Text('♛', style: TextStyle(fontSize: 110, color: Color(0x0DFFFFFF))))),
         Padding(
           padding: const EdgeInsets.fromLTRB(7, 6, 7, 18),
-          child: Column(children: [
-            _teamRow(eles: true),
-            Expanded(child: _meldsBox('eles')),
-            _midBox(),
-            _teamRow(eles: false),
-            Expanded(child: _meldsBox('nos')),
-          ]),
+          child: LayoutBuilder(builder: (context, cons) {
+            // fundo escuro dos jogos com ALTURA FIXA (não abre quando as cartas descem);
+            // o excesso rola no scroll interno de cada caixa.
+            final boxH = ((cons.maxHeight - 360) / 2).clamp(88.0, 150.0);
+            return Column(children: [
+              _teamRow(eles: true),
+              SizedBox(height: boxH, child: _meldsBox('eles')),
+              _midBox(),
+              _teamRow(eles: false),
+              SizedBox(height: boxH, child: _meldsBox('nos')),
+            ]);
+          }),
         ),
         Positioned(left: 8, right: 8, bottom: 96, child: Text(_dica, textAlign: TextAlign.center,
             style: TextStyle(color: _msg != null ? _mGoldHi : const Color(0xFFE7D9B0), fontSize: 11.5, fontWeight: FontWeight.w700, shadows: const [Shadow(color: Colors.black, blurRadius: 3)]))),
@@ -1416,17 +1421,17 @@ class _MesaScreenState extends State<MesaScreen> {
     final ehVez = _j.vez == a && !_j.rodadaEncerrada;
     final avatar = Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
       Positioned(
-        bottom: -7, left: dir ? null : -10, right: dir ? -10 : null,
+        bottom: -8, left: dir ? null : -13, right: dir ? -13 : null,
         child: Container(
-          width: 29, height: 29, alignment: Alignment.center,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]), border: Border.all(color: const Color(0x66EFB94A))),
-          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 16)),
+          width: 38, height: 38, alignment: Alignment.center,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]), border: Border.all(color: const Color(0x66EFB94A))),
+          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 21)),
         ),
       ),
       Container(
-        width: 33, height: 33, alignment: Alignment.center,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF2A1C10), border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 2.6 : 2), boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 10)] : null),
-        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 14, color: _mGoldHi)),
+        width: 44, height: 44, alignment: Alignment.center,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF2A1C10), border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 3 : 2.2), boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 12)] : null),
+        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 19, color: _mGoldHi)),
       ),
     ]);
     final label = SizedBox(
@@ -1513,14 +1518,27 @@ class _MesaScreenState extends State<MesaScreen> {
 
   // jogo baixado em "leque": cartas sobrepostas, mostrando o canto (valor+naipe).
   // cabe sequências longas sem estourar e fica com cara de jogo de verdade.
+  // ordena a EXIBIÇÃO do jogo em ordem crescente (A,2,3…K); coringa JOKER vai pro fim.
+  // é só visual — a validade do jogo independe da ordem.
+  List<Carta> _meldOrdenado(List<Carta> cartas) {
+    final c = List<Carta>.from(cartas);
+    c.sort((a, b) {
+      final ja = a.valor == 'JOKER', jb = b.valor == 'JOKER';
+      if (ja != jb) return ja ? 1 : -1;
+      return Jogo._ordem.indexOf(a.valor) - Jogo._ordem.indexOf(b.valor);
+    });
+    return c;
+  }
+
   Widget _meldCards(List<Carta> cartas) {
     const peek = 16.0, cw = 25.0, ch = 40.0;
-    final k = cartas.length;
+    final ord = _meldOrdenado(cartas);
+    final k = ord.length;
     final totalW = (k - 1) * peek + cw;
     return SizedBox(
       width: totalW, height: ch,
       child: Stack(clipBehavior: Clip.none, children: [
-        for (int i = 0; i < k; i++) Positioned(left: i * peek, child: _mcard(cartas[i])),
+        for (int i = 0; i < k; i++) Positioned(left: i * peek, child: _mcard(ord[i])),
       ]),
     );
   }
@@ -1602,28 +1620,35 @@ class _MesaScreenState extends State<MesaScreen> {
         decoration: BoxDecoration(color: const Color(0x0DFFFFFF), borderRadius: BorderRadius.circular(6), border: Border.all(color: destaque ? _mGoldHi : const Color(0x3AFFFFFF), width: destaque ? 2 : 1.4)),
       );
 
+  final ScrollController _handScroll = ScrollController();
+
   Widget _hand() {
     final mao = _j.maos[0];
     final n = mao.length;
     if (n == 0) return const SizedBox();
-    const cw = 60.0, ch = 104.0;
-    return LayoutBuilder(builder: (context, cons) {
-      // passo dinâmico: espalha a mão na largura, mas sem passar de 34 px por carta
-      final maxW = cons.maxWidth - 16;
-      double step = n > 1 ? ((maxW - cw) / (n - 1)) : 0;
-      if (step > 34) step = 34;
-      final totalW = cw + (n - 1) * step;
-      final base = (cons.maxWidth - totalW) / 2;
-      return Stack(clipBehavior: Clip.none, children: [
-        for (int i = 0; i < n; i++)
-          Positioned(
-            left: base + i * step,
-            bottom: _sel.contains(i) ? 22 : -30,
-            width: cw, height: ch,
-            child: GestureDetector(onTap: () => _tapCard(i), child: _handCard(mao[i], _sel.contains(i))),
-          ),
-      ]);
-    });
+    // cartas MAIORES e SEM sobreposição — a mão rola na horizontal quando não cabe.
+    const cw = 68.0, ch = 116.0, gap = 7.0;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: SingleChildScrollView(
+        controller: _handScroll,
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 22, 12, 4),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          for (int i = 0; i < n; i++)
+            Padding(
+              padding: EdgeInsets.only(right: i == n - 1 ? 0 : gap),
+              child: GestureDetector(
+                onTap: () => _tapCard(i),
+                child: Transform.translate(
+                  offset: Offset(0, _sel.contains(i) ? -20 : 0),
+                  child: SizedBox(width: cw, height: ch, child: _handCard(mao[i], _sel.contains(i))),
+                ),
+              ),
+            ),
+        ]),
+      ),
+    );
   }
 
   Widget _handCard(Carta c, bool sel) {
@@ -1641,22 +1666,22 @@ class _MesaScreenState extends State<MesaScreen> {
       child: Stack(children: [
         // canto superior esquerdo: valor + naipe
         Positioned(
-          top: 5, left: 6,
+          top: 6, left: 7,
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 20 : 24, fontWeight: FontWeight.w800, height: 0.95)),
-            Text(simb, style: TextStyle(color: cor, fontSize: 17, height: 1)),
+            Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 23 : 28, fontWeight: FontWeight.w800, height: 0.95)),
+            Text(simb, style: TextStyle(color: cor, fontSize: 20, height: 1)),
           ]),
         ),
-        // naipe grande no centro (dá o "corpo" de carta de verdade)
-        Center(child: Text(simb, style: TextStyle(color: cor.withOpacity(0.9), fontSize: 40))),
+        // naipe discreto no centro (o corpo de carta vem do TAMANHO da carta, não do naipe)
+        Center(child: Text(simb, style: TextStyle(color: cor.withOpacity(0.55), fontSize: 26))),
         // canto inferior direito espelhado
         Positioned(
-          bottom: 5, right: 6,
+          bottom: 6, right: 7,
           child: Transform.rotate(
             angle: 3.14159,
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 13 : 16, fontWeight: FontWeight.w800, height: 0.95)),
-              Text(simb, style: TextStyle(color: cor, fontSize: 12, height: 1)),
+              Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 15 : 18, fontWeight: FontWeight.w800, height: 0.95)),
+              Text(simb, style: TextStyle(color: cor, fontSize: 13, height: 1)),
             ]),
           ),
         ),
@@ -1691,16 +1716,25 @@ int _clamp16(double v) {
   return i;
 }
 
-// deslize de UMA carta: ruído curto que decai (o "atrito" na mesa)
+// deslize de UMA carta: um "shhh" de papel deslizando (NÃO uma pancada).
+// ruído filtrado (passa-alta tira o "boom" grave; passa-baixa tira o chiado)
+// com ataque suave e cauda que decai — fica leve e discreto.
 Uint8List _genDeslize() {
   final rnd = Random(7);
-  final n = (_sr * 0.09).round();
-  final out = List<int>.filled(n, 0);
+  final n = (_sr * 0.12).round();
+  final out = List<double>.filled(n, 0);
+  double lp = 0, hp = 0, prev = 0;
   for (var i = 0; i < n; i++) {
-    final env = (1 - i / n);
-    out[i] = _clamp16((rnd.nextDouble() * 2 - 1) * env * env * 0.5);
+    final t = i / n;
+    // envelope: ataque de 18% e cauda longa e suave (sem transiente de pancada)
+    final env = t < 0.18 ? (t / 0.18) : (1 - (t - 0.18) / 0.82);
+    final white = rnd.nextDouble() * 2 - 1;
+    lp += 0.12 * (white - lp);   // passa-baixa: corta o agudo áspero
+    hp = 0.90 * (hp + lp - prev); // passa-alta: corta o grave (o "thud")
+    prev = lp;
+    out[i] = hp * env * env * 0.20;
   }
-  return _wav(out);
+  return _wav([for (final v in out) _clamp16(v)]);
 }
 
 // arpejo maior (dó-mi-sol-dó) = "conquista" ao baixar/canastra/bater
