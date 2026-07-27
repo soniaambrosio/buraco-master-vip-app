@@ -55,6 +55,28 @@ jobs:
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
 
+      - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
+        # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
+        # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
+        # "Could not find method kotlin()". O jni 1.0.0 tem build.gradle Groovy simples
+        # que compila, e a API é praticamente idêntica (só structs FFI internos mudaram).
+        # dependency_overrides força 1.0.0 independente de quem pede ^1.0.0.
+        run: |
+          cd app_build
+          python3 - <<'PY'
+          import re
+          p = 'pubspec.yaml'
+          s = open(p, encoding='utf-8').read()
+          if 'dependency_overrides:' not in s:
+              s = s.rstrip() + '\n\ndependency_overrides:\n  jni: 1.0.0\n'
+          elif 'jni:' not in s.split('dependency_overrides:')[1].split('\n\n')[0]:
+              s = s.replace('dependency_overrides:', 'dependency_overrides:\n  jni: 1.0.0', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('pubspec.yaml com dependency_overrides jni 1.0.0:')
+          print(s[s.find('dependency_overrides:'):])
+          PY
+          flutter pub get
+
       - name: Bump minSdk to 23 (Firebase)
         run: |
           f=app_build/android/app/build.gradle.kts
