@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'screens/perfil_screen.dart';
 
 // Paleta da casa
 const _dourado = Color(0xFFEFB94A);
@@ -223,6 +224,46 @@ class _HomeScreenState extends State<HomeScreen> {
     FirebaseAuth.instance.authStateChanges().listen((u) {
       if (mounted) setState(() => _user = u);
     });
+  }
+
+  void _abrirPerfil() {
+    void aviso(String mensagem) => _breve(mensagem);
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PerfilScreen(
+          vm: PerfilVM.mock(),
+          onVoltar: () => Navigator.of(context).pop(),
+          onAbrirConfig: () => aviso('Configurações do perfil'),
+          onTrocarAvatar: () => aviso('Trocar avatar'),
+          onEditarNick: () => aviso('Editar apelido'),
+          onEditarPerfil: () => aviso('Editar perfil'),
+          onAbrirPresentes: () {},
+          onFecharPresentes: () {},
+          onVerTodasConquistas: () => aviso('Todas as conquistas'),
+          onVerConquista: (id) => aviso('Conquista: $id'),
+          onVerUltimaConquista: () => aviso('Última conquista'),
+          onTrocarVitrine: () => aviso('Trocar vitrine'),
+          onCompartilhar: () => aviso('Compartilhar perfil'),
+          onRecarregar: () {},
+          onNavTap: (destino) {
+            switch (destino) {
+              case NavDestino.inicio:
+                Navigator.of(context).pop();
+                break;
+              case NavDestino.ranking:
+                aviso('Ranking');
+                break;
+              case NavDestino.loja:
+                aviso('Loja VIP');
+                break;
+              case NavDestino.perfil:
+                break;
+            }
+          },
+        ),
+      ),
+    );
   }
 
   void _breve(String o) {
@@ -533,7 +574,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _tile(String emoji, String label) {
     return GestureDetector(
-      onTap: () => _breve(label),
+      onTap: label == 'Perfil' ? _abrirPerfil : () => _breve(label),
       child: Container(
         decoration: _cardDeco,
         child: Column(
@@ -551,19 +592,30 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _bottomNav() {
-    Widget item(String emoji, String label, bool ativo) {
+    Widget item(
+      String emoji,
+      String label,
+      bool ativo, {
+      VoidCallback? onTap,
+    }) {
       return Expanded(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(emoji, style: const TextStyle(fontSize: 20)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: TextStyle(
-                    color: ativo ? _dourado : Colors.white38,
-                    fontSize: 11,
-                    fontWeight: ativo ? FontWeight.bold : FontWeight.normal)),
-          ],
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 1),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 20)),
+                const SizedBox(height: 2),
+                Text(label,
+                    style: TextStyle(
+                        color: ativo ? _dourado : Colors.white38,
+                        fontSize: 11,
+                        fontWeight: ativo ? FontWeight.bold : FontWeight.normal)),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -577,9 +629,9 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         children: [
           item('🏠', 'Início', true),
-          item('🏆', 'Ranking', false),
-          item('🛍️', 'Loja', false),
-          item('👤', 'Perfil', false),
+          item('🏆', 'Ranking', false, onTap: () => _breve('Ranking')),
+          item('🛍️', 'Loja', false, onTap: () => _breve('Loja VIP')),
+          item('👤', 'Perfil', false, onTap: _abrirPerfil),
         ],
       ),
     );
