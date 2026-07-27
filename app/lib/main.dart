@@ -1377,13 +1377,15 @@ class _MesaScreenState extends State<MesaScreen> {
           child: LayoutBuilder(builder: (context, cons) {
             // fundo escuro dos jogos com ALTURA FIXA (não abre quando as cartas descem);
             // o excesso rola no scroll interno de cada caixa.
-            final boxH = ((cons.maxHeight - 360) / 2).clamp(88.0, 150.0);
-            return Column(children: [
+            // ALTURA e LARGURA fixas e IGUAIS para as duas duplas: a caixa não
+            // "abre" nem estica conforme os jogos entram — largura sempre cheia.
+            final boxH = ((cons.maxHeight - 300) / 2).clamp(96.0, 168.0);
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               _teamRow(eles: true),
-              SizedBox(height: boxH, child: _meldsBox('eles')),
+              SizedBox(height: boxH, width: double.infinity, child: _meldsBox('eles')),
               _midBox(),
               _teamRow(eles: false),
-              SizedBox(height: boxH, child: _meldsBox('nos')),
+              SizedBox(height: boxH, width: double.infinity, child: _meldsBox('nos')),
             ]);
           }),
         ),
@@ -1626,22 +1628,26 @@ class _MesaScreenState extends State<MesaScreen> {
     final mao = _j.maos[0];
     final n = mao.length;
     if (n == 0) return const SizedBox();
-    // cartas MAIORES e SEM sobreposição — a mão rola na horizontal quando não cabe.
-    const cw = 68.0, ch = 116.0, gap = 7.0;
+    // FORA da vez: cartas aparecem só pela METADE (espiando na base).
+    // NA vez do jogador: a mão ABRE inteira e pode rolar na horizontal.
+    const cw = 60.0, ch = 104.0, gap = 6.0;
+    final ativo = _minhaVezAtiva;
+    final dy = ativo ? 0.0 : ch * 0.5; // empurra metade pra baixo quando não é a vez
     return Align(
       alignment: Alignment.bottomCenter,
       child: SingleChildScrollView(
         controller: _handScroll,
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 22, 12, 4),
+        physics: ativo ? const BouncingScrollPhysics() : const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 18, 12, 0),
         child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           for (int i = 0; i < n; i++)
             Padding(
               padding: EdgeInsets.only(right: i == n - 1 ? 0 : gap),
               child: GestureDetector(
-                onTap: () => _tapCard(i),
+                onTap: ativo ? () => _tapCard(i) : null,
                 child: Transform.translate(
-                  offset: Offset(0, _sel.contains(i) ? -20 : 0),
+                  offset: Offset(0, (_sel.contains(i) ? -18 : 0) + dy),
                   child: SizedBox(width: cw, height: ch, child: _handCard(mao[i], _sel.contains(i))),
                 ),
               ),
@@ -1668,12 +1674,12 @@ class _MesaScreenState extends State<MesaScreen> {
         Positioned(
           top: 6, left: 7,
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 23 : 28, fontWeight: FontWeight.w800, height: 0.95)),
-            Text(simb, style: TextStyle(color: cor, fontSize: 20, height: 1)),
+            Text(rot, style: TextStyle(color: cor, fontSize: rot.length > 1 ? 21 : 26, fontWeight: FontWeight.w800, height: 0.95)),
+            Text(simb, style: TextStyle(color: cor, fontSize: 18, height: 1)),
           ]),
         ),
         // naipe discreto no centro (o corpo de carta vem do TAMANHO da carta, não do naipe)
-        Center(child: Text(simb, style: TextStyle(color: cor.withOpacity(0.55), fontSize: 26))),
+        Center(child: Text(simb, style: TextStyle(color: cor.withOpacity(0.55), fontSize: 22))),
         // canto inferior direito espelhado
         Positioned(
           bottom: 6, right: 7,
