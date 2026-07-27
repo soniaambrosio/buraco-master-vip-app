@@ -40,6 +40,11 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # PINADO: 3.44.8 é a versão que compilou verde no build #24.
+          # Sem pin, o 'stable' pegava a mais recente, que ativava native-assets
+          # e puxava o pacote jni 1.0.1 (build.gradle quebrado). Travar aqui
+          # mantém a resolução idêntica ao #24 e o build reprodutível.
+          flutter-version: 3.44.8
 
       - name: Scaffold Flutter project
         run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
