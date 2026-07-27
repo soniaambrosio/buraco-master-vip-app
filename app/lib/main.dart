@@ -5,7 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'screens/perfil_screen.dart';
+import 'pages/perfil_page.dart';
 
 // Paleta da casa
 const _dourado = Color(0xFFEFB94A);
@@ -227,41 +227,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _abrirPerfil() {
-    void aviso(String mensagem) => _breve(mensagem);
-
+    // Fase 1 da colaboração: a UI é do Codex (PerfilScreen); o carregamento de
+    // dados, estados e callbacks reais vivem no PerfilPage (Claude).
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PerfilScreen(
-          vm: PerfilVM.mock(),
-          onVoltar: () => Navigator.of(context).pop(),
-          onAbrirConfig: () => aviso('Configurações do perfil'),
-          onTrocarAvatar: () => aviso('Trocar avatar'),
-          onEditarNick: () => aviso('Editar apelido'),
-          onEditarPerfil: () => aviso('Editar perfil'),
-          onAbrirPresentes: () {},
-          onFecharPresentes: () {},
-          onVerTodasConquistas: () => aviso('Todas as conquistas'),
-          onVerConquista: (id) => aviso('Conquista: $id'),
-          onVerUltimaConquista: () => aviso('Última conquista'),
-          onTrocarVitrine: () => aviso('Trocar vitrine'),
-          onCompartilhar: () => aviso('Compartilhar perfil'),
-          onRecarregar: () {},
-          onNavTap: (destino) {
-            switch (destino) {
-              case NavDestino.inicio:
-                Navigator.of(context).pop();
-                break;
-              case NavDestino.ranking:
-                aviso('Ranking');
-                break;
-              case NavDestino.loja:
-                aviso('Loja VIP');
-                break;
-              case NavDestino.perfil:
-                break;
-            }
-          },
-        ),
+        builder: (_) => const PerfilPage(),
       ),
     );
   }
