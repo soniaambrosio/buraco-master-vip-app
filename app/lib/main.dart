@@ -1463,87 +1463,186 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _header() {
-    // título numa linha; meta · aberto · rodada em linha abaixo (compacto -> sobra mais mesa)
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 7, 12, 3),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          const Text('♛ ', style: TextStyle(color: _mGold, fontSize: 16, fontWeight: FontWeight.w800)),
-          const Text('BURACO MASTER VIP', style: TextStyle(color: Color(0xFFEAD9A8), fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 0.4)),
-          const Spacer(),
-          _hIcon('☰'), const SizedBox(width: 6), _hIcon('💬'),
-        ]),
-        Padding(
-          padding: const EdgeInsets.only(left: 20, top: 2),
-          child: Row(children: [
-            Text('meta ${_j.metaPontos}', style: const TextStyle(color: _mGoldHi, fontSize: 11.5, fontWeight: FontWeight.w800)),
-            const Text('   ·   ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 11)),
-            Text('rodada ${_j.rodada}', style: const TextStyle(color: Color(0xFFC9B98F), fontSize: 11)),
-            const Spacer(),
-            // PLACAR maior, alinhado à direita
-            Text('NÓS ${_j.placar['nos']}', style: const TextStyle(color: Color(0xFF8FE0B0), fontSize: 16, fontWeight: FontWeight.w900)),
-            const Text('  ×  ', style: TextStyle(color: Color(0xFF8A7A54), fontSize: 13, fontWeight: FontWeight.w700)),
-            Text('ELES ${_j.placar['eles']}', style: const TextStyle(color: Color(0xFFE7B7A6), fontSize: 16, fontWeight: FontWeight.w900)),
-          ]),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
+      child: Row(children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(9),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF4A351A), Color(0xFF24170A)],
+            ),
+            border: Border.all(color: const Color(0x88EFB94A)),
+            boxShadow: const [
+              BoxShadow(color: Color(0x44000000), blurRadius: 6, offset: Offset(0, 2)),
+            ],
+          ),
+          child: const Icon(Icons.workspace_premium_rounded, color: _mGoldHi, size: 19),
         ),
+        const SizedBox(width: 7),
+        const Expanded(
+          child: Text(
+            'BURACO MASTER VIP',
+            maxLines: 1,
+            overflow: TextOverflow.fade,
+            softWrap: false,
+            style: TextStyle(
+              color: Color(0xFFF0E1B7),
+              fontSize: 13.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.35,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        _matchInfoPill(),
+        const SizedBox(width: 7),
+        _hIcon(Icons.menu_rounded),
+        const SizedBox(width: 5),
+        _hIcon(Icons.chat_bubble_outline_rounded),
       ]),
     );
   }
 
-  Widget _hIcon(String s) => Container(
-        width: 26, height: 26, alignment: Alignment.center,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF241A10), border: Border.all(color: const Color(0x44EFB94A))),
-        child: Text(s, style: const TextStyle(fontSize: 12, color: Color(0xFFD9C79A))),
+  Widget _matchInfoPill() => Container(
+        constraints: const BoxConstraints(minWidth: 86),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: const Color(0xFF21170D),
+          border: Border.all(color: const Color(0xA6EFB94A)),
+          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 5, offset: Offset(0, 2))],
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(
+            'meta ${_j.metaPontos}',
+            style: const TextStyle(color: _mGoldHi, fontSize: 10.5, fontWeight: FontWeight.w900, height: 1),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'rodada ${_j.rodada}',
+            style: const TextStyle(color: Color(0xFFC9B98F), fontSize: 8.5, fontWeight: FontWeight.w600, height: 1),
+          ),
+        ]),
+      );
+
+  Widget _hIcon(IconData icon) => Container(
+        width: 29,
+        height: 29,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF21170D),
+          border: Border.all(color: const Color(0x55EFB94A)),
+        ),
+        child: Icon(icon, size: 16, color: const Color(0xFFE2D1A7)),
       );
 
   Widget _mesa() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(8, 3, 8, 0),
+      margin: const EdgeInsets.fromLTRB(7, 2, 7, 0),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        border: Border.all(color: _mRail, width: 2),
-        gradient: const RadialGradient(center: Alignment(0, -0.2), radius: 0.95, colors: [Color(0xFF1D7059), Color(0xFF175946), Color(0xFF103528)], stops: [0, 0.55, 1]),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(21)),
+        border: Border.all(color: _mRail, width: 1.6),
+        gradient: const RadialGradient(
+          center: Alignment(0, -0.18),
+          radius: 1.02,
+          colors: [Color(0xFF1A684F), Color(0xFF124735), Color(0xFF0B2B20)],
+          stops: [0, 0.58, 1],
+        ),
+        boxShadow: const [
+          BoxShadow(color: Color(0x66000000), blurRadius: 10, offset: Offset(0, 2)),
+          BoxShadow(color: Color(0x33795D2A), blurRadius: 4, spreadRadius: 1),
+        ],
       ),
       child: Stack(children: [
         Positioned.fill(child: CustomPaint(painter: _CrossHatch())),
-        const Positioned(top: 0, left: 0, right: 0, bottom: 0, child: Center(child: Text('♛', style: TextStyle(fontSize: 110, color: Color(0x0DFFFFFF))))),
-        // TRÊS CONTAINERS: superior (ELES) 41% · central 18% · inferior (NÓS) 41%.
-        // Superior e inferior EXATAMENTE iguais (mesmo flex). Avatares sobrepostos nos
-        // cantos via Stack, sem consumir espaço interno. (spec definitiva da Sônia)
+        const Positioned.fill(
+          child: Center(
+            child: Text('♛', style: TextStyle(fontSize: 112, color: Color(0x0AFFFFFF))),
+          ),
+        ),
         Positioned.fill(
           child: Column(children: [
-            Expanded(flex: 41, child: _areaJogo('eles')),
-            Expanded(flex: 18, child: _faixaCentral()),
-            Expanded(flex: 41, child: _areaJogo('nos')),
+            Expanded(flex: 42, child: _areaJogo('eles')),
+            Expanded(flex: 16, child: _faixaCentral()),
+            Expanded(flex: 42, child: _areaJogo('nos')),
           ]),
         ),
-        // dica curta de jogo (não é bloco explicativo — some quando não há o que dizer)
-        Positioned(left: 8, right: 8, bottom: 92, child: IgnorePointer(child: Text(_dica, textAlign: TextAlign.center,
-            style: TextStyle(color: _msg != null ? _mGoldHi : const Color(0xFFE7D9B0), fontSize: 11, fontWeight: FontWeight.w700, shadows: const [Shadow(color: Colors.black, blurRadius: 4)])))),
-        // MÃO presa à base: fora da vez desce 50% (metade escondida); na vez sobe inteira.
-        Positioned(left: 0, right: 0, bottom: 0, height: 94, child: _hand()),
+        Positioned(left: 10, right: 10, bottom: 94, child: _turnBanner()),
+        Positioned(left: 0, right: 0, bottom: 0, height: 96, child: _hand()),
         if (_j.rodadaEncerrada) Positioned.fill(child: _overlayFimRodada()),
       ]),
+    );
+  }
+
+  Widget _turnBanner() {
+    final erro = _msg != null;
+    final minhaVez = _j.suaVez && !_j.rodadaEncerrada;
+    final icon = erro
+        ? Icons.info_outline_rounded
+        : minhaVez
+            ? Icons.touch_app_rounded
+            : Icons.hourglass_top_rounded;
+    final accent = erro
+        ? const Color(0xFFF1C673)
+        : minhaVez
+            ? const Color(0xFF8FE0B0)
+            : const Color(0xFFC9B98F);
+    return IgnorePointer(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        child: Container(
+          key: ValueKey<String>(_dica),
+          constraints: const BoxConstraints(minHeight: 30),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xE62A2014), Color(0xE619120C)],
+            ),
+            border: Border.all(color: accent.withValues(alpha: 0.55)),
+            boxShadow: const [
+              BoxShadow(color: Color(0x88000000), blurRadius: 7, offset: Offset(0, 2)),
+            ],
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 15, color: accent),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                _dica,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: erro ? _mGoldHi : const Color(0xFFE9DFC5), fontSize: 10.5, fontWeight: FontWeight.w700, height: 1.12),
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
   // área de jogo de uma dupla (superior=eles / inferior=nos): jogos baixados + avatares nos cantos
   Widget _areaJogo(String dupla) {
     final eles = dupla == 'eles';
-    // superior: Adversário 1 (assento 1) à esquerda, Adversário 2 (assento 3) à direita
-    // inferior: EU (assento 0) à esquerda, PARCEIRO (assento 2) à direita
-    // superior: Adv1 (assento 1) esq · Adv2 (assento 3) dir.
-    // inferior (spec da Sônia): MATEUS (assento 2) à ESQUERDA · VOCÊ (assento 0) à DIREITA.
-    final aL = eles ? 1 : 2;
-    final aR = eles ? 3 : 0;
-    // dupla NÓS: avatares SOBEM (encostam na faixa central) pra liberar mais mesa embaixo
-    final avTop = eles ? 2.0 : -30.0;
-    final padTop = eles ? 52.0 : 22.0;
-    return Stack(clipBehavior: Clip.none, children: [
-      Positioned.fill(child: _meldsBox(dupla, padTop: padTop)),
-      Positioned(top: avTop, left: 4, child: _avatarCanto(a: aL, dir: false)),
-      Positioned(top: avTop, right: 4, child: _avatarCanto(a: aR, dir: true)),
+    return Column(children: [
+      _teamRow(eles: eles),
+      Expanded(
+        child: _meldsBox(
+          dupla,
+          padTop: 5,
+          padBottom: eles ? 8 : 42,
+        ),
+      ),
     ]);
   }
 
@@ -1681,20 +1780,27 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _teamRow({required bool eles}) {
     final ptsCor = eles ? const Color(0xFFE7B7A6) : const Color(0xFF8FE0B0);
-    final dotCor = eles ? const Color(0xFFD9483F) : const Color(0xFF37C98A);
-    final dot = eles ? '●' : '◆';
-    final ptsTxt = eles ? 'ELES ${_j.placar['eles']} pts' : 'NÓS ${_j.placar['nos']} pts';
+    final dotCor = eles ? const Color(0xFFD8685C) : const Color(0xFF45D59A);
+    final ptsTxt = eles ? 'ELES ${_j.placar['eles']}' : 'NÓS ${_j.placar['nos']}';
     final chipL = eles ? _chip(a: 1, dir: false) : _chip(a: 2, dir: false);
     final chipR = eles ? _chip(a: 3, dir: true) : _chip(a: 0, dir: true, play: true);
     return Padding(
-      padding: const EdgeInsets.only(top: 5, bottom: 9),
+      padding: const EdgeInsets.fromLTRB(7, 4, 7, 2),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         Expanded(child: Align(alignment: Alignment.centerLeft, child: chipL)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: const Color(0xB3162B21),
+            border: Border.all(color: dotCor.withValues(alpha: 0.42)),
+            boxShadow: const [BoxShadow(color: Color(0x44000000), blurRadius: 4, offset: Offset(0, 1))],
+          ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('$dot ', style: TextStyle(color: dotCor, fontSize: 10)),
-            Text(ptsTxt, style: TextStyle(color: ptsCor, fontSize: 12.5, fontWeight: FontWeight.w800)),
+            Container(width: 6, height: 6, decoration: BoxDecoration(color: dotCor, shape: BoxShape.circle)),
+            const SizedBox(width: 5),
+            Text(ptsTxt, style: TextStyle(color: ptsCor, fontSize: 11.5, fontWeight: FontWeight.w900, letterSpacing: 0.2)),
+            const Text(' pts', style: TextStyle(color: Color(0x99FFFFFF), fontSize: 8.5, fontWeight: FontWeight.w600)),
           ]),
         ),
         Expanded(child: Align(alignment: Alignment.centerRight, child: chipR)),
@@ -1709,15 +1815,15 @@ class _MesaScreenState extends State<MesaScreen> {
       Positioned(
         bottom: -8, left: dir ? null : -13, right: dir ? -13 : null,
         child: Container(
-          width: 38, height: 38, alignment: Alignment.center,
+          width: 34, height: 34, alignment: Alignment.center,
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]), border: Border.all(color: const Color(0x66EFB94A))),
-          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 21)),
+          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 18)),
         ),
       ),
       Container(
-        width: 44, height: 44, alignment: Alignment.center,
+        width: 42, height: 42, alignment: Alignment.center,
         decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF2A1C10), border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 3 : 2.2), boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 12)] : null),
-        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 19, color: _mGoldHi)),
+        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 18, color: _mGoldHi)),
       ),
     ]);
   }
@@ -1727,8 +1833,8 @@ class _MesaScreenState extends State<MesaScreen> {
     final ehVez = _j.vez == a && !_j.rodadaEncerrada;
     final avatar = _avatarSq(a: a, dir: dir, play: play);
     final label = SizedBox(
-      width: 50,
-      child: Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 12, fontWeight: FontWeight.w700)),
+      width: 48,
+      child: Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 11, fontWeight: FontWeight.w800)),
     );
     final children = <Widget>[];
     if (dir) {
@@ -1757,10 +1863,21 @@ class _MesaScreenState extends State<MesaScreen> {
 
   // contagem de cartas do jogador — mesmo estilo do selo de contagem dos jogos na mesa
   Widget _countBadge(int n) => Container(
-        constraints: const BoxConstraints(minWidth: 19), height: 18, alignment: Alignment.center,
+        constraints: const BoxConstraints(minWidth: 20),
+        height: 18,
+        alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 5),
-        decoration: BoxDecoration(color: _mMaroon1, borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0x55000000))),
-        child: Text('$n', style: const TextStyle(color: Color(0xFFF6E8DF), fontSize: 11, fontWeight: FontWeight.w800)),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(7),
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFFA44A36), Color(0xFF6D291E)],
+          ),
+          border: Border.all(color: const Color(0x55F1C673)),
+          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 3, offset: Offset(0, 1))],
+        ),
+        child: Text('$n', style: const TextStyle(color: Color(0xFFFFF1E8), fontSize: 10.5, fontWeight: FontWeight.w900)),
       );
 
   Widget _cpill(String s) => Container(
@@ -1769,23 +1886,23 @@ class _MesaScreenState extends State<MesaScreen> {
         child: Text(s, style: const TextStyle(color: _mPillTx, fontSize: 8.5, fontWeight: FontWeight.w800)),
       );
 
-  Widget _meldsBox(String dupla, {double padTop = 64}) {
+  Widget _meldsBox(String dupla, {double padTop = 64, double padBottom = 8}) {
     final melds = _j.jogosDupla[dupla]!;
     final interativo = dupla == 'nos';
     final podeBaixar = interativo && _minhaVezAtiva && _j.jaComprou && _sel.length >= 3;
     final box = Container(
       margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       // topo reservado pros avatares sobrepostos nos cantos não cobrirem os jogos
-      padding: EdgeInsets.fromLTRB(8, padTop, 8, 8),
+      padding: EdgeInsets.fromLTRB(8, padTop, 8, padBottom),
       clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
         color: _mBox,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: podeBaixar ? Border.all(color: _mGoldHi, width: 1.4) : Border.all(color: const Color(0x22FFFFFF), width: 1),
         boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))],
       ),
       child: melds.isEmpty
-          ? Center(child: Text(interativo ? (podeBaixar ? '↓ toque pra BAIXAR aqui' : 'seus jogos aparecem aqui') : 'jogos da dupla', style: const TextStyle(color: Color(0x55FFFFFF), fontSize: 10)))
+          ? Center(child: Text(interativo ? (podeBaixar ? 'Toque aqui para baixar' : 'Seus jogos aparecerão aqui') : 'Jogos da dupla', style: const TextStyle(color: Color(0x66FFFFFF), fontSize: 9.5, fontWeight: FontWeight.w600)))
           : SingleChildScrollView(child: Wrap(spacing: 7, runSpacing: 8, children: [
               for (int i = 0; i < melds.length; i++)
                 interativo
@@ -1872,8 +1989,13 @@ class _MesaScreenState extends State<MesaScreen> {
     final topo = _j.lixoTopo;
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 2, 6, 2),
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
-      decoration: BoxDecoration(color: _mBox, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0x22FFFFFF), width: 1), boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))]),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xE60E3B2C), Color(0xE6092A20)]),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x334FD39A), width: 1),
+        boxShadow: const [BoxShadow(color: Color(0x44000000), blurRadius: 5, offset: Offset(0, 2))],
+      ),
       // monte + lixo JUNTOS bem à esquerda; os 2 mortos JUNTOS bem à direita (espaço no meio)
       child: Row(children: [
         _celula('monte', _back(destaque: podeComprar), '${_j.monte.length}', onTap: _tapMonte),
@@ -1892,7 +2014,7 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _celula(String label, Widget slot, String pill, {VoidCallback? onTap}) {
     final conteudo = Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(label, style: const TextStyle(color: Color(0xFFCFE6D8), fontSize: 9.5)),
+        Text(label.toUpperCase(), style: const TextStyle(color: Color(0xFFD9E8DF), fontSize: 8.5, fontWeight: FontWeight.w800, letterSpacing: 0.25)),
         const SizedBox(width: 4),
         _cpill(pill),
       ]),
