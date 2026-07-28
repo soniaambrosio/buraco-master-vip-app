@@ -8,6 +8,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'pages/perfil_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
+import 'screens/inicio_screen.dart';
 import 'screens/ranking_screen.dart';
 import 'screens/mesa_vip_preview_screen.dart';
 
@@ -125,7 +126,7 @@ class _SplashScreenState extends State<SplashScreen>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 550),
-        pageBuilder: (_, __, ___) => const HomeScreen(),
+        pageBuilder: (_, __, ___) => const _InicioPreviewHost(),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
       ),
@@ -207,6 +208,98 @@ class _PontinhosPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PontinhosPainter old) => true;
+}
+
+class _InicioPreviewHost extends StatefulWidget {
+  const _InicioPreviewHost();
+
+  @override
+  State<_InicioPreviewHost> createState() => _InicioPreviewHostState();
+}
+
+class _InicioPreviewHostState extends State<_InicioPreviewHost> {
+  InicioEstado _estado = InicioEstado.normal;
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1200),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  void _abrirPerfil() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PerfilPage()),
+    );
+  }
+
+  void _abrirRanking() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+    );
+  }
+
+  void _abrirMesa() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const MesaScreen()),
+    );
+  }
+
+  void _menuTap(String id) {
+    switch (id) {
+      case 'perfil':
+        _abrirPerfil();
+        break;
+      case 'ranking':
+        _abrirRanking();
+        break;
+      case 'jogar':
+        _abrirMesa();
+        break;
+      default:
+        _aviso('$id — integração fica com o Claude');
+    }
+  }
+
+  void _navTap(NavDestino destino) {
+    switch (destino) {
+      case NavDestino.inicio:
+        break;
+      case NavDestino.ranking:
+        _abrirRanking();
+        break;
+      case NavDestino.loja:
+        _aviso('Loja VIP — integração fica com o Claude');
+        break;
+      case NavDestino.perfil:
+        _abrirPerfil();
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InicioScreen(
+      vm: InicioVM.mock(),
+      estado: _estado,
+      onJogar: _abrirMesa,
+      onAbrirPerfil: _abrirPerfil,
+      onHistorico: () => _aviso('Histórico — integração fica com o Claude'),
+      onAbrirTemporada: () => _aviso('Temporada — integração fica com o Claude'),
+      onAbrirLobby: () => _aviso('Lobby — integração fica com o Claude'),
+      onMenuTap: _menuTap,
+      onRecarregar: () {
+        setState(() => _estado = InicioEstado.carregando);
+        Future<void>.delayed(const Duration(milliseconds: 650), () {
+          if (mounted) setState(() => _estado = InicioEstado.normal);
+        });
+      },
+      onNavTap: _navTap,
+    );
+  }
 }
 
 // ===================== INÍCIO (menu) =====================
