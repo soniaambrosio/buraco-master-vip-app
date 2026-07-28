@@ -1,48 +1,41 @@
-# Mesa VIP — Fase 1 visual (Codex)
+# Mesa VIP — vestido de gala
 
 ## Escopo
 
-Alterações exclusivamente visuais na `MesaScreen`, preservando integralmente as regras, estados, áudio, callbacks e fluxo da partida.
+Refinamento final da camada visual da mesa do Buraco Master VIP, preservando integralmente regras, pontuação, turnos, robôs, Firebase e validações do motor.
 
-## Ajustes realizados
+## Ajustes aplicados
 
-- Cabeçalho compacto e premium, com título, meta, rodada, menu e chat em uma única faixa.
-- Placar deslocado para dentro das áreas de cada dupla, associado aos respectivos jogadores.
-- Jogadores reorganizados em linhas simétricas, com avatares, mascotes, nomes e contagem de cartas.
-- Feltro refinado com verde profundo, borda dourada discreta e sombras mais suaves.
-- Faixa central de monte, lixo e mortos com acabamento mais limpo e hierarquia melhor.
-- Barra de turno transformada em componente próprio, com estado visual para turno, espera e aviso.
-- Reserva de espaço na área da dupla NÓS para reduzir colisão da barra de turno com jogos baixados.
-- Badges de quantidade redesenhados com acabamento vinho/dourado.
-- Textos vazios e instruções visuais simplificados.
+- Conteúdo da mesa centralizado e limitado a 430 dp para manter proporções estáveis em celulares de diferentes larguras.
+- Cabeçalho responsivo com o título **BURACO MASTER VIP** completo e selo **MESA VIP**.
+- Faixas das duplas com larguras estáveis, nomes completos e placares centralizados.
+- Painéis superior, central e inferior alinhados com dimensões previsíveis.
+- Cartas dos jogos baixados ampliadas e padronizadas em 48 × 72 dp.
+- Cartas do monte, lixo e mortos padronizadas em 52 × 78 dp.
+- Dorsos ampliados, sem versão reduzida nos mortos.
+- Mão do jogador ampliada para 66 × 99 dp, com sobreposição fixa de 50% e rolagem horizontal quando necessária.
+- Área segura inferior respeitada para impedir corte das cartas pela navegação do Android.
+- Faixa permanente de instrução da vez removida.
+- Mensagens aparecem somente em situações de erro, confirmação ou orientação realmente necessária.
+- Compra no monte ou lixo mantém o som de carta e destaca temporariamente as cartas que entraram na mão.
+- A origem da compra também recebe brilho temporário no painel central.
+- Carta recém-comprada recebe elevação, escala, borda dourada/ametista e selo de brilho por aproximadamente 1,85 s.
 
-## Limites respeitados
+## Limites preservados
 
 Não foram alterados:
 
-- distribuição de cartas;
-- compra do monte ou lixo;
+- distribuição e embaralhamento;
+- regras de compra do monte ou lixo;
 - descarte;
-- baixar ou estender jogos;
-- validação de sequências;
-- mortos;
-- turnos dos robôs;
-- pontuação;
-- fim de rodada ou partida;
-- áudio;
-- Firebase ou autenticação.
+- baixar e estender jogos;
+- canastras e pontuação;
+- morto;
+- turnos e inteligência dos robôs;
+- autenticação, Perfil VIP ou Firebase.
+
+O único estado adicional é estritamente visual e temporário: identificação das cartas recém-compradas para animação e destaque.
 
 ## Arquivo alterado
 
-- `app/lib/main.dart`
-
-## Validação necessária
-
-Executar o GitHub Actions na branch da Mesa VIP e testar no aparelho:
-
-- ausência de overflow em 360, 394 e 430 dp;
-- legibilidade de nomes e placar;
-- toque em monte, lixo, jogos baixados e cartas da mão;
-- barra de turno sem esconder informações essenciais;
-- rolagem dos jogos baixados;
-- animação e seleção da mão.
+`app/lib/main.dart`
