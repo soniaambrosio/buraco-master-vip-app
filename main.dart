@@ -1,41 +1,330 @@
-# Mesa VIP — vestido de gala
+name: Build APK
 
-## Escopo
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-Refinamento final da camada visual da mesa do Buraco Master VIP, preservando integralmente regras, pontuação, turnos, robôs, Firebase e validações do motor.
+permissions:
+  contents: write
 
-## Ajustes aplicados
+# ============================================================================
+# ASSINATURA FIXA DE TESTE (resolve INSTALL_FAILED_UPDATE_INCOMPATIBLE)
+# - Keystore permanente: keystore/buraco-master-vip-test.jks.b64  (alias: bmv-test)
+# - Mesma chave do debug fixo antigo -> MESMO SHA-1 -> login Google segue valendo.
+# - Senhas vêm por ENV (abaixo) e viram key.properties no CI. NUNCA ficam no gradle.
+# - applicationId de teste fixo: com.buracomastervip.poc.buraco_master_vip
+# - versionCode = número do run (incrementa a cada build).
+# Produção fica numa config SEPARADA (ver bloco comentado no fim do patch do gradle).
+# ============================================================================
+env:
+  BMV_KEY_ALIAS: bmv-test
+  BMV_STORE_PASSWORD: bmvtest2026
+  BMV_KEY_PASSWORD: bmvtest2026
+  BMV_APPLICATION_ID: com.buracomastervip.poc.buraco_master_vip
 
-- Conteúdo da mesa centralizado e limitado a 430 dp para manter proporções estáveis em celulares de diferentes larguras.
-- Cabeçalho responsivo com o título **BURACO MASTER VIP** completo e selo **MESA VIP**.
-- Faixas das duplas com larguras estáveis, nomes completos e placares centralizados.
-- Painéis superior, central e inferior alinhados com dimensões previsíveis.
-- Cartas dos jogos baixados ampliadas e padronizadas em 48 × 72 dp.
-- Cartas do monte, lixo e mortos padronizadas em 52 × 78 dp.
-- Dorsos ampliados, sem versão reduzida nos mortos.
-- Mão do jogador ampliada para 66 × 99 dp, com sobreposição fixa de 50% e rolagem horizontal quando necessária.
-- Área segura inferior respeitada para impedir corte das cartas pela navegação do Android.
-- Faixa permanente de instrução da vez removida.
-- Mensagens aparecem somente em situações de erro, confirmação ou orientação realmente necessária.
-- Compra no monte ou lixo mantém o som de carta e destaca temporariamente as cartas que entraram na mão.
-- A origem da compra também recebe brilho temporário no painel central.
-- Carta recém-comprada recebe elevação, escala, borda dourada/ametista e selo de brilho por aproximadamente 1,85 s.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-## Limites preservados
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-Não foram alterados:
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # PINADO: 3.44.8 é a versão que compilou verde no build #24.
+          # Sem pin, o 'stable' pegava a mais recente, que ativava native-assets
+          # e puxava o pacote jni 1.0.1 (build.gradle quebrado). Travar aqui
+          # mantém a resolução idêntica ao #24 e o build reprodutível.
+          flutter-version: 3.44.8
 
-- distribuição e embaralhamento;
-- regras de compra do monte ou lixo;
-- descarte;
-- baixar e estender jogos;
-- canastras e pontuação;
-- morto;
-- turnos e inteligência dos robôs;
-- autenticação, Perfil VIP ou Firebase.
+      - name: Scaffold Flutter project
+        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
 
-O único estado adicional é estritamente visual e temporário: identificação das cartas recém-compradas para animação e destaque.
+      - name: Overlay custom UI files
+        run: cp -R app/lib/. app_build/lib/
 
-## Arquivo alterado
+      - name: Copy sound assets (mp3 reais da Sônia)
+        run: |
+          mkdir -p app_build/assets/sons
+          cp app/assets/sons/*.mp3 app_build/assets/sons/
+          echo "sons copiados:"
+          ls -l app_build/assets/sons/
 
-`app/lib/main.dart`
+      - name: Copy card deck assets (baralho de imagens da Sônia)
+        run: |
+          mkdir -p app_build/assets/baralho
+          cp app/assets/baralho/*.webp app_build/assets/baralho/
+          N=$(ls app_build/assets/baralho/ | wc -l)
+          echo "cartas copiadas: $N arquivos"
+          ls -l app_build/assets/baralho/ | head
+          if [ "$N" -lt 55 ]; then echo "ERRO: esperava 55 cartas, veio $N"; exit 1; fi
+
+
+      - name: Copy profile UI assets
+        run: |
+          mkdir -p app_build/assets/perfil
+          cp app/assets/perfil/*.webp app_build/assets/perfil/
+          N=$(ls app_build/assets/perfil/ | wc -l)
+          echo "assets do perfil copiados: $N arquivos"
+          if [ "$N" -lt 23 ]; then echo "ERRO: esperava 23 assets do perfil, veio $N"; exit 1; fi
+
+      - name: Copy ranking UI assets
+        run: |
+          mkdir -p app_build/assets/ranking
+          cp app/assets/ranking/*.webp app_build/assets/ranking/
+          N=$(ls app_build/assets/ranking/ | wc -l)
+          echo "assets do ranking copiados: $N arquivos"
+          if [ "$N" -lt 13 ]; then echo "ERRO: esperava 13 assets do ranking, veio $N"; exit 1; fi
+
+      - name: Add Firebase + Google Sign-In + Audio deps
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
+
+      - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
+        # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
+        # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
+        # "Could not find method kotlin()". O jni 1.0.0 tem build.gradle Groovy simples
+        # que compila, e a API é praticamente idêntica (só structs FFI internos mudaram).
+        # dependency_overrides força 1.0.0 independente de quem pede ^1.0.0.
+        run: |
+          cd app_build
+          python3 - <<'PY'
+          import re
+          p = 'pubspec.yaml'
+          s = open(p, encoding='utf-8').read()
+          if 'dependency_overrides:' not in s:
+              s = s.rstrip() + '\n\ndependency_overrides:\n  jni: 1.0.0\n'
+          elif 'jni:' not in s.split('dependency_overrides:')[1].split('\n\n')[0]:
+              s = s.replace('dependency_overrides:', 'dependency_overrides:\n  jni: 1.0.0', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('pubspec.yaml com dependency_overrides jni 1.0.0:')
+          print(s[s.find('dependency_overrides:'):])
+          PY
+          flutter pub get
+
+      - name: Bump minSdk to 23 (Firebase)
+        run: |
+          f=app_build/android/app/build.gradle.kts
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
+          grep -n "minSdk" "$f" || true
+
+      - name: Install fixed TEST keystore (assinatura estável / SHA-1 do login Google)
+        run: |
+          base64 -d keystore/buraco-master-vip-test.jks.b64 > app_build/android/app/buraco-master-vip-test.jks
+          echo "keystore de teste instalado: $(ls -l app_build/android/app/buraco-master-vip-test.jks | awk '{print $5}') bytes"
+
+      - name: Write key.properties (senhas por ENV, nunca no build.gradle)
+        run: |
+          cat > app_build/android/key.properties <<EOF
+          storeFile=${GITHUB_WORKSPACE}/app_build/android/app/buraco-master-vip-test.jks
+          storePassword=${BMV_STORE_PASSWORD}
+          keyAlias=${BMV_KEY_ALIAS}
+          keyPassword=${BMV_KEY_PASSWORD}
+          EOF
+          echo "key.properties criado (senhas ocultas):"
+          sed 's/Password=.*/Password=***/' app_build/android/key.properties
+
+      - name: Patch build.gradle.kts (signingConfig 'test' + versionCode incremental)
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          p = 'app_build/android/app/build.gradle.kts'
+          s = open(p, encoding='utf-8').read()
+          vc = os.environ.get('VERSION_CODE', '1')
+
+          # 1) imports no topo do arquivo
+          imports = 'import java.util.Properties\nimport java.io.FileInputStream\n'
+          if 'import java.util.Properties' not in s:
+              s = imports + s
+
+          # 2) carrega key.properties logo antes de `android {`
+          loader = (
+              'val keystoreProperties = Properties()\n'
+              'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+              'if (keystorePropertiesFile.exists()) {\n'
+              '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+              '}\n\n'
+          )
+          if 'val keystoreProperties' not in s:
+              s = re.sub(r'\nandroid\s*\{', '\n' + loader + 'android {', s, count=1)
+
+          # 3) signingConfigs { create("test") { ... } } logo apos `android {`
+          signing = (
+              '\n    signingConfigs {\n'
+              '        create("test") {\n'
+              '            keyAlias = keystoreProperties["keyAlias"] as String\n'
+              '            keyPassword = keystoreProperties["keyPassword"] as String\n'
+              '            storeFile = file(keystoreProperties["storeFile"] as String)\n'
+              '            storePassword = keystoreProperties["storePassword"] as String\n'
+              '        }\n'
+              '    }\n'
+          )
+          if 'create("test")' not in s:
+              s = re.sub(r'android\s*\{', 'android {' + signing, s, count=1)
+
+          # 4) todos os buildTypes (debug e release) usam a assinatura 'test'
+          novo_buildtypes = (
+              '    buildTypes {\n'
+              '        getByName("debug") {\n'
+              '            signingConfig = signingConfigs.getByName("test")\n'
+              '        }\n'
+              '        getByName("release") {\n'
+              '            signingConfig = signingConfigs.getByName("test")\n'
+              '        }\n'
+              '    }\n'
+          )
+          if re.search(r'buildTypes\s*\{.*?\n    \}\n', s, flags=re.DOTALL):
+              s = re.sub(r'buildTypes\s*\{.*?\n    \}\n', novo_buildtypes, s, count=1, flags=re.DOTALL)
+          else:
+              # fallback: injeta antes do fechamento do bloco android
+              s = s.rstrip()
+              s = s[:s.rfind('}')] + '\n' + novo_buildtypes + '}\n'
+
+          # 5) versionCode incremental (numero do run)
+          s = re.sub(r'versionCode = flutter\.versionCode', f'versionCode = {vc}', s)
+          s = re.sub(r'versionCode\s+flutter\.versionCode', f'versionCode = {vc}', s)
+
+          open(p, 'w', encoding='utf-8').write(s)
+          print("build.gradle.kts patchado. versionCode =", vc)
+          print("---- trechos relevantes ----")
+          for m in ['create("test")', 'signingConfig = signingConfigs.getByName("test")', f'versionCode = {vc}']:
+              print("OK" if m in s else "FALTOU", '->', m)
+          PY
+          echo "===== build.gradle.kts final ====="
+          cat app_build/android/app/build.gradle.kts
+
+      - name: Set app display name to BMV Teste
+        run: |
+          sed -i 's/android:label="[^"]*"/android:label="BMV Teste"/' app_build/android/app/src/main/AndroidManifest.xml
+          grep -o 'android:label="[^"]*"' app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Desativar Impeller (renderiza webp com transparência via Skia)
+        # Impeller (motor padrão do Flutter no Android) tem bug conhecido: imagens
+        # WEBP com canal alfa aparecem EM BRANCO no build release, embora o resto da
+        # UI funcione. Voltar pro Skia resolve e renderiza os assets do baralho.
+        run: |
+          python3 - <<'PY'
+          p = 'app_build/android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf-8').read()
+          meta = '<meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false" />'
+          if 'EnableImpeller' not in s:
+              s = s.replace('</application>', '        ' + meta + '\n    </application>', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('Impeller desativado:' , 'EnableImpeller' in s)
+          PY
+          grep -n "EnableImpeller" app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Fetch logo (splash) from live app and add as asset
+        run: |
+          mkdir -p app_build/assets
+          curl -sSL "https://soniaambrosio.github.io/buraco-master-vip/app.html" -o /tmp/app.html
+          python3 - <<'PY'
+          import re, base64, sys
+          h = open('/tmp/app.html', encoding='utf-8', errors='ignore').read()
+          i = h.find('id="splash"')
+          seg = h[i:i+400000] if i >= 0 else h
+          m = re.search(r"data:image/(?:jpeg|png|webp);base64,([A-Za-z0-9+/=]+)", seg)
+          if not m:
+              print("ERRO: nao encontrei a logo do splash no app.html"); sys.exit(1)
+          data = base64.b64decode(m.group(1))
+          if len(data) < 10000:
+              print("ERRO: imagem extraida muito pequena (%d bytes)" % len(data)); sys.exit(1)
+          open('app_build/assets/splash.jpg', 'wb').write(data)
+          print("Logo extraida: %d bytes" % len(data))
+          PY
+
+      - name: Declare assets in pubspec (robusto)
+        run: |
+          python3 - <<'PY'
+          p = 'app_build/pubspec.yaml'
+          lines = open(p, encoding='utf-8').read().split('\n')
+          asset_block = [
+              '  assets:',
+              '    - assets/splash.jpg',
+              '    - assets/sons/',
+              '    - assets/baralho/',
+              '    - assets/perfil/',
+              '    - assets/ranking/',
+          ]
+          joined = '\n'.join(lines)
+          if 'assets/baralho/' not in joined:
+              out = []
+              injected = False
+              for ln in lines:
+                  out.append(ln)
+                  # injeta o bloco de assets logo APÓS a linha 'flutter:' de nível 0
+                  # (a única com esse texto exato; 'sdk: flutter' e '  flutter:' não batem)
+                  if not injected and ln.rstrip() == 'flutter:':
+                      out.extend(asset_block)
+                      injected = True
+              if not injected:
+                  # não achou seção flutter: -> cria uma no fim
+                  out.extend(['flutter:', '  uses-material-design: true'] + asset_block)
+              lines = out
+          s = '\n'.join(lines)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('----- pubspec.yaml (a partir de flutter:) -----')
+          print(s[s.find('\nflutter:'):] if '\nflutter:' in s else s)
+          # travas de segurança: exatamente UMA seção flutter: e as 5 pastas declaradas
+          top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
+          assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
+          for a in ('assets/splash.jpg', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/'):
+              assert a in s, f'FALTOU declarar {a} no pubspec!'
+          print('OK: 1 seção flutter: · splash + sons + baralho + perfil + ranking declarados')
+          PY
+
+      - name: Conferir assets que serão empacotados
+        run: |
+          echo "--- app_build/assets ---"; find app_build/assets -type f | sort | sed -n '1,20p'
+          echo "baralho: $(ls app_build/assets/baralho | wc -l) | sons: $(ls app_build/assets/sons | wc -l) | perfil: $(ls app_build/assets/perfil | wc -l) | ranking: $(ls app_build/assets/ranking | wc -l)"
+
+      - name: Build release APK por ABI (menor; arm64 pro celular)
+        run: cd app_build && flutter build apk --release --split-per-abi
+
+      - name: Conferir baralho DENTRO do APK (prova de bundling)
+        run: |
+          APK=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          echo "cartas no APK: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/baralho/') | sons: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/sons/') | perfil: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/perfil/') | ranking: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/ranking/')"
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/baralho/' | head -3 || true
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/ranking/' | head -3 || true
+
+      - name: Signing report (confirma a assinatura final)
+        run: |
+          cd app_build/android
+          ./gradlew :app:signingReport --console=plain | tee /tmp/signingReport.txt || true
+          echo "================= RESUMO DA ASSINATURA ================="
+          echo "applicationId: ${BMV_APPLICATION_ID}"
+          echo "versionCode:   ${{ github.run_number }}"
+          echo "APK (arm64):   app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+          echo "--- tamanhos dos APKs por ABI ---"
+          ls -lh app_build/build/app/outputs/flutter-apk/*.apk | awk '{print $9, $5}'
+          echo "--- SHA-1 / SHA-256 do APK arm64 ---"
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort | tail -1)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs ../build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | grep -iE "SHA-1|SHA-256" || true
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bmv-teste-apk
+          path: app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          if-no-files-found: error
+
+      - name: Publish APK as Release (link direto pro celular)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk BMV-Teste.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest BMV-Teste.apk --title "BMV Teste (mais recente)" --notes "APK mais recente do Buraco Master VIP (teste nativo, release). Abra este link no celular para instalar."
