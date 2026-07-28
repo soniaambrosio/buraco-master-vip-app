@@ -97,6 +97,14 @@ jobs:
           cp app/assets/ranking/selos/*.webp app_build/assets/ranking/selos/
           echo "selos: $(ls app_build/assets/ranking/selos/ | wc -l)"
 
+      - name: Copy home UI assets (tela Inicio do Codex)
+        run: |
+          mkdir -p app_build/assets/inicio
+          cp app/assets/inicio/*.webp app_build/assets/inicio/
+          N=$(find app_build/assets/inicio -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "assets da tela inicio copiados: $N arquivos"
+          if [ "$N" -lt 11 ]; then echo "ERRO: esperava 11 assets da tela inicio, veio $N"; exit 1; fi
+
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
 
@@ -269,6 +277,7 @@ jobs:
               '    - assets/ranking/',
               '    - assets/ranking/selos/',
               '    - assets/mesa_vip/',
+              '    - assets/inicio/',
           ]
           joined = '\n'.join(lines)
           if 'assets/baralho/' not in joined:
