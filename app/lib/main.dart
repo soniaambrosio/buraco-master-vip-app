@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -1234,8 +1235,8 @@ class Jogo {
 }
 
 // paleta da mesa verde
-const _mGold = Color(0xFFDCAB57);
-const _mGoldHi = Color(0xFFF1C673);
+const _mGold = Color(0xFFE0B45D);
+const _mGoldHi = Color(0xFFF4D47F);
 const _mCard = Color(0xFFF3F0E8);
 const _mRed = Color(0xFF9C302E);
 const _mBlack = Color(0xFF2B2B28);
@@ -1243,8 +1244,8 @@ const _mMaroon1 = Color(0xFF7A2F22);
 const _mMaroon2 = Color(0xFF471B11);
 const _mPill = Color(0xFF123F30);
 const _mPillTx = Color(0xFFE7D3A0);
-const _mBox = Color(0xFF0C3729);
-const _mRail = Color(0xFF6F5324);
+const _mBox = Color(0xFF082E22);
+const _mRail = Color(0xFF8A642B);
 
 Color _corCarta(Carta c) =>
     c.valor == 'JOKER' ? const Color(0xFFB8860B) : (_cartaVermelha(c) ? _mRed : _mBlack);
@@ -1252,17 +1253,39 @@ Color _corCarta(Carta c) =>
 class _CrossHatch extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final p = Paint()..color = const Color(0x0A000000)..strokeWidth = 1;
-    final diag = size.width + size.height;
-    for (final dir in [1.0, -1.0]) {
-      canvas.save();
-      if (dir < 0) { canvas.translate(size.width, 0); canvas.scale(-1, 1); }
-      for (double x = -size.height; x < diag; x += 4) {
-        canvas.drawLine(Offset(x, 0), Offset(x + size.height, size.height), p);
-      }
-      canvas.restore();
+    final line = Paint()
+      ..color = const Color(0x09000000)
+      ..strokeWidth = 0.8;
+    final shine = Paint()
+      ..color = const Color(0x087FE0B2)
+      ..strokeWidth = 0.7;
+    for (double x = -size.height; x < size.width + size.height; x += 7) {
+      canvas.drawLine(Offset(x, 0), Offset(x + size.height, size.height), line);
     }
+    for (double x = 0; x < size.width + size.height; x += 19) {
+      canvas.drawLine(Offset(x, 0), Offset(x - size.height, size.height), shine);
+    }
+    final oval = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: size.width * 0.78,
+      height: size.height * 0.58,
+    );
+    canvas.drawOval(
+      oval,
+      Paint()
+        ..color = const Color(0x0AEDD69B)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    final vignette = RadialGradient(
+      center: Alignment.center,
+      radius: 0.78,
+      colors: const [Color(0x00000000), Color(0x22000000)],
+      stops: const [0.55, 1],
+    ).createShader(Offset.zero & size);
+    canvas.drawRect(Offset.zero & size, Paint()..shader = vignette);
   }
+
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
@@ -1278,6 +1301,9 @@ class _MesaScreenState extends State<MesaScreen> {
   final Set<int> _sel = {};
   bool _botsRodando = false;
   String? _msg;
+  Set<String> _recentlyBoughtIds = <String>{};
+  String? _lastPurchaseSource;
+  Timer? _purchaseGlowTimer;
 
   // --- ÁUDIO: mp3 reais fornecidos pela Sônia (em assets/sons/) ---
   // dois "canais": um pro deslize de carta, outro pros eventos (canastra/morto/erro),
@@ -1300,6 +1326,8 @@ class _MesaScreenState extends State<MesaScreen> {
 
   @override
   void dispose() {
+    _purchaseGlowTimer?.cancel();
+    _handScroll.dispose();
     _pCarta?.dispose();
     _pEvento?.dispose();
     super.dispose();
@@ -1312,6 +1340,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   // deslize de carta: comprar, descartar, baixar simples, estender, jogadas dos robôs
   void _somCarta() => _play(_pCarta, 'carta.mp3', 0.95);
+  void _somCompra() => _play(_pCarta, 'carta.mp3', 1.0);
   void _somErro() => _play(_pEvento, 'erro.mp3', 0.9);
   void _somMorto() => _play(_pEvento, 'morto.mp3', 1.0);
   void _somCanastra(String? tipo) {
@@ -1344,21 +1373,45 @@ class _MesaScreenState extends State<MesaScreen> {
     });
   }
 
+  void _mostrarCompra(Set<String> ids, String origem) {
+    if (ids.isEmpty) return;
+    _purchaseGlowTimer?.cancel();
+    setState(() {
+      _recentlyBoughtIds = ids;
+      _lastPurchaseSource = origem;
+      _msg = null;
+    });
+    _purchaseGlowTimer = Timer(const Duration(milliseconds: 1850), () {
+      if (!mounted) return;
+      setState(() {
+        _recentlyBoughtIds = <String>{};
+        _lastPurchaseSource = null;
+      });
+    });
+  }
+
   void _tapMonte() {
     if (!_minhaVezAtiva || _j.jaComprou) return;
-    setState(() { _j.comprarMonte(0); _j.ordenar(0); _msg = null; });
-    _somCarta();
+    final antes = _j.maos[0].map((c) => c.id).toSet();
+    if (!_j.comprarMonte(0)) return;
+    _j.ordenar(0);
+    final novos = _j.maos[0].where((c) => !antes.contains(c.id)).map((c) => c.id).toSet();
+    _mostrarCompra(novos, 'monte');
+    _somCompra();
   }
 
   Future<void> _tapLixo() async {
     if (!_minhaVezAtiva) return;
     if (!_j.jaComprou) {
       // antes de comprar: tocar no lixo PEGA o monte de descarte inteiro
+      final antes = _j.maos[0].map((c) => c.id).toSet();
       final res = _j.comprarLixo(0);
       if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); _somErro(); return; }
       _j.ordenar(0);
-      _somCarta();
-      setState(() { _sel.clear(); _msg = 'Você pegou o LIXO (${res['qtd']} cartas)! Baixe/estenda e depois descarte.'; });
+      final novos = _j.maos[0].where((c) => !antes.contains(c.id)).map((c) => c.id).toSet();
+      _sel.clear();
+      _mostrarCompra(novos, 'lixo');
+      _somCompra();
       return;
     }
     if (_sel.length != 1) { setState(() => _msg = 'Toque em UMA carta e depois no lixo pra descartar'); return; }
@@ -1427,16 +1480,6 @@ class _MesaScreenState extends State<MesaScreen> {
     if (mounted) setState(() {});
   }
 
-  String get _dica {
-    if (_msg != null) return _msg!;
-    if (_j.rodadaEncerrada) return _j.duplaQueBateu == 'nos' ? '🎉 Rodada encerrada — NÓS batemos!' : 'Rodada encerrada';
-    if (!_j.suaVez) return 'Vez de ${_j.apelidos[_j.vez]}...';
-    if (!_j.jaComprou) return _j.lixo.isEmpty ? 'Sua vez — toque no MONTE pra comprar' : 'Sua vez — MONTE compra 1 · LIXO pega tudo';
-    if (_sel.length >= 3) return 'Toque na área NÓS pra BAIXAR, ou num jogo pra estender';
-    if (_sel.length == 1) return 'Toque no LIXO pra descartar, ou num jogo pra estender';
-    return 'Selecione cartas: 3+ pra baixar · 1 pra descartar';
-  }
-
   // sash a partir do tipo de canastra
   Sash _sashDeMeld(List<Carta> m) {
     if (m.length < 7) return Sash.nenhuma;
@@ -1454,220 +1497,260 @@ class _MesaScreenState extends State<MesaScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0906),
+      backgroundColor: const Color(0xFF070504),
       body: SafeArea(
-        bottom: false,
-        child: Column(children: [_header(), Expanded(child: _mesa())]),
+        bottom: true,
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF17100B), Color(0xFF090604), Color(0xFF030202)],
+              stops: [0, 0.42, 1],
+            ),
+          ),
+          child: Column(children: [_header(), Expanded(child: _mesa())]),
+        ),
       ),
     );
   }
 
   Widget _header() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
-      child: Row(children: [
-        Container(
-          width: 30,
-          height: 30,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(9),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF4A351A), Color(0xFF24170A)],
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF21160F), Color(0xFF100A07)],
             ),
-            border: Border.all(color: const Color(0x88EFB94A)),
-            boxShadow: const [
-              BoxShadow(color: Color(0x44000000), blurRadius: 6, offset: Offset(0, 2)),
-            ],
+            border: Border(bottom: BorderSide(color: Color(0x557D5A24), width: 1)),
+            boxShadow: [BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3))],
           ),
-          child: const Icon(Icons.workspace_premium_rounded, color: _mGoldHi, size: 19),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Container(
+                width: 31,
+                height: 31,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const RadialGradient(colors: [Color(0xFFF7D987), Color(0xFFB87B25)]),
+                  border: Border.all(color: const Color(0xFFFFEDB2), width: 1),
+                  boxShadow: const [BoxShadow(color: Color(0x66EFB94A), blurRadius: 8)],
+                ),
+                child: const Icon(Icons.workspace_premium_rounded, color: Color(0xFF3E2708), size: 20),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: const Text(
+                    'BURACO MASTER VIP',
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: Color(0xFFF4E5BC),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.25,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                width: 49,
+                height: 20,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  gradient: const LinearGradient(colors: [Color(0xFF6F42B5), Color(0xFF3D2469)]),
+                  border: Border.all(color: const Color(0xAAAF83FF)),
+                ),
+                child: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    'MESA VIP',
+                    style: TextStyle(color: Color(0xFFF4EBFF), fontSize: 7.2, fontWeight: FontWeight.w900, letterSpacing: 0.45),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              _hIcon(Icons.menu_rounded),
+              const SizedBox(width: 5),
+              _hIcon(Icons.chat_bubble_outline_rounded),
+            ]),
+            const SizedBox(height: 5),
+            Row(children: [
+              SizedBox(width: 66, child: _matchChip(Icons.flag_outlined, 'META', '${_j.metaPontos}')),
+              const SizedBox(width: 6),
+              Expanded(child: _scoreboard()),
+              const SizedBox(width: 6),
+              SizedBox(width: 66, child: _matchChip(Icons.style_outlined, 'RODADA', '${_j.rodada}')),
+            ]),
+          ]),
         ),
-        const SizedBox(width: 7),
-        const Expanded(
-          child: Text(
-            'BURACO MASTER VIP',
-            maxLines: 1,
-            overflow: TextOverflow.fade,
-            softWrap: false,
-            style: TextStyle(
-              color: Color(0xFFF0E1B7),
-              fontSize: 13.5,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.35,
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        _matchInfoPill(),
-        const SizedBox(width: 7),
-        _hIcon(Icons.menu_rounded),
-        const SizedBox(width: 5),
-        _hIcon(Icons.chat_bubble_outline_rounded),
-      ]),
+      ),
     );
   }
 
-  Widget _matchInfoPill() => Container(
-        constraints: const BoxConstraints(minWidth: 86),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          color: const Color(0xFF21170D),
-          border: Border.all(color: const Color(0xA6EFB94A)),
-          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 5, offset: Offset(0, 2))],
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(
-            'meta ${_j.metaPontos}',
-            style: const TextStyle(color: _mGoldHi, fontSize: 10.5, fontWeight: FontWeight.w900, height: 1),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'rodada ${_j.rodada}',
-            style: const TextStyle(color: Color(0xFFC9B98F), fontSize: 8.5, fontWeight: FontWeight.w600, height: 1),
-          ),
-        ]),
-      );
-
   Widget _hIcon(IconData icon) => Container(
-        width: 29,
-        height: 29,
+        width: 30,
+        height: 30,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: const Color(0xFF21170D),
-          border: Border.all(color: const Color(0x55EFB94A)),
+          color: const Color(0xFF21170E),
+          border: Border.all(color: const Color(0x668F6A31)),
+          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 4, offset: Offset(0, 2))],
         ),
-        child: Icon(icon, size: 16, color: const Color(0xFFE2D1A7)),
+        child: Icon(icon, size: 17, color: const Color(0xFFE7D5A7)),
+      );
+
+  Widget _matchChip(IconData icon, String label, String value) => Container(
+        constraints: const BoxConstraints(minWidth: 58),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          color: const Color(0xFF1B120B),
+          border: Border.all(color: const Color(0x557D5A24)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 12, color: _mGold),
+          const SizedBox(width: 4),
+          Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(color: Color(0xFF9D8E6D), fontSize: 6.5, fontWeight: FontWeight.w800, height: 1)),
+            const SizedBox(height: 2),
+            Text(value, style: const TextStyle(color: Color(0xFFF2E2B7), fontSize: 10, fontWeight: FontWeight.w900, height: 1)),
+          ]),
+        ]),
+      );
+
+  Widget _scoreboard() => Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 9),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(17),
+          gradient: const LinearGradient(colors: [Color(0xFF11291F), Color(0xFF17110C), Color(0xFF311713)]),
+          border: Border.all(color: const Color(0x887D5A24)),
+          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 5, offset: Offset(0, 2))],
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Text('NÓS', style: TextStyle(color: Color(0xFF91E2B5), fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+          const SizedBox(width: 5),
+          Text('${_j.placar['nos']}', style: const TextStyle(color: Color(0xFFD8FFE9), fontSize: 17, fontWeight: FontWeight.w900, height: 1)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 9),
+            child: Container(width: 20, height: 20, alignment: Alignment.center, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x332B2117)), child: const Text('×', style: TextStyle(color: _mGold, fontSize: 13, fontWeight: FontWeight.w800))),
+          ),
+          Text('${_j.placar['eles']}', style: const TextStyle(color: Color(0xFFFFDCD3), fontSize: 17, fontWeight: FontWeight.w900, height: 1)),
+          const SizedBox(width: 5),
+          const Text('ELES', style: TextStyle(color: Color(0xFFF0B0A1), fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+        ]),
       );
 
   Widget _mesa() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(7, 2, 7, 0),
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(21)),
-        border: Border.all(color: _mRail, width: 1.6),
-        gradient: const RadialGradient(
-          center: Alignment(0, -0.18),
-          radius: 1.02,
-          colors: [Color(0xFF1A684F), Color(0xFF124735), Color(0xFF0B2B20)],
-          stops: [0, 0.58, 1],
-        ),
-        boxShadow: const [
-          BoxShadow(color: Color(0x66000000), blurRadius: 10, offset: Offset(0, 2)),
-          BoxShadow(color: Color(0x33795D2A), blurRadius: 4, spreadRadius: 1),
-        ],
-      ),
-      child: Stack(children: [
-        Positioned.fill(child: CustomPaint(painter: _CrossHatch())),
-        const Positioned.fill(
-          child: Center(
-            child: Text('♛', style: TextStyle(fontSize: 112, color: Color(0x0AFFFFFF))),
+    return LayoutBuilder(builder: (context, cons) {
+      // Geometria definitiva: os três containers usam a mesma largura útil.
+      // Superior e inferior recebem exatamente o mesmo flex (41/18/41).
+      final tableWidth = min(cons.maxWidth, 430.0);
+      const handH = 116.0;
+      return Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(
+          width: tableWidth,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(7, 5, 7, 0),
+            padding: const EdgeInsets.all(2.2),
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFF2D287), Color(0xFF78541F), Color(0xFFD5AA55), Color(0xFF5B3C14)],
+                stops: [0, 0.35, 0.72, 1],
+              ),
+              boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 14, offset: Offset(0, 4))],
+            ),
+            child: Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(21)),
+                border: Border.all(color: const Color(0xFF1B1108), width: 2),
+                gradient: const RadialGradient(
+                  center: Alignment(0, -0.16),
+                  radius: 1.08,
+                  colors: [Color(0xFF126247), Color(0xFF0A4533), Color(0xFF05261C)],
+                  stops: [0, 0.58, 1],
+                ),
+              ),
+              child: Stack(children: [
+                Positioned.fill(child: CustomPaint(painter: _CrossHatch())),
+                const Positioned.fill(child: Center(child: Icon(Icons.workspace_premium_rounded, size: 126, color: Color(0x08F7E0A6)))),
+                Positioned.fill(
+                  child: Column(children: [
+                    Expanded(flex: 41, child: _areaJogo('eles')),
+                    Expanded(flex: 18, child: _faixaCentral()),
+                    Expanded(flex: 41, child: _areaJogo('nos', handReserve: handH + 6)),
+                  ]),
+                ),
+                if (_msg != null)
+                  Positioned(left: 16, right: 16, bottom: handH + 8, child: _feedbackToast()),
+                Positioned(left: 0, right: 0, bottom: 0, height: handH, child: _hand()),
+                if (_j.rodadaEncerrada) Positioned.fill(child: _overlayFimRodada()),
+              ]),
+            ),
           ),
         ),
-        Positioned.fill(
-          child: Column(children: [
-            Expanded(flex: 42, child: _areaJogo('eles')),
-            Expanded(flex: 16, child: _faixaCentral()),
-            Expanded(flex: 42, child: _areaJogo('nos')),
+      );
+    });
+  }
+
+  Widget _feedbackToast() {
+    final texto = _msg ?? '';
+    final erro = texto.toLowerCase().contains('não') || texto.toLowerCase().contains('erro') || texto.toLowerCase().contains('selecione');
+    final accent = erro ? const Color(0xFFFFC56E) : const Color(0xFFC99BFF);
+    return IgnorePointer(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        child: Container(
+          key: ValueKey<String>(texto),
+          constraints: const BoxConstraints(minHeight: 36),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(15),
+            gradient: const LinearGradient(colors: [Color(0xF2281B12), Color(0xF2130D09)]),
+            border: Border.all(color: accent.withValues(alpha: 0.62), width: 1.1),
+            boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.18), blurRadius: 12), const BoxShadow(color: Color(0x99000000), blurRadius: 8, offset: Offset(0, 3))],
+          ),
+          child: Row(children: [
+            Icon(erro ? Icons.info_outline_rounded : Icons.auto_awesome_rounded, color: accent, size: 17),
+            const SizedBox(width: 8),
+            Expanded(child: Text(texto, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFFF3E8CE), fontSize: 9.5, fontWeight: FontWeight.w800, height: 1.15))),
           ]),
         ),
-        Positioned(left: 10, right: 10, bottom: 94, child: _turnBanner()),
-        Positioned(left: 0, right: 0, bottom: 0, height: 96, child: _hand()),
-        if (_j.rodadaEncerrada) Positioned.fill(child: _overlayFimRodada()),
+      ),
+    );
+  }
+
+  Widget _areaJogo(String dupla, {double handReserve = 0}) {
+    final eles = dupla == 'eles';
+    return SizedBox(
+      width: double.infinity,
+      child: Column(children: [
+        _teamRow(eles: eles),
+        Expanded(child: _meldsBox(dupla, padTop: 5, padBottom: handReserve > 0 ? handReserve : 7)),
       ]),
     );
   }
 
-  Widget _turnBanner() {
-    final erro = _msg != null;
-    final minhaVez = _j.suaVez && !_j.rodadaEncerrada;
-    final icon = erro
-        ? Icons.info_outline_rounded
-        : minhaVez
-            ? Icons.touch_app_rounded
-            : Icons.hourglass_top_rounded;
-    final accent = erro
-        ? const Color(0xFFF1C673)
-        : minhaVez
-            ? const Color(0xFF8FE0B0)
-            : const Color(0xFFC9B98F);
-    return IgnorePointer(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        child: Container(
-          key: ValueKey<String>(_dica),
-          constraints: const BoxConstraints(minHeight: 30),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(13),
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xE62A2014), Color(0xE619120C)],
-            ),
-            border: Border.all(color: accent.withValues(alpha: 0.55)),
-            boxShadow: const [
-              BoxShadow(color: Color(0x88000000), blurRadius: 7, offset: Offset(0, 2)),
-            ],
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 15, color: accent),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
-                _dica,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: erro ? _mGoldHi : const Color(0xFFE9DFC5), fontSize: 10.5, fontWeight: FontWeight.w700, height: 1.12),
-              ),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
+  Widget _avatarCanto({required int a, required bool dir}) => _chip(a: a, dir: dir, play: a == 0);
 
-  // área de jogo de uma dupla (superior=eles / inferior=nos): jogos baixados + avatares nos cantos
-  Widget _areaJogo(String dupla) {
-    final eles = dupla == 'eles';
-    return Column(children: [
-      _teamRow(eles: eles),
-      Expanded(
-        child: _meldsBox(
-          dupla,
-          padTop: 5,
-          padBottom: eles ? 8 : 42,
-        ),
-      ),
-    ]);
-  }
-
-  // avatar sobreposto no canto: círculo + (AO LADO) nome em cima e selo de contagem embaixo
-  Widget _avatarCanto({required int a, required bool dir}) {
-    final ehVez = _j.vez == a && !_j.rodadaEncerrada;
-    final info = Column(
-      crossAxisAlignment: dir ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 64,
-          child: Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: dir ? TextAlign.right : TextAlign.left,
-              style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 11, fontWeight: FontWeight.w700, shadows: const [Shadow(color: Colors.black, blurRadius: 3)])),
-        ),
-        const SizedBox(height: 3),
-        _countBadge(_j.maos[a].length),
-      ],
-    );
-    final av = _avatarSq(a: a, dir: dir, play: a == 0);
-    final children = dir ? [info, const SizedBox(width: 6), av] : [av, const SizedBox(width: 6), info];
-    return Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: children);
-  }
-
-  // ===== OVERLAY DE FIM DE RODADA / FIM DE PARTIDA (Fatia 4) =====
   Widget _overlayFimRodada() {
     final venceu = _j.encerrada;
     final linhaNos = _linhaPlacar('nos');
@@ -1675,39 +1758,41 @@ class _MesaScreenState extends State<MesaScreen> {
     String titulo;
     if (venceu) {
       final nosVenceu = _j.placar['nos']! >= _j.placar['eles']!;
-      titulo = nosVenceu ? '🏆 NÓS vencemos a partida!' : '😢 ELES venceram a partida';
+      titulo = nosVenceu ? 'NÓS VENCEMOS!' : 'ELES VENCERAM';
     } else if (_j.duplaQueBateu == 'nos') {
-      titulo = '🎉 NÓS batemos!';
+      titulo = 'NÓS BATEMOS!';
     } else if (_j.duplaQueBateu == 'eles') {
-      titulo = 'ELES bateram';
+      titulo = 'ELES BATERAM';
     } else {
-      titulo = 'Rodada encerrada (baralho esgotou)';
+      titulo = 'BARALHO ESGOTADO';
     }
     return GestureDetector(
-      onTap: () {}, // bloqueia toques na mesa atrás
+      onTap: () {},
       child: Container(
-        color: const Color(0xCC000000),
+        color: const Color(0xD9000000),
         alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 22),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+          padding: const EdgeInsets.fromLTRB(16, 17, 16, 16),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF20313A), Color(0xFF14232B)]),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _mGold, width: 1.6),
-            boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 20)],
+            gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF271A11), Color(0xFF111916), Color(0xFF17100B)]),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: _mGold, width: 1.5),
+            boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 24), BoxShadow(color: Color(0x447C4DB7), blurRadius: 18)],
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('♛  ${venceu ? 'FIM DE PARTIDA' : 'Rodada ${_j.rodada}'}', style: const TextStyle(color: _mGoldHi, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
-            const SizedBox(height: 6),
-            Text(titulo, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFF1E7CC), fontSize: 17, fontWeight: FontWeight.w800)),
+            Container(width: 54, height: 54, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, gradient: const RadialGradient(colors: [Color(0xFFFFE9A5), Color(0xFFC2872D)]), border: Border.all(color: const Color(0xFFFFF1C2))), child: Icon(venceu ? Icons.emoji_events_rounded : Icons.workspace_premium_rounded, color: const Color(0xFF4B2D07), size: 31)),
+            const SizedBox(height: 9),
+            Text(venceu ? 'FIM DE PARTIDA' : 'RODADA ${_j.rodada}', style: const TextStyle(color: _mGoldHi, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+            const SizedBox(height: 4),
+            Text(titulo, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFF6E9C8), fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: 0.2)),
             const SizedBox(height: 14),
             linhaNos,
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
             linhaEles,
             const SizedBox(height: 16),
             _botaoOverlay(
-              venceu ? '🔄  Nova partida' : '▶  Próxima rodada',
+              venceu ? 'NOVA PARTIDA' : 'PRÓXIMA RODADA',
               () => setState(() {
                 if (venceu) {
                   _j = Jogo(
@@ -1734,7 +1819,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final ganhou = (r?['total'] as int?) ?? 0;
     final eles = dupla == 'eles';
     final nome = eles ? 'ELES' : 'NÓS';
-    final cor = eles ? const Color(0xFFE7B7A6) : const Color(0xFF8FE0B0);
+    final cor = eles ? const Color(0xFFF0B0A1) : const Color(0xFF91E2B5);
     final partes = <String>[];
     if (det != null) {
       if ((det['asAas'] ?? 0) > 0) partes.add('${det['asAas']}×1000');
@@ -1742,25 +1827,28 @@ class _MesaScreenState extends State<MesaScreen> {
       if ((det['limpas'] ?? 0) > 0) partes.add('${det['limpas']} limpa');
       if ((det['sujas'] ?? 0) > 0) partes.add('${det['sujas']} suja');
       partes.add('cartas ${det['baixadas'] ?? 0}');
-      if ((r?['bonusBatida'] as int? ?? 0) != 0) partes.add('bateu +100');
-      if ((r?['penalidadeMorto'] as int? ?? 0) != 0) partes.add('s/ morto −100');
+      if ((r?['bonusBatida'] as int? ?? 0) != 0) partes.add('batida +100');
+      if ((r?['penalidadeMorto'] as int? ?? 0) != 0) partes.add('morto −100');
       if ((r?['descontoMao'] as int? ?? 0) != 0) partes.add('mão ${r!['descontoMao']}');
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(color: const Color(0x14FFFFFF), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0x22FFFFFF))),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+      decoration: BoxDecoration(
+        color: eles ? const Color(0x1FEF8170) : const Color(0x1F51D49A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cor.withValues(alpha: 0.28)),
+      ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Row(children: [
-            Text('$nome  ', style: TextStyle(color: cor, fontSize: 14, fontWeight: FontWeight.w800)),
-            Text('${ganhou >= 0 ? '+' : ''}$ganhou', style: TextStyle(color: ganhou >= 0 ? const Color(0xFF9BE7BE) : const Color(0xFFE79B9B), fontSize: 14, fontWeight: FontWeight.w800)),
-          ]),
-          Text('total ${_j.placar[dupla]}', style: const TextStyle(color: _mGoldHi, fontSize: 14, fontWeight: FontWeight.w900)),
+        Row(children: [
+          Container(width: 7, height: 7, decoration: BoxDecoration(shape: BoxShape.circle, color: cor)),
+          const SizedBox(width: 6),
+          Text(nome, style: TextStyle(color: cor, fontSize: 12, fontWeight: FontWeight.w900)),
+          const Spacer(),
+          Text('${ganhou >= 0 ? '+' : ''}$ganhou', style: TextStyle(color: ganhou >= 0 ? const Color(0xFFB7F4D2) : const Color(0xFFFFB7B0), fontSize: 13, fontWeight: FontWeight.w900)),
+          const SizedBox(width: 12),
+          Text('TOTAL ${_j.placar[dupla]}', style: const TextStyle(color: _mGoldHi, fontSize: 11, fontWeight: FontWeight.w900)),
         ]),
-        if (partes.isNotEmpty) Padding(
-          padding: const EdgeInsets.only(top: 3),
-          child: Text(partes.join(' · '), style: const TextStyle(color: Color(0x99FFFFFF), fontSize: 10.5)),
-        ),
+        if (partes.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(partes.join(' · '), maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xB3FFFFFF), fontSize: 8.5, height: 1.2))),
       ]),
     );
   }
@@ -1768,147 +1856,202 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _botaoOverlay(String txt, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFF2CF), Color(0xFFE6BA5F), Color(0xFFC68F36)], stops: [0, 0.6, 1]),
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 8, offset: Offset(0, 2))],
+            gradient: const LinearGradient(colors: [Color(0xFFFFE99D), Color(0xFFE0AA4D), Color(0xFFAE7121)]),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: const Color(0xFFFFF1BD)),
+            boxShadow: const [BoxShadow(color: Color(0x559C6A21), blurRadius: 10, offset: Offset(0, 3))],
           ),
-          child: Text(txt, style: const TextStyle(color: Color(0xFF4A3208), fontSize: 15, fontWeight: FontWeight.w900)),
+          child: Text(txt, style: const TextStyle(color: Color(0xFF3F2707), fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
         ),
       );
 
   Widget _teamRow({required bool eles}) {
-    final ptsCor = eles ? const Color(0xFFE7B7A6) : const Color(0xFF8FE0B0);
-    final dotCor = eles ? const Color(0xFFD8685C) : const Color(0xFF45D59A);
-    final ptsTxt = eles ? 'ELES ${_j.placar['eles']}' : 'NÓS ${_j.placar['nos']}';
+    final cor = eles ? const Color(0xFFF0A897) : const Color(0xFF88DEAF);
+    // Posição aprovada: o usuário (índice 0) permanece no canto inferior direito.
     final chipL = eles ? _chip(a: 1, dir: false) : _chip(a: 2, dir: false);
     final chipR = eles ? _chip(a: 3, dir: true) : _chip(a: 0, dir: true, play: true);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(7, 4, 7, 2),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        Expanded(child: Align(alignment: Alignment.centerLeft, child: chipL)),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: const Color(0xB3162B21),
-            border: Border.all(color: dotCor.withValues(alpha: 0.42)),
-            boxShadow: const [BoxShadow(color: Color(0x44000000), blurRadius: 4, offset: Offset(0, 1))],
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(width: 6, height: 6, decoration: BoxDecoration(color: dotCor, shape: BoxShape.circle)),
-            const SizedBox(width: 5),
-            Text(ptsTxt, style: TextStyle(color: ptsCor, fontSize: 11.5, fontWeight: FontWeight.w900, letterSpacing: 0.2)),
-            const Text(' pts', style: TextStyle(color: Color(0x99FFFFFF), fontSize: 8.5, fontWeight: FontWeight.w600)),
-          ]),
+    final label = eles ? 'ELES' : 'NÓS';
+    final points = eles ? _j.placar['eles'] : _j.placar['nos'];
+    return LayoutBuilder(builder: (context, cons) {
+      final playerW = ((cons.maxWidth - 94) / 2).clamp(112.0, 138.0).toDouble();
+      return Container(
+        margin: const EdgeInsets.fromLTRB(6, 5, 6, 2),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: const LinearGradient(colors: [Color(0xC9122D22), Color(0xB5081D16)]),
+          border: Border.all(color: const Color(0x227FE0B2)),
+          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 5, offset: Offset(0, 2))],
         ),
-        Expanded(child: Align(alignment: Alignment.centerRight, child: chipR)),
-      ]),
-    );
+        child: Row(children: [
+          SizedBox(width: playerW, child: Align(alignment: Alignment.centerLeft, child: chipL)),
+          const Spacer(),
+          SizedBox(
+            width: 82,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(13), color: const Color(0xA40A1712), border: Border.all(color: cor.withValues(alpha: 0.38))),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: cor)),
+                const SizedBox(width: 5),
+                Text(label, style: TextStyle(color: cor, fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: 0.4, height: 1)),
+                const SizedBox(width: 5),
+                Text('$points', style: const TextStyle(color: Color(0xFFECE3CE), fontSize: 11, fontWeight: FontWeight.w900, height: 1)),
+              ]),
+            ),
+          ),
+          const Spacer(),
+          SizedBox(width: playerW, child: Align(alignment: Alignment.centerRight, child: chipR)),
+        ]),
+      );
+    });
   }
 
-  // só o visual do avatar (círculo + mascote), reaproveitado no topo e na faixa central
   Widget _avatarSq({required int a, required bool dir, bool play = false}) {
     final ehVez = _j.vez == a && !_j.rodadaEncerrada;
+    final user = a == 0;
     return Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
-      Positioned(
-        bottom: -8, left: dir ? null : -13, right: dir ? -13 : null,
-        child: Container(
-          width: 34, height: 34, alignment: Alignment.center,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), gradient: const RadialGradient(center: Alignment(-0.2, -0.3), colors: [Color(0xFF4A3416), Color(0xFF231607)]), border: Border.all(color: const Color(0x66EFB94A))),
-          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 18)),
-        ),
-      ),
       Container(
-        width: 42, height: 42, alignment: Alignment.center,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF2A1C10), border: Border.all(color: (play || ehVez) ? _mGoldHi : _mGold, width: ehVez ? 3 : 2.2), boxShadow: ehVez ? const [BoxShadow(color: Color(0xAAEFB94A), blurRadius: 12)] : null),
+        width: 43,
+        height: 43,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const RadialGradient(center: Alignment(-0.25, -0.35), colors: [Color(0xFF5A3D1B), Color(0xFF211208)]),
+          border: Border.all(color: ehVez ? const Color(0xFFC89AFF) : (user ? _mGoldHi : _mGold), width: ehVez ? 2.8 : 2),
+          boxShadow: ehVez
+              ? const [BoxShadow(color: Color(0xAA9B63E4), blurRadius: 13), BoxShadow(color: Color(0x66EFB94A), blurRadius: 7)]
+              : const [BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(0, 2))],
+        ),
         child: Text(_j.avatares[a], style: const TextStyle(fontSize: 18, color: _mGoldHi)),
       ),
+      Positioned(
+        bottom: -5,
+        left: dir ? null : -7,
+        right: dir ? -7 : null,
+        child: Container(
+          width: 25,
+          height: 25,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: const LinearGradient(colors: [Color(0xFF4A3014), Color(0xFF1D1007)]), border: Border.all(color: const Color(0xAAEFB94A)), boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 4)]),
+          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 14)),
+        ),
+      ),
+      if (ehVez) Positioned(top: -5, right: dir ? null : -3, left: dir ? -3 : null, child: Container(width: 12, height: 12, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFFC89AFF), border: Border.all(color: const Color(0xFFF5E9FF), width: 1.2), boxShadow: const [BoxShadow(color: Color(0xAAC89AFF), blurRadius: 6)]))),
     ]);
   }
 
-  // chip horizontal (usado na barra de cima da dupla ELES)
   Widget _chip({required int a, required bool dir, bool play = false}) {
     final ehVez = _j.vez == a && !_j.rodadaEncerrada;
+    final user = a == 0;
     final avatar = _avatarSq(a: a, dir: dir, play: play);
-    final label = SizedBox(
-      width: 48,
-      child: Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 11, fontWeight: FontWeight.w800)),
+    final info = Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: dir ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisAlignment: dir ? MainAxisAlignment.end : MainAxisAlignment.start, children: [
+            if (user && dir) ...[_userTag(), const SizedBox(width: 4)],
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: dir ? Alignment.centerRight : Alignment.centerLeft,
+                child: Text(_j.apelidos[a], maxLines: 1, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? const Color(0xFFE7D1FF) : const Color(0xFFF1E8D3), fontSize: 10.5, fontWeight: FontWeight.w900, height: 1.05)),
+              ),
+            ),
+            if (user && !dir) ...[const SizedBox(width: 4), _userTag()],
+          ]),
+          const SizedBox(height: 4),
+          Row(mainAxisAlignment: dir ? MainAxisAlignment.end : MainAxisAlignment.start, children: [
+            Icon(Icons.style_rounded, size: 9, color: ehVez ? const Color(0xFFC89AFF) : const Color(0xFF9E8B68)),
+            const SizedBox(width: 3),
+            _countBadge(_j.maos[a].length),
+          ]),
+        ],
+      ),
     );
-    final children = <Widget>[];
-    if (dir) {
-      children.addAll([label, const SizedBox(width: 5), _countBadge(_j.maos[a].length), const SizedBox(width: 6), avatar]);
-    } else {
-      children.addAll([avatar, const SizedBox(width: 7), label, const SizedBox(width: 5), _countBadge(_j.maos[a].length)]);
-    }
-    return Row(mainAxisSize: MainAxisSize.min, children: children);
-  }
-
-  // chip vertical compacto (usado ladeando a faixa central — dupla NÓS)
-  Widget _chipStrip({required int a, required bool dir, bool play = false}) {
-    final ehVez = _j.vez == a && !_j.rodadaEncerrada;
     return SizedBox(
-      width: 54,
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _avatarSq(a: a, dir: dir, play: play),
-        const SizedBox(height: 3),
-        Text(_j.apelidos[a], maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
-            style: TextStyle(color: ehVez ? _mGoldHi : const Color(0xFFEDE3CC), fontSize: 10.5, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 2),
-        _countBadge(_j.maos[a].length),
-      ]),
+      width: double.infinity,
+      child: Row(children: dir ? [info, const SizedBox(width: 6), avatar] : [avatar, const SizedBox(width: 6), info]),
     );
   }
 
-  // contagem de cartas do jogador — mesmo estilo do selo de contagem dos jogos na mesa
+  Widget _userTag() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), color: const Color(0xFF7650A8), border: Border.all(color: const Color(0x88D0ABFF))),
+        child: const Text('VOCÊ', style: TextStyle(color: Color(0xFFF7EFFF), fontSize: 5.5, fontWeight: FontWeight.w900, letterSpacing: 0.35)),
+      );
+
+  Widget _chipStrip({required int a, required bool dir, bool play = false}) => _chip(a: a, dir: dir, play: play);
+
   Widget _countBadge(int n) => Container(
-        constraints: const BoxConstraints(minWidth: 20),
-        height: 18,
+        constraints: const BoxConstraints(minWidth: 21),
+        height: 17,
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 5),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(7),
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFA44A36), Color(0xFF6D291E)],
-          ),
-          border: Border.all(color: const Color(0x55F1C673)),
-          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 3, offset: Offset(0, 1))],
+          gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF9E4635), Color(0xFF61251C)]),
+          border: Border.all(color: const Color(0x66F1C673)),
+          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 3, offset: Offset(0, 1))],
         ),
-        child: Text('$n', style: const TextStyle(color: Color(0xFFFFF1E8), fontSize: 10.5, fontWeight: FontWeight.w900)),
+        child: Text('$n', style: const TextStyle(color: Color(0xFFFFEEE5), fontSize: 9.5, fontWeight: FontWeight.w900, height: 1)),
       );
 
   Widget _cpill(String s) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        decoration: BoxDecoration(color: _mPill, borderRadius: BorderRadius.circular(9), border: Border.all(color: const Color(0x1AFFFFFF))),
-        child: Text(s, style: const TextStyle(color: _mPillTx, fontSize: 8.5, fontWeight: FontWeight.w800)),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(color: const Color(0xFF153D30), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0x337FE0B2))),
+        child: Text(s, style: const TextStyle(color: Color(0xFFE8D6A6), fontSize: 7.5, fontWeight: FontWeight.w900, height: 1)),
       );
 
-  Widget _meldsBox(String dupla, {double padTop = 64, double padBottom = 8}) {
+  Widget _meldsBox(String dupla, {double padTop = 5, double padBottom = 7}) {
     final melds = _j.jogosDupla[dupla]!;
     final interativo = dupla == 'nos';
     final podeBaixar = interativo && _minhaVezAtiva && _j.jaComprou && _sel.length >= 3;
-    final box = Container(
-      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      // topo reservado pros avatares sobrepostos nos cantos não cobrirem os jogos
-      padding: EdgeInsets.fromLTRB(8, padTop, 8, padBottom),
+    final title = interativo ? 'JOGOS DA SUA DUPLA' : 'JOGOS ADVERSÁRIOS';
+    final box = AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(6, 2, 6, 3),
+      padding: EdgeInsets.fromLTRB(7, padTop, 7, padBottom),
       clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
-        color: _mBox,
-        borderRadius: BorderRadius.circular(14),
-        border: podeBaixar ? Border.all(color: _mGoldHi, width: 1.4) : Border.all(color: const Color(0x22FFFFFF), width: 1),
-        boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))],
+        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: podeBaixar ? const [Color(0xAA244C39), Color(0xAA102E23)] : const [Color(0x7A0D3B2B), Color(0x7208261C)]),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: podeBaixar ? _mGoldHi : const Color(0x246DD4A2), width: podeBaixar ? 1.5 : 1),
+        boxShadow: podeBaixar ? const [BoxShadow(color: Color(0x55EFB94A), blurRadius: 9)] : const [BoxShadow(color: Color(0x44000000), blurRadius: 4, offset: Offset(0, 2))],
       ),
-      child: melds.isEmpty
-          ? Center(child: Text(interativo ? (podeBaixar ? 'Toque aqui para baixar' : 'Seus jogos aparecerão aqui') : 'Jogos da dupla', style: const TextStyle(color: Color(0x66FFFFFF), fontSize: 9.5, fontWeight: FontWeight.w600)))
-          : SingleChildScrollView(child: Wrap(spacing: 7, runSpacing: 8, children: [
-              for (int i = 0; i < melds.length; i++)
-                interativo
-                    ? GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => _estender(i), child: _meld(melds[i]))
-                    : _meld(melds[i]),
-            ])),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(interativo ? Icons.auto_awesome_rounded : Icons.shield_outlined, size: 10, color: podeBaixar ? _mGoldHi : const Color(0x668FD7B6)),
+          const SizedBox(width: 4),
+          Text(title, style: TextStyle(color: podeBaixar ? _mGoldHi : const Color(0x668FD7B6), fontSize: 6.8, fontWeight: FontWeight.w900, letterSpacing: 0.55)),
+          const Spacer(),
+          if (melds.isNotEmpty) _cpill('${melds.length} ${melds.length == 1 ? 'jogo' : 'jogos'}'),
+        ]),
+        const SizedBox(height: 4),
+        Expanded(
+          child: melds.isEmpty
+              ? Center(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(podeBaixar ? Icons.touch_app_rounded : Icons.style_outlined, color: podeBaixar ? _mGoldHi : const Color(0x3394CDB3), size: 21),
+                    const SizedBox(height: 5),
+                    Text(podeBaixar ? 'TOQUE PARA BAIXAR' : (interativo ? 'Seus jogos aparecerão aqui' : 'Nenhum jogo baixado'), style: TextStyle(color: podeBaixar ? _mGoldHi : const Color(0x55FFFFFF), fontSize: 8.5, fontWeight: FontWeight.w800, letterSpacing: podeBaixar ? 0.5 : 0)),
+                  ]),
+                )
+              : SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Wrap(spacing: 7, runSpacing: 9, children: [
+                    for (int i = 0; i < melds.length; i++)
+                      interativo ? GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => _estender(i), child: _meld(melds[i])) : _meld(melds[i]),
+                  ]),
+                ),
+        ),
+      ]),
     );
     if (!interativo) return box;
     return GestureDetector(behavior: HitTestBehavior.opaque, onTap: _baixar, child: box);
@@ -1916,36 +2059,65 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _meld(List<Carta> cartas) {
     final sash = _sashDeMeld(cartas);
-    final lab = {Sash.limpa: 'LIMPA', Sash.suja: 'SUJA', Sash.n500: '500'}[sash];
-    return SizedBox(
-      child: Stack(clipBehavior: Clip.none, children: [
-        Container(
-          margin: const EdgeInsets.only(bottom: 5),
-          padding: const EdgeInsets.fromLTRB(3, 3, 3, 2),
-          decoration: BoxDecoration(color: const Color(0x0DFFFFFF), border: Border.all(color: const Color(0x1CFFFFFF)), borderRadius: BorderRadius.circular(6)),
-          child: _meldCards(cartas),
-        ),
-        Positioned(top: -5, right: -5, child: Container(
-          constraints: const BoxConstraints(minWidth: 15), height: 15, alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 3),
-          decoration: BoxDecoration(color: _mMaroon1, borderRadius: BorderRadius.circular(5), border: Border.all(color: const Color(0x44000000))),
-          child: Text('${cartas.length}', style: const TextStyle(color: Color(0xFFF6E8DF), fontSize: 8.5, fontWeight: FontWeight.w800)),
-        )),
-        if (lab != null) Positioned(left: 4, right: 4, bottom: 0, height: 12, child: Container(
+    final lab = {Sash.limpa: 'LIMPA', Sash.suja: 'SUJA', Sash.n500: 'VIP 500'}[sash];
+    Color accent;
+    List<Color> sashColors;
+    Color labelColor;
+    switch (sash) {
+      case Sash.suja:
+        accent = const Color(0xFFE66E62);
+        sashColors = const [Color(0xFFCE5A4F), Color(0xFF7C2924)];
+        labelColor = const Color(0xFFFFEBE8);
+        break;
+      case Sash.n500:
+        accent = const Color(0xFFC99BFF);
+        sashColors = const [Color(0xFFB989F0), Color(0xFF6B3FA0), Color(0xFFDAAC55)];
+        labelColor = const Color(0xFFFFFFFF);
+        break;
+      case Sash.limpa:
+        accent = const Color(0xFFF1C673);
+        sashColors = const [Color(0xFFFFEDB1), Color(0xFFDFA94D), Color(0xFF98631E)];
+        labelColor = const Color(0xFF4C3007);
+        break;
+      default:
+        accent = const Color(0x667FE0B2);
+        sashColors = const [Color(0xFF204C3A), Color(0xFF123326)];
+        labelColor = const Color(0xFFE8F5EF);
+    }
+    return Stack(clipBehavior: Clip.none, children: [
+      Container(
+        margin: EdgeInsets.only(bottom: lab == null ? 0 : 11),
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: const LinearGradient(colors: [Color(0x22FFFFFF), Color(0x0AFFFFFF)]), border: Border.all(color: accent.withValues(alpha: 0.52)), boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 5, offset: Offset(0, 2))]),
+        child: _meldCards(cartas),
+      ),
+      Positioned(
+        top: -5,
+        right: -5,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 17),
+          height: 17,
           alignment: Alignment.center,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(3), gradient: sash == Sash.suja
-              ? const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFB8433C), Color(0xFF9C302E)])
-              : const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFFFF2CF), Color(0xFFE6BA5F), Color(0xFFC68F36)], stops: [0, 0.6, 1])),
-          child: Text(lab, style: TextStyle(color: sash == Sash.suja ? const Color(0xFFFBE3DF) : const Color(0xFF5A3D0C), fontSize: 8, fontWeight: FontWeight.w800)),
-        )),
-      ]),
-    );
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF9E4635), Color(0xFF61251C)]), border: Border.all(color: const Color(0x99F1C673)), boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 4)]),
+          child: Text('${cartas.length}', style: const TextStyle(color: Color(0xFFFFEEE5), fontSize: 8, fontWeight: FontWeight.w900)),
+        ),
+      ),
+      if (lab != null)
+        Positioned(
+          left: 5,
+          right: 5,
+          bottom: 0,
+          height: 13,
+          child: Container(
+            alignment: Alignment.center,
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(5), gradient: LinearGradient(colors: sashColors), border: Border.all(color: accent.withValues(alpha: 0.65)), boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 3)]),
+            child: Text(lab, style: TextStyle(color: labelColor, fontSize: 7.5, fontWeight: FontWeight.w900, letterSpacing: 0.65, height: 1)),
+          ),
+        ),
+    ]);
   }
 
-  // jogo baixado em "leque": cartas sobrepostas, mostrando o canto (valor+naipe).
-  // cabe sequências longas sem estourar e fica com cara de jogo de verdade.
-  // ordena a EXIBIÇÃO do jogo em ordem crescente (A,2,3…K); coringa JOKER vai pro fim.
-  // é só visual — a validade do jogo independe da ordem.
   List<Carta> _meldOrdenado(List<Carta> cartas) {
     final c = List<Carta>.from(cartas);
     c.sort((a, b) {
@@ -1957,99 +2129,127 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _meldCards(List<Carta> cartas) {
-    const peek = 20.0, cw = 34.0, ch = 50.0;
+    // Sobreposição fixa de 50%, sem reduzir conforme crescem a sequência
+    // ou a quantidade de jogos existentes na mesa.
+    const cw = 54.0, ch = 81.0, step = cw * 0.50;
     final ord = _meldOrdenado(cartas);
     final k = ord.length;
-    final totalW = (k - 1) * peek + cw;
+    final totalW = (k - 1) * step + cw;
     return SizedBox(
-      width: totalW, height: ch,
-      child: Stack(clipBehavior: Clip.none, children: [
-        for (int i = 0; i < k; i++) Positioned(left: i * peek, child: _mcard(ord[i])),
-      ]),
+      width: totalW,
+      height: ch,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [for (int i = 0; i < k; i++) Positioned(left: i * step, child: _mcard(ord[i]))],
+      ),
     );
   }
 
-  // carta da mesa (leque) = imagem real do baralho; o "peek" à esquerda mostra o canto (valor+naipe)
   Widget _mcard(Carta c) => Container(
-        width: 34, height: 50,
-        decoration: const BoxDecoration(
-          borderRadius: BorderRadius.all(Radius.circular(5)),
-          boxShadow: [BoxShadow(color: Color(0x66000000), blurRadius: 2, offset: Offset(1, 0))],
-        ),
+        width: 54,
+        height: 81,
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0x55FFFFFF), width: 0.7), boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 4, offset: Offset(1.4, 1.8))]),
         clipBehavior: Clip.antiAlias,
-        child: Image.asset(_cartaAsset(c), fit: BoxFit.fill),
+        child: Image.asset(_cartaAsset(c), fit: BoxFit.fill, filterQuality: FilterQuality.high),
       );
 
-  // FAIXA CENTRAL (18%): quatro áreas IGUAIS lado a lado — monte, lixo, morto 1, morto 2.
   Widget _faixaCentral() {
     final podeComprar = _minhaVezAtiva && !_j.jaComprou;
     final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
     final podePegarLixo = _minhaVezAtiva && !_j.jaComprou && _j.lixo.isNotEmpty;
-    final lixoDestaque = podeDescartar || podePegarLixo;
+    final monteComprado = _lastPurchaseSource == 'monte' && _recentlyBoughtIds.isNotEmpty;
+    final lixoComprado = _lastPurchaseSource == 'lixo' && _recentlyBoughtIds.isNotEmpty;
+    final monteDestaque = podeComprar || monteComprado;
+    final lixoDestaque = podeDescartar || podePegarLixo || lixoComprado;
     final topo = _j.lixoTopo;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(6, 2, 6, 2),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xE60E3B2C), Color(0xE6092A20)]),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x334FD39A), width: 1),
-        boxShadow: const [BoxShadow(color: Color(0x44000000), blurRadius: 5, offset: Offset(0, 2))],
-      ),
-      // monte + lixo JUNTOS bem à esquerda; os 2 mortos JUNTOS bem à direita (espaço no meio)
-      child: Row(children: [
-        _celula('monte', _back(destaque: podeComprar), '${_j.monte.length}', onTap: _tapMonte),
-        const SizedBox(width: 8),
-        _celula('lixo', topo == null ? _ghost(destaque: lixoDestaque) : _lixoCarta(topo, lixoDestaque), '${_j.lixo.length}', onTap: _tapLixo),
-        const Spacer(),
-        _celula('morto', _j.mortos.isNotEmpty ? _back() : _ghost(), _j.mortos.isNotEmpty ? '1' : '—'),
-        const SizedBox(width: 8),
-        _celula('morto', _j.mortos.length > 1 ? _back() : _ghost(), _j.mortos.length > 1 ? '1' : '—'),
+    return LayoutBuilder(builder: (context, cons) {
+      return SizedBox(
+        width: double.infinity,
+        child: Container(
+        margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(17),
+          gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xED162119), Color(0xED0A120E)]),
+          border: Border.all(color: const Color(0x997B5B2A), width: 1.1),
+          boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 8, offset: Offset(0, 3)), BoxShadow(color: Color(0x224D2E73), blurRadius: 10)],
+        ),
+        child: Row(children: [
+          Expanded(child: _celula('MONTE', Icons.layers_rounded, _back(destaque: monteDestaque), '${_j.monte.length}', destaque: monteDestaque, onTap: _tapMonte)),
+          _centralDivider(),
+          Expanded(child: _celula('LIXO', Icons.delete_outline_rounded, topo == null ? _ghost(destaque: lixoDestaque) : _lixoCarta(topo, lixoDestaque), '${_j.lixo.length}', destaque: lixoDestaque, onTap: _tapLixo)),
+          _centralDivider(),
+          Expanded(child: _celula('MORTO 1', Icons.style_outlined, _j.mortos.isNotEmpty ? _back() : _ghost(), _j.mortos.isNotEmpty ? 'OK' : '—')),
+          _centralDivider(),
+          Expanded(child: _celula('MORTO 2', Icons.style_outlined, _j.mortos.length > 1 ? _back() : _ghost(), _j.mortos.length > 1 ? 'OK' : '—')),
+        ]),
+      ));
+    });
+  }
+
+  Widget _centralDivider() => Container(width: 1, height: 84, margin: const EdgeInsets.symmetric(horizontal: 2), color: const Color(0x337D5A24));
+
+  Widget _celula(String label, IconData icon, Widget slot, String pill, {bool destaque = false, VoidCallback? onTap}) {
+    final accent = destaque ? const Color(0xFFC99BFF) : const Color(0xFFB8A984);
+    final conteudo = AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), color: destaque ? const Color(0x174F2C70) : Colors.transparent),
+      child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 9.5, color: accent),
+          const SizedBox(width: 3),
+          Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.fade, softWrap: false, style: TextStyle(color: destaque ? const Color(0xFFE7D1FF) : const Color(0xFFD9CBA8), fontSize: 6.7, fontWeight: FontWeight.w900, letterSpacing: 0.35))),
+        ]),
+        const SizedBox(height: 3),
+        Stack(clipBehavior: Clip.none, children: [
+          slot,
+          Positioned(top: -4, right: -5, child: Container(constraints: const BoxConstraints(minWidth: 18), height: 15, alignment: Alignment.center, padding: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(borderRadius: BorderRadius.circular(7), gradient: destaque ? const LinearGradient(colors: [Color(0xFF8F60C9), Color(0xFF5B367F)]) : const LinearGradient(colors: [Color(0xFF4A3820), Color(0xFF251A0E)]), border: Border.all(color: destaque ? const Color(0xAAC99BFF) : const Color(0x668F6A31))), child: Text(pill, style: TextStyle(color: destaque ? const Color(0xFFF5EAFF) : const Color(0xFFEAD9A8), fontSize: 7, fontWeight: FontWeight.w900)))),
+        ]),
       ]),
     );
+    return onTap == null ? conteudo : GestureDetector(onTap: onTap, behavior: HitTestBehavior.opaque, child: conteudo);
   }
 
-  // uma célula da faixa central (largura fixa; agrupadas por Spacer).
-  // rótulo + contador JUNTOS em cima -> a margem de baixo fica livre pros avatares NÓS que sobem.
-  Widget _celula(String label, Widget slot, String pill, {VoidCallback? onTap}) {
-    final conteudo = Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(label.toUpperCase(), style: const TextStyle(color: Color(0xFFD9E8DF), fontSize: 8.5, fontWeight: FontWeight.w800, letterSpacing: 0.25)),
-        const SizedBox(width: 4),
-        _cpill(pill),
-      ]),
-      const SizedBox(height: 3),
-      slot,
-    ]);
-    return onTap != null ? GestureDetector(onTap: onTap, behavior: HitTestBehavior.opaque, child: conteudo) : conteudo;
-  }
-
-  // dorso do baralho (monte e mortos) = imagem real do dorso
-  Widget _back({bool destaque = false}) {
-    return Container(
-      width: 46, height: 64,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: destaque ? _mGoldHi : const Color(0x66EFB94A), width: destaque ? 2 : 1),
-        boxShadow: destaque ? const [BoxShadow(color: Color(0x99EFB94A), blurRadius: 8)] : const [BoxShadow(color: Color(0x66000000), blurRadius: 3, offset: Offset(0, 1))],
+  Widget _back({bool destaque = false, bool compacto = false}) {
+    const w = 54.0;
+    const h = 81.0;
+    return AnimatedScale(
+      duration: const Duration(milliseconds: 180),
+      scale: destaque ? 1.045 : 1,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: w,
+        height: h,
+        padding: const EdgeInsets.all(1.3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          gradient: destaque ? const LinearGradient(colors: [Color(0xFFC99BFF), Color(0xFFEFB94A)]) : const LinearGradient(colors: [Color(0xFFE0BC6B), Color(0xFF704C1D)]),
+          boxShadow: destaque ? const [BoxShadow(color: Color(0x99B27BE9), blurRadius: 12), BoxShadow(color: Color(0x66EFB94A), blurRadius: 8)] : const [BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(0, 2))],
+        ),
+        child: ClipRRect(borderRadius: BorderRadius.circular(6.4), child: Image.asset(_dorsoAsset, fit: BoxFit.fill, filterQuality: FilterQuality.high)),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Image.asset(_dorsoAsset, fit: BoxFit.cover),
     );
   }
 
-  Widget _lixoCarta(Carta c, bool destaque) {
-    return Container(
-      width: 46, height: 64,
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(7), border: Border.all(color: destaque ? _mGoldHi : const Color(0x55000000), width: destaque ? 2 : 1), boxShadow: destaque ? const [BoxShadow(color: Color(0x99EFB94A), blurRadius: 8)] : const [BoxShadow(color: Color(0x55000000), blurRadius: 3, offset: Offset(0, 1))]),
-      clipBehavior: Clip.antiAlias,
-      child: Image.asset(_cartaAsset(c), fit: BoxFit.fill),
-    );
-  }
+  Widget _lixoCarta(Carta c, bool destaque) => AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        scale: destaque ? 1.045 : 1,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 54,
+          height: 81,
+          padding: const EdgeInsets.all(1.3),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: destaque ? const LinearGradient(colors: [Color(0xFFC99BFF), Color(0xFFEFB94A)]) : const LinearGradient(colors: [Color(0xFFE0BC6B), Color(0xFF704C1D)]), boxShadow: destaque ? const [BoxShadow(color: Color(0x99B27BE9), blurRadius: 12), BoxShadow(color: Color(0x66EFB94A), blurRadius: 7)] : const [BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(0, 2))]),
+          child: ClipRRect(borderRadius: BorderRadius.circular(6.4), child: Image.asset(_cartaAsset(c), fit: BoxFit.fill, filterQuality: FilterQuality.high)),
+        ),
+      );
 
-  Widget _ghost({bool destaque = false}) => Container(
-        width: 46, height: 64,
-        decoration: BoxDecoration(color: const Color(0x0DFFFFFF), borderRadius: BorderRadius.circular(7), border: Border.all(color: destaque ? _mGoldHi : const Color(0x3AFFFFFF), width: destaque ? 2 : 1.4)),
+  Widget _ghost({bool destaque = false, bool compacto = false}) => Container(
+        width: 54,
+        height: 81,
+        decoration: BoxDecoration(color: destaque ? const Color(0x154F2C70) : const Color(0x0CFFFFFF), borderRadius: BorderRadius.circular(8), border: Border.all(color: destaque ? const Color(0xAAC99BFF) : const Color(0x3FDBC387), width: destaque ? 1.7 : 1.1)),
+        child: Icon(Icons.style_outlined, color: destaque ? const Color(0x77C99BFF) : const Color(0x257FE0B2), size: 22),
       );
 
   final ScrollController _handScroll = ScrollController();
@@ -2058,62 +2258,99 @@ class _MesaScreenState extends State<MesaScreen> {
     final mao = _j.maos[0];
     final n = mao.length;
     if (n == 0) return const SizedBox();
-    // Cartas em TAMANHO NORMAL (nunca miniatura). A mão fica presa à base:
-    //  - FORA da vez: desce 50% da altura (metade some pra baixo, cortada pela borda);
-    //  - NA vez: sobe inteira (translateY 0). Só movimento vertical, escala igual.
-    // Animação 300ms ease-out. Selecionar levanta a carta 16px.
-    const cw = 52.0, ch = 78.0, gap = 6.0, lift = 16.0;
-    const boxH = ch + lift; // folga no topo pra carta selecionada subir sem cortar
+    const cw = 68.0, ch = 102.0, step = cw * 0.50, lift = 15.0;
     final ativo = _minhaVezAtiva;
-    final larguraCartas = n * cw + (n - 1) * gap + 24;
-    final conteudo = LayoutBuilder(builder: (context, cons) {
-      final row = Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-        for (int i = 0; i < n; i++)
-          Padding(
-            padding: EdgeInsets.only(right: i == n - 1 ? 0 : gap),
-            child: GestureDetector(
-              onTap: ativo ? () => _tapCard(i) : null,
-              child: Transform.translate(
-                offset: Offset(0, _sel.contains(i) ? -lift : 0),
-                child: SizedBox(width: cw, height: ch, child: _handCard(mao[i], _sel.contains(i))),
+    final totalW = (n - 1) * step + cw;
+
+    final cartas = LayoutBuilder(builder: (context, cons) {
+      final order = List<int>.generate(n, (i) => i)
+        ..sort((a, b) {
+          final pa = (_sel.contains(a) ? 2 : 0) + (_recentlyBoughtIds.contains(mao[a].id) ? 1 : 0);
+          final pb = (_sel.contains(b) ? 2 : 0) + (_recentlyBoughtIds.contains(mao[b].id) ? 1 : 0);
+          if (pa != pb) return pa.compareTo(pb);
+          return a.compareTo(b);
+        });
+      final stack = SizedBox(
+        width: totalW,
+        height: ch + lift,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (final i in order)
+              Positioned(
+                left: i * step,
+                bottom: 0,
+                child: GestureDetector(
+                  onTap: ativo ? () => _tapCard(i) : null,
+                  child: AnimatedSlide(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    offset: Offset(0, _sel.contains(i) ? -lift / ch : (_recentlyBoughtIds.contains(mao[i].id) ? -7 / ch : 0)),
+                    child: SizedBox(width: cw, height: ch, child: _handCard(mao[i], _sel.contains(i), _recentlyBoughtIds.contains(mao[i].id))),
+                  ),
+                ),
               ),
-            ),
-          ),
-      ]);
+          ],
+        ),
+      );
       return SingleChildScrollView(
         controller: _handScroll,
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, lift, 12, 0),
-        child: larguraCartas < cons.maxWidth
-            ? SizedBox(width: cons.maxWidth - 24, child: Center(child: row))
-            : row,
+        child: totalW < cons.maxWidth - 24 ? SizedBox(width: cons.maxWidth - 24, child: Center(child: stack)) : stack,
       );
     });
-    // desliza a mão inteira meia-CARTA pra baixo quando não é a vez (metade some, cortada pela borda)
-    return SizedBox(
-      height: boxH,
+
+    // Fora da vez, a mão conserva a escala e desce exatamente 50% da sua altura.
+    // Na vez do jogador, sobe verticalmente e fica 100% visível.
+    return ClipRect(
       child: AnimatedSlide(
         duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-        offset: Offset(0, ativo ? 0.0 : (ch * 0.5) / boxH),
-        child: conteudo,
+        curve: Curves.easeOutCubic,
+        offset: Offset(0, ativo ? 0 : 0.50),
+        child: SizedBox(
+          height: ch + lift,
+          width: double.infinity,
+          child: cartas,
+        ),
       ),
     );
   }
 
-  // carta da MÃO = imagem real do baralho; destaque dourado quando selecionada
-  Widget _handCard(Carta c, bool sel) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: sel ? _mGoldHi : const Color(0x33000000), width: sel ? 2.4 : 0.5),
-        boxShadow: [BoxShadow(color: Color(sel ? 0x99000000 : 0x77000000), blurRadius: sel ? 16 : 9, offset: const Offset(0, -3))],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Image.asset(_cartaAsset(c), fit: BoxFit.fill),
-    );
-  }
+  Widget _handCard(Carta c, bool sel, bool comprada) => AnimatedScale(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutBack,
+        scale: comprada ? 1.06 : 1,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          padding: EdgeInsets.all(sel || comprada ? 2.0 : 0.8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            gradient: comprada
+                ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFFFFF2A8), Color(0xFFC99BFF), Color(0xFFEFB94A)])
+                : (sel ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFFC99BFF), Color(0xFFF2D287), Color(0xFF8053B5)]) : const LinearGradient(colors: [Color(0x99FFFFFF), Color(0x557D5A24)])),
+            boxShadow: comprada
+                ? const [BoxShadow(color: Color(0xCCF4D66E), blurRadius: 22, spreadRadius: 2, offset: Offset(0, -4)), BoxShadow(color: Color(0xAA9C65D4), blurRadius: 17)]
+                : (sel ? const [BoxShadow(color: Color(0xAA9C65D4), blurRadius: 15, offset: Offset(0, -2)), BoxShadow(color: Color(0x88EFB94A), blurRadius: 7)] : const [BoxShadow(color: Color(0x99000000), blurRadius: 8, offset: Offset(0, -2))]),
+          ),
+          child: Stack(children: [
+            Positioned.fill(child: ClipRRect(borderRadius: BorderRadius.circular(7.6), child: Image.asset(_cartaAsset(c), fit: BoxFit.fill, filterQuality: FilterQuality.high))),
+            if (comprada)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Container(
+                  width: 17,
+                  height: 17,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [Color(0xFFFFFFFF), Color(0xFFEFB94A)]), boxShadow: [BoxShadow(color: Color(0xFFF6D96A), blurRadius: 8)]),
+                  child: const Icon(Icons.auto_awesome_rounded, size: 10, color: Color(0xFF5B3507)),
+                ),
+              ),
+          ]),
+        ),
+      );
 }
 
 enum Sash { nenhuma, limpa, suja, n500 }
