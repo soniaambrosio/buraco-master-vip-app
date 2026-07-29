@@ -836,7 +836,7 @@ class _PotCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      minHeight: 43,
+      constraints: const BoxConstraints(minHeight: 43),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xFF21160B),
@@ -979,7 +979,7 @@ class _ChairCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final liberated = cadeira.estado == EstadoCadeira.liberada;
     return Container(
-      minHeight: 63,
+      constraints: const BoxConstraints(minHeight: 63),
       padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
       decoration: BoxDecoration(
         color: ConfigurarMesaScreen._card,
