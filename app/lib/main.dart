@@ -8,6 +8,9 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'pages/perfil_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
+import 'screens/inicio_screen.dart';
+import 'screens/recompensas_screen.dart';
+import 'screens/mesa_screen.dart' as mesa_visual;
 import 'screens/ranking_screen.dart';
 import 'screens/mesa_vip_preview_screen.dart';
 
@@ -125,7 +128,7 @@ class _SplashScreenState extends State<SplashScreen>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 550),
-        pageBuilder: (_, __, ___) => const HomeScreen(),
+        pageBuilder: (_, __, ___) => const _InicioPreviewHost(),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
       ),
@@ -207,6 +210,194 @@ class _PontinhosPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _PontinhosPainter old) => true;
+}
+
+class _InicioPreviewHost extends StatefulWidget {
+  const _InicioPreviewHost();
+
+  @override
+  State<_InicioPreviewHost> createState() => _InicioPreviewHostState();
+}
+
+class _InicioPreviewHostState extends State<_InicioPreviewHost> {
+  InicioEstado _estado = InicioEstado.normal;
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1200),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  void _abrirPerfil() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PerfilPage()),
+    );
+  }
+
+  void _abrirRanking() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+    );
+  }
+
+  void _abrirMesa() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _MesaCodexPreviewHost()),
+    );
+  }
+
+  void _abrirRecompensas() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _RecompensasPreviewHost()),
+    );
+  }
+
+  void _menuTap(String id) {
+    switch (id) {
+      case 'perfil':
+        _abrirPerfil();
+        break;
+      case 'ranking':
+        _abrirRanking();
+        break;
+      case 'recompensas':
+        _abrirRecompensas();
+        break;
+      case 'jogar':
+        _abrirMesa();
+        break;
+      default:
+        _aviso('$id — integração fica com o Claude');
+    }
+  }
+
+  void _navTap(NavDestino destino) {
+    switch (destino) {
+      case NavDestino.inicio:
+        break;
+      case NavDestino.ranking:
+        _abrirRanking();
+        break;
+      case NavDestino.loja:
+        _aviso('Loja VIP — integração fica com o Claude');
+        break;
+      case NavDestino.perfil:
+        _abrirPerfil();
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InicioScreen(
+      vm: InicioVM.mock(),
+      estado: _estado,
+      onJogar: _abrirMesa,
+      onAbrirPerfil: _abrirPerfil,
+      onHistorico: () => _aviso('Histórico — integração fica com o Claude'),
+      onAbrirTemporada: () => _aviso('Temporada — integração fica com o Claude'),
+      onAbrirLobby: () => _aviso('Lobby — integração fica com o Claude'),
+      onMenuTap: _menuTap,
+      onRecarregar: () {
+        setState(() => _estado = InicioEstado.carregando);
+        Future<void>.delayed(const Duration(milliseconds: 650), () {
+          if (mounted) setState(() => _estado = InicioEstado.normal);
+        });
+      },
+      onNavTap: _navTap,
+    );
+  }
+}
+
+class _RecompensasPreviewHost extends StatefulWidget {
+  const _RecompensasPreviewHost();
+
+  @override
+  State<_RecompensasPreviewHost> createState() => _RecompensasPreviewHostState();
+}
+
+class _RecompensasPreviewHostState extends State<_RecompensasPreviewHost> {
+  RecompensaEstado _estado = RecompensaEstado.normal;
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1200),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RecompensasScreen(
+      vm: RecompensasVM.mock(),
+      estado: _estado,
+      onVoltar: () => Navigator.of(context).pop(),
+      onResgatarMissao: (id) => _aviso('Missão $id — resgate fica com o Claude'),
+      onResgatarHoje: () => _aviso('Login diário — resgate fica com o Claude'),
+      onAbrirBau: () => _aviso('Baú Real — integração fica com o Claude'),
+      onFonteTap: (id) => _aviso('$id — integração fica com o Claude'),
+      onRecarregar: () {
+        setState(() => _estado = RecompensaEstado.carregando);
+        Future<void>.delayed(const Duration(milliseconds: 650), () {
+          if (mounted) setState(() => _estado = RecompensaEstado.normal);
+        });
+      },
+    );
+  }
+}
+
+class _MesaCodexPreviewHost extends StatefulWidget {
+  const _MesaCodexPreviewHost();
+
+  @override
+  State<_MesaCodexPreviewHost> createState() => _MesaCodexPreviewHostState();
+}
+
+class _MesaCodexPreviewHostState extends State<_MesaCodexPreviewHost> {
+  Set<String> _selecionadas = const {'mao_as'};
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(texto),
+          duration: const Duration(milliseconds: 1000),
+          backgroundColor: const Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
+  void _alternarCarta(String id) {
+    setState(() {
+      final novas = Set<String>.from(_selecionadas);
+      if (!novas.add(id)) novas.remove(id);
+      _selecionadas = novas;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = mesa_visual.MesaVM.mock(selecionadas: _selecionadas);
+    return mesa_visual.MesaScreen(
+      vm: vm,
+      onMenu: () => _aviso('Menu da partida — conexão entra com o Claude'),
+      onChat: () => _aviso('Chat da mesa — conexão entra com o Claude'),
+      onComprarMonte: () => _aviso('Comprar do monte'),
+      onPegarLixo: () => _aviso('Pegar o lixo'),
+      onTapCarta: _alternarCarta,
+      onBaixar: () => _aviso('Baixar cartas selecionadas'),
+      onEstender: (meldId) => _aviso('Estender no jogo $meldId'),
+      onDescartar: () => _aviso('Descartar carta selecionada'),
+    );
+  }
 }
 
 // ===================== INÍCIO (menu) =====================
@@ -1051,17 +1242,47 @@ class Jogo {
     return {'ok': true, 'qtd': qtd};
   }
 
-  // ORGANIZAR A MÃO: agrupa por naipe (cores alternadas p/ leitura) e ordena por
-  // sequência (A,2,3…K). O 2 fica na posição natural dele dentro do naipe (ajuda a
-  // enxergar A-2-3); coringas sem naipe (JOKER) vão pro fim.
-  static const _naipeOrdem = {'copas': 0, 'espadas': 1, 'ouros': 2, 'paus': 3};
+  // ORGANIZAR A MÃO: agrupa por naipe e ordena cada naipe por sequência (A,2,3…K),
+  // depois INTERCALA AS CORES (vermelho ↔ preto) pra melhor visualização — nunca deixa
+  // dois naipes da mesma cor colados quando dá pra evitar. O 2 fica na posição natural
+  // dele dentro do naipe (ajuda a enxergar A-2-3); coringas sem naipe (JOKER) vão pro fim.
+  static const _naipesVermelhos = ['copas', 'ouros'];
+  static const _naipesPretos = ['espadas', 'paus'];
   void ordenar(int assento) {
-    maos[assento].sort((a, b) {
-      final na = a.naipe == null ? 99 : (_naipeOrdem[a.naipe] ?? 98);
-      final nb = b.naipe == null ? 99 : (_naipeOrdem[b.naipe] ?? 98);
-      if (na != nb) return na - nb;
-      return _ordem.indexOf(a.valor) - _ordem.indexOf(b.valor);
-    });
+    // 1) separa por naipe e ordena cada grupo por valor (A→K)
+    final grupos = <String, List<Carta>>{};
+    final coringasSemNaipe = <Carta>[]; // JOKER puro (naipe null)
+    for (final c in maos[assento]) {
+      if (c.naipe == null) {
+        coringasSemNaipe.add(c);
+      } else {
+        (grupos[c.naipe!] ??= <Carta>[]).add(c);
+      }
+    }
+    for (final g in grupos.values) {
+      g.sort((a, b) => _ordem.indexOf(a.valor) - _ordem.indexOf(b.valor));
+    }
+    // 2) monta as filas de grupos por cor (só naipes presentes)
+    final vermelhos = [for (final n in _naipesVermelhos) if (grupos[n] != null) grupos[n]!];
+    final pretos = [for (final n in _naipesPretos) if (grupos[n] != null) grupos[n]!];
+    // 3) intercala vermelho ↔ preto começando pela cor com mais grupos (empate = vermelho)
+    final resultado = <Carta>[];
+    var iv = 0, ip = 0;
+    var vezVermelho = vermelhos.length >= pretos.length;
+    while (iv < vermelhos.length || ip < pretos.length) {
+      if (vezVermelho && iv < vermelhos.length) {
+        resultado.addAll(vermelhos[iv++]);
+      } else if (!vezVermelho && ip < pretos.length) {
+        resultado.addAll(pretos[ip++]);
+      } else if (iv < vermelhos.length) {
+        resultado.addAll(vermelhos[iv++]);
+      } else {
+        resultado.addAll(pretos[ip++]);
+      }
+      vezVermelho = !vezVermelho;
+    }
+    resultado.addAll(coringasSemNaipe); // JOKER no fim
+    maos[assento] = resultado;
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
