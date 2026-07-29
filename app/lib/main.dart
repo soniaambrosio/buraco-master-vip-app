@@ -1741,7 +1741,14 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
       onConvidar: (id) => _aviso('Convite pra mesa — integração fica com o Claude (Fase B)'),
       onAssistir: (id) => _aviso('Assistir a mesa — integração fica com o Claude (Fase B)'),
       onAbrirAmigo: (id) => _aviso('Opções do amigo — integração fica com o Claude (Fase B)'),
-      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba)),
+      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba, ehVip: _vm.ehVip)),
+      onAssinar: (plano) {
+        // Fase B: aqui entra o Google Play Billing (assinatura recorrente real) +
+        // a infra conta.vip / ehVip(). Ver ASSINATURA-VIP-INFRA.md.
+        // No mock, "assinar" desbloqueia a prévia pra dar pra navegar a tela VIP.
+        _aviso('Assinatura $plano — pagamento recorrente via Google Play (Fase B)');
+        setState(() => _vm = _vm.copyWith(ehVip: true));
+      },
     );
   }
 }
