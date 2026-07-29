@@ -9,6 +9,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'pages/perfil_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
 import 'screens/inicio_screen.dart';
+import 'screens/recompensas_screen.dart';
+import 'screens/mesa_screen.dart' as mesa_visual;
 import 'screens/ranking_screen.dart';
 import 'screens/mesa_vip_preview_screen.dart';
 
@@ -244,7 +246,13 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
 
   void _abrirMesa() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const MesaScreen()),
+      MaterialPageRoute(builder: (_) => const _MesaCodexPreviewHost()),
+    );
+  }
+
+  void _abrirRecompensas() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _RecompensasPreviewHost()),
     );
   }
 
@@ -255,6 +263,9 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
         break;
       case 'ranking':
         _abrirRanking();
+        break;
+      case 'recompensas':
+        _abrirRecompensas();
         break;
       case 'jogar':
         _abrirMesa();
@@ -298,6 +309,93 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
         });
       },
       onNavTap: _navTap,
+    );
+  }
+}
+
+class _RecompensasPreviewHost extends StatefulWidget {
+  const _RecompensasPreviewHost();
+
+  @override
+  State<_RecompensasPreviewHost> createState() => _RecompensasPreviewHostState();
+}
+
+class _RecompensasPreviewHostState extends State<_RecompensasPreviewHost> {
+  RecompensaEstado _estado = RecompensaEstado.normal;
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1200),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RecompensasScreen(
+      vm: RecompensasVM.mock(),
+      estado: _estado,
+      onVoltar: () => Navigator.of(context).pop(),
+      onResgatarMissao: (id) => _aviso('Missão $id — resgate fica com o Claude'),
+      onResgatarHoje: () => _aviso('Login diário — resgate fica com o Claude'),
+      onAbrirBau: () => _aviso('Baú Real — integração fica com o Claude'),
+      onFonteTap: (id) => _aviso('$id — integração fica com o Claude'),
+      onRecarregar: () {
+        setState(() => _estado = RecompensaEstado.carregando);
+        Future<void>.delayed(const Duration(milliseconds: 650), () {
+          if (mounted) setState(() => _estado = RecompensaEstado.normal);
+        });
+      },
+    );
+  }
+}
+
+class _MesaCodexPreviewHost extends StatefulWidget {
+  const _MesaCodexPreviewHost();
+
+  @override
+  State<_MesaCodexPreviewHost> createState() => _MesaCodexPreviewHostState();
+}
+
+class _MesaCodexPreviewHostState extends State<_MesaCodexPreviewHost> {
+  Set<String> _selecionadas = const {'mao_as'};
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(texto),
+          duration: const Duration(milliseconds: 1000),
+          backgroundColor: const Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
+  void _alternarCarta(String id) {
+    setState(() {
+      final novas = Set<String>.from(_selecionadas);
+      if (!novas.add(id)) novas.remove(id);
+      _selecionadas = novas;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = mesa_visual.MesaVM.mock(selecionadas: _selecionadas);
+    return mesa_visual.MesaScreen(
+      vm: vm,
+      onMenu: () => _aviso('Menu da partida — conexão entra com o Claude'),
+      onChat: () => _aviso('Chat da mesa — conexão entra com o Claude'),
+      onComprarMonte: () => _aviso('Comprar do monte'),
+      onPegarLixo: () => _aviso('Pegar o lixo'),
+      onTapCarta: _alternarCarta,
+      onBaixar: () => _aviso('Baixar cartas selecionadas'),
+      onEstender: (meldId) => _aviso('Estender no jogo $meldId'),
+      onDescartar: () => _aviso('Descartar carta selecionada'),
     );
   }
 }
