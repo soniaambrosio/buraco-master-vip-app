@@ -19,6 +19,10 @@ import 'screens/saguao_screen.dart';
 import 'screens/configuracoes_screen.dart';
 import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
+import 'screens/splash_oficial_screen.dart';
+import 'screens/preparando_partida_screen.dart';
+import 'screens/hall_screen.dart';
+import 'screens/onde_jogar_screen.dart';
 import 'widgets/convite_vip.dart';
 
 // Paleta da casa
@@ -59,7 +63,9 @@ class BuracoApp extends StatelessWidget {
       title: 'Buraco Master VIP',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-      home: const SplashScreen(),
+      home: const SplashOficialScreen(
+        proximaTela: _InicioPreviewHost(),
+      ),
     );
   }
 }
@@ -253,8 +259,9 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
   }
 
   void _abrirMesa() {
+    // JOGAR → Onde Jogar (seletor de mesa) → Configurar Mesa → Preparando → Mesa.
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _ConfigMesaPreviewHost()),
+      MaterialPageRoute(builder: (_) => const _OndeJogarPreviewHost()),
     );
   }
 
@@ -815,6 +822,88 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
 }
 
 
+// ===================== HALL DOS IMORTAIS (host) =====================
+class _HallPreviewHost extends StatelessWidget {
+  const _HallPreviewHost();
+
+  void _aviso(BuildContext context, String texto) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(texto),
+          duration: const Duration(milliseconds: 1500),
+          backgroundColor: const Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return HallScreen(
+      vm: HallVM.mock(),
+      onVoltar: () => Navigator.of(context).maybePop(),
+      onVerRegras: () {},
+      onVerPerfil: (id) => _aviso(context, 'Abrir perfil: $id'),
+      onPresentear: (id) {},
+      onEnviarPresente: (id, presenteId) =>
+          _aviso(context, 'Presente $presenteId enviado para $id'),
+      onNav: (destino) {
+        switch (destino) {
+          case 'ranking':
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+            );
+            break;
+          case 'perfil':
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const PerfilPage()),
+            );
+            break;
+          case 'estatisticas':
+            _aviso(context, 'Minhas estatísticas — integração fica com o Claude');
+            break;
+          case 'presentes':
+            _aviso(context, 'Inventário de presentes — integração fica com o Claude');
+            break;
+          default:
+            break;
+        }
+      },
+    );
+  }
+}
+
+
+// ===================== ONDE JOGAR (host) =====================
+class _OndeJogarPreviewHost extends StatelessWidget {
+  const _OndeJogarPreviewHost();
+
+  @override
+  Widget build(BuildContext context) {
+    return OndeJogarScreen(
+      vm: OndeJogarVM.mock(),
+      onVoltar: () => Navigator.of(context).maybePop(),
+      onEscolher: (id) {
+        if (id == 'treino') {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const MesaScreen()),
+          );
+          return;
+        }
+        final tipo = id == 'publica'
+            ? TipoMesa.publica
+            : id == 'vip'
+                ? TipoMesa.vip
+                : TipoMesa.privada;
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => _ConfigMesaPreviewHost(tipoInicial: tipo)),
+        );
+      },
+    );
+  }
+}
+
 // ===================== RECOMPENSAS — PRÉVIA VISUAL CODEX =====================
 class _RecompensasPreviewHost extends StatefulWidget {
   const _RecompensasPreviewHost();
@@ -858,14 +947,15 @@ class _RecompensasPreviewHostState extends State<_RecompensasPreviewHost> {
 
 // ===================== CONFIGURAR MESA — PRÉVIA VISUAL CODEX =====================
 class _ConfigMesaPreviewHost extends StatefulWidget {
-  const _ConfigMesaPreviewHost();
+  final TipoMesa tipoInicial;
+  const _ConfigMesaPreviewHost({this.tipoInicial = TipoMesa.privada});
 
   @override
   State<_ConfigMesaPreviewHost> createState() => _ConfigMesaPreviewHostState();
 }
 
 class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
-  ConfigMesaVM _vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
+  late ConfigMesaVM _vm = ConfigMesaVM.mock(tipo: widget.tipoInicial);
 
   void _aviso(String texto) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -996,16 +1086,30 @@ class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
       onCopiar: _copiarCodigo,
       onAlternarCadeira: _alternarCadeira,
       onCriarMesa: () {
-        _aviso('Configuração pronta — criação real fica com o Claude');
+        // Dono cria a mesa → tela "Preparando partida" (cadeiras enchendo) →
+        // ao concluir, abre a MesaScreen jogável com a config escolhida.
+        final variant = _vm.tipo == TipoMesa.publica
+            ? MesaVariant.publica
+            : MesaVariant.vip;
+        final modalidade = _modalidadeLabel(_vm.modalidade);
+        final metaPontos = _vm.pontos;
+        final tempo = _vm.tempo;
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => MesaScreen(
-              variant: _vm.tipo == TipoMesa.publica
-                  ? MesaVariant.publica
-                  : MesaVariant.vip,
-              modalidade: _modalidadeLabel(_vm.modalidade),
-              metaPontos: _vm.pontos,
-              tempoSegundos: _vm.tempo,
+            builder: (_) => PreparandoPartidaScreen(
+              vm: PreparandoPartidaVM.mock(ehVip: _vm.ehVip),
+              onConcluido: () {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => MesaScreen(
+                      variant: variant,
+                      modalidade: modalidade,
+                      metaPontos: metaPontos,
+                      tempoSegundos: tempo,
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         );
@@ -1478,7 +1582,9 @@ class _RankingPreviewHostState extends State<_RankingPreviewHost> {
       vm: vm,
       onVoltar: () => Navigator.of(context).maybePop(),
       onTrocarAba: (aba) => setState(() => _aba = aba),
-      onAbrirHall: () => _aviso('Hall dos Imortais — conexão entra com o Claude'),
+      onAbrirHall: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const _HallPreviewHost()),
+      ),
       onVerJogador: (posicao) => _aviso('Perfil da posição #$posicao'),
       onRecarregar: () => setState(() {}),
       onCarregarMais: null,
