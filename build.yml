@@ -49,8 +49,8 @@ jobs:
       - name: Scaffold Flutter project
         run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
 
-      - name: Overlay custom screen
-        run: cp app/lib/main.dart app_build/lib/main.dart
+      - name: Overlay custom UI files
+        run: cp -R app/lib/. app_build/lib/
 
       - name: Copy sound assets (mp3 reais da Sônia)
         run: |
@@ -67,6 +67,51 @@ jobs:
           echo "cartas copiadas: $N arquivos"
           ls -l app_build/assets/baralho/ | head
           if [ "$N" -lt 55 ]; then echo "ERRO: esperava 55 cartas, veio $N"; exit 1; fi
+
+
+      - name: Copy profile UI assets
+        run: |
+          mkdir -p app_build/assets/perfil
+          cp app/assets/perfil/*.webp app_build/assets/perfil/
+          N=$(ls app_build/assets/perfil/ | wc -l)
+          echo "assets do perfil copiados: $N arquivos"
+          if [ "$N" -lt 23 ]; then echo "ERRO: esperava 23 assets do perfil, veio $N"; exit 1; fi
+
+      - name: Copy ranking UI assets
+        run: |
+          mkdir -p app_build/assets/ranking
+          cp app/assets/ranking/*.webp app_build/assets/ranking/
+          N=$(ls app_build/assets/ranking/ | wc -l)
+          echo "assets do ranking copiados: $N arquivos"
+          if [ "$N" -lt 13 ]; then echo "ERRO: esperava 13 assets do ranking, veio $N"; exit 1; fi
+
+      - name: Copy mesa VIP assets
+        run: |
+          mkdir -p app_build/assets/mesa_vip
+          cp app/assets/mesa_vip/*.webp app_build/assets/mesa_vip/
+          echo "assets mesa_vip: $(ls app_build/assets/mesa_vip/ | wc -l)"
+
+      - name: Copy ranking selos assets
+        run: |
+          mkdir -p app_build/assets/ranking/selos
+          cp app/assets/ranking/selos/*.webp app_build/assets/ranking/selos/
+          echo "selos: $(ls app_build/assets/ranking/selos/ | wc -l)"
+
+      - name: Copy home UI assets (tela Inicio do Codex)
+        run: |
+          mkdir -p app_build/assets/inicio
+          cp app/assets/inicio/*.webp app_build/assets/inicio/
+          N=$(find app_build/assets/inicio -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "assets da tela inicio copiados: $N arquivos"
+          if [ "$N" -lt 11 ]; then echo "ERRO: esperava 11 assets da tela inicio, veio $N"; exit 1; fi
+
+      - name: Copy configurar-mesa UI assets (tela Configurar Mesa do Codex)
+        run: |
+          mkdir -p app_build/assets/configurar_mesa
+          cp app/assets/configurar_mesa/*.webp app_build/assets/configurar_mesa/
+          N=$(find app_build/assets/configurar_mesa -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "assets da tela configurar_mesa copiados: $N arquivos"
+          if [ "$N" -lt 8 ]; then echo "ERRO: esperava 8 assets de configurar_mesa, veio $N"; exit 1; fi
 
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
@@ -236,6 +281,12 @@ jobs:
               '    - assets/splash.jpg',
               '    - assets/sons/',
               '    - assets/baralho/',
+              '    - assets/perfil/',
+              '    - assets/ranking/',
+              '    - assets/ranking/selos/',
+              '    - assets/mesa_vip/',
+              '    - assets/inicio/',
+              '    - assets/configurar_mesa/',
           ]
           joined = '\n'.join(lines)
           if 'assets/baralho/' not in joined:
@@ -256,18 +307,18 @@ jobs:
           open(p, 'w', encoding='utf-8').write(s)
           print('----- pubspec.yaml (a partir de flutter:) -----')
           print(s[s.find('\nflutter:'):] if '\nflutter:' in s else s)
-          # travas de segurança: exatamente UMA seção flutter: e as 3 pastas declaradas
+          # travas de segurança: exatamente UMA seção flutter: e as 5 pastas declaradas
           top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
           assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
-          for a in ('assets/splash.jpg', 'assets/sons/', 'assets/baralho/'):
+          for a in ('assets/splash.jpg', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/'):
               assert a in s, f'FALTOU declarar {a} no pubspec!'
-          print('OK: 1 seção flutter: · splash + sons + baralho declarados')
+          print('OK: 1 seção flutter: · splash + sons + baralho + perfil + ranking declarados')
           PY
 
       - name: Conferir assets que serão empacotados
         run: |
           echo "--- app_build/assets ---"; find app_build/assets -type f | sort | sed -n '1,20p'
-          echo "baralho: $(ls app_build/assets/baralho | wc -l) | sons: $(ls app_build/assets/sons | wc -l)"
+          echo "baralho: $(ls app_build/assets/baralho | wc -l) | sons: $(ls app_build/assets/sons | wc -l) | perfil: $(ls app_build/assets/perfil | wc -l) | ranking: $(ls app_build/assets/ranking | wc -l)"
 
       - name: Build release APK por ABI (menor; arm64 pro celular)
         run: cd app_build && flutter build apk --release --split-per-abi
@@ -275,8 +326,9 @@ jobs:
       - name: Conferir baralho DENTRO do APK (prova de bundling)
         run: |
           APK=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-          echo "cartas no APK: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/baralho/') | sons: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/sons/')"
+          echo "cartas no APK: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/baralho/') | sons: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/sons/') | perfil: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/perfil/') | ranking: $(unzip -l "$APK" | grep -c 'assets/flutter_assets/assets/ranking/')"
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/baralho/' | head -3 || true
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/ranking/' | head -3 || true
 
       - name: Signing report (confirma a assinatura final)
         run: |
