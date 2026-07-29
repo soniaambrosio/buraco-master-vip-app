@@ -246,7 +246,7 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
 
   void _abrirMesa() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _MesaCodexPreviewHost()),
+      MaterialPageRoute(builder: (_) => const MesaScreen()),
     );
   }
 
@@ -1815,24 +1815,116 @@ class _MesaScreenState extends State<MesaScreen> with SingleTickerProviderStateM
     }
   }
 
+  // ===== ADAPTER: liga o motor (Jogo) ao visual novo do Codex (mesa_visual) =====
+  mesa_visual.CartaVM _cvm(Carta c) => mesa_visual.CartaVM(
+        id: c.id,
+        valor: c.valor == 'JOKER' ? '★' : c.valor,
+        naipe: c.naipe ?? '',
+        coringa: c.ehCoringa,
+      );
+
+  mesa_visual.TipoMeld _tipoMeld(List<Carta> m) {
+    if (m.length < 7) return mesa_visual.TipoMeld.comum;
+    final r = _j.validarSequencia(m);
+    if (r['valido'] != true) return mesa_visual.TipoMeld.comum;
+    switch (r['tipo']) {
+      case 'limpa':
+        return mesa_visual.TipoMeld.limpa;
+      case 'suja':
+        return mesa_visual.TipoMeld.suja;
+      case 'de_500':
+      case 'as_a_as':
+        return mesa_visual.TipoMeld.de500;
+      default:
+        return mesa_visual.TipoMeld.comum;
+    }
+  }
+
+  List<mesa_visual.Meld> _meldsDupla(String dupla) {
+    final jogos = _j.jogosDupla[dupla]!;
+    return [
+      for (var i = 0; i < jogos.length; i++)
+        mesa_visual.Meld(
+          id: '${dupla}_$i',
+          cartas: jogos[i].map(_cvm).toList(),
+          tipo: _tipoMeld(jogos[i]),
+          contagem: jogos[i].length,
+        ),
+    ];
+  }
+
+  mesa_visual.JogadorMesa _jogadorVM(int assento, bool ehVoce) {
+    const nomes = ['você', 'Cláudia', 'Mateus', 'Sofia'];
+    const numeros = [7, 2, 4, 3];
+    const avatares = ['🐶', '🐰', '🦊', '🐱'];
+    return mesa_visual.JogadorMesa(
+      nome: nomes[assento],
+      numero: numeros[assento],
+      cartas: _j.maos[assento].length,
+      avatar: avatares[assento],
+      ehVoce: ehVoce,
+    );
+  }
+
+  mesa_visual.MesaVM _buildMesaVM() {
+    return mesa_visual.MesaVM(
+      titulo: 'BURACO MASTER VIP',
+      meta: _j.metaPontos,
+      modalidade: mesa_visual.Modalidade.aberto,
+      rodada: _j.rodada,
+      eles: mesa_visual.PlacarDupla(
+        pontos: _j.placar['eles'] ?? 0,
+        vulneravel: _j.vulneravel('eles'),
+        vulneravelMinimo: _j.vulneravelMinimo('eles'),
+      ),
+      nos: mesa_visual.PlacarDupla(
+        pontos: _j.placar['nos'] ?? 0,
+        vulneravel: _j.vulneravel('nos'),
+        vulneravelMinimo: _j.vulneravelMinimo('nos'),
+      ),
+      jogadoresEles: [_jogadorVM(1, false), _jogadorVM(3, false)],
+      jogadoresNos: [_jogadorVM(2, false), _jogadorVM(0, true)],
+      meldsEles: _meldsDupla('eles'),
+      meldsNos: _meldsDupla('nos'),
+      monte: mesa_visual.PilhaMonte(
+        contagem: _j.monte.length,
+        destaque: _minhaVezAtiva && !_j.jaComprou,
+      ),
+      lixo: mesa_visual.PilhaLixo(
+        contagem: _j.lixo.length,
+        topo: _j.lixo.isNotEmpty ? _cvm(_j.lixo.last) : null,
+      ),
+      mortosRestantes: _j.mortos.length,
+      mao: _j.maos[0].map(_cvm).toList(),
+      selecionadas: _sel.map((i) => _j.maos[0][i].id).toSet(),
+      dica: _msg,
+      minhaVez: _minhaVezAtiva,
+    );
+  }
+
+  void _tapCartaPorId(String id) {
+    final i = _j.maos[0].indexWhere((c) => c.id == id);
+    if (i >= 0) _tapCard(i);
+  }
+
+  void _estenderPorId(String meldId) {
+    if (!meldId.startsWith('nos_')) return;
+    final i = int.tryParse(meldId.substring(4));
+    if (i != null) _estender(i);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF070504),
-      body: SafeArea(
-        bottom: true,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFF17100B), Color(0xFF090604), Color(0xFF030202)],
-              stops: [0, 0.42, 1],
-            ),
-          ),
-          child: Column(children: [_header(), Expanded(child: _mesa())]),
-        ),
-      ),
+    return mesa_visual.MesaScreen(
+      vm: _buildMesaVM(),
+      onMenu: () {},
+      onChat: () {},
+      onComprarMonte: _tapMonte,
+      onPegarLixo: _tapLixo,
+      onTapCarta: _tapCartaPorId,
+      onBaixar: _baixar,
+      onEstender: _estenderPorId,
+      onDescartar: _tapLixo,
     );
   }
 
