@@ -16,6 +16,9 @@ import 'screens/configurar_mesa_screen.dart';
 import 'screens/resultado_partida_screen.dart';
 import 'screens/amigos_screen.dart';
 import 'screens/saguao_screen.dart';
+import 'screens/configuracoes_screen.dart';
+import 'screens/como_jogar_screen.dart';
+import 'screens/loja_screen.dart';
 import 'widgets/convite_vip.dart';
 
 // Paleta da casa
@@ -273,6 +276,24 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
     );
   }
 
+  void _abrirConfiguracoes() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _ConfiguracoesPreviewHost()),
+    );
+  }
+
+  void _abrirComoJogar() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _ComoJogarPreviewHost()),
+    );
+  }
+
+  void _abrirLoja() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _LojaPreviewHost()),
+    );
+  }
+
   void _menuTap(String id) {
     switch (id) {
       case 'perfil':
@@ -286,6 +307,15 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
         break;
       case 'amigos':
         _abrirAmigos();
+        break;
+      case 'ajustes':
+        _abrirConfiguracoes();
+        break;
+      case 'tutorial':
+        _abrirComoJogar();
+        break;
+      case 'loja':
+        _abrirLoja();
         break;
       case 'jogar':
         _abrirMesa();
@@ -303,7 +333,7 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
         _abrirRanking();
         break;
       case NavDestino.loja:
-        _aviso('Loja VIP — integração fica com o Claude');
+        _abrirLoja();
         break;
       case NavDestino.perfil:
         _abrirPerfil();
@@ -546,6 +576,243 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
   }
 }
 
+
+
+// ===================== CONFIGURAÇÕES (host) =====================
+class _ConfiguracoesPreviewHost extends StatefulWidget {
+  const _ConfiguracoesPreviewHost();
+
+  @override
+  State<_ConfiguracoesPreviewHost> createState() =>
+      _ConfiguracoesPreviewHostState();
+}
+
+class _ConfiguracoesPreviewHostState
+    extends State<_ConfiguracoesPreviewHost> {
+  ConfigVM _vm = ConfigVM.mock();
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(texto),
+          duration: const Duration(milliseconds: 1300),
+          backgroundColor: const Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
+  void _toggle(String id, bool valor) {
+    setState(() {
+      switch (id) {
+        case 'musica':
+          _vm = _vm.copyWith(musica: valor);
+          break;
+        case 'efeitos':
+          _vm = _vm.copyWith(efeitos: valor);
+          break;
+        case 'vibracao':
+          _vm = _vm.copyWith(vibracao: valor);
+          break;
+        case 'notificacoes':
+          _vm = _vm.copyWith(notificacoes: valor);
+          break;
+        case 'animacoes':
+          _vm = _vm.copyWith(animacoes: valor);
+          break;
+        case 'ordenarCartas':
+          _vm = _vm.copyWith(ordenarCartas: valor);
+          break;
+        case 'mostrarOnline':
+          _vm = _vm.copyWith(mostrarOnline: valor);
+          break;
+      }
+    });
+    _aviso('$id atualizado — persistência fica com o Claude');
+  }
+
+  void _abrirLoja() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _LojaPreviewHost()),
+    );
+  }
+
+  void _abrirPerfil() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PerfilPage()),
+    );
+  }
+
+  void _abrirComoJogar() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _ComoJogarPreviewHost()),
+    );
+  }
+
+  Future<void> _confirmarSaida() async {
+    final sair = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1C130C),
+        title: const Text(
+          'Sair da conta?',
+          style: TextStyle(color: Color(0xFFF6E2A6)),
+        ),
+        content: const Text(
+          'Você precisará entrar novamente para continuar jogando.',
+          style: TextStyle(color: Color(0xFFD5C4A3)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF8E2F2B),
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sair'),
+          ),
+        ],
+      ),
+    );
+    if (sair == true && mounted) {
+      _aviso('Logout real fica com o Claude');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ConfiguracoesScreen(
+      vm: _vm,
+      onVoltar: () => Navigator.of(context).maybePop(),
+      onEditarPerfil: _abrirPerfil,
+      onAssinaturaVip: _abrirLoja,
+      onMoedasCompras: _abrirLoja,
+      onToggle: _toggle,
+      onMao: (mao) {
+        setState(() => _vm = _vm.copyWith(mao: mao));
+        _aviso('Mão ${mao == MaoJogador.destro ? 'destro' : 'canhoto'}');
+      },
+      onQuemConvida: () {
+        const opcoes = ['Amigos', 'Todos', 'Ninguém'];
+        final atual = opcoes.indexOf(_vm.quemConvida);
+        final proximo = opcoes[(atual + 1) % opcoes.length];
+        setState(() => _vm = _vm.copyWith(quemConvida: proximo));
+        _aviso('Convites: $proximo — lista real fica com o Claude');
+      },
+      onBloqueados: () =>
+          _aviso('Jogadores bloqueados — integração fica com o Claude'),
+      onComoJogar: _abrirComoJogar,
+      onSuporte: () => _aviso('Suporte — canal real fica com o Claude'),
+      onAvaliar: () =>
+          _aviso('Google Play — abertura da loja fica com o Claude'),
+      onSair: _confirmarSaida,
+    );
+  }
+}
+
+// ===================== COMO JOGAR (host) =====================
+class _ComoJogarPreviewHost extends StatelessWidget {
+  const _ComoJogarPreviewHost();
+
+  @override
+  Widget build(BuildContext context) {
+    return ComoJogarScreen(
+      onVoltar: () => Navigator.of(context).maybePop(),
+      onJogarTreino: () {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Treino com 3 robôs — criação real fica com o Claude'),
+            duration: Duration(milliseconds: 1300),
+            backgroundColor: Color(0xFF2A1B0E),
+          ),
+        );
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const MesaScreen()),
+        );
+      },
+    );
+  }
+}
+
+
+// ===================== LOJA VIP (host) =====================
+class _LojaPreviewHost extends StatefulWidget {
+  const _LojaPreviewHost();
+
+  @override
+  State<_LojaPreviewHost> createState() => _LojaPreviewHostState();
+}
+
+class _LojaPreviewHostState extends State<_LojaPreviewHost> {
+  bool _ehVip = false;
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(texto),
+          duration: const Duration(milliseconds: 1400),
+          backgroundColor: const Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
+  void _abrirRanking() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+    );
+  }
+
+  void _abrirPerfil() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const PerfilPage()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LojaScreen(
+      vm: LojaVM.mock(ehVip: _ehVip),
+      onVoltar: () => Navigator.of(context).maybePop(),
+      onNav: (destino) {
+        switch (destino) {
+          case NavDestino.inicio:
+            Navigator.of(context).popUntil((route) => route.isFirst);
+            break;
+          case NavDestino.ranking:
+            _abrirRanking();
+            break;
+          case NavDestino.loja:
+            break;
+          case NavDestino.perfil:
+            _abrirPerfil();
+            break;
+        }
+      },
+      onComprarMoedas: () => _aviso('Pacotes de moedas'),
+      onAssinar: (planoId) {
+        _aviso('Plano $planoId selecionado — billing entra com o Claude');
+        Future<void>.delayed(const Duration(milliseconds: 550), () {
+          if (mounted) setState(() => _ehVip = true);
+        });
+      },
+      onComprarPacote: (pacoteId) => _aviso('Revisando pacote $pacoteId'),
+      onConfirmarCompra: (itemId) =>
+          _aviso('Compra de $itemId — Google Play Billing entra com o Claude'),
+      onAbrirCategoria: (categoria) =>
+          _aviso('${categoria.name} — catálogo detalhado é o próximo contrato'),
+      onPresentear: (itemId) => _aviso('Escolha um amigo para receber $itemId'),
+      onBuscarPresenteado: (_) {},
+      onEnviarPresente: (itemId, jogadorId) =>
+          _aviso('Presente $itemId enviado para $jogadorId'),
+    );
+  }
+}
 
 
 // ===================== RECOMPENSAS — PRÉVIA VISUAL CODEX =====================
