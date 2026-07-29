@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -11,6 +12,8 @@ import 'screens/perfil_screen.dart' show NavDestino;
 import 'screens/inicio_screen.dart';
 import 'screens/recompensas_screen.dart';
 import 'screens/mesa_screen.dart' as mesa_visual;
+import 'screens/configurar_mesa_screen.dart';
+import 'screens/amigos_screen.dart';
 import 'screens/ranking_screen.dart';
 import 'screens/mesa_vip_preview_screen.dart';
 
@@ -245,14 +248,22 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
   }
 
   void _abrirMesa() {
+    // JOGAR → Configurar Mesa (visual do Codex) → "Criar mesa" abre a MesaScreen
+    // jogável (motor do Claude). Fluxo real do jogo.
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const MesaScreen()),
+      MaterialPageRoute(builder: (_) => const _ConfigMesaPreviewHost()),
     );
   }
 
   void _abrirRecompensas() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const _RecompensasPreviewHost()),
+    );
+  }
+
+  void _abrirAmigos() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _AmigosPreviewHost()),
     );
   }
 
@@ -269,6 +280,9 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
         break;
       case 'jogar':
         _abrirMesa();
+        break;
+      case 'amigos':
+        _abrirAmigos();
         break;
       default:
         _aviso('$id — integração fica com o Claude');
@@ -1605,6 +1619,271 @@ class _CrossHatch extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ===================== AMIGOS (host) =====================
+// Tela do Claude (visual + lógica). Fase A: mock navegável (busca/abas/pedidos
+// funcionam sobre dados locais). Fase B: AmigosService + cloud_firestore em
+// tempo real (presença, código real, recompensa de convite). Ver PLANO-TELA-AMIGOS.md.
+class _AmigosPreviewHost extends StatefulWidget {
+  const _AmigosPreviewHost();
+
+  @override
+  State<_AmigosPreviewHost> createState() => _AmigosPreviewHostState();
+}
+
+class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
+  AmigosVM _vm = AmigosVM.mock();
+  Timer? _debounce;
+
+  // Diretório mock só pra a busca da Fase A ter o que devolver.
+  // Fase B: substituído por query no Firestore (apelidoLower / codigo).
+  static const List<ResultadoBusca> _diretorio = [
+    ResultadoBusca(id: 'larissa', apelido: 'Larissa', avatar: '🐱', nivel: 9, online: true, relacao: RelacaoBusca.nenhuma),
+    ResultadoBusca(id: 'ricardo', apelido: 'Ricardo', avatar: '🐻', nivel: 14, online: false, relacao: RelacaoBusca.nenhuma),
+    ResultadoBusca(id: 'claudia', apelido: 'Cláudia', avatar: '🐰', nivel: 18, online: true, relacao: RelacaoBusca.jaAmigo),
+    ResultadoBusca(id: 'joao', apelido: 'João', avatar: '🐼', nivel: 7, online: false, relacao: RelacaoBusca.pedidoEnviado),
+    ResultadoBusca(id: 'paula', apelido: 'Paula', avatar: '🦉', nivel: 22, online: true, relacao: RelacaoBusca.nenhuma),
+    ResultadoBusca(id: 'sonia', apelido: 'Sônia', avatar: '👑', nivel: 24, online: true, relacao: RelacaoBusca.ehVoce),
+  ];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1300),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  void _buscar(String termo) {
+    _debounce?.cancel();
+    final t = termo.trim();
+    if (t.isEmpty) {
+      setState(() => _vm = _vm.semBusca());
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      final low = t.toLowerCase();
+      final achados = _diretorio
+          .where((r) => r.apelido.toLowerCase().contains(low) || vm_codigoBate(r, low))
+          .toList();
+      if (!mounted) return;
+      setState(() => _vm = _vm.copyWith(termoBusca: t, resultados: achados));
+    });
+  }
+
+  // Busca também pelo "código" (na Fase A só o próprio código bate; Fase B: código real por jogador).
+  bool vm_codigoBate(ResultadoBusca r, String low) =>
+      r.id == 'sonia' && _vm.meuCodigo.toLowerCase().contains(low);
+
+  void _enviarPedido(String id) {
+    setState(() {
+      _vm = _vm.copyWith(
+        resultados: _vm.resultados
+            .map((r) => r.id == id
+                ? ResultadoBusca(
+                    id: r.id, apelido: r.apelido, avatar: r.avatar,
+                    nivel: r.nivel, online: r.online, relacao: RelacaoBusca.pedidoEnviado)
+                : r)
+            .toList(),
+      );
+    });
+    _aviso('Pedido enviado 🤝 (vira real com o Firestore — Fase B)');
+  }
+
+  void _responderPedido(String id, bool aceitar) {
+    final pedido = _vm.pedidosRecebidos.firstWhere(
+      (p) => p.id == id,
+      orElse: () => const Pedido(id: '', apelido: ''),
+    );
+    final restantes = _vm.pedidosRecebidos.where((p) => p.id != id).toList();
+    if (aceitar && pedido.id.isNotEmpty) {
+      final novo = Amigo(
+        id: pedido.id, apelido: pedido.apelido, avatar: pedido.avatar,
+        status: StatusAmigo.livre, ultimoAcesso: 'agora',
+      );
+      setState(() {
+        _vm = _vm.copyWith(
+          pedidosRecebidos: restantes,
+          online: [..._vm.online, novo],
+          todos: [..._vm.todos, novo],
+        );
+      });
+      _aviso('${pedido.apelido} agora é seu amigo! 🎉');
+    } else {
+      setState(() => _vm = _vm.copyWith(pedidosRecebidos: restantes));
+      if (pedido.id.isNotEmpty) _aviso('Pedido de ${pedido.apelido} recusado');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AmigosScreen(
+      vm: _vm,
+      onVoltar: () => Navigator.of(context).pop(),
+      onCopiarCodigo: () async {
+        await Clipboard.setData(ClipboardData(text: _vm.meuCodigo));
+        if (mounted) _aviso('Código ${_vm.meuCodigo} copiado');
+      },
+      onConvidarLink: () => _aviso('Compartilhar convite — integração fica com o Claude (Fase B)'),
+      onBuscar: _buscar,
+      onEnviarPedido: _enviarPedido,
+      onResponderPedido: _responderPedido,
+      onTrocarAba: (aba) => setState(() => _vm = _vm.copyWith(aba: aba)),
+      onConvidar: (id) => _aviso('Convite pra mesa — integração fica com o Claude (Fase B)'),
+      onAssistir: (id) => _aviso('Assistir a mesa — integração fica com o Claude (Fase B)'),
+      onAbrirAmigo: (id) => _aviso('Opções do amigo — integração fica com o Claude (Fase B)'),
+      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba)),
+    );
+  }
+}
+
+// ===================== CONFIGURAR MESA (host) =====================
+// Visual do Codex (ConfigurarMesaScreen). O Claude conecta a criação real da
+// mesa depois; por ora "Criar mesa" abre a MesaScreen jogável (motor do Claude).
+class _ConfigMesaPreviewHost extends StatefulWidget {
+  const _ConfigMesaPreviewHost();
+
+  @override
+  State<_ConfigMesaPreviewHost> createState() => _ConfigMesaPreviewHostState();
+}
+
+class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
+  ConfigMesaVM _vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1300),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  int get _jogadores => _vm.modo == ModoJogo.dois ? 2 : 4;
+
+  ApostaVM? _apostaComPote(ApostaVM? aposta, {int? valor}) {
+    if (aposta == null) return null;
+    final novoValor = valor ?? aposta.valor;
+    return aposta.copyWith(valor: novoValor, pote: novoValor * _jogadores);
+  }
+
+  void _trocarTipo(TipoMesa tipo) {
+    setState(() {
+      _vm = ConfigMesaVM.mock(tipo: tipo, ehVip: _vm.ehVip);
+    });
+  }
+
+  void _trocarModo(ModoJogo modo) {
+    setState(() {
+      final jogadores = modo == ModoJogo.dois ? 2 : 4;
+      final aposta = _vm.aposta;
+      _vm = _vm.copyWith(
+        modo: modo,
+        aposta: aposta == null
+            ? null
+            : aposta.copyWith(pote: aposta.valor * jogadores),
+      );
+    });
+  }
+
+  void _alternarCadeira(String id) {
+    final cadeiras = _vm.cadeiras;
+    if (cadeiras == null) return;
+    setState(() {
+      _vm = _vm.copyWith(
+        cadeiras: cadeiras.map((cadeira) {
+          if (cadeira.id != id || !cadeira.podeAlternar) return cadeira;
+          return cadeira.copyWith(
+            estado: cadeira.estado == EstadoCadeira.travada
+                ? EstadoCadeira.liberada
+                : EstadoCadeira.travada,
+          );
+        }).toList(),
+      );
+    });
+  }
+
+  Future<void> _copiarCodigo() async {
+    final codigo = _vm.codigo;
+    if (codigo == null) return;
+    await Clipboard.setData(ClipboardData(text: codigo));
+    if (mounted) _aviso('Código $codigo copiado');
+  }
+
+  void _verRegras() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C130C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => const SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(22, 18, 22, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Modalidades',
+                style: TextStyle(
+                  color: Color(0xFFEFB94A),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              SizedBox(height: 13),
+              Text('Aberto — lixo à vista e compra livre.'),
+              SizedBox(height: 8),
+              Text('Fechado — compra justificada e aceita trinca.'),
+              SizedBox(height: 8),
+              Text('SBTL — sem trinca e bate somente com canastra limpa.'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ConfigurarMesaScreen(
+      vm: _vm,
+      onVoltar: () => Navigator.of(context).pop(),
+      onTipo: _trocarTipo,
+      onTipoBloqueado: (tipo) =>
+          _aviso('${tipo.name.toUpperCase()} é exclusivo para jogador VIP'),
+      onModalidade: (value) => setState(() => _vm = _vm.copyWith(modalidade: value)),
+      onVerRegras: _verRegras,
+      onModo: _trocarModo,
+      onPontos: (value) => setState(() => _vm = _vm.copyWith(pontos: value)),
+      onAposta: (value) => setState(() {
+        _vm = _vm.copyWith(aposta: _apostaComPote(_vm.aposta, valor: value));
+      }),
+      onTempo: (value) => setState(() => _vm = _vm.copyWith(tempo: value)),
+      onChat: (value) => setState(() => _vm = _vm.copyWith(chat: value)),
+      onEspectadores: (value) =>
+          setState(() => _vm = _vm.copyWith(espectadores: value)),
+      onCopiar: _copiarCodigo,
+      onAlternarCadeira: _alternarCadeira,
+      onCriarMesa: () {
+        // Criação real da mesa fica com o Claude; por ora abre a mesa jogável.
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const MesaScreen()),
+        );
+      },
+    );
+  }
 }
 
 class MesaScreen extends StatefulWidget {
