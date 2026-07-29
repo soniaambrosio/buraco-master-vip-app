@@ -105,6 +105,14 @@ jobs:
           echo "assets da tela inicio copiados: $N arquivos"
           if [ "$N" -lt 11 ]; then echo "ERRO: esperava 11 assets da tela inicio, veio $N"; exit 1; fi
 
+      - name: Copy configurar-mesa UI assets (tela Configurar Mesa do Codex)
+        run: |
+          mkdir -p app_build/assets/configurar_mesa
+          cp app/assets/configurar_mesa/*.webp app_build/assets/configurar_mesa/
+          N=$(find app_build/assets/configurar_mesa -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "assets da tela configurar_mesa copiados: $N arquivos"
+          if [ "$N" -lt 8 ]; then echo "ERRO: esperava 8 assets de configurar_mesa, veio $N"; exit 1; fi
+
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
 
@@ -278,6 +286,7 @@ jobs:
               '    - assets/ranking/selos/',
               '    - assets/mesa_vip/',
               '    - assets/inicio/',
+              '    - assets/configurar_mesa/',
           ]
           joined = '\n'.join(lines)
           if 'assets/baralho/' not in joined:
