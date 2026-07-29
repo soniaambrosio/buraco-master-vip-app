@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/convite_vip.dart';
 
 // ============================================================================
 // TELA AMIGOS — build do Claude (visual + lógica).
@@ -234,7 +235,20 @@ class AmigosScreen extends StatelessWidget {
                   _topBar(),
                   Expanded(
                     child: !vm.ehVip
-                        ? _AmigosVipGate(onAssinar: onAssinar)
+                        ? ConviteVip(
+                            titulo: 'Amigos é um benefício VIP',
+                            subtitulo:
+                                'Assine e jogue buraco com quem você ama — a sua turma na mesa, do seu jeito.',
+                            beneficios: const [
+                              'Jogue com sua turma em mesas privadas',
+                              'Veja quem está online e convide pra jogar',
+                              'Assista seus amigos ao vivo nas mesas',
+                              'Presenteie e receba presentes',
+                              'Sem anúncios + bônus diário de moedas',
+                              'Selo VIP dourado ao lado do seu nome',
+                            ],
+                            onAssinar: onAssinar,
+                          )
                         : vm.estado == AmigosEstado.erro
                         ? _erro()
                         : RefreshIndicator(
@@ -756,194 +770,4 @@ class AmigosScreen extends StatelessWidget {
           ],
         ),
       );
-}
-
-// ============================================================================
-// PORTÃO VIP — Amigos é benefício de assinante. Não-VIP vê o convite pra a
-// assinatura RECORRENTE (semanal/mensal/anual). Preços de TABELA-PRECOS.md.
-// Fase B: o botão liga no Google Play Billing (assinatura real) via a infra
-// `conta.vip` / ehVip(). Ver ASSINATURA-VIP-INFRA.md.
-// ============================================================================
-class _PlanoVip {
-  final String id;
-  final String nome;
-  final String preco;
-  final String periodo;
-  final String? selo;
-  const _PlanoVip(this.id, this.nome, this.preco, this.periodo, [this.selo]);
-}
-
-class _AmigosVipGate extends StatefulWidget {
-  final ValueChanged<String> onAssinar;
-  const _AmigosVipGate({required this.onAssinar});
-
-  @override
-  State<_AmigosVipGate> createState() => _AmigosVipGateState();
-}
-
-class _AmigosVipGateState extends State<_AmigosVipGate> {
-  static const _gold = Color(0xFFEFB94A);
-  static const _goldHi = Color(0xFFF6E2A6);
-  static const _card = Color(0xFF1C130C);
-  static const _texto = Color(0xFFEFE3CC);
-  static const _mut = Color(0xFF9A8C6C);
-
-  static const List<_PlanoVip> _planos = [
-    _PlanoVip('semanal', 'Semanal', 'R\$ 7,90', 'por semana'),
-    _PlanoVip('mensal', 'Mensal', 'R\$ 19,90', 'por mês', '⭐ mais vendido'),
-    _PlanoVip('anual', 'Anual', 'R\$ 132,90', '≈ R\$ 11/mês', '💎 44% OFF'),
-  ];
-
-  String _sel = 'mensal';
-
-  static const List<String> _beneficios = [
-    'Jogue com sua turma em mesas privadas',
-    'Veja quem está online e convide pra jogar',
-    'Assista seus amigos ao vivo nas mesas',
-    'Presenteie e receba presentes',
-    'Sem anúncios + bônus diário de moedas',
-    'Selo VIP dourado ao lado do seu nome',
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-      children: [
-        // herói
-        Container(
-          margin: const EdgeInsets.only(top: 6),
-          padding: const EdgeInsets.fromLTRB(18, 22, 18, 20),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF2A1E0C), Color(0xFF191007)],
-            ),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0x66EFB94A), width: 1.5),
-          ),
-          child: Column(
-            children: const [
-              Text('👑', style: TextStyle(fontSize: 44)),
-              SizedBox(height: 8),
-              Text('Amigos é um benefício VIP',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: _goldHi, fontSize: 18, fontWeight: FontWeight.w900)),
-              SizedBox(height: 6),
-              Text('Assine e jogue buraco com quem você ama — a sua turma na mesa, do seu jeito.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFD9C79A), fontSize: 12.5, height: 1.35)),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        // benefícios
-        ..._beneficios.map((b) => Padding(
-              padding: const EdgeInsets.only(bottom: 9),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('✓', style: TextStyle(color: _gold, fontSize: 15, fontWeight: FontWeight.w900)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(b, style: const TextStyle(color: _texto, fontSize: 13, height: 1.3)),
-                  ),
-                ],
-              ),
-            )),
-        const SizedBox(height: 10),
-        const Text('ESCOLHA SEU PLANO',
-            style: TextStyle(color: _gold, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.4)),
-        const SizedBox(height: 10),
-        ..._planos.map(_planoCard),
-        const SizedBox(height: 6),
-        // CTA
-        GestureDetector(
-          onTap: () => widget.onAssinar(_sel),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 15),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFFF6E2A6), Color(0xFFE0A83A)]),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            alignment: Alignment.center,
-            child: const Text('Virar VIP 👑',
-                style: TextStyle(color: Color(0xFF3A2606), fontSize: 15.5, fontWeight: FontWeight.w900)),
-          ),
-        ),
-        const SizedBox(height: 10),
-        const Text('Assinatura recorrente — renova sozinha, cancele quando quiser na Google Play.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: _mut, fontSize: 10.5, height: 1.3)),
-      ],
-    );
-  }
-
-  Widget _planoCard(_PlanoVip p) {
-    final on = _sel == p.id;
-    return GestureDetector(
-      onTap: () => setState(() => _sel = p.id),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 9),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        decoration: BoxDecoration(
-          color: on ? const Color(0xFF2A1E0C) : _card,
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(
-            color: on ? _gold : const Color(0x22FFFFFF),
-            width: on ? 1.8 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            // radio
-            Container(
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: on ? _gold : _mut, width: 2),
-                color: on ? _gold : Colors.transparent,
-              ),
-              alignment: Alignment.center,
-              child: on
-                  ? const Icon(Icons.check, size: 13, color: Color(0xFF3A2606))
-                  : const SizedBox.shrink(),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(p.nome,
-                          style: const TextStyle(color: _texto, fontSize: 14.5, fontWeight: FontWeight.w800)),
-                      if (p.selo != null) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0x33EFB94A),
-                            borderRadius: BorderRadius.circular(7),
-                          ),
-                          child: Text(p.selo!,
-                              style: const TextStyle(color: _goldHi, fontSize: 9.5, fontWeight: FontWeight.w800)),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(p.periodo, style: const TextStyle(color: _mut, fontSize: 11)),
-                ],
-              ),
-            ),
-            Text(p.preco,
-                style: const TextStyle(color: _goldHi, fontSize: 15, fontWeight: FontWeight.w900)),
-          ],
-        ),
-      ),
-    );
-  }
 }

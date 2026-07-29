@@ -162,6 +162,7 @@ class RankingVM {
           direcao: Direcao.subiu,
           delta: 2,
           ehVoce: false,
+          selo: 'assets/ranking/selos/sequencia_quente.webp',
         ),
         RankingRow(
           posicao: 5,
@@ -172,6 +173,7 @@ class RankingVM {
           direcao: Direcao.desceu,
           delta: 1,
           ehVoce: false,
+          selo: 'assets/ranking/selos/canastra_limpa.webp',
         ),
         RankingRow(
           posicao: 12,
@@ -182,6 +184,7 @@ class RankingVM {
           direcao: Direcao.subiu,
           delta: 3,
           ehVoce: true,
+          selo: 'assets/ranking/selos/campeao_do_dia.webp',
         ),
         RankingRow(
           posicao: 13,
@@ -192,6 +195,7 @@ class RankingVM {
           direcao: Direcao.subiu,
           delta: 1,
           ehVoce: false,
+          selo: 'assets/ranking/selos/subiu_no_ranking.webp',
         ),
         RankingRow(
           posicao: 14,
@@ -202,6 +206,7 @@ class RankingVM {
           direcao: Direcao.desceu,
           delta: 2,
           ehVoce: false,
+          selo: 'assets/ranking/selos/rei_do_morto.webp',
         ),
       ],
       escadaLigas: const [
@@ -221,13 +226,18 @@ class RankingVM {
           atual: false,
         ),
         LigaEscada(
+          nome: 'Platina',
+          icone: 'assets/ranking/liga_platina.webp',
+          atual: false,
+        ),
+        LigaEscada(
           nome: 'Diamante',
           icone: 'assets/ranking/liga_diamante.webp',
           atual: true,
         ),
         LigaEscada(
-          nome: 'Lenda',
-          icone: 'assets/ranking/liga_lenda.webp',
+          nome: 'Imperial',
+          icone: 'assets/ranking/liga_imperial.webp',
           atual: false,
         ),
       ],
@@ -824,6 +834,16 @@ class RankingScreen extends StatelessWidget {
                               'VOCÊ',
                               style: TextStyle(color: Color(0xFF3A2606), fontSize: 8, fontWeight: FontWeight.w900),
                             ),
+                          ),
+                        ],
+                        if (item.selo != null) ...[
+                          const SizedBox(width: 5),
+                          Image.asset(
+                            item.selo!,
+                            width: 20,
+                            height: 20,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                           ),
                         ],
                       ],

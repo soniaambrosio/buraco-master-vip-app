@@ -10,12 +10,13 @@ import 'package:audioplayers/audioplayers.dart';
 import 'pages/perfil_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
 import 'screens/inicio_screen.dart';
-import 'screens/recompensas_screen.dart';
-import 'screens/mesa_screen.dart' as mesa_visual;
-import 'screens/configurar_mesa_screen.dart';
-import 'screens/amigos_screen.dart';
 import 'screens/ranking_screen.dart';
-import 'screens/mesa_vip_preview_screen.dart';
+import 'screens/recompensas_screen.dart';
+import 'screens/configurar_mesa_screen.dart';
+import 'screens/resultado_partida_screen.dart';
+import 'screens/amigos_screen.dart';
+import 'screens/saguao_screen.dart';
+import 'widgets/convite_vip.dart';
 
 // Paleta da casa
 const _dourado = Color(0xFFEFB94A);
@@ -215,6 +216,7 @@ class _PontinhosPainter extends CustomPainter {
   bool shouldRepaint(covariant _PontinhosPainter old) => true;
 }
 
+// ===================== INÍCIO — PRÉVIA VISUAL CODEX =====================
 class _InicioPreviewHost extends StatefulWidget {
   const _InicioPreviewHost();
 
@@ -248,8 +250,6 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
   }
 
   void _abrirMesa() {
-    // JOGAR → Configurar Mesa (visual do Codex) → "Criar mesa" abre a MesaScreen
-    // jogável (motor do Claude). Fluxo real do jogo.
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const _ConfigMesaPreviewHost()),
     );
@@ -267,6 +267,12 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
     );
   }
 
+  void _abrirLobby() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _SaguaoPreviewHost()),
+    );
+  }
+
   void _menuTap(String id) {
     switch (id) {
       case 'perfil':
@@ -278,11 +284,11 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
       case 'recompensas':
         _abrirRecompensas();
         break;
-      case 'jogar':
-        _abrirMesa();
-        break;
       case 'amigos':
         _abrirAmigos();
+        break;
+      case 'jogar':
+        _abrirMesa();
         break;
       default:
         _aviso('$id — integração fica com o Claude');
@@ -314,7 +320,7 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
       onAbrirPerfil: _abrirPerfil,
       onHistorico: () => _aviso('Histórico — integração fica com o Claude'),
       onAbrirTemporada: () => _aviso('Temporada — integração fica com o Claude'),
-      onAbrirLobby: () => _aviso('Lobby — integração fica com o Claude'),
+      onAbrirLobby: _abrirLobby,
       onMenuTap: _menuTap,
       onRecarregar: () {
         setState(() => _estado = InicioEstado.carregando);
@@ -327,6 +333,222 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
   }
 }
 
+// ===================== SAGUÃO / LOBBY (host) =====================
+class _SaguaoPreviewHost extends StatefulWidget {
+  const _SaguaoPreviewHost();
+
+  @override
+  State<_SaguaoPreviewHost> createState() => _SaguaoPreviewHostState();
+}
+
+class _SaguaoPreviewHostState extends State<_SaguaoPreviewHost> {
+  SaguaoVM _vm = SaguaoVM.mock(sala: SalaSaguao.publico, ehVip: true);
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1350),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  void _trocarSala(SalaSaguao sala) {
+    setState(() {
+      _vm = SaguaoVM.mock(sala: sala, ehVip: _vm.ehVip);
+    });
+  }
+
+  void _enviar(String texto) {
+    final mensagens = List<MsgSaguao>.of(_vm.mensagens)
+      ..add(
+        MsgSaguao(
+          id: 'preview-${DateTime.now().microsecondsSinceEpoch}',
+          autor: 'Você',
+          avatar: '',
+          texto: texto,
+          ehVoce: true,
+          ehVip: _vm.sala == SalaSaguao.vip,
+        ),
+      );
+    setState(() => _vm = _vm.copyWith(mensagens: mensagens));
+  }
+
+  void _presentearSalao(String presenteId) {
+    PresenteVip? presente;
+    for (final item in _vm.presentes) {
+      if (item.id == presenteId) {
+        presente = item;
+        break;
+      }
+    }
+    if (presente == null) return;
+    _enviar('${presente.emoji} ${presente.nome} para o salão!');
+    _aviso('${presente.nome} enviada — débito real fica com o Claude');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SaguaoScreen(
+      vm: _vm,
+      onVoltar: () => Navigator.of(context).pop(),
+      onTrocarSala: _trocarSala,
+      onVipBloqueado: () =>
+          _aviso('Salão VIP — assinatura e gate ficam com o Claude'),
+      onEnviarFala: (_, fala) => _enviar(fala),
+      onEnviarEmoji: _enviar,
+      onPresentearSalao: _presentearSalao,
+      onPresentearJogador: (id) =>
+          _aviso('Presente para $id — economia fica com o Claude'),
+      onConvidar: (id) => _aviso('Convite para $id — ligação fica com o Claude'),
+      onAssistir: (id) =>
+          _aviso('Assistir $id — entrada como espectador fica com o Claude'),
+      onEntrarMesa: (codigo) {
+        _aviso('Entrando em $codigo — conexão real fica com o Claude');
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const MesaScreen()),
+        );
+      },
+    );
+  }
+}
+
+// ===================== AMIGOS (host) =====================
+// Tela do Claude (visual + lógica). Fase A: mock navegável (busca/abas/pedidos
+// funcionam sobre dados locais). Fase B: AmigosService + cloud_firestore em
+// tempo real (presença, código real, recompensa de convite). Ver PLANO-TELA-AMIGOS.md.
+class _AmigosPreviewHost extends StatefulWidget {
+  const _AmigosPreviewHost();
+
+  @override
+  State<_AmigosPreviewHost> createState() => _AmigosPreviewHostState();
+}
+
+class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
+  AmigosVM _vm = AmigosVM.mock();
+  Timer? _debounce;
+
+  // Diretório mock só pra a busca da Fase A ter o que devolver.
+  // Fase B: substituído por query no Firestore (apelidoLower / codigo).
+  static const List<ResultadoBusca> _diretorio = [
+    ResultadoBusca(id: 'larissa', apelido: 'Larissa', avatar: '🐱', nivel: 9, online: true, relacao: RelacaoBusca.nenhuma),
+    ResultadoBusca(id: 'ricardo', apelido: 'Ricardo', avatar: '🐻', nivel: 14, online: false, relacao: RelacaoBusca.nenhuma),
+    ResultadoBusca(id: 'claudia', apelido: 'Cláudia', avatar: '🐰', nivel: 18, online: true, relacao: RelacaoBusca.jaAmigo),
+    ResultadoBusca(id: 'joao', apelido: 'João', avatar: '🐼', nivel: 7, online: false, relacao: RelacaoBusca.pedidoEnviado),
+    ResultadoBusca(id: 'paula', apelido: 'Paula', avatar: '🦉', nivel: 22, online: true, relacao: RelacaoBusca.nenhuma),
+    ResultadoBusca(id: 'sonia', apelido: 'Sônia', avatar: '👑', nivel: 24, online: true, relacao: RelacaoBusca.ehVoce),
+  ];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _aviso(String texto) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1300),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
+  }
+
+  void _buscar(String termo) {
+    _debounce?.cancel();
+    final t = termo.trim();
+    if (t.isEmpty) {
+      setState(() => _vm = _vm.semBusca());
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      final low = t.toLowerCase();
+      final achados = _diretorio
+          .where((r) => r.apelido.toLowerCase().contains(low) || vm_codigoBate(r, low))
+          .toList();
+      if (!mounted) return;
+      setState(() => _vm = _vm.copyWith(termoBusca: t, resultados: achados));
+    });
+  }
+
+  // Busca também pelo "código" (na Fase A só o próprio código bate; Fase B: código real por jogador).
+  bool vm_codigoBate(ResultadoBusca r, String low) =>
+      r.id == 'sonia' && _vm.meuCodigo.toLowerCase().contains(low);
+
+  void _enviarPedido(String id) {
+    setState(() {
+      _vm = _vm.copyWith(
+        resultados: _vm.resultados
+            .map((r) => r.id == id
+                ? ResultadoBusca(
+                    id: r.id, apelido: r.apelido, avatar: r.avatar,
+                    nivel: r.nivel, online: r.online, relacao: RelacaoBusca.pedidoEnviado)
+                : r)
+            .toList(),
+      );
+    });
+    _aviso('Pedido enviado 🤝 (vira real com o Firestore — Fase B)');
+  }
+
+  void _responderPedido(String id, bool aceitar) {
+    final pedido = _vm.pedidosRecebidos.firstWhere(
+      (p) => p.id == id,
+      orElse: () => const Pedido(id: '', apelido: ''),
+    );
+    final restantes = _vm.pedidosRecebidos.where((p) => p.id != id).toList();
+    if (aceitar && pedido.id.isNotEmpty) {
+      final novo = Amigo(
+        id: pedido.id, apelido: pedido.apelido, avatar: pedido.avatar,
+        status: StatusAmigo.livre, ultimoAcesso: 'agora',
+      );
+      setState(() {
+        _vm = _vm.copyWith(
+          pedidosRecebidos: restantes,
+          online: [..._vm.online, novo],
+          todos: [..._vm.todos, novo],
+        );
+      });
+      _aviso('${pedido.apelido} agora é seu amigo! 🎉');
+    } else {
+      setState(() => _vm = _vm.copyWith(pedidosRecebidos: restantes));
+      if (pedido.id.isNotEmpty) _aviso('Pedido de ${pedido.apelido} recusado');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AmigosScreen(
+      vm: _vm,
+      onVoltar: () => Navigator.of(context).pop(),
+      onCopiarCodigo: () async {
+        await Clipboard.setData(ClipboardData(text: _vm.meuCodigo));
+        if (mounted) _aviso('Código ${_vm.meuCodigo} copiado');
+      },
+      onConvidarLink: () => _aviso('Compartilhar convite — integração fica com o Claude (Fase B)'),
+      onBuscar: _buscar,
+      onEnviarPedido: _enviarPedido,
+      onResponderPedido: _responderPedido,
+      onTrocarAba: (aba) => setState(() => _vm = _vm.copyWith(aba: aba)),
+      onConvidar: (id) => _aviso('Convite pra mesa — integração fica com o Claude (Fase B)'),
+      onAssistir: (id) => _aviso('Assistir a mesa — integração fica com o Claude (Fase B)'),
+      onAbrirAmigo: (id) => _aviso('Opções do amigo — integração fica com o Claude (Fase B)'),
+      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba, ehVip: _vm.ehVip)),
+      onAssinar: (plano) {
+        // Fase B: aqui entra o Google Play Billing (assinatura recorrente real) +
+        // a infra conta.vip / ehVip(). Ver ASSINATURA-VIP-INFRA.md.
+        // No mock, "assinar" desbloqueia a prévia pra dar pra navegar a tela VIP.
+        _aviso('Assinatura $plano — pagamento recorrente via Google Play (Fase B)');
+        setState(() => _vm = _vm.copyWith(ehVip: true));
+      },
+    );
+  }
+}
+
+
+
+// ===================== RECOMPENSAS — PRÉVIA VISUAL CODEX =====================
 class _RecompensasPreviewHost extends StatefulWidget {
   const _RecompensasPreviewHost();
 
@@ -367,49 +589,160 @@ class _RecompensasPreviewHostState extends State<_RecompensasPreviewHost> {
   }
 }
 
-class _MesaCodexPreviewHost extends StatefulWidget {
-  const _MesaCodexPreviewHost();
+// ===================== CONFIGURAR MESA — PRÉVIA VISUAL CODEX =====================
+class _ConfigMesaPreviewHost extends StatefulWidget {
+  const _ConfigMesaPreviewHost();
 
   @override
-  State<_MesaCodexPreviewHost> createState() => _MesaCodexPreviewHostState();
+  State<_ConfigMesaPreviewHost> createState() => _ConfigMesaPreviewHostState();
 }
 
-class _MesaCodexPreviewHostState extends State<_MesaCodexPreviewHost> {
-  Set<String> _selecionadas = const {'mao_as'};
+class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
+  ConfigMesaVM _vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
 
   void _aviso(String texto) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(texto),
-          duration: const Duration(milliseconds: 1000),
-          backgroundColor: const Color(0xFF2A1B0E),
-        ),
-      );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(texto),
+        duration: const Duration(milliseconds: 1300),
+        backgroundColor: const Color(0xFF2A1B0E),
+      ),
+    );
   }
 
-  void _alternarCarta(String id) {
+  int get _jogadores => _vm.modo == ModoJogo.dois ? 2 : 4;
+
+  String _modalidadeLabel(ModalidadeJogo modalidade) {
+    switch (modalidade) {
+      case ModalidadeJogo.aberto:
+        return 'ABERTO';
+      case ModalidadeJogo.fechado:
+        return 'FECHADO';
+      case ModalidadeJogo.sbtl:
+        return 'STBL';
+    }
+  }
+
+  ApostaVM? _apostaComPote(ApostaVM? aposta, {int? valor}) {
+    if (aposta == null) return null;
+    final novoValor = valor ?? aposta.valor;
+    return aposta.copyWith(valor: novoValor, pote: novoValor * _jogadores);
+  }
+
+  void _trocarTipo(TipoMesa tipo) {
     setState(() {
-      final novas = Set<String>.from(_selecionadas);
-      if (!novas.add(id)) novas.remove(id);
-      _selecionadas = novas;
+      _vm = ConfigMesaVM.mock(tipo: tipo, ehVip: _vm.ehVip);
     });
+  }
+
+  void _trocarModo(ModoJogo modo) {
+    setState(() {
+      final jogadores = modo == ModoJogo.dois ? 2 : 4;
+      final aposta = _vm.aposta;
+      _vm = _vm.copyWith(
+        modo: modo,
+        aposta: aposta == null
+            ? null
+            : aposta.copyWith(pote: aposta.valor * jogadores),
+      );
+    });
+  }
+
+  void _alternarCadeira(String id) {
+    final cadeiras = _vm.cadeiras;
+    if (cadeiras == null) return;
+    setState(() {
+      _vm = _vm.copyWith(
+        cadeiras: cadeiras.map((cadeira) {
+          if (cadeira.id != id || !cadeira.podeAlternar) return cadeira;
+          return cadeira.copyWith(
+            estado: cadeira.estado == EstadoCadeira.travada
+                ? EstadoCadeira.liberada
+                : EstadoCadeira.travada,
+          );
+        }).toList(),
+      );
+    });
+  }
+
+  Future<void> _copiarCodigo() async {
+    final codigo = _vm.codigo;
+    if (codigo == null) return;
+    await Clipboard.setData(ClipboardData(text: codigo));
+    if (mounted) _aviso('Código $codigo copiado');
+  }
+
+  void _verRegras() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C130C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => const SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(22, 18, 22, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Modalidades',
+                style: TextStyle(
+                  color: Color(0xFFEFB94A),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              SizedBox(height: 13),
+              Text('Aberto — lixo à vista e compra livre.'),
+              SizedBox(height: 8),
+              Text('Fechado — compra justificada e aceita trinca.'),
+              SizedBox(height: 8),
+              Text('SBTL — sem trinca e bate somente com canastra limpa.'),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final vm = mesa_visual.MesaVM.mock(selecionadas: _selecionadas);
-    return mesa_visual.MesaScreen(
-      vm: vm,
-      onMenu: () => _aviso('Menu da partida — conexão entra com o Claude'),
-      onChat: () => _aviso('Chat da mesa — conexão entra com o Claude'),
-      onComprarMonte: () => _aviso('Comprar do monte'),
-      onPegarLixo: () => _aviso('Pegar o lixo'),
-      onTapCarta: _alternarCarta,
-      onBaixar: () => _aviso('Baixar cartas selecionadas'),
-      onEstender: (meldId) => _aviso('Estender no jogo $meldId'),
-      onDescartar: () => _aviso('Descartar carta selecionada'),
+    return ConfigurarMesaScreen(
+      vm: _vm,
+      onVoltar: () => Navigator.of(context).pop(),
+      onTipo: _trocarTipo,
+      onTipoBloqueado: (tipo) =>
+          _aviso('${tipo.name.toUpperCase()} é exclusivo para jogador VIP'),
+      onModalidade: (value) => setState(() => _vm = _vm.copyWith(modalidade: value)),
+      onVerRegras: _verRegras,
+      onModo: _trocarModo,
+      onPontos: (value) => setState(() => _vm = _vm.copyWith(pontos: value)),
+      onAposta: (value) => setState(() {
+        _vm = _vm.copyWith(aposta: _apostaComPote(_vm.aposta, valor: value));
+      }),
+      onTempo: (value) => setState(() => _vm = _vm.copyWith(tempo: value)),
+      onChat: (value) => setState(() => _vm = _vm.copyWith(chat: value)),
+      onEspectadores: (value) =>
+          setState(() => _vm = _vm.copyWith(espectadores: value)),
+      onCopiar: _copiarCodigo,
+      onAlternarCadeira: _alternarCadeira,
+      onCriarMesa: () {
+        _aviso('Configuração pronta — criação real fica com o Claude');
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => MesaScreen(
+              variant: _vm.tipo == TipoMesa.publica
+                  ? MesaVariant.publica
+                  : MesaVariant.vip,
+              modalidade: _modalidadeLabel(_vm.modalidade),
+              metaPontos: _vm.pontos,
+              tempoSegundos: _vm.tempo,
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -435,26 +768,30 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _abrirRanking() {
-    // Prévia visual do Ranking (host do Codex). O Claude troca por RankingPage
-    // ao conectar os dados reais.
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
-    );
-  }
-
-  void _abrirMesaVip() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const MesaVipPreviewScreen()),
-    );
-  }
-
   void _abrirPerfil() {
     // Fase 1 da colaboração: a UI é do Codex (PerfilScreen); o carregamento de
     // dados, estados e callbacks reais vivem no PerfilPage (Claude).
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const PerfilPage(),
+      ),
+    );
+  }
+
+  void _abrirRanking() {
+    // Prévia visual do contrato RankingVM. O Claude substitui este host pelo
+    // RankingPage/RankingService quando conectar os dados reais.
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const _RankingPreviewHost(),
+      ),
+    );
+  }
+
+  void _abrirRecompensas() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const _RecompensasPreviewHost(),
       ),
     );
   }
@@ -728,7 +1065,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _botaoJogar() {
     return GestureDetector(
       onTap: () => Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const MesaScreen())),
+          .push(MaterialPageRoute(builder: (_) => const _ConfigMesaPreviewHost())),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 18),
@@ -752,7 +1089,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _grade() {
     final itens = <List<String>>[
       ['👤', 'Perfil'], ['🏆', 'Ranking'], ['🎁', 'Recompensas'], ['👥', 'Amigos'],
-      ['🛍️', 'Loja VIP'], ['👑', 'Mesa VIP'], ['📖', 'Como jogar'], ['⚙️', 'Ajustes'],
+      ['🛍️', 'Loja VIP'], ['🎲', 'Jogar'], ['📖', 'Como jogar'], ['⚙️', 'Ajustes'],
     ];
     return GridView.count(
       crossAxisCount: 4,
@@ -771,9 +1108,15 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _abrirPerfil
           : label == 'Ranking'
               ? _abrirRanking
-              : label == 'Mesa VIP'
-                  ? _abrirMesaVip
-                  : () => _breve(label),
+              : label == 'Recompensas'
+                  ? _abrirRecompensas
+                  : label == 'Jogar'
+                      ? () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const _ConfigMesaPreviewHost(),
+                            ),
+                          )
+                      : () => _breve(label),
       child: Container(
         decoration: _cardDeco,
         child: Column(
@@ -837,6 +1180,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// ===================== RANKING — PRÉVIA VISUAL CODEX =====================
 class _RankingPreviewHost extends StatefulWidget {
   const _RankingPreviewHost();
 
@@ -916,7 +1260,7 @@ String _cartaRotulo(Carta c) => c.valor == 'JOKER' ? '★' : c.valor;
 
 // imagem real da carta (baralho enviado pela Sônia). JOKER alterna entre os dois
 // desenhos de curinga (usando o id pra dar variedade); dorso do baralho pro monte/mortos.
-const String _dorsoAsset = 'assets/baralho/dorso_publica.webp';
+const String _dorsoAsset = 'assets/baralho/dorso.webp';
 String _cartaAsset(Carta c) {
   if (c.valor == 'JOKER') {
     final h = c.id.codeUnits.fold<int>(0, (a, b) => a + b);
@@ -951,23 +1295,6 @@ class Jogo {
   // ===== FATIA 4: PLACAR / FIM DE RODADA / FIM DE PARTIDA =====
   int metaPontos = 1500;
   Map<String, int> placar = {'nos': 0, 'eles': 0};
-
-  // ===== VULNERABILIDADE (regra do motor: 1500 -> 75 -> 90, teto 90) =====
-  static const int _limiarVulneravel = 1500;
-  Map<String, int> _rodadasVuln = {'nos': 0, 'eles': 0};
-  void _reavaliarVulnerabilidade() {
-    for (final d in ['nos', 'eles']) {
-      if (placar[d]! >= _limiarVulneravel) {
-        _rodadasVuln[d] = (_rodadasVuln[d]! + 1).clamp(0, 2);
-      }
-    }
-  }
-  int vulneravelMinimo(String dupla) {
-    final r = _rodadasVuln[dupla] ?? 0;
-    if (r <= 0) return 0;
-    return r == 1 ? 75 : 90;
-  }
-  bool vulneravel(String dupla) => vulneravelMinimo(dupla) > 0;
   bool encerrada = false; // partida acabou (bateu a meta)
   Map<String, dynamic>? pontosRodada; // detalhamento da última rodada contada
   bool _rodadaContada = false;
@@ -1020,7 +1347,6 @@ class Jogo {
     mortoPego = {'nos': false, 'eles': false};
     jogosDupla = {'nos': [], 'eles': []};
     vez = 0; jaComprou = false; rodadaEncerrada = false; duplaQueBateu = null; assentoQueBateu = null; rodada += 1;
-    _reavaliarVulnerabilidade();
     _rodadaContada = false; pontosRodada = null;
     ordenar(0); // mão do jogador já começa organizada
   }
@@ -1256,47 +1582,17 @@ class Jogo {
     return {'ok': true, 'qtd': qtd};
   }
 
-  // ORGANIZAR A MÃO: agrupa por naipe e ordena cada naipe por sequência (A,2,3…K),
-  // depois INTERCALA AS CORES (vermelho ↔ preto) pra melhor visualização — nunca deixa
-  // dois naipes da mesma cor colados quando dá pra evitar. O 2 fica na posição natural
-  // dele dentro do naipe (ajuda a enxergar A-2-3); coringas sem naipe (JOKER) vão pro fim.
-  static const _naipesVermelhos = ['copas', 'ouros'];
-  static const _naipesPretos = ['espadas', 'paus'];
+  // ORGANIZAR A MÃO: agrupa por naipe (cores alternadas p/ leitura) e ordena por
+  // sequência (A,2,3…K). O 2 fica na posição natural dele dentro do naipe (ajuda a
+  // enxergar A-2-3); coringas sem naipe (JOKER) vão pro fim.
+  static const _naipeOrdem = {'copas': 0, 'espadas': 1, 'ouros': 2, 'paus': 3};
   void ordenar(int assento) {
-    // 1) separa por naipe e ordena cada grupo por valor (A→K)
-    final grupos = <String, List<Carta>>{};
-    final coringasSemNaipe = <Carta>[]; // JOKER puro (naipe null)
-    for (final c in maos[assento]) {
-      if (c.naipe == null) {
-        coringasSemNaipe.add(c);
-      } else {
-        (grupos[c.naipe!] ??= <Carta>[]).add(c);
-      }
-    }
-    for (final g in grupos.values) {
-      g.sort((a, b) => _ordem.indexOf(a.valor) - _ordem.indexOf(b.valor));
-    }
-    // 2) monta as filas de grupos por cor (só naipes presentes)
-    final vermelhos = [for (final n in _naipesVermelhos) if (grupos[n] != null) grupos[n]!];
-    final pretos = [for (final n in _naipesPretos) if (grupos[n] != null) grupos[n]!];
-    // 3) intercala vermelho ↔ preto começando pela cor com mais grupos (empate = vermelho)
-    final resultado = <Carta>[];
-    var iv = 0, ip = 0;
-    var vezVermelho = vermelhos.length >= pretos.length;
-    while (iv < vermelhos.length || ip < pretos.length) {
-      if (vezVermelho && iv < vermelhos.length) {
-        resultado.addAll(vermelhos[iv++]);
-      } else if (!vezVermelho && ip < pretos.length) {
-        resultado.addAll(pretos[ip++]);
-      } else if (iv < vermelhos.length) {
-        resultado.addAll(vermelhos[iv++]);
-      } else {
-        resultado.addAll(pretos[ip++]);
-      }
-      vezVermelho = !vezVermelho;
-    }
-    resultado.addAll(coringasSemNaipe); // JOKER no fim
-    maos[assento] = resultado;
+    maos[assento].sort((a, b) {
+      final na = a.naipe == null ? 99 : (_naipeOrdem[a.naipe] ?? 98);
+      final nb = b.naipe == null ? 99 : (_naipeOrdem[b.naipe] ?? 98);
+      if (na != nb) return na - nb;
+      return _ordem.indexOf(a.valor) - _ordem.indexOf(b.valor);
+    });
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
@@ -1565,417 +1861,283 @@ class Jogo {
   }
 }
 
-// paleta da mesa verde
-const _mGold = Color(0xFFE0B45D);
-const _mGoldHi = Color(0xFFF4D47F);
-const _mCard = Color(0xFFF3F0E8);
-const _mRed = Color(0xFF9C302E);
-const _mBlack = Color(0xFF2B2B28);
-const _mMaroon1 = Color(0xFF7A2F22);
-const _mMaroon2 = Color(0xFF471B11);
-const _mPill = Color(0xFF123F30);
-const _mPillTx = Color(0xFFE7D3A0);
-const _mBox = Color(0xFF082E22);
-const _mRail = Color(0xFF8A642B);
+// ===================== MESA DE JOGO — FUNCIONAL VIP (CODEX) =====================
+// Camada visual aprovada pela Sônia em 29/07/2026.
+// Regras, motor, pontuação, robôs, Firebase e contratos continuam preservados.
+
+const _mGold = Color(0xFFE5B84F);
+const _mGoldHi = Color(0xFFFFE7A0);
+const _mPurple = Color(0xFF9D43D8);
+const _mPurpleHi = Color(0xFFD690FF);
+const _mFelt = Color(0xFF080808);
+const _mPanel = Color(0xEE101010);
+const _mRed = Color(0xFFB3262D);
+const _mBlack = Color(0xFF121212);
 
 Color _corCarta(Carta c) =>
-    c.valor == 'JOKER' ? const Color(0xFFB8860B) : (_cartaVermelha(c) ? _mRed : _mBlack);
+    c.valor == 'JOKER' ? _mGold : (_cartaVermelha(c) ? _mRed : _mBlack);
 
-class _CrossHatch extends CustomPainter {
+class _VipFeltPainter extends CustomPainter {
+  const _VipFeltPainter();
+
   @override
   void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = const Color(0x09000000)
-      ..strokeWidth = 0.8;
-    final shine = Paint()
-      ..color = const Color(0x087FE0B2)
-      ..strokeWidth = 0.7;
-    for (double x = -size.height; x < size.width + size.height; x += 7) {
-      canvas.drawLine(Offset(x, 0), Offset(x + size.height, size.height), line);
+    final rect = Offset.zero & size;
+    final glow = RadialGradient(
+      center: const Alignment(0, -0.08),
+      radius: 1.1,
+      colors: const [Color(0x182B2030), Color(0x080F0B12), Color(0x00000000)],
+      stops: const [0, 0.55, 1],
+    ).createShader(rect);
+    canvas.drawRect(rect, Paint()..shader = glow);
+
+    final grain = Paint()
+      ..color = const Color(0x0AFFFFFF)
+      ..strokeWidth = 0.55;
+    for (double y = 3; y < size.height; y += 9) {
+      final shift = (y ~/ 9).isEven ? 0.0 : 4.0;
+      for (double x = shift; x < size.width; x += 12) {
+        canvas.drawCircle(Offset(x, y), 0.45, grain);
+      }
     }
-    for (double x = 0; x < size.width + size.height; x += 19) {
-      canvas.drawLine(Offset(x, 0), Offset(x - size.height, size.height), shine);
-    }
-    final oval = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height / 2),
-      width: size.width * 0.78,
-      height: size.height * 0.58,
-    );
-    canvas.drawOval(
-      oval,
-      Paint()
-        ..color = const Color(0x0AEDD69B)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1,
-    );
+
     final vignette = RadialGradient(
-      center: Alignment.center,
-      radius: 0.78,
-      colors: const [Color(0x00000000), Color(0x22000000)],
-      stops: const [0.55, 1],
-    ).createShader(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, Paint()..shader = vignette);
+      radius: 0.84,
+      colors: const [Color(0x00000000), Color(0x55000000)],
+      stops: const [0.58, 1],
+    ).createShader(rect);
+    canvas.drawRect(rect, Paint()..shader = vignette);
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// ===================== AMIGOS (host) =====================
-// Tela do Claude (visual + lógica). Fase A: mock navegável (busca/abas/pedidos
-// funcionam sobre dados locais). Fase B: AmigosService + cloud_firestore em
-// tempo real (presença, código real, recompensa de convite). Ver PLANO-TELA-AMIGOS.md.
-class _AmigosPreviewHost extends StatefulWidget {
-  const _AmigosPreviewHost();
+enum MesaVariant { publica, vip }
+
+class _PublicFeltPainter extends CustomPainter {
+  const _PublicFeltPainter();
 
   @override
-  State<_AmigosPreviewHost> createState() => _AmigosPreviewHostState();
-}
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final felt = RadialGradient(
+      center: const Alignment(0, -0.12),
+      radius: 1.08,
+      colors: const [
+        Color(0xFF174D36),
+        Color(0xFF0D3928),
+        Color(0xFF062719),
+      ],
+      stops: const [0, 0.58, 1],
+    ).createShader(rect);
+    canvas.drawRect(rect, Paint()..shader = felt);
 
-class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
-  AmigosVM _vm = AmigosVM.mock();
-  Timer? _debounce;
-
-  // Diretório mock só pra a busca da Fase A ter o que devolver.
-  // Fase B: substituído por query no Firestore (apelidoLower / codigo).
-  static const List<ResultadoBusca> _diretorio = [
-    ResultadoBusca(id: 'larissa', apelido: 'Larissa', avatar: '🐱', nivel: 9, online: true, relacao: RelacaoBusca.nenhuma),
-    ResultadoBusca(id: 'ricardo', apelido: 'Ricardo', avatar: '🐻', nivel: 14, online: false, relacao: RelacaoBusca.nenhuma),
-    ResultadoBusca(id: 'claudia', apelido: 'Cláudia', avatar: '🐰', nivel: 18, online: true, relacao: RelacaoBusca.jaAmigo),
-    ResultadoBusca(id: 'joao', apelido: 'João', avatar: '🐼', nivel: 7, online: false, relacao: RelacaoBusca.pedidoEnviado),
-    ResultadoBusca(id: 'paula', apelido: 'Paula', avatar: '🦉', nivel: 22, online: true, relacao: RelacaoBusca.nenhuma),
-    ResultadoBusca(id: 'sonia', apelido: 'Sônia', avatar: '👑', nivel: 24, online: true, relacao: RelacaoBusca.ehVoce),
-  ];
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    super.dispose();
-  }
-
-  void _aviso(String texto) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(texto),
-        duration: const Duration(milliseconds: 1300),
-        backgroundColor: const Color(0xFF2A1B0E),
-      ),
-    );
-  }
-
-  void _buscar(String termo) {
-    _debounce?.cancel();
-    final t = termo.trim();
-    if (t.isEmpty) {
-      setState(() => _vm = _vm.semBusca());
-      return;
+    final grain = Paint()
+      ..color = const Color(0x0BFFFFFF)
+      ..strokeWidth = 0.55;
+    for (double y = 3; y < size.height; y += 9) {
+      final shift = (y ~/ 9).isEven ? 0.0 : 4.0;
+      for (double x = shift; x < size.width; x += 12) {
+        canvas.drawCircle(Offset(x, y), 0.45, grain);
+      }
     }
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      final low = t.toLowerCase();
-      final achados = _diretorio
-          .where((r) => r.apelido.toLowerCase().contains(low) || vm_codigoBate(r, low))
-          .toList();
-      if (!mounted) return;
-      setState(() => _vm = _vm.copyWith(termoBusca: t, resultados: achados));
-    });
-  }
 
-  // Busca também pelo "código" (na Fase A só o próprio código bate; Fase B: código real por jogador).
-  bool vm_codigoBate(ResultadoBusca r, String low) =>
-      r.id == 'sonia' && _vm.meuCodigo.toLowerCase().contains(low);
-
-  void _enviarPedido(String id) {
-    setState(() {
-      _vm = _vm.copyWith(
-        resultados: _vm.resultados
-            .map((r) => r.id == id
-                ? ResultadoBusca(
-                    id: r.id, apelido: r.apelido, avatar: r.avatar,
-                    nivel: r.nivel, online: r.online, relacao: RelacaoBusca.pedidoEnviado)
-                : r)
-            .toList(),
-      );
-    });
-    _aviso('Pedido enviado 🤝 (vira real com o Firestore — Fase B)');
-  }
-
-  void _responderPedido(String id, bool aceitar) {
-    final pedido = _vm.pedidosRecebidos.firstWhere(
-      (p) => p.id == id,
-      orElse: () => const Pedido(id: '', apelido: ''),
-    );
-    final restantes = _vm.pedidosRecebidos.where((p) => p.id != id).toList();
-    if (aceitar && pedido.id.isNotEmpty) {
-      final novo = Amigo(
-        id: pedido.id, apelido: pedido.apelido, avatar: pedido.avatar,
-        status: StatusAmigo.livre, ultimoAcesso: 'agora',
-      );
-      setState(() {
-        _vm = _vm.copyWith(
-          pedidosRecebidos: restantes,
-          online: [..._vm.online, novo],
-          todos: [..._vm.todos, novo],
-        );
-      });
-      _aviso('${pedido.apelido} agora é seu amigo! 🎉');
-    } else {
-      setState(() => _vm = _vm.copyWith(pedidosRecebidos: restantes));
-      if (pedido.id.isNotEmpty) _aviso('Pedido de ${pedido.apelido} recusado');
-    }
+    final vignette = RadialGradient(
+      radius: 0.88,
+      colors: const [Color(0x00000000), Color(0x65000000)],
+      stops: const [0.58, 1],
+    ).createShader(rect);
+    canvas.drawRect(rect, Paint()..shader = vignette);
   }
 
   @override
-  Widget build(BuildContext context) {
-    return AmigosScreen(
-      vm: _vm,
-      onVoltar: () => Navigator.of(context).pop(),
-      onCopiarCodigo: () async {
-        await Clipboard.setData(ClipboardData(text: _vm.meuCodigo));
-        if (mounted) _aviso('Código ${_vm.meuCodigo} copiado');
-      },
-      onConvidarLink: () => _aviso('Compartilhar convite — integração fica com o Claude (Fase B)'),
-      onBuscar: _buscar,
-      onEnviarPedido: _enviarPedido,
-      onResponderPedido: _responderPedido,
-      onTrocarAba: (aba) => setState(() => _vm = _vm.copyWith(aba: aba)),
-      onConvidar: (id) => _aviso('Convite pra mesa — integração fica com o Claude (Fase B)'),
-      onAssistir: (id) => _aviso('Assistir a mesa — integração fica com o Claude (Fase B)'),
-      onAbrirAmigo: (id) => _aviso('Opções do amigo — integração fica com o Claude (Fase B)'),
-      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba, ehVip: _vm.ehVip)),
-      onAssinar: (plano) {
-        // Fase B: aqui entra o Google Play Billing (assinatura recorrente real) +
-        // a infra conta.vip / ehVip(). Ver ASSINATURA-VIP-INFRA.md.
-        // No mock, "assinar" desbloqueia a prévia pra dar pra navegar a tela VIP.
-        _aviso('Assinatura $plano — pagamento recorrente via Google Play (Fase B)');
-        setState(() => _vm = _vm.copyWith(ehVip: true));
-      },
-    );
-  }
-}
-
-// ===================== CONFIGURAR MESA (host) =====================
-// Visual do Codex (ConfigurarMesaScreen). O Claude conecta a criação real da
-// mesa depois; por ora "Criar mesa" abre a MesaScreen jogável (motor do Claude).
-class _ConfigMesaPreviewHost extends StatefulWidget {
-  const _ConfigMesaPreviewHost();
-
-  @override
-  State<_ConfigMesaPreviewHost> createState() => _ConfigMesaPreviewHostState();
-}
-
-class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
-  ConfigMesaVM _vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
-
-  void _aviso(String texto) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(texto),
-        duration: const Duration(milliseconds: 1300),
-        backgroundColor: const Color(0xFF2A1B0E),
-      ),
-    );
-  }
-
-  int get _jogadores => _vm.modo == ModoJogo.dois ? 2 : 4;
-
-  ApostaVM? _apostaComPote(ApostaVM? aposta, {int? valor}) {
-    if (aposta == null) return null;
-    final novoValor = valor ?? aposta.valor;
-    return aposta.copyWith(valor: novoValor, pote: novoValor * _jogadores);
-  }
-
-  void _trocarTipo(TipoMesa tipo) {
-    setState(() {
-      _vm = ConfigMesaVM.mock(tipo: tipo, ehVip: _vm.ehVip);
-    });
-  }
-
-  void _trocarModo(ModoJogo modo) {
-    setState(() {
-      final jogadores = modo == ModoJogo.dois ? 2 : 4;
-      final aposta = _vm.aposta;
-      _vm = _vm.copyWith(
-        modo: modo,
-        aposta: aposta == null
-            ? null
-            : aposta.copyWith(pote: aposta.valor * jogadores),
-      );
-    });
-  }
-
-  void _alternarCadeira(String id) {
-    final cadeiras = _vm.cadeiras;
-    if (cadeiras == null) return;
-    setState(() {
-      _vm = _vm.copyWith(
-        cadeiras: cadeiras.map((cadeira) {
-          if (cadeira.id != id || !cadeira.podeAlternar) return cadeira;
-          return cadeira.copyWith(
-            estado: cadeira.estado == EstadoCadeira.travada
-                ? EstadoCadeira.liberada
-                : EstadoCadeira.travada,
-          );
-        }).toList(),
-      );
-    });
-  }
-
-  Future<void> _copiarCodigo() async {
-    final codigo = _vm.codigo;
-    if (codigo == null) return;
-    await Clipboard.setData(ClipboardData(text: codigo));
-    if (mounted) _aviso('Código $codigo copiado');
-  }
-
-  void _verRegras() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF1C130C),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => const SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(22, 18, 22, 26),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Modalidades',
-                style: TextStyle(
-                  color: Color(0xFFEFB94A),
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              SizedBox(height: 13),
-              Text('Aberto — lixo à vista e compra livre.'),
-              SizedBox(height: 8),
-              Text('Fechado — compra justificada e aceita trinca.'),
-              SizedBox(height: 8),
-              Text('SBTL — sem trinca e bate somente com canastra limpa.'),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ConfigurarMesaScreen(
-      vm: _vm,
-      onVoltar: () => Navigator.of(context).pop(),
-      onTipo: _trocarTipo,
-      onTipoBloqueado: (tipo) =>
-          _aviso('${tipo.name.toUpperCase()} é exclusivo para jogador VIP'),
-      onModalidade: (value) => setState(() => _vm = _vm.copyWith(modalidade: value)),
-      onVerRegras: _verRegras,
-      onModo: _trocarModo,
-      onPontos: (value) => setState(() => _vm = _vm.copyWith(pontos: value)),
-      onAposta: (value) => setState(() {
-        _vm = _vm.copyWith(aposta: _apostaComPote(_vm.aposta, valor: value));
-      }),
-      onTempo: (value) => setState(() => _vm = _vm.copyWith(tempo: value)),
-      onChat: (value) => setState(() => _vm = _vm.copyWith(chat: value)),
-      onEspectadores: (value) =>
-          setState(() => _vm = _vm.copyWith(espectadores: value)),
-      onCopiar: _copiarCodigo,
-      onAlternarCadeira: _alternarCadeira,
-      onCriarMesa: () {
-        // Criação real da mesa fica com o Claude; por ora abre a mesa jogável.
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const MesaScreen()),
-        );
-      },
-    );
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class MesaScreen extends StatefulWidget {
-  const MesaScreen({super.key});
+  final MesaVariant variant;
+  final String modalidade;
+  final int metaPontos;
+  final int tempoSegundos;
+  final int? vulnerabilidadeNos;
+  final int? vulnerabilidadeEles;
+
+  const MesaScreen({
+    super.key,
+    this.variant = MesaVariant.vip,
+    this.modalidade = 'ABERTO',
+    this.metaPontos = 1500,
+    this.tempoSegundos = 45,
+    this.vulnerabilidadeNos,
+    this.vulnerabilidadeEles,
+  });
+
   @override
   State<MesaScreen> createState() => _MesaScreenState();
 }
 
-class _MesaScreenState extends State<MesaScreen> with SingleTickerProviderStateMixin {
+class _MesaScreenState extends State<MesaScreen> {
   late Jogo _j;
-  final Set<int> _sel = {};
+  final Set<int> _sel = <int>{};
+  final ScrollController _handScroll = ScrollController();
+  final ScrollController _discardScroll = ScrollController();
+
   bool _botsRodando = false;
+  bool _soundEnabled = true;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
   String? _lastPurchaseSource;
+  String? _celebratingMeldKey;
+  int? _expandedAvatarSeat;
   Timer? _purchaseGlowTimer;
-  late final AnimationController _pulse; // brilho pulsante da vulnerabilidade
+  Timer? _celebrationTimer;
+  Timer? _turnTimer;
+  int _turnSeconds = 45;
+  int _clockSeat = 0;
 
-  // --- ÁUDIO: mp3 reais fornecidos pela Sônia (em assets/sons/) ---
-  // dois "canais": um pro deslize de carta, outro pros eventos (canastra/morto/erro),
-  // assim um não corta o outro se acontecerem quase juntos.
-  AudioPlayer? _pCarta, _pEvento;
+  final Map<int, EstadoAmizade> _amizades = <int, EstadoAmizade>{
+    1: EstadoAmizade.disponivel,
+    2: EstadoAmizade.amigos,
+    3: EstadoAmizade.disponivel,
+  };
+  bool _conviteRevancheEnviado = false;
+  bool _anuncioAssistido = false;
+  bool _anuncioDisponivel = true;
+  bool _assinanteSemAnuncios = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _j = Jogo(
+  AudioPlayer? _pCarta;
+  AudioPlayer? _pEvento;
+
+  String get _modalidade => widget.modalidade;
+  bool get _mesaVip => widget.variant == MesaVariant.vip;
+  Color get _feltColor =>
+      _mesaVip ? _mFelt : const Color(0xFF062719);
+  String get _cardBackAsset => _mesaVip
+      ? 'assets/baralho/dorso.webp'
+      : 'assets/baralho/dorso_publico.webp';
+  int? _vulnerabilidadeDaDupla(String dupla) =>
+      dupla == 'nos' ? widget.vulnerabilidadeNos : widget.vulnerabilidadeEles;
+
+  bool get _minhaVezAtiva =>
+      _j.suaVez && !_j.rodadaEncerrada && !_botsRodando;
+
+  Jogo _novoJogo() {
+    final jogo = Jogo(
       const ['você', 'Cláudia', 'Mateus', 'Sofia'],
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
     );
-    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
-      ..repeat(reverse: true);
+    jogo.metaPontos = widget.metaPontos;
+    return jogo;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _j = _novoJogo();
+    _turnSeconds = widget.tempoSegundos;
+    _clockSeat = _j.vez;
     try {
       _pCarta = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
       _pEvento = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
-    } catch (_) {/* sem áudio, o jogo segue normal */}
+    } catch (_) {
+      // A mesa continua funcional mesmo quando o dispositivo não oferece áudio.
+    }
+    _startTurnClock();
   }
 
   @override
   void dispose() {
     _purchaseGlowTimer?.cancel();
-    _pulse.dispose();
+    _celebrationTimer?.cancel();
+    _turnTimer?.cancel();
     _handScroll.dispose();
+    _discardScroll.dispose();
     _pCarta?.dispose();
     _pEvento?.dispose();
     super.dispose();
   }
 
-  void _play(AudioPlayer? p, String arquivo, double vol) {
-    if (p == null) return;
-    try { p.stop(); p.play(AssetSource('sons/$arquivo'), volume: vol); } catch (_) {}
+  void _startTurnClock() {
+    _turnTimer?.cancel();
+    _turnTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_j.rodadaEncerrada) return;
+      if (_clockSeat != _j.vez) {
+        setState(() {
+          _clockSeat = _j.vez;
+          _turnSeconds = widget.tempoSegundos;
+        });
+        return;
+      }
+      if (_turnSeconds > 0) {
+        setState(() => _turnSeconds -= 1);
+      }
+    });
   }
 
-  // deslize de carta: comprar, descartar, baixar simples, estender, jogadas dos robôs
+  void _syncTurnClock({bool force = false}) {
+    if (force || _clockSeat != _j.vez) {
+      _clockSeat = _j.vez;
+      _turnSeconds = widget.tempoSegundos;
+    }
+  }
+
+  void _play(AudioPlayer? player, String arquivo, double volume) {
+    if (!_soundEnabled || player == null) return;
+    try {
+      player.stop();
+      player.play(AssetSource('sons/$arquivo'), volume: volume);
+    } catch (_) {}
+  }
+
   void _somCarta() => _play(_pCarta, 'carta.mp3', 0.95);
   void _somCompra() => _play(_pCarta, 'carta.mp3', 1.0);
   void _somErro() => _play(_pEvento, 'erro.mp3', 0.9);
   void _somMorto() => _play(_pEvento, 'morto.mp3', 1.0);
+  void _somVitoria() => _play(_pEvento, 'vitoria.mp3', 1.0);
+
   void _somCanastra(String? tipo) {
     switch (tipo) {
-      case 'as_a_as': _play(_pEvento, 'canastra1000.mp3', 1.0); break;
-      case 'de_500':  _play(_pEvento, 'canastra500.mp3', 1.0); break;
-      case 'suja':    _play(_pEvento, 'canastra_suja.mp3', 1.0); break;
-      default:        _play(_pEvento, 'canastra200.mp3', 1.0); break; // limpa (e demais canastras)
+      case 'as_a_as':
+        _play(_pEvento, 'canastra1000.mp3', 1.0);
+        break;
+      case 'de_500':
+        _play(_pEvento, 'canastra500.mp3', 1.0);
+        break;
+      case 'suja':
+        _play(_pEvento, 'canastra_suja.mp3', 1.0);
+        break;
+      default:
+        _play(_pEvento, 'canastra200.mp3', 1.0);
     }
   }
 
-  // decide o som de uma jogada (baixar/estender):
-  // bater = SILÊNCIO por enquanto (a Sônia vai mandar um som de vitória);
-  // formou canastra nova → fanfarra da canastra; pegou o morto → som do morto; senão → carta.
-  void _somJogada(Map<String, dynamic> res, {required bool novaCanastra}) {
-    if (res['bateu'] == true) { _somVitoria(); return; } // BATEU! (som de vitória da Sônia)
-    if (novaCanastra) { _somCanastra(res['tipo'] as String?); return; }
-    if (res['pegouMorto'] == true) { _somMorto(); return; }
+  void _somJogada(Map<String, dynamic> resultado,
+      {required bool novaCanastra}) {
+    if (resultado['bateu'] == true) {
+      _somVitoria();
+      return;
+    }
+    if (novaCanastra) {
+      _somCanastra(resultado['tipo'] as String?);
+      return;
+    }
+    if (resultado['pegouMorto'] == true) {
+      _somMorto();
+      return;
+    }
     _somCarta();
   }
 
-  void _somVitoria() => _play(_pEvento, 'vitoria.mp3', 1.0);
-
-  bool get _minhaVezAtiva => _j.suaVez && !_j.rodadaEncerrada && !_botsRodando;
-
-  void _tapCard(int i) {
+  void _tapCard(int index) {
     setState(() {
-      if (_sel.contains(i)) { _sel.remove(i); } else { _sel.add(i); }
+      if (_sel.contains(index)) {
+        _sel.remove(index);
+      } else {
+        _sel.add(index);
+      }
       _msg = null;
     });
   }
@@ -1997,12 +2159,35 @@ class _MesaScreenState extends State<MesaScreen> with SingleTickerProviderStateM
     });
   }
 
+  void _celebrateMeld(String dupla, int index) {
+    _celebrationTimer?.cancel();
+    setState(() => _celebratingMeldKey = '$dupla-$index');
+    _celebrationTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (!mounted) return;
+      setState(() => _celebratingMeldKey = null);
+    });
+  }
+
+  void _scrollDiscardToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_discardScroll.hasClients) return;
+      _discardScroll.animateTo(
+        _discardScroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
   void _tapMonte() {
     if (!_minhaVezAtiva || _j.jaComprou) return;
     final antes = _j.maos[0].map((c) => c.id).toSet();
     if (!_j.comprarMonte(0)) return;
     _j.ordenar(0);
-    final novos = _j.maos[0].where((c) => !antes.contains(c.id)).map((c) => c.id).toSet();
+    final novos = _j.maos[0]
+        .where((c) => !antes.contains(c.id))
+        .map((c) => c.id)
+        .toSet();
     _mostrarCompra(novos, 'monte');
     _somCompra();
   }
@@ -2010,64 +2195,117 @@ class _MesaScreenState extends State<MesaScreen> with SingleTickerProviderStateM
   Future<void> _tapLixo() async {
     if (!_minhaVezAtiva) return;
     if (!_j.jaComprou) {
-      // antes de comprar: tocar no lixo PEGA o monte de descarte inteiro
       final antes = _j.maos[0].map((c) => c.id).toSet();
-      final res = _j.comprarLixo(0);
-      if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); _somErro(); return; }
+      final resultado = _j.comprarLixo(0);
+      if (resultado['ok'] != true) {
+        setState(() => _msg = resultado['erro'] as String?);
+        _somErro();
+        return;
+      }
       _j.ordenar(0);
-      final novos = _j.maos[0].where((c) => !antes.contains(c.id)).map((c) => c.id).toSet();
+      final novos = _j.maos[0]
+          .where((c) => !antes.contains(c.id))
+          .map((c) => c.id)
+          .toSet();
       _sel.clear();
       _mostrarCompra(novos, 'lixo');
       _somCompra();
       return;
     }
-    if (_sel.length != 1) { return; }
+
+    if (_sel.length != 1) {
+      setState(() =>
+          _msg = 'Selecione uma carta e toque no lixo para descartar.');
+      return;
+    }
+
     final id = _j.maos[0][_sel.first].id;
     final mortoAntes = _j.mortoPego['nos'] == true;
-    final err = _j.descartar(0, id);
-    if (err != null) { setState(() => _msg = err); _somErro(); return; }
-    // descarte que zerou a mão e pegou o morto → som do morto; batida NOSSA → vitória; senão → carta
-    if (!mortoAntes && _j.mortoPego['nos'] == true) { _somMorto(); }
-    else if (_j.rodadaEncerrada && _j.duplaQueBateu == 'nos') { _somVitoria(); }
-    else if (!_j.rodadaEncerrada) { _somCarta(); }
+    final erro = _j.descartar(0, id);
+    if (erro != null) {
+      setState(() => _msg = erro);
+      _somErro();
+      return;
+    }
+
+    if (!mortoAntes && _j.mortoPego['nos'] == true) {
+      _somMorto();
+    } else if (_j.rodadaEncerrada && _j.duplaQueBateu == 'nos') {
+      _somVitoria();
+    } else if (!_j.rodadaEncerrada) {
+      _somCarta();
+    }
     if (_j.rodadaEncerrada) _j.contarPontos();
-    setState(() { _sel.clear(); _msg = null; });
+    setState(() {
+      _sel.clear();
+      _msg = null;
+      _syncTurnClock();
+    });
+    _scrollDiscardToEnd();
     await _rodarBots();
   }
 
   void _baixar() {
     if (!_minhaVezAtiva || !_j.jaComprou) return;
-    if (_sel.length < 3) { return; }
+    if (_sel.length < 3) {
+      setState(() => _msg =
+          'Selecione três ou mais cartas e toque no feltro para baixar.');
+      return;
+    }
+    final novoIndice = _j.jogosDupla['nos']!.length;
     final ids = _sel.map((i) => _j.maos[0][i].id).toList();
-    final res = _j.baixar(0, ids);
-    if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); _somErro(); return; }
+    final resultado = _j.baixar(0, ids);
+    if (resultado['ok'] != true) {
+      setState(() => _msg = resultado['erro'] as String?);
+      _somErro();
+      return;
+    }
     _j.ordenar(0);
-    // jogo baixado NOVO: se já nasce com 7+ cartas, é canastra
-    final tipo = res['tipo'] as String?;
-    _somJogada(res, novaCanastra: tipo != null && tipo != 'aberta');
+    final tipo = resultado['tipo'] as String?;
+    final novaCanastra = tipo != null && tipo != 'aberta';
+    _somJogada(resultado, novaCanastra: novaCanastra);
+    if (novaCanastra) _celebrateMeld('nos', novoIndice);
     if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() {
       _sel.clear();
-      _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo baixado! 🎴');
+      _msg = resultado['bateu'] == true
+          ? 'Você bateu!'
+          : (resultado['pegouMorto'] == true
+              ? 'Você pegou o morto.'
+              : 'Jogo baixado.');
     });
   }
 
   void _estender(int indiceJogo) {
     if (!_minhaVezAtiva || !_j.jaComprou) return;
-    if (_sel.isEmpty) { return; }
+    if (_sel.isEmpty) {
+      _showMeldZoom('nos', indiceJogo);
+      return;
+    }
+    final jogos = _j.jogosDupla['nos']!;
+    if (indiceJogo < 0 || indiceJogo >= jogos.length) return;
+    final sashAntes = _sashDeMeld(jogos[indiceJogo]);
     final ids = _sel.map((i) => _j.maos[0][i].id).toList();
-    final jogosNos = _j.jogosDupla['nos']!;
-    final antes = (indiceJogo >= 0 && indiceJogo < jogosNos.length) ? jogosNos[indiceJogo].length : 0;
-    final res = _j.estender(0, indiceJogo, ids);
-    if (res['ok'] != true) { setState(() => _msg = res['erro'] as String?); _somErro(); return; }
+    final resultado = _j.estender(0, indiceJogo, ids);
+    if (resultado['ok'] != true) {
+      setState(() => _msg = resultado['erro'] as String?);
+      _somErro();
+      return;
+    }
     _j.ordenar(0);
-    // virou canastra só quando cruza de <7 pra >=7 (estender uma canastra já formada = carta)
-    final depois = jogosNos[indiceJogo].length;
-    _somJogada(res, novaCanastra: antes < 7 && depois >= 7);
+    final sashDepois = _sashDeMeld(jogos[indiceJogo]);
+    final novaCanastra =
+        sashDepois != Sash.nenhuma && sashDepois != sashAntes;
+    _somJogada(resultado, novaCanastra: novaCanastra);
+    if (novaCanastra) _celebrateMeld('nos', indiceJogo);
     if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() {
       _sel.clear();
-      _msg = res['bateu'] == true ? '🎉 Você BATEU!' : (res['pegouMorto'] == true ? 'Mão zerou — você pegou o MORTO!' : 'Jogo estendido! ➕');
+      _msg = resultado['bateu'] == true
+          ? 'Você bateu!'
+          : (resultado['pegouMorto'] == true
+              ? 'Você pegou o morto.'
+              : 'Jogo estendido.');
     });
   }
 
@@ -2077,1057 +2315,1617 @@ class _MesaScreenState extends State<MesaScreen> with SingleTickerProviderStateM
       await Future.delayed(const Duration(milliseconds: 650));
       _j.botJoga(_j.vez);
       _somCarta();
+      _syncTurnClock();
+      _scrollDiscardToEnd();
       if (mounted) setState(() {});
     }
     _botsRodando = false;
     if (_j.rodadaEncerrada) {
       _j.contarPontos();
-      if (_j.duplaQueBateu == 'nos') _somVitoria(); // parceiro bateu = vitória nossa
+      if (_j.duplaQueBateu == 'nos') _somVitoria();
     }
+    _syncTurnClock();
     if (mounted) setState(() {});
   }
 
-  // sash a partir do tipo de canastra
-  Sash _sashDeMeld(List<Carta> m) {
-    if (m.length < 7) return Sash.nenhuma;
-    final r = _j.validarSequencia(m);
-    if (r['valido'] != true) return Sash.nenhuma;
-    switch (r['tipo']) {
-      case 'limpa': return Sash.limpa;
-      case 'suja': return Sash.suja;
-      case 'de_500':
-      case 'as_a_as': return Sash.n500;
-      default: return Sash.nenhuma;
-    }
-  }
-
-  // ===== ADAPTER: liga o motor (Jogo) ao visual novo do Codex (mesa_visual) =====
-  mesa_visual.CartaVM _cvm(Carta c) => mesa_visual.CartaVM(
-        id: c.id,
-        valor: c.valor == 'JOKER' ? '★' : c.valor,
-        naipe: c.naipe ?? '',
-        coringa: c.ehCoringa,
-      );
-
-  mesa_visual.TipoMeld _tipoMeld(List<Carta> m) {
-    if (m.length < 7) return mesa_visual.TipoMeld.comum;
-    final r = _j.validarSequencia(m);
-    if (r['valido'] != true) return mesa_visual.TipoMeld.comum;
-    switch (r['tipo']) {
+  Sash _sashDeMeld(List<Carta> cartas) {
+    if (cartas.length < 7) return Sash.nenhuma;
+    final resultado = _j.validarSequencia(cartas);
+    if (resultado['valido'] != true) return Sash.nenhuma;
+    switch (resultado['tipo']) {
       case 'limpa':
-        return mesa_visual.TipoMeld.limpa;
+        return Sash.limpa;
       case 'suja':
-        return mesa_visual.TipoMeld.suja;
+        return Sash.suja;
       case 'de_500':
+        return Sash.n500;
       case 'as_a_as':
-        return mesa_visual.TipoMeld.de500;
+        return Sash.n1000;
       default:
-        return mesa_visual.TipoMeld.comum;
+        return Sash.nenhuma;
     }
   }
 
-  List<mesa_visual.Meld> _meldsDupla(String dupla) {
-    final jogos = _j.jogosDupla[dupla]!;
-    return [
-      for (var i = 0; i < jogos.length; i++)
-        mesa_visual.Meld(
-          id: '${dupla}_$i',
-          cartas: jogos[i].map(_cvm).toList(),
-          tipo: _tipoMeld(jogos[i]),
-          contagem: jogos[i].length,
-        ),
-    ];
+  String _sashLabel(Sash sash) {
+    switch (sash) {
+      case Sash.limpa:
+        return 'LIMPA · 200';
+      case Sash.suja:
+        return 'SUJA · 100';
+      case Sash.n500:
+        return 'CANASTRA · 500';
+      case Sash.n1000:
+        return 'CANASTRA · 1000';
+      case Sash.nenhuma:
+        return '';
+    }
   }
 
-  mesa_visual.JogadorMesa _jogadorVM(int assento, bool ehVoce) {
-    const nomes = ['você', 'Cláudia', 'Mateus', 'Sofia'];
-    const numeros = [7, 2, 4, 3];
-    const avatares = ['🐶', '🐰', '🦊', '🐱'];
-    return mesa_visual.JogadorMesa(
-      nome: nomes[assento],
-      numero: numeros[assento],
-      cartas: _j.maos[assento].length,
-      avatar: avatares[assento],
-      ehVoce: ehVoce,
-    );
-  }
-
-  mesa_visual.MesaVM _buildMesaVM() {
-    return mesa_visual.MesaVM(
-      titulo: 'BURACO MASTER VIP',
-      meta: _j.metaPontos,
-      modalidade: mesa_visual.Modalidade.aberto,
-      rodada: _j.rodada,
-      eles: mesa_visual.PlacarDupla(
-        pontos: _j.placar['eles'] ?? 0,
-        vulneravel: _j.vulneravel('eles'),
-        vulneravelMinimo: _j.vulneravelMinimo('eles'),
-      ),
-      nos: mesa_visual.PlacarDupla(
-        pontos: _j.placar['nos'] ?? 0,
-        vulneravel: _j.vulneravel('nos'),
-        vulneravelMinimo: _j.vulneravelMinimo('nos'),
-      ),
-      jogadoresEles: [_jogadorVM(1, false), _jogadorVM(3, false)],
-      jogadoresNos: [_jogadorVM(2, false), _jogadorVM(0, true)],
-      meldsEles: _meldsDupla('eles'),
-      meldsNos: _meldsDupla('nos'),
-      monte: mesa_visual.PilhaMonte(
-        contagem: _j.monte.length,
-        destaque: _minhaVezAtiva && !_j.jaComprou,
-      ),
-      lixo: mesa_visual.PilhaLixo(
-        contagem: _j.lixo.length,
-        topo: _j.lixo.isNotEmpty ? _cvm(_j.lixo.last) : null,
-      ),
-      mortosRestantes: _j.mortos.length,
-      mao: _j.maos[0].map(_cvm).toList(),
-      selecionadas: _sel.map((i) => _j.maos[0][i].id).toSet(),
-      dica: _msg,
-      minhaVez: _minhaVezAtiva,
-    );
-  }
-
-  void _tapCartaPorId(String id) {
-    final i = _j.maos[0].indexWhere((c) => c.id == id);
-    if (i >= 0) _tapCard(i);
-  }
-
-  void _estenderPorId(String meldId) {
-    if (!meldId.startsWith('nos_')) return;
-    final i = int.tryParse(meldId.substring(4));
-    if (i != null) _estender(i);
+  Color _sashColor(Sash sash) {
+    switch (sash) {
+      case Sash.limpa:
+        return const Color(0xFF9D43D8);
+      case Sash.suja:
+        return const Color(0xFF4B7ED8);
+      case Sash.n500:
+        return const Color(0xFFC44CCB);
+      case Sash.n1000:
+        return const Color(0xFFE5B84F);
+      case Sash.nenhuma:
+        return Colors.transparent;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return mesa_visual.MesaScreen(
-      vm: _buildMesaVM(),
-      onMenu: () {},
-      onChat: () {},
-      onComprarMonte: _tapMonte,
-      onPegarLixo: _tapLixo,
-      onTapCarta: _tapCartaPorId,
-      onBaixar: _baixar,
-      onEstender: _estenderPorId,
-      onDescartar: _tapLixo,
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _header(),
+            Expanded(child: _board()),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _header() {
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFF21160F), Color(0xFF100A07)],
+    return Container(
+      margin: const EdgeInsets.fromLTRB(3, 3, 3, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF070707),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        border: Border.all(color: _mGold, width: 1.2),
+        boxShadow: const [
+          BoxShadow(color: Color(0x66000000), blurRadius: 10, offset: Offset(0, 3)),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 28,
+            child: _headerMetric(
+              Icons.group_work_rounded,
+              'Modalidade',
+              _modalidade,
+              _mPurpleHi,
             ),
-            border: Border(bottom: BorderSide(color: Color(0x557D5A24), width: 1)),
-            boxShadow: [BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3))],
           ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: [
-              Container(
-                width: 31,
-                height: 31,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const RadialGradient(colors: [Color(0xFFF7D987), Color(0xFFB87B25)]),
-                  border: Border.all(color: const Color(0xFFFFEDB2), width: 1),
-                  boxShadow: const [BoxShadow(color: Color(0x66EFB94A), blurRadius: 8)],
-                ),
-                child: const Icon(Icons.workspace_premium_rounded, color: Color(0xFF3E2708), size: 20),
-              ),
-              const SizedBox(width: 7),
-              Expanded(
-                child: FittedBox(
+          _headerDivider(),
+          Expanded(
+            flex: 21,
+            child: _headerMetric(
+              Icons.monetization_on_rounded,
+              'Mesa',
+              '${_j.metaPontos}',
+              _mGoldHi,
+            ),
+          ),
+          _headerDivider(),
+          Expanded(
+            flex: 19,
+            child: _headerMetric(
+              Icons.sync_rounded,
+              'Rodada',
+              '${_j.rodada}',
+              _mPurpleHi,
+            ),
+          ),
+          _headerDivider(),
+          Expanded(
+            flex: 32,
+            child: _scoreMetric(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerDivider() => Container(
+        width: 1,
+        height: 45,
+        color: const Color(0x665B421C),
+      );
+
+  Widget _headerMetric(
+      IconData icon, String label, String value, Color valueColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: Row(
+        children: [
+          Icon(icon, color: _mGold, size: 20),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
-                  child: const Text(
-                    'BURACO MASTER VIP',
+                  child: Text(
+                    label,
                     maxLines: 1,
-                    style: TextStyle(
-                      color: Color(0xFFF4E5BC),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.25,
+                    style: const TextStyle(
+                      color: Color(0xFFF2E7C8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                width: 62,
-                height: 20,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  gradient: const LinearGradient(colors: [Color(0xFF176C50), Color(0xFF0B3D2D)]),
-                  border: Border.all(color: const Color(0xAA71D7AD)),
-                ),
-                child: const FittedBox(
+                const SizedBox(height: 2),
+                FittedBox(
                   fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
                   child: Text(
-                    'MESA PÚBLICA',
-                    style: TextStyle(color: Color(0xFFE8FFF4), fontSize: 6.8, fontWeight: FontWeight.w900, letterSpacing: 0.35),
+                    value,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: valueColor,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      height: 1,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              _hIcon(Icons.menu_rounded),
-              const SizedBox(width: 5),
-              _hIcon(Icons.chat_bubble_outline_rounded),
-            ]),
-            const SizedBox(height: 2),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                SizedBox(width: 62, child: _matchChip(Icons.flag_outlined, 'META', '${_j.metaPontos}')),
-                const SizedBox(width: 4),
-                SizedBox(width: 62, child: _matchChip(Icons.style_outlined, 'RODADA', '${_j.rodada}')),
-              ]),
+              ],
             ),
-          ]),
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _hIcon(IconData icon) => Container(
-        width: 30,
-        height: 30,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF21170E),
-          border: Border.all(color: const Color(0x668F6A31)),
-          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 4, offset: Offset(0, 2))],
-        ),
-        child: Icon(icon, size: 17, color: const Color(0xFFE7D5A7)),
-      );
-
-  Widget _matchChip(IconData icon, String label, String value) => Container(
-        constraints: const BoxConstraints(minWidth: 54),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          color: const Color(0xFF1B120B),
-          border: Border.all(color: const Color(0x557D5A24)),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 10.5, color: _mGold),
-          const SizedBox(width: 3),
-          Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: const TextStyle(color: Color(0xFF9D8E6D), fontSize: 6.0, fontWeight: FontWeight.w800, height: 1)),
-            const SizedBox(height: 1),
-            Text(value, style: const TextStyle(color: Color(0xFFF2E2B7), fontSize: 9.5, fontWeight: FontWeight.w900, height: 1)),
-          ]),
-        ]),
-      );
-
-  Widget _mesa() {
-    return LayoutBuilder(builder: (context, cons) {
-      // Geometria compacta: áreas superior e inferior dividem o espaço livre,
-      // enquanto a faixa central usa altura fixa menor.
-      final tableWidth = min(cons.maxWidth, 430.0);
-      const handH = 120.0;
-      return Align(
-        alignment: Alignment.topCenter,
-        child: SizedBox(
-          width: tableWidth,
-          child: Container(
-            margin: const EdgeInsets.fromLTRB(7, 5, 7, 0),
-            padding: const EdgeInsets.all(2.2),
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFF2D287), Color(0xFF78541F), Color(0xFFD5AA55), Color(0xFF5B3C14)],
-                stops: [0, 0.35, 0.72, 1],
-              ),
-              boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 14, offset: Offset(0, 4))],
-            ),
-            child: Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(21)),
-                border: Border.all(color: const Color(0xFF1B1108), width: 2),
-                gradient: const RadialGradient(
-                  center: Alignment(0, -0.16),
-                  radius: 1.08,
-                  colors: [Color(0xFF126247), Color(0xFF0A4533), Color(0xFF05261C)],
-                  stops: [0, 0.58, 1],
+  Widget _scoreMetric() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: Row(
+        children: [
+          const Icon(Icons.emoji_events_rounded, color: _mGold, size: 20),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Pontuação',
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: Color(0xFFF2E7C8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              child: Stack(children: [
-                Positioned.fill(child: CustomPaint(painter: _CrossHatch())),
-                const Positioned.fill(child: Center(child: Icon(Icons.workspace_premium_rounded, size: 126, color: Color(0x08F7E0A6)))),
+                const SizedBox(height: 2),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: RichText(
+                    text: TextSpan(
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
+                      children: [
+                        const TextSpan(
+                          text: 'Nós ',
+                          style: TextStyle(color: _mPurpleHi),
+                        ),
+                        TextSpan(
+                          text: '${_j.placar['nos']}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        const TextSpan(
+                          text: '  Eles ',
+                          style: TextStyle(color: Color(0xFFF1C15B)),
+                        ),
+                        TextSpan(
+                          text: '${_j.placar['eles']}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _board() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const centralHeight = 122.0;
+        const playerDockHeight = 166.0;
+        return Container(
+          margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFFE6A1), Color(0xFF6A4415), Color(0xFFE0B45D)],
+            ),
+            borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+            boxShadow: const [
+              BoxShadow(color: Color(0x88000000), blurRadius: 12, offset: Offset(0, 4)),
+            ],
+          ),
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: _feltColor,
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(10)),
+              border: Border.all(color: const Color(0xFF15100A), width: 1.5),
+            ),
+            child: Stack(
+              children: [
                 Positioned.fill(
-                  child: Column(children: [
-                    Expanded(child: _areaJogo('eles')),
-                    SizedBox(height: 92, child: _faixaCentral()),
-                    Expanded(child: _areaJogo('nos', handReserve: handH + 6)),
-                  ]),
+                  child: CustomPaint(
+                    painter: _mesaVip
+                        ? const _VipFeltPainter()
+                        : const _PublicFeltPainter(),
+                  ),
+                ),
+                Positioned.fill(
+                  child: Column(
+                    children: [
+                      Expanded(child: _meldArea('eles', top: true)),
+                      SizedBox(height: centralHeight, child: _centralTray()),
+                      Expanded(child: _meldArea('nos', top: false)),
+                      const SizedBox(height: playerDockHeight),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: 2,
+                  top: 74,
+                  child: _sidePlayer(1, left: true),
+                ),
+                Positioned(
+                  right: 2,
+                  top: 74,
+                  child: _sidePlayer(3, left: false),
+                ),
+                Positioned(
+                  left: 2,
+                  bottom: playerDockHeight + 14,
+                  child: _sidePlayer(2, left: true),
+                ),
+                Positioned(
+                  right: 5,
+                  bottom: playerDockHeight + 25,
+                  child: _actionRail(),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: playerDockHeight,
+                  child: _playerDock(),
                 ),
                 if (_msg != null)
-                  Positioned(left: 16, right: 16, bottom: handH + 8, child: _feedbackToast()),
-                Positioned(left: 0, right: 0, bottom: 0, height: handH, child: _hand()),
-                if (_j.rodadaEncerrada) Positioned.fill(child: _overlayFimRodada()),
-              ]),
+                  Positioned(
+                    left: 74,
+                    right: 74,
+                    bottom: playerDockHeight + 5,
+                    child: _feedbackToast(),
+                  ),
+                if (_j.rodadaEncerrada)
+                  Positioned.fill(child: _overlayFimRodada()),
+                if (_expandedAvatarSeat != null)
+                  Positioned.fill(
+                    child: _avatarOverlay(_expandedAvatarSeat!),
+                  ),
+              ],
             ),
-          ),
-        ),
-      );
-    });
-  }
-
-  Widget _feedbackToast() {
-    final texto = _msg ?? '';
-    final erro = texto.toLowerCase().contains('não') || texto.toLowerCase().contains('erro') || texto.toLowerCase().contains('selecione');
-    final accent = erro ? const Color(0xFFFFC56E) : const Color(0xFFC99BFF);
-    return IgnorePointer(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 220),
-        child: Container(
-          key: ValueKey<String>(texto),
-          constraints: const BoxConstraints(minHeight: 36),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(15),
-            gradient: const LinearGradient(colors: [Color(0xF2281B12), Color(0xF2130D09)]),
-            border: Border.all(color: accent.withValues(alpha: 0.62), width: 1.1),
-            boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.18), blurRadius: 12), const BoxShadow(color: Color(0x99000000), blurRadius: 8, offset: Offset(0, 3))],
-          ),
-          child: Row(children: [
-            Icon(erro ? Icons.info_outline_rounded : Icons.auto_awesome_rounded, color: accent, size: 17),
-            const SizedBox(width: 8),
-            Expanded(child: Text(texto, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFFF3E8CE), fontSize: 9.5, fontWeight: FontWeight.w800, height: 1.15))),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _areaJogo(String dupla, {double handReserve = 0}) {
-    final eles = dupla == 'eles';
-    return SizedBox(
-      width: double.infinity,
-      child: Column(children: [
-        _teamRow(eles: eles),
-        Expanded(child: _meldsBox(dupla, padTop: 5, padBottom: handReserve > 0 ? handReserve : 7)),
-      ]),
-    );
-  }
-
-  Widget _avatarCanto({required int a, required bool dir}) => _chip(a: a, dir: dir, play: a == 0);
-
-  Widget _overlayFimRodada() {
-    final venceu = _j.encerrada;
-    final linhaNos = _linhaPlacar('nos');
-    final linhaEles = _linhaPlacar('eles');
-    String titulo;
-    if (venceu) {
-      final nosVenceu = _j.placar['nos']! >= _j.placar['eles']!;
-      titulo = nosVenceu ? 'NÓS VENCEMOS!' : 'ELES VENCERAM';
-    } else if (_j.duplaQueBateu == 'nos') {
-      titulo = 'NÓS BATEMOS!';
-    } else if (_j.duplaQueBateu == 'eles') {
-      titulo = 'ELES BATERAM';
-    } else {
-      titulo = 'BARALHO ESGOTADO';
-    }
-    return GestureDetector(
-      onTap: () {},
-      child: Container(
-        color: const Color(0xD9000000),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 17, 16, 16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF271A11), Color(0xFF111916), Color(0xFF17100B)]),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: _mGold, width: 1.5),
-            boxShadow: const [BoxShadow(color: Color(0xAA000000), blurRadius: 24), BoxShadow(color: Color(0x447C4DB7), blurRadius: 18)],
-          ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(width: 54, height: 54, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, gradient: const RadialGradient(colors: [Color(0xFFFFE9A5), Color(0xFFC2872D)]), border: Border.all(color: const Color(0xFFFFF1C2))), child: Icon(venceu ? Icons.emoji_events_rounded : Icons.workspace_premium_rounded, color: const Color(0xFF4B2D07), size: 31)),
-            const SizedBox(height: 9),
-            Text(venceu ? 'FIM DE PARTIDA' : 'RODADA ${_j.rodada}', style: const TextStyle(color: _mGoldHi, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-            const SizedBox(height: 4),
-            Text(titulo, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFF6E9C8), fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: 0.2)),
-            const SizedBox(height: 14),
-            linhaNos,
-            const SizedBox(height: 7),
-            linhaEles,
-            const SizedBox(height: 16),
-            _botaoOverlay(
-              venceu ? 'NOVA PARTIDA' : 'PRÓXIMA RODADA',
-              () => setState(() {
-                if (venceu) {
-                  _j = Jogo(
-                    const ['você', 'Cláudia', 'Mateus', 'Sofia'],
-                    const ['👑', '🙂', '😎', 'RN'],
-                    const ['🐶', '🐰', '🦊', '🐱'],
-                  );
-                } else {
-                  _j.novaRodada();
-                }
-                _sel.clear();
-                _msg = null;
-              }),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-
-  Widget _linhaPlacar(String dupla) {
-    final r = _j.pontosRodada?[dupla] as Map<String, dynamic>?;
-    final det = r?['detalhe'] as Map?;
-    final ganhou = (r?['total'] as int?) ?? 0;
-    final eles = dupla == 'eles';
-    final nome = eles ? 'ELES' : 'NÓS';
-    final cor = eles ? const Color(0xFFF0B0A1) : const Color(0xFF91E2B5);
-    final partes = <String>[];
-    if (det != null) {
-      if ((det['asAas'] ?? 0) > 0) partes.add('${det['asAas']}×1000');
-      if ((det['de500'] ?? 0) > 0) partes.add('${det['de500']}×500');
-      if ((det['limpas'] ?? 0) > 0) partes.add('${det['limpas']} limpa');
-      if ((det['sujas'] ?? 0) > 0) partes.add('${det['sujas']} suja');
-      partes.add('cartas ${det['baixadas'] ?? 0}');
-      if ((r?['bonusBatida'] as int? ?? 0) != 0) partes.add('batida +100');
-      if ((r?['penalidadeMorto'] as int? ?? 0) != 0) partes.add('morto −100');
-      if ((r?['descontoMao'] as int? ?? 0) != 0) partes.add('mão ${r!['descontoMao']}');
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-      decoration: BoxDecoration(
-        color: eles ? const Color(0x1FEF8170) : const Color(0x1F51D49A),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cor.withValues(alpha: 0.28)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(width: 7, height: 7, decoration: BoxDecoration(shape: BoxShape.circle, color: cor)),
-          const SizedBox(width: 6),
-          Text(nome, style: TextStyle(color: cor, fontSize: 12, fontWeight: FontWeight.w900)),
-          const Spacer(),
-          Text('${ganhou >= 0 ? '+' : ''}$ganhou', style: TextStyle(color: ganhou >= 0 ? const Color(0xFFB7F4D2) : const Color(0xFFFFB7B0), fontSize: 13, fontWeight: FontWeight.w900)),
-          const SizedBox(width: 12),
-          Text('TOTAL ${_j.placar[dupla]}', style: const TextStyle(color: _mGoldHi, fontSize: 11, fontWeight: FontWeight.w900)),
-        ]),
-        if (partes.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(partes.join(' · '), maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xB3FFFFFF), fontSize: 8.5, height: 1.2))),
-      ]),
-    );
-  }
-
-  Widget _botaoOverlay(String txt, VoidCallback onTap) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFFFFE99D), Color(0xFFE0AA4D), Color(0xFFAE7121)]),
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: const Color(0xFFFFF1BD)),
-            boxShadow: const [BoxShadow(color: Color(0x559C6A21), blurRadius: 10, offset: Offset(0, 3))],
-          ),
-          child: Text(txt, style: const TextStyle(color: Color(0xFF3F2707), fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
-        ),
-      );
-
-  Widget _teamRow({required bool eles}) {
-    final cor = eles ? const Color(0xFFF0A897) : const Color(0xFF88DEAF);
-    // Posição aprovada: o usuário (índice 0) permanece no canto inferior direito.
-    final chipL = eles ? _chip(a: 1, dir: false) : _chip(a: 2, dir: false);
-    final chipR = eles ? _chip(a: 3, dir: true) : _chip(a: 0, dir: true, play: true);
-    final label = eles ? 'ELES' : 'NÓS';
-    final points = eles ? _j.placar['eles'] : _j.placar['nos'];
-    final dupla = eles ? 'eles' : 'nos';
-    return LayoutBuilder(builder: (context, cons) {
-      final playerW = ((cons.maxWidth - 94) / 2).clamp(112.0, 138.0).toDouble();
-      return Container(
-        margin: const EdgeInsets.fromLTRB(6, 5, 6, 2),
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: const LinearGradient(colors: [Color(0xC9122D22), Color(0xB5081D16)]),
-          border: Border.all(color: const Color(0x227FE0B2)),
-          boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 5, offset: Offset(0, 2))],
-        ),
-        child: Row(children: [
-          SizedBox(width: playerW, child: Align(alignment: Alignment.centerLeft, child: chipL)),
-          Expanded(
-            child: Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(13), color: const Color(0xA40A1712), border: Border.all(color: cor.withValues(alpha: 0.38))),
-                  child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: cor)),
-                    const SizedBox(width: 5),
-                    Text(label, style: TextStyle(color: cor, fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: 0.4, height: 1)),
-                    const SizedBox(width: 5),
-                    Text('$points', style: const TextStyle(color: Color(0xFFECE3CE), fontSize: 11, fontWeight: FontWeight.w900, height: 1)),
-                  ]),
-                ),
-                _vulnPill(dupla),
-              ]),
-            ),
-          ),
-          SizedBox(width: playerW, child: Align(alignment: Alignment.centerRight, child: chipR)),
-        ]),
-      );
-    });
-  }
-
-  // Container de vulnerabilidade entre os dois jogadores da dupla (pulsa/brilha).
-  Widget _vulnPill(String dupla) {
-    final minimo = _j.vulneravelMinimo(dupla);
-    if (minimo == 0) return const SizedBox.shrink();
-    return AnimatedBuilder(
-      animation: _pulse,
-      builder: (context, _) {
-        final t = Curves.easeInOut.transform(_pulse.value);
-        return Transform.scale(
-          scale: 1.0 + 0.05 * t,
-          child: Container(
-            margin: const EdgeInsets.only(top: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(9),
-              gradient: const LinearGradient(colors: [Color(0xFFFFE08A), Color(0xFFF0A93A)]),
-              border: Border.all(color: const Color(0xFFFFE9A8)),
-              boxShadow: [BoxShadow(color: const Color(0xFFF0A93A).withValues(alpha: 0.35 + 0.5 * t), blurRadius: 5 + 12 * t, spreadRadius: t * 2.5)],
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.warning_amber_rounded, size: 10, color: Color(0xFF3A1410)),
-              const SizedBox(width: 3),
-              Text('Vulnerável \u00b7 $minimo', style: const TextStyle(color: Color(0xFF3A1410), fontSize: 8.5, fontWeight: FontWeight.w900, height: 1)),
-            ]),
           ),
         );
       },
     );
   }
 
-  Widget _avatarSq({required int a, required bool dir, bool play = false}) {
-    final ehVez = _j.vez == a && !_j.rodadaEncerrada;
-    final user = a == 0;
-    return Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
-      Container(
-        width: 43,
-        height: 43,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const RadialGradient(center: Alignment(-0.25, -0.35), colors: [Color(0xFF5A3D1B), Color(0xFF211208)]),
-          border: Border.all(color: ehVez ? const Color(0xFFC89AFF) : (user ? _mGoldHi : _mGold), width: ehVez ? 2.8 : 2),
-          boxShadow: ehVez
-              ? const [BoxShadow(color: Color(0xAA9B63E4), blurRadius: 13), BoxShadow(color: Color(0x66EFB94A), blurRadius: 7)]
-              : const [BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(0, 2))],
-        ),
-        child: Text(_j.avatares[a], style: const TextStyle(fontSize: 18, color: _mGoldHi)),
+  Widget _meldArea(String dupla, {required bool top}) {
+    final jogos = _j.jogosDupla[dupla]!;
+    final vulnerabilidade = _vulnerabilidadeDaDupla(dupla);
+    final podeBaixar = dupla == 'nos' &&
+        _minhaVezAtiva &&
+        _j.jaComprou &&
+        _sel.length >= 3;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: dupla == 'nos' ? _baixar : null,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // A área de jogos sempre ocupa toda a largura útil da mesa.
+          // Cada jogo conserva sua largura natural e o Wrap organiza os blocos
+          // lado a lado; quando não há espaço, o próximo jogo desce de linha.
+          final larguraUtil = max(0.0, constraints.maxWidth - 20);
+
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: jogos.isEmpty
+                    ? Center(
+                        child: AnimatedOpacity(
+                          opacity: podeBaixar ? 1 : 0.22,
+                          duration: const Duration(milliseconds: 180),
+                          child: Text(
+                            podeBaixar
+                                ? 'TOQUE NO FELTRO PARA BAIXAR'
+                                : (top ? 'ELES' : 'NÓS'),
+                            style: TextStyle(
+                              color: podeBaixar ? _mPurpleHi : _mGold,
+                              fontSize: podeBaixar ? 9 : 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.1,
+                            ),
+                          ),
+                        ),
+                      )
+                    : SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(10, 40, 10, 7),
+                        physics: const BouncingScrollPhysics(),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minWidth: larguraUtil,
+                            maxWidth: larguraUtil,
+                          ),
+                          child: Wrap(
+                            alignment: WrapAlignment.start,
+                            runAlignment: WrapAlignment.start,
+                            crossAxisAlignment: WrapCrossAlignment.start,
+                            spacing: 6,
+                            runSpacing: 7,
+                            children: [
+                              for (var index = 0;
+                                  index < jogos.length;
+                                  index++)
+                                _meldWidget(dupla, index, jogos[index]),
+                            ],
+                          ),
+                        ),
+                      ),
+              ),
+              Positioned(
+                top: 6,
+                left: 7,
+                right: 7,
+                child: IgnorePointer(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _areaLabel(top ? 'ELES' : 'NÓS', top: top),
+                      if (vulnerabilidade != null) ...[
+                        const SizedBox(width: 7),
+                        _vulnerabilityBadge(vulnerabilidade),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
-      Positioned(
-        bottom: -5,
-        left: dir ? null : -7,
-        right: dir ? -7 : null,
-        child: Container(
-          width: 25,
-          height: 25,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: const LinearGradient(colors: [Color(0xFF4A3014), Color(0xFF1D1007)]), border: Border.all(color: const Color(0xAAEFB94A)), boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 4)]),
-          child: Text(_j.mascotes[a], style: const TextStyle(fontSize: 14)),
-        ),
-      ),
-      if (ehVez) Positioned(top: -5, right: dir ? null : -3, left: dir ? -3 : null, child: Container(width: 12, height: 12, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFFC89AFF), border: Border.all(color: const Color(0xFFF5E9FF), width: 1.2), boxShadow: const [BoxShadow(color: Color(0xAAC89AFF), blurRadius: 6)]))),
-    ]);
+    );
   }
 
-  Widget _chip({required int a, required bool dir, bool play = false}) {
-    final ehVez = _j.vez == a && !_j.rodadaEncerrada;
-    final user = a == 0;
-    final avatar = _avatarSq(a: a, dir: dir, play: play);
-    final info = Expanded(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: dir ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          Row(mainAxisAlignment: dir ? MainAxisAlignment.end : MainAxisAlignment.start, children: [
-            if (user && dir) ...[_userTag(), const SizedBox(width: 4)],
-            Flexible(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: dir ? Alignment.centerRight : Alignment.centerLeft,
-                child: Text(_j.apelidos[a], maxLines: 1, textAlign: dir ? TextAlign.right : TextAlign.left, style: TextStyle(color: ehVez ? const Color(0xFFE7D1FF) : const Color(0xFFF1E8D3), fontSize: 10.5, fontWeight: FontWeight.w900, height: 1.05)),
+  Widget _areaLabel(String label, {required bool top}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0x88000000),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x337D5A24)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: top ? const Color(0xFFD7A45A) : const Color(0xFFC67BFF),
+          fontSize: 8,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
+
+  Widget _vulnerabilityBadge(int valor) {
+    final accent = valor >= 95
+        ? const Color(0xFFE86A80)
+        : const Color(0xFFE5B84F);
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0.92, end: 1),
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutBack,
+      builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xEE160D12),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: accent, width: 1),
+          boxShadow: [
+            BoxShadow(color: accent.withOpacity(0.45), blurRadius: 10),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.warning_amber_rounded, color: accent, size: 12),
+            const SizedBox(width: 4),
+            Text(
+              'VULNERABILIDADE +$valor',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 7.4,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.35,
               ),
             ),
-            if (user && !dir) ...[const SizedBox(width: 4), _userTag()],
-          ]),
-          const SizedBox(height: 4),
-          Row(mainAxisAlignment: dir ? MainAxisAlignment.end : MainAxisAlignment.start, children: [
-            Icon(Icons.style_rounded, size: 9, color: ehVez ? const Color(0xFFC89AFF) : const Color(0xFF9E8B68)),
-            const SizedBox(width: 3),
-            _countBadge(_j.maos[a].length),
-          ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
+    const cardWidth = 64.0;
+    const cardHeight = 96.0;
+    // As cartas mantêm o tamanho aprovado. A compactação vem somente da
+    // sobreposição: ficam aparentes principalmente o número e o naipe.
+    const step = 17.0;
+    final count = cartas.length;
+    final totalWidth = cardWidth + (count - 1) * step;
+    final sash = _sashDeMeld(cartas);
+    final celebrating = _celebratingMeldKey == '$dupla-$index';
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (dupla == 'nos' &&
+            _sel.isNotEmpty &&
+            _minhaVezAtiva &&
+            _j.jaComprou) {
+          _estender(index);
+        } else {
+          _showMeldZoom(dupla, index);
+        }
+      },
+      child: AnimatedScale(
+        scale: celebrating ? 1.08 : 1,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutBack,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 320),
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            color: celebrating ? const Color(0x249D43D8) : Colors.transparent,
+            boxShadow: celebrating
+                ? const [
+                    BoxShadow(color: Color(0xAA9D43D8), blurRadius: 22),
+                    BoxShadow(color: Color(0x88E5B84F), blurRadius: 14),
+                  ]
+                : null,
+          ),
+          child: SizedBox(
+            width: totalWidth,
+            height: cardHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (var i = 0; i < count; i++)
+                  Positioned(
+                    left: i * step,
+                    top: 0,
+                    child: _frontCard(
+                      cartas[i],
+                      width: cardWidth,
+                      height: cardHeight,
+                    ),
+                  ),
+                // O contador fica sobre o canto superior direito da última carta.
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: _countCircle(count),
+                ),
+                // A classificação da canastra fica sobre as próprias cartas e
+                // não cria uma linha externa nem aumenta o bloco do jogo.
+                if (sash != Sash.nenhuma)
+                  Positioned(
+                    left: 1,
+                    right: 1,
+                    bottom: 2,
+                    child: _canastraRibbon(sash, celebrating),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _canastraRibbon(Sash sash, bool celebrating) {
+    final color = _sashColor(sash);
+    return AnimatedScale(
+      scale: celebrating ? 1.04 : 1,
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutBack,
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(7),
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.96),
+              Color.lerp(color, Colors.black, 0.52)!.withOpacity(0.96),
+            ],
+          ),
+          border: Border.all(color: _mGoldHi, width: 0.8),
+          boxShadow: [
+            BoxShadow(color: color.withOpacity(0.48), blurRadius: 7),
+          ],
+        ),
+        child: Text(
+          _sashLabel(sash),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 7.5,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.45,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _centralTray() {
+    final podeComprar = _minhaVezAtiva && !_j.jaComprou;
+    final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
+    final monteGlow = podeComprar ||
+        (_lastPurchaseSource == 'monte' && _recentlyBoughtIds.isNotEmpty);
+    final lixoGlow = podeDescartar ||
+        (_lastPurchaseSource == 'lixo' && _recentlyBoughtIds.isNotEmpty);
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+      decoration: BoxDecoration(
+        color: _mPanel,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF8C6729), width: 1.1),
+        boxShadow: const [
+          BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3)),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          _centralPile(
+            label: 'MONTE',
+            count: _j.monte.length,
+            child: _backCard(width: 62, height: 93, glowing: monteGlow),
+            onTap: _tapMonte,
+          ),
+          const SizedBox(width: 7),
+          Expanded(child: _discardPile(glowing: lixoGlow)),
+          const SizedBox(width: 7),
+          _centralPile(
+            label: 'MORTO\n(NÓS)',
+            count: _j.mortos.isNotEmpty ? _j.mortos.first.length : 0,
+            child: _j.mortos.isNotEmpty
+                ? _backCard(width: 62, height: 93)
+                : _emptyCard(width: 62, height: 93),
+          ),
+          const SizedBox(width: 7),
+          _centralPile(
+            label: 'MORTO\n(ELES)',
+            count: _j.mortos.length > 1 ? _j.mortos[1].length : 0,
+            child: _j.mortos.length > 1
+                ? _backCard(width: 62, height: 93)
+                : _emptyCard(width: 62, height: 93),
+          ),
         ],
       ),
     );
-    return SizedBox(
-      width: double.infinity,
-      child: Row(children: dir ? [info, const SizedBox(width: 6), avatar] : [avatar, const SizedBox(width: 6), info]),
-    );
   }
 
-  Widget _userTag() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), color: const Color(0xFF7650A8), border: Border.all(color: const Color(0x88D0ABFF))),
-        child: const Text('VOCÊ', style: TextStyle(color: Color(0xFFF7EFFF), fontSize: 5.5, fontWeight: FontWeight.w900, letterSpacing: 0.35)),
-      );
-
-  Widget _chipStrip({required int a, required bool dir, bool play = false}) => _chip(a: a, dir: dir, play: play);
-
-  Widget _countBadge(int n) => Container(
-        constraints: const BoxConstraints(minWidth: 21),
-        height: 17,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 5),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(7),
-          gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF9E4635), Color(0xFF61251C)]),
-          border: Border.all(color: const Color(0x66F1C673)),
-          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 3, offset: Offset(0, 1))],
-        ),
-        child: Text('$n', style: const TextStyle(color: Color(0xFFFFEEE5), fontSize: 9.5, fontWeight: FontWeight.w900, height: 1)),
-      );
-
-  Widget _cpill(String s) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-        decoration: BoxDecoration(color: const Color(0xFF153D30), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0x337FE0B2))),
-        child: Text(s, style: const TextStyle(color: Color(0xFFE8D6A6), fontSize: 7.5, fontWeight: FontWeight.w900, height: 1)),
-      );
-
-  Widget _meldsBox(String dupla, {double padTop = 5, double padBottom = 7}) {
-    final melds = _j.jogosDupla[dupla]!;
-    final interativo = dupla == 'nos';
-    final podeBaixar = interativo && _minhaVezAtiva && _j.jaComprou && _sel.length >= 3;
-    final title = interativo ? 'JOGOS DA SUA DUPLA' : 'JOGOS ADVERSÁRIOS';
-    final box = AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(6, 2, 6, 3),
-      padding: EdgeInsets.fromLTRB(7, padTop, 7, padBottom),
-      clipBehavior: Clip.hardEdge,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: podeBaixar ? const [Color(0xAA244C39), Color(0xAA102E23)] : const [Color(0x7A0D3B2B), Color(0x7208261C)]),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: podeBaixar ? _mGoldHi : const Color(0x246DD4A2), width: podeBaixar ? 1.5 : 1),
-        boxShadow: podeBaixar ? const [BoxShadow(color: Color(0x55EFB94A), blurRadius: 9)] : const [BoxShadow(color: Color(0x44000000), blurRadius: 4, offset: Offset(0, 2))],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(interativo ? Icons.auto_awesome_rounded : Icons.shield_outlined, size: 10, color: podeBaixar ? _mGoldHi : const Color(0x668FD7B6)),
-          const SizedBox(width: 4),
-          Text(title, style: TextStyle(color: podeBaixar ? _mGoldHi : const Color(0x668FD7B6), fontSize: 6.8, fontWeight: FontWeight.w900, letterSpacing: 0.55)),
-          const Spacer(),
-          if (melds.isNotEmpty) _cpill('${melds.length} ${melds.length == 1 ? 'jogo' : 'jogos'}'),
-        ]),
-        const SizedBox(height: 4),
-        Expanded(
-          child: melds.isEmpty
-              ? Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(podeBaixar ? Icons.touch_app_rounded : Icons.style_outlined, color: podeBaixar ? _mGoldHi : const Color(0x3394CDB3), size: 21),
-                    const SizedBox(height: 5),
-                    Text(podeBaixar ? 'TOQUE PARA BAIXAR' : (interativo ? 'Seus jogos aparecerão aqui' : 'Nenhum jogo baixado'), style: TextStyle(color: podeBaixar ? _mGoldHi : const Color(0x55FFFFFF), fontSize: 8.5, fontWeight: FontWeight.w800, letterSpacing: podeBaixar ? 0.5 : 0)),
-                  ]),
-                )
-              : SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: Wrap(spacing: 4, runSpacing: 6, children: [
-                    for (int i = 0; i < melds.length; i++)
-                      interativo ? GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => _estender(i), child: _meld(melds[i])) : _meld(melds[i]),
-                  ]),
-                ),
-        ),
-      ]),
-    );
-    if (!interativo) return box;
-    return GestureDetector(behavior: HitTestBehavior.opaque, onTap: _baixar, child: box);
-  }
-
-  Widget _meld(List<Carta> cartas) {
-    final sash = _sashDeMeld(cartas);
-    final lab = {Sash.limpa: 'LIMPA', Sash.suja: 'SUJA', Sash.n500: 'VIP 500'}[sash];
-    Color accent;
-    List<Color> sashColors;
-    Color labelColor;
-    switch (sash) {
-      case Sash.suja:
-        accent = const Color(0xFFE66E62);
-        sashColors = const [Color(0xFFCE5A4F), Color(0xFF7C2924)];
-        labelColor = const Color(0xFFFFEBE8);
-        break;
-      case Sash.n500:
-        accent = const Color(0xFFC99BFF);
-        sashColors = const [Color(0xFFB989F0), Color(0xFF6B3FA0), Color(0xFFDAAC55)];
-        labelColor = const Color(0xFFFFFFFF);
-        break;
-      case Sash.limpa:
-        accent = const Color(0xFFF1C673);
-        sashColors = const [Color(0xFFFFEDB1), Color(0xFFDFA94D), Color(0xFF98631E)];
-        labelColor = const Color(0xFF4C3007);
-        break;
-      default:
-        accent = const Color(0x667FE0B2);
-        sashColors = const [Color(0xFF204C3A), Color(0xFF123326)];
-        labelColor = const Color(0xFFE8F5EF);
-    }
-    return Stack(clipBehavior: Clip.none, children: [
-      Container(
-        margin: EdgeInsets.only(bottom: lab == null ? 0 : 11),
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), gradient: const LinearGradient(colors: [Color(0x22FFFFFF), Color(0x0AFFFFFF)]), border: Border.all(color: accent.withValues(alpha: 0.52)), boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 5, offset: Offset(0, 2))]),
-        child: _meldCards(cartas),
-      ),
-      Positioned(
-        top: -5,
-        right: -5,
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 17),
-          height: 17,
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF9E4635), Color(0xFF61251C)]), border: Border.all(color: const Color(0x99F1C673)), boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 4)]),
-          child: Text('${cartas.length}', style: const TextStyle(color: Color(0xFFFFEEE5), fontSize: 8, fontWeight: FontWeight.w900)),
-        ),
-      ),
-      if (lab != null)
-        Positioned(
-          left: 5,
-          right: 5,
-          bottom: 0,
-          height: 13,
-          child: Container(
-            alignment: Alignment.center,
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(5), gradient: LinearGradient(colors: sashColors), border: Border.all(color: accent.withValues(alpha: 0.65)), boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 3)]),
-            child: Text(lab, style: TextStyle(color: labelColor, fontSize: 7.5, fontWeight: FontWeight.w900, letterSpacing: 0.65, height: 1)),
-          ),
-        ),
-    ]);
-  }
-
-  List<Carta> _meldOrdenado(List<Carta> cartas) {
-    final c = List<Carta>.from(cartas);
-    c.sort((a, b) {
-      final ja = a.valor == 'JOKER', jb = b.valor == 'JOKER';
-      if (ja != jb) return ja ? 1 : -1;
-      return Jogo._ordem.indexOf(a.valor) - Jogo._ordem.indexOf(b.valor);
-    });
-    return c;
-  }
-
-  Widget _meldCards(List<Carta> cartas) {
-    // Sobreposição fixa e mais fechada, igual para todos os jogos.
-    // A primeira carta mantém exatamente o mesmo tamanho das demais.
-    const cw = 54.0, ch = 81.0, step = cw * 0.38;
-    final ord = _meldOrdenado(cartas);
-    final k = ord.length;
-    final totalW = (k - 1) * step + cw;
-    return SizedBox(
-      width: totalW,
-      height: ch,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [for (int i = 0; i < k; i++) Positioned(left: i * step, child: _mcard(ord[i]))],
-      ),
-    );
-  }
-
-  // Carta baixada: SÓ a carta (sem moldura, sem sombra).
-  Widget _mcard(Carta c) => SizedBox(
-        width: 54,
-        height: 81,
-        child: Image.asset(_cartaAsset(c), fit: BoxFit.fill, filterQuality: FilterQuality.high),
-      );
-
-  Widget _faixaCentral() {
-    final podeComprar = _minhaVezAtiva && !_j.jaComprou;
-    final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
-    final podePegarLixo = _minhaVezAtiva && !_j.jaComprou && _j.lixo.isNotEmpty;
-    final monteComprado = _lastPurchaseSource == 'monte' && _recentlyBoughtIds.isNotEmpty;
-    final lixoComprado = _lastPurchaseSource == 'lixo' && _recentlyBoughtIds.isNotEmpty;
-    final monteDestaque = podeComprar || monteComprado;
-    final lixoDestaque = podeDescartar || podePegarLixo || lixoComprado;
-    final topo = _j.lixoTopo;
-
-    return SizedBox(
-      width: double.infinity,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(6, 1, 6, 1),
-        padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 0),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xE8162119), Color(0xE808100C)],
-          ),
-          border: Border.all(color: const Color(0x997B5B2A), width: 1),
-          boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 5, offset: Offset(0, 2))],
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 280),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              SizedBox(
-                width: 68,
-                child: _celula(
-                  'MONTE',
-                  Icons.layers_rounded,
-                  _back(destaque: monteDestaque),
-                  '${_j.monte.length}',
-                  destaque: monteDestaque,
-                  onTap: _tapMonte,
-                ),
-              ),
-              _centralDivider(),
-              SizedBox(
-                width: 68,
-                child: _celula(
-                  'LIXO',
-                  Icons.delete_outline_rounded,
-                  topo == null ? _ghost(destaque: lixoDestaque) : _lixoCarta(topo, lixoDestaque),
-                  '${_j.lixo.length}',
-                  destaque: lixoDestaque,
-                  onTap: _tapLixo,
-                ),
-              ),
-              _centralDivider(),
-              SizedBox(
-                width: 68,
-                child: _celula(
-                  'MORTO 1',
-                  Icons.style_outlined,
-                  _j.mortos.isNotEmpty ? _back() : _ghost(),
-                  _j.mortos.isNotEmpty ? 'OK' : '—',
-                ),
-              ),
-              _centralDivider(),
-              SizedBox(
-                width: 68,
-                child: _celula(
-                  'MORTO 2',
-                  Icons.style_outlined,
-                  _j.mortos.length > 1 ? _back() : _ghost(),
-                  _j.mortos.length > 1 ? 'OK' : '—',
-                ),
-              ),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _centralDivider() => Container(width: 1, height: 67, margin: EdgeInsets.zero, color: const Color(0x337D5A24));
-
-  Widget _celula(String label, IconData icon, Widget slot, String pill, {bool destaque = false, VoidCallback? onTap}) {
-    final accent = destaque ? const Color(0xFFC99BFF) : const Color(0xFFB8A984);
-    final conteudo = AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 0),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), color: destaque ? const Color(0x174F2C70) : Colors.transparent),
-      child: Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 8.5, color: accent),
-          const SizedBox(width: 2),
-          Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.fade, softWrap: false, style: TextStyle(color: destaque ? const Color(0xFFE7D1FF) : const Color(0xFFD9CBA8), fontSize: 6.2, fontWeight: FontWeight.w900, letterSpacing: 0.25))),
-        ]),
-        const SizedBox(height: 1),
-        Stack(clipBehavior: Clip.none, children: [
-          slot,
-          Positioned(top: -4, right: -5, child: Container(constraints: const BoxConstraints(minWidth: 18), height: 15, alignment: Alignment.center, padding: const EdgeInsets.symmetric(horizontal: 4), decoration: BoxDecoration(borderRadius: BorderRadius.circular(7), gradient: destaque ? const LinearGradient(colors: [Color(0xFF8F60C9), Color(0xFF5B367F)]) : const LinearGradient(colors: [Color(0xFF4A3820), Color(0xFF251A0E)]), border: Border.all(color: destaque ? const Color(0xAAC99BFF) : const Color(0x668F6A31))), child: Text(pill, style: TextStyle(color: destaque ? const Color(0xFFF5EAFF) : const Color(0xFFEAD9A8), fontSize: 7, fontWeight: FontWeight.w900)))),
-        ]),
-      ]),
-    );
-    return onTap == null ? conteudo : GestureDetector(onTap: onTap, behavior: HitTestBehavior.opaque, child: conteudo);
-  }
-
-  Widget _back({bool destaque = false, bool compacto = false}) {
-    const w = 46.0;
-    const h = 69.0;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      width: w,
-      height: h,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: destaque ? const [BoxShadow(color: Color(0x99B27BE9), blurRadius: 12), BoxShadow(color: Color(0x66EFB94A), blurRadius: 8)] : null,
-      ),
-      child: Image.asset(_dorsoAsset, fit: BoxFit.fill, filterQuality: FilterQuality.high),
-    );
-  }
-
-  Widget _lixoCarta(Carta c, bool destaque) => AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        width: 46,
-        height: 69,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: destaque ? const [BoxShadow(color: Color(0x99B27BE9), blurRadius: 12), BoxShadow(color: Color(0x66EFB94A), blurRadius: 7)] : null,
-        ),
-        child: Image.asset(_cartaAsset(c), fit: BoxFit.fill, filterQuality: FilterQuality.high),
-      );
-
-  Widget _ghost({bool destaque = false, bool compacto = false}) => Container(
-        width: 46,
-        height: 69,
-        decoration: BoxDecoration(color: destaque ? const Color(0x154F2C70) : const Color(0x0CFFFFFF), borderRadius: BorderRadius.circular(8), border: Border.all(color: destaque ? const Color(0xAAC99BFF) : const Color(0x3FDBC387), width: destaque ? 1.7 : 1.1)),
-        child: Icon(Icons.style_outlined, color: destaque ? const Color(0x77C99BFF) : const Color(0x257FE0B2), size: 19),
-      );
-
-  final ScrollController _handScroll = ScrollController();
-
-  Widget _hand() {
-    final mao = _j.maos[0];
-    final n = mao.length;
-    if (n == 0) return const SizedBox();
-
-    // A mão permanece em uma única linha e rola horizontalmente.
-    // O passo maior deixa a leitura das cartas confortável e garante overflow
-    // real quando a mão cresce, sem comprimir ou deformar os arquivos do baralho.
-    const cw = 68.0, ch = 102.0, step = 46.0, lift = 15.0;
-    final ativo = _minhaVezAtiva;
-    final totalW = (n - 1) * step + cw;
-
-    final cartas = LayoutBuilder(builder: (context, cons) {
-      final order = List<int>.generate(n, (i) => i)
-        ..sort((a, b) {
-          final pa = (_sel.contains(a) ? 2 : 0) + (_recentlyBoughtIds.contains(mao[a].id) ? 1 : 0);
-          final pb = (_sel.contains(b) ? 2 : 0) + (_recentlyBoughtIds.contains(mao[b].id) ? 1 : 0);
-          if (pa != pb) return pa.compareTo(pb);
-          return a.compareTo(b);
-        });
-
-      final stack = SizedBox(
-        width: totalW,
-        height: ch + lift,
-        child: Stack(
+  Widget _centralPile({
+    required String label,
+    required int count,
+    required Widget child,
+    VoidCallback? onTap,
+  }) {
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
           clipBehavior: Clip.none,
           children: [
-            for (final i in order)
-              Positioned(
-                left: i * step,
-                bottom: 0,
-                child: GestureDetector(
-                  onTap: ativo ? () => _tapCard(i) : null,
-                  child: AnimatedSlide(
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    offset: Offset(
-                      0,
-                      _sel.contains(i)
-                          ? -lift / ch
-                          : (_recentlyBoughtIds.contains(mao[i].id) ? -7 / ch : 0),
-                    ),
-                    child: SizedBox(
-                      width: cw,
-                      height: ch,
-                      child: _handCard(
-                        mao[i],
-                        _sel.contains(i),
-                        _recentlyBoughtIds.contains(mao[i].id),
+            child,
+            Positioned(top: -7, right: -7, child: _countCircle(count)),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Color(0xFFEADBB7),
+            fontSize: 7.2,
+            height: 1.05,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+    return onTap == null
+        ? content
+        : GestureDetector(
+            onTap: onTap,
+            behavior: HitTestBehavior.opaque,
+            child: content,
+          );
+  }
+
+  Widget _discardPile({required bool glowing}) {
+    const cardWidth = 62.0;
+    const cardHeight = 93.0;
+    const step = 19.0;
+    final cards = _j.lixo;
+    final totalWidth = cards.isEmpty
+        ? cardWidth
+        : cardWidth + (cards.length - 1) * step;
+    return GestureDetector(
+      onTap: _tapLixo,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: cardHeight,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(9),
+                  boxShadow: glowing
+                      ? const [
+                          BoxShadow(color: Color(0xAA9D43D8), blurRadius: 13),
+                          BoxShadow(color: Color(0x66E5B84F), blurRadius: 8),
+                        ]
+                      : null,
+                ),
+                child: cards.isEmpty
+                    ? _emptyCard(width: cardWidth, height: cardHeight)
+                    : SingleChildScrollView(
+                        controller: _discardScroll,
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        child: SizedBox(
+                          width: totalWidth,
+                          height: cardHeight,
+                          child: Stack(
+                            children: [
+                              for (var i = 0; i < cards.length; i++)
+                                Positioned(
+                                  left: i * step,
+                                  child: _frontCard(
+                                    cards[i],
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
+              ),
+              Positioned(
+                top: -7,
+                right: -7,
+                child: _countCircle(cards.length),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          const Text(
+            'LIXO ABERTO',
+            style: TextStyle(
+              color: Color(0xFFEADBB7),
+              fontSize: 7.2,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _frontCard(
+    Carta carta, {
+    required double width,
+    required double height,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(width * 0.09),
+        border: Border.all(color: const Color(0x55FFFFFF), width: 0.7),
+        boxShadow: const [
+          BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(1, 2)),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Image.asset(
+        _cartaAsset(carta),
+        fit: BoxFit.fill,
+        filterQuality: FilterQuality.high,
+      ),
+    );
+  }
+
+  Widget _backCard({
+    required double width,
+    required double height,
+    bool glowing = false,
+  }) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      width: width,
+      height: height,
+      padding: const EdgeInsets.all(1.1),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(width * 0.1),
+        gradient: glowing
+            ? const LinearGradient(colors: [_mPurpleHi, _mGoldHi])
+            : const LinearGradient(colors: [_mGoldHi, Color(0xFF694317)]),
+        boxShadow: glowing
+            ? const [
+                BoxShadow(color: Color(0xAA9D43D8), blurRadius: 13),
+                BoxShadow(color: Color(0x66E5B84F), blurRadius: 8),
+              ]
+            : const [
+                BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(1, 2)),
+              ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(width * 0.08),
+        child: Image.asset(
+          _cardBackAsset,
+          fit: BoxFit.fill,
+          filterQuality: FilterQuality.high,
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyCard({required double width, required double height}) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0x12000000),
+        borderRadius: BorderRadius.circular(width * 0.1),
+        border: Border.all(color: const Color(0x558C6729), width: 1),
+      ),
+      child: const Icon(Icons.style_outlined, color: Color(0x447B3F91), size: 25),
+    );
+  }
+
+  Widget _countCircle(int count) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 24),
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: count < 10 ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: count < 10 ? null : BorderRadius.circular(12),
+        color: const Color(0xEE080808),
+        border: Border.all(color: _mGold, width: 1.2),
+        boxShadow: const [
+          BoxShadow(color: Color(0x66000000), blurRadius: 5),
+        ],
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: _mGoldHi,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  Widget _sidePlayer(int seat, {required bool left}) {
+    final active = _j.vez == seat && !_j.rodadaEncerrada;
+    return SizedBox(
+      width: 66,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _expandedAvatarSeat = seat),
+            child: AnimatedScale(
+              scale: active ? 1.18 : 1,
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutBack,
+              child: _avatarCircle(seat, size: 46, active: active),
+            ),
+          ),
+          const SizedBox(height: 4),
+          FittedBox(
+            child: Text(
+              _j.apelidos[seat].toUpperCase(),
+              style: TextStyle(
+                color: active ? _mPurpleHi : const Color(0xFFEADCC1),
+                fontSize: 8,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+          _miniHiddenHand(seat, expanded: active, left: left),
+          if (active) ...[
+            const SizedBox(height: 4),
+            _turnBadge(compact: true),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _miniHiddenHand(int seat,
+      {required bool expanded, required bool left}) {
+    final count = _j.maos[seat].length;
+    final shown = min(count, 5);
+    const cardWidth = 25.0;
+    const cardHeight = 38.0;
+    final step = expanded ? 12.0 : 7.0;
+    final width = cardWidth + max(0, shown - 1) * step;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 260),
+          width: width,
+          height: cardHeight,
+          child: Stack(
+            children: [
+              for (var i = 0; i < shown; i++)
+                Positioned(
+                  left: i * step,
+                  child: _backCard(width: cardWidth, height: cardHeight),
+                ),
+            ],
+          ),
+        ),
+        Positioned(
+          top: -7,
+          right: -8,
+          child: _countCircle(count),
+        ),
+      ],
+    );
+  }
+
+  Widget _avatarCircle(int seat,
+      {required double size, required bool active}) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const RadialGradient(
+          center: Alignment(-0.25, -0.35),
+          colors: [Color(0xFF4E2E65), Color(0xFF140C17)],
+        ),
+        border: Border.all(
+          color: active ? _mPurpleHi : _mGold,
+          width: active ? 2.8 : 2,
+        ),
+        boxShadow: active
+            ? const [
+                BoxShadow(color: Color(0xAA9D43D8), blurRadius: 14),
+                BoxShadow(color: Color(0x66E5B84F), blurRadius: 8),
+              ]
+            : const [
+                BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(0, 2)),
+              ],
+      ),
+      child: Text(
+        _j.avatares[seat],
+        style: TextStyle(fontSize: size * 0.42, color: _mGoldHi),
+      ),
+    );
+  }
+
+  Widget _turnBadge({bool compact = false}) {
+    final danger = _turnSeconds <= 10;
+    final size = compact ? 33.0 : 52.0;
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF090909),
+        border: Border.all(
+          color: danger ? const Color(0xFFFF5D68) : _mPurpleHi,
+          width: compact ? 2 : 3,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (danger ? const Color(0xFFFF5D68) : _mPurple)
+                .withOpacity(0.55),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$_turnSeconds',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 12 : 20,
+              fontWeight: FontWeight.w900,
+              height: 1,
+            ),
+          ),
+          if (!compact)
+            const Text(
+              'SEG',
+              style: TextStyle(
+                color: Color(0xFFD8C8E8),
+                fontSize: 6,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionRail() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _railButton(Icons.chat_bubble_rounded, () {
+          setState(() => _msg = 'Chat — ligação final com o Claude.');
+        }),
+        const SizedBox(height: 7),
+        _railButton(Icons.sentiment_satisfied_alt_rounded, () {
+          setState(() => _msg = 'Expressões — ligação final com o Claude.');
+        }),
+        const SizedBox(height: 7),
+        _railButton(
+          _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+          () => setState(() => _soundEnabled = !_soundEnabled),
+        ),
+      ],
+    );
+  }
+
+  Widget _railButton(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xEE0A0A0A),
+          border: Border.all(color: _mGold, width: 1),
+          boxShadow: const [
+            BoxShadow(color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
+          ],
+        ),
+        child: Icon(icon, color: _mGoldHi, size: 20),
+      ),
+    );
+  }
+
+  Widget _playerDock() {
+    final active = _j.vez == 0 && !_j.rodadaEncerrada;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 137,
+          child: _hand(),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          child: Center(
+            child: GestureDetector(
+              onTap: () => setState(() => _expandedAvatarSeat = 0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedScale(
+                    scale: active ? 1.18 : 1,
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutBack,
+                    child: _avatarCircle(0, size: 61, active: active),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xEE090909),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: _mGold, width: 1),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x669D43D8), blurRadius: 10),
+                      ],
                     ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'VOCÊ',
+                          style: TextStyle(
+                            color: active ? _mPurpleHi : _mGoldHi,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          '${_j.placar['nos']} pontos',
+                          style: const TextStyle(
+                            color: Color(0xFFDCCDAA),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (active) ...[
+                    const SizedBox(width: 8),
+                    _turnBadge(),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _hand() {
+    final hand = _j.maos[0];
+    final count = hand.length;
+    if (count == 0) return const SizedBox();
+
+    const cardWidth = 88.0;
+    const cardHeight = 132.0;
+    const step = 47.0;
+    const selectedLift = 15.0;
+    final active = _minhaVezAtiva;
+    final totalWidth = cardWidth + (count - 1) * step;
+
+    final order = List<int>.generate(count, (i) => i)
+      ..sort((a, b) {
+        final priorityA = (_sel.contains(a) ? 2 : 0) +
+            (_recentlyBoughtIds.contains(hand[a].id) ? 1 : 0);
+        final priorityB = (_sel.contains(b) ? 2 : 0) +
+            (_recentlyBoughtIds.contains(hand[b].id) ? 1 : 0);
+        if (priorityA != priorityB) return priorityA.compareTo(priorityB);
+        return a.compareTo(b);
+      });
+
+    final cards = SizedBox(
+      width: totalWidth,
+      height: cardHeight + selectedLift,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (final index in order)
+            Positioned(
+              left: index * step,
+              bottom: 0,
+              child: GestureDetector(
+                onTap: active ? () => _tapCard(index) : null,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  offset: Offset(
+                    0,
+                    _sel.contains(index)
+                        ? -selectedLift / cardHeight
+                        : (_recentlyBoughtIds.contains(hand[index].id)
+                            ? -7 / cardHeight
+                            : 0),
+                  ),
+                  child: _handCard(
+                    hand[index],
+                    selected: _sel.contains(index),
+                    purchased: _recentlyBoughtIds.contains(hand[index].id),
+                    width: cardWidth,
+                    height: cardHeight,
+                  ),
+                ),
+              ),
+            ),
+          Positioned(
+            top: -7,
+            right: -8,
+            child: _countCircle(count),
+          ),
+        ],
+      ),
+    );
+
+    return ClipRect(
+      child: AnimatedSlide(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        offset: Offset(0, active ? 0 : 0.50),
+        child: SingleChildScrollView(
+          controller: _handScroll,
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(14, selectedLift, 14, 0),
+          child: cards,
+        ),
+      ),
+    );
+  }
+
+  Widget _handCard(
+    Carta carta, {
+    required bool selected,
+    required bool purchased,
+    required double width,
+    required double height,
+  }) {
+    return AnimatedScale(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutBack,
+      scale: purchased ? 1.05 : 1,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        width: width,
+        height: height,
+        padding: EdgeInsets.all(selected || purchased ? 2 : 0.8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(11),
+          gradient: purchased
+              ? const LinearGradient(colors: [_mGoldHi, _mPurpleHi, _mGold])
+              : (selected
+                  ? const LinearGradient(colors: [_mPurpleHi, _mGoldHi, _mPurple])
+                  : const LinearGradient(colors: [Color(0x99FFFFFF), Color(0x557D5A24)])),
+          boxShadow: purchased
+              ? const [
+                  BoxShadow(color: Color(0xCCF4D66E), blurRadius: 20, spreadRadius: 1),
+                  BoxShadow(color: Color(0xAA9D43D8), blurRadius: 15),
+                ]
+              : (selected
+                  ? const [
+                      BoxShadow(color: Color(0xAA9D43D8), blurRadius: 14),
+                      BoxShadow(color: Color(0x88E5B84F), blurRadius: 7),
+                    ]
+                  : const [
+                      BoxShadow(color: Color(0x99000000), blurRadius: 8, offset: Offset(0, -2)),
+                    ]),
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset(
+                  _cartaAsset(carta),
+                  fit: BoxFit.fill,
+                  filterQuality: FilterQuality.high,
+                ),
+              ),
+            ),
+            if (purchased)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [Colors.white, _mGold]),
+                    boxShadow: [BoxShadow(color: _mGoldHi, blurRadius: 8)],
+                  ),
+                  child: const Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 10,
+                    color: Color(0xFF4E2D05),
                   ),
                 ),
               ),
           ],
         ),
-      );
-
-      return RawScrollbar(
-        controller: _handScroll,
-        thumbVisibility: true,
-        trackVisibility: true,
-        interactive: true,
-        scrollbarOrientation: ScrollbarOrientation.bottom,
-        thickness: 3,
-        radius: const Radius.circular(3),
-        thumbColor: const Color(0x99D6C18D),
-        trackColor: const Color(0x331C130C),
-        trackBorderColor: const Color(0x337D5A24),
-        child: SingleChildScrollView(
-          controller: _handScroll,
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-          padding: const EdgeInsets.fromLTRB(8, lift, 12, 8),
-          child: stack,
-        ),
-      );
-    });
-
-    // Fora da vez, a mão conserva a escala e desce exatamente 50% da sua altura.
-    // Na vez do jogador, sobe verticalmente e fica 100% visível.
-    return Container(
-      margin: const EdgeInsets.fromLTRB(6, 0, 6, 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: const Color(0x4406110D),
-        border: Border.all(color: const Color(0x557D5A24), width: 1),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: AnimatedSlide(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-        offset: Offset(0, ativo ? 0 : 0.50),
-        child: SizedBox(
-          height: ch + lift,
-          width: double.infinity,
-          child: cartas,
+    );
+  }
+
+  Widget _feedbackToast() {
+    final text = _msg ?? '';
+    return IgnorePointer(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xF2140D16),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xAA9D43D8)),
+          boxShadow: const [
+            BoxShadow(color: Color(0x779D43D8), blurRadius: 11),
+          ],
+        ),
+        child: Text(
+          text,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Color(0xFFF3E9FF),
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ),
     );
   }
 
-  // SÓ a carta — sem moldura. Destaque da comprada/selecionada = brilho + estrelinha
-  // (a elevação da comprada/selecionada continua no _hand, do Codex).
-  Widget _handCard(Carta c, bool sel, bool comprada) => AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(9),
-          boxShadow: comprada
-              ? const [BoxShadow(color: Color(0xCCF4D66E), blurRadius: 22, spreadRadius: 2, offset: Offset(0, -4)), BoxShadow(color: Color(0xAA9C65D4), blurRadius: 17)]
-              : (sel ? const [BoxShadow(color: Color(0xAA9C65D4), blurRadius: 15, offset: Offset(0, -2)), BoxShadow(color: Color(0x88EFB94A), blurRadius: 7)] : null),
-        ),
-        child: Stack(children: [
-            Positioned.fill(child: Image.asset(_cartaAsset(c), fit: BoxFit.fill, filterQuality: FilterQuality.high)),
-            if (comprada)
-              Positioned(
-                top: 4,
-                right: 4,
-                child: Container(
-                  width: 17,
-                  height: 17,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [Color(0xFFFFFFFF), Color(0xFFEFB94A)]), boxShadow: [BoxShadow(color: Color(0xFFF6D96A), blurRadius: 8)]),
-                  child: const Icon(Icons.auto_awesome_rounded, size: 10, color: Color(0xFF5B3507)),
+  void _showMeldZoom(String dupla, int index) {
+    final jogos = _j.jogosDupla[dupla]!;
+    if (index < 0 || index >= jogos.length) return;
+    final cards = List<Carta>.from(jogos[index]);
+    final sash = _sashDeMeld(cards);
+    showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Fechar jogo ampliado',
+      barrierColor: const Color(0xCC000000),
+      transitionDuration: const Duration(milliseconds: 230),
+      pageBuilder: (_, __, ___) {
+        const width = 92.0;
+        const height = 138.0;
+        const step = 49.0;
+        final total = width + (cards.length - 1) * step;
+        return SafeArea(
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Material(
+              color: Colors.transparent,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 14),
+                    padding: const EdgeInsets.fromLTRB(14, 13, 14, 15),
+                    decoration: BoxDecoration(
+                      color: const Color(0xF4120D14),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _mGold, width: 1.3),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0xAA9D43D8), blurRadius: 22),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              dupla == 'nos' ? 'JOGO — NÓS' : 'JOGO — ELES',
+                              style: const TextStyle(
+                                color: _mGoldHi,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const Spacer(),
+                            _countCircle(cards.length),
+                          ],
+                        ),
+                        if (sash != Sash.nenhuma) ...[
+                          const SizedBox(height: 7),
+                          _canastraRibbon(sash, false),
+                        ],
+                        const SizedBox(height: 12),
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          child: SizedBox(
+                            width: total,
+                            height: height,
+                            child: Stack(
+                              children: [
+                                for (var i = 0; i < cards.length; i++)
+                                  Positioned(
+                                    left: i * step,
+                                    child: _frontCard(
+                                      cards[i],
+                                      width: width,
+                                      height: height,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Toque fora para recolher',
+                          style: TextStyle(
+                            color: Color(0xFFBFAECD),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-          ]),
-      );
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (_, animation, __, child) => ScaleTransition(
+        scale: CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+        child: FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+
+  Widget _avatarOverlay(int seat) {
+    return GestureDetector(
+      onTap: () => setState(() => _expandedAvatarSeat = null),
+      child: Container(
+        color: const Color(0xB8000000),
+        alignment: Alignment.center,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.72, end: 1),
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOutBack,
+          builder: (_, value, child) => Transform.scale(
+            scale: value,
+            child: child,
+          ),
+          child: Container(
+            width: 190,
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 15),
+            decoration: BoxDecoration(
+              color: const Color(0xF4150D18),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: _mGold, width: 1.4),
+              boxShadow: const [
+                BoxShadow(color: Color(0xAA9D43D8), blurRadius: 25),
+                BoxShadow(color: Color(0x66E5B84F), blurRadius: 14),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _avatarCircle(
+                  seat,
+                  size: seat == 0 ? 122 : 92,
+                  active: _j.vez == seat && !_j.rodadaEncerrada,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _j.apelidos[seat].toUpperCase(),
+                  style: const TextStyle(
+                    color: _mPurpleHi,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_j.maos[seat].length} cartas na mão',
+                  style: const TextStyle(
+                    color: Color(0xFFE2D4B6),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                const Text(
+                  'Toque fora para fechar',
+                  style: TextStyle(
+                    color: Color(0xFFB6A8BE),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  DetalhePontuacaoVM _detalhePontuacao(String dupla) {
+    final rodada = _j.pontosRodada;
+    if (rodada == null) return DetalhePontuacaoVM.vazio();
+    final bruto = rodada[dupla];
+    if (bruto is! Map<String, dynamic>) return DetalhePontuacaoVM.vazio();
+    final detalhe = bruto['detalhe'];
+    final det = detalhe is Map<String, dynamic>
+        ? detalhe
+        : <String, dynamic>{};
+    return DetalhePontuacaoVM(
+      total: (bruto['total'] as int?) ?? 0,
+      canastras: (bruto['canastras'] as int?) ?? 0,
+      cartasBaixadas: (det['baixadas'] as int?) ?? 0,
+      bonusBatida: (bruto['bonusBatida'] as int?) ?? 0,
+      descontoMao: (bruto['descontoMao'] as int?) ?? 0,
+      penalidadeMorto: (bruto['penalidadeMorto'] as int?) ?? 0,
+      limpas: (det['limpas'] as int?) ?? 0,
+      sujas: (det['sujas'] as int?) ?? 0,
+      de500: (det['de500'] as int?) ?? 0,
+      de1000: (det['asAas'] as int?) ?? 0,
+    );
+  }
+
+  List<JogadorResultadoVM> _jogadoresResultado() {
+    return List<JogadorResultadoVM>.generate(
+      _j.apelidos.length,
+      (seat) => JogadorResultadoVM(
+        assento: seat,
+        nome: _j.apelidos[seat],
+        avatar: _j.avatares[seat],
+        souEu: seat == 0,
+      ),
+    );
+  }
+
+  void _continuarRodada() {
+    setState(() {
+      _j.novaRodada();
+      _sel.clear();
+      _msg = null;
+      _conviteRevancheEnviado = false;
+      _anuncioAssistido = false;
+      _syncTurnClock(force: true);
+    });
+  }
+
+  void _convidarRevanche() {
+    setState(() {
+      _conviteRevancheEnviado = true;
+      _msg = 'Convite de revanche enviado para a mesa.';
+    });
+  }
+
+  void _jogarNovamente() {
+    setState(() {
+      _j = _novoJogo();
+      _sel.clear();
+      _msg = null;
+      _conviteRevancheEnviado = false;
+      _anuncioAssistido = false;
+      _syncTurnClock(force: true);
+    });
+  }
+
+  void _adicionarAmigo(int seat) {
+    if (seat == 0) return;
+    setState(() {
+      _amizades[seat] = EstadoAmizade.enviado;
+      _msg = 'Convite de amizade enviado para ${_j.apelidos[seat]}.';
+    });
+  }
+
+  void _verAnuncioRecompensado() {
+    if (!_anuncioDisponivel || _anuncioAssistido || _assinanteSemAnuncios) {
+      return;
+    }
+    setState(() {
+      _anuncioAssistido = true;
+      _msg = 'Recompensa do anúncio registrada na prévia.';
+    });
+  }
+
+  void _voltarAoLobby() {
+    Navigator.of(context).pop();
+  }
+
+  Widget _overlayFimRodada() {
+    final finalPartida = _j.encerrada;
+    String title;
+    if (finalPartida) {
+      title = _j.placar['nos']! >= _j.placar['eles']!
+          ? 'NÓS VENCEMOS!'
+          : 'ELES VENCERAM';
+    } else if (_j.duplaQueBateu == 'nos') {
+      title = 'NÓS BATEMOS!';
+    } else if (_j.duplaQueBateu == 'eles') {
+      title = 'ELES BATERAM';
+    } else {
+      title = 'BARALHO ESGOTADO';
+    }
+
+    return ResultadoPartidaScreen(
+      fimPartida: finalPartida,
+      mesaVip: _mesaVip,
+      rodada: _j.rodada,
+      titulo: title,
+      pontosNos: _j.placar['nos'] ?? 0,
+      pontosEles: _j.placar['eles'] ?? 0,
+      detalheNos: _detalhePontuacao('nos'),
+      detalheEles: _detalhePontuacao('eles'),
+      jogadores: _jogadoresResultado(),
+      amizades: Map<int, EstadoAmizade>.unmodifiable(_amizades),
+      conviteRevancheEnviado: _conviteRevancheEnviado,
+      anuncioDisponivel: _anuncioDisponivel,
+      anuncioAssistido: _anuncioAssistido,
+      assinanteSemAnuncios: _assinanteSemAnuncios,
+      recompensaAnuncio: '+50 fichas de continuidade',
+      onContinuar: _continuarRodada,
+      onConvidarRevanche: _convidarRevanche,
+      onJogarNovamente: _jogarNovamente,
+      onVoltarLobby: _voltarAoLobby,
+      onAdicionarAmigo: _adicionarAmigo,
+      onVerAnuncio: _verAnuncioRecompensado,
+    );
+  }
+
 }
 
-enum Sash { nenhuma, limpa, suja, n500 }
+enum Sash { nenhuma, limpa, suja, n500, n1000 }
