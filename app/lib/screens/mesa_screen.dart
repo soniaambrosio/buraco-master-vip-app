@@ -809,7 +809,7 @@ class _ChipJogador extends StatelessWidget {
             right: direita ? null : -40,
             top: 12,
             child: Container(
-              minWidth: 35,
+              constraints: const BoxConstraints(minWidth: 35),
               height: 28,
               padding: const EdgeInsets.symmetric(horizontal: 7),
               alignment: Alignment.center,
@@ -1018,7 +1018,7 @@ class _MeldWidget extends StatelessWidget {
               right: -5,
               top: -6,
               child: Container(
-                minWidth: 25,
+                constraints: const BoxConstraints(minWidth: 25),
                 height: 25,
                 padding: const EdgeInsets.symmetric(horizontal: 5),
                 alignment: Alignment.center,
@@ -1198,7 +1198,7 @@ class _PilhaItem extends StatelessWidget {
                 ),
                 const SizedBox(width: 5),
                 Container(
-                  minWidth: 32,
+                  constraints: const BoxConstraints(minWidth: 32),
                   height: 24,
                   padding: const EdgeInsets.symmetric(horizontal: 7),
                   alignment: Alignment.center,
@@ -1322,7 +1322,7 @@ class _Mortos extends StatelessWidget {
               ),
               const SizedBox(width: 5),
               Container(
-                minWidth: 32,
+                constraints: const BoxConstraints(minWidth: 32),
                 height: 24,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
