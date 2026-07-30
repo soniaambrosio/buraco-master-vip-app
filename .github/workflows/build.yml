@@ -335,8 +335,7 @@ jobs:
               if not inserted:
                   raise AssertionError('nao encontrei assets/ranking/ para declarar assets/ranking/selos/')
               lines = out
-          joined = '
-'.join(lines)
+          joined = '\n'.join(lines)
           if 'assets/hall/' not in joined:
               out = []
               inserted = False
@@ -348,8 +347,7 @@ jobs:
               if not inserted:
                   raise AssertionError('nao encontrei assets/ranking/selos/ para declarar assets/hall/')
               lines = out
-          joined = '
-'.join(lines)
+          joined = '\n'.join(lines)
           if 'assets/configurar_mesa/' not in joined:
               out = []
               inserted = False
