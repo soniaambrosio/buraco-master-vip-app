@@ -383,7 +383,7 @@ class _ProfileHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      minHeight: compact ? 98 : 108,
+      constraints: BoxConstraints(minHeight: compact ? 98 : 108),
       padding: EdgeInsets.all(compact ? 13 : 15),
       decoration: BoxDecoration(
         color: ConfiguracoesScreen._card,

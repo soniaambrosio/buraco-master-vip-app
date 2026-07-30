@@ -143,7 +143,7 @@ class OndeJogarScreen extends StatelessWidget {
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
-                      children: vm.opcoes.map(_card).toList(),
+                      children: vm.opcoes.map(_cardOpcao).toList(),
                     ),
                   ),
                 ],
@@ -155,7 +155,7 @@ class OndeJogarScreen extends StatelessWidget {
     );
   }
 
-  Widget _card(OpcaoMesa o) {
+  Widget _cardOpcao(OpcaoMesa o) {
     return GestureDetector(
       onTap: () => onEscolher(o.id),
       child: Container(
