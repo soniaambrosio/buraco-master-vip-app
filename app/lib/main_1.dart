@@ -43,15 +43,22 @@ final GoogleSignIn _gsi = GoogleSignIn(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: const FirebaseOptions(
-      apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
-      appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
-      messagingSenderId: '203886484007',
-      projectId: 'buraco-master-vip',
-      storageBucket: 'buraco-master-vip.firebasestorage.app',
-    ),
-  );
+  // Blindado: no celular o Firebase sobe normal; no navegador (versão web de
+  // teste), se a config de Android não inicializar, o jogo roda mesmo assim —
+  // só o login Google fica indisponível, que não é necessário pra jogar/testar.
+  try {
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
+        appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
+        messagingSenderId: '203886484007',
+        projectId: 'buraco-master-vip',
+        storageBucket: 'buraco-master-vip.firebasestorage.app',
+      ),
+    );
+  } catch (_) {
+    // Ambiente sem Firebase configurado (ex.: web de teste) — segue o jogo.
+  }
   runApp(const BuracoApp());
 }
 
@@ -2231,10 +2238,40 @@ class Jogo {
     return pool.first;
   }
 
-  // ROBÔ (fatia 3): compra, BAIXA os jogos possíveis, ESTENDE cartas soltas e descarta com critério
+  // Porte fiel de bot.js::decidirCompra — decide LIXO vs MONTE no início do turno.
+  // Pega o lixo quando o topo (1) estende um jogo já baixado da dupla, ou
+  // (2) aumenta as cartas em corridas da mão. Senão, compra do monte.
+  // Essa inteligência existia no motor JS e tinha sumido no porte pro Flutter.
+  bool _botDeveComprarLixo(int assento) {
+    final topo = lixoTopo;
+    if (topo == null) return false;
+    final dupla = _duplaKey(assento);
+    // 1) topo estende algum jogo da dupla?
+    for (final jogo in jogosDupla[dupla]!) {
+      if (_validarJogoMesa([...jogo, topo])['valido'] == true) return true;
+    }
+    // 2) o topo aumenta as cartas em corridas da mão?
+    int cartasEmCorridas(List<Carta> mao) {
+      final jogos = _agruparMao(mao, true)['jogos'] as List<List<Carta>>;
+      return jogos.fold<int>(0, (s, j) => s + j.length);
+    }
+    final sem = cartasEmCorridas(maos[assento]);
+    final com = cartasEmCorridas([...maos[assento], topo]);
+    return com > sem;
+  }
+
+  // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
+  // ESTENDE cartas soltas e descarta com critério.
   void botJoga(int assento) {
     if (rodadaEncerrada || vez != assento) return;
-    if (!jaComprou) comprarMonte(assento);
+    if (!jaComprou) {
+      // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
+      if (_botDeveComprarLixo(assento) && comprarLixo(assento)['ok'] == true) {
+        // pegou o lixo
+      } else {
+        comprarMonte(assento);
+      }
+    }
     if (rodadaEncerrada) return;
     final dupla = _duplaKey(assento);
 
