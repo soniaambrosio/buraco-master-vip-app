@@ -112,7 +112,7 @@ jobs:
           echo "assets da tela configurar mesa copiados: $N arquivos"
           if [ "$N" -lt 8 ]; then echo "ERRO: esperava 8 assets da tela configurar mesa, veio $N"; exit 1; fi
 
-      - name: Copy loja cosmetics assets (tolerante: placeholder se faltar arte)
+      - name: Copy loja cosmetics assets (placeholder se faltar arte)
         run: |
           for d in dorsos molduras avatares mascotes efeitos emojis; do
             mkdir -p "app_build/assets/loja/$d"
