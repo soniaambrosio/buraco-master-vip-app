@@ -845,14 +845,50 @@ class _HallPreviewHost extends StatelessWidget {
       );
   }
 
+  // Modal de "Regras do Hall" — explica as 5 categorias de glória (antes não abria nada).
+  void _mostrarRegras(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xF2160D08),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: Color(0x55EFB94A)),
+        ),
+        title: const Text('📜 Regras do Hall',
+            style: TextStyle(color: Color(0xFFF6E2A6), fontWeight: FontWeight.w900)),
+        content: const SingleChildScrollView(
+          child: Text(
+            'O Hall dos Imortais celebra os melhores por período:\n\n'
+            '🏆 Campeão de hoje — quem mais venceu no dia.\n'
+            '👑 Melhor dupla — a parceria mais afiada.\n'
+            '🔥 Maior sequência — o maior embalo de vitórias.\n'
+            '⭐ Rei/Rainha da semana — o destaque dos últimos 7 dias.\n'
+            '🌙 Lenda do mês — o nome que dominou o mês.\n\n'
+            'Tudo é automático pelos resultados das partidas. Jogue, vença e '
+            'entre para a história! 🃏',
+            style: TextStyle(color: Color(0xFFEFE3CC), fontSize: 13, height: 1.4),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Entendi',
+                style: TextStyle(color: Color(0xFFEFB94A), fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return HallScreen(
       vm: HallVM.mock(),
       onVoltar: () => Navigator.of(context).maybePop(),
-      onVerRegras: () {},
+      onVerRegras: () => _mostrarRegras(context),
       onVerPerfil: (id) => _aviso(context, 'Abrir perfil: $id'),
-      onPresentear: (id) {},
+      onPresentear: (id) => _aviso(context, 'Escolha um presente para homenagear $id 👑'),
       onEnviarPresente: (id, presenteId) =>
           _aviso(context, 'Presente $presenteId enviado para $id'),
       onNav: (destino) {
@@ -2260,8 +2296,35 @@ class Jogo {
     return com > sem;
   }
 
+  // Porte de bot.js::decidirPegarMorto + decidirBater — o robô deve "fechar" a mão?
+  // true se consegue ZERAR a mão agora E (o morto ainda está disponível pra pegar,
+  // OU já pegou o morto e a dupla terá canastra LIMPA pra bater).
+  bool _botDeveFechar(int assento) {
+    final sobra = _agruparMao(maos[assento], true)['sobra'] as List<Carta>;
+    if (sobra.isNotEmpty) return false; // não zera a mão nesta jogada
+    final dupla = _duplaKey(assento);
+    final mortoDisponivel = !mortoPego[dupla]! && mortos.isNotEmpty;
+    if (mortoDisponivel) return true; // decidirPegarMorto
+    // decidirBater: precisa de canastra LIMPA (já na mesa ou formada agora)
+    final grupos = _agruparMao(maos[assento], true)['jogos'] as List<List<Carta>>;
+    final finais = [...jogosDupla[dupla]!, ...grupos];
+    return finais.any(_canastraLiberaBatida);
+  }
+
+  // Trava de segurança: só deixa uma baixada ZERAR a mão se o zerar for LEGAL
+  // (pega o morto disponível, ou bate com canastra limpa). Evita mão vazia travada.
+  bool _baixadaSeguraParaZerar(int assento, List<Carta> g) {
+    final zeraria = g.length >= maos[assento].length;
+    if (!zeraria) return true;
+    final dupla = _duplaKey(assento);
+    final mortoDisponivel = !mortoPego[dupla]! && mortos.isNotEmpty;
+    if (mortoDisponivel) return true;
+    final finais = [...jogosDupla[dupla]!, g];
+    return finais.any(_canastraLiberaBatida);
+  }
+
   // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
-  // ESTENDE cartas soltas e descarta com critério.
+  // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
   void botJoga(int assento) {
     if (rodadaEncerrada || vez != assento) return;
     if (!jaComprou) {
@@ -2280,6 +2343,7 @@ class Jogo {
     for (final g in grupos) {
       if (rodadaEncerrada) break;
       if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue; // mão mudou (pegou morto)
+      if (!_baixadaSeguraParaZerar(assento, g)) continue; // nunca zerar ilegal (mão vazia travada)
       baixar(assento, g.map((c) => c.id).toList());
     }
 
@@ -2297,7 +2361,29 @@ class Jogo {
       }
     }
 
-    if (rodadaEncerrada || maos[assento].isEmpty) return;
+    // 2.5) FECHAMENTO (porte de decidirPegarMorto + decidirBater): quando dá pra
+    // ZERAR a mão, baixa agressivo pra PEGAR O MORTO (se disponível) ou BATER
+    // (se já pegou o morto e terá canastra limpa). A trava impede zerar ilegal.
+    if (_botDeveFechar(assento)) {
+      bool fechando = true;
+      while (fechando && !rodadaEncerrada && maos[assento].isNotEmpty) {
+        fechando = false;
+        final fecha = _agruparMao(maos[assento], true)['jogos'] as List<List<Carta>>;
+        for (final g in fecha) {
+          if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue;
+          if (!_baixadaSeguraParaZerar(assento, g)) continue;
+          if (baixar(assento, g.map((c) => c.id).toList())['ok'] == true) { fechando = true; break; }
+        }
+      }
+    }
+
+    if (rodadaEncerrada) return;
+    if (maos[assento].isEmpty) {
+      // Rede de segurança: mão vazia sem bater não deveria ocorrer (as travas
+      // acima evitam). Se ocorrer, passa a vez pra NUNCA travar o loop dos robôs.
+      if (vez == assento) _passarVez();
+      return;
+    }
 
     // 3) descarta (encerra a vez)
     final adv = jogosDupla[dupla == 'nos' ? 'eles' : 'nos']!;
