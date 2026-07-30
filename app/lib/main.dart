@@ -2039,6 +2039,33 @@ class Jogo {
     });
   }
 
+  // Ordena um JOGO BAIXADO para EXIBIR em sequência crescente (2→A, ou A-2-3 quando
+  // o Ás é baixo). Regra: no máx. 1 curinga por jogo — o coringa (JOKER) vai no
+  // buraco entre dois naturais, ou na ponta se não houver buraco. Só afeta a exibição.
+  List<Carta> ordenarMeld(List<Carta> meld) {
+    final jokers = meld.where((c) => c.valor == 'JOKER').toList();
+    final resto = meld.where((c) => c.valor != 'JOKER').toList();
+    // Ás é baixo quando o jogo tem 2 ou 3 (sequência A-2-3…); senão é alto (…Q-K-A).
+    final asBaixo = resto.any((c) => c.valor == '2' || c.valor == '3');
+    int rank(Carta c) {
+      if (c.valor == 'A') return asBaixo ? -1 : 13;
+      return _ordem.indexOf(c.valor); // A=0 (tratado acima), 2=1, 3=2 … K=12
+    }
+    resto.sort((a, b) => rank(a).compareTo(rank(b)));
+    if (jokers.isEmpty) return resto;
+    final out = <Carta>[];
+    bool inserido = false;
+    for (int i = 0; i < resto.length; i++) {
+      out.add(resto[i]);
+      if (!inserido && i < resto.length - 1 && rank(resto[i + 1]) - rank(resto[i]) == 2) {
+        out.add(jokers.first);
+        inserido = true;
+      }
+    }
+    if (!inserido) out.add(jokers.first); // sem buraco → coringa na ponta
+    return out;
+  }
+
   Map<String, dynamic> baixar(int assento, List<String> ids) {
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
     if (ids.length < 3) return {'ok': false, 'erro': 'um jogo tem no mínimo 3 cartas'};
@@ -3369,6 +3396,7 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
+    cartas = _j.ordenarMeld(cartas); // exibe o jogo baixado em ordem crescente
     const cardWidth = 64.0;
     const cardHeight = 96.0;
     // As cartas mantêm o tamanho aprovado. A compactação vem somente da
@@ -4200,7 +4228,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void _showMeldZoom(String dupla, int index) {
     final jogos = _j.jogosDupla[dupla]!;
     if (index < 0 || index >= jogos.length) return;
-    final cards = List<Carta>.from(jogos[index]);
+    final cards = _j.ordenarMeld(jogos[index]); // jogo ampliado também em ordem
     final sash = _sashDeMeld(cards);
     showGeneralDialog<void>(
       context: context,
