@@ -5,8 +5,6 @@ name: Deploy Web (GitHub Pages)
 # URL final: https://soniaambrosio.github.io/buraco-master-vip-app/
 
 on:
-  push:
-    branches: [ codex/inicio-ui ]
   workflow_dispatch:
 
 permissions:
