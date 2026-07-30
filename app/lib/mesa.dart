@@ -951,9 +951,6 @@ class _MesaScreenState extends State<MesaScreen> {
   String get _cardBackAsset => _mesaVip
       ? 'assets/baralho/dorso.webp'
       : 'assets/baralho/dorso_publico.webp';
-  // Mostra o selo de vulnerabilidade lendo o estado REAL do motor (mínimo p/ descer).
-  // Só aparece quando a dupla está vulnerável e ainda não abriu jogo na rodada.
-  // Se o motor não exigir nada, respeita um valor de prévia passado por parâmetro.
   int? _vulnerabilidadeDaDupla(String dupla) {
     final minimo = _j.minimoParaDescer(dupla);
     if (minimo > 0) return minimo;
@@ -1015,8 +1012,7 @@ class _MesaScreenState extends State<MesaScreen> {
       if (_turnSeconds > 0) {
         setState(() => _turnSeconds -= 1);
       } else {
-        // Tempo esgotou: na vez do humano o app joga sozinho (compra + descarta) e
-        // passa a vez. Os bots já jogam sozinhos, então aqui só tratamos o assento 0.
+        // Tempo esgotou: na vez do humano o app joga sozinho e passa a vez.
         if (_j.vez == 0 && !_j.rodadaEncerrada && !_botsRodando) {
           _autoJogarPorTempo();
         }
@@ -1027,12 +1023,10 @@ class _MesaScreenState extends State<MesaScreen> {
   // Jogada automática quando o cronômetro zera na vez do humano.
   void _autoJogarPorTempo() {
     if (_j.vez != 0 || _j.rodadaEncerrada || _botsRodando) return;
-    // 1) compra do monte, se ainda não comprou nesta vez.
     if (!_j.jaComprou) {
       _j.comprarMonte(0);
       _j.ordenar(0);
     }
-    // 2) descarta a primeira carta que o motor aceitar (evita batida inválida).
     if (_j.jaComprou && !_j.rodadaEncerrada) {
       for (final c in List<Carta>.from(_j.maos[0])) {
         if (_j.descartar(0, c.id) == null) break;
@@ -1368,9 +1362,6 @@ class _MesaScreenState extends State<MesaScreen> {
         color: const Color(0xFF070707),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
         border: Border.all(color: _mGold, width: 1.2),
-        boxShadow: const [
-          BoxShadow(color: Color(0x66000000), blurRadius: 10, offset: Offset(0, 3)),
-        ],
       ),
       child: Row(
         children: [
@@ -1532,8 +1523,10 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _board() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        const centralHeight = 122.0;
-        const playerDockHeight = 166.0;
+        // Núcleo central deliberadamente compacto. A altura economizada é
+        // devolvida principalmente à área de jogos da dupla de baixo.
+        const centralHeight = 98.0;
+        const playerDockHeight = 180.0;
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
           padding: const EdgeInsets.all(2),
@@ -1542,9 +1535,6 @@ class _MesaScreenState extends State<MesaScreen> {
               colors: [Color(0xFFFFE6A1), Color(0xFF6A4415), Color(0xFFE0B45D)],
             ),
             borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-            boxShadow: const [
-              BoxShadow(color: Color(0x88000000), blurRadius: 12, offset: Offset(0, 4)),
-            ],
           ),
           child: Container(
             clipBehavior: Clip.antiAlias,
@@ -1566,32 +1556,33 @@ class _MesaScreenState extends State<MesaScreen> {
                 Positioned.fill(
                   child: Column(
                     children: [
-                      Expanded(child: _meldArea('eles', top: true)),
+                      Expanded(
+                        flex: 9,
+                        child: _meldArea('eles', top: true),
+                      ),
                       SizedBox(height: centralHeight, child: _centralTray()),
-                      Expanded(child: _meldArea('nos', top: false)),
+                      Expanded(
+                        flex: 12,
+                        child: _meldArea('nos', top: false),
+                      ),
                       const SizedBox(height: playerDockHeight),
                     ],
                   ),
                 ),
                 Positioned(
-                  left: 2,
-                  top: 74,
+                  left: 1,
+                  top: 56,
                   child: _sidePlayer(1, left: true),
                 ),
                 Positioned(
-                  right: 2,
-                  top: 74,
+                  right: 1,
+                  top: 56,
                   child: _sidePlayer(3, left: false),
                 ),
                 Positioned(
-                  left: 2,
-                  bottom: playerDockHeight + 14,
+                  left: 1,
+                  bottom: playerDockHeight + 8,
                   child: _sidePlayer(2, left: true),
-                ),
-                Positioned(
-                  right: 5,
-                  bottom: playerDockHeight + 25,
-                  child: _actionRail(),
                 ),
                 Positioned(
                   left: 0,
@@ -1637,7 +1628,7 @@ class _MesaScreenState extends State<MesaScreen> {
           // A área de jogos sempre ocupa toda a largura útil da mesa.
           // Cada jogo conserva sua largura natural e o Wrap organiza os blocos
           // lado a lado; quando não há espaço, o próximo jogo desce de linha.
-          final larguraUtil = max(0.0, constraints.maxWidth - 20);
+          final larguraUtil = max(0.0, constraints.maxWidth);
 
           return Stack(
             fit: StackFit.expand,
@@ -1662,7 +1653,7 @@ class _MesaScreenState extends State<MesaScreen> {
                         ),
                       )
                     : SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(10, 40, 10, 7),
+                        padding: const EdgeInsets.fromLTRB(0, 28, 0, 2),
                         physics: const BouncingScrollPhysics(),
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
@@ -1673,8 +1664,8 @@ class _MesaScreenState extends State<MesaScreen> {
                             alignment: WrapAlignment.start,
                             runAlignment: WrapAlignment.start,
                             crossAxisAlignment: WrapCrossAlignment.start,
-                            spacing: 6,
-                            runSpacing: 7,
+                            spacing: 3,
+                            runSpacing: 4,
                             children: [
                               for (var index = 0;
                                   index < jogos.length;
@@ -1769,16 +1760,13 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
-    cartas = _j.ordenarMeld(cartas); // exibe o jogo baixado em ordem crescente
+    cartas = _j.ordenarMeld(cartas); // jogo baixado em ordem crescente
     const cardWidth = 64.0;
     const cardHeight = 96.0;
-    // As cartas mantêm o tamanho aprovado. A compactação vem somente da
-    // sobreposição: ficam aparentes principalmente o número e o naipe.
     const step = 17.0;
     final count = cartas.length;
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
-    final celebrating = _celebratingMeldKey == '$dupla-$index';
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1792,57 +1780,35 @@ class _MesaScreenState extends State<MesaScreen> {
           _showMeldZoom(dupla, index);
         }
       },
-      child: AnimatedScale(
-        scale: celebrating ? 1.08 : 1,
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.easeOutBack,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 320),
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(13),
-            color: celebrating ? const Color(0x249D43D8) : Colors.transparent,
-            boxShadow: celebrating
-                ? const [
-                    BoxShadow(color: Color(0xAA9D43D8), blurRadius: 22),
-                    BoxShadow(color: Color(0x88E5B84F), blurRadius: 14),
-                  ]
-                : null,
-          ),
-          child: SizedBox(
-            width: totalWidth,
-            height: cardHeight,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                for (var i = 0; i < count; i++)
-                  Positioned(
-                    left: i * step,
-                    top: 0,
-                    child: _frontCard(
-                      cartas[i],
-                      width: cardWidth,
-                      height: cardHeight,
-                    ),
-                  ),
-                // O contador fica sobre o canto superior direito da última carta.
-                Positioned(
-                  top: -4,
-                  right: -4,
-                  child: _countCircle(count),
+      child: SizedBox(
+        width: totalWidth,
+        height: cardHeight,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (var i = 0; i < count; i++)
+              Positioned(
+                left: i * step,
+                top: 0,
+                child: _frontCard(
+                  cartas[i],
+                  width: cardWidth,
+                  height: cardHeight,
                 ),
-                // A classificação da canastra fica sobre as próprias cartas e
-                // não cria uma linha externa nem aumenta o bloco do jogo.
-                if (sash != Sash.nenhuma)
-                  Positioned(
-                    left: 1,
-                    right: 1,
-                    bottom: 2,
-                    child: _canastraRibbon(sash, celebrating),
-                  ),
-              ],
+              ),
+            Positioned(
+              top: -4,
+              right: -4,
+              child: _countCircle(count),
             ),
-          ),
+            if (sash != Sash.nenhuma)
+              Positioned(
+                left: 1,
+                right: 1,
+                bottom: 2,
+                child: _canastraRibbon(sash, false),
+              ),
+          ],
         ),
       ),
     );
@@ -1866,9 +1832,6 @@ class _MesaScreenState extends State<MesaScreen> {
             ],
           ),
           border: Border.all(color: _mGoldHi, width: 0.8),
-          boxShadow: [
-            BoxShadow(color: color.withOpacity(0.48), blurRadius: 7),
-          ],
         ),
         child: Text(
           _sashLabel(sash),
@@ -1887,50 +1850,56 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _centralTray() {
+    const cardWidth = 54.0;
+    const cardHeight = 81.0;
     final podeComprar = _minhaVezAtiva && !_j.jaComprou;
     final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
     final monteGlow = podeComprar ||
         (_lastPurchaseSource == 'monte' && _recentlyBoughtIds.isNotEmpty);
     final lixoGlow = podeDescartar ||
         (_lastPurchaseSource == 'lixo' && _recentlyBoughtIds.isNotEmpty);
+
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+      margin: const EdgeInsets.fromLTRB(4, 1, 4, 1),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
       decoration: BoxDecoration(
         color: _mPanel,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF8C6729), width: 1.1),
-        boxShadow: const [
-          BoxShadow(color: Color(0x88000000), blurRadius: 10, offset: Offset(0, 3)),
-        ],
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: const Color(0xFF8C6729), width: 1),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           _centralPile(
-            label: 'MONTE',
+            bottomLabel: 'MONTE',
             count: _j.monte.length,
-            child: _backCard(width: 62, height: 93, glowing: monteGlow),
+            child: _backCard(
+              width: cardWidth,
+              height: cardHeight,
+              glowing: monteGlow,
+            ),
             onTap: _tapMonte,
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: 5),
           Expanded(child: _discardPile(glowing: lixoGlow)),
-          const SizedBox(width: 7),
+          const SizedBox(width: 5),
           _centralPile(
-            label: 'MORTO\n(NÓS)',
-            count: _j.mortos.isNotEmpty ? _j.mortos.first.length : 0,
+            topLabel: 'MORTO',
+            bottomLabel: '1',
+            showCount: false,
             child: _j.mortos.isNotEmpty
-                ? _backCard(width: 62, height: 93)
-                : _emptyCard(width: 62, height: 93),
+                ? _backCard(width: cardWidth, height: cardHeight)
+                : _emptyCard(width: cardWidth, height: cardHeight),
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: 5),
           _centralPile(
-            label: 'MORTO\n(ELES)',
-            count: _j.mortos.length > 1 ? _j.mortos[1].length : 0,
+            topLabel: 'MORTO',
+            bottomLabel: '2',
+            showCount: false,
             child: _j.mortos.length > 1
-                ? _backCard(width: 62, height: 93)
-                : _emptyCard(width: 62, height: 93),
+                ? _backCard(width: cardWidth, height: cardHeight)
+                : _emptyCard(width: cardWidth, height: cardHeight),
           ),
         ],
       ),
@@ -1938,34 +1907,40 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _centralPile({
-    required String label,
-    required int count,
+    String? topLabel,
+    required String bottomLabel,
+    int count = 0,
+    bool showCount = true,
     required Widget child,
     VoidCallback? onTap,
   }) {
-    final content = Column(
-      mainAxisSize: MainAxisSize.min,
+    final content = Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
       children: [
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            child,
-            Positioned(top: -7, right: -7, child: _countCircle(count)),
-          ],
-        ),
-        const SizedBox(height: 3),
-        Text(
-          label,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFFEADBB7),
-            fontSize: 7.2,
-            height: 1.05,
-            fontWeight: FontWeight.w900,
+        child,
+        if (topLabel != null)
+          Positioned(
+            left: 3,
+            right: 3,
+            top: 3,
+            child: _centralOverlayLabel(topLabel, compact: true),
           ),
+        Positioned(
+          left: 3,
+          right: 3,
+          bottom: 3,
+          child: _centralOverlayLabel(bottomLabel),
         ),
+        if (showCount)
+          Positioned(
+            top: -5,
+            right: -5,
+            child: _countCircle(count),
+          ),
       ],
     );
+
     return onTap == null
         ? content
         : GestureDetector(
@@ -1975,75 +1950,98 @@ class _MesaScreenState extends State<MesaScreen> {
           );
   }
 
+  Widget _centralOverlayLabel(String text, {bool compact = false}) {
+    return Container(
+      alignment: Alignment.center,
+      padding: EdgeInsets.symmetric(
+        horizontal: 3,
+        vertical: compact ? 1 : 1.5,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xD90A080B),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: const Color(0x668C6729), width: 0.6),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: const Color(0xFFF0DFB7),
+          fontSize: compact ? 6.4 : 7,
+          height: 1,
+          fontWeight: FontWeight.w900,
+          letterSpacing: compact ? 0.25 : 0.45,
+        ),
+      ),
+    );
+  }
+
   Widget _discardPile({required bool glowing}) {
-    const cardWidth = 62.0;
-    const cardHeight = 93.0;
-    const step = 19.0;
-    final cards = _j.lixo;
+    const cardWidth = 54.0;
+    const cardHeight = 81.0;
+    const step = 16.0;
+    final aberto = _modalidade.toLowerCase() == 'aberto';
+    final cards = aberto
+        ? _j.lixo
+        : (_j.lixo.isEmpty ? <Carta>[] : <Carta>[_j.lixo.last]);
     final totalWidth = cards.isEmpty
         ? cardWidth
         : cardWidth + (cards.length - 1) * step;
+
     return GestureDetector(
       onTap: _tapLixo,
       behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                height: cardHeight,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(9),
-                  boxShadow: glowing
-                      ? const [
-                          BoxShadow(color: Color(0xAA9D43D8), blurRadius: 13),
-                          BoxShadow(color: Color(0x66E5B84F), blurRadius: 8),
-                        ]
-                      : null,
-                ),
-                child: cards.isEmpty
-                    ? _emptyCard(width: cardWidth, height: cardHeight)
-                    : SingleChildScrollView(
-                        controller: _discardScroll,
-                        scrollDirection: Axis.horizontal,
-                        physics: const BouncingScrollPhysics(),
-                        child: SizedBox(
-                          width: totalWidth,
-                          height: cardHeight,
-                          child: Stack(
-                            children: [
-                              for (var i = 0; i < cards.length; i++)
-                                Positioned(
-                                  left: i * step,
-                                  child: _frontCard(
-                                    cards[i],
-                                    width: cardWidth,
-                                    height: cardHeight,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-              ),
-              Positioned(
-                top: -7,
-                right: -7,
-                child: _countCircle(cards.length),
-              ),
-            ],
-          ),
-          const SizedBox(height: 3),
-          const Text(
-            'LIXO ABERTO',
-            style: TextStyle(
-              color: Color(0xFFEADBB7),
-              fontSize: 7.2,
-              fontWeight: FontWeight.w900,
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: cardHeight,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(7),
+              border: glowing
+                  ? Border.all(color: _mPurpleHi, width: 1.2)
+                  : null,
             ),
+            child: cards.isEmpty
+                ? _emptyCard(width: cardWidth, height: cardHeight)
+                : SingleChildScrollView(
+                    controller: aberto ? _discardScroll : null,
+                    scrollDirection: Axis.horizontal,
+                    physics: aberto
+                        ? const BouncingScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
+                    child: SizedBox(
+                      width: totalWidth,
+                      height: cardHeight,
+                      child: Stack(
+                        children: [
+                          for (var i = 0; i < cards.length; i++)
+                            Positioned(
+                              left: i * step,
+                              child: _frontCard(
+                                cards[i],
+                                width: cardWidth,
+                                height: cardHeight,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+          Positioned(
+            left: 3,
+            right: 3,
+            bottom: 3,
+            child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
+          ),
+          Positioned(
+            top: -5,
+            right: -5,
+            child: _countCircle(_j.lixo.length),
           ),
         ],
       ),
@@ -2060,10 +2058,7 @@ class _MesaScreenState extends State<MesaScreen> {
       height: height,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(width * 0.09),
-        border: Border.all(color: const Color(0x55FFFFFF), width: 0.7),
-        boxShadow: const [
-          BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(1, 2)),
-        ],
+        border: Border.all(color: const Color(0x44FFFFFF), width: 0.6),
       ),
       clipBehavior: Clip.antiAlias,
       child: Image.asset(
@@ -2089,14 +2084,7 @@ class _MesaScreenState extends State<MesaScreen> {
         gradient: glowing
             ? const LinearGradient(colors: [_mPurpleHi, _mGoldHi])
             : const LinearGradient(colors: [_mGoldHi, Color(0xFF694317)]),
-        boxShadow: glowing
-            ? const [
-                BoxShadow(color: Color(0xAA9D43D8), blurRadius: 13),
-                BoxShadow(color: Color(0x66E5B84F), blurRadius: 8),
-              ]
-            : const [
-                BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(1, 2)),
-              ],
+
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(width * 0.08),
@@ -2133,9 +2121,6 @@ class _MesaScreenState extends State<MesaScreen> {
         borderRadius: count < 10 ? null : BorderRadius.circular(12),
         color: const Color(0xEE080808),
         border: Border.all(color: _mGold, width: 1.2),
-        boxShadow: const [
-          BoxShadow(color: Color(0x66000000), blurRadius: 5),
-        ],
       ),
       child: Text(
         '$count',
@@ -2150,73 +2135,97 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _sidePlayer(int seat, {required bool left}) {
     final active = _j.vez == seat && !_j.rodadaEncerrada;
-    return SizedBox(
-      width: 66,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GestureDetector(
-            onTap: () => setState(() => _expandedAvatarSeat = seat),
-            child: AnimatedScale(
-              scale: active ? 1.18 : 1,
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutBack,
-              child: _avatarCircle(seat, size: 46, active: active),
-            ),
-          ),
-          const SizedBox(height: 4),
-          FittedBox(
-            child: Text(
-              _j.apelidos[seat].toUpperCase(),
-              style: TextStyle(
-                color: active ? _mPurpleHi : const Color(0xFFEADCC1),
-                fontSize: 8,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(height: 3),
-          _miniHiddenHand(seat, expanded: active, left: left),
-          if (active) ...[
-            const SizedBox(height: 4),
-            _turnBadge(compact: true),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _miniHiddenHand(int seat,
-      {required bool expanded, required bool left}) {
     final count = _j.maos[seat].length;
-    final shown = min(count, 5);
-    const cardWidth = 25.0;
-    const cardHeight = 38.0;
-    final step = expanded ? 12.0 : 7.0;
-    final width = cardWidth + max(0, shown - 1) * step;
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 260),
-          width: width,
-          height: cardHeight,
+
+    // Fora do turno o assento não reserva largura da mesa: somente uma pequena
+    // aba fica visível na borda. O avatar abre apenas no turno ou por toque.
+    if (!active) {
+      return GestureDetector(
+        onTap: () => setState(() => _expandedAvatarSeat = seat),
+        child: SizedBox(
+          width: 12,
+          height: 46,
           child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              for (var i = 0; i < shown; i++)
-                Positioned(
-                  left: i * step,
-                  child: _backCard(width: cardWidth, height: cardHeight),
+              Positioned(
+                left: left ? -7 : null,
+                right: left ? null : -7,
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 18,
+                  decoration: BoxDecoration(
+                    color: const Color(0xEE100B12),
+                    borderRadius: BorderRadius.horizontal(
+                      right: left ? const Radius.circular(10) : Radius.zero,
+                      left: left ? Radius.zero : const Radius.circular(10),
+                    ),
+                    border: Border.all(color: _mGold, width: 1),
+                  ),
                 ),
+              ),
+              Positioned(
+                left: left ? -2 : null,
+                right: left ? null : -2,
+                top: 11,
+                child: Container(
+                  width: 18,
+                  height: 24,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xF20A0A0A),
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(color: _mGold, width: 1),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: _mGoldHi,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-        Positioned(
-          top: -7,
-          right: -8,
-          child: _countCircle(count),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => setState(() => _expandedAvatarSeat = seat),
+      child: Container(
+        width: 58,
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xEE100B12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _mGold, width: 1),
         ),
-      ],
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _avatarCircle(seat, size: 42, active: true),
+            const SizedBox(height: 2),
+            FittedBox(
+              child: Text(
+                _j.apelidos[seat].toUpperCase(),
+                style: const TextStyle(
+                  color: Color(0xFFEADCC1),
+                  fontSize: 7,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            _countCircle(count),
+            const SizedBox(height: 3),
+            _turnBadge(compact: true),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2236,14 +2245,7 @@ class _MesaScreenState extends State<MesaScreen> {
           color: active ? _mPurpleHi : _mGold,
           width: active ? 2.8 : 2,
         ),
-        boxShadow: active
-            ? const [
-                BoxShadow(color: Color(0xAA9D43D8), blurRadius: 14),
-                BoxShadow(color: Color(0x66E5B84F), blurRadius: 8),
-              ]
-            : const [
-                BoxShadow(color: Color(0x77000000), blurRadius: 5, offset: Offset(0, 2)),
-              ],
+
       ),
       child: Text(
         _j.avatares[seat],
@@ -2342,75 +2344,47 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _playerDock() {
     final active = _j.vez == 0 && !_j.rodadaEncerrada;
-    return Stack(
-      clipBehavior: Clip.none,
+    return Column(
       children: [
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 137,
-          child: _hand(),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: 0,
-          child: Center(
-            child: GestureDetector(
-              onTap: () => setState(() => _expandedAvatarSeat = 0),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedScale(
-                    scale: active ? 1.18 : 1,
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOutBack,
-                    child: _avatarCircle(0, size: 61, active: active),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: const Color(0xEE090909),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: _mGold, width: 1),
-                      boxShadow: const [
-                        BoxShadow(color: Color(0x669D43D8), blurRadius: 10),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'VOCÊ',
-                          style: TextStyle(
-                            color: active ? _mPurpleHi : _mGoldHi,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        Text(
-                          '${_j.placar['nos']} pontos',
-                          style: const TextStyle(
-                            color: Color(0xFFDCCDAA),
-                            fontSize: 8,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (active) ...[
-                    const SizedBox(width: 8),
-                    _turnBadge(),
-                  ],
-                ],
+        SizedBox(
+          height: 44,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () => setState(() => _expandedAvatarSeat = 0),
+                child: _avatarCircle(0, size: 38, active: active),
               ),
-            ),
+              const SizedBox(width: 7),
+              Text(
+                'VOCÊ  •  ${_j.maos[0].length} cartas',
+                style: TextStyle(
+                  color: active ? _mPurpleHi : _mGoldHi,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              if (active) ...[
+                const SizedBox(width: 10),
+                _turnBadge(compact: true),
+              ],
+              const SizedBox(width: 12),
+              _railButton(Icons.chat_bubble_rounded, () {
+                setState(() => _msg = 'Chat — ligação final com o Claude.');
+              }),
+              const SizedBox(width: 6),
+              _railButton(Icons.sentiment_satisfied_alt_rounded, () {
+                setState(() => _msg = 'Expressões — ligação final com o Claude.');
+              }),
+              const SizedBox(width: 6),
+              _railButton(
+                _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                () => setState(() => _soundEnabled = !_soundEnabled),
+              ),
+            ],
           ),
         ),
+        Expanded(child: _hand()),
       ],
     );
   }
@@ -2505,7 +2479,7 @@ class _MesaScreenState extends State<MesaScreen> {
     return AnimatedScale(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutBack,
-      scale: purchased ? 1.05 : 1,
+      scale: 1,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         width: width,
@@ -2518,19 +2492,7 @@ class _MesaScreenState extends State<MesaScreen> {
               : (selected
                   ? const LinearGradient(colors: [_mPurpleHi, _mGoldHi, _mPurple])
                   : const LinearGradient(colors: [Color(0x99FFFFFF), Color(0x557D5A24)])),
-          boxShadow: purchased
-              ? const [
-                  BoxShadow(color: Color(0xCCF4D66E), blurRadius: 20, spreadRadius: 1),
-                  BoxShadow(color: Color(0xAA9D43D8), blurRadius: 15),
-                ]
-              : (selected
-                  ? const [
-                      BoxShadow(color: Color(0xAA9D43D8), blurRadius: 14),
-                      BoxShadow(color: Color(0x88E5B84F), blurRadius: 7),
-                    ]
-                  : const [
-                      BoxShadow(color: Color(0x99000000), blurRadius: 8, offset: Offset(0, -2)),
-                    ]),
+
         ),
         child: Stack(
           children: [
@@ -2601,7 +2563,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void _showMeldZoom(String dupla, int index) {
     final jogos = _j.jogosDupla[dupla]!;
     if (index < 0 || index >= jogos.length) return;
-    final cards = _j.ordenarMeld(jogos[index]); // jogo ampliado também em ordem
+    final cards = _j.ordenarMeld(jogos[index]); // ampliado em ordem
     final sash = _sashDeMeld(cards);
     showGeneralDialog<void>(
       context: context,
