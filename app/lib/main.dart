@@ -21,6 +21,7 @@ import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
+import 'services/configuracoes_service.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
@@ -606,7 +607,16 @@ class _ConfiguracoesPreviewHost extends StatefulWidget {
 
 class _ConfiguracoesPreviewHostState
     extends State<_ConfiguracoesPreviewHost> {
-  ConfigVM _vm = ConfigVM.mock();
+  // Estado REAL: carrega do disco (SharedPreferences) e persiste cada mudança.
+  Configuracoes _config = const Configuracoes(versaoApp: '1.0.0');
+
+  @override
+  void initState() {
+    super.initState();
+    ConfiguracoesService.instance.carregar(versaoApp: '1.0.0').then((c) {
+      if (mounted) setState(() => _config = c);
+    });
+  }
 
   void _aviso(String texto) {
     ScaffoldMessenger.of(context)
@@ -620,33 +630,30 @@ class _ConfiguracoesPreviewHostState
       );
   }
 
-  void _toggle(String id, bool valor) {
-    setState(() {
-      switch (id) {
-        case 'musica':
-          _vm = _vm.copyWith(musica: valor);
-          break;
-        case 'efeitos':
-          _vm = _vm.copyWith(efeitos: valor);
-          break;
-        case 'vibracao':
-          _vm = _vm.copyWith(vibracao: valor);
-          break;
-        case 'notificacoes':
-          _vm = _vm.copyWith(notificacoes: valor);
-          break;
-        case 'animacoes':
-          _vm = _vm.copyWith(animacoes: valor);
-          break;
-        case 'ordenarCartas':
-          _vm = _vm.copyWith(ordenarCartas: valor);
-          break;
-        case 'mostrarOnline':
-          _vm = _vm.copyWith(mostrarOnline: valor);
-          break;
+  // Cabeçalho: usa o login real quando existir; senão, valores neutros.
+  PerfilResumo _montarPerfil() {
+    var apelido = 'Você';
+    var email = '';
+    try {
+      final u = FirebaseAuth.instance.currentUser;
+      if (u != null) {
+        if ((u.displayName ?? '').isNotEmpty) apelido = u.displayName!;
+        email = u.email ?? '';
       }
-    });
-    _aviso('$id atualizado — persistência fica com o Claude');
+    } catch (_) {
+      // Firebase indisponível (ex.: web de teste) — segue com neutro.
+    }
+    return PerfilResumo(
+      apelido: apelido,
+      email: email,
+      vip: false,
+      moedas: 0,
+    );
+  }
+
+  Future<void> _salvar(Configuracoes novo) async {
+    setState(() => _config = novo); // aplica na hora na UI
+    await ConfiguracoesService.instance.salvar(novo); // persiste no disco
   }
 
   void _abrirLoja() {
@@ -696,37 +703,38 @@ class _ConfiguracoesPreviewHostState
       ),
     );
     if (sair == true && mounted) {
-      _aviso('Logout real fica com o Claude');
+      // Logout REAL (blindado — não quebra se o Firebase não estiver ativo).
+      try {
+        await FirebaseAuth.instance.signOut();
+      } catch (_) {}
+      try {
+        await GoogleSignIn().signOut();
+      } catch (_) {}
+      if (mounted) {
+        Navigator.of(context).popUntil((r) => r.isFirst);
+        _aviso('Você saiu da conta.');
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return ConfiguracoesScreen(
-      vm: _vm,
+      perfil: _montarPerfil(),
+      config: _config,
       onVoltar: () => Navigator.of(context).maybePop(),
-      onEditarPerfil: _abrirPerfil,
-      onAssinaturaVip: _abrirLoja,
-      onMoedasCompras: _abrirLoja,
-      onToggle: _toggle,
-      onMao: (mao) {
-        setState(() => _vm = _vm.copyWith(mao: mao));
-        _aviso('Mão ${mao == MaoJogador.destro ? 'destro' : 'canhoto'}');
-      },
-      onQuemConvida: () {
-        const opcoes = ['Amigos', 'Todos', 'Ninguém'];
-        final atual = opcoes.indexOf(_vm.quemConvida);
-        final proximo = opcoes[(atual + 1) % opcoes.length];
-        setState(() => _vm = _vm.copyWith(quemConvida: proximo));
-        _aviso('Convites: $proximo — lista real fica com o Claude');
-      },
-      onBloqueados: () =>
-          _aviso('Jogadores bloqueados — integração fica com o Claude'),
-      onComoJogar: _abrirComoJogar,
-      onSuporte: () => _aviso('Suporte — canal real fica com o Claude'),
-      onAvaliar: () =>
-          _aviso('Google Play — abertura da loja fica com o Claude'),
-      onSair: _confirmarSaida,
+      callbacks: ConfiguracoesCallbacks(
+        onAlterar: _salvar,
+        onEditarPerfil: _abrirPerfil,
+        onAssinaturaVip: _abrirLoja,
+        onMoedasCompras: _abrirLoja,
+        onBloqueados: () => _aviso('Jogadores bloqueados — em breve.'),
+        onRegras: _abrirComoJogar,
+        onSuporte: () => _aviso('Suporte — em breve.'),
+        onTermos: () => _aviso('Termos e privacidade — em breve.'),
+        onAvaliar: () => _aviso('Avaliar na loja — em breve.'),
+        onSair: _confirmarSaida,
+      ),
     );
   }
 }
