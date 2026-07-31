@@ -423,6 +423,68 @@ class Jogo {
     return out;
   }
 
+  // EXIBIÇÃO (#9): qual carta cada CORINGA (JOKER) "ocupa" no jogo baixado.
+  // Recebe o meld JÁ ORDENADO (por ordenarMeld) e devolve uma lista paralela:
+  // posição i => Carta virtual que o coringa daquela posição representa, ou null
+  // se a carta i não for um coringa-substituto. Só afeta o desenho da mesa.
+  List<Carta?> substitutosMeld(List<Carta> ordenado) {
+    final out = List<Carta?>.filled(ordenado.length, null);
+    final naturais = ordenado.where((c) => c.valor != 'JOKER').toList();
+    if (naturais.isEmpty) return out; // canastra só de curingas: nada a substituir
+
+    // TRINCA (mesmo valor, naipes diferentes): o coringa vira mais uma daquele valor.
+    final mesmoValor = naturais.every((c) => c.valor == naturais.first.valor);
+    if (mesmoValor) {
+      final valor = naturais.first.valor;
+      final naipesUsados = naturais.map((c) => c.naipe).toSet();
+      final naipeLivre = _naipes.firstWhere(
+        (n) => !naipesUsados.contains(n),
+        orElse: () => naturais.first.naipe ?? 'espadas',
+      );
+      for (var i = 0; i < ordenado.length; i++) {
+        if (ordenado[i].valor == 'JOKER') {
+          out[i] = Carta('virt_${ordenado[i].id}', naipeLivre, valor, false);
+        }
+      }
+      return out;
+    }
+
+    // SEQUÊNCIA (mesmo naipe): o coringa ocupa o buraco (4-★-6 → 5) ou a ponta.
+    final naipe = naturais.first.naipe;
+    final asBaixo = naturais.any((c) => c.valor == '2' || c.valor == '3');
+    int rankOf(Carta c) {
+      if (c.valor == 'A') return asBaixo ? -1 : 13;
+      return _ordem.indexOf(c.valor); // 2=1 … K=12
+    }
+    String valorDoRank(int r) {
+      if (r == -1 || r == 13) return 'A';
+      if (r >= 0 && r < _ordem.length) return _ordem[r];
+      return '';
+    }
+    for (var i = 0; i < ordenado.length; i++) {
+      if (ordenado[i].valor != 'JOKER') continue;
+      final antes = i > 0 ? ordenado[i - 1] : null;
+      final depois = i < ordenado.length - 1 ? ordenado[i + 1] : null;
+      int? alvoRank;
+      if (antes != null && antes.valor != 'JOKER' &&
+          depois != null && depois.valor != 'JOKER') {
+        final ra = rankOf(antes), rd = rankOf(depois);
+        if (rd - ra == 2) alvoRank = ra + 1; // buraco de 1
+      } else if (antes != null && antes.valor != 'JOKER') {
+        alvoRank = rankOf(antes) + 1; // coringa na ponta de cima
+      } else if (depois != null && depois.valor != 'JOKER') {
+        alvoRank = rankOf(depois) - 1; // coringa na ponta de baixo
+      }
+      if (alvoRank != null && naipe != null) {
+        final v = valorDoRank(alvoRank);
+        if (v.isNotEmpty) {
+          out[i] = Carta('virt_${ordenado[i].id}', naipe, v, false);
+        }
+      }
+    }
+    return out;
+  }
+
   Map<String, dynamic> baixar(int assento, List<String> ids) {
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
     if (ids.length < 3) return {'ok': false, 'erro': 'um jogo tem no mínimo 3 cartas'};
@@ -1525,7 +1587,7 @@ class _MesaScreenState extends State<MesaScreen> {
       builder: (context, constraints) {
         // Núcleo central deliberadamente compacto. A altura economizada é
         // devolvida principalmente à área de jogos da dupla de baixo.
-        const centralHeight = 98.0;
+        const centralHeight = 118.0;
         const playerDockHeight = 180.0;
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
@@ -1557,7 +1619,7 @@ class _MesaScreenState extends State<MesaScreen> {
                   child: Column(
                     children: [
                       Expanded(
-                        flex: 9,
+                        flex: 11,
                         child: _meldArea('eles', top: true),
                       ),
                       SizedBox(height: centralHeight, child: _centralTray()),
@@ -1635,23 +1697,23 @@ class _MesaScreenState extends State<MesaScreen> {
             children: [
               Positioned.fill(
                 child: jogos.isEmpty
-                    ? Center(
-                        child: AnimatedOpacity(
-                          opacity: podeBaixar ? 1 : 0.22,
-                          duration: const Duration(milliseconds: 180),
-                          child: Text(
-                            podeBaixar
-                                ? 'TOQUE NO FELTRO PARA BAIXAR'
-                                : (top ? 'ELES' : 'NÓS'),
-                            style: TextStyle(
-                              color: podeBaixar ? _mPurpleHi : _mGold,
-                              fontSize: podeBaixar ? 9 : 10,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.1,
+                    ? (podeBaixar
+                        ? Center(
+                            child: AnimatedOpacity(
+                              opacity: 1,
+                              duration: const Duration(milliseconds: 180),
+                              child: Text(
+                                'TOQUE NO FELTRO PARA BAIXAR',
+                                style: TextStyle(
+                                  color: _mPurpleHi,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.1,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                      )
+                          )
+                        : const SizedBox.shrink())
                     : SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(0, 28, 0, 2),
                         physics: const BouncingScrollPhysics(),
@@ -1761,9 +1823,11 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
     cartas = _j.ordenarMeld(cartas); // jogo baixado em ordem crescente
-    const cardWidth = 64.0;
-    const cardHeight = 96.0;
-    const step = 17.0;
+    final subs = _j.substitutosMeld(cartas); // #9: coringa mostra a carta que ocupa
+    // #2: tamanho único da mesa (grande, boa visualização) — igual monte/lixo/mão.
+    const cardWidth = 66.0;
+    const cardHeight = 100.0;
+    const step = 18.0;
     final count = cartas.length;
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
@@ -1790,17 +1854,13 @@ class _MesaScreenState extends State<MesaScreen> {
               Positioned(
                 left: i * step,
                 top: 0,
-                child: _frontCard(
+                child: _meldCardFace(
                   cartas[i],
+                  subs[i],
                   width: cardWidth,
                   height: cardHeight,
                 ),
               ),
-            Positioned(
-              top: -4,
-              right: -4,
-              child: _countCircle(count),
-            ),
             if (sash != Sash.nenhuma)
               Positioned(
                 left: 1,
@@ -1850,8 +1910,9 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _centralTray() {
-    const cardWidth = 54.0;
-    const cardHeight = 81.0;
+    // #2: monte/lixo/mortos no MESMO tamanho da mesa e da mão (medida única).
+    const cardWidth = 66.0;
+    const cardHeight = 100.0;
     final podeComprar = _minhaVezAtiva && !_j.jaComprou;
     final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
     final monteGlow = podeComprar ||
@@ -1979,9 +2040,9 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   Widget _discardPile({required bool glowing}) {
-    const cardWidth = 54.0;
-    const cardHeight = 81.0;
-    const step = 16.0;
+    const cardWidth = 66.0;
+    const cardHeight = 100.0;
+    const step = 18.0;
     final aberto = _modalidade.toLowerCase() == 'aberto';
     final cards = aberto
         ? _j.lixo
@@ -2038,13 +2099,60 @@ class _MesaScreenState extends State<MesaScreen> {
             bottom: 3,
             child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
           ),
+          // Contador de cartas do lixo — do lado ESQUERDO (junto do monte),
+          // longe dos mortos pra não poluir aquele canto.
           Positioned(
             top: -5,
-            right: -5,
+            left: -5,
             child: _countCircle(_j.lixo.length),
           ),
         ],
       ),
+    );
+  }
+
+  // Carta de um jogo baixado: se for um CORINGA que ocupa outra carta (#9),
+  // mostra a FACE da carta substituída + um selo ★ discreto no canto pra deixar
+  // claro que ali mora um coringa. Cartas normais caem no _frontCard de sempre.
+  Widget _meldCardFace(
+    Carta original,
+    Carta? substituto, {
+    required double width,
+    required double height,
+  }) {
+    if (substituto == null) {
+      return _frontCard(original, width: width, height: height);
+    }
+    final selo = width * 0.30;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        _frontCard(substituto, width: width, height: height),
+        Positioned(
+          top: width * 0.06,
+          right: width * 0.06,
+          child: Container(
+            width: selo,
+            height: selo,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const RadialGradient(colors: [_mPurpleHi, _mPurple]),
+              border: Border.all(color: _mGoldHi, width: 0.8),
+              boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 3)],
+            ),
+            child: Text(
+              '★',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: selo * 0.62,
+                fontWeight: FontWeight.w900,
+                height: 1,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2347,13 +2455,13 @@ class _MesaScreenState extends State<MesaScreen> {
     return Column(
       children: [
         SizedBox(
-          height: 44,
+          height: 52,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               GestureDetector(
                 onTap: () => setState(() => _expandedAvatarSeat = 0),
-                child: _avatarCircle(0, size: 38, active: active),
+                child: _avatarCircle(0, size: 50, active: active),
               ),
               const SizedBox(width: 7),
               Text(
@@ -2394,10 +2502,11 @@ class _MesaScreenState extends State<MesaScreen> {
     final count = hand.length;
     if (count == 0) return const SizedBox();
 
-    const cardWidth = 88.0;
-    const cardHeight = 132.0;
-    const step = 47.0;
-    const selectedLift = 15.0;
+    // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
+    const cardWidth = 66.0;
+    const cardHeight = 100.0;
+    const step = 36.0;
+    const selectedLift = 13.0;
     final active = _minhaVezAtiva;
     final totalWidth = cardWidth + (count - 1) * step;
 
@@ -2484,15 +2593,14 @@ class _MesaScreenState extends State<MesaScreen> {
         duration: const Duration(milliseconds: 220),
         width: width,
         height: height,
-        padding: EdgeInsets.all(selected || purchased ? 2 : 0.8),
+        padding: EdgeInsets.all(selected || purchased ? 2 : 0),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(11),
           gradient: purchased
               ? const LinearGradient(colors: [_mGoldHi, _mPurpleHi, _mGold])
               : (selected
                   ? const LinearGradient(colors: [_mPurpleHi, _mGoldHi, _mPurple])
-                  : const LinearGradient(colors: [Color(0x99FFFFFF), Color(0x557D5A24)])),
-
+                  : null),
         ),
         child: Stack(
           children: [
@@ -2564,6 +2672,7 @@ class _MesaScreenState extends State<MesaScreen> {
     final jogos = _j.jogosDupla[dupla]!;
     if (index < 0 || index >= jogos.length) return;
     final cards = _j.ordenarMeld(jogos[index]); // ampliado em ordem
+    final subs = _j.substitutosMeld(cards); // #9: coringa ocupa a carta
     final sash = _sashDeMeld(cards);
     showGeneralDialog<void>(
       context: context,
@@ -2628,8 +2737,9 @@ class _MesaScreenState extends State<MesaScreen> {
                                 for (var i = 0; i < cards.length; i++)
                                   Positioned(
                                     left: i * step,
-                                    child: _frontCard(
+                                    child: _meldCardFace(
                                       cards[i],
+                                      subs[i],
                                       width: width,
                                       height: height,
                                     ),
