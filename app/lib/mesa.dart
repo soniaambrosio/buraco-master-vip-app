@@ -66,6 +66,18 @@ class Jogo {
   // Fechado/SBTL: ao pegar o lixo, o id da carta do TOPO que o jogador é
   // OBRIGADO a usar (baixar/estender) antes de descartar. null = sem pendência.
   String? lixoTopoObrigatorio;
+  // §5.2 ABERTO: quem compra um lixo de UMA carta só não pode devolver essa
+  // mesma carta como descarte no mesmo turno (anti "turno nulo").
+  String? _lixoUnicoCompradoId;
+  // §8.1/§8.3: mortos convertidos em monte nesta rodada (isenta o -100 de
+  // "morto não pego" — o direito deixou de existir).
+  int _mortosConvertidos = 0;
+  // §3.2: quem inicia a rodada — sorteado na 1ª, rotaciona nas seguintes.
+  int _iniciadorRodada = -1;
+  // BLOQUEIO CRÍTICO (doc 31/07): integridade do baralho. null = íntegro;
+  // senão, código auditável — e o motor RECUSA novas jogadas (nunca "conserta"
+  // inventando carta).
+  String? integridadeErro;
   // Modalidade da mesa: 'ABERTO' | 'FECHADO' | 'SBTL'. Governa a trava do lixo,
   // a batida (limpa obrigatória ou não) e, futuramente, trincas. Setada pela UI.
   String modalidade = 'ABERTO';
@@ -149,8 +161,15 @@ class Jogo {
     lixo = [];
     mortoPego = {'nos': false, 'eles': false};
     jogosDupla = {'nos': [], 'eles': []};
-    vez = 0; jaComprou = false; rodadaEncerrada = false; duplaQueBateu = null; assentoQueBateu = null; rodada += 1;
+    // §3.2: sorteia quem começa na 1ª rodada; nas seguintes, rotaciona.
+    _iniciadorRodada =
+        _iniciadorRodada < 0 ? _rnd.nextInt(4) : (_iniciadorRodada + 1) % 4;
+    vez = _iniciadorRodada;
+    jaComprou = false; rodadaEncerrada = false; duplaQueBateu = null; assentoQueBateu = null; rodada += 1;
     _rodadaContada = false; pontosRodada = null;
+    _mortosConvertidos = 0;
+    lixoTopoObrigatorio = null;
+    _lixoUnicoCompradoId = null;
     // Reavalia a vulnerabilidade da rodada que começa, a partir do placar acumulado.
     for (final d in ['nos', 'eles']) {
       if (placar[d]! >= _limiteVulneravel) {
@@ -161,7 +180,65 @@ class Jogo {
       primeiraBaixadaFeita[d] = false;
     }
     ordenar(0); // mão do jogador já começa organizada
+    auditarIntegridade(); // auditoria pós-distribuição (invariantes globais)
   }
+
+  // ===== AUDITORIA DE INTEGRIDADE DO BARALHO (BLOQUEIO CRÍTICO, doc 31/07) =====
+  // Invariantes: 108 cartas no total; nenhum id em duas zonas; nenhum id criado
+  // ou sumido; máx. 2 cópias de cada valor+naipe (4 Jokers); toda carta em
+  // exatamente uma zona. Cartas "virt_" (desenho do coringa) NUNCA entram aqui.
+  Map<String, List<Carta>> _zonas() => {
+        'monte': monte,
+        'lixo': lixo,
+        for (var i = 0; i < mortos.length; i++) 'morto${i + 1}': mortos[i],
+        for (var a = 0; a < 4; a++) 'mao$a': maos[a],
+        'jogosNos': [for (final j in jogosDupla['nos']!) ...j],
+        'jogosEles': [for (final j in jogosDupla['eles']!) ...j],
+      };
+
+  /// Valida os invariantes globais após cada mutação. Se algo estiver
+  /// impossível, grava o código em [integridadeErro] e o jogo bloqueia
+  /// novas jogadas (preserva o estado pra auditoria — não inventa carta).
+  bool auditarIntegridade() {
+    final vistos = <String, String>{}; // cardId -> zona
+    final porValorNaipe = <String, int>{};
+    var total = 0;
+    for (final e in _zonas().entries) {
+      for (final c in e.value) {
+        total++;
+        final zonaAnterior = vistos[c.id];
+        if (zonaAnterior != null) {
+          integridadeErro =
+              'CARD_PRESENT_IN_MULTIPLE_ZONES: ${c.id} (${_cartaRotulo(c)}) em $zonaAnterior e ${e.key}';
+          return false;
+        }
+        vistos[c.id] = e.key;
+        if (c.id.startsWith('virt_')) {
+          integridadeErro = 'VIRTUAL_CARD_IN_STATE: ${c.id} em ${e.key}';
+          return false;
+        }
+        final chave = '${c.naipe ?? 'JOKER'}:${c.valor}';
+        final n = (porValorNaipe[chave] ?? 0) + 1;
+        porValorNaipe[chave] = n;
+        final limite = c.valor == 'JOKER' ? 4 : 2;
+        if (n > limite) {
+          integridadeErro =
+              'DUPLICATE_RANK_SUIT_OVERFLOW: $chave x$n (última em ${e.key})';
+          return false;
+        }
+      }
+    }
+    if (total != 108) {
+      integridadeErro = 'DECK_TOTAL_MISMATCH: $total cartas (esperado 108) · ${contagemPorZona()}';
+      return false;
+    }
+    integridadeErro = null;
+    return true;
+  }
+
+  /// Contagem de cartas por zona (relatório de teste/telemetria).
+  String contagemPorZona() =>
+      _zonas().entries.map((e) => '${e.key}=${e.value.length}').join(' · ');
 
   // ===== PONTUAÇÃO (porte fiel de motor/jogo.js: pontuarDuplaJogo + contarPontos) =====
   // canastra: as_a_as=1000, de_500=500, limpa=200, suja=100; + cartas baixadas;
@@ -172,7 +249,7 @@ class Jogo {
     final det = {'asAas': 0, 'de500': 0, 'limpas': 0, 'sujas': 0, 'baixadas': 0};
     for (final meld in jogosDupla[dupla]!) {
       if (meld.length >= 7) {
-        final res = validarSequencia(meld);
+        final res = _validarJogoMesa(meld); // trinca-canastra pontua no Fechado
         if (res['valido'] == true) {
           switch (res['tipo']) {
             case 'as_a_as': pontosCanastras += 1000; det['asAas'] = det['asAas']! + 1; break;
@@ -186,7 +263,10 @@ class Jogo {
     }
     det['baixadas'] = pontosCartas;
     final bonusBatida = bateu ? 100 : 0;
-    final penalidadeMorto = (!mortoPegoDupla && algumPegouMorto) ? -100 : 0;
+    // §8.3: morto convertido em monte deixa de ser direito reclamável —
+    // NÃO aplica o -100 pra dupla que ficou sem morto por causa da conversão.
+    final penalidadeMorto =
+        (!mortoPegoDupla && algumPegouMorto && _mortosConvertidos == 0) ? -100 : 0;
     final descontoMao = -cartasNaMao;
     final total = pontosCanastras + pontosCartas + bonusBatida + descontoMao + penalidadeMorto;
     return {'total': total, 'canastras': pontosCanastras, 'bonusBatida': bonusBatida,
@@ -212,7 +292,10 @@ class Jogo {
       placar[dupla] = placar[dupla]! + (r['total'] as int);
     }
     pontosRodada = res;
-    if (placar['nos']! >= metaPontos || placar['eles']! >= metaPontos) encerrada = true;
+    // §9.2: a partida só encerra quando alguém cruza a meta E não há empate
+    // exato — empate na meta força uma RODADA EXTRA até desempatar.
+    final n = placar['nos']!, e = placar['eles']!;
+    if ((n >= metaPontos || e >= metaPontos) && n != e) encerrada = true;
   }
 
   // Nova rodada: mantém o placar, redistribui tudo o resto.
@@ -244,7 +327,11 @@ class Jogo {
     if (cartas.length < 3) return {'valido': false, 'motivo': 'Mínimo de 3 cartas para formar um jogo'};
     final curingas = cartas.where((c) => c.ehCoringa).toList();
     final naoCuringas = cartas.where((c) => !c.ehCoringa).toList();
-    if (curingas.length == cartas.length) return _finalizar('de_curinga', curingas.length, cartas.length);
+    // §4.2 (Diretriz Oficial): um jogo aceita NO MÁXIMO 1 curinga substituto.
+    // Jogo só de curingas não existe mais (a antiga "canastra de curingas" saiu).
+    if (curingas.length == cartas.length) {
+      return {'valido': false, 'motivo': 'um jogo precisa de cartas naturais (máximo 1 curinga)'};
+    }
     if (curingas.isEmpty && naoCuringas.every((c) => c.valor == 'A')) return _finalizar('de_as', 0, cartas.length);
 
     final jokers = cartas.where((c) => c.valor == 'JOKER').toList();
@@ -326,20 +413,70 @@ class Jogo {
     return {'valido': false, 'motivo': motivoFalha};
   }
 
-  // ABERTO: só sequência (ás só em sequência; trinca/de_as só valeriam no Fechado)
+  // §4.3 TRINCA/LAVADEIRA — permitida SÓ no Fechado: 3+ cartas do MESMO VALOR
+  // (naipes livres), no máximo 1 curinga substituto (Joker, ou um 2 de valor
+  // diferente do da trinca). Com 7+ vira canastra: limpa sem curinga, suja com.
+  Map<String, dynamic> _validarTrinca(List<Carta> cartas) {
+    if (cartas.length < 3) {
+      return {'valido': false, 'motivo': 'uma trinca tem no mínimo 3 cartas'};
+    }
+    final jokers = cartas.where((c) => c.valor == 'JOKER').toList();
+    final naoJokers = cartas.where((c) => c.valor != 'JOKER').toList();
+    if (naoJokers.isEmpty) {
+      return {'valido': false, 'motivo': 'trinca precisa de cartas naturais'};
+    }
+    // valor da trinca = o valor mais frequente entre as cartas não-Joker
+    final cont = <String, int>{};
+    for (final c in naoJokers) {
+      cont[c.valor] = (cont[c.valor] ?? 0) + 1;
+    }
+    final valor = (cont.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value)))
+        .first
+        .key;
+    final substitutos = naoJokers.where((c) => c.valor != valor).toList();
+    if (substitutos.any((c) => c.valor != '2')) {
+      return {
+        'valido': false,
+        'motivo': 'trinca: todas as cartas devem ter o mesmo valor (só 1 curinga pode substituir)'
+      };
+    }
+    final qtdCuringas = jokers.length + substitutos.length;
+    if (qtdCuringas > 1) {
+      return {'valido': false, 'motivo': 'trinca aceita no máximo 1 curinga'};
+    }
+    final tipo = cartas.length < 7
+        ? 'aberta'
+        : (qtdCuringas > 0 ? 'suja' : 'limpa');
+    return {'valido': true, 'tipo': tipo, 'qtd_curingas': qtdCuringas, 'trinca': true};
+  }
+
+  // Validador OFICIAL por modalidade (§2/§10):
+  // ABERTO/STBL — só sequência (mesmo naipe); trinca proibida (ás só em sequência).
+  // FECHADO — sequência OU trinca/lavadeira.
   Map<String, dynamic> _validarJogoMesa(List<Carta> cartas) {
+    final fechado = modalidade.toLowerCase() == 'fechado';
+    if (fechado) {
+      final t = _validarTrinca(cartas);
+      if (t['valido'] == true) return t;
+      final r = validarSequencia(cartas);
+      if (r['valido'] == true) return r;
+      return r; // motivo da sequência é o mais útil pro jogador
+    }
     final soAses = cartas.isNotEmpty && cartas.every((c) => c.valor == 'A' && !c.ehCoringa);
     final r = validarSequencia(cartas);
     if (r['valido'] == true && !soAses) return r;
-    if (soAses) return {'valido': false, 'motivo': 'no ABERTO o ás só entra em sequência'};
+    if (soAses) {
+      return {'valido': false, 'motivo': 'trinca só vale no FECHADO — aqui o ás entra apenas em sequência'};
+    }
     return r;
   }
 
   bool _canastraLiberaBatida(List<Carta> meld) {
     if (meld.length < 7) return false;
-    final r = validarSequencia(meld);
+    final r = _validarJogoMesa(meld); // inclui trinca-canastra no Fechado
     if (r['valido'] != true) return false;
-    // Fechado: QUALQUER canastra (7+) libera a batida — suja basta.
+    // Fechado: QUALQUER canastra (7+) libera a batida — suja basta (§6.4).
     if (modalidade.toLowerCase() == 'fechado') return true;
     // Aberto/STBL: exige canastra LIMPA (limpa, 500 ou 1000).
     final t = r['tipo'];
@@ -355,8 +492,9 @@ class Jogo {
     return !(temLimpa || mortoDisp);
   }
 
-  static const erroTravaria =
-      'não dá pra baixar isso: você ficaria com uma carta que não pode descartar (sem canastra LIMPA pra bater e sem morto). Segure mais uma carta.';
+  String get erroTravaria => modalidade.toLowerCase() == 'fechado'
+      ? 'não dá pra baixar isso: você ficaria com uma carta que não pode descartar (sem canastra pra bater e sem morto). Segure mais uma carta.'
+      : 'não dá pra baixar isso: você ficaria com uma carta que não pode descartar (sem canastra LIMPA pra bater e sem morto). Segure mais uma carta.';
 
   Map<String, dynamic>? _aoZerarMaoBaixando(int assento) {
     if (maos[assento].isNotEmpty) return null;
@@ -375,12 +513,17 @@ class Jogo {
 
   // ---------- JOGADAS ----------
   bool comprarMonte(int assento) {
+    if (integridadeErro != null) return false; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento || jaComprou) return false;
     if (monte.isEmpty) {
-      if (mortos.isNotEmpty) { monte = mortos.removeAt(0); } else { rodadaEncerrada = true; return false; }
+      if (mortos.isNotEmpty) {
+        monte = mortos.removeAt(0); // §8.1: morto de menor índice vira monte
+        _mortosConvertidos++;
+      } else { rodadaEncerrada = true; return false; }
     }
     maos[assento].add(monte.removeAt(0));
     jaComprou = true;
+    auditarIntegridade();
     return true;
   }
 
@@ -389,6 +532,7 @@ class Jogo {
   // - FECHADO/SBTL: só pode pegar se a carta do TOPO tiver USO IMEDIATO — formar
   //   um jogo novo com 2 cartas da mão OU estender um jogo já baixado da dupla.
   Map<String, dynamic> comprarLixo(int assento, {String modalidade = 'ABERTO'}) {
+    if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
     if (lixo.isEmpty) return {'ok': false, 'erro': 'o lixo está vazio'};
     if (modalidade.toLowerCase() != 'aberto' && !_topoLixoTemUso(assento)) {
@@ -406,6 +550,11 @@ class Jogo {
     // Fechado/SBTL: nasce a OBRIGAÇÃO de usar o topo antes de descartar.
     lixoTopoObrigatorio =
         modalidade.toLowerCase() != 'aberto' ? topo.id : null;
+    // §5.2 ABERTO: lixo de UMA carta — essa carta não pode voltar como
+    // descarte no mesmo turno (anti turno nulo).
+    _lixoUnicoCompradoId =
+        (modalidade.toLowerCase() == 'aberto' && qtd == 1) ? topo.id : null;
+    auditarIntegridade();
     return {'ok': true, 'qtd': qtd};
   }
 
@@ -450,30 +599,72 @@ class Jogo {
     });
   }
 
-  // Ordena um JOGO BAIXADO para EXIBIR em sequência crescente (2→A, ou A-2-3 quando
-  // o Ás é baixo). Regra: no máx. 1 curinga por jogo — o coringa (JOKER) vai no
-  // buraco entre dois naturais, ou na ponta se não houver buraco. Só afeta a exibição.
+  // Ordena um JOGO BAIXADO para EXIBIR em sequência crescente (2→A, ou A-2-3
+  // quando o Ás é baixo). MELD-003: TODO curinga (JOKER **ou 2 usado como
+  // substituto**) vai pro buraco da sequência — nunca fica ordenado pelo valor
+  // físico "2". O 2 natural (mesmo naipe, posição contígua) fica onde é. Só exibição.
   List<Carta> ordenarMeld(List<Carta> meld) {
     final jokers = meld.where((c) => c.valor == 'JOKER').toList();
-    final resto = meld.where((c) => c.valor != 'JOKER').toList();
-    // Ás é baixo quando o jogo tem 2 ou 3 (sequência A-2-3…); senão é alto (…Q-K-A).
-    final asBaixo = resto.any((c) => c.valor == '2' || c.valor == '3');
+    final naoJokers = meld.where((c) => c.valor != 'JOKER').toList();
+    final asBaixo = naoJokers.any((c) => c.valor == '2' || c.valor == '3');
     int rank(Carta c) {
-      if (c.valor == 'A') return asBaixo ? -1 : 13;
-      return _ordem.indexOf(c.valor); // A=0 (tratado acima), 2=1, 3=2 … K=12
+      if (c.valor == 'A') return asBaixo ? 0 : 13; // A baixo = 0 (contíguo ao 2)
+      return _ordem.indexOf(c.valor); // A=0, 2=1, 3=2 … K=12
     }
-    resto.sort((a, b) => rank(a).compareTo(rank(b)));
-    if (jokers.isEmpty) return resto;
-    final out = <Carta>[];
-    bool inserido = false;
-    for (int i = 0; i < resto.length; i++) {
-      out.add(resto[i]);
-      if (!inserido && i < resto.length - 1 && rank(resto[i + 1]) - rank(resto[i]) == 2) {
-        out.add(jokers.first);
-        inserido = true;
+
+    final outros = naoJokers.where((c) => c.valor != '2').toList();
+    final dois = naoJokers.where((c) => c.valor == '2').toList();
+    final naipeJogo = outros.isNotEmpty
+        ? outros.first.naipe
+        : (dois.isNotEmpty ? dois.first.naipe : null);
+
+    // Decide cada 2: NATURAL (mesmo naipe e o rank 1 encaixa contíguo) ou
+    // CURINGA de exibição (naipe diferente, ou não encaixa como natural).
+    final doisNaturais = <Carta>[];
+    final doisCuringa = <Carta>[];
+    for (final d in dois) {
+      if (d.naipe != naipeJogo) {
+        doisCuringa.add(d);
+        continue;
+      }
+      final ranks = [...outros.map(rank), ...doisNaturais.map(rank), 1]..sort();
+      final semDuplicata = ranks.toSet().length == ranks.length;
+      final lacunas = (ranks.last - ranks.first + 1) - ranks.length;
+      final curingasDisponiveis = jokers.length + doisCuringa.length;
+      if (semDuplicata && lacunas <= curingasDisponiveis) {
+        doisNaturais.add(d);
+      } else {
+        doisCuringa.add(d);
       }
     }
-    if (!inserido) out.add(jokers.first); // sem buraco → coringa na ponta
+
+    // 2º passe: o Ás só é BAIXO se a sequência realmente ocupa a ponta de baixo
+    // (tem um 2 NATURAL ou um 3). Um 2 usado como curinga não puxa o Ás pra
+    // frente (10-J-[2]-K-A fica com o Ás no ALTO, onde ele pertence).
+    final asBaixoFinal = doisNaturais.isNotEmpty ||
+        outros.any((c) => c.valor == '3');
+    int rankFinal(Carta c) {
+      if (c.valor == 'A') return asBaixoFinal ? 0 : 13;
+      return _ordem.indexOf(c.valor);
+    }
+
+    final naturais = [...outros, ...doisNaturais]
+      ..sort((a, b) => rankFinal(a).compareTo(rankFinal(b)));
+    final curingas = [...jokers, ...doisCuringa];
+    if (curingas.isEmpty) return naturais;
+    if (naturais.isEmpty) return curingas;
+
+    final out = <Carta>[];
+    final fila = [...curingas];
+    for (int i = 0; i < naturais.length; i++) {
+      out.add(naturais[i]);
+      if (fila.isNotEmpty &&
+          i < naturais.length - 1 &&
+          rankFinal(naturais[i + 1]) - rankFinal(naturais[i]) == 2) {
+        out.add(fila.removeAt(0)); // curinga tapa o buraco
+      }
+    }
+    out.addAll(fila); // sem buraco → curinga na ponta
     return out;
   }
 
@@ -505,14 +696,18 @@ class Jogo {
 
     // SEQUÊNCIA (mesmo naipe): o coringa ocupa o buraco (4-★-6 → 5) ou a ponta.
     final naipe = naturais.first.naipe;
-    final asBaixo = naturais.any((c) => c.valor == '2' || c.valor == '3');
+    // Ás baixo quando a sequência ORDENADA começa na ponta de baixo (A/2/3) —
+    // coerente com o 2º passe do ordenarMeld (2-curinga não puxa o Ás).
+    final asBaixo = naturais.first.valor == 'A' ||
+        naturais.first.valor == '2' ||
+        naturais.first.valor == '3';
     int rankOf(Carta c) {
-      if (c.valor == 'A') return asBaixo ? -1 : 13;
+      if (c.valor == 'A') return asBaixo ? 0 : 13; // A baixo = 0 (igual ordenarMeld)
       return _ordem.indexOf(c.valor); // 2=1 … K=12
     }
     String valorDoRank(int r) {
-      if (r == -1 || r == 13) return 'A';
-      if (r >= 0 && r < _ordem.length) return _ordem[r];
+      if (r == 13) return 'A';
+      if (r >= 0 && r < _ordem.length) return _ordem[r]; // r=0 → 'A' baixo
       return '';
     }
     for (var i = 0; i < ordenado.length; i++) {
@@ -540,6 +735,7 @@ class Jogo {
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
+    if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
     if (ids.length < 3) return {'ok': false, 'erro': 'um jogo tem no mínimo 3 cartas'};
     if (ids.toSet().length != ids.length) return {'ok': false, 'erro': 'carta repetida no jogo'};
@@ -573,10 +769,12 @@ class Jogo {
     }
     primeiraBaixadaFeita[dupla] = true; // dupla abriu jogo nesta rodada
     final zer = _aoZerarMaoBaixando(assento);
+    auditarIntegridade();
     return {'ok': true, 'tipo': res['tipo'], ...?zer};
   }
 
   Map<String, dynamic> estender(int assento, int indiceJogo, List<String> ids) {
+    if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes'};
     final dupla = _duplaKey(assento);
     final jogos = jogosDupla[dupla]!;
@@ -602,11 +800,13 @@ class Jogo {
       lixoTopoObrigatorio = null; // topo do lixo usado numa extensão → obrigação cumprida
     }
     final zer = _aoZerarMaoBaixando(assento);
+    auditarIntegridade();
     return {'ok': true, 'tipo': res['tipo'], ...?zer};
   }
 
   // retorna null se ok; senão string de erro
   String? descartar(int assento, String idCarta) {
+    if (integridadeErro != null) return integridadeErro;
     if (rodadaEncerrada || vez != assento || !jaComprou) return 'não é sua vez';
     // Fechado/SBTL: pegou o lixo? tem que USAR o topo antes de descartar.
     if (lixoTopoObrigatorio != null &&
@@ -614,6 +814,10 @@ class Jogo {
       final t = maos[assento].firstWhere((c) => c.id == lixoTopoObrigatorio);
       return 'Você pegou o lixo: use a carta do topo (${_cartaRotulo(t)}) '
           'num jogo (baixando ou estendendo) antes de descartar.';
+    }
+    // §5.2 ABERTO: comprou o lixo de uma carta só? não pode devolver a mesma.
+    if (_lixoUnicoCompradoId != null && _lixoUnicoCompradoId == idCarta) {
+      return 'Você pegou essa carta sozinha do lixo — não pode devolvê-la no mesmo turno.';
     }
     final idx = maos[assento].indexWhere((c) => c.id == idCarta);
     if (idx < 0) return 'carta não está na mão';
@@ -632,20 +836,25 @@ class Jogo {
         maos[assento] = mortos.removeAt(0);
         mortoPego[dupla] = true;
         _passarVez();
+        auditarIntegridade();
         return null;
       }
       rodadaEncerrada = true; duplaQueBateu = dupla; assentoQueBateu = assento;
+      auditarIntegridade();
       return null;
     }
     _passarVez();
+    auditarIntegridade();
     return null;
   }
 
   void _passarVez() {
     lixoTopoObrigatorio = null; // pendência do topo não atravessa a vez
+    _lixoUnicoCompradoId = null; // trava do lixo único vale só no próprio turno
     if (monte.isEmpty) {
       if (mortos.isEmpty) { rodadaEncerrada = true; return; }
-      monte = mortos.removeAt(0);
+      monte = mortos.removeAt(0); // §8.1: conversão de morto em monte
+      _mortosConvertidos++;
     }
     vez = (vez + 1) % 4;
     jaComprou = false;
@@ -850,10 +1059,14 @@ class Jogo {
   // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
   // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
   void botJoga(int assento) {
+    if (integridadeErro != null) return; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento) return;
     if (!jaComprou) {
       // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
-      if (_botDeveComprarLixo(assento) && comprarLixo(assento)['ok'] == true) {
+      // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
+      // o robô passa a modalidade e obedece à MESMA trava dos humanos.
+      if (_botDeveComprarLixo(assento) &&
+          comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
         // pegou o lixo
       } else {
         comprarMonte(assento);
@@ -913,6 +1126,40 @@ class Jogo {
     if (maos[assento].isEmpty) {
       // Rede de segurança: mão vazia sem bater não deveria ocorrer (as travas
       // acima evitam). Se ocorrer, passa a vez pra NUNCA travar o loop dos robôs.
+      if (vez == assento) _passarVez();
+      return;
+    }
+
+    // 2.7) OBRIGAÇÃO DO TOPO (§5.3 Fechado/SBTL): se o robô pegou o lixo e o
+    // topo ainda está na mão, ele PRECISA usá-lo (estender ou baixar) antes de
+    // descartar — mesma regra dos humanos.
+    if (lixoTopoObrigatorio != null &&
+        maos[assento].any((c) => c.id == lixoTopoObrigatorio)) {
+      final topoId = lixoTopoObrigatorio!;
+      var usou = false;
+      final jogosDaDupla = jogosDupla[dupla]!;
+      for (int i = 0; i < jogosDaDupla.length && !usou; i++) {
+        usou = estender(assento, i, [topoId])['ok'] == true;
+      }
+      if (!usou) {
+        final mao = maos[assento].toList();
+        busca:
+        for (int i = 0; i < mao.length; i++) {
+          for (int k = i + 1; k < mao.length; k++) {
+            if (mao[i].id == topoId || mao[k].id == topoId) continue;
+            if (baixar(assento, [topoId, mao[i].id, mao[k].id])['ok'] == true) {
+              usou = true;
+              break busca;
+            }
+          }
+        }
+      }
+      // Rede de segurança absoluta: se a mão mudou e o uso ficou impossível,
+      // libera a pendência pra mesa NUNCA travar (o servidor real valida antes).
+      if (!usou) lixoTopoObrigatorio = null;
+    }
+    if (rodadaEncerrada) return;
+    if (maos[assento].isEmpty) {
       if (vez == assento) _passarVez();
       return;
     }
@@ -1116,6 +1363,12 @@ class _MesaScreenState extends State<MesaScreen> {
       // A mesa continua funcional mesmo quando o dispositivo não oferece áudio.
     }
     _startTurnClock();
+    // §3.2: o 1º jogador é SORTEADO — se caiu num robô, os robôs abrem a rodada.
+    if (_j.vez != 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _rodarBots();
+      });
+    }
   }
 
   @override
@@ -1407,7 +1660,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Future<void> _rodarBots() async {
     _botsRodando = true;
-    while (_j.vez != 0 && !_j.rodadaEncerrada) {
+    while (_j.vez != 0 && !_j.rodadaEncerrada && _j.integridadeErro == null) {
       await Future.delayed(const Duration(milliseconds: 650));
       _j.botJoga(_j.vez);
       _somCarta();
@@ -1416,6 +1669,12 @@ class _MesaScreenState extends State<MesaScreen> {
       if (mounted) setState(() {});
     }
     _botsRodando = false;
+    if (_j.integridadeErro != null && mounted) {
+      // Integridade violada: preserva o estado, bloqueia a partida e mostra
+      // o código auditável (nunca tenta "consertar" inventando carta).
+      setState(() => _msg = 'PARTIDA BLOQUEADA · ${_j.integridadeErro}');
+      return;
+    }
     if (_j.rodadaEncerrada) {
       _j.contarPontos();
       if (_j.duplaQueBateu == 'nos') _somVitoria();
@@ -1426,7 +1685,8 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Sash _sashDeMeld(List<Carta> cartas) {
     if (cartas.length < 7) return Sash.nenhuma;
-    final resultado = _j.validarSequencia(cartas);
+    // Validador por modalidade: no Fechado a trinca-canastra também ganha tarja.
+    final resultado = _j._validarJogoMesa(cartas);
     if (resultado['valido'] != true) return Sash.nenhuma;
     switch (resultado['tipo']) {
       case 'limpa':
@@ -2250,11 +2510,39 @@ class _MesaScreenState extends State<MesaScreen> {
     if (substituto == null) {
       return _frontCard(original, width: width, height: height);
     }
+    // Carta SUBSTITUÍDA por coringa: mostra a face que ele ocupa, MAS deixa
+    // inconfundível que ali mora um coringa (selo ★ + faixa "CORINGA") — pra
+    // ninguém contar uma "3ª cópia" da carta olhando a mesa.
     final selo = width * 0.30;
     return Stack(
       clipBehavior: Clip.none,
       children: [
         _frontCard(substituto, width: width, height: height),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 1.5),
+            decoration: BoxDecoration(
+              color: const Color(0xE64B2367),
+              borderRadius: BorderRadius.vertical(
+                bottom: Radius.circular(width * 0.09),
+              ),
+            ),
+            child: Text(
+              'CORINGA',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: width * 0.13,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.6,
+                height: 1,
+              ),
+            ),
+          ),
+        ),
         Positioned(
           top: width * 0.06,
           right: width * 0.06,
@@ -3000,6 +3288,8 @@ class _MesaScreenState extends State<MesaScreen> {
       _anuncioAssistido = false;
       _syncTurnClock(force: true);
     });
+    // §3.2: o iniciador rotaciona a cada rodada — se for robô, eles começam.
+    if (_j.vez != 0 && !_j.rodadaEncerrada) _rodarBots();
   }
 
   void _convidarRevanche() {
