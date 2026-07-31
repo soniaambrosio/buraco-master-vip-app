@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'pages/perfil_page.dart';
+import 'pages/torneios_preview_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
 import 'screens/inicio_screen.dart';
 import 'screens/ranking_screen.dart';
@@ -367,7 +368,10 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
       onJogar: _abrirMesa,
       onAbrirPerfil: _abrirPerfil,
       onHistorico: () => _aviso('Histórico — integração fica com o Claude'),
-      onAbrirTemporada: () => _aviso('Temporada — integração fica com o Claude'),
+      // Banner de temporada abre a CENTRAL DE TORNEIOS (1ª entrega, mocks do contrato).
+      onAbrirTemporada: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const TorneiosPreviewPage()),
+      ),
       onAbrirLobby: _abrirLobby,
       onMenuTap: _menuTap,
       onRecarregar: () {
