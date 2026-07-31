@@ -1,955 +1,930 @@
 import 'package:flutter/material.dart';
 
-enum MaoJogador { destro, canhoto }
+enum MaoDominante { destro, canhoto }
 
-class ConfigVM {
-  final String nome;
+enum Idioma { ptBR }
+
+enum QuemMeConvida { todos, somenteAmigos, ninguem }
+
+@immutable
+class PerfilResumo {
+  final String apelido;
   final String email;
-  final String avatar;
-  final bool ehVip;
-  final String? vipInfo;
+  final bool vip;
+  final String? vipPlano;
+  final String? vipValidoAte;
+  final int moedas;
+
+  const PerfilResumo({
+    required this.apelido,
+    required this.email,
+    required this.vip,
+    this.vipPlano,
+    this.vipValidoAte,
+    required this.moedas,
+  });
+}
+
+@immutable
+class Configuracoes {
   final bool musica;
-  final bool efeitos;
+  final bool efeitosSonoros;
   final bool vibracao;
   final bool notificacoes;
   final bool animacoes;
-  final bool ordenarCartas;
+  final bool ordenarCartasAuto;
+  final bool confirmarDescarte;
+  final MaoDominante maoDominante;
+  final QuemMeConvida quemMeConvida;
+  final bool chatPublicoSoMaiores;
   final bool mostrarOnline;
-  final MaoJogador mao;
-  final String versao;
-  final String quemConvida;
+  final Idioma idioma;
+  final String versaoApp;
 
-  const ConfigVM({
-    required this.nome,
-    required this.email,
-    required this.avatar,
-    required this.ehVip,
-    required this.vipInfo,
-    required this.musica,
-    required this.efeitos,
-    required this.vibracao,
-    required this.notificacoes,
-    required this.animacoes,
-    required this.ordenarCartas,
-    required this.mostrarOnline,
-    required this.mao,
-    required this.versao,
-    required this.quemConvida,
+  const Configuracoes({
+    this.musica = true,
+    this.efeitosSonoros = true,
+    this.vibracao = false,
+    this.notificacoes = true,
+    this.animacoes = true,
+    this.ordenarCartasAuto = true,
+    this.confirmarDescarte = false,
+    this.maoDominante = MaoDominante.destro,
+    this.quemMeConvida = QuemMeConvida.todos,
+    this.chatPublicoSoMaiores = true,
+    this.mostrarOnline = true,
+    this.idioma = Idioma.ptBR,
+    this.versaoApp = '',
   });
 
-  factory ConfigVM.mock({bool ehVip = true}) {
-    return ConfigVM(
-      nome: 'Sônia Rainha',
-      email: 'sonia.ambrosio@gmail.com',
-      avatar: '👑',
-      ehVip: ehVip,
-      vipInfo: ehVip ? 'Renova em 24/08 · Mensal' : null,
-      musica: true,
-      efeitos: true,
-      vibracao: false,
-      notificacoes: true,
-      animacoes: true,
-      ordenarCartas: true,
-      mostrarOnline: true,
-      mao: MaoJogador.destro,
-      versao: '2.0.0',
-      quemConvida: 'Amigos',
-    );
-  }
-
-  ConfigVM copyWith({
-    String? nome,
-    String? email,
-    String? avatar,
-    bool? ehVip,
-    String? vipInfo,
-    bool limparVipInfo = false,
+  Configuracoes copyWith({
     bool? musica,
-    bool? efeitos,
+    bool? efeitosSonoros,
     bool? vibracao,
     bool? notificacoes,
     bool? animacoes,
-    bool? ordenarCartas,
+    bool? ordenarCartasAuto,
+    bool? confirmarDescarte,
+    MaoDominante? maoDominante,
+    QuemMeConvida? quemMeConvida,
+    bool? chatPublicoSoMaiores,
     bool? mostrarOnline,
-    MaoJogador? mao,
-    String? versao,
-    String? quemConvida,
+    Idioma? idioma,
+    String? versaoApp,
   }) {
-    return ConfigVM(
-      nome: nome ?? this.nome,
-      email: email ?? this.email,
-      avatar: avatar ?? this.avatar,
-      ehVip: ehVip ?? this.ehVip,
-      vipInfo: limparVipInfo ? null : (vipInfo ?? this.vipInfo),
+    return Configuracoes(
       musica: musica ?? this.musica,
-      efeitos: efeitos ?? this.efeitos,
+      efeitosSonoros: efeitosSonoros ?? this.efeitosSonoros,
       vibracao: vibracao ?? this.vibracao,
       notificacoes: notificacoes ?? this.notificacoes,
       animacoes: animacoes ?? this.animacoes,
-      ordenarCartas: ordenarCartas ?? this.ordenarCartas,
+      ordenarCartasAuto: ordenarCartasAuto ?? this.ordenarCartasAuto,
+      confirmarDescarte: confirmarDescarte ?? this.confirmarDescarte,
+      maoDominante: maoDominante ?? this.maoDominante,
+      quemMeConvida: quemMeConvida ?? this.quemMeConvida,
+      chatPublicoSoMaiores:
+          chatPublicoSoMaiores ?? this.chatPublicoSoMaiores,
       mostrarOnline: mostrarOnline ?? this.mostrarOnline,
-      mao: mao ?? this.mao,
-      versao: versao ?? this.versao,
-      quemConvida: quemConvida ?? this.quemConvida,
+      idioma: idioma ?? this.idioma,
+      versaoApp: versaoApp ?? this.versaoApp,
     );
   }
 }
 
-class ConfiguracoesScreen extends StatelessWidget {
-  static const _gold = Color(0xFFEFB94A);
-  static const _goldHi = Color(0xFFF6E2A6);
-  static const _card = Color(0xFF1C130C);
-  static const _border = Color(0x5530B67A);
-  static const _divider = Color(0x221EAE79);
-  static const _text = Color(0xFFF1E8D8);
-  static const _muted = Color(0xFFAA9870);
-
-  final ConfigVM vm;
-  final VoidCallback onVoltar;
+@immutable
+class ConfiguracoesCallbacks {
+  final void Function(Configuracoes atualizado) onAlterar;
   final VoidCallback onEditarPerfil;
   final VoidCallback onAssinaturaVip;
   final VoidCallback onMoedasCompras;
-  final void Function(String id, bool valor) onToggle;
-  final ValueChanged<MaoJogador> onMao;
-  final VoidCallback onQuemConvida;
   final VoidCallback onBloqueados;
-  final VoidCallback onComoJogar;
+  final VoidCallback onRegras;
   final VoidCallback onSuporte;
+  final VoidCallback onTermos;
   final VoidCallback onAvaliar;
   final VoidCallback onSair;
 
-  const ConfiguracoesScreen({
-    super.key,
-    required this.vm,
-    required this.onVoltar,
+  const ConfiguracoesCallbacks({
+    required this.onAlterar,
     required this.onEditarPerfil,
     required this.onAssinaturaVip,
     required this.onMoedasCompras,
-    required this.onToggle,
-    required this.onMao,
-    required this.onQuemConvida,
     required this.onBloqueados,
-    required this.onComoJogar,
+    required this.onRegras,
     required this.onSuporte,
+    required this.onTermos,
     required this.onAvaliar,
     required this.onSair,
+  });
+}
+
+class ConfiguracoesScreen extends StatelessWidget {
+  static const _ouro = Color(0xFFEFB94A);
+  static const _ouroClaro = Color(0xFFF6E2A6);
+  static const _roxo = Color(0xFFB36CFF);
+  static const _fundo = Color(0xFF080503);
+  static const _card = Color(0xFF1C130C);
+  static const _cardSecundario = Color(0xFF130D08);
+  static const _texto = Color(0xFFEFE3CC);
+  static const _textoSec = Color(0xFFB6A884);
+  static const _borda = Color(0x44EFB94A);
+
+  final PerfilResumo perfil;
+  final Configuracoes config;
+  final ConfiguracoesCallbacks callbacks;
+  final VoidCallback onVoltar;
+
+  const ConfiguracoesScreen({
+    super.key,
+    required this.perfil,
+    required this.config,
+    required this.callbacks,
+    required this.onVoltar,
   });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: _fundo,
       body: DecoratedBox(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF241812),
-              Color(0xFF120A06),
-              Color(0xFF000000),
-            ],
-            stops: [0, .55, 1],
+            colors: [Color(0xFF241812), Color(0xFF120A06), Colors.black],
+            stops: [0, .46, 1],
           ),
         ),
         child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth <= 370;
-              final horizontal = compact ? 12.0 : 14.0;
-              return Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 430),
-                  child: SingleChildScrollView(
-                    padding: EdgeInsets.fromLTRB(horizontal, 8, horizontal, 22),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _TopBar(onVoltar: onVoltar, compact: compact),
-                        SizedBox(height: compact ? 14 : 18),
-                        _ProfileHeader(vm: vm, compact: compact),
-                        SizedBox(height: compact ? 16 : 18),
-                        _SectionTitle('CONTA', compact: compact),
-                        const SizedBox(height: 8),
-                        _SettingsGroup(
-                          children: [
-                            _NavRow(
-                              icon: '✏️',
-                              label: 'Editar perfil',
-                              onTap: onEditarPerfil,
-                              compact: compact,
-                            ),
-                            _NavRow(
-                              icon: '💎',
-                              label: vm.ehVip ? 'Assinatura VIP' : 'Assine o VIP',
-                              subtitle: vm.ehVip ? vm.vipInfo : 'Conheça os benefícios VIP',
-                              onTap: onAssinaturaVip,
-                              compact: compact,
-                            ),
-                            _NavRow(
-                              icon: '🪙',
-                              label: 'Moedas e compras',
-                              onTap: onMoedasCompras,
-                              compact: compact,
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: compact ? 16 : 18),
-                        _SectionTitle('SOM E NOTIFICAÇÕES', compact: compact),
-                        const SizedBox(height: 8),
-                        _SettingsGroup(
-                          children: [
-                            _ToggleRow(
-                              icon: '🎵',
-                              label: 'Música',
-                              value: vm.musica,
-                              onChanged: (value) => onToggle('musica', value),
-                              compact: compact,
-                            ),
-                            _ToggleRow(
-                              icon: '🔊',
-                              label: 'Efeitos sonoros',
-                              value: vm.efeitos,
-                              onChanged: (value) => onToggle('efeitos', value),
-                              compact: compact,
-                            ),
-                            _ToggleRow(
-                              icon: '📳',
-                              label: 'Vibração',
-                              value: vm.vibracao,
-                              onChanged: (value) => onToggle('vibracao', value),
-                              compact: compact,
-                            ),
-                            _ToggleRow(
-                              icon: '🔔',
-                              label: 'Notificações',
-                              value: vm.notificacoes,
-                              onChanged: (value) => onToggle('notificacoes', value),
-                              compact: compact,
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: compact ? 16 : 18),
-                        _SectionTitle('JOGO', compact: compact),
-                        const SizedBox(height: 8),
-                        _SettingsGroup(
-                          children: [
-                            _ToggleRow(
-                              icon: '✨',
-                              label: 'Animações',
-                              value: vm.animacoes,
-                              onChanged: (value) => onToggle('animacoes', value),
-                              compact: compact,
-                            ),
-                            _ToggleRow(
-                              icon: '🔢',
-                              label: 'Ordenar cartas automaticamente',
-                              value: vm.ordenarCartas,
-                              onChanged: (value) => onToggle('ordenarCartas', value),
-                              compact: compact,
-                            ),
-                            _HandRow(
-                              value: vm.mao,
-                              onChanged: onMao,
-                              compact: compact,
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: compact ? 16 : 18),
-                        _SectionTitle('PRIVACIDADE', compact: compact),
-                        const SizedBox(height: 8),
-                        _SettingsGroup(
-                          children: [
-                            _ToggleRow(
-                              icon: '🟢',
-                              label: 'Mostrar quando estou online',
-                              value: vm.mostrarOnline,
-                              onChanged: (value) => onToggle('mostrarOnline', value),
-                              compact: compact,
-                            ),
-                            _NavRow(
-                              icon: '✉️',
-                              label: 'Quem pode me convidar',
-                              subtitle: vm.quemConvida,
-                              onTap: onQuemConvida,
-                              compact: compact,
-                            ),
-                            _NavRow(
-                              icon: '🚫',
-                              label: 'Jogadores bloqueados',
-                              onTap: onBloqueados,
-                              compact: compact,
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: compact ? 16 : 18),
-                        _SectionTitle('GERAL', compact: compact),
-                        const SizedBox(height: 8),
-                        _SettingsGroup(
-                          children: [
-                            _NavRow(
-                              icon: '📖',
-                              label: 'Como jogar / Regras',
-                              onTap: onComoJogar,
-                              compact: compact,
-                            ),
-                            _NavRow(
-                              icon: '💬',
-                              label: 'Suporte',
-                              onTap: onSuporte,
-                              compact: compact,
-                            ),
-                            _NavRow(
-                              icon: '⭐',
-                              label: 'Avaliar o app',
-                              onTap: onAvaliar,
-                              compact: compact,
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: compact ? 18 : 20),
-                        _LogoutButton(onTap: onSair, compact: compact),
-                        const SizedBox(height: 14),
-                        Text(
-                          'Buraco Master VIP · versão ${vm.versao}',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: _muted.withValues(alpha: .55),
-                            fontSize: compact ? 10.5 : 11.5,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 430),
+              child: Column(
+                children: [
+                  _topo(context),
+                  Expanded(
+                    child: Scrollbar(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 22),
+                        children: [
+                          _perfilCard(),
+                          _secao(
+                            titulo: 'CONTA',
+                            icone: Icons.person_outline_rounded,
+                            children: [
+                              _navTile(
+                                icone: Icons.edit_rounded,
+                                titulo: 'Editar perfil',
+                                subtitulo: 'Apelido, foto e informações públicas',
+                                onTap: callbacks.onEditarPerfil,
+                              ),
+                              _navTile(
+                                icone: Icons.workspace_premium_rounded,
+                                titulo: 'Assinatura VIP',
+                                subtitulo: perfil.vip
+                                    ? '${perfil.vipPlano ?? 'Plano VIP'}${perfil.vipValidoAte == null ? '' : ' · até ${perfil.vipValidoAte}'}'
+                                    : 'Conheça os benefícios da assinatura',
+                                destaque: perfil.vip,
+                                onTap: callbacks.onAssinaturaVip,
+                              ),
+                              _navTile(
+                                icone: Icons.monetization_on_outlined,
+                                titulo: 'Moedas e compras',
+                                subtitulo: '${perfil.moedas} moedas disponíveis',
+                                onTap: callbacks.onMoedasCompras,
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
+                          _secao(
+                            titulo: 'SOM E NOTIFICAÇÕES',
+                            icone: Icons.volume_up_outlined,
+                            children: [
+                              _toggleTile(
+                                icone: Icons.music_note_rounded,
+                                titulo: 'Música',
+                                subtitulo: 'Trilha musical do aplicativo',
+                                valor: config.musica,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(musica: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.graphic_eq_rounded,
+                                titulo: 'Efeitos sonoros',
+                                subtitulo: 'Cartas, canastras e avisos da mesa',
+                                valor: config.efeitosSonoros,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(efeitosSonoros: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.vibration_rounded,
+                                titulo: 'Vibração',
+                                subtitulo: 'Avisar quando chegar a sua vez',
+                                valor: config.vibracao,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(vibracao: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.notifications_active_outlined,
+                                titulo: 'Notificações',
+                                subtitulo: 'Convites, recompensas e novidades',
+                                valor: config.notificacoes,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(notificacoes: v),
+                                ),
+                              ),
+                            ],
+                          ),
+                          _secao(
+                            titulo: 'JOGO',
+                            icone: Icons.style_outlined,
+                            children: [
+                              _toggleTile(
+                                icone: Icons.auto_awesome_motion_rounded,
+                                titulo: 'Animações',
+                                subtitulo: 'Movimentos e celebrações visuais',
+                                valor: config.animacoes,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(animacoes: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.sort_rounded,
+                                titulo: 'Ordenar cartas automaticamente',
+                                subtitulo: 'Organiza a mão por naipe e valor',
+                                valor: config.ordenarCartasAuto,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(ordenarCartasAuto: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.fact_check_outlined,
+                                titulo: 'Confirmar antes de descartar',
+                                subtitulo: 'Evita descarte por toque acidental',
+                                valor: config.confirmarDescarte,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(confirmarDescarte: v),
+                                ),
+                              ),
+                              _choiceTile<MaoDominante>(
+                                context: context,
+                                icone: Icons.pan_tool_alt_outlined,
+                                titulo: 'Mão dominante',
+                                valor: config.maoDominante,
+                                label: _maoLabel,
+                                opcoes: MaoDominante.values,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(maoDominante: v),
+                                ),
+                              ),
+                            ],
+                          ),
+                          _secao(
+                            titulo: 'PRIVACIDADE',
+                            icone: Icons.shield_outlined,
+                            children: [
+                              _choiceTile<QuemMeConvida>(
+                                context: context,
+                                icone: Icons.person_add_alt_1_rounded,
+                                titulo: 'Quem pode me convidar',
+                                valor: config.quemMeConvida,
+                                label: _conviteLabel,
+                                opcoes: QuemMeConvida.values,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(quemMeConvida: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.forum_outlined,
+                                titulo: 'Chat público só para maiores',
+                                subtitulo: 'Restringe o acesso conforme a conta',
+                                valor: config.chatPublicoSoMaiores,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(chatPublicoSoMaiores: v),
+                                ),
+                              ),
+                              _toggleTile(
+                                icone: Icons.visibility_outlined,
+                                titulo: 'Mostrar quando estou online',
+                                subtitulo: 'Amigos poderão ver sua presença',
+                                valor: config.mostrarOnline,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(mostrarOnline: v),
+                                ),
+                              ),
+                              _navTile(
+                                icone: Icons.block_rounded,
+                                titulo: 'Jogadores bloqueados',
+                                subtitulo: 'Rever ou desbloquear jogadores',
+                                onTap: callbacks.onBloqueados,
+                              ),
+                            ],
+                          ),
+                          _secao(
+                            titulo: 'GERAL',
+                            icone: Icons.tune_rounded,
+                            children: [
+                              _choiceTile<Idioma>(
+                                context: context,
+                                icone: Icons.language_rounded,
+                                titulo: 'Idioma',
+                                valor: config.idioma,
+                                label: _idiomaLabel,
+                                opcoes: Idioma.values,
+                                onChanged: (v) => callbacks.onAlterar(
+                                  config.copyWith(idioma: v),
+                                ),
+                              ),
+                              _navTile(
+                                icone: Icons.menu_book_outlined,
+                                titulo: 'Regras e como jogar',
+                                subtitulo: 'Aberto, Fechado e STBL',
+                                onTap: callbacks.onRegras,
+                              ),
+                              _navTile(
+                                icone: Icons.support_agent_rounded,
+                                titulo: 'Suporte',
+                                subtitulo: 'Fale com a equipe do aplicativo',
+                                onTap: callbacks.onSuporte,
+                              ),
+                              _navTile(
+                                icone: Icons.policy_outlined,
+                                titulo: 'Termos e privacidade',
+                                subtitulo: 'Documentos e políticas do serviço',
+                                onTap: callbacks.onTermos,
+                              ),
+                              _navTile(
+                                icone: Icons.star_rate_rounded,
+                                titulo: 'Avaliar o aplicativo',
+                                subtitulo: 'Conte sua experiência na loja',
+                                onTap: callbacks.onAvaliar,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          _sairButton(),
+                          const SizedBox(height: 16),
+                          Text(
+                            config.versaoApp.isEmpty
+                                ? 'Buraco Master VIP'
+                                : 'Versão ${config.versaoApp}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: _textoSec,
+                              fontSize: 11,
+                              letterSpacing: .35,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  final VoidCallback onVoltar;
-  final bool compact;
-
-  const _TopBar({required this.onVoltar, required this.compact});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Semantics(
-          button: true,
-          label: 'Voltar',
-          child: InkResponse(
-            onTap: onVoltar,
-            radius: 24,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(2, 6, 9, 6),
-              child: Text(
-                '‹',
-                style: TextStyle(
-                  color: ConfiguracoesScreen._gold,
-                  fontSize: compact ? 29 : 31,
-                  height: .8,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ),
-        ),
-        Text(
-          'Configurações',
-          style: TextStyle(
-            color: ConfiguracoesScreen._goldHi,
-            fontSize: compact ? 19 : 21,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ProfileHeader extends StatelessWidget {
-  final ConfigVM vm;
-  final bool compact;
-
-  const _ProfileHeader({required this.vm, required this.compact});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: BoxConstraints(minHeight: compact ? 98 : 108),
-      padding: EdgeInsets.all(compact ? 13 : 15),
-      decoration: BoxDecoration(
-        color: ConfiguracoesScreen._card,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: ConfiguracoesScreen._border),
-      ),
-      child: Row(
-        children: [
-          _AvatarView(avatar: vm.avatar, compact: compact),
-          SizedBox(width: compact ? 12 : 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  vm.nome,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: ConfiguracoesScreen._goldHi,
-                    fontSize: compact ? 18 : 20,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  vm.email,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: ConfiguracoesScreen._muted,
-                    fontSize: compact ? 11.5 : 12.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (vm.ehVip) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: EdgeInsets.symmetric(
-                horizontal: compact ? 10 : 12,
-                vertical: compact ? 5 : 6,
-              ),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFFE9A4), Color(0xFFE9AE31)],
-                ),
-                borderRadius: BorderRadius.circular(999),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x55EFB94A),
-                    blurRadius: 12,
-                    spreadRadius: 1,
                   ),
                 ],
               ),
-              child: Text(
-                'VIP 💎',
-                style: TextStyle(
-                  color: const Color(0xFF2B1A08),
-                  fontSize: compact ? 10.5 : 11.5,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
             ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _topo(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 5, 12, 4),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Voltar',
+            onPressed: onVoltar,
+            icon: const Icon(Icons.chevron_left_rounded, color: _ouro, size: 31),
+          ),
+          const Text(
+            'Configurações',
+            style: TextStyle(
+              color: _ouroClaro,
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .3,
+            ),
+          ),
+          const Spacer(),
+          const Icon(Icons.settings_rounded, color: _ouro, size: 23),
         ],
       ),
     );
   }
-}
 
-class _AvatarView extends StatelessWidget {
-  final String avatar;
-  final bool compact;
-
-  const _AvatarView({required this.avatar, required this.compact});
-
-  @override
-  Widget build(BuildContext context) {
-    final size = compact ? 66.0 : 72.0;
-    Widget child;
-    if (avatar.startsWith('assets/')) {
-      child = Image.asset(avatar, fit: BoxFit.cover);
-    } else if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
-      child = Image.network(
-        avatar,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Center(
-          child: Text('👑', style: TextStyle(fontSize: 33)),
-        ),
-      );
-    } else {
-      child = Center(
-        child: Text(
-          avatar.isEmpty ? '👑' : avatar,
-          style: TextStyle(fontSize: compact ? 34 : 38),
-        ),
-      );
-    }
-
+  Widget _perfilCard() {
     return Container(
-      width: size,
-      height: size,
-      padding: const EdgeInsets.all(3),
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          colors: [Color(0xFFFFE49B), Color(0xFFE9A91E)],
-        ),
-      ),
-      child: ClipOval(
-        child: ColoredBox(
-          color: const Color(0xFF291B0D),
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  final String text;
-  final bool compact;
-
-  const _SectionTitle(this.text, {required this.compact});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 3),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: ConfiguracoesScreen._gold,
-          fontSize: compact ? 12 : 13,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 1.8,
-        ),
-      ),
-    );
-  }
-}
-
-class _SettingsGroup extends StatelessWidget {
-  final List<Widget> children;
-
-  const _SettingsGroup({required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    final separated = <Widget>[];
-    for (var index = 0; index < children.length; index++) {
-      if (index > 0) {
-        separated.add(
-          const Divider(
-            height: 1,
-            thickness: 1,
-            color: ConfiguracoesScreen._divider,
-          ),
-        );
-      }
-      separated.add(children[index]);
-    }
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: ConfiguracoesScreen._card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: ConfiguracoesScreen._border),
-        ),
-        child: Column(children: separated),
-      ),
-    );
-  }
-}
-
-class _NavRow extends StatelessWidget {
-  final String icon;
-  final String label;
-  final String? subtitle;
-  final VoidCallback onTap;
-  final bool compact;
-
-  const _NavRow({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    required this.compact,
-    this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: label,
-      child: InkWell(
-        onTap: onTap,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: compact ? 58 : 64),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 13 : 15,
-              vertical: subtitle == null ? 10 : 8,
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: compact ? 32 : 36,
-                  child: Text(
-                    icon,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: compact ? 21 : 23),
-                  ),
-                ),
-                SizedBox(width: compact ? 8 : 10),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: ConfiguracoesScreen._text,
-                          fontSize: compact ? 14.5 : 16,
-                          height: 1.12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      if (subtitle != null && subtitle!.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: ConfiguracoesScreen._muted,
-                            fontSize: compact ? 10.5 : 11.5,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '›',
-                  style: TextStyle(
-                    color: ConfiguracoesScreen._muted.withValues(alpha: .8),
-                    fontSize: compact ? 24 : 26,
-                    height: 1,
-                    fontWeight: FontWeight.w300,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ToggleRow extends StatelessWidget {
-  final String icon;
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final bool compact;
-
-  const _ToggleRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.onChanged,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      toggled: value,
-      label: label,
-      child: InkWell(
-        onTap: () => onChanged(!value),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: compact ? 58 : 64),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: compact ? 13 : 15),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: compact ? 32 : 36,
-                  child: Text(
-                    icon,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: compact ? 21 : 23),
-                  ),
-                ),
-                SizedBox(width: compact ? 8 : 10),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: ConfiguracoesScreen._text,
-                      fontSize: compact ? 14.5 : 16,
-                      height: 1.15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _GoldSwitch(
-                  value: value,
-                  onChanged: onChanged,
-                  compact: compact,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _GoldSwitch extends StatelessWidget {
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final bool compact;
-
-  const _GoldSwitch({
-    required this.value,
-    required this.onChanged,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final width = compact ? 48.0 : 52.0;
-    final height = compact ? 28.0 : 30.0;
-    final knob = height - 6;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onChanged(!value),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        width: width,
-        height: height,
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: value ? const Color(0xFFE7A91D) : const Color(0xFF4B443A),
-          borderRadius: BorderRadius.circular(999),
-          boxShadow: value
-              ? const [
-                  BoxShadow(
-                    color: Color(0x33EFB94A),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  ),
-                ]
-              : null,
-        ),
-        child: AnimatedAlign(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: knob,
-            height: knob,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(color: Color(0x33000000), blurRadius: 4),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HandRow extends StatelessWidget {
-  final MaoJogador value;
-  final ValueChanged<MaoJogador> onChanged;
-  final bool compact;
-
-  const _HandRow({
-    required this.value,
-    required this.onChanged,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: BoxConstraints(minHeight: compact ? 58 : 64),
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: compact ? 13 : 15),
-        child: Row(
-          children: [
-            SizedBox(
-              width: compact ? 32 : 36,
-              child: Text(
-                '🖐️',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: compact ? 21 : 23),
-              ),
-            ),
-            SizedBox(width: compact ? 8 : 10),
-            Expanded(
-              child: Text(
-                'Mão',
-                style: TextStyle(
-                  color: ConfiguracoesScreen._text,
-                  fontSize: compact ? 14.5 : 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            _HandSegmented(
-              value: value,
-              onChanged: onChanged,
-              compact: compact,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HandSegmented extends StatelessWidget {
-  final MaoJogador value;
-  final ValueChanged<MaoJogador> onChanged;
-  final bool compact;
-
-  const _HandSegmented({
-    required this.value,
-    required this.onChanged,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(2),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF100A06),
-        borderRadius: BorderRadius.circular(12),
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _borda),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          _SegmentOption(
-            label: 'Destro',
-            selected: value == MaoJogador.destro,
-            onTap: () => onChanged(MaoJogador.destro),
-            compact: compact,
-          ),
-          _SegmentOption(
-            label: 'Canhoto',
-            selected: value == MaoJogador.canhoto,
-            onTap: () => onChanged(MaoJogador.canhoto),
-            compact: compact,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SegmentOption extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final bool compact;
-
-  const _SegmentOption({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: label,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 10 : 12,
-            vertical: compact ? 7 : 8,
-          ),
-          decoration: BoxDecoration(
-            color: selected ? ConfiguracoesScreen._gold : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected
-                  ? const Color(0xFF2A1A08)
-                  : ConfiguracoesScreen._muted,
-              fontSize: compact ? 11 : 12,
-              fontWeight: selected ? FontWeight.w900 : FontWeight.w500,
+          Container(
+            width: 52,
+            height: 52,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF2B1B0C),
+              border: Border.all(color: _ouro, width: 1.4),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LogoutButton extends StatelessWidget {
-  final VoidCallback onTap;
-  final bool compact;
-
-  const _LogoutButton({required this.onTap, required this.compact});
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: 'Sair da conta',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Ink(
-          height: compact ? 50 : 54,
-          decoration: BoxDecoration(
-            color: const Color(0xFF451717),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFF9A332E)),
-          ),
-          child: Center(
             child: Text(
-              'Sair da conta',
-              style: TextStyle(
-                color: const Color(0xFFE77B70),
-                fontSize: compact ? 17 : 18,
+              perfil.apelido.trim().isEmpty
+                  ? '👑'
+                  : perfil.apelido.trim().substring(0, 1).toUpperCase(),
+              style: const TextStyle(
+                color: _ouroClaro,
+                fontSize: 21,
                 fontWeight: FontWeight.w900,
               ),
             ),
           ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        perfil.apelido,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _texto,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    if (perfil.vip) ...[
+                      const SizedBox(width: 7),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _roxo.withValues(alpha: .16),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: _roxo.withValues(alpha: .70),
+                          ),
+                        ),
+                        child: const Text(
+                          'VIP',
+                          style: TextStyle(
+                            color: Color(0xFFE2C9FF),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  perfil.email,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: _textoSec, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+            decoration: BoxDecoration(
+              color: _cardSecundario,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _borda),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.monetization_on_rounded, color: _ouro, size: 17),
+                const SizedBox(width: 4),
+                Text(
+                  '${perfil.moedas}',
+                  style: const TextStyle(
+                    color: _ouroClaro,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _secao({
+    required String titulo,
+    required IconData icone,
+    required List<Widget> children,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 0, 6, 7),
+            child: Row(
+              children: [
+                Icon(icone, color: _ouro, size: 17),
+                const SizedBox(width: 7),
+                Text(
+                  titulo,
+                  style: const TextStyle(
+                    color: _ouroClaro,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .7,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              color: _card,
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(color: _borda),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (var i = 0; i < children.length; i++) ...[
+                  children[i],
+                  if (i != children.length - 1)
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Color(0x22EFB94A),
+                      indent: 54,
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _navTile({
+    required IconData icone,
+    required String titulo,
+    required String subtitulo,
+    required VoidCallback onTap,
+    bool destaque = false,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+          child: Row(
+            children: [
+              _iconeTile(icone, destaque: destaque),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      titulo,
+                      style: TextStyle(
+                        color: destaque ? const Color(0xFFE2C9FF) : _texto,
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitulo,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _textoSec,
+                        fontSize: 10.4,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: _textoSec, size: 23),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Widget _toggleTile({
+    required IconData icone,
+    required String titulo,
+    required String subtitulo,
+    required bool valor,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
+      child: Row(
+        children: [
+          _iconeTile(icone),
+          const SizedBox(width: 11),
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => onChanged(!valor),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      titulo,
+                      style: const TextStyle(
+                        color: _texto,
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitulo,
+                      style: const TextStyle(
+                        color: _textoSec,
+                        fontSize: 10.4,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Switch(
+            value: valor,
+            onChanged: onChanged,
+            activeThumbColor: const Color(0xFF2A1700),
+            activeTrackColor: _ouro,
+            inactiveThumbColor: const Color(0xFF8A806B),
+            inactiveTrackColor: const Color(0xFF3A3026),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _choiceTile<T>({
+    required BuildContext context,
+    required IconData icone,
+    required String titulo,
+    required T valor,
+    required String Function(T) label,
+    required List<T> opcoes,
+    required ValueChanged<T> onChanged,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _abrirEscolha<T>(
+          context: context,
+          titulo: titulo,
+          valor: valor,
+          opcoes: opcoes,
+          label: label,
+          onChanged: onChanged,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+          child: Row(
+            children: [
+              _iconeTile(icone),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Text(
+                  titulo,
+                  style: const TextStyle(
+                    color: _texto,
+                    fontSize: 13.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                constraints: const BoxConstraints(maxWidth: 150),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _cardSecundario,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _borda),
+                ),
+                child: Text(
+                  label(valor),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _ouroClaro,
+                    fontSize: 10.8,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 3),
+              const Icon(Icons.expand_more_rounded, color: _textoSec, size: 21),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _abrirEscolha<T>({
+    required BuildContext context,
+    required String titulo,
+    required T valor,
+    required List<T> opcoes,
+    required String Function(T) label,
+    required ValueChanged<T> onChanged,
+  }) async {
+    final escolhido = await showModalBottomSheet<T>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.all(10),
+            padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF17100A),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: _borda),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  titulo,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: _ouroClaro,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                for (final opcao in opcoes)
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(13),
+                      onTap: () => Navigator.of(context).pop(opcao),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: opcao == valor
+                              ? _ouro.withValues(alpha: .14)
+                              : _cardSecundario,
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(
+                            color: opcao == valor ? _ouro : _borda,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                label(opcao),
+                                style: TextStyle(
+                                  color: opcao == valor ? _ouroClaro : _texto,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            if (opcao == valor)
+                              const Icon(Icons.check_rounded, color: _ouro, size: 21),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (escolhido != null && escolhido != valor) onChanged(escolhido);
+  }
+
+  Widget _iconeTile(IconData icone, {bool destaque = false}) {
+    return Container(
+      width: 32,
+      height: 32,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: destaque
+            ? _roxo.withValues(alpha: .14)
+            : _ouro.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: destaque
+              ? _roxo.withValues(alpha: .55)
+              : _ouro.withValues(alpha: .24),
+        ),
+      ),
+      child: Icon(
+        icone,
+        color: destaque ? const Color(0xFFDDBBFF) : _ouro,
+        size: 18,
+      ),
+    );
+  }
+
+  Widget _sairButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: callbacks.onSair,
+        borderRadius: BorderRadius.circular(15),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2A0E0E),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: const Color(0xFF8C3535)),
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.logout_rounded, color: Color(0xFFFFA2A2), size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Sair da conta',
+                style: TextStyle(
+                  color: Color(0xFFFFC2C2),
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _maoLabel(MaoDominante valor) {
+    switch (valor) {
+      case MaoDominante.destro:
+        return 'Destro';
+      case MaoDominante.canhoto:
+        return 'Canhoto';
+    }
+  }
+
+  String _conviteLabel(QuemMeConvida valor) {
+    switch (valor) {
+      case QuemMeConvida.todos:
+        return 'Todos';
+      case QuemMeConvida.somenteAmigos:
+        return 'Só amigos';
+      case QuemMeConvida.ninguem:
+        return 'Ninguém';
+    }
+  }
+
+  String _idiomaLabel(Idioma valor) {
+    switch (valor) {
+      case Idioma.ptBR:
+        return 'Português (Brasil)';
+    }
   }
 }
