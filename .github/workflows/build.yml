@@ -144,6 +144,26 @@ jobs:
           PY
           flutter pub get
 
+      - name: "PORTÃO DE QUALIDADE — testes do motor (bloqueia o APK se falhar)"
+        run: |
+          if [ ! -f app/test/teste_motor.dart ]; then
+            echo "ERRO: app/test/teste_motor.dart não encontrado — o portão de qualidade é OBRIGATÓRIO."
+            echo "Nenhum APK pode ser gerado sem a suíte de testes do motor."
+            exit 1
+          fi
+          mkdir -p app_build/test
+          cp app/test/teste_motor.dart app_build/test/
+          echo "================= REGISTRO DO PORTÃO ================="
+          echo "Commit testado (GITHUB_SHA): ${GITHUB_SHA}"
+          echo "SHA-256 do motor testado (código REAL de produção):"
+          sha256sum app_build/lib/mesa.dart
+          echo "SHA-256 da suíte executada:"
+          sha256sum app_build/test/teste_motor.dart
+          echo "======================================================"
+          cd app_build
+          flutter test test/teste_motor.dart --reporter expanded
+          echo "PORTÃO VERDE: todos os testes do motor passaram no commit ${GITHUB_SHA} — seguindo pro APK."
+
       - name: Bump minSdk to 23 (Firebase)
         run: |
           f=app_build/android/app/build.gradle.kts
