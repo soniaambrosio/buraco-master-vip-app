@@ -1799,19 +1799,7 @@ class _MesaScreenState extends State<MesaScreen> {
                             minWidth: larguraUtil,
                             maxWidth: larguraUtil,
                           ),
-                          child: Wrap(
-                            alignment: WrapAlignment.start,
-                            runAlignment: WrapAlignment.start,
-                            crossAxisAlignment: WrapCrossAlignment.start,
-                            spacing: 3,
-                            runSpacing: 4,
-                            children: [
-                              for (var index = 0;
-                                  index < jogos.length;
-                                  index++)
-                                _meldWidget(dupla, index, jogos[index]),
-                            ],
-                          ),
+                          child: _packedMelds(dupla, jogos, larguraUtil),
                         ),
                       ),
               ),
@@ -1898,13 +1886,75 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // Empacotamento dos jogos (patch item 8): aproveita toda a largura útil.
+  // First-Fit-Decreasing — coloca os blocos MAIORES primeiro e encaixa os
+  // menores nas lacunas das linhas já abertas. Cada jogo é um bloco INDIVISÍVEL
+  // (nunca quebra a sequência); só a POSIÇÃO do bloco muda. Dentro da linha,
+  // reordena por índice original pra manter a leitura estável.
+  Widget _packedMelds(String dupla, List<List<Carta>> jogos, double larguraUtil) {
+    const double cardWidth = 66.0; // igual ao _meldWidget
+    const double step = 13.0;
+    const double spacing = 6.0;
+    const double runSpacing = 6.0;
+    double larguraJogo(List<Carta> m) =>
+        cardWidth + (m.length - 1).clamp(0, 999) * step;
+
+    // índices ordenados por largura decrescente (FFD)
+    final ordem = [for (var i = 0; i < jogos.length; i++) i]
+      ..sort((a, b) => larguraJogo(jogos[b]).compareTo(larguraJogo(jogos[a])));
+
+    final linhas = <List<int>>[]; // cada linha = índices de jogos
+    final ocupado = <double>[]; // largura já usada por linha
+    for (final i in ordem) {
+      final w = larguraJogo(jogos[i]);
+      var alvo = -1;
+      for (var r = 0; r < linhas.length; r++) {
+        if (ocupado[r] + spacing + w <= larguraUtil) {
+          alvo = r;
+          break;
+        }
+      }
+      if (alvo == -1) {
+        linhas.add([i]);
+        ocupado.add(w);
+      } else {
+        linhas[alvo].add(i);
+        ocupado[alvo] += spacing + w;
+      }
+    }
+    for (final l in linhas) {
+      l.sort(); // leitura estável dentro da linha
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var r = 0; r < linhas.length; r++) ...[
+          if (r > 0) const SizedBox(height: runSpacing),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var k = 0; k < linhas[r].length; k++) ...[
+                if (k > 0) const SizedBox(width: spacing),
+                _meldWidget(dupla, linhas[r][k], jogos[linhas[r][k]]),
+              ],
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
     cartas = _j.ordenarMeld(cartas); // jogo baixado em ordem crescente
     final subs = _j.substitutosMeld(cartas); // #9: coringa mostra a carta que ocupa
     // #2: tamanho único da mesa (grande, boa visualização) — igual monte/lixo/mão.
+    // Patch visual: sobreposição mais fechada (13) mantendo a carta no mesmo tamanho.
     const cardWidth = 66.0;
     const cardHeight = 100.0;
-    const step = 18.0;
+    const step = 13.0;
     final count = cartas.length;
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
@@ -1942,7 +1992,7 @@ class _MesaScreenState extends State<MesaScreen> {
               Positioned(
                 left: 1,
                 right: 1,
-                bottom: 2,
+                bottom: 0,
                 child: _canastraRibbon(sash, false),
               ),
           ],
@@ -2176,10 +2226,11 @@ class _MesaScreenState extends State<MesaScreen> {
             bottom: 3,
             child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
           ),
-          // Contador de cartas do lixo — canto superior DIREITO do lixo.
+          // Contador do lixo — SOBRE a carta do topo (canto sup. dir. da carta),
+          // longe do monte e dos mortos pra não poluir aquele canto.
           Positioned(
-            top: -5,
-            right: -5,
+            top: -6,
+            left: cardWidth - 22,
             child: _countCircle(_j.lixo.length),
           ),
         ],
@@ -2215,7 +2266,6 @@ class _MesaScreenState extends State<MesaScreen> {
               shape: BoxShape.circle,
               gradient: const RadialGradient(colors: [_mPurpleHi, _mPurple]),
               border: Border.all(color: _mGoldHi, width: 0.8),
-              boxShadow: const [BoxShadow(color: Color(0x88000000), blurRadius: 3)],
             ),
             child: Text(
               '★',
@@ -2237,12 +2287,13 @@ class _MesaScreenState extends State<MesaScreen> {
     required double width,
     required double height,
   }) {
+    // Patch visual: SEM moldura/stroke e SEM sombra — o feltro aparece direto
+    // atrás da carta. Só cantos arredondados + recorte da imagem.
     return Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(width * 0.09),
-        border: Border.all(color: const Color(0x44FFFFFF), width: 0.6),
       ),
       clipBehavior: Clip.antiAlias,
       child: Image.asset(
