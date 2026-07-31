@@ -122,7 +122,7 @@ jobs:
           echo "assets da loja de cosmeticos: $N arquivos (a tela usa placeholder onde faltar)"
 
       - name: Add Firebase + Google Sign-In + Audio deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel
+       run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
 
       - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
         # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
