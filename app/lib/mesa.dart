@@ -63,6 +63,12 @@ class Jogo {
   int vez = 0;
   bool jaComprou = false;
   bool rodadaEncerrada = false;
+  // Fechado/SBTL: ao pegar o lixo, o id da carta do TOPO que o jogador é
+  // OBRIGADO a usar (baixar/estender) antes de descartar. null = sem pendência.
+  String? lixoTopoObrigatorio;
+  // Modalidade da mesa: 'ABERTO' | 'FECHADO' | 'SBTL'. Governa a trava do lixo,
+  // a batida (limpa obrigatória ou não) e, futuramente, trincas. Setada pela UI.
+  String modalidade = 'ABERTO';
   String? duplaQueBateu;
   int? assentoQueBateu;
   int rodada = 0;
@@ -78,12 +84,14 @@ class Jogo {
   // Derivada do placar ACUMULADO da dupla, reavaliada no início de cada rodada.
   // < 1500 pts: livre. 1ª rodada a 1500+ → mínimo 75. 2ª rodada seguida a 1500+ → 90 (teto).
   // Só bloqueia a PRIMEIRA baixada da dupla na rodada; depois de aberta, os turnos são livres.
-  static const int limiteVulneravel = 1500;
+  // Vulnerável a partir de metaPontos/2 (750 na meta 1500; 1500 na meta 3000).
+  int get _limiteVulneravel => metaPontos ~/ 2;
   Map<String, int> rodadasVulneravel = {'nos': 0, 'eles': 0};
   Map<String, bool> primeiraBaixadaFeita = {'nos': false, 'eles': false};
 
   // Mínimo de pontos que a 1ª baixada da dupla precisa somar nesta rodada.
   // 0 = sem restrição (dupla não vulnerável, ou já abriu jogo nesta rodada).
+  // 1ª rodada vulnerável → 75; a partir da 2ª seguida → 90 (decisão da Sônia).
   int minimoParaDescer(String dupla) {
     if (primeiraBaixadaFeita[dupla] ?? false) return 0;
     final r = rodadasVulneravel[dupla] ?? 0;
@@ -111,7 +119,10 @@ class Jogo {
           cs.add(Carta(_novoId(), n, v, v == '2'));
         }
       }
-      // modalidade ABERTO nao usa curingao (jokers) — so os 2 sao coringa
+      // 2 curingões (JOKER) por baralho → 4 no total. Perfil BMV_STANDARD_108:
+      // 108 cartas jogáveis nas TRÊS modalidades (Aberto/Fechado/STBL).
+      cs.add(Carta(_novoId(), null, 'JOKER', true));
+      cs.add(Carta(_novoId(), null, 'JOKER', true));
     }
     return cs;
   }
@@ -142,7 +153,7 @@ class Jogo {
     _rodadaContada = false; pontosRodada = null;
     // Reavalia a vulnerabilidade da rodada que começa, a partir do placar acumulado.
     for (final d in ['nos', 'eles']) {
-      if (placar[d]! >= limiteVulneravel) {
+      if (placar[d]! >= _limiteVulneravel) {
         rodadasVulneravel[d] = (rodadasVulneravel[d] ?? 0) + 1;
       } else {
         rodadasVulneravel[d] = 0;
@@ -328,6 +339,9 @@ class Jogo {
     if (meld.length < 7) return false;
     final r = validarSequencia(meld);
     if (r['valido'] != true) return false;
+    // Fechado: QUALQUER canastra (7+) libera a batida — suja basta.
+    if (modalidade.toLowerCase() == 'fechado') return true;
+    // Aberto/STBL: exige canastra LIMPA (limpa, 500 ou 1000).
     final t = r['tipo'];
     return t == 'limpa' || t == 'de_500' || t == 'as_a_as';
   }
@@ -370,17 +384,57 @@ class Jogo {
     return true;
   }
 
-  // PEGAR O LIXO INTEIRO. No ABERTO a compra é livre: sem trava de "carta com mola"
-  // e sem obrigação de usar o topo (regra confirmada). Leva o monte de descarte todo
-  // pra mão. (fatia 3)
-  Map<String, dynamic> comprarLixo(int assento) {
+  // PEGAR O LIXO INTEIRO.
+  // - ABERTO: compra LIVRE, sem obrigação de usar o topo (regra confirmada).
+  // - FECHADO/SBTL: só pode pegar se a carta do TOPO tiver USO IMEDIATO — formar
+  //   um jogo novo com 2 cartas da mão OU estender um jogo já baixado da dupla.
+  Map<String, dynamic> comprarLixo(int assento, {String modalidade = 'ABERTO'}) {
     if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
     if (lixo.isEmpty) return {'ok': false, 'erro': 'o lixo está vazio'};
+    if (modalidade.toLowerCase() != 'aberto' && !_topoLixoTemUso(assento)) {
+      return {
+        'ok': false,
+        'erro': 'No fechado, só dá pra pegar o lixo se o topo (${_cartaRotulo(lixo.last)}) '
+            'tiver uso imediato: formar um jogo novo com 2 cartas da mão ou estender um jogo já baixado.',
+      };
+    }
     final qtd = lixo.length;
+    final topo = lixo.last; // guarda o topo antes de esvaziar o lixo
     maos[assento].addAll(lixo);
     lixo = [];
     jaComprou = true;
+    // Fechado/SBTL: nasce a OBRIGAÇÃO de usar o topo antes de descartar.
+    lixoTopoObrigatorio =
+        modalidade.toLowerCase() != 'aberto' ? topo.id : null;
     return {'ok': true, 'qtd': qtd};
+  }
+
+  // A carta do topo do lixo tem uso imediato E LEGAL? (estende um jogo baixado da
+  // dupla, ou fecha um jogo novo de 3+ com 2 cartas da mão — respeitando o mínimo
+  // de pontos quando a dupla está vulnerável). Usado pela trava do Fechado.
+  bool _topoLixoTemUso(int assento) {
+    if (lixo.isEmpty) return false;
+    final topo = lixo.last;
+    final dupla = _duplaKey(assento);
+    // 1) topo estende um jogo já baixado da dupla (extensão nunca é bloqueada)
+    for (final jogo in jogosDupla[dupla]!) {
+      if (_validarJogoMesa([...jogo, topo])['valido'] == true) return true;
+    }
+    // 2) topo forma jogo novo de 3 com 2 cartas da mão
+    final minimo = minimoParaDescer(dupla); // 0 se não vulnerável / já abriu
+    final mao = maos[assento];
+    for (var i = 0; i < mao.length; i++) {
+      for (var j = i + 1; j < mao.length; j++) {
+        final combo = [topo, mao[i], mao[j]];
+        if (_validarJogoMesa(combo)['valido'] != true) continue;
+        if (minimo > 0) {
+          final pts = combo.fold<int>(0, (s, c) => s + _pontos(c));
+          if (pts < minimo) continue; // baixada nova seria ilegal (vulnerável)
+        }
+        return true;
+      }
+    }
+    return false;
   }
 
   // ORGANIZAR A MÃO: agrupa por naipe (cores alternadas p/ leitura) e ordena por
@@ -514,6 +568,9 @@ class Jogo {
     final idset = ids.toSet();
     maos[assento] = maos[assento].where((c) => !idset.contains(c.id)).toList();
     jogosDupla[dupla]!.add(cartas);
+    if (lixoTopoObrigatorio != null && idset.contains(lixoTopoObrigatorio)) {
+      lixoTopoObrigatorio = null; // topo do lixo usado numa baixada → obrigação cumprida
+    }
     primeiraBaixadaFeita[dupla] = true; // dupla abriu jogo nesta rodada
     final zer = _aoZerarMaoBaixando(assento);
     return {'ok': true, 'tipo': res['tipo'], ...?zer};
@@ -541,6 +598,9 @@ class Jogo {
     final idset = ids.toSet();
     maos[assento] = maos[assento].where((c) => !idset.contains(c.id)).toList();
     jogos[indiceJogo] = [...alvo, ...cartas];
+    if (lixoTopoObrigatorio != null && idset.contains(lixoTopoObrigatorio)) {
+      lixoTopoObrigatorio = null; // topo do lixo usado numa extensão → obrigação cumprida
+    }
     final zer = _aoZerarMaoBaixando(assento);
     return {'ok': true, 'tipo': res['tipo'], ...?zer};
   }
@@ -548,13 +608,22 @@ class Jogo {
   // retorna null se ok; senão string de erro
   String? descartar(int assento, String idCarta) {
     if (rodadaEncerrada || vez != assento || !jaComprou) return 'não é sua vez';
+    // Fechado/SBTL: pegou o lixo? tem que USAR o topo antes de descartar.
+    if (lixoTopoObrigatorio != null &&
+        maos[assento].any((c) => c.id == lixoTopoObrigatorio)) {
+      final t = maos[assento].firstWhere((c) => c.id == lixoTopoObrigatorio);
+      return 'Você pegou o lixo: use a carta do topo (${_cartaRotulo(t)}) '
+          'num jogo (baixando ou estendendo) antes de descartar.';
+    }
     final idx = maos[assento].indexWhere((c) => c.id == idCarta);
     if (idx < 0) return 'carta não está na mão';
     final dupla = _duplaKey(assento);
     final zeraria = maos[assento].length == 1;
     final podeBatidaFinal = mortoPego[dupla]! || mortos.isEmpty;
     if (zeraria && podeBatidaFinal && !duplaPodeBater(dupla)) {
-      return 'pra bater você precisa de uma canastra LIMPA na mesa da dupla';
+      return modalidade.toLowerCase() == 'fechado'
+          ? 'pra bater você precisa de pelo menos uma canastra (7+) na mesa da dupla'
+          : 'pra bater você precisa de uma canastra LIMPA na mesa da dupla';
     }
     final c = maos[assento].removeAt(idx);
     lixo.add(c);
@@ -573,6 +642,7 @@ class Jogo {
   }
 
   void _passarVez() {
+    lixoTopoObrigatorio = null; // pendência do topo não atravessa a vez
     if (monte.isEmpty) {
       if (mortos.isEmpty) { rodadaEncerrada = true; return; }
       monte = mortos.removeAt(0);
@@ -1029,6 +1099,7 @@ class _MesaScreenState extends State<MesaScreen> {
       const ['🐶', '🐰', '🦊', '🐱'],
     );
     jogo.metaPontos = widget.metaPontos;
+    jogo.modalidade = widget.modalidade;
     return jogo;
   }
 
@@ -1221,7 +1292,7 @@ class _MesaScreenState extends State<MesaScreen> {
     if (!_minhaVezAtiva) return;
     if (!_j.jaComprou) {
       final antes = _j.maos[0].map((c) => c.id).toSet();
-      final resultado = _j.comprarLixo(0);
+      final resultado = _j.comprarLixo(0, modalidade: _modalidade);
       if (resultado['ok'] != true) {
         setState(() => _msg = resultado['erro'] as String?);
         _somErro();
@@ -1645,6 +1716,12 @@ class _MesaScreenState extends State<MesaScreen> {
                   left: 1,
                   bottom: playerDockHeight + 8,
                   child: _sidePlayer(2, left: true),
+                ),
+                // Chat / expressões / som — coluna vertical discreta na lateral direita.
+                Positioned(
+                  right: 4,
+                  bottom: playerDockHeight + 8,
+                  child: _actionRail(),
                 ),
                 Positioned(
                   left: 0,
@@ -2099,11 +2176,10 @@ class _MesaScreenState extends State<MesaScreen> {
             bottom: 3,
             child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
           ),
-          // Contador de cartas do lixo — do lado ESQUERDO (junto do monte),
-          // longe dos mortos pra não poluir aquele canto.
+          // Contador de cartas do lixo — canto superior DIREITO do lixo.
           Positioned(
             top: -5,
-            left: -5,
+            right: -5,
             child: _countCircle(_j.lixo.length),
           ),
         ],
@@ -2476,19 +2552,8 @@ class _MesaScreenState extends State<MesaScreen> {
                 const SizedBox(width: 10),
                 _turnBadge(compact: true),
               ],
-              const SizedBox(width: 12),
-              _railButton(Icons.chat_bubble_rounded, () {
-                setState(() => _msg = 'Chat — ligação final com o Claude.');
-              }),
-              const SizedBox(width: 6),
-              _railButton(Icons.sentiment_satisfied_alt_rounded, () {
-                setState(() => _msg = 'Expressões — ligação final com o Claude.');
-              }),
-              const SizedBox(width: 6),
-              _railButton(
-                _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
-                () => setState(() => _soundEnabled = !_soundEnabled),
-              ),
+              // Chat/expressões/som agora ficam numa coluna vertical à direita
+              // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
             ],
           ),
         ),
@@ -2537,11 +2602,9 @@ class _MesaScreenState extends State<MesaScreen> {
                   curve: Curves.easeOutCubic,
                   offset: Offset(
                     0,
-                    _sel.contains(index)
-                        ? -selectedLift / cardHeight
-                        : (_recentlyBoughtIds.contains(hand[index].id)
-                            ? -7 / cardHeight
-                            : 0),
+                    // Mão sempre RETA: só a carta selecionada sobe. As recém-compradas
+                    // ficam alinhadas (o destaque delas é a moldura dourada, não a altura).
+                    _sel.contains(index) ? -selectedLift / cardHeight : 0,
                   ),
                   child: _handCard(
                     hand[index],
