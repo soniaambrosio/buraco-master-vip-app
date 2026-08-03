@@ -2909,7 +2909,16 @@ class _MesaScreenState extends State<MesaScreen> {
     // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
     const cardWidth = 66.0;
     const cardHeight = 100.0;
-    const step = 36.0;
+    // Sobreposição compacta e AUTOMÁTICA conforme a quantidade: trecho visível
+    // de cada carta entre 32% (poucas cartas) e 25% (muitas) da largura, sem
+    // reduzir a carta. A última carta continua inteira (Stack) e a mão mantém
+    // scroll horizontal. Ajuste SÓ visual — não altera estado, seleção nem regras.
+    final double frac = count <= 12
+        ? 0.32
+        : count >= 24
+            ? 0.25
+            : 0.32 - (count - 12) * (0.07 / 12);
+    final double step = cardWidth * frac;
     const selectedLift = 13.0;
     final active = _minhaVezAtiva;
     final totalWidth = cardWidth + (count - 1) * step;
