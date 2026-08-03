@@ -2510,56 +2510,45 @@ class _MesaScreenState extends State<MesaScreen> {
     if (substituto == null) {
       return _frontCard(original, width: width, height: height);
     }
-    // Carta SUBSTITUÍDA por coringa: mostra a face que ele ocupa, MAS deixa
-    // inconfundível que ali mora um coringa (selo ★ + faixa "CORINGA") — pra
-    // ninguém contar uma "3ª cópia" da carta olhando a mesa.
-    final selo = width * 0.30;
+    // Curinga baixado (aprovado pela Sônia): mostra a CARTA REAL que ele
+    // representa, na casa dela. Indicação DISCRETA de que ali mora um curinga:
+    // contorno violeta fino + badge mínima no canto — SEM tarja grande cobrindo
+    // a carta. A classificação limpa/suja continua no motor (validarSequencia).
+    final double selo = width * 0.20;
+    final BorderRadius raio = BorderRadius.circular(width * 0.09);
     return Stack(
       clipBehavior: Clip.none,
       children: [
         _frontCard(substituto, width: width, height: height),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 1.5),
-            decoration: BoxDecoration(
-              color: const Color(0xE64B2367),
-              borderRadius: BorderRadius.vertical(
-                bottom: Radius.circular(width * 0.09),
-              ),
-            ),
-            child: Text(
-              'CORINGA',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: width * 0.13,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.6,
-                height: 1,
+        // contorno violeta fino sobre a carta (não altera a face nem o toque)
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: raio,
+                border: Border.all(color: _mPurple, width: 1.2),
               ),
             ),
           ),
         ),
+        // badge mínima e discreta: marca de curinga no canto
         Positioned(
-          top: width * 0.06,
-          right: width * 0.06,
+          top: width * 0.05,
+          right: width * 0.05,
           child: Container(
             width: selo,
             height: selo,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: const RadialGradient(colors: [_mPurpleHi, _mPurple]),
-              border: Border.all(color: _mGoldHi, width: 0.8),
+              color: _mPurple,
+              border: Border.all(color: _mGoldHi, width: 0.7),
             ),
             child: Text(
               '★',
               style: TextStyle(
                 color: Colors.white,
-                fontSize: selo * 0.62,
+                fontSize: selo * 0.6,
                 fontWeight: FontWeight.w900,
                 height: 1,
               ),
