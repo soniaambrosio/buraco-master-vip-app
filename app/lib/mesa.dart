@@ -2510,17 +2510,19 @@ class _MesaScreenState extends State<MesaScreen> {
     if (substituto == null) {
       return _frontCard(original, width: width, height: height);
     }
-    // Curinga baixado (aprovado pela Sônia): mostra a CARTA REAL que ele
-    // representa, na casa dela. Indicação DISCRETA de que ali mora um curinga:
-    // contorno violeta fino + badge mínima no canto — SEM tarja grande cobrindo
-    // a carta. A classificação limpa/suja continua no motor (validarSequencia).
-    final double selo = width * 0.20;
+    // Curinga baixado (aprovado pela Sônia, 03/08): a carta renderizada é
+    // SEMPRE o curinga REAL (joker.webp / o próprio 2) — NUNCA a carta
+    // substituída. O motor mantém internamente o valor substituído para validar
+    // a sequência; aqui ele aparece só como indicação DISCRETA "=X".
+    // Vale para os jogos na mesa E para o modal ampliado (mesma função).
+    final String repr = _cartaRotulo(substituto); // valor representado: '5','J'…
     final BorderRadius raio = BorderRadius.circular(width * 0.09);
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        _frontCard(substituto, width: width, height: height),
-        // contorno violeta fino sobre a carta (não altera a face nem o toque)
+        // arte REAL do curinga na casa que ele ocupa (joker.webp / o 2)
+        _frontCard(original, width: width, height: height),
+        // contorno violeta fino: sinal discreto de "aqui mora um curinga"
         Positioned.fill(
           child: IgnorePointer(
             child: Container(
@@ -2531,24 +2533,23 @@ class _MesaScreenState extends State<MesaScreen> {
             ),
           ),
         ),
-        // badge mínima e discreta: marca de curinga no canto
+        // indicação discreta do valor representado (=X), sem cobrir a arte
         Positioned(
-          top: width * 0.05,
-          right: width * 0.05,
+          left: width * 0.05,
+          bottom: width * 0.05,
           child: Container(
-            width: selo,
-            height: selo,
-            alignment: Alignment.center,
+            padding: EdgeInsets.symmetric(
+                horizontal: width * 0.07, vertical: width * 0.015),
             decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _mPurple,
-              border: Border.all(color: _mGoldHi, width: 0.7),
+              color: const Color(0xE64B2367),
+              borderRadius: BorderRadius.circular(width * 0.11),
+              border: Border.all(color: _mGoldHi, width: 0.6),
             ),
             child: Text(
-              '★',
+              '=$repr',
               style: TextStyle(
                 color: Colors.white,
-                fontSize: selo * 0.6,
+                fontSize: width * 0.19,
                 fontWeight: FontWeight.w900,
                 height: 1,
               ),

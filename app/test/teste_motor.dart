@@ -419,6 +419,18 @@ void main() {
     expect(subs[pos]?.valor, '3');
     expect(subs[pos]!.id.startsWith('virt_'), isTrue);
   });
+  test('CUR-01 curinga baixado mantém identidade JOKER (substituto só p/ exibição)', () {
+    // A carta RENDERIZADA continua sendo o joker (_meldCardFace usa `original`);
+    // o valor substituído existe só p/ exibição/validação, nunca troca a carta.
+    final m = jv.ordenarMeld([c('4', 'ouros'), cj(), c('6', 'ouros')]);
+    final subs = jv.substitutosMeld(m);
+    final pos = m.indexWhere((x) => x.valor == 'JOKER');
+    expect(pos, isNonNegative);
+    expect(m[pos].valor, 'JOKER'); // identidade preservada
+    expect(m[pos].ehCoringa, isTrue);
+    expect(subs[pos]?.valor, '5'); // valor representado só p/ exibição (=5)
+    expect(subs[pos]!.valor == 'JOKER', isFalse);
+  });
 
   // ================= FLUX — monte, lixo, morto, turno (20) =================
   test('FLUX-01 comprarMonte transfere exatamente 1 carta', () {
