@@ -1991,11 +1991,11 @@ class _MesaScreenState extends State<MesaScreen> {
                   child: _playerDock(),
                 ),
                 if (_msg != null)
-                  Positioned(
-                    left: 74,
-                    right: 74,
-                    bottom: playerDockHeight + 5,
-                    child: _feedbackToast(),
+                  Positioned.fill(
+                    child: Align(
+                      alignment: const Alignment(0, -0.12),
+                      child: _feedbackToast(),
+                    ),
                   ),
                 if (_j.rodadaEncerrada)
                   Positioned.fill(child: _overlayFimRodada()),
@@ -2052,8 +2052,9 @@ class _MesaScreenState extends State<MesaScreen> {
                           )
                         : const SizedBox.shrink())
                     : SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(0, 28, 0, 2),
+                        padding: const EdgeInsets.fromLTRB(0, 28, 0, 12),
                         physics: const BouncingScrollPhysics(),
+                        clipBehavior: Clip.hardEdge,
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
                             minWidth: larguraUtil,
@@ -2153,7 +2154,7 @@ class _MesaScreenState extends State<MesaScreen> {
   // reordena por índice original pra manter a leitura estável.
   Widget _packedMelds(String dupla, List<List<Carta>> jogos, double larguraUtil) {
     const double cardWidth = 66.0; // igual ao _meldWidget
-    const double step = 13.0;
+    const double step = 20.0; // desloc. horizontal maior: índice+naipe visíveis
     const double spacing = 6.0;
     const double runSpacing = 6.0;
     double larguraJogo(List<Carta> m) =>
@@ -2214,7 +2215,7 @@ class _MesaScreenState extends State<MesaScreen> {
     // Patch visual: sobreposição mais fechada (13) mantendo a carta no mesmo tamanho.
     const cardWidth = 66.0;
     const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
-    const step = 13.0;
+    const step = 20.0; // igual ao _packedMelds: índice+naipe visíveis em cada carta
     final count = cartas.length;
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
@@ -2886,7 +2887,15 @@ class _MesaScreenState extends State<MesaScreen> {
             ],
           ),
         ),
-        Expanded(child: _hand()),
+        Expanded(
+          child: Padding(
+            // margem inferior segura em aparelhos com barra de navegação (#8)
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewPadding.bottom,
+            ),
+            child: _hand(),
+          ),
+        ),
       ],
     );
   }
@@ -3044,25 +3053,28 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _feedbackToast() {
     final text = _msg ?? '';
     return IgnorePointer(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: const Color(0xF2140D16),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xAA9D43D8)),
-          boxShadow: const [
-            BoxShadow(color: Color(0x779D43D8), blurRadius: 11),
-          ],
-        ),
-        child: Text(
-          text,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFFF3E9FF),
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 230),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+          decoration: BoxDecoration(
+            color: const Color(0xF2140D16),
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: const Color(0xAA9D43D8)),
+            boxShadow: const [
+              BoxShadow(color: Color(0x559D43D8), blurRadius: 8),
+            ],
+          ),
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFF3E9FF),
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ),
@@ -3083,7 +3095,7 @@ class _MesaScreenState extends State<MesaScreen> {
       transitionDuration: const Duration(milliseconds: 230),
       pageBuilder: (_, __, ___) {
         const width = 92.0;
-        const height = 138.0;
+        const height = 107.0; // proporção real 907/1058 (92 * 1058/907) — sem letterbox
         const step = 49.0;
         final total = width + (cards.length - 1) * step;
         return SafeArea(
