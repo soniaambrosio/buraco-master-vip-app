@@ -1,0 +1,3 @@
+# Scaffold Flutter gerado localmente/CI (flutter create app_build).
+# Nunca versionar: e artefato de build, nao fonte.
+/app_build/
