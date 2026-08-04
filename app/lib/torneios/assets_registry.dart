@@ -1,12 +1,16 @@
-// assets_registry.dart — registro estavel de assets de torneios e premiacoes.
+// assets_registry.dart — registro estavel de assets de torneios.
 //
 // Fundacao apenas: sem Firestore, sem logica de premiacao e sem dependencia de
 // UI (nenhum import de flutter/material aqui, de proposito).
 //
+// ESCOPO: este arquivo descreve a ARTE e nada mais. Permanencia, duracao,
+// hierarquia e expiracao vivem em reward_policies.dart / reward_policies.seed.json.
+// A separacao e intencional: trocar um PNG nao pode mexer em regra de premiacao,
+// e mudar uma regra nao pode exigir tocar no catalogo de arte.
+//
 // Contrato: o `assetId` e o identificador canonico e imutavel. Regras futuras
-// (premiacao, recorrencia, Hall dos Imortais, Firestore) devem referenciar
-// `TorneioAssetIds.*` — nunca o nome fisico do PNG. Trocar ou renomear a arte
-// altera somente `arquivoLocal`, sem quebrar regra nenhuma.
+// devem referenciar `TorneioAssetIds.*` — nunca o nome fisico do PNG. Trocar ou
+// renomear a arte altera somente `arquivoLocal`.
 //
 // Fonte de dados: app/data/torneios/assets_registry.seed.json.
 
@@ -50,7 +54,7 @@ abstract final class TorneioAssetIds {
   static const sealPerformance = 'seal_performance';
   static const sealFairPlay = 'seal_fair_play';
 
-  // Encerramento de temporada.
+  // Encerramento anual.
   static const sealClosingGuest = 'seal_closing_guest';
   static const sealClosingChampion = 'seal_closing_champion';
   static const sealClosingRunnerUp = 'seal_closing_runner_up';
@@ -86,24 +90,19 @@ abstract final class TorneioAssetIds {
   ];
 }
 
-/// Definicao de um asset de torneio. DTO puro: sem estado, sem widget.
+/// Metadado de arte de um asset de torneio. DTO puro: sem estado, sem widget,
+/// sem regra de premiacao.
 class TorneioAssetDefinicao {
   /// Identificador canonico e imutavel.
   final String assetId;
 
   final TorneioAssetCategoria categoria;
 
-  /// Para que serve o asset, em linguagem de produto.
+  /// O que o ativo representa, em linguagem de produto.
   final String finalidade;
 
   /// Caminho no bundle Flutter, ou null enquanto a arte nao existir.
   final String? arquivoLocal;
-
-  /// true = permanece no perfil indefinidamente.
-  final bool permanente;
-
-  /// Validade padrao quando [permanente] e false; null caso contrario.
-  final Duration? duracaoPadrao;
 
   final TorneioAssetStatus status;
 
@@ -112,28 +111,21 @@ class TorneioAssetDefinicao {
     required this.categoria,
     required this.finalidade,
     required this.arquivoLocal,
-    required this.permanente,
-    required this.duracaoPadrao,
     required this.status,
   });
 
   /// A arte ja existe no repositorio.
   bool get temArte => status == TorneioAssetStatus.ready && arquivoLocal != null;
 
+  /// Capas nao sao recompensa; coroas e selos sim. Usado para checar cobertura
+  /// contra o registro de politicas.
+  bool get ehRecompensa => categoria != TorneioAssetCategoria.capa;
+
   factory TorneioAssetDefinicao.fromJson(Map<String, dynamic> json) {
     final assetId = json['assetId'] as String;
-    final permanente = json['permanente'] as bool;
-    final duracao = _parseDuracao(json['duracaoPadrao'] as String?, assetId);
-
-    if (permanente && duracao != null) {
-      throw FormatException('$assetId: asset permanente nao pode ter duracaoPadrao.');
-    }
-    if (!permanente && duracao == null) {
-      throw FormatException('$assetId: asset temporario exige duracaoPadrao.');
-    }
-
     final status = _parseStatus(json['status'] as String, assetId);
     final arquivoLocal = json['arquivoLocal'] as String?;
+
     if (status == TorneioAssetStatus.ready && arquivoLocal == null) {
       throw FormatException('$assetId: status ready exige arquivoLocal.');
     }
@@ -146,8 +138,6 @@ class TorneioAssetDefinicao {
       categoria: _parseCategoria(json['categoria'] as String, assetId),
       finalidade: json['finalidade'] as String,
       arquivoLocal: arquivoLocal,
-      permanente: permanente,
-      duracaoPadrao: duracao,
       status: status,
     );
   }
@@ -157,8 +147,6 @@ class TorneioAssetDefinicao {
         'categoria': categoria.name,
         'finalidade': finalidade,
         'arquivoLocal': arquivoLocal,
-        'permanente': permanente,
-        'duracaoPadrao': duracaoPadrao == null ? null : 'P${duracaoPadrao!.inDays}D',
         'status': status.name,
       };
 
@@ -173,19 +161,9 @@ class TorneioAssetDefinicao {
         (s) => s.name == valor,
         orElse: () => throw FormatException('$assetId: status desconhecido "$valor".'),
       );
-
-  /// Aceita ISO-8601 restrito a dias inteiros (ex.: `P30D`).
-  static Duration? _parseDuracao(String? valor, String assetId) {
-    if (valor == null) return null;
-    final m = RegExp(r'^P(\d+)D$').firstMatch(valor);
-    if (m == null) {
-      throw FormatException('$assetId: duracaoPadrao "$valor" fora do formato PnD.');
-    }
-    return Duration(days: int.parse(m.group(1)!));
-  }
 }
 
-/// Colecao imutavel de definicoes, indexada por [assetId].
+/// Colecao imutavel de definicoes de arte, indexada por [assetId].
 class TorneioAssetsRegistry {
   final int schemaVersion;
   final Map<String, TorneioAssetDefinicao> _porId;
@@ -232,6 +210,10 @@ class TorneioAssetsRegistry {
 
   Iterable<TorneioAssetDefinicao> porCategoria(TorneioAssetCategoria categoria) =>
       _porId.values.where((a) => a.categoria == categoria);
+
+  /// Assets que exigem politica de recompensa (tudo que nao e capa).
+  Iterable<TorneioAssetDefinicao> get recompensaveis =>
+      _porId.values.where((a) => a.ehRecompensa);
 
   /// Assets cuja arte ainda precisa ser produzida.
   Iterable<TorneioAssetDefinicao> get pendentes =>

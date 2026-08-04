@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "descricao": "Politica de recompensa por assetId. Separado de assets_registry.seed.json de proposito: aquele arquivo descreve a ARTE, este descreve a REGRA. Trocar a arte nao mexe na politica; mudar a politica nao mexe na arte. Nenhuma logica de premiacao e implementada nesta etapa.",
+  "convencoes": {
+    "assetId": "chave estrangeira para assets_registry.seed.json; so coroas e selos tem politica (capas nao sao recompensa)",
+    "expirationPolicy": "permanent | fixed_duration | until_next_edition | pending_admin_definition",
+    "defaultDuration": "ISO-8601 restrito a dias inteiros (PnD). Em fixed_duration e a validade; em until_next_edition e o LIMITE maximo caso a proxima edicao atrase. null em permanent e em pending_admin_definition.",
+    "hierarquia": "ordem de prestigio crescente para desempate de exibicao; null quando ainda nao definida",
+    "acumulaContador": "true = concessoes repetidas incrementam um contador em vez de duplicar a insignia"
+  },
+  "policies": [
+    {
+      "assetId": "crown_participant",
+      "expirationPolicy": "fixed_duration",
+      "defaultDuration": "P3D",
+      "hierarquia": 1,
+      "acumulaContador": false
+    },
+    {
+      "assetId": "crown_top3",
+      "expirationPolicy": "fixed_duration",
+      "defaultDuration": "P7D",
+      "hierarquia": 2,
+      "acumulaContador": false
+    },
+    {
+      "assetId": "crown_runner_up",
+      "expirationPolicy": "fixed_duration",
+      "defaultDuration": "P7D",
+      "hierarquia": 3,
+      "acumulaContador": false
+    },
+    {
+      "assetId": "crown_champion",
+      "expirationPolicy": "fixed_duration",
+      "defaultDuration": "P7D",
+      "hierarquia": 4,
+      "acumulaContador": false
+    },
+    {
+      "assetId": "crown_monthly_champion",
+      "expirationPolicy": "until_next_edition",
+      "defaultDuration": "P35D",
+      "hierarquia": 5,
+      "acumulaContador": false
+    },
+    {
+      "assetId": "crown_annual_champion",
+      "expirationPolicy": "until_next_edition",
+      "defaultDuration": "P370D",
+      "hierarquia": 6,
+      "acumulaContador": false
+    },
+    {
+      "assetId": "crown_legend_master",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": 7,
+      "acumulaContador": false
+    },
+
+    {
+      "assetId": "seal_participant",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_top3",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_runner_up",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_champion",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_monthly_champion",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_annual_champion",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_performance",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_fair_play",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+
+    {
+      "assetId": "seal_closing_guest",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_closing_champion",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "seal_closing_runner_up",
+      "expirationPolicy": "permanent",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": true
+    },
+    {
+      "assetId": "crown_closing_champion",
+      "expirationPolicy": "pending_admin_definition",
+      "defaultDuration": null,
+      "hierarquia": null,
+      "acumulaContador": false
+    }
+  ]
+}

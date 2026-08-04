@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 1,
-  "descricao": "Registro estavel de assets de torneios e premiacoes. O assetId e o identificador canonico: regras de premiacao, Firestore e UI devem referenciar o assetId, nunca o nome fisico do arquivo. Renomear/trocar a arte muda apenas arquivoLocal.",
+  "schemaVersion": 2,
+  "descricao": "Registro estavel de assets de torneios. Descreve APENAS o ativo grafico. Permanencia, duracao, hierarquia e expiracao NAO moram aqui: ver app/data/torneios/reward_policies.seed.json.",
   "convencoes": {
+    "assetId": "identificador canonico e imutavel; regras devem referenciar isto, nunca o nome do arquivo",
     "categoria": "capa | coroa | selo",
+    "finalidade": "o que o ativo representa, em linguagem de produto",
     "arquivoLocal": "caminho do asset no bundle Flutter, ou null quando a arte ainda nao existe",
-    "permanente": "true = fica no perfil indefinidamente; false = expira apos duracaoPadrao",
-    "duracaoPadrao": "duracao ISO-8601 restrita a dias inteiros (ex.: P30D); null quando permanente",
     "status": "ready = arte presente no repo; pendingAsset = arte ainda nao produzida"
   },
   "assets": [
@@ -14,8 +14,6 @@
       "categoria": "capa",
       "finalidade": "Capa do torneio semanal Quarta da Vulnerabilidade.",
       "arquivoLocal": "assets/torneios/capas/quarta_vulnerabilidade.png",
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "ready"
     },
     {
@@ -23,8 +21,6 @@
       "categoria": "capa",
       "finalidade": "Capa do torneio semanal Sexta Master VIP.",
       "arquivoLocal": "assets/torneios/capas/sexta_master_vip.png",
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "ready"
     },
     {
@@ -32,8 +28,6 @@
       "categoria": "capa",
       "finalidade": "Capa da Copa Buraco Master.",
       "arquivoLocal": "assets/torneios/capas/copa_buraco_master.png",
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "ready"
     },
     {
@@ -41,8 +35,6 @@
       "categoria": "capa",
       "finalidade": "Capa do torneio semanal Domingo Pintando o 7.",
       "arquivoLocal": "assets/torneios/capas/domingo_pintando_7.png",
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "ready"
     },
     {
@@ -50,8 +42,6 @@
       "categoria": "capa",
       "finalidade": "Capa do Campeonato Mensal.",
       "arquivoLocal": "assets/torneios/capas/campeonato_mensal.png",
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "ready"
     },
 
@@ -60,8 +50,6 @@
       "categoria": "coroa",
       "finalidade": "Coroa de participacao, concedida a quem concluiu a edicao do torneio.",
       "arquivoLocal": null,
-      "permanente": false,
-      "duracaoPadrao": "P7D",
       "status": "pendingAsset"
     },
     {
@@ -69,8 +57,6 @@
       "categoria": "coroa",
       "finalidade": "Coroa de podio, concedida ao terceiro colocado da edicao.",
       "arquivoLocal": null,
-      "permanente": false,
-      "duracaoPadrao": "P30D",
       "status": "pendingAsset"
     },
     {
@@ -78,8 +64,6 @@
       "categoria": "coroa",
       "finalidade": "Coroa de vice-campeao da edicao.",
       "arquivoLocal": null,
-      "permanente": false,
-      "duracaoPadrao": "P30D",
       "status": "pendingAsset"
     },
     {
@@ -87,17 +71,13 @@
       "categoria": "coroa",
       "finalidade": "Coroa de campeao da edicao.",
       "arquivoLocal": null,
-      "permanente": false,
-      "duracaoPadrao": "P30D",
       "status": "pendingAsset"
     },
     {
       "assetId": "crown_monthly_champion",
       "categoria": "coroa",
-      "finalidade": "Coroa de campeao do Campeonato Mensal, valida ate a edicao seguinte.",
+      "finalidade": "Coroa de campeao do Campeonato Mensal.",
       "arquivoLocal": null,
-      "permanente": false,
-      "duracaoPadrao": "P30D",
       "status": "pendingAsset"
     },
     {
@@ -105,17 +85,13 @@
       "categoria": "coroa",
       "finalidade": "Coroa de campeao anual; titulo maximo do calendario.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
       "assetId": "crown_legend_master",
       "categoria": "coroa",
-      "finalidade": "Coroa de lenda, vinculada ao Hall dos Imortais.",
+      "finalidade": "Coroa de Lenda Master, vinculada ao Hall dos Imortais.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
 
@@ -124,8 +100,6 @@
       "categoria": "selo",
       "finalidade": "Selo de participacao registrado no historico do perfil.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -133,8 +107,6 @@
       "categoria": "selo",
       "finalidade": "Selo de podio (terceiro colocado) registrado no historico do perfil.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -142,8 +114,6 @@
       "categoria": "selo",
       "finalidade": "Selo de vice-campeao registrado no historico do perfil.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -151,8 +121,6 @@
       "categoria": "selo",
       "finalidade": "Selo de campeao registrado no historico do perfil.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -160,8 +128,6 @@
       "categoria": "selo",
       "finalidade": "Selo de campeao mensal registrado no historico do perfil.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -169,8 +135,6 @@
       "categoria": "selo",
       "finalidade": "Selo de campeao anual registrado no historico do perfil.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -178,8 +142,6 @@
       "categoria": "selo",
       "finalidade": "Selo de desempenho por marcas em quadra (canastras, saldo, sequencias).",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
@@ -187,45 +149,35 @@
       "categoria": "selo",
       "finalidade": "Selo de fair play por conduta na edicao, sem abandono nem penalidade.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
 
     {
       "assetId": "seal_closing_guest",
       "categoria": "selo",
-      "finalidade": "Selo de convidado do torneio de encerramento de temporada.",
+      "finalidade": "Selo de convidado do torneio de encerramento anual.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
       "assetId": "seal_closing_champion",
       "categoria": "selo",
-      "finalidade": "Selo de campeao do torneio de encerramento de temporada.",
+      "finalidade": "Selo de campeao do torneio de encerramento anual.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
       "assetId": "seal_closing_runner_up",
       "categoria": "selo",
-      "finalidade": "Selo de vice-campeao do torneio de encerramento de temporada.",
+      "finalidade": "Selo de vice-campeao do torneio de encerramento anual.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     },
     {
       "assetId": "crown_closing_champion",
       "categoria": "coroa",
-      "finalidade": "Coroa de campeao do torneio de encerramento de temporada.",
+      "finalidade": "Coroa de campeao do torneio de encerramento anual.",
       "arquivoLocal": null,
-      "permanente": true,
-      "duracaoPadrao": null,
       "status": "pendingAsset"
     }
   ]
