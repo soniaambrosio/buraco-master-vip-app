@@ -2213,7 +2213,7 @@ class _MesaScreenState extends State<MesaScreen> {
     // #2: tamanho único da mesa (grande, boa visualização) — igual monte/lixo/mão.
     // Patch visual: sobreposição mais fechada (13) mantendo a carta no mesmo tamanho.
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     const step = 13.0;
     final count = cartas.length;
     final totalWidth = cardWidth + (count - 1) * step;
@@ -2299,7 +2299,7 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _centralTray() {
     // #2: monte/lixo/mortos no MESMO tamanho da mesa e da mão (medida única).
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     final podeComprar = _minhaVezAtiva && !_j.jaComprou;
     final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
     final monteGlow = podeComprar ||
@@ -2428,7 +2428,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _discardPile({required bool glowing}) {
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     const step = 18.0;
     final aberto = _modalidade.toLowerCase() == 'aberto';
     final cards = aberto
@@ -2576,7 +2576,7 @@ class _MesaScreenState extends State<MesaScreen> {
       clipBehavior: Clip.antiAlias,
       child: Image.asset(
         _cartaAsset(carta),
-        fit: BoxFit.fill,
+        fit: BoxFit.contain, // proporção 907/1058 sem deformar
         filterQuality: FilterQuality.high,
       ),
     );
@@ -2603,7 +2603,7 @@ class _MesaScreenState extends State<MesaScreen> {
         borderRadius: BorderRadius.circular(width * 0.08),
         child: Image.asset(
           _cardBackAsset,
-          fit: BoxFit.fill,
+          fit: BoxFit.contain, // proporção 907/1058 sem deformar
           filterQuality: FilterQuality.high,
         ),
       ),
@@ -2898,7 +2898,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
     // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     // Sobreposição compacta e AUTOMÁTICA conforme a quantidade: trecho visível
     // de cada carta entre 32% (poucas cartas) e 25% (muitas) da largura, sem
     // reduzir a carta. A última carta continua inteira (Stack) e a mão mantém
@@ -3010,7 +3010,7 @@ class _MesaScreenState extends State<MesaScreen> {
                 borderRadius: BorderRadius.circular(8),
                 child: Image.asset(
                   _cartaAsset(carta),
-                  fit: BoxFit.fill,
+                  fit: BoxFit.contain, // proporção 907/1058 sem deformar
                   filterQuality: FilterQuality.high,
                 ),
               ),
