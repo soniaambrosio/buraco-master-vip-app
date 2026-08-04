@@ -709,6 +709,7 @@ class TorneiosMockData {
         TorneioCardVM(
           tournamentId: 'quarta-vulnerabilidade',
           nome: 'Quarta da Vulnerabilidade',
+          imagemUrl: 'assets/torneios/capas/quarta_vulnerabilidade.png',
           modalidade: ModalidadeTorneio.fechado,
           acesso: TipoAcesso.misto,
           participacao: TipoParticipacao.dupla,
@@ -725,6 +726,7 @@ class TorneiosMockData {
         TorneioCardVM(
           tournamentId: 'sexta-master-vip',
           nome: 'Sexta Master VIP',
+          imagemUrl: 'assets/torneios/capas/sexta_master_vip.png',
           modalidade: ModalidadeTorneio.stbl,
           acesso: TipoAcesso.vip,
           participacao: TipoParticipacao.dupla,
@@ -742,6 +744,7 @@ class TorneiosMockData {
         TorneioCardVM(
           tournamentId: 'copa-buraco-master',
           nome: 'Copa Buraco Master',
+          imagemUrl: 'assets/torneios/capas/copa_buraco_master.png',
           modalidade: ModalidadeTorneio.aberto,
           acesso: TipoAcesso.publico,
           participacao: TipoParticipacao.individual,
@@ -758,6 +761,7 @@ class TorneiosMockData {
         TorneioCardVM(
           tournamentId: 'domingo-pintando-7',
           nome: 'Domingo Pintando o 7',
+          imagemUrl: 'assets/torneios/capas/domingo_pintando_7.png',
           modalidade: ModalidadeTorneio.fechado,
           acesso: TipoAcesso.publico,
           participacao: TipoParticipacao.dupla,
@@ -774,6 +778,7 @@ class TorneiosMockData {
         TorneioCardVM(
           tournamentId: 'campeonato-mensal',
           nome: 'Campeonato Mensal',
+          imagemUrl: 'assets/torneios/capas/campeonato_mensal.png',
           modalidade: ModalidadeTorneio.stbl,
           acesso: TipoAcesso.misto,
           participacao: TipoParticipacao.individual,

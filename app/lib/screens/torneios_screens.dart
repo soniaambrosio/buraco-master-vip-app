@@ -76,6 +76,15 @@ Color _statusColor(TorneioStatus status) => switch (status) {
       _ => TorneiosPalette.textMuted,
     };
 
+ImageProvider<Object>? _torneioImageProvider(String? source) {
+  if (source == null || source.trim().isEmpty) return null;
+  final value = source.trim();
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return NetworkImage(value);
+  }
+  return AssetImage(value);
+}
+
 class TorneiosShell extends StatelessWidget {
   final String title;
   final String? subtitle;
@@ -610,45 +619,79 @@ class TorneioCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final statusColor = _statusColor(vm.status);
     final progress = vm.vagasTotais == 0 ? 0.0 : (vm.inscritos / vm.vagasTotais).clamp(0.0, 1.0);
+    final artwork = _torneioImageProvider(vm.imagemUrl);
     return _GlassCard(
       onTap: onTap,
       color: destaque ? const Color(0xFF25152C) : TorneiosPalette.card,
       padding: EdgeInsets.zero,
       child: Column(
         children: [
-          Container(
-            height: destaque ? 92 : 70,
-            decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-              gradient: LinearGradient(
-                colors: destaque
-                    ? const [Color(0xFF5D2C8A), Color(0xFF2A1539), Color(0xFF25150B)]
-                    : const [Color(0xFF2D1B12), Color(0xFF1C130C)],
-              ),
-            ),
-            child: Stack(
-              children: [
-                Positioned(right: 16, top: 11, child: Icon(Icons.emoji_events_rounded, color: TorneiosPalette.gold.withValues(alpha: .18), size: destaque ? 76 : 54)),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 9),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          TorneioPill(vm.modalidade.label, color: TorneiosPalette.gold),
-                          const SizedBox(width: 5),
-                          TorneioPill(_acessoLabel(vm.acesso), color: vm.acesso == TipoAcesso.vip ? TorneiosPalette.amethyst : TorneiosPalette.textMuted),
-                          const Spacer(),
-                          TorneioPill(vm.status.label, color: statusColor, icon: _statusIcon(vm.status)),
-                        ],
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+            child: SizedBox(
+              height: destaque ? 112 : 86,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (artwork != null)
+                    Image(
+                      image: artwork,
+                      fit: BoxFit.cover,
+                      alignment: Alignment.center,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    )
+                  else
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: destaque
+                              ? const [Color(0xFF5D2C8A), Color(0xFF2A1539), Color(0xFF25150B)]
+                              : const [Color(0xFF2D1B12), Color(0xFF1C130C)],
+                        ),
                       ),
-                      const Spacer(),
-                      Text(vm.nome, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: TorneiosPalette.goldHi, fontSize: 16, fontWeight: FontWeight.w900)),
-                    ],
+                    ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x66000000), Color(0xAA090406), Color(0xF20A0505)],
+                        stops: [0, .56, 1],
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                  Positioned(right: 16, top: 11, child: Icon(Icons.emoji_events_rounded, color: TorneiosPalette.gold.withValues(alpha: .20), size: destaque ? 76 : 54)),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            TorneioPill(vm.modalidade.label, color: TorneiosPalette.gold),
+                            const SizedBox(width: 5),
+                            TorneioPill(_acessoLabel(vm.acesso), color: vm.acesso == TipoAcesso.vip ? TorneiosPalette.amethyst : TorneiosPalette.textMuted),
+                            const Spacer(),
+                            TorneioPill(vm.status.label, color: statusColor, icon: _statusIcon(vm.status)),
+                          ],
+                        ),
+                        const Spacer(),
+                        Text(
+                          vm.nome,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: TorneiosPalette.goldHi,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            shadows: [Shadow(color: Colors.black, blurRadius: 8, offset: Offset(0, 2))],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           Padding(
@@ -811,35 +854,83 @@ class _DetalhesHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final artwork = _torneioImageProvider(card.imagemUrl);
     return Container(
-      padding: const EdgeInsets.all(17),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFF5B2A82), Color(0xFF2C1736), Color(0xFF1A100B)]),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: TorneiosPalette.amethyst.withValues(alpha: .55)),
       ),
-      child: Column(
-        children: [
-          const Icon(Icons.emoji_events_rounded, color: TorneiosPalette.gold, size: 54),
-          const SizedBox(height: 8),
-          Text(card.nome, textAlign: TextAlign.center, style: const TextStyle(color: TorneiosPalette.goldHi, fontSize: 21, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 8),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              TorneioPill(card.modalidade.label, color: TorneiosPalette.gold),
-              TorneioPill(_acessoLabel(card.acesso), color: TorneiosPalette.amethyst),
-              TorneioPill(_participacaoLabel(card.participacao), color: TorneiosPalette.text),
-              TorneioPill(_entradaLabel(card), color: TorneiosPalette.success),
-            ],
-          ),
-          const SizedBox(height: 13),
-          Text('${torneioData(card.dataHora)} · ${card.inscritos}/${card.vagasTotais} inscritos', style: const TextStyle(color: Color(0xFFDCCFE8), fontSize: 11.5)),
-          const SizedBox(height: 8),
-          Text(card.premiacaoPrincipal, textAlign: TextAlign.center, style: const TextStyle(color: TorneiosPalette.gold, fontSize: 13, fontWeight: FontWeight.w800)),
-        ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(19),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: artwork != null
+                  ? Image(
+                      image: artwork,
+                      fit: BoxFit.cover,
+                      alignment: Alignment.center,
+                      errorBuilder: (_, __, ___) => const DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [Color(0xFF5B2A82), Color(0xFF2C1736), Color(0xFF1A100B)]),
+                        ),
+                      ),
+                    )
+                  : const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: [Color(0xFF5B2A82), Color(0xFF2C1736), Color(0xFF1A100B)]),
+                      ),
+                    ),
+            ),
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x44000000), Color(0xBB080308), Color(0xFA090405)],
+                    stops: [0, .52, 1],
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(17),
+              child: Column(
+                children: [
+                  const Icon(Icons.emoji_events_rounded, color: TorneiosPalette.gold, size: 54),
+                  const SizedBox(height: 8),
+                  Text(
+                    card.nome,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: TorneiosPalette.goldHi,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900,
+                      shadows: [Shadow(color: Colors.black, blurRadius: 10, offset: Offset(0, 2))],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      TorneioPill(card.modalidade.label, color: TorneiosPalette.gold),
+                      TorneioPill(_acessoLabel(card.acesso), color: TorneiosPalette.amethyst),
+                      TorneioPill(_participacaoLabel(card.participacao), color: TorneiosPalette.text),
+                      TorneioPill(_entradaLabel(card), color: TorneiosPalette.success),
+                    ],
+                  ),
+                  const SizedBox(height: 13),
+                  Text('${torneioData(card.dataHora)} · ${card.inscritos}/${card.vagasTotais} inscritos', style: const TextStyle(color: Color(0xFFDCCFE8), fontSize: 11.5)),
+                  const SizedBox(height: 8),
+                  Text(card.premiacaoPrincipal, textAlign: TextAlign.center, style: const TextStyle(color: TorneiosPalette.gold, fontSize: 13, fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
