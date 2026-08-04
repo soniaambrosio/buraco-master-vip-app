@@ -273,6 +273,28 @@ class Jogo {
       'penalidadeMorto': penalidadeMorto, 'descontoMao': descontoMao, 'detalhe': det};
   }
 
+  // Placar em tempo real (somente exibição): pontos já garantidos na mesa nesta
+  // rodada = canastras + cartas baixadas da dupla. NÃO altera a contagem oficial
+  // de fim de rodada (bônus de batida, cartas na mão e morto entram só no final).
+  int pontosMesaAoVivo(String dupla) {
+    int p = 0;
+    for (final meld in jogosDupla[dupla]!) {
+      if (meld.length >= 7) {
+        final res = _validarJogoMesa(meld);
+        if (res['valido'] == true) {
+          switch (res['tipo']) {
+            case 'as_a_as': p += 1000; break;
+            case 'de_500': p += 500; break;
+            case 'limpa': p += 200; break;
+            case 'suja': p += 100; break;
+          }
+        }
+      }
+      for (final c in meld) p += _pontos(c);
+    }
+    return p;
+  }
+
   // Conta as duas duplas, soma no placar e marca a partida encerrada se bateu a meta.
   // Auto-protegida: só conta uma vez por rodada.
   void contarPontos() {
@@ -1890,7 +1912,7 @@ class _MesaScreenState extends State<MesaScreen> {
                           style: TextStyle(color: _mPurpleHi),
                         ),
                         TextSpan(
-                          text: '${_j.placar['nos']}',
+                          text: '${_j.placar['nos']! + _j.pontosMesaAoVivo('nos')}',
                           style: const TextStyle(color: Colors.white),
                         ),
                         const TextSpan(
@@ -1898,7 +1920,7 @@ class _MesaScreenState extends State<MesaScreen> {
                           style: TextStyle(color: Color(0xFFF1C15B)),
                         ),
                         TextSpan(
-                          text: '${_j.placar['eles']}',
+                          text: '${_j.placar['eles']! + _j.pontosMesaAoVivo('eles')}',
                           style: const TextStyle(color: Colors.white),
                         ),
                       ],
@@ -1918,8 +1940,8 @@ class _MesaScreenState extends State<MesaScreen> {
       builder: (context, constraints) {
         // Núcleo central deliberadamente compacto. A altura economizada é
         // devolvida principalmente à área de jogos da dupla de baixo.
-        const centralHeight = 118.0;
-        const playerDockHeight = 180.0;
+        const centralHeight = 104.0; // núcleo mais compacto (centro menor)
+        const playerDockHeight = 170.0; // HUD mais baixo; mão preservada
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
           padding: const EdgeInsets.all(2),
@@ -1950,7 +1972,7 @@ class _MesaScreenState extends State<MesaScreen> {
                   child: Column(
                     children: [
                       Expanded(
-                        flex: 11,
+                        flex: 12,
                         child: _meldArea('eles', top: true),
                       ),
                       SizedBox(height: centralHeight, child: _centralTray()),
@@ -2309,8 +2331,8 @@ class _MesaScreenState extends State<MesaScreen> {
         (_lastPurchaseSource == 'lixo' && _recentlyBoughtIds.isNotEmpty);
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(4, 1, 4, 1),
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+      margin: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
         color: _mPanel,
         borderRadius: BorderRadius.circular(15),
@@ -2861,13 +2883,13 @@ class _MesaScreenState extends State<MesaScreen> {
     return Column(
       children: [
         SizedBox(
-          height: 52,
+          height: 42, // HUD do jogador mais baixo (libera altura p/ jogos)
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               GestureDetector(
                 onTap: () => setState(() => _expandedAvatarSeat = 0),
-                child: _avatarCircle(0, size: 50, active: active),
+                child: _avatarCircle(0, size: 40, active: active),
               ),
               const SizedBox(width: 7),
               Text(
