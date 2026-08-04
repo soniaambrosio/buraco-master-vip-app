@@ -31,6 +31,10 @@ bool _cartaVermelha(Carta c) => c.naipe == 'copas' || c.naipe == 'ouros';
 String _cartaSimb(Carta c) => c.ehCoringa && c.valor == 'JOKER' ? '★' : (_naipeSimb[c.naipe] ?? '');
 String _cartaRotulo(Carta c) => c.valor == 'JOKER' ? '★' : c.valor;
 
+// ===== AUDITORIA DE REGRAS (fase diagnóstica) — liga logs [AUD ...] no console.
+// Só instrumentação/observação; NÃO altera regras nem layout. Desligar depois.
+const bool kAuditoriaRegras = true;
+
 // imagem real da carta (baralho enviado pela Sônia). JOKER alterna entre os dois
 // desenhos de curinga (usando o id pra dar variedade); dorso do baralho pro monte/mortos.
 const String _dorsoAsset = 'assets/baralho/dorso.webp';
@@ -294,6 +298,33 @@ class Jogo {
     }
     return p;
   }
+
+  // ===================== AUDITORIA / INSTRUMENTAÇÃO (só leitura) =====================
+  // Invariante P0: TODO meld ARMAZENADO na mesa precisa passar no validador oficial.
+  // Devolve a descrição de cada meld ilegal encontrado (vazio = mesa 100% legal).
+  // Não altera estado nem comportamento — serve para provar estado × render.
+  List<String> auditarMeldsArmazenados() {
+    final falhas = <String>[];
+    for (final dupla in const ['nos', 'eles']) {
+      final jogos = jogosDupla[dupla]!;
+      for (var i = 0; i < jogos.length; i++) {
+        final m = jogos[i];
+        final r = _validarJogoMesa(m);
+        if (r['valido'] != true) {
+          final desc = m
+              .map((c) => '${c.valor}${c.naipe == null ? '' : '/${c.naipe}'}#${c.id}')
+              .join(' ');
+          falhas.add('$dupla[$i] ILEGAL (${r['motivo']}): $desc');
+        }
+      }
+    }
+    return falhas;
+  }
+
+  // Descrição textual de um meld (para logs de auditoria: valor/naipe + id).
+  static String descreverMeld(List<Carta> m) => m
+      .map((c) => '${c.valor}${c.naipe == null ? '' : '/${c.naipe}'}#${c.id}')
+      .join(' ');
 
   // Conta as duas duplas, soma no placar e marca a partida encerrada se bateu a meta.
   // Auto-protegida: só conta uma vez por rodada.
@@ -768,6 +799,11 @@ class Jogo {
       cartas.add(maos[assento][idx]);
     }
     final res = _validarJogoMesa(cartas);
+    if (kAuditoriaRegras) {
+      debugPrint('[AUD baixar] assento=$assento ids=$ids '
+          'cartas={${descreverMeld(cartas)}} -> '
+          '${res['valido'] == true ? 'OK tipo=${res['tipo']}' : 'REJEITADO: ${res['motivo']}'}');
+    }
     if (res['valido'] != true) return {'ok': false, 'erro': res['motivo'] ?? 'jogo inválido'};
     final dupla = _duplaKey(assento);
     // Gate de vulnerabilidade (seção 11): a PRIMEIRA baixada da dupla na rodada
@@ -786,6 +822,12 @@ class Jogo {
     final idset = ids.toSet();
     maos[assento] = maos[assento].where((c) => !idset.contains(c.id)).toList();
     jogosDupla[dupla]!.add(cartas);
+    if (kAuditoriaRegras) {
+      final falhas = auditarMeldsArmazenados();
+      if (falhas.isNotEmpty) {
+        debugPrint('[AUD !!! MELD ILEGAL ARMAZENADO após baixar] ${falhas.join(' | ')}');
+      }
+    }
     if (lixoTopoObrigatorio != null && idset.contains(lixoTopoObrigatorio)) {
       lixoTopoObrigatorio = null; // topo do lixo usado numa baixada → obrigação cumprida
     }
@@ -811,6 +853,11 @@ class Jogo {
       cartas.add(maos[assento][idx]);
     }
     final res = _validarJogoMesa([...alvo, ...cartas]);
+    if (kAuditoriaRegras) {
+      debugPrint('[AUD estender] assento=$assento jogo=$indiceJogo '
+          'alvo={${descreverMeld(alvo)}} +{${descreverMeld(cartas)}} -> '
+          '${res['valido'] == true ? 'OK tipo=${res['tipo']}' : 'REJEITADO: ${res['motivo']}'}');
+    }
     if (res['valido'] != true) return {'ok': false, 'erro': res['motivo'] ?? 'extensão inválida'};
     final maoRest = maos[assento].length - cartas.length;
     final futuros = [for (int i = 0; i < jogos.length; i++) i == indiceJogo ? [...alvo, ...cartas] : jogos[i]];
@@ -818,6 +865,12 @@ class Jogo {
     final idset = ids.toSet();
     maos[assento] = maos[assento].where((c) => !idset.contains(c.id)).toList();
     jogos[indiceJogo] = [...alvo, ...cartas];
+    if (kAuditoriaRegras) {
+      final falhas = auditarMeldsArmazenados();
+      if (falhas.isNotEmpty) {
+        debugPrint('[AUD !!! MELD ILEGAL ARMAZENADO após estender] ${falhas.join(' | ')}');
+      }
+    }
     if (lixoTopoObrigatorio != null && idset.contains(lixoTopoObrigatorio)) {
       lixoTopoObrigatorio = null; // topo do lixo usado numa extensão → obrigação cumprida
     }
@@ -2207,6 +2260,22 @@ class _MesaScreenState extends State<MesaScreen> {
     }
     for (final l in linhas) {
       l.sort(); // leitura estável dentro da linha
+    }
+
+    if (kAuditoriaRegras) {
+      for (var r = 0; r < linhas.length; r++) {
+        if (linhas[r].length >= 2) {
+          // DOIS OU MAIS jogos distintos na MESMA linha: risco de "colagem" visual.
+          // step = sobreposição interna das cartas; spacing = distância entre jogos.
+          debugPrint('[AUD render/_packedMelds] linha $r com ${linhas[r].length} '
+              'jogos DISTINTOS coladas: gap_entre_jogos=${spacing}px, '
+              'sobreposicao_interna(step)=${step}px '
+              '${spacing < step ? '(gap < step → PODE PARECER 1 jogo só)' : ''}');
+          for (final idx in linhas[r]) {
+            debugPrint('    jogo[$idx] = {${Jogo.descreverMeld(jogos[idx])}}');
+          }
+        }
+      }
     }
 
     return Column(

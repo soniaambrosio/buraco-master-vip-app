@@ -1016,4 +1016,49 @@ void main() {
       });
     }
   }
+
+  // ============== AUDITORIA (fase diagnóstica) — invariante P0 + estado × render ==============
+  // AUD-01: em partidas bot×bot, NENHUM meld armazenado pode ser ilegal. Se falhar,
+  // é BUG DE ESTADO (o motor guardou jogo inválido) — a mensagem mostra o meld e os IDs.
+  // Se passar sempre, é evidência de que o A♥/A♦ é RENDER (colagem), não estado.
+  for (final mod in ['ABERTO', 'FECHADO', 'SBTL']) {
+    test('AUD-01-$mod bot×bot: nenhum meld ILEGAL é armazenado (invariante P0)', () {
+      for (var partida = 0; partida < 4; partida++) {
+        final j = novo(mod);
+        j.metaPontos = 1500;
+        for (var rod = 0; rod < 60 && !j.encerrada; rod++) {
+          var seg = 0;
+          while (!j.rodadaEncerrada && seg < 3000) {
+            seg++;
+            final antes = j.vez;
+            j.botJoga(j.vez);
+            final falhas = j.auditarMeldsArmazenados();
+            expect(falhas, isEmpty,
+                reason: 'part$partida rod$rod após botJoga($antes) [$mod]: $falhas');
+            if (j.integridadeErro != null) break;
+          }
+          j.contarPontos();
+          if (!j.encerrada) j.novaRodada();
+        }
+      }
+    });
+  }
+
+  // AUD-02: dois jogos LEGAIS de naipes diferentes cabem na MESMA linha do _packedMelds
+  // com só 6px entre eles (< 20px de sobreposição interna) → colam e parecem UM jogo só
+  // com dois Áses de naipes diferentes. Prova a hipótese "colagem visual" (render).
+  test('AUD-02 render: dois jogos legais de naipes diferentes colam na mesma linha', () {
+    final j = novo('ABERTO');
+    final runCopas = [c('J', 'copas'), c('Q', 'copas'), c('K', 'copas'), c('A', 'copas')];
+    final runOuros = [c('J', 'ouros'), c('Q', 'ouros'), c('K', 'ouros'), c('A', 'ouros')];
+    expect(j.validarSequencia(runCopas)['valido'], true);
+    expect(j.validarSequencia(runOuros)['valido'], true);
+    const cardWidth = 66.0, step = 20.0, spacing = 6.0; // iguais ao _packedMelds
+    double larg(List<Carta> m) => cardWidth + (m.length - 1) * step;
+    const larguraUtil = 380.0; // largura típica da área de jogos
+    final juntas = larg(runCopas) + spacing + larg(runOuros);
+    expect(juntas <= larguraUtil, true,
+        reason: 'as duas corridas cabem juntas ($juntas <= $larguraUtil) a só ${spacing}px '
+            '(< step=${step}px) → colagem visual: parecem 1 jogo só com 2 Áses de naipes diferentes');
+  });
 }
