@@ -328,6 +328,39 @@ class Jogo {
       .map((c) => '${c.valor}${c.naipe == null ? '' : '/${c.naipe}'}#${c.id}')
       .join(' ');
 
+  // Empacotamento FFD dos jogos por linha — MESMA lógica do _packedMelds, extraída
+  // pura para teste fiel da colagem visual. `larguras` = largura de cada jogo na ordem
+  // original; devolve as linhas como listas de índices originais (ordenados). Sem efeito
+  // colateral. Usada tanto pelo render (_packedMelds) quanto pelo teste AUD-02.
+  static List<List<int>> empacotarLinhasFFD(
+      List<double> larguras, double larguraUtil, double spacing) {
+    final ordem = [for (var i = 0; i < larguras.length; i++) i]
+      ..sort((a, b) => larguras[b].compareTo(larguras[a]));
+    final linhas = <List<int>>[];
+    final ocupado = <double>[];
+    for (final i in ordem) {
+      final w = larguras[i];
+      var alvo = -1;
+      for (var r = 0; r < linhas.length; r++) {
+        if (ocupado[r] + spacing + w <= larguraUtil) {
+          alvo = r;
+          break;
+        }
+      }
+      if (alvo == -1) {
+        linhas.add([i]);
+        ocupado.add(w);
+      } else {
+        linhas[alvo].add(i);
+        ocupado[alvo] += spacing + w;
+      }
+    }
+    for (final l in linhas) {
+      l.sort();
+    }
+    return linhas;
+  }
+
   // Conta as duas duplas, soma no placar e marca a partida encerrada se bateu a meta.
   // Auto-protegida: só conta uma vez por rodada.
   void contarPontos() {
@@ -2237,32 +2270,9 @@ class _MesaScreenState extends State<MesaScreen> {
     double larguraJogo(List<Carta> m) =>
         cardWidth + (m.length - 1).clamp(0, 999) * step;
 
-    // índices ordenados por largura decrescente (FFD)
-    final ordem = [for (var i = 0; i < jogos.length; i++) i]
-      ..sort((a, b) => larguraJogo(jogos[b]).compareTo(larguraJogo(jogos[a])));
-
-    final linhas = <List<int>>[]; // cada linha = índices de jogos
-    final ocupado = <double>[]; // largura já usada por linha
-    for (final i in ordem) {
-      final w = larguraJogo(jogos[i]);
-      var alvo = -1;
-      for (var r = 0; r < linhas.length; r++) {
-        if (ocupado[r] + spacing + w <= larguraUtil) {
-          alvo = r;
-          break;
-        }
-      }
-      if (alvo == -1) {
-        linhas.add([i]);
-        ocupado.add(w);
-      } else {
-        linhas[alvo].add(i);
-        ocupado[alvo] += spacing + w;
-      }
-    }
-    for (final l in linhas) {
-      l.sort(); // leitura estável dentro da linha
-    }
+    // índices por linha (FFD) — função pura, MESMA usada no teste AUD-02
+    final linhas = Jogo.empacotarLinhasFFD(
+        [for (final g in jogos) larguraJogo(g)], larguraUtil, spacing);
 
     if (kAuditoriaRegras) {
       for (var r = 0; r < linhas.length; r++) {

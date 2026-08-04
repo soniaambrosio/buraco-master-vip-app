@@ -1024,52 +1024,93 @@ void main() {
   // AUD-01: em bot x bot, NENHUM meld ARMAZENADO pode ser ilegal (revalidado pelo motor).
   const kAudSeeds = [1, 2, 3, 7, 11, 13, 17, 23, 42, 99, 123, 777]; // 12 seeds fixas
   const kAudLimiteTurnos = 4000; // limite de turnos por partida (trava de seguranca)
+  const kCicloMax = 12; // mesma assinatura de estado repetida >12x numa rodada = ciclo
   for (final mod in ['ABERTO', 'FECHADO', 'SBTL']) {
-    test('AUD-01-$mod bot x bot deterministico (${kAudSeeds.length} seeds): nenhum meld ILEGAL armazenado', () {
+    test('AUD-01-$mod bot x bot deterministico (${kAudSeeds.length} seeds): sem meld ilegal, sem ciclo', () {
+      final sw = Stopwatch()..start();
+      var totalTurnos = 0, partidasCompletas = 0;
+      final naoConcluidas = <String>[]; // estourou seg/turno sem terminar a rodada
+      final ciclos = <String>[]; // estado repetido (assinatura) > kCicloMax numa rodada
       for (final seed in kAudSeeds) {
         final j = novo(mod, seed);
         j.metaPontos = 1500;
         var turno = 0;
-        for (var rod = 0; rod < 60 && !j.encerrada; rod++) {
+        var abortou = false;
+        for (var rod = 0; rod < 60 && !j.encerrada && !abortou; rod++) {
           var seg = 0;
+          final vistos = <String, int>{}; // assinaturas de estado desta rodada
           while (!j.rodadaEncerrada && seg < 3000 && turno < kAudLimiteTurnos) {
             seg++;
             turno++;
+            totalTurnos++;
             final assento = j.vez;
+            final sig = '${j.vez}|${j.monte.length}|${j.lixo.length}|'
+                '${j.maos.map((m) => m.length).join(',')}|'
+                '${j.jogosDupla['nos']!.map((g) => g.length).join('.')}|'
+                '${j.jogosDupla['eles']!.map((g) => g.length).join('.')}';
+            final n = (vistos[sig] ?? 0) + 1;
+            vistos[sig] = n;
+            if (n > kCicloMax) {
+              ciclos.add('seed=$seed mod=$mod rodada=$rod turno=$turno repetiu=${n}x sig=[$sig]');
+              abortou = true;
+              break;
+            }
             j.botJoga(j.vez);
             final falhas = j.auditarMeldsArmazenados();
             expect(falhas, isEmpty,
-                reason: 'ESTADO ILEGAL — seed=$seed mod=$mod rodada=$rod turno=$turno '
+                reason: 'ESTADO ILEGAL: seed=$seed mod=$mod rodada=$rod turno=$turno '
                     'assento=$assento :: ${falhas.join(' || ')}');
-            if (j.integridadeErro != null) break;
+            if (j.integridadeErro != null) {
+              abortou = true;
+              break;
+            }
           }
-          j.contarPontos();
-          if (!j.encerrada) j.novaRodada();
+          if (!abortou && (seg >= 3000 || turno >= kAudLimiteTurnos)) {
+            naoConcluidas.add('seed=$seed mod=$mod rodada=$rod seg=$seg turno=$turno');
+            abortou = true;
+          }
+          if (!abortou) {
+            j.contarPontos();
+            if (!j.encerrada) j.novaRodada();
+          }
         }
+        if (!abortou && j.encerrada) partidasCompletas++;
       }
+      sw.stop();
+      // RELATORIO INTEGRAL (visivel no log do CI com --reporter expanded):
+      // ignore: avoid_print
+      print('[AUD-01 $mod] duracao=${sw.elapsedMilliseconds}ms seeds=${kAudSeeds.length} '
+          'partidas_completas=$partidasCompletas total_turnos=$totalTurnos '
+          'nao_concluidas=${naoConcluidas.length} ciclos=${ciclos.length}');
+      expect(ciclos, isEmpty, reason: 'CICLO/ESTADO REPETIDO: ${ciclos.join(' ; ')}');
+      expect(naoConcluidas, isEmpty, reason: 'NAO CONCLUIDA (possivel loop): ${naoConcluidas.join(' ; ')}');
     });
   }
 
-  // AUD-02: dois jogos LEGAIS de naipes diferentes, cada um terminando em As, cabem na
-  // MESMA linha do _packedMelds a so 6px (< step 20px) -> colam e parecem 1 jogo so com dois
-  // Ases de naipes diferentes que, na verdade, estao em MELDS DIFERENTES (render, nao estado).
-  test('AUD-02 render: aces colados vem de MELDS DIFERENTES (colagem, nao estado)', () {
+  // AUD-02: usa o EMPACOTAMENTO REAL do _packedMelds (funcao pura Jogo.empacotarLinhasFFD).
+  // Dois jogos LEGAIS de naipes diferentes, cada um terminando em As, caem na MESMA linha
+  // (gap 6px < step 20px) -> colam e parecem 1 jogo so com dois aces de naipes diferentes,
+  // que na verdade estao em MELDS DIFERENTES (render, nao estado).
+  test('AUD-02 render (FFD real): dois jogos legais de naipes diferentes vao pra MESMA linha', () {
     final j = novo('ABERTO');
     final runCopas = [c('J', 'copas'), c('Q', 'copas'), c('K', 'copas'), c('A', 'copas')];
     final runOuros = [c('J', 'ouros'), c('Q', 'ouros'), c('K', 'ouros'), c('A', 'ouros')];
     expect(j.validarSequencia(runCopas)['valido'], true);
     expect(j.validarSequencia(runOuros)['valido'], true);
-    final aCopas = runCopas.last, aOuros = runOuros.last; // os dois Ases
+    final aCopas = runCopas.last, aOuros = runOuros.last;
     expect(aCopas.valor == 'A' && aCopas.naipe == 'copas', true);
     expect(aOuros.valor == 'A' && aOuros.naipe == 'ouros', true);
-    expect(identical(runCopas, runOuros), false); // sao melds DISTINTOS
+    expect(identical(runCopas, runOuros), false); // melds DISTINTOS
     const cardWidth = 66.0, step = 20.0, spacing = 6.0; // iguais ao _packedMelds
     double larg(List<Carta> m) => cardWidth + (m.length - 1) * step;
     const larguraUtil = 380.0; // largura tipica da area de jogos
-    final juntas = larg(runCopas) + spacing + larg(runOuros);
-    expect(juntas <= larguraUtil, true,
-        reason: 'as duas corridas cabem juntas ($juntas <= $larguraUtil) a so ${spacing}px '
-            '(< step=${step}px) -> A/copas#${aCopas.id} e A/ouros#${aOuros.id} colam mas sao '
-            'MELDS DIFERENTES (render/colagem, nao meld ilegal)');
+    final jogos = [runCopas, runOuros]; // indices 0 e 1
+    final linhas =
+        Jogo.empacotarLinhasFFD([for (final g in jogos) larg(g)], larguraUtil, spacing);
+    final mesmaLinha = linhas.any((l) => l.contains(0) && l.contains(1));
+    expect(mesmaLinha, true,
+        reason: 'FFD real: jogo0(A/copas#${aCopas.id}) e jogo1(A/ouros#${aOuros.id}) na MESMA '
+            'linha (gap=${spacing}px < step=${step}px) -> colam e parecem 1 jogo so com 2 aces '
+            'de naipes diferentes. Linhas=$linhas');
   });
 }
