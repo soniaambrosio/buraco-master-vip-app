@@ -11,9 +11,9 @@ Carta c(String valor, String? naipe) =>
         valor == '2' || valor == 'JOKER');
 Carta cj() => c('JOKER', null);
 
-Jogo novo([String modalidade = 'ABERTO']) {
+Jogo novo([String modalidade = 'ABERTO', int? seed]) {
   final j = Jogo(const ['você', 'B1', 'B2', 'B3'], const ['', '', '', ''],
-      const ['', '', '', '']);
+      const ['', '', '', ''], seed: seed);
   j.modalidade = modalidade;
   return j;
 }
@@ -1017,24 +1017,30 @@ void main() {
     }
   }
 
-  // ============== AUDITORIA (fase diagnóstica) — invariante P0 + estado × render ==============
-  // AUD-01: em partidas bot×bot, NENHUM meld armazenado pode ser ilegal. Se falhar,
-  // é BUG DE ESTADO (o motor guardou jogo inválido) — a mensagem mostra o meld e os IDs.
-  // Se passar sempre, é evidência de que o A♥/A♦ é RENDER (colagem), não estado.
+  // ============== AUDITORIA (fase diagnóstica) — invariante P0 + estado x render ==============
+  // DETERMINISTICO: seeds fixas, nº de partidas e limite de turnos declarados. Se falhar,
+  // o relatorio traz seed+modalidade+rodada+turno+assento+meld+IDs para reproducao exata.
+  // NAO depende de debugPrint: a falha e do proprio expect, com relatorio completo.
+  // AUD-01: em bot x bot, NENHUM meld ARMAZENADO pode ser ilegal (revalidado pelo motor).
+  const kAudSeeds = [1, 2, 3, 7, 11, 13, 17, 23, 42, 99, 123, 777]; // 12 seeds fixas
+  const kAudLimiteTurnos = 4000; // limite de turnos por partida (trava de seguranca)
   for (final mod in ['ABERTO', 'FECHADO', 'SBTL']) {
-    test('AUD-01-$mod bot×bot: nenhum meld ILEGAL é armazenado (invariante P0)', () {
-      for (var partida = 0; partida < 4; partida++) {
-        final j = novo(mod);
+    test('AUD-01-$mod bot x bot deterministico (${kAudSeeds.length} seeds): nenhum meld ILEGAL armazenado', () {
+      for (final seed in kAudSeeds) {
+        final j = novo(mod, seed);
         j.metaPontos = 1500;
+        var turno = 0;
         for (var rod = 0; rod < 60 && !j.encerrada; rod++) {
           var seg = 0;
-          while (!j.rodadaEncerrada && seg < 3000) {
+          while (!j.rodadaEncerrada && seg < 3000 && turno < kAudLimiteTurnos) {
             seg++;
-            final antes = j.vez;
+            turno++;
+            final assento = j.vez;
             j.botJoga(j.vez);
             final falhas = j.auditarMeldsArmazenados();
             expect(falhas, isEmpty,
-                reason: 'part$partida rod$rod após botJoga($antes) [$mod]: $falhas');
+                reason: 'ESTADO ILEGAL — seed=$seed mod=$mod rodada=$rod turno=$turno '
+                    'assento=$assento :: ${falhas.join(' || ')}');
             if (j.integridadeErro != null) break;
           }
           j.contarPontos();
@@ -1044,21 +1050,26 @@ void main() {
     });
   }
 
-  // AUD-02: dois jogos LEGAIS de naipes diferentes cabem na MESMA linha do _packedMelds
-  // com só 6px entre eles (< 20px de sobreposição interna) → colam e parecem UM jogo só
-  // com dois Áses de naipes diferentes. Prova a hipótese "colagem visual" (render).
-  test('AUD-02 render: dois jogos legais de naipes diferentes colam na mesma linha', () {
+  // AUD-02: dois jogos LEGAIS de naipes diferentes, cada um terminando em As, cabem na
+  // MESMA linha do _packedMelds a so 6px (< step 20px) -> colam e parecem 1 jogo so com dois
+  // Ases de naipes diferentes que, na verdade, estao em MELDS DIFERENTES (render, nao estado).
+  test('AUD-02 render: aces colados vem de MELDS DIFERENTES (colagem, nao estado)', () {
     final j = novo('ABERTO');
     final runCopas = [c('J', 'copas'), c('Q', 'copas'), c('K', 'copas'), c('A', 'copas')];
     final runOuros = [c('J', 'ouros'), c('Q', 'ouros'), c('K', 'ouros'), c('A', 'ouros')];
     expect(j.validarSequencia(runCopas)['valido'], true);
     expect(j.validarSequencia(runOuros)['valido'], true);
+    final aCopas = runCopas.last, aOuros = runOuros.last; // os dois Ases
+    expect(aCopas.valor == 'A' && aCopas.naipe == 'copas', true);
+    expect(aOuros.valor == 'A' && aOuros.naipe == 'ouros', true);
+    expect(identical(runCopas, runOuros), false); // sao melds DISTINTOS
     const cardWidth = 66.0, step = 20.0, spacing = 6.0; // iguais ao _packedMelds
     double larg(List<Carta> m) => cardWidth + (m.length - 1) * step;
-    const larguraUtil = 380.0; // largura típica da área de jogos
+    const larguraUtil = 380.0; // largura tipica da area de jogos
     final juntas = larg(runCopas) + spacing + larg(runOuros);
     expect(juntas <= larguraUtil, true,
-        reason: 'as duas corridas cabem juntas ($juntas <= $larguraUtil) a só ${spacing}px '
-            '(< step=${step}px) → colagem visual: parecem 1 jogo só com 2 Áses de naipes diferentes');
+        reason: 'as duas corridas cabem juntas ($juntas <= $larguraUtil) a so ${spacing}px '
+            '(< step=${step}px) -> A/copas#${aCopas.id} e A/ouros#${aOuros.id} colam mas sao '
+            'MELDS DIFERENTES (render/colagem, nao meld ilegal)');
   });
 }

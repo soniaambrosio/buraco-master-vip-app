@@ -32,8 +32,9 @@ String _cartaSimb(Carta c) => c.ehCoringa && c.valor == 'JOKER' ? '★' : (_naip
 String _cartaRotulo(Carta c) => c.valor == 'JOKER' ? '★' : c.valor;
 
 // ===== AUDITORIA DE REGRAS (fase diagnóstica) — liga logs [AUD ...] no console.
-// Só instrumentação/observação; NÃO altera regras nem layout. Desligar depois.
-const bool kAuditoriaRegras = true;
+// Só instrumentação/observação; NÃO altera regras nem layout.
+// DESLIGADA por padrão; liga com --dart-define=AUD_REGRAS=true.
+const bool kAuditoriaRegras = bool.fromEnvironment('AUD_REGRAS');
 
 // imagem real da carta (baralho enviado pela Sônia). JOKER alterna entre os dois
 // desenhos de curinga (usando o id pra dar variedade); dorso do baralho pro monte/mortos.
@@ -48,7 +49,7 @@ String _cartaAsset(Carta c) {
 
 // ---------- MOTOR ----------
 class Jogo {
-  final _rnd = Random();
+  final Random _rnd; // semeável p/ testes determinísticos (produção = sem seed)
   int _cont = 0;
   static const _naipes = ['copas', 'ouros', 'paus', 'espadas'];
   static const _valores = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
@@ -118,7 +119,8 @@ class Jogo {
   final List<String> apelidos;
   final List<String> avatares;
   final List<String> mascotes;
-  Jogo(this.apelidos, this.avatares, this.mascotes) {
+  Jogo(this.apelidos, this.avatares, this.mascotes, {int? seed})
+      : _rnd = seed == null ? Random() : Random(seed) {
     _distribuir();
   }
 
@@ -2264,15 +2266,38 @@ class _MesaScreenState extends State<MesaScreen> {
 
     if (kAuditoriaRegras) {
       for (var r = 0; r < linhas.length; r++) {
-        if (linhas[r].length >= 2) {
-          // DOIS OU MAIS jogos distintos na MESMA linha: risco de "colagem" visual.
-          // step = sobreposição interna das cartas; spacing = distância entre jogos.
-          debugPrint('[AUD render/_packedMelds] linha $r com ${linhas[r].length} '
-              'jogos DISTINTOS coladas: gap_entre_jogos=${spacing}px, '
-              'sobreposicao_interna(step)=${step}px '
-              '${spacing < step ? '(gap < step → PODE PARECER 1 jogo só)' : ''}');
-          for (final idx in linhas[r]) {
-            debugPrint('    jogo[$idx] = {${Jogo.descreverMeld(jogos[idx])}}');
+        if (linhas[r].length < 2) continue;
+        // DOIS+ jogos DISTINTOS na MESMA linha: risco de "colagem" visual.
+        debugPrint('[AUD render/_packedMelds] dupla=$dupla linha=$r '
+            'jogos=${linhas[r].length} gap_entre_jogos=${spacing}px '
+            'sobreposicao_interna_step=${step}px '
+            '${spacing < step ? '(gap < step → PODEM PARECER 1 JOGO SÓ)' : ''}');
+        for (var p = 0; p < linhas[r].length; p++) {
+          final idx = linhas[r][p];
+          final m = jogos[idx];
+          debugPrint('    jogo[$idx] = {${Jogo.descreverMeld(m)}}');
+          if (p > 0) {
+            final ant = jogos[linhas[r][p - 1]];
+            final ultimaAnt = ant.isNotEmpty ? ant.last : null;
+            final primeiraAtual = m.isNotEmpty ? m.first : null;
+            debugPrint('      fronteira: ultima_do_jogo_${linhas[r][p - 1]}='
+                '${ultimaAnt == null ? '-' : Jogo.descreverMeld([ultimaAnt])} | '
+                'primeira_do_jogo_$idx='
+                '${primeiraAtual == null ? '-' : Jogo.descreverMeld([primeiraAtual])} | '
+                'gap=${spacing}px step=${step}px');
+          }
+          // Confirmação específica do caso A♥/A♦: ases de naipes DIFERENTES em
+          // jogos DISTINTOS colados na mesma linha (é render, não estado).
+          for (var q = 0; q < p; q++) {
+            final outro = jogos[linhas[r][q]];
+            for (final a in m.where((c) => c.valor == 'A')) {
+              for (final b in outro.where((c) => c.valor == 'A' && c.naipe != a.naipe)) {
+                debugPrint('[AUD A♥/A♦] ases de naipes DIFERENTES em MELDS DIFERENTES '
+                    'colados: jogo[$idx] tem ${a.valor}/${a.naipe}#${a.id} e '
+                    'jogo[${linhas[r][q]}] tem ${b.valor}/${b.naipe}#${b.id} '
+                    '→ são jogos SEPARADOS (render/colagem), NÃO um meld ilegal.');
+              }
+            }
           }
         }
       }
