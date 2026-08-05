@@ -15,6 +15,8 @@ import 'package:buraco_master_vip/rules/replay.dart';
 import 'package:buraco_master_vip/rules/rules_engine.dart';
 // C2 — validador de meld canônico (aditivo; motor antigo continua padrão).
 import 'package:buraco_master_vip/rules/meld/meld_validator.dart';
+// C3 — pontuação canônica (aditivo; motor antigo continua padrão).
+import 'package:buraco_master_vip/rules/pontuacao_canonica.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -1619,6 +1621,188 @@ void main() {
       ];
       expect(validarJogoMesa(trioAs, fechado).tipo, 'trinca');
       expect(validarSequencia(trioAs, fechado).valido, false);
+    });
+  });
+
+  // ===================================================================
+  // C3 — PONTUAÇÃO canônica (rules/pontuacao_canonica.dart). Aditivos: só
+  // exercitam o módulo novo; motor antigo continua ativo em runtime.
+  // Inclui vetores anti-dupla-contagem entre cartas e bônus de canastra.
+  // ===================================================================
+  group('C3 — pontuação canônica', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+    const aK = [
+      'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'
+    ];
+    List<CartaSnapshot> runCopas(List<String> vs) =>
+        [for (int i = 0; i < vs.length; i++) csm('c$i', 'copas', vs[i])];
+
+    test('PONT-CANON-01 valor das cartas', () {
+      expect(valorCarta(csm('a', 'copas', 'A')), 15);
+      expect(valorCarta(csm('j', '', 'JOKER')), 50);
+      expect(valorCarta(csm('d', 'copas', '2')), 10);
+      for (final v in ['8', '9', '10', 'J', 'Q', 'K']) {
+        expect(valorCarta(csm('x', 'copas', v)), 10, reason: v);
+      }
+      for (final v in ['3', '4', '5', '6', '7']) {
+        expect(valorCarta(csm('x', 'copas', v)), 5, reason: v);
+      }
+    });
+
+    test('PONT-CANON-02 meld curto: só pontos das cartas, sem bônus', () {
+      final m = validarSequencia(
+          [csm('a', 'copas', '4'), csm('b', 'copas', '5'), csm('c', 'copas', '6')],
+          aberto);
+      final p = pontosMeld(m);
+      expect(p.cartas, 15); // 5+5+5
+      expect(p.bonus, 0); // <7 não é canastra
+      expect(p.total, 15);
+    });
+
+    test('PONT-CANON-03 canastra limpa (7+, sem curinga) = cartas + 200', () {
+      final m = validarSequencia(runCopas(['3', '4', '5', '6', '7', '8', '9']),
+          aberto);
+      expect(m.classificacao, 'limpa');
+      final p = pontosMeld(m);
+      expect(p.cartas, 45); // 5*5 + 10*2
+      expect(p.bonus, 200);
+      expect(p.total, 245);
+    });
+
+    test('PONT-CANON-04 canastra suja (7+, com curinga) = cartas + 100', () {
+      final m = validarSequencia([
+        csm('c3', 'copas', '3'),
+        csm('c4', 'copas', '4'),
+        csm('c5', 'copas', '5'),
+        csm('c6', 'copas', '6'),
+        csm('c7', 'copas', '7'),
+        csm('c8', 'copas', '8'),
+        csm('j', '', 'JOKER'),
+      ], aberto);
+      expect(m.classificacao, 'suja');
+      expect(m.qtdCuringas, 1);
+      final p = pontosMeld(m);
+      expect(p.cartas, 85); // 3-7=25, 8=10, joker=50
+      expect(p.bonus, 100);
+      expect(p.total, 185);
+    });
+
+    test('PONT-CANON-05 de_500 (A-K) = cartas + 500 (só o maior bônus)', () {
+      final m = validarSequencia(runCopas(aK), aberto);
+      expect(m.classificacao, 'de_500');
+      final p = pontosMeld(m);
+      expect(p.cartas, 110); // A15 + 2:10 + (3-7)25 + (8-K)60
+      expect(p.bonus, 500); // não 200 (limpa) nem 700
+      expect(p.total, 610);
+    });
+
+    test('PONT-CANON-06 as_a_as (A-K-A) = cartas + 1000 (só o maior bônus)', () {
+      final cards = [...runCopas(aK), csm('cA2', 'copas', 'A')];
+      final m = validarSequencia(cards, aberto);
+      expect(m.classificacao, 'as_a_as');
+      final p = pontosMeld(m);
+      expect(p.cartas, 125); // 110 + A(15)
+      expect(p.bonus, 1000);
+      expect(p.total, 1125);
+    });
+
+    test('PONT-CANON-07 trinca (mesmo 7+) = só cartas, sem bônus de canastra',
+        () {
+      const naipes = [
+        'copas', 'ouros', 'espadas', 'paus', 'copas', 'ouros', 'espadas'
+      ];
+      final nines = [for (int i = 0; i < 7; i++) csm('n$i', naipes[i], '9')];
+      final m = validarTrinca(nines, fechado);
+      expect(m.valido, true);
+      expect(m.tipo, 'trinca');
+      final p = pontosMeld(m);
+      expect(p.cartas, 70); // 7 * 10
+      expect(p.bonus, 0); // trinca nunca forma canastra
+      expect(p.total, 70);
+    });
+
+    test('PONT-CANON-08 penalidade da mão desconta o valor das cartas', () {
+      final r = pontuarRodada(
+          EntradaRodada(mao: [csm('a', 'copas', 'A'), csm('k', 'copas', 'K')]),
+          aberto);
+      expect(r.mao, 25); // 15 + 10
+      expect(r.total, -25);
+    });
+
+    test('PONT-CANON-09 batida soma +100', () {
+      final sem = pontuarRodada(const EntradaRodada(bateu: false), aberto);
+      final com = pontuarRodada(const EntradaRodada(bateu: true), aberto);
+      expect(com.batida, 100);
+      expect(com.total - sem.total, 100);
+    });
+
+    test('PONT-CANON-10 morto não pego (alguém pegou, sem conversão) = -100',
+        () {
+      final penal = pontuarRodada(
+          const EntradaRodada(mortoPego: false, algumPegouMorto: true), aberto);
+      expect(penal.penalidadeMorto, 100);
+      expect(penal.total, -100);
+      final pego = pontuarRodada(
+          const EntradaRodada(mortoPego: true, algumPegouMorto: true), aberto);
+      expect(pego.penalidadeMorto, 0);
+      final conv = pontuarRodada(
+          const EntradaRodada(
+              mortoPego: false, algumPegouMorto: true, mortoConvertido: true),
+          aberto);
+      expect(conv.penalidadeMorto, 0);
+      final ninguem = pontuarRodada(
+          const EntradaRodada(mortoPego: false, algumPegouMorto: false),
+          aberto);
+      expect(ninguem.penalidadeMorto, 0);
+    });
+
+    test('PONT-CANON-11 parcial da rodada x acumulada da partida', () {
+      // canastra limpa 7 (245) + batida (100), mão 0
+      final canastra = runCopas(['3', '4', '5', '6', '7', '8', '9']);
+      final r = pontuarRodada(
+          EntradaRodada(melds: [canastra], bateu: true), aberto);
+      expect(r.total, 345); // 45 + 200 + 100
+      expect(r.parcial.total, 345);
+      var partida = const PontuacaoPartida(nos: 500, eles: 400);
+      partida = partida.somarRodada('nos', r.parcial);
+      expect(partida.nos, 845);
+      expect(partida.eles, 400);
+    });
+
+    test('PONT-CANON-12 mínimo de abertura via RuleSpec (+75/+90)', () {
+      final v = fechado.vulnerabilidade;
+      expect(v.minimoParaDescer(rodadasVulneravel: 0, jaAbriuNaRodada: false), 0);
+      expect(
+          v.minimoParaDescer(rodadasVulneravel: 1, jaAbriuNaRodada: false), 75);
+      expect(
+          v.minimoParaDescer(rodadasVulneravel: 2, jaAbriuNaRodada: false), 90);
+    });
+
+    test('PONT-CANON-13 fim de partida: meta cruzada e sem empate', () {
+      expect(partidaEncerrada(const PontuacaoPartida(nos: 1500, eles: 1400), 1500),
+          true);
+      // empate exato na meta força rodada extra
+      expect(partidaEncerrada(const PontuacaoPartida(nos: 1500, eles: 1500), 1500),
+          false);
+      expect(partidaEncerrada(const PontuacaoPartida(nos: 1490, eles: 1400), 1500),
+          false);
+    });
+
+    test('PONT-DOUBLE-01 sem dupla contagem entre cartas e bônus de canastra',
+        () {
+      final cards = runCopas(['3', '4', '5', '6', '7', '8', '9']);
+      final m = validarSequencia(cards, aberto);
+      final p = pontosMeld(m);
+      final somaManual = cards.fold<int>(0, (s, c) => s + valorCarta(c));
+      expect(p.cartas, somaManual); // cada carta contada UMA vez
+      expect(p.bonus, 200); // bônus fixo, NÃO inclui valor de carta
+      expect(p.total, somaManual + 200); // exatamente cartas + bônus
+      // e NÃO é cartas contadas duas vezes nem bônus dobrado
+      expect(p.total == 2 * somaManual + 200, false);
+      expect(p.total == somaManual + 400, false);
     });
   });
 }
