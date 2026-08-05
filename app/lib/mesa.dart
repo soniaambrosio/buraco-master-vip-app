@@ -2254,7 +2254,7 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _packedMelds(String dupla, List<List<Carta>> jogos, double larguraUtil) {
     const double cardWidth = 66.0; // igual ao _meldWidget
     const double step = 20.0; // desloc. horizontal maior: índice+naipe visíveis
-    const double spacing = 6.0;
+    const double spacing = 12.0; // P0-A: gap entre melds distintos (com divisor discreto)
     const double runSpacing = 6.0;
     double larguraJogo(List<Carta> m) =>
         cardWidth + (m.length - 1).clamp(0, 999) * step;
@@ -2313,7 +2313,22 @@ class _MesaScreenState extends State<MesaScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               for (var k = 0; k < linhas[r].length; k++) ...[
-                if (k > 0) const SizedBox(width: spacing),
+                // P0-A: separador SÓ entre melds distintos — gap 12px com um
+                // divisor dourado discreto de 1px (não parece parte de carta).
+                if (k > 0)
+                  const SizedBox(
+                    width: spacing,
+                    height: 77,
+                    child: Center(
+                      child: SizedBox(
+                        width: 1,
+                        height: 48,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(color: Color(0x66E5B84F)),
+                        ),
+                      ),
+                    ),
+                  ),
                 _meldWidget(dupla, linhas[r][k], jogos[linhas[r][k]]),
               ],
             ],
@@ -3027,13 +3042,16 @@ class _MesaScreenState extends State<MesaScreen> {
     // de cada carta entre 32% (poucas cartas) e 25% (muitas) da largura, sem
     // reduzir a carta. A última carta continua inteira (Stack) e a mão mantém
     // scroll horizontal. Ajuste SÓ visual — não altera estado, seleção nem regras.
+    // Mão do jogador com passo horizontal MAIOR (índice+naipe sempre visíveis):
+    // ~0.42 (poucas cartas → passo ~28px) reduzindo até ~0.33 (mãos grandes → ~22px).
+    // Carta mantida 66x77; scroll horizontal preservado.
     final double frac = count <= 12
-        ? 0.32
+        ? 0.42
         : count >= 24
-            ? 0.25
-            : 0.32 - (count - 12) * (0.07 / 12);
+            ? 0.33
+            : 0.42 - (count - 12) * (0.09 / 12);
     final double step = cardWidth * frac;
-    const selectedLift = 13.0;
+    const selectedLift = 8.0; // elevação da selecionada reduzida (P0-A/mão)
     final active = _minhaVezAtiva;
     final totalWidth = cardWidth + (count - 1) * step;
 
