@@ -277,6 +277,12 @@ ResolucaoValidade resolverValidade({
 /// Cada concessao e um registro proprio e permanece no historico mesmo quando o
 /// selo aparece uma unica vez no perfil com contador agregado: o contador e
 /// projecao, o registro e a fonte.
+///
+/// Duas portas de entrada, com regras diferentes de proposito:
+/// - [RecompensaConcessao.new] EMITE uma concessao nova e por isso exige a
+///   [RecompensaPolitica] vigente, de onde saem `assetId` e `acumulaContador`;
+/// - [RecompensaConcessao.fromMap] HIDRATA um registro ja gravado e nao toca em
+///   politica alguma, restaurando o snapshot exatamente como ele foi salvo.
 class RecompensaConcessao {
   /// Identificador do registro de concessao. Distinto de [chaveIdempotencia]:
   /// este identifica a LINHA, aquela identifica o DIREITO.
@@ -378,6 +384,127 @@ class RecompensaConcessao {
         assetId: politica.assetId,
       ),
     );
+  }
+
+  /// Reconstroi um registro ja persistido, restaurando o snapshot como ele foi
+  /// gravado.
+  ///
+  /// Deliberadamente NAO recebe [RecompensaPolitica]: a politica vale para
+  /// EMITIR uma concessao nova, nao para reinterpretar uma antiga. Se a
+  /// administracao mudar duracao, hierarquia ou contador amanha, o historico do
+  /// jogador continua sendo lido com a regra que valia no dia.
+  ///
+  /// Rejeita registro corrompido com [FormatException] em vez de assumir
+  /// default: um campo faltando ou uma data ambigua viram silenciosamente um
+  /// premio errado no perfil, e ninguem descobre a origem depois.
+  factory RecompensaConcessao.fromMap(Map<String, dynamic> json) {
+    final rewardId = _texto(json, 'rewardId');
+    final userId = _texto(json, 'userId');
+    final tournamentId = _texto(json, 'tournamentId');
+    final editionId = _texto(json, 'editionId');
+    final assetId = _texto(json, 'assetId');
+    final grantedAt = _instanteUtc(json, 'grantedAt', obrigatorio: true)!;
+    final expiresAt = _instanteUtc(json, 'expiresAt', obrigatorio: false);
+    final motivo = _motivo(json);
+    final colocacao = _colocacao(json, motivo);
+    final acumulaContador = _booleano(json, 'acumulaContador');
+    final chave = _texto(json, 'chaveIdempotencia');
+
+    if (expiresAt != null && !expiresAt.isAfter(grantedAt)) {
+      _erro('expiresAt', json['expiresAt'], 'deve ser posterior a grantedAt');
+    }
+
+    // A chave gravada precisa bater com a que os proprios campos produzem.
+    // Divergencia significa registro adulterado ou migracao mal feita — aceitar
+    // quebraria a idempotencia justamente onde ela mais importa.
+    final String esperada;
+    try {
+      esperada = ChaveIdempotencia.de(
+        tournamentId: tournamentId,
+        editionId: editionId,
+        userId: userId,
+        assetId: assetId,
+      );
+    } on ArgumentError catch (e) {
+      throw FormatException('concessao: segmento invalido para a chave de idempotencia ($e).');
+    }
+    if (chave != esperada) {
+      _erro('chaveIdempotencia', chave, 'nao corresponde aos campos do registro ($esperada)');
+    }
+
+    return RecompensaConcessao._(
+      rewardId: rewardId,
+      userId: userId,
+      tournamentId: tournamentId,
+      editionId: editionId,
+      assetId: assetId,
+      grantedAt: grantedAt,
+      expiresAt: expiresAt,
+      motivo: motivo,
+      colocacao: colocacao,
+      acumulaContador: acumulaContador,
+      chaveIdempotencia: chave,
+    );
+  }
+
+  static Never _erro(String campo, Object? valor, String problema) =>
+      throw FormatException('concessao: $campo $problema (recebido: $valor).');
+
+  static String _texto(Map<String, dynamic> json, String campo) {
+    final Object? valor = json[campo];
+    if (valor is! String || valor.isEmpty) {
+      _erro(campo, valor, 'deve ser string nao vazia');
+    }
+    return valor;
+  }
+
+  static bool _booleano(Map<String, dynamic> json, String campo) {
+    final Object? valor = json[campo];
+    if (valor is! bool) _erro(campo, valor, 'deve ser booleano');
+    return valor;
+  }
+
+  /// Exige ISO-8601 explicitamente em UTC. Data sem fuso seria interpretada com
+  /// o relogio de quem le, e o mesmo registro expiraria em horas diferentes em
+  /// cada aparelho.
+  static DateTime? _instanteUtc(
+    Map<String, dynamic> json,
+    String campo, {
+    required bool obrigatorio,
+  }) {
+    final Object? valor = json[campo];
+    if (valor == null) {
+      if (obrigatorio) _erro(campo, valor, 'e obrigatorio');
+      return null;
+    }
+    if (valor is! String || valor.isEmpty) {
+      _erro(campo, valor, 'deve ser string ISO-8601 em UTC');
+    }
+    final instante = DateTime.tryParse(valor);
+    if (instante == null) _erro(campo, valor, 'nao e ISO-8601 valido');
+    if (!instante.isUtc) _erro(campo, valor, 'deve estar em UTC (sufixo Z)');
+    return instante;
+  }
+
+  static MotivoConcessao _motivo(Map<String, dynamic> json) {
+    final wire = _texto(json, 'motivo');
+    for (final motivo in MotivoConcessao.values) {
+      if (motivo.wire == wire) return motivo;
+    }
+    _erro('motivo', wire, 'nao corresponde a nenhum motivo conhecido');
+  }
+
+  static int? _colocacao(Map<String, dynamic> json, MotivoConcessao motivo) {
+    final Object? valor = json['colocacao'];
+    if (motivo.exigeColocacao) {
+      if (valor is! int) _erro('colocacao', valor, 'e obrigatoria em ${motivo.wire}');
+      if (valor < 1) _erro('colocacao', valor, 'deve ser >= 1');
+      return valor;
+    }
+    if (valor != null) {
+      _erro('colocacao', valor, 'so vale em ${MotivoConcessao.colocacao.wire}');
+    }
+    return null;
   }
 
   bool get permanente => expiresAt == null;

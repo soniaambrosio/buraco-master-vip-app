@@ -603,4 +603,166 @@ void main() {
       expect(json['expiresAt'], base.add(const Duration(days: 7)).toIso8601String());
     });
   });
+
+  group('hidratacao de registros persistidos', () {
+    /// Registro tipico gravado, servido como mapa mutavel para cada caso poder
+    /// corromper um campo por vez.
+    Map<String, dynamic> gravado(String assetId,
+            {MotivoConcessao motivo = MotivoConcessao.participacao, int? colocacao}) =>
+        Map<String, dynamic>.from(
+            conceder(assetId, motivo: motivo, colocacao: colocacao).concessao!.toJson());
+
+    test('1. round-trip toJson -> fromMap preserva todos os campos', () {
+      final original = conceder(TorneioAssetIds.crownTop3,
+              motivo: MotivoConcessao.colocacao, colocacao: 3)
+          .concessao!;
+      final hidratada = RecompensaConcessao.fromMap(original.toJson());
+
+      expect(hidratada.rewardId, original.rewardId);
+      expect(hidratada.userId, original.userId);
+      expect(hidratada.tournamentId, original.tournamentId);
+      expect(hidratada.editionId, original.editionId);
+      expect(hidratada.assetId, original.assetId);
+      expect(hidratada.grantedAt, original.grantedAt);
+      expect(hidratada.expiresAt, original.expiresAt);
+      expect(hidratada.motivo, original.motivo);
+      expect(hidratada.colocacao, original.colocacao);
+      expect(hidratada.acumulaContador, original.acumulaContador);
+      expect(hidratada.chaveIdempotencia, original.chaveIdempotencia);
+      expect(hidratada.toJson(), original.toJson());
+    });
+
+    test('2. recompensa permanente volta permanente', () {
+      final hidratada = RecompensaConcessao.fromMap(gravado(TorneioAssetIds.sealParticipant));
+      expect(hidratada.expiresAt, isNull);
+      expect(hidratada.permanente, isTrue);
+      expect(hidratada.ativaEm(DateTime.utc(2099)), isTrue);
+      expect(hidratada.ativaEm(base.subtract(const Duration(seconds: 1))), isFalse);
+    });
+
+    test('3. recompensa temporaria volta com a mesma janela', () {
+      final hidratada = RecompensaConcessao.fromMap(gravado(TorneioAssetIds.crownParticipant));
+      expect(hidratada.permanente, isFalse);
+      expect(hidratada.grantedAt.isUtc, isTrue);
+      expect(hidratada.expiresAt!.isUtc, isTrue);
+      expect(hidratada.expiresAt, base.add(const Duration(days: 3)));
+      expect(hidratada.ativaEm(base), isTrue);
+      expect(hidratada.ativaEm(hidratada.expiresAt!), isFalse);
+    });
+
+    test('4. hidratacao nao consulta a politica atual', () {
+      final antiga = gravado(TorneioAssetIds.sealParticipant);
+      expect(antiga['acumulaContador'], isTrue);
+
+      // A administracao desliga o contador do selo DEPOIS da gravacao.
+      final politicaNova = RewardPoliciesRegistry.fromMap(_comPoliticas(politicasRaiz,
+          sobrescrever: {
+            TorneioAssetIds.sealParticipant: {'acumulaContador': false}
+          }));
+      expect(politicaNova[TorneioAssetIds.sealParticipant].acumulaContador, isFalse);
+
+      // O registro historico volta com o snapshot do dia, nao com a regra nova.
+      final hidratada = RecompensaConcessao.fromMap(antiga);
+      expect(hidratada.acumulaContador, isTrue);
+      expect(
+        contarPermanentesDe(<RecompensaConcessao>[hidratada],
+            userId: 'u1', assetId: TorneioAssetIds.sealParticipant),
+        1,
+      );
+    });
+
+    test('5. data invalida e recusada', () {
+      final semFuso = gravado(TorneioAssetIds.crownParticipant)
+        ..['grantedAt'] = '2026-03-01T12:00:00.000';
+      expect(() => RecompensaConcessao.fromMap(semFuso), throwsFormatException);
+
+      final lixo = gravado(TorneioAssetIds.crownParticipant)..['grantedAt'] = 'ontem';
+      expect(() => RecompensaConcessao.fromMap(lixo), throwsFormatException);
+
+      final expiraAntes = gravado(TorneioAssetIds.crownParticipant)
+        ..['expiresAt'] = base.subtract(const Duration(days: 1)).toIso8601String();
+      expect(() => RecompensaConcessao.fromMap(expiraAntes), throwsFormatException);
+
+      final tipoErrado = gravado(TorneioAssetIds.crownParticipant)
+        ..['grantedAt'] = 1772000000000;
+      expect(() => RecompensaConcessao.fromMap(tipoErrado), throwsFormatException);
+    });
+
+    test('6. campo obrigatorio ausente e recusado', () {
+      for (final campo in const [
+        'rewardId',
+        'userId',
+        'tournamentId',
+        'editionId',
+        'assetId',
+        'grantedAt',
+        'motivo',
+        'acumulaContador',
+        'chaveIdempotencia',
+      ]) {
+        final semCampo = gravado(TorneioAssetIds.sealParticipant)..remove(campo);
+        expect(
+          () => RecompensaConcessao.fromMap(semCampo),
+          throwsFormatException,
+          reason: 'campo ausente deveria derrubar a hidratacao: $campo',
+        );
+      }
+
+      final vazio = gravado(TorneioAssetIds.sealParticipant)..['userId'] = '';
+      expect(() => RecompensaConcessao.fromMap(vazio), throwsFormatException);
+    });
+
+    test('7. enum invalido e recusado', () {
+      final motivoDesconhecido = gravado(TorneioAssetIds.sealParticipant)
+        ..['motivo'] = 'motivo_que_nao_existe';
+      expect(() => RecompensaConcessao.fromMap(motivoDesconhecido), throwsFormatException);
+
+      final motivoNaoTexto = gravado(TorneioAssetIds.sealParticipant)..['motivo'] = 7;
+      expect(() => RecompensaConcessao.fromMap(motivoNaoTexto), throwsFormatException);
+
+      // Coerencia motivo x colocacao tambem vale na hidratacao.
+      final semColocacao = gravado(TorneioAssetIds.crownTop3,
+          motivo: MotivoConcessao.colocacao, colocacao: 3)
+        ..['colocacao'] = null;
+      expect(() => RecompensaConcessao.fromMap(semColocacao), throwsFormatException);
+
+      final colocacaoIndevida = gravado(TorneioAssetIds.sealParticipant)..['colocacao'] = 1;
+      expect(() => RecompensaConcessao.fromMap(colocacaoIndevida), throwsFormatException);
+    });
+
+    test('8. chave de idempotencia incompativel e recusada', () {
+      final chaveTrocada = gravado(TorneioAssetIds.sealParticipant)
+        ..['chaveIdempotencia'] = 'tn-outro|ed-2026-03|u1|${TorneioAssetIds.sealParticipant}';
+      expect(() => RecompensaConcessao.fromMap(chaveTrocada), throwsFormatException);
+
+      // Campo adulterado sem atualizar a chave tambem nao passa.
+      final userTrocado = gravado(TorneioAssetIds.sealParticipant)..['userId'] = 'u9';
+      expect(() => RecompensaConcessao.fromMap(userTrocado), throwsFormatException);
+
+      final chaveMalFormada = gravado(TorneioAssetIds.sealParticipant)
+        ..['chaveIdempotencia'] = 'sem-separadores';
+      expect(() => RecompensaConcessao.fromMap(chaveMalFormada), throwsFormatException);
+    });
+
+    test('hidratada em lote alimenta o contador como a original', () {
+      final historico = <RecompensaConcessao>[];
+      for (final ed in ['ed-2026-01', 'ed-2026-02', 'ed-2026-03']) {
+        final r = conceder(TorneioAssetIds.sealParticipant,
+            editionId: ed, historico: historico);
+        if (r.concedida) historico.add(r.concessao!);
+      }
+      final relidos =
+          historico.map((c) => RecompensaConcessao.fromMap(c.toJson())).toList();
+
+      expect(relidos.length, 3);
+      expect(contarConcessoesPermanentes(relidos),
+          contarConcessoesPermanentes(historico));
+      expect(
+        contarPermanentesDe(relidos,
+            userId: 'u1', assetId: TorneioAssetIds.sealParticipant),
+        3,
+      );
+      expect(relidos.map((c) => c.chaveIdempotencia).toSet().length, 3);
+    });
+  });
 }
