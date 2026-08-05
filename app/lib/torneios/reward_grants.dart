@@ -109,24 +109,31 @@ class ResultadoAtivacao {
 
 /// Chave determinista de idempotencia.
 ///
-/// Contrato: `editionId + userId + assetId`. O mesmo jogador nao recebe duas
-/// vezes o mesmo ativo na mesma edicao — e a chave e reproduzivel offline, sem
-/// consultar nada, o que permite deduplicar no cliente e no servidor com o
-/// mesmo resultado.
+/// Contrato: `tournamentId + editionId + userId + assetId`. O mesmo jogador nao
+/// recebe duas vezes o mesmo ativo na mesma edicao do mesmo torneio — e a chave
+/// e reproduzivel offline, sem consultar nada, o que permite deduplicar no
+/// cliente e no servidor com o mesmo resultado.
+///
+/// O `tournamentId` entra na chave porque `editionId` so e unico DENTRO de um
+/// torneio: dois torneios distintos podem rodar a mesma janela de calendario e
+/// nomear a edicao igual. Sem esse segmento, a segunda concessao seria lida
+/// como repeticao da primeira e o jogador perderia a recompensa.
 abstract final class ChaveIdempotencia {
   /// Separador que nao pode aparecer nos segmentos, sob pena de duas chaves
   /// distintas colidirem em uma so string.
   static const separador = '|';
 
   static String de({
+    required String tournamentId,
     required String editionId,
     required String userId,
     required String assetId,
   }) {
+    _exigirSegmento(tournamentId, 'tournamentId');
     _exigirSegmento(editionId, 'editionId');
     _exigirSegmento(userId, 'userId');
     _exigirSegmento(assetId, 'assetId');
-    return '$editionId$separador$userId$separador$assetId';
+    return '$tournamentId$separador$editionId$separador$userId$separador$assetId';
   }
 
   static void _exigirSegmento(String valor, String campo) {
@@ -294,7 +301,15 @@ class RecompensaConcessao {
   /// [MotivoConcessao.colocacao], nula nos demais motivos.
   final int? colocacao;
 
-  /// `editionId + userId + assetId`. Sempre derivada, nunca recebida pronta.
+  /// Snapshot de `acumulaContador` da politica NO MOMENTO da concessao.
+  ///
+  /// Congelado de proposito: se a politica mudar depois, o passado nao pode ser
+  /// reinterpretado. Uma concessao emitida sob regra de contador continua
+  /// contando, e uma emitida fora dela continua fora.
+  final bool acumulaContador;
+
+  /// `tournamentId + editionId + userId + assetId`. Sempre derivada, nunca
+  /// recebida pronta.
   final String chaveIdempotencia;
 
   RecompensaConcessao._({
@@ -307,15 +322,19 @@ class RecompensaConcessao {
     required this.expiresAt,
     required this.motivo,
     required this.colocacao,
+    required this.acumulaContador,
     required this.chaveIdempotencia,
   });
 
+  /// O `assetId` e o snapshot de contador saem de [politica]: nao ha parametro
+  /// para informa-los soltos, justamente para o chamador nao poder divergir da
+  /// regra vigente.
   factory RecompensaConcessao({
     required String rewardId,
     required String userId,
     required String tournamentId,
     required String editionId,
-    required String assetId,
+    required RecompensaPolitica politica,
     required DateTime grantedAt,
     required DateTime? expiresAt,
     required MotivoConcessao motivo,
@@ -323,9 +342,6 @@ class RecompensaConcessao {
   }) {
     if (rewardId.isEmpty) {
       throw ArgumentError.value(rewardId, 'rewardId', 'nao pode ser vazio');
-    }
-    if (tournamentId.isEmpty) {
-      throw ArgumentError.value(tournamentId, 'tournamentId', 'nao pode ser vazio');
     }
     if (motivo.exigeColocacao) {
       if (colocacao == null) {
@@ -349,24 +365,35 @@ class RecompensaConcessao {
       userId: userId,
       tournamentId: tournamentId,
       editionId: editionId,
-      assetId: assetId,
+      assetId: politica.assetId,
       grantedAt: inicio,
       expiresAt: fim,
       motivo: motivo,
       colocacao: colocacao,
+      acumulaContador: politica.acumulaContador,
       chaveIdempotencia: ChaveIdempotencia.de(
+        tournamentId: tournamentId,
         editionId: editionId,
         userId: userId,
-        assetId: assetId,
+        assetId: politica.assetId,
       ),
     );
   }
 
   bool get permanente => expiresAt == null;
 
-  /// Vale no instante informado. Permanente vale sempre.
-  bool ativaEm(DateTime instante) =>
-      expiresAt == null || instante.toUtc().isBefore(expiresAt!);
+  /// Vale no instante informado, em janela fechada no inicio e aberta no fim:
+  /// `[grantedAt, expiresAt)`.
+  ///
+  /// Antes de [grantedAt] a recompensa ainda nao existe — devolver true ali
+  /// deixaria um titulo valendo antes de ser conquistado. No instante exato de
+  /// [expiresAt] ela ja nao vale, senao duas recompensas consecutivas se
+  /// sobreporiam por um tick na virada.
+  bool ativaEm(DateTime instante) {
+    final momento = instante.toUtc();
+    if (momento.isBefore(grantedAt)) return false;
+    return expiresAt == null || momento.isBefore(expiresAt!);
+  }
 
   Map<String, dynamic> toJson() => {
         'rewardId': rewardId,
@@ -378,6 +405,7 @@ class RecompensaConcessao {
         'expiresAt': expiresAt?.toIso8601String(),
         'motivo': motivo.wire,
         'colocacao': colocacao,
+        'acumulaContador': acumulaContador,
         'chaveIdempotencia': chaveIdempotencia,
       };
 
@@ -438,6 +466,7 @@ ResultadoConcessao concederRecompensa({
   }
 
   final chave = ChaveIdempotencia.de(
+    tournamentId: tournamentId,
     editionId: editionId,
     userId: userId,
     assetId: assetId,
@@ -446,8 +475,9 @@ ResultadoConcessao concederRecompensa({
     return const ResultadoConcessao.recusada(RecusaConcessao.concessaoDuplicada);
   }
 
+  final politica = politicas[assetId];
   final validade = resolverValidade(
-    politica: politicas[assetId],
+    politica: politica,
     grantedAt: grantedAt,
     proximaEdicaoEm: proximaEdicaoEm,
   );
@@ -460,7 +490,7 @@ ResultadoConcessao concederRecompensa({
     userId: userId,
     tournamentId: tournamentId,
     editionId: editionId,
-    assetId: assetId,
+    politica: politica,
     grantedAt: grantedAt,
     expiresAt: validade.expiresAt,
     motivo: motivo,
@@ -486,7 +516,12 @@ class ChaveContador {
   String toString() => '$userId/$assetId';
 }
 
-/// Agrega quantas concessoes permanentes cada jogador tem por ativo.
+/// Agrega quantas concessoes permanentes e acumulaveis cada jogador tem por
+/// ativo.
+///
+/// Entram apenas as concessoes com `permanente && acumulaContador`, lendo o
+/// snapshot gravado em cada registro — a politica ATUAL nao e consultada, para
+/// que uma mudanca de regra nao reescreva o passado do jogador.
 ///
 /// Projecao de leitura: o selo aparece uma vez no perfil com o contador ao lado,
 /// enquanto cada concessao segue existindo como registro proprio em [historico].
@@ -497,19 +532,24 @@ Map<ChaveContador, int> contarConcessoesPermanentes(
 ) {
   final contagem = <ChaveContador, int>{};
   for (final concessao in historico) {
-    if (!concessao.permanente) continue;
+    if (!concessao.permanente || !concessao.acumulaContador) continue;
     final chave = ChaveContador(concessao.userId, concessao.assetId);
     contagem[chave] = (contagem[chave] ?? 0) + 1;
   }
   return contagem;
 }
 
-/// Contador de um par especifico. Zero quando nunca houve concessao permanente.
+/// Contador de um par especifico, sob o mesmo criterio de
+/// [contarConcessoesPermanentes]. Zero quando nunca houve concessao contavel.
 int contarPermanentesDe(
   Iterable<RecompensaConcessao> historico, {
   required String userId,
   required String assetId,
 }) =>
     historico
-        .where((c) => c.permanente && c.userId == userId && c.assetId == assetId)
+        .where((c) =>
+            c.permanente &&
+            c.acumulaContador &&
+            c.userId == userId &&
+            c.assetId == assetId)
         .length;
