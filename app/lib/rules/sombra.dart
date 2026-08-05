@@ -57,6 +57,19 @@ const List<ExcecaoSombra> excecoesSombra = [
     testeCobertura: 'LIXO-DESACOPLA-01',
     etapaRemocao: 'C10',
   ),
+  ExcecaoSombra(
+    id: 'EXC-04',
+    descricao:
+        'Grupo só de ases: o antigo aceita como "de_as" (família sequência); o '
+        'canônico classifica como TRINCA no Fechado, NUNCA sequência; no Aberto '
+        'e no STBL é inválido. Trinca de ases não forma canastra, não recebe '
+        'bônus e não libera batida.',
+    casoEspecifico:
+        'A copas, A ouros, A espadas -> antigo de_as (sequência), canônico '
+        'TRINCA (Fechado); inválido no Aberto/STBL.',
+    testeCobertura: 'MELD-AS-01',
+    etapaRemocao: 'C10',
+  ),
 ];
 
 /// Verdade do modo sombra sobre um par de assinaturas de estado.

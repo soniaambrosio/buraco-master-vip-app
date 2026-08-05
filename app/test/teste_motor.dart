@@ -13,6 +13,8 @@ import 'package:buraco_master_vip/rules/estado.dart';
 import 'package:buraco_master_vip/rules/sombra.dart';
 import 'package:buraco_master_vip/rules/replay.dart';
 import 'package:buraco_master_vip/rules/rules_engine.dart';
+// C2 — validador de meld canônico (aditivo; motor antigo continua padrão).
+import 'package:buraco_master_vip/rules/meld/meld_validator.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -1217,10 +1219,10 @@ void main() {
       expect(p2.eles, 400);
     });
 
-    test('C1 Sombra: 3 excecoes versionadas e completas', () {
-      expect(excecoesSombra.length, 3);
+    test('C1 Sombra: excecoes versionadas e completas', () {
+      expect(excecoesSombra.length, 4);
       expect(excecoesSombra.map((e) => e.id).toList(),
-          ['EXC-01', 'EXC-02', 'EXC-03']);
+          ['EXC-01', 'EXC-02', 'EXC-03', 'EXC-04']);
       for (final e in excecoesSombra) {
         expect(e.descricao.isNotEmpty, true);
         expect(e.casoEspecifico.isNotEmpty, true);
@@ -1316,6 +1318,307 @@ void main() {
       );
       expect(() => eng.avaliar(estVazio, const ComprarMonte()),
           throwsUnimplementedError);
+    });
+  });
+
+  // ===================================================================
+  // C2 — MELDS canônicos (validador novo em rules/meld/). Testes de
+  // PROPRIEDADE obrigatórios. Aditivos: só exercitam o validador novo,
+  // sem tocar no comportamento do motor antigo.
+  // ===================================================================
+  group('C2 — melds canônicos (propriedades)', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+
+    List<List<T>> perms<T>(List<T> xs) {
+      if (xs.length <= 1) return [List<T>.from(xs)];
+      final out = <List<T>>[];
+      for (int i = 0; i < xs.length; i++) {
+        final rest = [...xs.sublist(0, i), ...xs.sublist(i + 1)];
+        for (final p in perms(rest)) {
+          out.add([xs[i], ...p]);
+        }
+      }
+      return out;
+    }
+
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+    final stbl = RuleSpec.canonica(Modalidade.stbl);
+
+    test('MELD-PROP-01 mesmo naipe (curinga não altera o naipe canônico)', () {
+      // sequência natural do mesmo naipe -> aceita
+      expect(
+          validarSequencia([
+            csm('a', 'copas', '4'),
+            csm('b', 'copas', '5'),
+            csm('c', 'copas', '6'),
+          ], aberto).valido,
+          true);
+      // uma carta natural de outro naipe -> rejeitada
+      expect(
+          validarSequencia([
+            csm('a', 'copas', '4'),
+            csm('b', 'copas', '5'),
+            csm('c', 'espadas', '6'),
+          ], aberto).valido,
+          false);
+      // A copas + A ouros na mesma sequência -> rejeitada
+      expect(
+          validarSequencia([
+            csm('a', 'copas', 'A'),
+            csm('b', 'ouros', 'A'),
+            csm('c', 'copas', '2'),
+          ], aberto).valido,
+          false);
+      // válida com um Joker -> aceita, naipe canônico preservado
+      final comJoker = validarSequencia([
+        csm('a', 'copas', '5'),
+        csm('j', '', 'JOKER'),
+        csm('c', 'copas', '7'),
+      ], aberto);
+      expect(comJoker.valido, true);
+      expect(comJoker.naipeCanonico, 'copas');
+      expect(comJoker.qtdCuringas, 1);
+      // válida com "2" contextual -> aceita conforme a melhor interpretação legal
+      final com2 = validarSequencia([
+        csm('a', 'copas', 'A'),
+        csm('b', 'copas', '2'),
+        csm('c', 'copas', '3'),
+      ], aberto);
+      expect(com2.valido, true);
+      expect(com2.qtdCuringas, 0); // "2" do mesmo naipe é a leitura mais limpa
+    });
+
+    test('MELD-PROP-02 invariância da ordem de entrada', () {
+      // 5-6-[7]-8 (copas) com Joker no lugar do 7
+      final base = [
+        csm('a', 'copas', '5'),
+        csm('b', 'copas', '6'),
+        csm('j', '', 'JOKER'),
+        csm('d', 'copas', '8'),
+      ];
+      final ref = validarSequencia(base, aberto);
+      expect(ref.valido, true);
+      expect(ref.qtdCuringas, 1);
+      for (final p in perms(base)) {
+        final r = validarSequencia(p, aberto);
+        expect(r.valido, ref.valido);
+        expect(r.tipo, ref.tipo);
+        expect(r.qtdCuringas, ref.qtdCuringas);
+        expect(r.posicoesCuringa, ref.posicoesCuringa);
+        expect(r.assinatura, ref.assinatura);
+        // pontuação é função pura das cartas + estrutura canônica: mesma
+        // sequência canônica => mesma pontuação. Comparamos a forma canônica.
+        expect(r.ordenado.map((c) => '${c.valor}/${c.naipe}').toList(),
+            ref.ordenado.map((c) => '${c.valor}/${c.naipe}').toList());
+      }
+    });
+
+    test('MELD-AS-01 ases de naipes diferentes', () {
+      // A♥,2♥,3♥ -> sequência válida
+      final s1 = validarSequencia([
+        csm('a', 'copas', 'A'),
+        csm('b', 'copas', '2'),
+        csm('c', 'copas', '3'),
+      ], aberto);
+      expect(s1.valido, true);
+      expect(s1.tipo, 'sequencia');
+      // A♥,2♥,3♥,A♦ -> inválida como sequência (ás de outro naipe)
+      expect(
+          validarSequencia([
+            csm('a', 'copas', 'A'),
+            csm('b', 'copas', '2'),
+            csm('c', 'copas', '3'),
+            csm('d', 'ouros', 'A'),
+          ], aberto).valido,
+          false);
+      // A♥,A♦,A♠ no Fechado -> trinca natural válida
+      final tr = validarJogoMesa([
+        csm('a', 'copas', 'A'),
+        csm('b', 'ouros', 'A'),
+        csm('c', 'espadas', 'A'),
+      ], fechado);
+      expect(tr.valido, true);
+      expect(tr.tipo, 'trinca');
+      // a MESMA trinca nunca pode ser classificada como sequência
+      expect(
+          validarSequencia([
+            csm('a', 'copas', 'A'),
+            csm('b', 'ouros', 'A'),
+            csm('c', 'espadas', 'A'),
+          ], fechado).valido,
+          false);
+      // trinca de ases não forma canastra e não libera batida
+      expect(tr.canastra, false);
+      expect(tr.liberaBatida, false);
+    });
+
+    test('MELD-TRIN-01 trinca somente natural', () {
+      // três naturais do mesmo valor -> válida no Fechado
+      expect(
+          validarTrinca([
+            csm('a', 'copas', 'K'),
+            csm('b', 'ouros', 'K'),
+            csm('c', 'espadas', 'K'),
+          ], fechado).valido,
+          true);
+      // três "2" naturais -> trinca de 2 válida
+      final t2 = validarTrinca([
+        csm('a', 'copas', '2'),
+        csm('b', 'ouros', '2'),
+        csm('c', 'espadas', '2'),
+      ], fechado);
+      expect(t2.valido, true);
+      expect(t2.tipo, 'trinca');
+      expect(t2.qtdCuringas, 0);
+      // duas naturais + Joker -> inválida
+      expect(
+          validarTrinca([
+            csm('a', 'copas', 'K'),
+            csm('b', 'ouros', 'K'),
+            csm('j', '', 'JOKER'),
+          ], fechado).valido,
+          false);
+      // duas naturais + "2" como substituto -> inválida
+      expect(
+          validarTrinca([
+            csm('a', 'copas', 'K'),
+            csm('b', 'ouros', 'K'),
+            csm('d', 'copas', '2'),
+          ], fechado).valido,
+          false);
+      // trinca proibida no Aberto e no STBL
+      final trioK = [
+        csm('a', 'copas', 'K'),
+        csm('b', 'ouros', 'K'),
+        csm('c', 'espadas', 'K'),
+      ];
+      expect(validarTrinca(trioK, aberto).valido, false);
+      expect(validarTrinca(trioK, stbl).valido, false);
+      // 7+ cartas continua trinca, sem tarja de canastra e sem bônus
+      final t7 = validarTrinca([
+        csm('a', 'copas', '9'),
+        csm('b', 'ouros', '9'),
+        csm('c', 'espadas', '9'),
+        csm('d', 'paus', '9'),
+        csm('e', 'copas', '9'),
+        csm('f', 'ouros', '9'),
+        csm('g', 'espadas', '9'),
+      ], fechado);
+      expect(t7.valido, true);
+      expect(t7.tipo, 'trinca');
+      expect(t7.canastra, false);
+      expect(t7.liberaBatida, false);
+    });
+
+    test('MELD-WILD-01 interpretação contextual do curinga', () {
+      // "2" do mesmo naipe atua NATURAL (leitura mais limpa)
+      final natural2 = validarSequencia([
+        csm('a', 'copas', 'A'),
+        csm('b', 'copas', '2'),
+        csm('c', 'copas', '3'),
+      ], aberto);
+      expect(natural2.valido, true);
+      expect(natural2.qtdCuringas, 0);
+      expect(natural2.usos.firstWhere((u) => u.id == 'b').papel, 'natural');
+      // "2" de OUTRO naipe só cabe como curinga
+      final wild2 = validarSequencia([
+        csm('a', 'copas', 'A'),
+        csm('b', 'espadas', '2'),
+        csm('c', 'copas', '3'),
+      ], aberto);
+      expect(wild2.valido, true);
+      expect(wild2.qtdCuringas, 1);
+      expect(wild2.classificacao, 'suja');
+      expect(wild2.usos.firstWhere((u) => u.id == 'b').papel, 'curinga');
+      // nenhuma carta é natural e curinga ao mesmo tempo
+      for (final u in wild2.usos) {
+        expect(wild2.usos.where((x) => x.id == u.id).length, 1);
+      }
+      // Joker sempre curinga, com posição e contagem registradas
+      final comJoker = validarSequencia([
+        csm('a', 'copas', '5'),
+        csm('j', '', 'JOKER'),
+        csm('c', 'copas', '7'),
+      ], aberto);
+      expect(comJoker.usos.firstWhere((u) => u.id == 'j').papel, 'curinga');
+      expect(comJoker.qtdCuringas, 1);
+    });
+
+    test('MELD-ID-01 conservação dos IDs após ordenar/normalizar', () {
+      final entrada = [
+        csm('x1', 'copas', '8'),
+        csm('x2', 'copas', '6'),
+        csm('j', '', 'JOKER'),
+        csm('x3', 'copas', '5'),
+      ];
+      final r = validarSequencia(entrada, aberto);
+      expect(r.valido, true);
+      final idsIn = entrada.map((c) => c.id).toSet();
+      final idsOut = r.ordenado.map((c) => c.id).toList();
+      expect(idsOut.toSet(), idsIn); // nenhum some
+      expect(idsOut.length, entrada.length); // nenhum duplica
+      for (final c in r.ordenado) {
+        final orig = entrada.firstWhere((e) => e.id == c.id);
+        expect(c.naipe, orig.naipe); // não muda de naipe
+        expect(c.valor, orig.valor); // não muda de valor
+      }
+      // lista exibida (usos) corresponde exatamente à lista validada (ordenado)
+      expect(r.usos.map((u) => u.id).toList(),
+          r.ordenado.map((c) => c.id).toList());
+    });
+
+    test('MELD-500-01 de_500 (A-K) e as_a_as (A-K-A): legalidade e classificação',
+        () {
+      List<CartaSnapshot> runCopas(List<String> valores) => [
+            for (int i = 0; i < valores.length; i++)
+              csm('c$i', 'copas', valores[i])
+          ];
+      const aK = [
+        'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'
+      ];
+      // A-K válido -> de_500
+      final de500 = validarSequencia(runCopas(aK), aberto);
+      expect(de500.valido, true);
+      expect(de500.tipo, 'sequencia');
+      expect(de500.classificacao, 'de_500');
+      expect(de500.qtdCuringas, 0);
+      // A-K-A válido -> as_a_as (dois ases MESMO naipe, nas pontas)
+      final aKa = [...runCopas(aK), csm('cA2', 'copas', 'A')];
+      final asAAs = validarSequencia(aKa, aberto);
+      expect(asAAs.valido, true);
+      expect(asAAs.tipo, 'sequencia');
+      expect(asAAs.classificacao, 'as_a_as');
+      expect(asAAs.qtdCuringas, 0);
+      // segundo Ás de OUTRO naipe -> inválido
+      final segundoAsOutro = [...runCopas(aK), csm('ad', 'ouros', 'A')];
+      expect(validarSequencia(segundoAsOutro, aberto).valido, false);
+      // dois Reis (rank duplicado) -> inválido
+      expect(
+          validarSequencia([
+            csm('q', 'copas', 'Q'),
+            csm('k1', 'copas', 'K'),
+            csm('k2', 'copas', 'K'),
+          ], aberto).valido,
+          false);
+      // Ás duplicado que não fecha as pontas -> inválido
+      expect(
+          validarSequencia([
+            csm('a1', 'copas', 'A'),
+            csm('a2', 'copas', 'A'),
+            csm('c2', 'copas', '2'),
+            csm('c3', 'copas', '3'),
+          ], aberto).valido,
+          false);
+      // grupo de ases -> trinca (Fechado), nunca sequência
+      final trioAs = [
+        csm('a', 'copas', 'A'),
+        csm('b', 'ouros', 'A'),
+        csm('c', 'espadas', 'A'),
+      ];
+      expect(validarJogoMesa(trioAs, fechado).tipo, 'trinca');
+      expect(validarSequencia(trioAs, fechado).valido, false);
     });
   });
 }
