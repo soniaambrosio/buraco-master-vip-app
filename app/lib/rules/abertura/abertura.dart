@@ -53,14 +53,28 @@ class ResultadoAbertura {
 /// `proximoEstado` é null e o estado de entrada não é tocado.
 ResultadoAbertura avaliarBaixar(
     EstadoJogo estado, int assento, Baixar acao, RuleSpec spec) {
-  // Enquanto o tratamento do lixo (C5) não existe, consumir o topo é recusado.
-  if (acao.topoLixoConsumido != null) {
-    return ResultadoAbertura.recusa(
-        'consumo do topo do lixo ainda não é suportado nesta etapa (chega no C5)');
-  }
   final dupla = _duplaDoAssento(assento);
   final mao = estado.maos[assento];
-  final indiceCarta = <String, CartaSnapshot>{for (final c in mao) c.id: c};
+
+  // Compra do lixo (Fechado/STBL): `topoLixoConsumido != null` sinaliza a
+  // compra; o topo entra na jogada e (no Fechado/STBL) deve ter uso imediato.
+  final comprandoLixo = acao.topoLixoConsumido != null;
+  final lixo = estado.lixo;
+  if (comprandoLixo) {
+    if (lixo.isEmpty) {
+      return ResultadoAbertura.recusa('lixo vazio: não há topo para comprar');
+    }
+    if (lixo.last.id != acao.topoLixoConsumido) {
+      return ResultadoAbertura.recusa(
+          'topo declarado (${acao.topoLixoConsumido}) não é o topo real do lixo (${lixo.last.id})');
+    }
+  }
+  // Cartas disponíveis para os jogos: a mão e, na compra do lixo, o lixo inteiro.
+  final disponiveis =
+      comprandoLixo ? <CartaSnapshot>[...mao, ...lixo] : mao;
+  final indiceCarta = <String, CartaSnapshot>{
+    for (final c in disponiveis) c.id: c
+  };
 
   // 1) coletar todos os ids usados; checar duplicidade e existência na mão.
   final usados = <String>[];
@@ -122,6 +136,15 @@ ResultadoAbertura avaliarBaixar(
     }
   }
 
+  // 3b) EXIGÊNCIA DO TOPO (Fechado/STBL): o topo precisa aparecer em ALGUM
+  //     jogo ou extensão desta ação. Em Aberto não se aplica (regra própria).
+  if (comprandoLixo && spec.exigeUsoDoTopoNoLixo) {
+    if (!vistos.contains(acao.topoLixoConsumido)) {
+      return ResultadoAbertura.recusa(
+          'o topo do lixo precisa ter uso imediato em pelo menos um jogo ou extensão');
+    }
+  }
+
   // 4) mínimo de abertura — só na 1ª baixada da dupla, sobre os jogos NOVOS.
   final abrindo = !(estado.primeiraBaixadaFeita[dupla] ?? false);
   final pontosAbertura = jogosResolvidos.fold<int>(
@@ -148,6 +171,13 @@ ResultadoAbertura avaliarBaixar(
   // 5) tudo-ou-nada: só AGORA produzimos o próximo estado (clone profundo).
   final proximo = estado.cloneProfundo();
   proximo.maos[assento].removeWhere((c) => vistos.contains(c.id));
+  // Compra do lixo: as cartas NÃO usadas do lixo vão para a mão; o lixo esvazia.
+  if (comprandoLixo) {
+    for (final c in lixo) {
+      if (!vistos.contains(c.id)) proximo.maos[assento].add(c.copia());
+    }
+    proximo.lixo.clear();
+  }
   final melds = proximo.jogosDupla[dupla]!;
   for (final e in extensoesPorIndice.entries) {
     melds[e.key] = [...melds[e.key], ...e.value];

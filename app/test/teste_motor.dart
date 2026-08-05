@@ -2173,4 +2173,298 @@ void main() {
       expect(r.atingiuMinimo, true);
     });
   });
+
+  // ===================================================================
+  // C5 — COMPRA DO LIXO (Fechado/STBL) desacoplada do mínimo de abertura.
+  // Aditivos: só exercitam avaliarBaixar com topoLixoConsumido; motor antigo
+  // continua ativo em runtime.
+  // ===================================================================
+  group('C5 — compra do lixo (Fechado/STBL) desacoplada do mínimo', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+    final stbl = RuleSpec.canonica(Modalidade.stbl);
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+
+    EstadoJogo estadoLixo({
+      required List<CartaSnapshot> mao0,
+      required List<CartaSnapshot> lixo,
+      List<List<CartaSnapshot>> melsNos = const [],
+      int rvNos = 0,
+      bool abriuNos = false,
+      Modalidade modalidade = Modalidade.fechado,
+    }) =>
+        EstadoJogo(
+          modalidade: modalidade,
+          metaPontos: 1500,
+          monte: const [],
+          lixo: [...lixo],
+          mortos: const [],
+          maos: [
+            [...mao0],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+          ],
+          jogosDupla: {
+            'nos': [for (final m in melsNos) [...m]],
+            'eles': <List<CartaSnapshot>>[],
+          },
+          rodadasVulneravel: {'nos': rvNos, 'eles': 0},
+          primeiraBaixadaFeita: {'nos': abriuNos, 'eles': false},
+          vez: 0,
+        );
+
+    Set<String> idsDoEstado(EstadoJogo e) => {
+          for (final m in e.maos) ...m.map((c) => c.id),
+          ...e.monte.map((c) => c.id),
+          ...e.lixo.map((c) => c.id),
+          for (final mm in e.mortos) ...mm.map((c) => c.id),
+          for (final g in e.jogosDupla['nos']!) ...g.map((c) => c.id),
+          for (final g in e.jogosDupla['eles']!) ...g.map((c) => c.id),
+        };
+
+    // Mão-padrão com dois jogos de 40 pts (paus e ouros 10-J-Q-K).
+    List<CartaSnapshot> doisReisComuns() => [
+          csm('c10', 'paus', '10'), csm('cj', 'paus', 'J'),
+          csm('cq', 'paus', 'Q'), csm('ck', 'paus', 'K'),
+          csm('d10', 'ouros', '10'), csm('dj', 'ouros', 'J'),
+          csm('dq', 'ouros', 'Q'), csm('dk', 'ouros', 'K'),
+        ];
+
+    test('LIXO-01 topo forma jogo válido + outros completam +75 → aceita', () {
+      final mao = [csm('h5', 'copas', '5'), csm('h7', 'copas', '7'), ...doisReisComuns()];
+      final est = estadoLixo(
+          mao0: mao, lixo: [csm('t6', 'copas', '6')], rvNos: 1);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['h5', 't6', 'h7'], // 5-6-7 (15) usa o topo
+            ['c10', 'cj', 'cq', 'ck'], // 40
+            ['d10', 'dj', 'dq', 'dk'], // 40
+          ], topoLixoConsumido: 't6'),
+          fechado);
+      expect(r.valido, true);
+      expect(r.pontosAbertura, 95);
+      expect(r.atingiuMinimo, true);
+      expect(r.proximoEstado!.lixo.isEmpty, true); // lixo consumido
+    });
+
+    test('LIXO-02 topo sem uso em nenhum jogo → rejeita tudo', () {
+      final mao = doisReisComuns();
+      final est = estadoLixo(mao0: mao, lixo: [csm('t6', 'copas', '6')]);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [['c10', 'cj', 'cq', 'ck']],
+              topoLixoConsumido: 't6'),
+          fechado);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.lixo.length, 1); // lixo intacto
+    });
+
+    test('LIXO-03 topo usado com Joker em jogo válido → aceita (STBL)', () {
+      final mao = [
+        csm('h5', 'copas', '5'), csm('jk', '', 'JOKER'), csm('h8', 'copas', '8'),
+      ];
+      final est = estadoLixo(
+          mao0: mao,
+          lixo: [csm('t6', 'copas', '6')],
+          modalidade: Modalidade.stbl);
+      // 5-6(topo)-7(joker)-8
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [['h5', 't6', 'jk', 'h8']],
+              topoLixoConsumido: 't6'),
+          stbl);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.lixo.isEmpty, true);
+    });
+
+    test('LIXO-04 jogo do topo < 75 sozinho, conjunto ≥ 75 → aceita (desacoplado)',
+        () {
+      final mao = [csm('h3', 'copas', '3'), csm('h5', 'copas', '5'), ...doisReisComuns()];
+      final est = estadoLixo(
+          mao0: mao, lixo: [csm('t4', 'copas', '4')], rvNos: 1);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['h3', 't4', 'h5'], // 3-4-5 = 15 (< 75 sozinho)
+            ['c10', 'cj', 'cq', 'ck'], // 40
+            ['d10', 'dj', 'dq', 'dk'], // 40
+          ], topoLixoConsumido: 't4'),
+          fechado);
+      expect(r.valido, true); // conjunto 95, mesmo com o jogo do topo em 15
+      expect(r.pontosAbertura, 95);
+      expect(r.minimoExigido, 75);
+    });
+
+    test('LIXO-05 total da abertura abaixo do mínimo → rejeita', () {
+      final mao = [
+        csm('h5', 'copas', '5'), csm('h7', 'copas', '7'),
+        csm('c3', 'paus', '3'), csm('c4', 'paus', '4'), csm('c5', 'paus', '5'),
+      ];
+      final est = estadoLixo(
+          mao0: mao, lixo: [csm('t6', 'copas', '6')], rvNos: 1);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['h5', 't6', 'h7'], // 15 (usa topo)
+            ['c3', 'c4', 'c5'], // 15
+          ], topoLixoConsumido: 't6'),
+          fechado);
+      expect(r.valido, false); // 30 < 75
+      expect(r.pontosAbertura, 30);
+      expect(r.proximoEstado, null);
+      expect(est.lixo.length, 1);
+    });
+
+    test('LIXO-06 topo estende jogo existente → aceita', () {
+      final mesa = [
+        csm('m5', 'copas', '5'), csm('m6', 'copas', '6'), csm('m7', 'copas', '7')
+      ];
+      final est = estadoLixo(
+          mao0: const [],
+          lixo: [csm('t8', 'copas', '8')],
+          melsNos: [mesa],
+          abriuNos: true);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(extensoes: [Extensao(0, ['t8'])],
+              topoLixoConsumido: 't8'),
+          fechado);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.jogosDupla['nos']![0].length, 4); // 5-6-7-8
+      expect(r.proximoEstado!.lixo.isEmpty, true);
+    });
+
+    test('LIXO-07 ID informado não é o topo real → rejeita', () {
+      final mao = [csm('h5', 'copas', '5'), csm('h7', 'copas', '7')];
+      final est = estadoLixo(
+          mao0: mao,
+          lixo: [csm('b3', 'copas', '3'), csm('t6', 'copas', '6')]); // topo real = t6
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [['h5', 't6', 'h7']],
+              topoLixoConsumido: 'b3'), // declara o do fundo
+          fechado);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+    });
+
+    test('LIXO-08 topo declarado mas ausente de todos os melds/extensões → rejeita',
+        () {
+      final mesa = [
+        csm('m5', 'copas', '5'), csm('m6', 'copas', '6'), csm('m7', 'copas', '7')
+      ];
+      final est = estadoLixo(
+          mao0: [csm('h8', 'copas', '8')],
+          lixo: [csm('t9', 'ouros', '9')], // topo t9, NÃO usado
+          melsNos: [mesa],
+          abriuNos: true);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(extensoes: [Extensao(0, ['h8'])], // usa h8, não t9
+              topoLixoConsumido: 't9'),
+          fechado);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+    });
+
+    test('LIXO-09 topo usado em dois jogos → rejeita', () {
+      final mao = [
+        csm('h5', 'copas', '5'), csm('h7', 'copas', '7'),
+        csm('x4', 'ouros', '4'), csm('x8', 'ouros', '8'),
+      ];
+      final est = estadoLixo(mao0: mao, lixo: [csm('t6', 'copas', '6')]);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['h5', 't6', 'h7'], // usa t6
+            ['x4', 't6', 'x8'], // usa t6 de novo
+          ], topoLixoConsumido: 't6'),
+          fechado);
+      expect(r.valido, false); // id repetido
+      expect(r.proximoEstado, null);
+    });
+
+    test('LIXO-10 falha preserva integralmente o estado', () {
+      final mao = [
+        csm('h5', 'copas', '5'), csm('h7', 'copas', '7'),
+        csm('c3', 'paus', '3'), csm('c4', 'paus', '4'), csm('c5', 'paus', '5'),
+      ];
+      final est = estadoLixo(
+          mao0: mao, lixo: [csm('t6', 'copas', '6')], rvNos: 1);
+      final antes = est.assinatura();
+      final vezAntes = est.vez;
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['h5', 't6', 'h7'],
+            ['c3', 'c4', 'c5'],
+          ], topoLixoConsumido: 't6'),
+          fechado); // 30 < 75 → falha
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes); // estado idêntico
+      expect(est.vez, vezAntes);
+      expect(est.lixo.length, 1);
+      expect(est.maos[0].length, 5);
+      expect(est.jogosDupla['nos']!.isEmpty, true);
+    });
+
+    test('LIXO-11 sucesso conserva todos os IDs (lixo → mão/mesa)', () {
+      final mao = [csm('h5', 'copas', '5'), csm('h7', 'copas', '7'), ...doisReisComuns()];
+      final est = estadoLixo(
+          mao0: mao,
+          // fundo bx (não usado) + topo t6 (usado)
+          lixo: [csm('bx', 'espadas', '2'), csm('t6', 'copas', '6')],
+          rvNos: 1);
+      final idsAntes = idsDoEstado(est);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['h5', 't6', 'h7'],
+            ['c10', 'cj', 'cq', 'ck'],
+            ['d10', 'dj', 'dq', 'dk'],
+          ], topoLixoConsumido: 't6'),
+          fechado);
+      expect(r.valido, true);
+      final prox = r.proximoEstado!;
+      expect(idsDoEstado(prox), idsAntes); // nada some/surge
+      expect(prox.lixo.isEmpty, true); // lixo esvaziado
+      expect(prox.maos[0].map((c) => c.id).toSet(), {'bx'}); // fundo não usado → mão
+      expect(idsDoEstado(est), idsAntes); // original intacto
+    });
+
+    test('LIXO-12 Aberto não herda a exigência do topo do Fechado/STBL', () {
+      final acao = const Baixar(
+        jogosNovos: [['c10', 'cj', 'cq', 'ck']], // NÃO usa o topo
+        topoLixoConsumido: 't6',
+      );
+      // Aberto: sem exigência de uso do topo → aceita.
+      final estA = estadoLixo(
+          mao0: doisReisComuns(),
+          lixo: [csm('t6', 'copas', '6')],
+          modalidade: Modalidade.aberto);
+      expect(avaliarBaixar(estA, 0, acao, aberto).valido, true);
+      // MESMO cenário no Fechado → recusa (topo não usado).
+      final estF = estadoLixo(
+          mao0: doisReisComuns(),
+          lixo: [csm('t6', 'copas', '6')],
+          modalidade: Modalidade.fechado);
+      expect(avaliarBaixar(estF, 0, acao, fechado).valido, false);
+    });
+  });
 }

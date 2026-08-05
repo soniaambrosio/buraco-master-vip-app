@@ -54,7 +54,7 @@ const List<ExcecaoSombra> excecoesSombra = [
     casoEspecifico:
         'Topo num jogo abaixo do mínimo + outros jogos completam -> antigo '
         'RECUSA, canônico ACEITA.',
-    testeCobertura: 'LIXO-DESACOPLA-01',
+    testeCobertura: 'LIXO-04 (jogo do topo < 75, conjunto acima) / LIXO-01',
     etapaRemocao: 'C10',
   ),
   ExcecaoSombra(
