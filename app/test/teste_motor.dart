@@ -17,6 +17,8 @@ import 'package:buraco_master_vip/rules/rules_engine.dart';
 import 'package:buraco_master_vip/rules/meld/meld_validator.dart';
 // C3 — pontuação canônica (aditivo; motor antigo continua padrão).
 import 'package:buraco_master_vip/rules/pontuacao_canonica.dart';
+// C4 — jogada atômica / abertura múltipla (aditivo; motor antigo continua padrão).
+import 'package:buraco_master_vip/rules/abertura/abertura.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -1803,6 +1805,279 @@ void main() {
       // e NÃO é cartas contadas duas vezes nem bônus dobrado
       expect(p.total == 2 * somaManual + 200, false);
       expect(p.total == somaManual + 400, false);
+    });
+  });
+
+  // ===================================================================
+  // C4 — JOGADA ATÔMICA / abertura múltipla (rules/abertura/abertura.dart).
+  // Aditivos: só exercitam o módulo novo sobre EstadoJogo imutável; motor
+  // antigo continua ativo em runtime.
+  // ===================================================================
+  group('C4 — jogada atômica / abertura múltipla', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+
+    EstadoJogo estadoCom({
+      required List<CartaSnapshot> mao0,
+      List<List<CartaSnapshot>> melsNos = const [],
+      int rvNos = 0,
+      bool abriuNos = false,
+      List<CartaSnapshot> monte = const [],
+      List<CartaSnapshot> lixo = const [],
+    }) =>
+        EstadoJogo(
+          modalidade: Modalidade.aberto,
+          metaPontos: 1500,
+          monte: [...monte],
+          lixo: [...lixo],
+          mortos: const [],
+          maos: [
+            [...mao0],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+          ],
+          jogosDupla: {
+            'nos': [for (final m in melsNos) [...m]],
+            'eles': <List<CartaSnapshot>>[],
+          },
+          rodadasVulneravel: {'nos': rvNos, 'eles': 0},
+          primeiraBaixadaFeita: {'nos': abriuNos, 'eles': false},
+          vez: 0,
+        );
+
+    Set<String> idsDoEstado(EstadoJogo e) => {
+          for (final m in e.maos) ...m.map((c) => c.id),
+          ...e.monte.map((c) => c.id),
+          ...e.lixo.map((c) => c.id),
+          for (final mm in e.mortos) ...mm.map((c) => c.id),
+          for (final g in e.jogosDupla['nos']!) ...g.map((c) => c.id),
+          for (final g in e.jogosDupla['eles']!) ...g.map((c) => c.id),
+        };
+
+    test('ATOM-01 dois jogos de naipes diferentes somando 80 → aceita', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'),
+        csm('c', 'copas', 'Q'), csm('d', 'copas', 'K'), // 40
+        csm('e', 'ouros', '10'), csm('f', 'ouros', 'J'),
+        csm('g', 'ouros', 'Q'), csm('h', 'ouros', 'K'), // 40
+      ];
+      final est = estadoCom(mao0: mao, rvNos: 1); // vulnerável, min 75
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['a', 'b', 'c', 'd'],
+            ['e', 'f', 'g', 'h'],
+          ]),
+          aberto);
+      expect(r.valido, true);
+      expect(r.pontosAbertura, 80);
+      expect(r.minimoExigido, 75);
+      expect(r.atingiuMinimo, true);
+      expect(r.proximoEstado!.jogosDupla['nos']!.length, 2);
+    });
+
+    test('ATOM-02 um jogo válido + um inválido → rejeita tudo', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'), csm('c', 'copas', 'Q'),
+        csm('e', 'ouros', '4'), csm('f', 'ouros', '7'), csm('g', 'ouros', '9'),
+      ];
+      final est = estadoCom(mao0: mao, rvNos: 0);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['a', 'b', 'c'],
+            ['e', 'f', 'g'],
+          ]),
+          aberto);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.jogosDupla['nos']!.isEmpty, true); // mesa intacta
+      expect(est.maos[0].length, 6); // mão intacta
+    });
+
+    test('ATOM-03 total abaixo do mínimo → rejeita tudo', () {
+      final mao = [
+        csm('a', 'copas', '4'), csm('b', 'copas', '5'), csm('c', 'copas', '6'),
+        csm('e', 'ouros', '4'), csm('f', 'ouros', '5'), csm('g', 'ouros', '6'),
+      ];
+      final est = estadoCom(mao0: mao, rvNos: 1); // min 75
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['a', 'b', 'c'],
+            ['e', 'f', 'g'],
+          ]),
+          aberto);
+      expect(r.valido, false);
+      expect(r.pontosAbertura, 30); // 15 + 15
+      expect(r.minimoExigido, 75);
+      expect(r.proximoEstado, null);
+    });
+
+    test('ATOM-04 abertura com Joker contado corretamente (50)', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'),
+        csm('c', 'copas', 'Q'), csm('d', 'copas', 'K'), // 40
+        csm('e', 'ouros', '5'), csm('f', 'ouros', '6'),
+        csm('j', '', 'JOKER'), csm('h', 'ouros', '8'), // 5+5+50+10 = 70
+      ];
+      final est = estadoCom(mao0: mao, rvNos: 1);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['a', 'b', 'c', 'd'],
+            ['e', 'f', 'j', 'h'],
+          ]),
+          aberto);
+      expect(r.valido, true);
+      expect(r.pontosAbertura, 110); // Joker conta 50
+    });
+
+    test('ATOM-05 jogo único continua funcionando', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'),
+        csm('c', 'copas', 'Q'), csm('d', 'copas', 'K'),
+      ];
+      final est = estadoCom(mao0: mao, rvNos: 0);
+      final r = avaliarBaixar(
+          est, 0, const Baixar(jogosNovos: [['a', 'b', 'c', 'd']]), aberto);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.jogosDupla['nos']!.length, 1);
+      expect(r.proximoEstado!.maos[0].isEmpty, true);
+    });
+
+    test('ATOM-06 mesma carta usada em dois jogos → rejeita', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'), csm('c', 'copas', 'Q'),
+        csm('d', 'copas', 'K'), csm('e', 'ouros', '9'),
+      ];
+      final r = avaliarBaixar(
+          estadoCom(mao0: mao),
+          0,
+          const Baixar(jogosNovos: [
+            ['a', 'b', 'c'],
+            ['a', 'd', 'e'], // 'a' repetido
+          ]),
+          aberto);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+    });
+
+    test('ATOM-07 carta inexistente ou já baixada → rejeita', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'), csm('c', 'copas', 'Q'),
+      ];
+      final r = avaliarBaixar(estadoCom(mao0: mao), 0,
+          const Baixar(jogosNovos: [['a', 'b', 'zzz']]), aberto);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+    });
+
+    test('ATOM-08 várias extensões válidas → aceita', () {
+      final mesa1 = [
+        csm('m1', 'copas', '4'), csm('m2', 'copas', '5'), csm('m3', 'copas', '6')
+      ];
+      final mesa2 = [
+        csm('n1', 'ouros', '9'), csm('n2', 'ouros', '10'), csm('n3', 'ouros', 'J')
+      ];
+      final mao = [csm('a', 'copas', '7'), csm('b', 'ouros', 'Q')];
+      final est =
+          estadoCom(mao0: mao, melsNos: [mesa1, mesa2], abriuNos: true);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(extensoes: [
+            Extensao(0, ['a']),
+            Extensao(1, ['b']),
+          ]),
+          aberto);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.jogosDupla['nos']![0].length, 4); // 4-5-6-7
+      expect(r.proximoEstado!.jogosDupla['nos']![1].length, 4); // 9-10-J-Q
+      expect(r.proximoEstado!.maos[0].isEmpty, true);
+    });
+
+    test('ATOM-09 uma extensão inválida → rejeita tudo', () {
+      final mesa1 = [
+        csm('m1', 'copas', '4'), csm('m2', 'copas', '5'), csm('m3', 'copas', '6')
+      ];
+      final mesa2 = [
+        csm('n1', 'ouros', '9'), csm('n2', 'ouros', '10'), csm('n3', 'ouros', 'J')
+      ];
+      final mao = [csm('a', 'copas', '7'), csm('b', 'ouros', 'K')]; // K quebra 9-10-J
+      final est =
+          estadoCom(mao0: mao, melsNos: [mesa1, mesa2], abriuNos: true);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(extensoes: [
+            Extensao(0, ['a']),
+            Extensao(1, ['b']),
+          ]),
+          aberto);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.jogosDupla['nos']![0].length, 3); // mesa intacta
+      expect(est.jogosDupla['nos']![1].length, 3);
+      expect(est.maos[0].length, 2); // mão intacta
+    });
+
+    test('ATOM-10 falha não altera mão, mesa, lixo, pontuação ou turno', () {
+      final mao = [
+        csm('a', 'copas', '4'), csm('b', 'copas', '5'), csm('c', 'copas', '6'),
+      ];
+      final est = estadoCom(
+          mao0: mao, rvNos: 1, lixo: [csm('l', 'ouros', '7')]);
+      final antes = est.assinatura();
+      final vezAntes = est.vez;
+      final r = avaliarBaixar(
+          est, 0, const Baixar(jogosNovos: [['a', 'b', 'c']]), aberto); // 15 < 75
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes); // estado idêntico
+      expect(est.vez, vezAntes); // turno intacto
+      expect(est.maos[0].length, 3); // mão intacta
+      expect(est.lixo.length, 1); // lixo intacto
+      expect(est.jogosDupla['nos']!.isEmpty, true); // mesa intacta
+    });
+
+    test('ATOM-11 sucesso conserva integralmente todos os IDs', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'),
+        csm('c', 'copas', 'Q'), csm('d', 'copas', 'K'),
+        csm('e', 'ouros', '10'), csm('f', 'ouros', 'J'),
+        csm('g', 'ouros', 'Q'), csm('h', 'ouros', 'K'),
+        csm('x', 'paus', '2'), // carta extra que não entra
+      ];
+      final est = estadoCom(
+          mao0: mao,
+          rvNos: 1,
+          monte: [csm('mo', 'espadas', '3')],
+          lixo: [csm('li', 'espadas', '4')]);
+      final idsAntes = idsDoEstado(est);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(jogosNovos: [
+            ['a', 'b', 'c', 'd'],
+            ['e', 'f', 'g', 'h'],
+          ]),
+          aberto);
+      expect(r.valido, true);
+      final prox = r.proximoEstado!;
+      final idsDepois = idsDoEstado(prox);
+      expect(idsDepois, idsAntes); // nenhum some, nenhum surge
+      expect(idsDepois.length, idsAntes.length); // sem duplicação
+      expect(prox.maos[0].map((c) => c.id).toSet(), {'x'}); // só a extra sobra
+      // e o estado original continua intacto
+      expect(idsDoEstado(est), idsAntes);
+      expect(est.maos[0].length, 9);
     });
   });
 }

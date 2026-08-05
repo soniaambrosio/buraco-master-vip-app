@@ -1,0 +1,156 @@
+// C4 — jogada atômica: abertura de VÁRIOS jogos novos + VÁRIAS extensões numa
+// única ação, tudo-ou-nada, sobre o EstadoJogo imutável. SEM comportamento de
+// produção: só a suíte de testes usa isto; o motor antigo continua ativo.
+//
+// Garantias:
+//  - cada meld novo é validado individualmente (validarJogoMesa);
+//  - cada extensão é validada como [alvo + novas] inteiro;
+//  - nenhuma carta pode ser usada em dois lugares; toda carta precisa existir na mão;
+//  - o mínimo (+75/+90) é exigido sobre a SOMA dos jogos NOVOS da abertura;
+//  - o próximo estado só é produzido se TUDO validar (nenhuma mutação parcial);
+//  - em qualquer falha, o estado de entrada permanece intacto (é imutável);
+//  - os IDs das cartas são conservados (mão -> mesa), sem sumiço/duplicação.
+import '../estado.dart';
+import '../acoes.dart';
+import '../rule_spec.dart';
+import '../meld/meld_validator.dart';
+import '../pontuacao_canonica.dart' show valorCarta;
+
+String _duplaDoAssento(int a) => a % 2 == 0 ? 'nos' : 'eles';
+
+class ResultadoAbertura {
+  final bool valido;
+  final String? motivo;
+  final int pontosAbertura; // soma dos pontos das cartas dos jogos NOVOS
+  final int minimoExigido;
+  final bool atingiuMinimo;
+  final EstadoJogo? proximoEstado; // preenchido só se válido (aplicar puro)
+
+  const ResultadoAbertura({
+    required this.valido,
+    this.motivo,
+    this.pontosAbertura = 0,
+    this.minimoExigido = 0,
+    this.atingiuMinimo = false,
+    this.proximoEstado,
+  });
+
+  factory ResultadoAbertura.recusa(String motivo,
+          {int pontos = 0, int minimo = 0}) =>
+      ResultadoAbertura(
+        valido: false,
+        motivo: motivo,
+        pontosAbertura: pontos,
+        minimoExigido: minimo,
+        atingiuMinimo: false,
+      );
+}
+
+/// Avalia e (se válida) aplica a jogada atômica `Baixar` para o assento dado.
+/// Retorna o próximo estado apenas quando tudo é válido; caso contrário
+/// `proximoEstado` é null e o estado de entrada não é tocado.
+ResultadoAbertura avaliarBaixar(
+    EstadoJogo estado, int assento, Baixar acao, RuleSpec spec) {
+  final dupla = _duplaDoAssento(assento);
+  final mao = estado.maos[assento];
+  final indiceCarta = <String, CartaSnapshot>{for (final c in mao) c.id: c};
+
+  // 1) coletar todos os ids usados; checar duplicidade e existência na mão.
+  final usados = <String>[];
+  for (final jogo in acao.jogosNovos) {
+    usados.addAll(jogo);
+  }
+  for (final ext in acao.extensoes) {
+    usados.addAll(ext.cartas);
+  }
+  if (usados.isEmpty) {
+    return ResultadoAbertura.recusa('nenhuma carta na jogada');
+  }
+  final vistos = <String>{};
+  for (final id in usados) {
+    if (!vistos.add(id)) {
+      return ResultadoAbertura.recusa(
+          'mesma carta usada em mais de um jogo: $id');
+    }
+    if (!indiceCarta.containsKey(id)) {
+      return ResultadoAbertura.recusa('carta inexistente ou já baixada: $id');
+    }
+  }
+
+  // 2) validar cada JOGO NOVO individualmente.
+  final jogosResolvidos = <List<CartaSnapshot>>[];
+  for (final jogo in acao.jogosNovos) {
+    if (jogo.length < 3) {
+      return ResultadoAbertura.recusa('um jogo tem no mínimo 3 cartas');
+    }
+    final cartas = [for (final id in jogo) indiceCarta[id]!];
+    final r = validarJogoMesa(cartas, spec);
+    if (!r.valido) {
+      return ResultadoAbertura.recusa('jogo inválido: ${r.motivo}');
+    }
+    jogosResolvidos.add(cartas);
+  }
+
+  // 3) validar cada EXTENSÃO como [alvo + novas] inteiro.
+  final jogosDupla = estado.jogosDupla[dupla] ?? const <List<CartaSnapshot>>[];
+  final extensoesResolvidas = <int, List<CartaSnapshot>>{};
+  for (final ext in acao.extensoes) {
+    if (ext.indiceJogo < 0 || ext.indiceJogo >= jogosDupla.length) {
+      return ResultadoAbertura.recusa(
+          'jogo a estender não existe: ${ext.indiceJogo}');
+    }
+    if (ext.cartas.isEmpty) {
+      return ResultadoAbertura.recusa('extensão sem cartas');
+    }
+    final alvo = jogosDupla[ext.indiceJogo];
+    final add = [for (final id in ext.cartas) indiceCarta[id]!];
+    final r = validarJogoMesa([...alvo, ...add], spec);
+    if (!r.valido) {
+      return ResultadoAbertura.recusa('extensão inválida: ${r.motivo}');
+    }
+    extensoesResolvidas[ext.indiceJogo] = [
+      ...(extensoesResolvidas[ext.indiceJogo] ?? const []),
+      ...add,
+    ];
+  }
+
+  // 4) mínimo de abertura — só na 1ª baixada da dupla, sobre os jogos NOVOS.
+  final abrindo = !(estado.primeiraBaixadaFeita[dupla] ?? false);
+  final pontosAbertura = jogosResolvidos.fold<int>(
+      0, (s, j) => s + j.fold<int>(0, (t, c) => t + valorCarta(c)));
+  final minimo = (abrindo && acao.jogosNovos.isNotEmpty)
+      ? spec.vulnerabilidade.minimoParaDescer(
+          rodadasVulneravel: estado.rodadasVulneravel[dupla] ?? 0,
+          jaAbriuNaRodada: false,
+        )
+      : 0;
+  if (minimo > 0 && pontosAbertura < minimo) {
+    return ResultadoAbertura.recusa(
+      'vulnerável: a abertura precisa somar $minimo pts (esta soma $pontosAbertura)',
+      pontos: pontosAbertura,
+      minimo: minimo,
+    );
+  }
+
+  // 5) tudo-ou-nada: só AGORA produzimos o próximo estado (clone profundo).
+  final proximo = estado.cloneProfundo();
+  proximo.maos[assento].removeWhere((c) => vistos.contains(c.id));
+  final melds = proximo.jogosDupla[dupla]!;
+  for (final e in extensoesResolvidas.entries) {
+    melds[e.key] = [...melds[e.key], ...e.value];
+  }
+  for (final j in jogosResolvidos) {
+    melds.add(j);
+  }
+  if (acao.jogosNovos.isNotEmpty || acao.extensoes.isNotEmpty) {
+    proximo.primeiraBaixadaFeita[dupla] = true;
+  }
+
+  return ResultadoAbertura(
+    valido: true,
+    pontosAbertura: pontosAbertura,
+    minimoExigido: minimo,
+    atingiuMinimo: pontosAbertura >= minimo,
+    proximoEstado: proximo,
+  );
+}
