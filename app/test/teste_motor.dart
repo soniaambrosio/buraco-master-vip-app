@@ -342,13 +342,13 @@ void main() {
     final r = baixaEm('FECHADO', const [('8', 'copas'), ('8', 'ouros'), ('8', 'paus')]);
     expect(r['ok'], true);
   });
-  test('JOGO-22 trinca com JOKER é válida no Fechado', () {
+  test('JOGO-22 trinca com JOKER é INVÁLIDA (spec: só natural)', () {
     final r = baixaEm('FECHADO', const [('8', 'copas'), ('8', 'ouros'), ('JOKER', null)]);
-    expect(r['ok'], true);
+    expect(r['ok'], isNot(true));
   });
-  test('JOGO-23 trinca com 2-curinga é válida no Fechado', () {
+  test('JOGO-23 trinca com 2 de OUTRO valor (curinga) é INVÁLIDA (spec: só natural)', () {
     final r = baixaEm('FECHADO', const [('8', 'copas'), ('8', 'ouros'), ('2', 'paus')]);
-    expect(r['ok'], true);
+    expect(r['ok'], isNot(true));
   });
   test('JOGO-24 trinca com DOIS curingas é inválida', () {
     final r = baixaEm('FECHADO', const [('8', 'copas'), ('JOKER', null), ('2', 'paus')]);
@@ -370,25 +370,48 @@ void main() {
     final r = baixaEm('FECHADO', const [('2', 'copas'), ('2', 'ouros'), ('2', 'paus')]);
     expect(r['ok'], true);
   });
-  test('JOGO-29 trinca-canastra 7+ sem curinga = LIMPA', () {
+  test('JOGO-29 trinca 7+ natural é válida mas NÃO é canastra (tipo trinca, sem limpa)', () {
     final r = baixaEm('FECHADO', const [
       ('9', 'copas'), ('9', 'ouros'), ('9', 'paus'), ('9', 'espadas'),
       ('9', 'copas'), ('9', 'ouros'), ('9', 'paus')
     ]);
     expect(r['ok'], true);
-    expect(r['tipo'], 'limpa');
+    expect(r['tipo'], 'trinca'); // nunca 'limpa' — trinca não forma canastra
   });
-  test('JOGO-30 trinca-canastra com curinga = SUJA', () {
+  test('JOGO-30 trinca 7+ COM curinga (JOKER) é INVÁLIDA (spec: só natural)', () {
     final r = baixaEm('FECHADO', const [
       ('9', 'copas'), ('9', 'ouros'), ('9', 'paus'), ('9', 'espadas'),
       ('9', 'copas'), ('9', 'ouros'), ('JOKER', null)
     ]);
-    expect(r['ok'], true);
-    expect(r['tipo'], 'suja');
+    expect(r['ok'], isNot(true));
   });
   test('JOGO-31 mistura trinca+sequência (8-8-9) é inválida', () {
     final r = baixaEm('FECHADO', const [('8', 'copas'), ('8', 'ouros'), ('9', 'copas')]);
     expect(r['ok'], isNot(true));
+  });
+  // ===== TRINCA CANÔNICA (P1 — spec Sônia: só cartas naturais do mesmo valor) =====
+  test('TRIN-01 três "2" NATURAIS formam trinca válida (Fechado)', () {
+    final r = baixaEm('FECHADO', const [('2', 'copas'), ('2', 'ouros'), ('2', 'paus')]);
+    expect(r['ok'], true);
+    expect(r['tipo'], 'trinca');
+  });
+  test('TRIN-02 Joker em trinca é INVÁLIDA', () {
+    final r = baixaEm('FECHADO', const [('K', 'copas'), ('K', 'ouros'), ('JOKER', null)]);
+    expect(r['ok'], isNot(true));
+  });
+  test('TRIN-03 "2" como substituto em trinca de OUTRO valor é INVÁLIDA', () {
+    final r = baixaEm('FECHADO', const [('K', 'copas'), ('K', 'ouros'), ('2', 'paus')]);
+    expect(r['ok'], isNot(true));
+  });
+  test('TRIN-04 trinca 7+ NÃO forma canastra e NÃO libera batida', () {
+    final j = novo('FECHADO');
+    final trinca = <Carta>[
+      c('9', 'copas'), c('9', 'ouros'), c('9', 'paus'), c('9', 'espadas'),
+      c('9', 'copas'), c('9', 'ouros'), c('9', 'paus')
+    ];
+    j.jogosDupla['nos'] = [trinca];
+    expect(j.duplaPodeBater('nos'), false,
+        reason: 'trinca 7+ é só trinca (não canastra) — não pode liberar a batida');
   });
   test('JOGO-32 SUJA vira LIMPA quando a carta real entra', () {
     final j = novo('ABERTO');

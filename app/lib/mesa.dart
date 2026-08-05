@@ -501,42 +501,30 @@ class Jogo {
     return {'valido': false, 'motivo': motivoFalha};
   }
 
-  // §4.3 TRINCA/LAVADEIRA — permitida SÓ no Fechado: 3+ cartas do MESMO VALOR
-  // (naipes livres), no máximo 1 curinga substituto (Joker, ou um 2 de valor
-  // diferente do da trinca). Com 7+ vira canastra: limpa sem curinga, suja com.
+  // §4.3 TRINCA — SÓ no Fechado: 3+ cartas NATURAIS do MESMO VALOR (naipes livres).
+  // Spec canônica (Sônia + servidor): NÃO aceita curinga — nem JOKER, nem "2" usado
+  // como substituto de outro valor. Três "2" naturais formam trinca de 2 (válida).
+  // A trinca NUNCA vira canastra: sem bônus limpa/suja e NÃO libera a batida.
   Map<String, dynamic> _validarTrinca(List<Carta> cartas) {
     if (cartas.length < 3) {
       return {'valido': false, 'motivo': 'uma trinca tem no mínimo 3 cartas'};
     }
-    final jokers = cartas.where((c) => c.valor == 'JOKER').toList();
-    final naoJokers = cartas.where((c) => c.valor != 'JOKER').toList();
-    if (naoJokers.isEmpty) {
-      return {'valido': false, 'motivo': 'trinca precisa de cartas naturais'};
-    }
-    // valor da trinca = o valor mais frequente entre as cartas não-Joker
-    final cont = <String, int>{};
-    for (final c in naoJokers) {
-      cont[c.valor] = (cont[c.valor] ?? 0) + 1;
-    }
-    final valor = (cont.entries.toList()
-          ..sort((a, b) => b.value.compareTo(a.value)))
-        .first
-        .key;
-    final substitutos = naoJokers.where((c) => c.valor != valor).toList();
-    if (substitutos.any((c) => c.valor != '2')) {
+    if (cartas.any((c) => c.valor == 'JOKER')) {
       return {
         'valido': false,
-        'motivo': 'trinca: todas as cartas devem ter o mesmo valor (só 1 curinga pode substituir)'
+        'motivo': 'Joker não entra em trinca — só cartas naturais do mesmo valor'
       };
     }
-    final qtdCuringas = jokers.length + substitutos.length;
-    if (qtdCuringas > 1) {
-      return {'valido': false, 'motivo': 'trinca aceita no máximo 1 curinga'};
+    final valor = cartas.first.valor;
+    if (cartas.any((c) => c.valor != valor)) {
+      return {
+        'valido': false,
+        'motivo':
+            'trinca: todas as cartas devem ter o mesmo valor (naturais); 2 e Joker não entram como curinga'
+      };
     }
-    final tipo = cartas.length < 7
-        ? 'aberta'
-        : (qtdCuringas > 0 ? 'suja' : 'limpa');
-    return {'valido': true, 'tipo': tipo, 'qtd_curingas': qtdCuringas, 'trinca': true};
+    // Sempre tipo 'trinca' (nunca canastra), sem curinga.
+    return {'valido': true, 'tipo': 'trinca', 'qtd_curingas': 0, 'trinca': true};
   }
 
   // Validador OFICIAL por modalidade (§2/§10):
@@ -562,9 +550,10 @@ class Jogo {
 
   bool _canastraLiberaBatida(List<Carta> meld) {
     if (meld.length < 7) return false;
-    final r = _validarJogoMesa(meld); // inclui trinca-canastra no Fechado
+    final r = _validarJogoMesa(meld);
     if (r['valido'] != true) return false;
-    // Fechado: QUALQUER canastra (7+) libera a batida — suja basta (§6.4).
+    if (r['trinca'] == true) return false; // trinca NUNCA é canastra nem libera batida
+    // Fechado: QUALQUER canastra (7+) de sequência libera a batida — suja basta (§6.4).
     if (modalidade.toLowerCase() == 'fechado') return true;
     // Aberto/STBL: exige canastra LIMPA (limpa, 500 ou 1000).
     final t = r['tipo'];
