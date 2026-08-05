@@ -172,6 +172,25 @@ jobs:
           flutter test test/teste_motor.dart --reporter expanded
           echo "PORTÃO VERDE: todos os testes do motor passaram no commit ${GITHUB_SHA} — seguindo pro APK."
 
+      - name: "PORTÃO DE QUALIDADE — domínio de recompensas de torneios"
+        # Roda SOMENTE este arquivo. O test/widget_test.dart que vem do
+        # `flutter create` tem erro pré-existente e derrubaria a suíte inteira,
+        # então não se usa `flutter test` sem alvo aqui.
+        run: |
+          if [ ! -f app/test/torneios/reward_grants_test.dart ]; then
+            echo "ERRO: app/test/torneios/reward_grants_test.dart não encontrado — o portão do domínio é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/torneios/data
+          cp app/test/torneios/reward_grants_test.dart app_build/test/torneios/
+          cp app/data/torneios/assets_registry.seed.json app_build/test/torneios/data/
+          cp app/data/torneios/reward_policies.seed.json app_build/test/torneios/data/
+          echo "seeds disponíveis para o teste:"
+          ls -l app_build/test/torneios/data/
+          cd app_build
+          flutter test test/torneios/reward_grants_test.dart --reporter expanded
+          echo "PORTÃO VERDE: domínio de recompensas de torneios validado no commit ${GITHUB_SHA}."
+
       - name: Bump minSdk to 23 (Firebase)
         run: |
           f=app_build/android/app/build.gradle.kts
