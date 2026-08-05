@@ -1875,6 +1875,7 @@ void main() {
       expect(r.valido, true);
       expect(r.pontosAbertura, 80);
       expect(r.minimoExigido, 75);
+      expect(r.sujeitoAoMinimo, true);
       expect(r.atingiuMinimo, true);
       expect(r.proximoEstado!.jogosDupla['nos']!.length, 2);
     });
@@ -2078,6 +2079,98 @@ void main() {
       // e o estado original continua intacto
       expect(idsDoEstado(est), idsAntes);
       expect(est.maos[0].length, 9);
+    });
+
+    test('ATOM-12 duas extensões no MESMO jogo, válidas isoladas mas ilegais juntas → rejeita',
+        () {
+      final mesa1 = [
+        csm('m1', 'copas', '5'), csm('m2', 'copas', '6'), csm('m3', 'copas', '7')
+      ];
+      // dois 8 de copas (2 cópias existem): cada um estende 5-6-7 → 5-6-7-8
+      // (válido isolado), mas juntos formam 5-6-7-8-8 (rank duplicado) → ilegal.
+      final mao = [csm('o1', 'copas', '8'), csm('o2', 'copas', '8')];
+      final est = estadoCom(mao0: mao, melsNos: [mesa1], abriuNos: true);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(extensoes: [
+            Extensao(0, ['o1']),
+            Extensao(0, ['o2']),
+          ]),
+          aberto);
+      expect(r.valido, false); // agrupado: [5,6,7,8,8] é inválido
+      expect(r.proximoEstado, null);
+      expect(est.jogosDupla['nos']![0].length, 3); // mesa intacta
+    });
+
+    test('ATOM-13 duas extensões no MESMO jogo, válidas só em conjunto → aceita (agrupadas)',
+        () {
+      final mesa1 = [
+        csm('m1', 'copas', '5'), csm('m2', 'copas', '6'), csm('m3', 'copas', '7')
+      ];
+      // 9 sozinho deixaria lacuna (5-6-7-_-9, inválido isolado); com o 8 juntos
+      // formam 5-6-7-8-9. A validação agrupada precisa aceitar.
+      final mao = [csm('c9', 'copas', '9'), csm('c8', 'copas', '8')];
+      final est = estadoCom(mao0: mao, melsNos: [mesa1], abriuNos: true);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(extensoes: [
+            Extensao(0, ['c9']),
+            Extensao(0, ['c8']),
+          ]),
+          aberto);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.jogosDupla['nos']![0].length, 5); // 5-6-7-8-9
+    });
+
+    test('ATOM-14 consumo do topo do lixo (topoLixoConsumido) → rejeitado nesta etapa',
+        () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'),
+        csm('c', 'copas', 'Q'), csm('d', 'copas', 'K'),
+      ];
+      final est = estadoCom(mao0: mao);
+      final r = avaliarBaixar(
+          est,
+          0,
+          const Baixar(
+            jogosNovos: [['a', 'b', 'c', 'd']],
+            topoLixoConsumido: 'x',
+          ),
+          aberto);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.jogosDupla['nos']!.isEmpty, true); // nada aplicado
+    });
+
+    test('ATOM-15 extensão isolada NÃO marca primeiraBaixadaFeita', () {
+      final mesa1 = [
+        csm('m1', 'copas', '5'), csm('m2', 'copas', '6'), csm('m3', 'copas', '7')
+      ];
+      final mao = [csm('c8', 'copas', '8')];
+      // jogo na mesa com a flag ainda false: a extensão não pode marcá-la.
+      final est = estadoCom(mao0: mao, melsNos: [mesa1], abriuNos: false);
+      final r = avaliarBaixar(
+          est, 0, const Baixar(extensoes: [Extensao(0, ['c8'])]), aberto);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.primeiraBaixadaFeita['nos'], false);
+      expect(r.sujeitoAoMinimo, false); // sem abertura sujeita a mínimo
+      expect(r.atingiuMinimo, true); // vacuamente satisfeito
+    });
+
+    test('ATOM-16 abertura (jogo novo) marca primeiraBaixadaFeita', () {
+      final mao = [
+        csm('a', 'copas', '10'), csm('b', 'copas', 'J'),
+        csm('c', 'copas', 'Q'), csm('d', 'copas', 'K'),
+      ];
+      final est = estadoCom(mao0: mao, rvNos: 0, abriuNos: false);
+      final r = avaliarBaixar(
+          est, 0, const Baixar(jogosNovos: [['a', 'b', 'c', 'd']]), aberto);
+      expect(r.valido, true);
+      expect(r.proximoEstado!.primeiraBaixadaFeita['nos'], true);
+      expect(r.sujeitoAoMinimo, false); // não vulnerável (rv=0) → sem mínimo
+      expect(r.atingiuMinimo, true);
     });
   });
 }

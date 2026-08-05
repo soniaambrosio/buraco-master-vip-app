@@ -23,7 +23,8 @@ class ResultadoAbertura {
   final String? motivo;
   final int pontosAbertura; // soma dos pontos das cartas dos jogos NOVOS
   final int minimoExigido;
-  final bool atingiuMinimo;
+  final bool sujeitoAoMinimo; // houve abertura vulnerável com mínimo > 0
+  final bool atingiuMinimo; // requisito de mínimo satisfeito (vacuamente true se não sujeito)
   final EstadoJogo? proximoEstado; // preenchido só se válido (aplicar puro)
 
   const ResultadoAbertura({
@@ -31,6 +32,7 @@ class ResultadoAbertura {
     this.motivo,
     this.pontosAbertura = 0,
     this.minimoExigido = 0,
+    this.sujeitoAoMinimo = false,
     this.atingiuMinimo = false,
     this.proximoEstado,
   });
@@ -51,6 +53,11 @@ class ResultadoAbertura {
 /// `proximoEstado` é null e o estado de entrada não é tocado.
 ResultadoAbertura avaliarBaixar(
     EstadoJogo estado, int assento, Baixar acao, RuleSpec spec) {
+  // Enquanto o tratamento do lixo (C5) não existe, consumir o topo é recusado.
+  if (acao.topoLixoConsumido != null) {
+    return ResultadoAbertura.recusa(
+        'consumo do topo do lixo ainda não é suportado nesta etapa (chega no C5)');
+  }
   final dupla = _duplaDoAssento(assento);
   final mao = estado.maos[assento];
   final indiceCarta = <String, CartaSnapshot>{for (final c in mao) c.id: c};
@@ -91,9 +98,11 @@ ResultadoAbertura avaliarBaixar(
     jogosResolvidos.add(cartas);
   }
 
-  // 3) validar cada EXTENSÃO como [alvo + novas] inteiro.
+  // 3) AGRUPAR todas as cartas de extensão por indiceJogo e validar o meld
+  //    FINAL [alvo + TODAS as cartas do índice] UMA ÚNICA vez. Corrige o caso
+  //    de duas extensões individualmente válidas, mas ilegais em conjunto.
   final jogosDupla = estado.jogosDupla[dupla] ?? const <List<CartaSnapshot>>[];
-  final extensoesResolvidas = <int, List<CartaSnapshot>>{};
+  final extensoesPorIndice = <int, List<CartaSnapshot>>{};
   for (final ext in acao.extensoes) {
     if (ext.indiceJogo < 0 || ext.indiceJogo >= jogosDupla.length) {
       return ResultadoAbertura.recusa(
@@ -102,16 +111,15 @@ ResultadoAbertura avaliarBaixar(
     if (ext.cartas.isEmpty) {
       return ResultadoAbertura.recusa('extensão sem cartas');
     }
-    final alvo = jogosDupla[ext.indiceJogo];
-    final add = [for (final id in ext.cartas) indiceCarta[id]!];
-    final r = validarJogoMesa([...alvo, ...add], spec);
+    (extensoesPorIndice[ext.indiceJogo] ??= <CartaSnapshot>[])
+        .addAll([for (final id in ext.cartas) indiceCarta[id]!]);
+  }
+  for (final e in extensoesPorIndice.entries) {
+    final alvo = jogosDupla[e.key];
+    final r = validarJogoMesa([...alvo, ...e.value], spec);
     if (!r.valido) {
       return ResultadoAbertura.recusa('extensão inválida: ${r.motivo}');
     }
-    extensoesResolvidas[ext.indiceJogo] = [
-      ...(extensoesResolvidas[ext.indiceJogo] ?? const []),
-      ...add,
-    ];
   }
 
   // 4) mínimo de abertura — só na 1ª baixada da dupla, sobre os jogos NOVOS.
@@ -124,11 +132,16 @@ ResultadoAbertura avaliarBaixar(
           jaAbriuNaRodada: false,
         )
       : 0;
-  if (minimo > 0 && pontosAbertura < minimo) {
-    return ResultadoAbertura.recusa(
-      'vulnerável: a abertura precisa somar $minimo pts (esta soma $pontosAbertura)',
-      pontos: pontosAbertura,
-      minimo: minimo,
+  final sujeitoAoMinimo = minimo > 0;
+  if (sujeitoAoMinimo && pontosAbertura < minimo) {
+    return ResultadoAbertura(
+      valido: false,
+      motivo:
+          'vulnerável: a abertura precisa somar $minimo pts (esta soma $pontosAbertura)',
+      pontosAbertura: pontosAbertura,
+      minimoExigido: minimo,
+      sujeitoAoMinimo: true,
+      atingiuMinimo: false,
     );
   }
 
@@ -136,13 +149,14 @@ ResultadoAbertura avaliarBaixar(
   final proximo = estado.cloneProfundo();
   proximo.maos[assento].removeWhere((c) => vistos.contains(c.id));
   final melds = proximo.jogosDupla[dupla]!;
-  for (final e in extensoesResolvidas.entries) {
+  for (final e in extensoesPorIndice.entries) {
     melds[e.key] = [...melds[e.key], ...e.value];
   }
   for (final j in jogosResolvidos) {
     melds.add(j);
   }
-  if (acao.jogosNovos.isNotEmpty || acao.extensoes.isNotEmpty) {
+  // Só a ABERTURA (jogos novos) marca primeiraBaixadaFeita; extensão isolada não.
+  if (acao.jogosNovos.isNotEmpty) {
     proximo.primeiraBaixadaFeita[dupla] = true;
   }
 
@@ -150,7 +164,9 @@ ResultadoAbertura avaliarBaixar(
     valido: true,
     pontosAbertura: pontosAbertura,
     minimoExigido: minimo,
-    atingiuMinimo: pontosAbertura >= minimo,
+    sujeitoAoMinimo: sujeitoAoMinimo,
+    // vacuamente satisfeito quando não houve abertura sujeita a mínimo:
+    atingiuMinimo: !sujeitoAoMinimo || pontosAbertura >= minimo,
     proximoEstado: proximo,
   );
 }
