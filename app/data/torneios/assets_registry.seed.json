@@ -49,107 +49,107 @@
       "assetId": "crown_participant",
       "categoria": "coroa",
       "finalidade": "Coroa de participacao, concedida a quem concluiu a edicao do torneio.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_participant.png",
+      "status": "ready"
     },
     {
       "assetId": "crown_top3",
       "categoria": "coroa",
       "finalidade": "Coroa de podio, concedida ao terceiro colocado da edicao.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_top3.png",
+      "status": "ready"
     },
     {
       "assetId": "crown_runner_up",
       "categoria": "coroa",
       "finalidade": "Coroa de vice-campeao da edicao.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_runner_up.png",
+      "status": "ready"
     },
     {
       "assetId": "crown_champion",
       "categoria": "coroa",
       "finalidade": "Coroa de campeao da edicao.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_champion.png",
+      "status": "ready"
     },
     {
       "assetId": "crown_monthly_champion",
       "categoria": "coroa",
       "finalidade": "Coroa de campeao do Campeonato Mensal.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_monthly_champion.png",
+      "status": "ready"
     },
     {
       "assetId": "crown_annual_champion",
       "categoria": "coroa",
       "finalidade": "Coroa de campeao anual; titulo maximo do calendario.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_annual_champion.png",
+      "status": "ready"
     },
     {
       "assetId": "crown_legend_master",
       "categoria": "coroa",
       "finalidade": "Coroa de Lenda Master, vinculada ao Hall dos Imortais.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/coroas/crown_legend_master.png",
+      "status": "ready"
     },
 
     {
       "assetId": "seal_participant",
       "categoria": "selo",
       "finalidade": "Selo de participacao registrado no historico do perfil.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_participant.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_top3",
       "categoria": "selo",
       "finalidade": "Selo de podio (terceiro colocado) registrado no historico do perfil.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_top3.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_runner_up",
       "categoria": "selo",
       "finalidade": "Selo de vice-campeao registrado no historico do perfil.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_runner_up.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_champion",
       "categoria": "selo",
       "finalidade": "Selo de campeao registrado no historico do perfil.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_champion.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_monthly_champion",
       "categoria": "selo",
       "finalidade": "Selo de campeao mensal registrado no historico do perfil.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_monthly_champion.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_annual_champion",
       "categoria": "selo",
       "finalidade": "Selo de campeao anual registrado no historico do perfil.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_annual_champion.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_performance",
       "categoria": "selo",
       "finalidade": "Selo de desempenho por marcas em quadra (canastras, saldo, sequencias).",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_performance.png",
+      "status": "ready"
     },
     {
       "assetId": "seal_fair_play",
       "categoria": "selo",
       "finalidade": "Selo de fair play por conduta na edicao, sem abandono nem penalidade.",
-      "arquivoLocal": null,
-      "status": "pendingAsset"
+      "arquivoLocal": "assets/torneios/premiacao/selos/seal_fair_play.png",
+      "status": "ready"
     },
 
     {

@@ -3,8 +3,8 @@
 // Dart puro sobre flutter_test: nao sobe widget, nao toca Firebase e nao le
 // rede. Os seeds reais entram por arquivo (copiados para test/torneios/data/
 // pelo workflow), e os casos positivos usam uma fixture com a arte marcada como
-// pronta — no seed de producao TODA coroa e TODO selo ainda estao em
-// `pendingAsset`, entao sem a fixture nenhum caminho feliz seria observavel.
+// pronta — no seed de producao as quatro recompensas de encerramento anual
+// seguem em `pendingAsset`, entao a fixture mantem esses caminhos observaveis.
 
 import 'dart:convert';
 import 'dart:io';
@@ -13,6 +13,37 @@ import 'package:buraco_master_vip/torneios/assets_registry.dart';
 import 'package:buraco_master_vip/torneios/reward_grants.dart';
 import 'package:buraco_master_vip/torneios/reward_policies.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Coroas com arte oficial integrada ao bundle.
+const _coroasComArte = <String>{
+  TorneioAssetIds.crownParticipant,
+  TorneioAssetIds.crownTop3,
+  TorneioAssetIds.crownRunnerUp,
+  TorneioAssetIds.crownChampion,
+  TorneioAssetIds.crownMonthlyChampion,
+  TorneioAssetIds.crownAnnualChampion,
+  TorneioAssetIds.crownLegendMaster,
+};
+
+/// Selos com arte oficial integrada ao bundle.
+const _selosComArte = <String>{
+  TorneioAssetIds.sealParticipant,
+  TorneioAssetIds.sealTop3,
+  TorneioAssetIds.sealRunnerUp,
+  TorneioAssetIds.sealChampion,
+  TorneioAssetIds.sealMonthlyChampion,
+  TorneioAssetIds.sealAnnualChampion,
+  TorneioAssetIds.sealPerformance,
+  TorneioAssetIds.sealFairPlay,
+};
+
+/// Encerramento anual: identificador ja estavel, arte ainda nao produzida.
+const _recompensasSemArte = <String>{
+  TorneioAssetIds.sealClosingGuest,
+  TorneioAssetIds.sealClosingChampion,
+  TorneioAssetIds.sealClosingRunnerUp,
+  TorneioAssetIds.crownClosingChampion,
+};
 
 Map<String, dynamic> _lerSeed(String nome) {
   final arquivo = File('test/torneios/data/$nome');
@@ -102,12 +133,55 @@ void main() {
       expect(() => politicasSeed.validarCobertura(assetsSeed), returnsNormally);
     });
 
-    test('nenhuma arte de recompensa foi inventada: tudo segue pendingAsset', () {
-      expect(
-        assetsSeed.recompensaveis.every((a) => a.status == TorneioAssetStatus.pendingAsset),
-        isTrue,
-      );
-      expect(assetsSeed.recompensaveis.every((a) => a.arquivoLocal == null), isTrue);
+    test('as artes prontas sao exatamente as 15 coroas e selos oficiais', () {
+      final prontos = assetsSeed.recompensaveis
+          .where((a) => a.status == TorneioAssetStatus.ready)
+          .map((a) => a.assetId)
+          .toSet();
+      expect(prontos, {..._coroasComArte, ..._selosComArte});
+      expect(prontos.length, 15);
+    });
+
+    test('seguem pendingAsset exatamente as quatro recompensas de encerramento', () {
+      final pendentes = assetsSeed.recompensaveis
+          .where((a) => a.status == TorneioAssetStatus.pendingAsset)
+          .map((a) => a.assetId)
+          .toSet();
+      expect(pendentes, _recompensasSemArte);
+      expect(pendentes.length, 4);
+    });
+
+    test('toda arte pronta aponta um arquivo sob assets/torneios/premiacao/', () {
+      for (final a in assetsSeed.recompensaveis
+          .where((a) => a.status == TorneioAssetStatus.ready)) {
+        expect(a.arquivoLocal, isNotNull, reason: '${a.assetId} sem arquivoLocal');
+        expect(
+          a.arquivoLocal,
+          startsWith('assets/torneios/premiacao/'),
+          reason: '${a.assetId} fora do diretorio oficial de premiacao',
+        );
+        expect(a.temArte, isTrue, reason: '${a.assetId} deveria ter arte utilizavel');
+      }
+    });
+
+    test('coroa vai para coroas/ e selo vai para selos/', () {
+      for (final id in _coroasComArte) {
+        expect(assetsSeed[id].arquivoLocal,
+            'assets/torneios/premiacao/coroas/$id.png');
+      }
+      for (final id in _selosComArte) {
+        expect(assetsSeed[id].arquivoLocal,
+            'assets/torneios/premiacao/selos/$id.png');
+      }
+    });
+
+    test('toda recompensa pendente segue sem arquivoLocal', () {
+      for (final id in _recompensasSemArte) {
+        final a = assetsSeed[id];
+        expect(a.status, TorneioAssetStatus.pendingAsset);
+        expect(a.arquivoLocal, isNull, reason: '$id pendente nao pode ter arquivo');
+        expect(a.temArte, isFalse);
+      }
     });
   });
 
@@ -220,18 +294,40 @@ void main() {
   });
 
   group('10. pendingAsset', () {
+    // Coroas e selos de edicao ja tem arte no seed real; quem ainda bloqueia
+    // por arte ausente sao as recompensas de encerramento anual.
     test('arte pendente bloqueia a concessao', () {
-      final r = conceder(TorneioAssetIds.crownChampion, assets: assetsSeed);
+      final r = conceder(TorneioAssetIds.crownClosingChampion, assets: assetsSeed);
       expect(r.recusa, RecusaConcessao.artePendente);
     });
 
     test('podeAtivarRecompensa concorda', () {
       final v = podeAtivarRecompensa(
-          assetId: TorneioAssetIds.sealChampion,
+          assetId: TorneioAssetIds.sealClosingChampion,
           assets: assetsSeed,
           politicas: politicasSeed);
       expect(v.permitido, isFalse);
       expect(v.recusa, RecusaConcessao.artePendente);
+    });
+
+    test('a arte pendente e checada antes da politica pendente de definicao', () {
+      // crown_closing_champion tem os dois problemas; a arte responde primeiro.
+      expect(conceder(TorneioAssetIds.crownClosingChampion, assets: assetsSeed).recusa,
+          RecusaConcessao.artePendente);
+      expect(conceder(TorneioAssetIds.crownClosingChampion).recusa,
+          RecusaConcessao.politicaPendenteDefinicao);
+    });
+
+    test('coroa e selo de edicao ja passam pela checagem de arte no seed real', () {
+      expect(
+        podeAtivarRecompensa(
+                assetId: TorneioAssetIds.sealChampion,
+                assets: assetsSeed,
+                politicas: politicasSeed)
+            .permitido,
+        isTrue,
+      );
+      expect(conceder(TorneioAssetIds.crownChampion, assets: assetsSeed).concedida, isTrue);
     });
   });
 
