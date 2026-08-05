@@ -4,6 +4,15 @@
 // Todos os testes exercitam o COMPORTAMENTO via API pública do motor.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:buraco_master_vip/mesa.dart';
+// C1 — andaime do RulesEngine canônico (aditivo; motor antigo continua padrão).
+import 'package:buraco_master_vip/rules/modalidade.dart';
+import 'package:buraco_master_vip/rules/rule_spec.dart';
+import 'package:buraco_master_vip/rules/acoes.dart';
+import 'package:buraco_master_vip/rules/pontuacao.dart';
+import 'package:buraco_master_vip/rules/estado.dart';
+import 'package:buraco_master_vip/rules/sombra.dart';
+import 'package:buraco_master_vip/rules/replay.dart';
+import 'package:buraco_master_vip/rules/rules_engine.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -1135,5 +1144,178 @@ void main() {
         reason: 'FFD real: jogo0(A/copas#${aCopas.id}) e jogo1(A/ouros#${aOuros.id}) na MESMA '
             'linha (gap=${spacing}px < step=${step}px) -> colam e parecem 1 jogo so com 2 aces '
             'de naipes diferentes. Linhas=$linhas');
+  });
+
+  // ===================================================================
+  // C1 — ANDAIME do RulesEngine canônico. Testes ADITIVOS: exercitam só os
+  // novos módulos (rules/), sem tocar no comportamento do motor antigo.
+  // ===================================================================
+  group('C1 — andaime RulesEngine (aditivo, sem comportamento novo)', () {
+    test('C1 Modalidade: deTexto/texto e alias SBTL', () {
+      expect(Modalidade.deTexto('ABERTO'), Modalidade.aberto);
+      expect(Modalidade.deTexto('fechado'), Modalidade.fechado);
+      expect(Modalidade.deTexto('STBL'), Modalidade.stbl);
+      expect(Modalidade.deTexto('sbtl'), Modalidade.stbl); // typo historico
+      expect(Modalidade.aberto.texto, 'ABERTO');
+      expect(Modalidade.fechado.texto, 'FECHADO');
+      expect(Modalidade.stbl.texto, 'STBL');
+      expect(() => Modalidade.deTexto('x'), throwsArgumentError);
+    });
+
+    test('C1 RuleSpec: decisoes congeladas por modalidade', () {
+      final f = RuleSpec.canonica(Modalidade.fechado);
+      expect(f.trincaPermitida, true);
+      expect(f.trincaAceitaCuringa, false);
+      expect(f.maxCuringasPorSequencia, 1);
+      expect(f.exigeUsoDoTopoNoLixo, true);
+      expect(f.aberturaMultiplaAtomica, true);
+      expect(f.versao, RuleSpec.versaoCanonica);
+      final a = RuleSpec.canonica(Modalidade.aberto);
+      expect(a.trincaPermitida, false);
+      expect(a.exigeUsoDoTopoNoLixo, false);
+    });
+
+    test('C1 Vulnerabilidade: faixas EXATAS 0/75/90 e limiar meta/2', () {
+      final v = RuleSpec.canonica(Modalidade.fechado, metaPontos: 1500)
+          .vulnerabilidade;
+      expect(v.limiarAcumulado, 750);
+      expect(v.minimoParaDescer(rodadasVulneravel: 0, jaAbriuNaRodada: false), 0);
+      expect(v.minimoParaDescer(rodadasVulneravel: 1, jaAbriuNaRodada: false), 75);
+      expect(v.minimoParaDescer(rodadasVulneravel: 2, jaAbriuNaRodada: false), 90);
+      expect(v.minimoParaDescer(rodadasVulneravel: 5, jaAbriuNaRodada: false), 90);
+      expect(v.minimoParaDescer(rodadasVulneravel: 1, jaAbriuNaRodada: true), 0);
+      expect(
+          RuleSpec.canonica(Modalidade.fechado, metaPontos: 3000)
+              .vulnerabilidade
+              .limiarAcumulado,
+          1500);
+    });
+
+    test('C1 Vulnerabilidade: PARIDADE com o motor antigo (minimoParaDescer)',
+        () {
+      final v = RuleSpec.canonica(Modalidade.fechado).vulnerabilidade;
+      for (final rv in [0, 1, 2, 3]) {
+        for (final ja in [false, true]) {
+          final j = novo('FECHADO');
+          j.rodadasVulneravel['nos'] = rv;
+          j.primeiraBaixadaFeita['nos'] = ja;
+          expect(
+              v.minimoParaDescer(rodadasVulneravel: rv, jaAbriuNaRodada: ja),
+              j.minimoParaDescer('nos'),
+              reason: 'spec deve espelhar o antigo (rv=$rv, jaAbriu=$ja)');
+        }
+      }
+      expect(v.limiarAcumulado, novo('FECHADO').metaPontos ~/ 2);
+    });
+
+    test('C1 Pontuacao: parcial da rodada distinta da acumulada da partida', () {
+      const r = PontuacaoRodada(melds: 100, canastras: 200, mao: 30, bonus: 100);
+      expect(r.total, 370); // 100 + 200 + 100 - 30
+      const p = PontuacaoPartida(nos: 500, eles: 400);
+      final p2 = p.somarRodada('nos', r);
+      expect(p2.nos, 870);
+      expect(p2.eles, 400);
+    });
+
+    test('C1 Sombra: 3 excecoes versionadas e completas', () {
+      expect(excecoesSombra.length, 3);
+      expect(excecoesSombra.map((e) => e.id).toList(),
+          ['EXC-01', 'EXC-02', 'EXC-03']);
+      for (final e in excecoesSombra) {
+        expect(e.descricao.isNotEmpty, true);
+        expect(e.casoEspecifico.isNotEmpty, true);
+        expect(e.testeCobertura.isNotEmpty, true);
+        expect(e.etapaRemocao.isNotEmpty, true);
+      }
+    });
+
+    test('C1 Acoes + Replay: contrato cobre monte/lixo/baixar/descarte + round-trip',
+        () {
+      final acoes = <Acao>[
+        const ComprarLixo(),
+        const Baixar(
+          jogosNovos: [
+            ['c1', 'c2', 'c3'],
+            ['c4', 'c5', 'c6', 'c7'],
+          ],
+          extensoes: [Extensao(0, ['c8'])],
+          topoLixoConsumido: 'c9',
+        ),
+        const Descartar('c10'),
+        const ComprarMonte(),
+      ];
+      final r = Replay(
+        seed: 42,
+        versaoSpec: RuleSpec.versaoCanonica,
+        modalidade: Modalidade.fechado,
+        acoes: acoes,
+      );
+      final volta = Replay.fromJson(r.toJson());
+      expect(volta.seed, 42);
+      expect(volta.versaoSpec, RuleSpec.versaoCanonica);
+      expect(volta.modalidade, Modalidade.fechado);
+      expect(volta.acoes.length, 4);
+      expect(volta.acoes[1], isA<Baixar>());
+      final b = volta.acoes[1] as Baixar;
+      expect(b.jogosNovos.length, 2);
+      expect(b.jogosNovos[1].length, 4);
+      expect(b.extensoes.single.indiceJogo, 0);
+      expect(b.topoLixoConsumido, 'c9');
+      expect(volta.acoes[2], isA<Descartar>());
+      expect((volta.acoes[2] as Descartar).carta, 'c10');
+    });
+
+    test('C1 Estado: clone profundo isola referencias; normalizar ordena maos',
+        () {
+      CartaSnapshot cs(String id, String? n, String v) =>
+          CartaSnapshot(id, n, v, v == '2' || v == 'JOKER');
+      final est = EstadoJogo(
+        modalidade: Modalidade.aberto,
+        metaPontos: 1500,
+        monte: [cs('m1', 'copas', 'K')],
+        lixo: [cs('l1', 'ouros', '7')],
+        mortos: [
+          [cs('x1', 'paus', '3')]
+        ],
+        maos: [
+          [cs('h2', 'copas', 'Q'), cs('h1', 'copas', 'J')]
+        ],
+        jogosDupla: {
+          'nos': [
+            [cs('j1', 'copas', '4'), cs('j2', 'copas', '5')]
+          ],
+          'eles': [],
+        },
+        rodadasVulneravel: {'nos': 1, 'eles': 0},
+        primeiraBaixadaFeita: {'nos': false, 'eles': false},
+        vez: 0,
+      );
+      final clone = est.cloneProfundo();
+      clone.maos[0].clear(); // muta o clone
+      expect(est.maos[0].length, 2); // original intacto
+      expect(clone.monte.first == est.monte.first, true); // igualdade por valor
+      final norm = est.normalizar();
+      expect(norm.maos[0].first.id, 'h1'); // J antes de Q
+      expect(norm.maos[0].last.id, 'h2');
+      expect(norm.assinatura().contains('mod=ABERTO'), true);
+    });
+
+    test('C1 RulesEngine: fachada existe e ainda nao implementa (andaime)', () {
+      final eng = RulesEngine(RuleSpec.canonica(Modalidade.aberto));
+      final estVazio = EstadoJogo(
+        modalidade: Modalidade.aberto,
+        metaPontos: 1500,
+        monte: const [],
+        lixo: const [],
+        mortos: const [],
+        maos: const [],
+        jogosDupla: const {'nos': [], 'eles': []},
+        rodadasVulneravel: const {'nos': 0, 'eles': 0},
+        primeiraBaixadaFeita: const {'nos': false, 'eles': false},
+        vez: 0,
+      );
+      expect(() => eng.avaliar(estVazio, const ComprarMonte()),
+          throwsUnimplementedError);
+    });
   });
 }
