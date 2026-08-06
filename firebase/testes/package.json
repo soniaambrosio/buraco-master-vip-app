@@ -1,0 +1,13 @@
+{
+  "name": "buraco-master-vip-testes-seguranca",
+  "description": "Prova as regras do Firestore e a idempotencia do resgate contra os emuladores.",
+  "private": true,
+  "scripts": {
+    "test": "node --test seguranca.test.js",
+    "emulador": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd testes && npm test\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.2.0"
+  }
+}
