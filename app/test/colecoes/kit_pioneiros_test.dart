@@ -142,7 +142,7 @@ void main() {
     });
 
     test('assetPath e unico: nenhuma arte duplicada no bundle', () {
-      final caminhos = catalogo.itens.map((i) => i.assetPath).toList();
+      final caminhos = catalogo.itens.map((i) => i.arte.chaveCache).toList();
       expect(caminhos.toSet(), hasLength(caminhos.length));
     });
 
@@ -165,7 +165,7 @@ void main() {
 
       final noCatalogo = catalogo
           .itensDe(ColecaoIds.pioneiros2026)
-          .map((i) => i.assetPath.split('/').last)
+          .map((i) => i.assetPath!.split('/').last)
           .toSet();
       expect(noCatalogo, noManifesto,
           reason: 'renomear arquivo sem atualizar o catalogo quebra a colecao');
@@ -192,7 +192,7 @@ void main() {
     test('todos os assets moram numa unica pasta', () {
       final pastas = catalogo
           .itensDe(ColecaoIds.pioneiros2026)
-          .map((i) => i.assetPath.substring(0, i.assetPath.lastIndexOf('/')))
+          .map((i) => i.assetPath!.substring(0, i.assetPath!.lastIndexOf('/')))
           .toSet();
       expect(pastas, {'assets/colecoes/pioneiros_2026'});
     });

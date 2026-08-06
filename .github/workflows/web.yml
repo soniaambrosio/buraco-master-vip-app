@@ -111,104 +111,38 @@ jobs:
           echo "Kit Pioneiros 2026: $N pecas copiadas"
           if [ "$N" -ne 10 ]; then echo "ERRO: esperava EXATAMENTE 10 pecas, veio $N"; exit 1; fi
 
-      - name: Add Firebase + Google Sign-In + Audio deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
+      - name: Instalar dependências a partir do pubspec versionado
+        # Mesma troca feita no build.yml: app/pubspec.yaml + app/pubspec.lock
+        # mandam, e `pub get` reproduz as versões travadas. Sem `pub add`.
+        run: |
+          cp app/pubspec.yaml app_build/pubspec.yaml
+          cp app/pubspec.lock app_build/pubspec.lock
+          cd app_build && flutter pub get
 
-      - name: Declare assets in pubspec (robusto)
+      - name: Conferir a declaração de assets do pubspec versionado
+        # A injeção por script saiu daqui: as pastas agora são declaradas em
+        # app/pubspec.yaml. O que resta é conferir que toda pasta DECLARADA
+        # existe de fato — pasta declarada e ausente quebra o build com uma
+        # mensagem que não diz qual é.
         run: |
           cd app_build
-          python3 - <<'PY'
-          p = 'pubspec.yaml'
-          lines = open(p, encoding='utf-8').read().split('\n')
-          asset_block = [
-              '  assets:',
-              '    - assets/splash/',
-              '    - assets/sons/',
-              '    - assets/baralho/',
-              '    - assets/perfil/',
-              '    - assets/ranking/',
-              '    - assets/ranking/selos/',
-              '    - assets/hall/',
-              '    - assets/inicio/',
-              '    - assets/configurar_mesa/',
-              '    - assets/torneios/capas/',
-              '    - assets/torneios/premiacao/coroas/',
-              '    - assets/torneios/premiacao/selos/',
-              '    - assets/colecoes/pioneiros_2026/',
-          ]
-          joined = '\n'.join(lines)
-          if 'assets/baralho/' not in joined:
-              out = []
-              injected = False
-              for ln in lines:
-                  out.append(ln)
-                  if not injected and ln.rstrip() == 'flutter:':
-                      out.extend(asset_block)
-                      injected = True
-              if not injected:
-                  out.extend(['flutter:', '  uses-material-design: true'] + asset_block)
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/torneios/capas/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/configurar_mesa/':
-                      out.append('    - assets/torneios/capas/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/configurar_mesa/ para declarar assets/torneios/capas/')
-              lines = out
-          # Flutter nao inclui subdiretorios recursivamente: coroas/ e selos/
-          # precisam ser declarados um a um, logo apos as capas de torneio.
-          joined = '\n'.join(lines)
-          if 'assets/torneios/premiacao/coroas/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/torneios/capas/':
-                      out.append('    - assets/torneios/premiacao/coroas/')
-                      out.append('    - assets/torneios/premiacao/selos/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/torneios/capas/ para declarar a premiacao')
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/torneios/premiacao/selos/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/torneios/premiacao/coroas/':
-                      out.append('    - assets/torneios/premiacao/selos/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/torneios/premiacao/coroas/ para declarar os selos')
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/colecoes/pioneiros_2026/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/torneios/premiacao/selos/':
-                      out.append('    - assets/colecoes/pioneiros_2026/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/torneios/premiacao/selos/ para declarar o Kit Pioneiros')
-              lines = out
-          s = '\n'.join(lines)
-          open(p, 'w', encoding='utf-8').write(s)
-          top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
-          assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
-          for a in ('assets/splash/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/', 'assets/configurar_mesa/', 'assets/torneios/capas/', 'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/', 'assets/colecoes/pioneiros_2026/'):
-              assert a in s, f'FALTOU declarar {a} no pubspec!'
-          for a in ('assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/', 'assets/colecoes/pioneiros_2026/'):
-              assert s.count(f'- {a}') == 1, f'{a} declarado mais de uma vez no pubspec!'
-          print('OK: assets declarados no pubspec para o build web (inclui torneios/premiacao e colecoes/pioneiros_2026).')
-          PY
+          echo "--- seção flutter: do pubspec ---"
+          sed -n '/^flutter:/,$p' pubspec.yaml
+          FALTOU=0
+          while read -r dir; do
+            if [ -d "$dir" ]; then
+              echo "OK       $dir ($(find "$dir" -maxdepth 1 -type f | wc -l) arquivos)"
+            else
+              echo "AUSENTE  $dir"; FALTOU=1
+            fi
+          done < <(sed -n 's|^[[:space:]]*-[[:space:]]*\(assets/.*\)/$|\1|p' pubspec.yaml)
+          if [ "$FALTOU" -ne 0 ]; then
+            echo "ERRO: há pasta declarada no pubspec que não foi copiada."
+            exit 1
+          fi
+          grep -q 'assets/colecoes/pioneiros_2026/' pubspec.yaml || {
+            echo "ERRO: o Kit Pioneiros não está declarado no pubspec."; exit 1; }
+          echo "OK: todas as pastas declaradas existem e o Kit Pioneiros está entre elas."
 
       - name: Build Flutter Web (release)
         # base-href tem que casar com o caminho do GitHub Pages (nome do repo).

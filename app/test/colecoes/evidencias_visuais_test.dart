@@ -135,7 +135,7 @@ void main() {
         await tester.runAsync(() async {
           for (final r in vm.recompensas) {
             await precacheImage(
-                ResizeImage(AssetImage(r.assetPath), width: 480),
+                ResizeImage(AssetImage(r.assetPath!), width: 480),
                 tester.element(find.byKey(_alvo)));
           }
         });
@@ -299,7 +299,7 @@ class _Painel extends StatelessWidget {
                 // o custo de decodificacao, que aqui cai cerca de quinze vezes.
                 // A camada visual definitiva deve fazer o mesmo: dez artes
                 // decodificadas em tamanho cheio custam ~63 MB de memoria.
-                child: Image.asset(r.assetPath, fit: BoxFit.contain, cacheWidth: 480),
+                child: Image.asset(r.assetPath!, fit: BoxFit.contain, cacheWidth: 480),
               ),
             ),
           ),
