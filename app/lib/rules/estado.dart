@@ -41,6 +41,9 @@ class EstadoJogo {
   final Map<String, int> rodadasVulneravel;
   final Map<String, bool> primeiraBaixadaFeita;
   final int vez;
+  final Map<String, bool> mortoPego; // por dupla: 'nos'/'eles'
+  final bool rodadaEncerrada; // batida encerrou a rodada
+  final String? duplaQueBateu;
 
   const EstadoJogo({
     required this.modalidade,
@@ -53,6 +56,9 @@ class EstadoJogo {
     required this.rodadasVulneravel,
     required this.primeiraBaixadaFeita,
     required this.vez,
+    this.mortoPego = const {'nos': false, 'eles': false},
+    this.rodadaEncerrada = false,
+    this.duplaQueBateu,
   });
 
   static List<CartaSnapshot> _copiaLista(List<CartaSnapshot> l) =>
@@ -77,6 +83,9 @@ class EstadoJogo {
         rodadasVulneravel: {...rodadasVulneravel},
         primeiraBaixadaFeita: {...primeiraBaixadaFeita},
         vez: vez,
+        mortoPego: {...mortoPego},
+        rodadaEncerrada: rodadaEncerrada,
+        duplaQueBateu: duplaQueBateu,
       );
 
   /// NORMALIZAÇÃO para comparação determinística no modo sombra.
@@ -116,6 +125,9 @@ class EstadoJogo {
       rodadasVulneravel: {...rodadasVulneravel},
       primeiraBaixadaFeita: {...primeiraBaixadaFeita},
       vez: vez,
+      mortoPego: {...mortoPego},
+      rodadaEncerrada: rodadaEncerrada,
+      duplaQueBateu: duplaQueBateu,
     );
   }
 
@@ -134,7 +146,27 @@ class EstadoJogo {
       ..writeln('nos=${matriz(n.jogosDupla['nos'] ?? const [])}')
       ..writeln('eles=${matriz(n.jogosDupla['eles'] ?? const [])}')
       ..writeln('rv=${n.rodadasVulneravel}')
-      ..writeln('pb=${n.primeiraBaixadaFeita}');
+      ..writeln('pb=${n.primeiraBaixadaFeita}')
+      ..writeln('mp=${n.mortoPego}')
+      ..writeln('fim=${n.rodadaEncerrada} bateu=${n.duplaQueBateu}');
     return sb.toString();
   }
+
+  /// Cópia rasa alterando poucos campos (compartilha as coleções deste estado).
+  EstadoJogo copyWith({int? vez, bool? rodadaEncerrada, String? duplaQueBateu}) =>
+      EstadoJogo(
+        modalidade: modalidade,
+        metaPontos: metaPontos,
+        monte: monte,
+        lixo: lixo,
+        mortos: mortos,
+        maos: maos,
+        jogosDupla: jogosDupla,
+        rodadasVulneravel: rodadasVulneravel,
+        primeiraBaixadaFeita: primeiraBaixadaFeita,
+        vez: vez ?? this.vez,
+        mortoPego: mortoPego,
+        rodadaEncerrada: rodadaEncerrada ?? this.rodadaEncerrada,
+        duplaQueBateu: duplaQueBateu ?? this.duplaQueBateu,
+      );
 }

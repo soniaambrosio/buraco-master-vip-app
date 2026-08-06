@@ -19,6 +19,8 @@ import 'package:buraco_master_vip/rules/meld/meld_validator.dart';
 import 'package:buraco_master_vip/rules/pontuacao_canonica.dart';
 // C4 — jogada atômica / abertura múltipla (aditivo; motor antigo continua padrão).
 import 'package:buraco_master_vip/rules/abertura/abertura.dart';
+// C6 — morto e batida (aditivo; motor antigo continua padrão).
+import 'package:buraco_master_vip/rules/morto/morto.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -2551,6 +2553,233 @@ void main() {
       expect(est.assinatura(), antes);
       expect(est.lixo.map((c) => c.id).toList(), ['b2', 't6']);
       expect(est.maos[0].length, 8);
+    });
+  });
+
+  // ===================================================================
+  // C6 — MORTO e BATIDA (rules/morto/morto.dart). Aditivos: só exercitam o
+  // módulo novo sobre EstadoJogo imutável; motor antigo continua ativo.
+  // ===================================================================
+  group('C6 — morto e batida', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+
+    List<CartaSnapshot> seqCartas(String naipe, List<String> vs, String pre) =>
+        [for (int i = 0; i < vs.length; i++) csm('$pre$i', naipe, vs[i])];
+    List<CartaSnapshot> limpa7() =>
+        seqCartas('copas', ['3', '4', '5', '6', '7', '8', '9'], 'L');
+    List<CartaSnapshot> suja7() => [
+          csm('S0', 'copas', '3'), csm('S1', 'copas', '4'),
+          csm('S2', 'copas', '5'), csm('S3', 'copas', '6'),
+          csm('S4', 'copas', '7'), csm('S5', 'copas', '8'),
+          csm('SJ', '', 'JOKER'),
+        ];
+    List<CartaSnapshot> trinca7() => [
+          csm('T0', 'copas', '9'), csm('T1', 'ouros', '9'),
+          csm('T2', 'espadas', '9'), csm('T3', 'paus', '9'),
+          csm('T4', 'copas', '9'), csm('T5', 'ouros', '9'),
+          csm('T6', 'espadas', '9'),
+        ];
+    List<CartaSnapshot> morto11(String pre) =>
+        [for (int i = 0; i < 11; i++) csm('$pre$i', 'copas', '5')];
+
+    EstadoJogo estadoMorto({
+      List<CartaSnapshot> mao0 = const [],
+      List<List<CartaSnapshot>> mortos = const [],
+      List<List<CartaSnapshot>> melsNos = const [],
+      Map<String, bool> mortoPego = const {'nos': false, 'eles': false},
+      Modalidade modalidade = Modalidade.fechado,
+      int vez = 0,
+    }) =>
+        EstadoJogo(
+          modalidade: modalidade,
+          metaPontos: 1500,
+          monte: const [],
+          lixo: const [],
+          mortos: [for (final m in mortos) [...m]],
+          maos: [
+            [...mao0],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+          ],
+          jogosDupla: {
+            'nos': [for (final m in melsNos) [...m]],
+            'eles': <List<CartaSnapshot>>[],
+          },
+          rodadasVulneravel: const {'nos': 0, 'eles': 0},
+          primeiraBaixadaFeita: const {'nos': true, 'eles': true},
+          vez: vez,
+          mortoPego: {...mortoPego},
+        );
+
+    Set<String> idsDoEstado(EstadoJogo e) => {
+          for (final m in e.maos) ...m.map((c) => c.id),
+          ...e.monte.map((c) => c.id),
+          ...e.lixo.map((c) => c.id),
+          for (final mm in e.mortos) ...mm.map((c) => c.id),
+          for (final g in e.jogosDupla['nos']!) ...g.map((c) => c.id),
+          for (final g in e.jogosDupla['eles']!) ...g.map((c) => c.id),
+        };
+
+    test('MORTO-01 esvazia sem descarte → morto DIRETO (mesma vez)', () {
+      final est = estadoMorto(mortos: [morto11('a'), morto11('b')]);
+      final r = pegarMorto(est, 0, viaDescarte: false);
+      expect(r.valido, true);
+      expect(r.tipo, FimMao.mortoDireto);
+      final prox = r.proximoEstado!;
+      expect(prox.maos[0].length, 11);
+      expect(prox.mortoPego['nos'], true);
+      expect(prox.mortos.length, 1);
+      expect(prox.vez, est.vez); // direto mantém a vez
+    });
+
+    test('MORTO-02 esvazia ao descartar → morto INDIRETO (a vez passa)', () {
+      final est = estadoMorto(mortos: [morto11('a'), morto11('b')], vez: 0);
+      final r = pegarMorto(est, 0, viaDescarte: true);
+      expect(r.valido, true);
+      expect(r.tipo, FimMao.mortoIndireto);
+      expect(r.proximoEstado!.maos[0].length, 11);
+      expect(r.proximoEstado!.vez, 1); // indireto passa a vez (0→1)
+    });
+
+    test('MORTO-03 morto já utilizado não pode ser pego novamente', () {
+      final est = estadoMorto(
+          mortos: [morto11('a')],
+          mortoPego: const {'nos': true, 'eles': false});
+      final r = pegarMorto(est, 0);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+    });
+
+    test('MORTO-04 morto correto vai para a dupla correta', () {
+      final mortoA = morto11('a');
+      final mortoB = morto11('b');
+      final est = estadoMorto(mortos: [mortoA, mortoB]);
+      final r = pegarMorto(est, 0);
+      expect(r.valido, true);
+      final prox = r.proximoEstado!;
+      expect(prox.maos[0].map((c) => c.id).toSet(),
+          mortoA.map((c) => c.id).toSet());
+      expect(prox.mortoPego['nos'], true);
+      expect(prox.mortoPego['eles'], false);
+      expect(prox.mortos.length, 1);
+      expect(prox.mortos[0].map((c) => c.id).toSet(),
+          mortoB.map((c) => c.id).toSet());
+    });
+
+    test('MORTO-05 retirada conserva as 11 cartas e todos os IDs', () {
+      final est = estadoMorto(mortos: [morto11('a'), morto11('b')]);
+      final idsAntes = idsDoEstado(est);
+      final r = pegarMorto(est, 0);
+      expect(r.valido, true);
+      final prox = r.proximoEstado!;
+      expect(prox.maos[0].length, 11);
+      expect(idsDoEstado(prox), idsAntes); // nada some/surge
+      expect(idsDoEstado(prox).length, 22); // sem duplicação
+    });
+
+    test('MORTO-06 falha preserva estado', () {
+      final est = estadoMorto(
+          mortos: [morto11('a')],
+          mortoPego: const {'nos': true, 'eles': false});
+      final antes = est.assinatura();
+      final r = pegarMorto(est, 0);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes);
+      expect(est.mortos.length, 1);
+    });
+
+    test('BATIDA-01 canastra válida + morto cumprido + mão vazia → permite', () {
+      final est = estadoMorto(
+          melsNos: [limpa7()],
+          mortoPego: const {'nos': true, 'eles': false});
+      final r = avaliarBatida(est, 0, fechado);
+      expect(r.valido, true);
+      expect(r.tipo, FimMao.batida);
+      expect(r.proximoEstado!.rodadaEncerrada, true);
+      expect(r.proximoEstado!.duplaQueBateu, 'nos');
+    });
+
+    test('BATIDA-02 trinca de 7+ não libera batida', () {
+      final est = estadoMorto(
+          melsNos: [trinca7()],
+          mortoPego: const {'nos': true, 'eles': false});
+      final r = avaliarBatida(est, 0, fechado);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+    });
+
+    test('BATIDA-03 sem canastra exigida → rejeita', () {
+      final est = estadoMorto(
+          melsNos: [seqCartas('copas', ['3', '4', '5'], 'x')],
+          mortoPego: const {'nos': true, 'eles': false});
+      final r = avaliarBatida(est, 0, fechado);
+      expect(r.valido, false);
+    });
+
+    test('BATIDA-04 sem pegar o morto exigido → rejeita', () {
+      final est = estadoMorto(
+          mortos: [morto11('a')],
+          melsNos: [limpa7()],
+          mortoPego: const {'nos': false, 'eles': false});
+      final r = avaliarBatida(est, 0, fechado);
+      expect(r.valido, false); // morto disponível e não pego
+    });
+
+    test('BATIDA-05 canastra suja: libera no Fechado, não no Aberto', () {
+      final estF = estadoMorto(
+          melsNos: [suja7()],
+          mortoPego: const {'nos': true, 'eles': false},
+          modalidade: Modalidade.fechado);
+      expect(avaliarBatida(estF, 0, fechado).valido, true);
+      final estA = estadoMorto(
+          melsNos: [suja7()],
+          mortoPego: const {'nos': true, 'eles': false},
+          modalidade: Modalidade.aberto);
+      expect(avaliarBatida(estA, 0, aberto).valido, false);
+    });
+
+    test('BATIDA-06 batida aplica +100 uma única vez', () {
+      final sem = pontuarRodada(const EntradaRodada(bateu: false), fechado);
+      final com = pontuarRodada(const EntradaRodada(bateu: true), fechado);
+      expect(com.batida, 100);
+      expect(com.total - sem.total, 100);
+    });
+
+    test('BATIDA-07 morto não pego aplica −100 no fechamento', () {
+      final r = pontuarRodada(
+          const EntradaRodada(mortoPego: false, algumPegouMorto: true), fechado);
+      expect(r.penalidadeMorto, 100);
+      expect(r.total, -100);
+    });
+
+    test('BATIDA-08 tentativa inválida não altera mão, mesa, mortos, turno nem pontos',
+        () {
+      final est = estadoMorto(
+          mortos: [morto11('a')],
+          melsNos: [limpa7()],
+          mortoPego: const {'nos': false, 'eles': false});
+      final antes = est.assinatura();
+      final r = avaliarBatida(est, 0, fechado); // morto não pego → recusa
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes);
+      expect(est.rodadaEncerrada, false);
+      expect(est.mortos.length, 1);
+    });
+
+    test('BATIDA-09 batida válida não faz carta sumir nem duplicar', () {
+      final est = estadoMorto(
+          melsNos: [limpa7()],
+          mortoPego: const {'nos': true, 'eles': false});
+      final idsAntes = idsDoEstado(est);
+      final r = avaliarBatida(est, 0, fechado);
+      expect(r.valido, true);
+      expect(idsDoEstado(r.proximoEstado!), idsAntes);
     });
   });
 }
