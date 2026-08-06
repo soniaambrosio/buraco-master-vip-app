@@ -82,7 +82,24 @@ service cloud.firestore {
 
       match /inventory/{itemId} {
         allow get, list: if ehDono(uid) || ehAdmin();
-        allow create, update, delete: if false;
+
+        // Criar e apagar sao exclusividade da Cloud Function (Admin SDK, que
+        // ignora estas regras). Fechado aqui, nao existe caminho pelo qual o
+        // aplicativo invente `inventory/pioneer_2026_crown` a mao.
+        allow create, delete: if false;
+
+        // UNICA escrita permitida ao cliente: ligar ou desligar `equipped` num
+        // documento QUE JA EXISTE. `hasOnly` garante que nenhum outro campo
+        // muda junto — sem isso, uma atualizacao de equipagem poderia carregar
+        // `source`, `campaignId` ou `unlockedAt` adulterados no mesmo pedido e
+        // forjar a procedencia de um item legitimo.
+        //
+        // Equipar nao concede nada e nao tem valor economico: e escolha de
+        // vitrine. Por isso vale a pena permitir a escrita direta em vez de
+        // gastar uma Cloud Function em cada toque de botao.
+        allow update: if ehDono(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['equipped'])
+          && request.resource.data.equipped is bool;
       }
 
       match /campaign_claims/{campaignId} {

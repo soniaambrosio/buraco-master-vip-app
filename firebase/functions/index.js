@@ -22,6 +22,23 @@ const db = admin.firestore();
 const CAMPAIGN_ID = 'pioneiros_2026';
 const DOC_FLAGS = 'config/featureFlags';
 
+// App Check: barra chamadas que nao venham de um binario legitimo do aplicativo.
+//
+// Entregue DESLIGADO de proposito. Ligar antes de o aplicativo publicar uma
+// versao com App Check configurado derrubaria o resgate de todo mundo, inclusive
+// do teste fechado. A ativacao e um passo do runbook, imediatamente antes da
+// abertura publica, e nao exige alterar codigo: basta a variavel de ambiente.
+//
+//   firebase functions:config unset / firebase deploy --only functions
+//   ENFORCE_APP_CHECK=true
+const EXIGIR_APP_CHECK = process.env.ENFORCE_APP_CHECK === 'true';
+
+/** Opcoes comuns a todas as funcoes deste arquivo. */
+const OPCOES = {
+  region: 'southamerica-east1',
+  enforceAppCheck: EXIGIR_APP_CHECK,
+};
+
 /** Estados devolvidos ao cliente. Espelham SituacaoResgate no Dart. */
 const RESULTADO = {
   concedido: 'claimed',
@@ -141,7 +158,7 @@ function exigirComposicao(campanha) {
 // claimPioneerKit — a unica porta de concessao.
 // ---------------------------------------------------------------------------
 
-exports.claimPioneerKit = onCall({ region: 'southamerica-east1' }, async (request) => {
+exports.claimPioneerKit = onCall(OPCOES, async (request) => {
   const uid = request.auth && request.auth.uid;
   if (!uid) {
     throw new HttpsError('unauthenticated', 'e preciso estar autenticado para resgatar');
@@ -292,7 +309,7 @@ function registrarAuditoria(batchOuTx, { acao, autor, alvo, detalhe }) {
  * aplicativo nem o modo da campanha. Nao concede o kit: o jogador ainda resgata
  * pelo fluxo normal, o que mantem uma unica porta de gravacao de inventario.
  */
-exports.grantPioneerEligibility = onCall({ region: 'southamerica-east1' }, async (request) => {
+exports.grantPioneerEligibility = onCall(OPCOES, async (request) => {
   const autor = exigirAdmin(request);
   const alvo = request.data && request.data.uid;
   if (!alvo || typeof alvo !== 'string') {
@@ -322,7 +339,7 @@ exports.grantPioneerEligibility = onCall({ region: 'southamerica-east1' }, async
  * trilha. Remove os itens e o comprovante numa unica transacao, para nao deixar
  * o jogador num estado meio concedido.
  */
-exports.revokePioneerKit = onCall({ region: 'southamerica-east1' }, async (request) => {
+exports.revokePioneerKit = onCall(OPCOES, async (request) => {
   const autor = exigirAdmin(request);
   const alvo = request.data && request.data.uid;
   if (!alvo || typeof alvo !== 'string') {
