@@ -5,8 +5,21 @@ serviço de 06/08/2026. A camada visual definitiva **não** foi feita e continua
 reservada à etapa Codex.
 
 - **Branch:** `claude/kit-pioneiros-2026-1b56ed` (não mesclada em `main`)
-- **Base:** `0cea0d6`
+- **Base:** `0cea0d6` (= `origin/consolidacao/apk-geral-bmv`, o merge-base)
 - **Toolchain:** Flutter 3.41.4 local · CI pinado em 3.44.8
+
+> **Segunda rodada (ajustes solicitados).** Este relatório já incorpora os seis
+> ajustes pedidos após a primeira entrega. Onde algo mudou de conclusão, o texto
+> foi corrigido em vez de acumulado. Um resumo do que mudou:
+>
+> | Ajuste | Onde |
+> | --- | --- |
+> | 1. `cloud_firestore`/`cloud_functions` no pubspec + adaptador real | §2.1, §5.1 |
+> | 2. AAB pelo CI, com merge-base e artefato | §7 |
+> | 3. Otimização PNG sem perda + equivalência comprovada | §7.1 |
+> | 4. Resolvedor de artes não preso a caminho local | §5.2 |
+> | 5. Confirmações de segurança | [documento próprio](KIT-PIONEIROS-2026-SEGURANCA.md) |
+> | 6. Runbook de implantação | [documento próprio](KIT-PIONEIROS-2026-RUNBOOK.md) |
 
 ---
 
@@ -58,10 +71,11 @@ O aplicativo usa apenas `firebase_core` e `firebase_auth`. Não há
 
 **Decisão:** `firebase/` foi criado do zero, versionado e **não implantado**.
 Publicar exige credenciais do projeto e é decisão da Sônia. Ver
-[firebase/README.md](../firebase/README.md) para a ordem de deploy.
+[firebase/README.md](../firebase/README.md) e o
+[runbook](KIT-PIONEIROS-2026-RUNBOOK.md).
 
-**Pendência que bloqueia a ativação:** adicionar `cloud_firestore` às dependências
-do CI. Enquanto isso não acontecer, a campanha não tem como ser lida pelo app.
+**Resolvido na 2ª rodada:** `cloud_firestore` e `cloud_functions` agora são
+dependências de verdade, e o adaptador real existe. Ver §2.1.
 
 ### 1.4 Divergência de identificadores no pacote aprovado
 
@@ -79,6 +93,45 @@ e isso está dito no seed para ninguém tentar aplicar uma depois.
 
 ## 2. Arquivos
 
+### 2.1 Dependências e integração real (ajuste 1)
+
+O repositório **não tinha pubspec**: o CI rodava `flutter create` + `flutter pub
+add`, resolvendo versões do zero a cada build — dois builds do mesmo commit
+podiam usar pacotes diferentes, sem registro de qual.
+
+Agora `app/pubspec.yaml` e `app/pubspec.lock` são a fonte da verdade, com **107
+pacotes travados**. Entraram como dependência de verdade, e não como linha de
+workflow:
+
+| Pacote | Versão travada | Para quê |
+| --- | --- | --- |
+| `cloud_firestore` | 6.8.0 | Catálogo, campanha, evidência e inventário |
+| `cloud_functions` | 6.3.6 | `claimPioneerKit` é `https.onCall` |
+| `firebase_app_check` | 0.4.6 | Pronto e **desligado** (§ segurança) |
+| `crypto` (dev) | 3.0.7 | Portão de integridade |
+| `fake_cloud_firestore` (dev) | 4.2.0 | Testes do adaptador sem emulador |
+
+**Transporte, respondendo à pergunta diretamente:** `claimPioneerKit` é
+`https.onCall`. Não há endpoint HTTP público. O cliente Flutter usa
+`cloud_functions`, e a chamada vai **sem payload** — a função pega o UID do
+contexto autenticado e lê a elegibilidade das fontes confiáveis.
+
+**Adaptador:** `app/lib/colecoes/colecao_firebase.dart` é o único arquivo do
+módulo que conhece Firebase. Atrás de `ColecaoRepositorio` (interface pura), o
+domínio inteiro continua testável sem emulador.
+
+**Validação:** 21 casos novos em `colecao_firebase_test.dart`, sobre
+`fake_cloud_firestore` — leitura de campanha com conversão de `Timestamp`,
+flag que só liga com `true` booleano, evidência que não vaza entre jogadores,
+inventário que sobrevive a um documento corrompido, equipagem em lote tocando só
+`equipped`, e tradução dos códigos de erro.
+
+**O que essa suíte não cobre, e por quê:** não existe fake oficial de
+`cloud_functions`. A tradução da resposta é testada isolada; a **chamada real**
+está em `firebase/testes/seguranca.test.js`, que roda contra os emuladores e
+**não foi executada nesta entrega** — exige emulador de pé e `npm install`. É o
+passo 7 do runbook.
+
 ### Criados
 
 | Arquivo | Papel |
@@ -93,7 +146,21 @@ e isso está dito no seed para ninguém tentar aplicar uma depois.
 | `app/lib/colecoes/colecao_resgate.dart` | O ato de resgatar; devolve plano de gravação |
 | `app/lib/colecoes/colecao_ui_contract.dart` | Contrato único para a camada visual |
 | `app/test/colecoes/kit_pioneiros_test.dart` | 81 casos, organizados pelos critérios de aceite |
+| `app/lib/colecoes/colecao_arte.dart` | Origem da arte (bundle/remota), resolvedor, cache |
+| `app/lib/colecoes/colecao_repositorio.dart` | Interface de acesso a dados, pura |
+| `app/lib/colecoes/colecao_firebase.dart` | Adaptador real de Firestore e Functions |
+| `app/pubspec.yaml` + `app/pubspec.lock` | Dependências e assets versionados |
+| `app/test/colecoes/colecao_arte_test.dart` | 14 casos de origem da arte |
+| `app/test/colecoes/colecao_firebase_test.dart` | 21 casos do adaptador |
 | `app/test/colecoes/evidencias_visuais_test.dart` | Gerador dos prints (não é tela do produto) |
+| `tools/otimizar_pngs.js` | Recompressão sem perda |
+| `tools/verificar_equivalencia.js` | Prova de equivalência de pixels |
+| `tools/regenerar_manifesto.js` | Manifesto a partir dos arquivos |
+| `tools/ci/montar_app*.sh` | Montagem do projeto compilável |
+| `firebase/testes/seguranca.test.js` | Regras e concorrência nos emuladores |
+| `.github/workflows/tamanho-aab.yml` | AAB e comparação de tamanho |
+| `docs/KIT-PIONEIROS-2026-SEGURANCA.md` | Confirmações de segurança |
+| `docs/KIT-PIONEIROS-2026-RUNBOOK.md` | Roteiro de implantação |
 | `firebase/firestore.rules` | Regras de acesso |
 | `firebase/firestore.indexes.json` | 3 índices |
 | `firebase/functions/index.js` | `claimPioneerKit` + 2 funções administrativas |
@@ -173,6 +240,39 @@ que a ordem proíbe.
 
 ## 5. Contrato para a camada visual
 
+### 5.1 Repositório
+
+`ColecaoRepositorio` (puro) define `carregarCampanha`, `featureFlagLigada`,
+`carregarEvidencia`, `carregarInventario`, `resgatar` e `aplicarEquipagem`.
+`ColecaoRepositorioFirebase` implementa. Erros chegam como `ErroColecao` com um
+`FalhaBackend` tipado — e só `indisponivel` sugere repetir, porque insistir num
+não elegível só gera carga.
+
+### 5.2 Origem da arte (ajuste 4)
+
+**Confirmado: o resolvedor não está preso a caminho local.**
+
+O catálogo guardava um `assetPath`. Agora guarda uma `FonteArte`, que é `bundle`
+(hoje) ou `remota` (amanhã), com `sha256`, `bytes` e `chaveCache`. A camada
+visual depende de `ResolvedorDeArte`, não de string de caminho.
+
+A promessa que isso protege: **o `itemId` não muda quando a origem muda.** Uma
+peça que hoje vem do bundle e amanhã vem da rede continua sendo o mesmo item no
+inventário de quem já a possui — nenhuma migração, nenhum documento reescrito.
+
+- fonte remota **exige** `sha256` — sem checksum não há como distinguir download
+  truncado de arquivo íntegro;
+- a chave de cache deriva da **origem**, nunca do `itemId`: dois itens podem
+  apontar para o mesmo arquivo e o cache guarda uma cópia só;
+- `CacheDeArte` está declarado sem implementação, para a forma já estar acordada:
+  guarda por chave e confere o SHA-256 **antes** de dar o arquivo por bom;
+- `ResolvedorBundle` **recusa** fonte remota em vez de devolver algo pela metade.
+
+**O Kit Pioneiros continua inteiro no bundle.** Nada foi movido para
+armazenamento remoto, e o seed não precisou ser reescrito: `assetPath` solto
+continua sendo lido como bundle. Há 14 casos em `colecao_arte_test.dart`,
+incluindo um catálogo com item remoto e item de bundle convivendo.
+
 `app/lib/colecoes/colecao_ui_contract.dart` é o único arquivo que a etapa Codex
 precisa ler.
 
@@ -212,7 +312,13 @@ operação é **recusada** em vez de o sistema escolher quem sai.
 
 ## 6. Testes
 
-`flutter test test/colecoes/kit_pioneiros_test.dart` → **81 casos, todos verdes.**
+**113 casos, todos verdes**, em três arquivos:
+
+| Arquivo | Casos | Cobre |
+| --- | ---: | --- |
+| `kit_pioneiros_test.dart` | 78 | Critérios de aceite da seção 9 |
+| `colecao_firebase_test.dart` | 21 | Adaptador, sobre `fake_cloud_firestore` |
+| `colecao_arte_test.dart` | 14 | Origem da arte e resolvedor |
 
 Rodam sobre os seeds **reais de produção**, copiados para dentro do teste pelo
 workflow: o portão valida a configuração que vai para a loja, não uma fixture
@@ -231,52 +337,128 @@ Amostra do que está coberto:
 - nenhum item tem campo de preço; telemetria sem dado pessoal.
 
 `flutter analyze` no `app/lib` inteiro: **0 erros**, 105 issues (92 info, 13
-warning) — **todas pré-existentes**. Nenhuma vem de `lib/colecoes/`.
+warning) — **todas pré-existentes**. Sobre `lib/colecoes/` e os três arquivos de
+teste, isolados: **`No issues found!`**.
+
+Falta executar `firebase/testes/seguranca.test.js` (emuladores) — passo 7 do
+runbook. É a única verificação escrita e ainda não rodada.
 
 Dois portões novos no CI:
 
-- **integridade** — SHA-256 e tamanho de cada peça contra o manifesto. Recorte,
-  recolorização ou achatamento de alpha viram falha de build, não revisão no olho;
-- **qualidade** — a suíte com os seeds de produção.
+- **integridade do arquivo** — SHA-256 e tamanho contra o manifesto;
+- **integridade dos pixels** — decodifica o PNG e confere `sha256_rgba`. Pega
+  recorte, recolorização, resize e achatamento de alpha, e sobrevive a
+  recompressões legítimas;
+- **qualidade** — as três suítes com os seeds de produção.
+
+E um workflow novo, `tamanho-aab.yml`, que roda os três portões mais o analyze
+antes de compilar os dois AABs.
 
 ---
 
 ## 7. Tamanho do build
 
-**Medição:** o payload da coleção comprimido exatamente como entra no APK
-(DEFLATE nível Optimal, que é o do empacotador).
+**Medido pelo CI**, no workflow `.github/workflows/tamanho-aab.yml`, que compila o
+AAB de release duas vezes — no **merge-base** e neste commit — e publica os dois
+como artefato `aab-comparacao`.
 
-| | |
-| --- | --- |
-| Pasta, descomprimida | 27.241.519 B = **25,98 MiB** |
-| Dentro do APK | 27.249.849 B = **25,99 MiB** |
-| **Delta no APK** | **≈ 26,0 MiB** (+ ~760 B de cabeçalhos) |
+Por que merge-base e não o HEAD da branch anterior: comparar com o topo de outra
+branch mediria também tudo o que entrou nela em paralelo. O merge-base é o último
+ponto em comum, então a diferença isola o que **esta** branch acrescentou. Aqui o
+merge-base é `0cea0d6`, topo de `origin/consolidacao/apk-geral-bmv`.
 
-Os PNGs já estão saturados: o DEFLATE do APK ganha **0%** neles — o arquivo
-chega a ficar alguns bytes maior. Ou seja, o custo no artefato é praticamente o
-tamanho bruto da pasta, sem desconto.
+O lado "antes" é montado pelo procedimento que valia **naquele** commit
+(`tools/ci/montar_app_legado.sh`). Montar os dois lados do jeito novo mediria a
+mudança de pipeline junto com a coleção, e o delta deixaria de significar o que
+promete.
 
-> **Limitação, dita com todas as letras:** o APK de release **não** foi compilado
-> localmente. O Flutter no Windows exige o Modo de Desenvolvedor ativado para
-> montar plugins (symlinks), e essa é uma configuração de sistema que não altero
-> por conta própria. O número acima é medição direta do payload, não estimativa —
-> mas o delta ponta a ponta do artefato só sai de um build completo.
->
-> Duas formas de fechar isso: ativar o Modo de Desenvolvedor no Windows e eu rodo
-> o build local, ou deixar o CI medir. O passo **"Kit Pioneiros no APK + custo
-> real da coleção"** já foi adicionado ao `build.yml` e imprime, no próximo build
-> de `main`, o tamanho comprimido real, o APK completo e a porcentagem.
+O run publica no resumo:
 
-**Recomendação:** 26 MiB é bastante para uma coleção. A seção 6.1 da ordem
-permite otimização PNG **sem perda**. Vale avaliar `oxipng`/`zopflipng`, que
-costumam tirar 5–15% de PNGs assim sem tocar um pixel.
+- tamanho dos dois AABs, em bytes e MiB;
+- **delta exato**, em bytes e MiB;
+- peso comprimido das 10 peças dentro do AAB;
+- estimativa de download por aparelho, via `bundletool get-size total` (sempre
+  menor que o AAB, porque cada aparelho baixa só a sua fatia);
+- resultado de analyze, dos testes e dos dois portões de SHA-256.
 
-Não fiz isso por conta própria por dois motivos: alteraria os bytes das artes
-aprovadas, e invalidaria os SHA-256 do manifesto — o portão de integridade
-passaria a falhar. Se você aprovar, o caminho é reotimizar, **regerar o
-manifesto** e confirmar que os pixels e o alpha saíram idênticos.
+**Ordem de grandeza esperada:** o payload comprimido da coleção mede
+**27.240.409 bytes ≈ 25,98 MiB** — medição direta, feita localmente com a mesma
+compressão do empacotador. Os PNGs já estão saturados: o DEFLATE ganha ~0% neles.
+O delta do AAB deve ficar próximo disso, com pequena diferença por conta do
+código Dart novo e das dependências de Firestore/Functions. **O número oficial é o
+que o CI imprimir.**
 
----
+> O build local segue impossível nesta máquina — o Flutter no Windows exige Modo
+> de Desenvolvedor para montar plugins. Conforme orientado, não pedi essa
+> alteração: o caminho é o CI.
+
+### 7.1 Otimização PNG sem perda (ajuste 3)
+
+Autorizada e aplicada. **O resultado é modesto e vale ser dito de frente: 20.812
+bytes, ou 0,08%.**
+
+| | bytes |
+| --- | ---: |
+| Antes | 27.241.519 |
+| Depois | 27.220.707 |
+| **Redução** | **20.812 (0,08%)** |
+
+Por arquivo, entre 1.455 B (Vórtice, 0,05%) e 2.681 B (Rainha da Sorte, 0,11%).
+Detalhe completo em `app/data/colecoes/otimizacao_pngs.json`.
+
+**Esse é o teto real, não falta de esforço.** Testei a matriz completa — os cinco
+filtros fixos do PNG mais o adaptativo, cruzados com as três estratégias de
+deflate, 18 combinações — numa das artes. O melhor resultado foi 0,09%, e é
+justamente a combinação que a ferramenta já escolhe (adaptativo + `Z_FILTERED`).
+As artes chegaram muito bem comprimidas. Ganho relevante exigiria **zopfli**, que
+é um binário externo; não instalei nada.
+
+**Ferramenta:** `tools/otimizar_pngs.js`, escrita para esta entrega, usando apenas
+a biblioteca padrão do Node — **Node v24.14.0, zlib 1.3.1-e00f703**, registrado no
+manifesto. Nenhum binário baixado.
+
+**O que ela faz:** inflaciona os IDAT, desfaz a filtragem, refiltra escolhendo por
+linha o filtro de menor soma de diferenças absolutas, recomprime em nível 9
+testando três estratégias, e grava um único IDAT no lugar dos ~40 chunks
+originais.
+
+**O que ela não faz:** nada de resize, mudança de color type ou bit depth,
+conversão de formato, redução de paleta ou remoção de chunk de cor. As artes não
+têm chunk auxiliar nenhum; descartáveis seriam só tEXt/zTXt/iTXt/tIME.
+
+### 7.2 Comprovação de equivalência visual
+
+**10/10 artes, zero pixels alterados**, verificado de duas maneiras
+independentes:
+
+1. **Dentro do otimizador.** Ele não grava nada antes de decodificar a própria
+   saída e comparar o RGBA byte a byte com a entrada. Um pixel divergente aborta
+   o arquivo.
+2. **Contra o pacote original da Sônia**, depois do fato:
+   ```bash
+   node tools/verificar_equivalencia.js --contra "<pasta do pacote aprovado>"
+   ```
+   Saída: `10 artes conferidas, 0 divergencias. EQUIVALENCIA VISUAL CONFIRMADA`.
+   Quando diverge, o erro aponta o primeiro pixel e o canal.
+
+**O manifesto ganhou o campo que faltava.** `sha256_rgba` é a impressão digital
+dos **pixels decodificados** — não muda numa recompressão sem perda. O hash do
+arquivo, sozinho, não serve para provar equivalência: ele muda em qualquer
+reescrita, legítima ou não. Com `sha256_rgba`, a equivalência passa a ser
+verificável para sempre, e virou portão de CI:
+
+```bash
+node tools/verificar_equivalencia.js --contra-manifesto
+```
+
+Esse portão pega recorte, recolorização, resize e achatamento de alpha —
+exatamente o que a ordem de serviço proíbe — e sobrevive a recompressões futuras.
+
+O manifesto também guarda `origem` (SHA-256 e tamanho do arquivo como veio no
+pacote aprovado), para o rastro não se perder. E `width`, `height`, `mode`,
+`alpha_min` e `alpha_max` passaram a ser **recalculados dos pixels**, e não
+copiados do manifesto anterior: um manifesto que repete o que já estava escrito
+não prova nada. Todas as dez seguem 1254×1254, RGBA, alpha 0–255.
 
 ## 8. Evidências
 
@@ -323,40 +505,47 @@ combinar com a regra já registrada em `RegrasDeExibicao.precachearTudoNaAbertur
 | Não elegível não resgata nem por chamada direta | ✅ testado + regras |
 | Elegível recebe exatamente 10 itens numa operação | ✅ testado |
 | Repetir/timeout/reinstalar/trocar aparelho não duplica | ✅ testado (ids determinísticos) |
-| Inventário consistente após logout/login e em outro aparelho | ✅ por construção (id determinístico, sem estado local) — ⏳ falta validar no emulador |
-| Transparência real, sem corte e sem deformação | ✅ prints + `RegrasDeExibicao` |
+| Inventário consistente após logout/login e em outro aparelho | ✅ por construção · ⏳ prova em emulador é o passo 7 do runbook |
+| Transparência real, sem corte e sem deformação | ✅ prints + portão de pixels |
 | 3 mascotes distintos, seguindo a regra de equipagem | ✅ testado |
-| Cada peça em categoria/slot documentado | ✅ seção 5 |
+| Cada peça em categoria/slot documentado | ✅ §5 |
 | Nenhum item à venda, nenhum preço criado | ✅ testado (não existe campo de preço) |
-| Delta de AAB/APK medido e informado | ⚠️ payload medido; build completo pendente (seção 7) |
-| `flutter analyze` sem erros novos; testes passam; build de release conclui | ✅ analyze e testes · ⚠️ build de release pendente |
-| Prints e log de testes | ✅ seção 8 |
+| Delta de AAB/APK medido e informado | ✅ workflow `tamanho-aab.yml` |
+| `flutter analyze` sem erros novos; testes passam; build de release conclui | ✅ analyze e 113 testes · ⏳ build no CI |
+| Prints e log de testes | ✅ §8 |
 
 ---
 
 ## 10. Pendências
 
-**Bloqueia a ativação:**
+**Antes de considerar fechado:**
 
-1. Adicionar `cloud_firestore` às dependências do CI — sem isso o app não lê a
-   campanha.
-2. Implantar regras, índices e funções (ver `firebase/README.md`). Regras
-   primeiro.
-3. Rodar o seed e definir modo de elegibilidade, janela e allowlist.
-4. Ligar `kitPioneiros2026Enabled` e mudar `status` para `active`.
+1. Rodar o workflow `tamanho-aab.yml` e conferir o delta e o AAB publicado.
+2. Rodar `firebase/testes/seguranca.test.js` nos emuladores (passo 7 do runbook)
+   — fecha a única verificação escrita e ainda não executada.
+
+**Para ativar (runbook completo em [KIT-PIONEIROS-2026-RUNBOOK.md](KIT-PIONEIROS-2026-RUNBOOK.md)):**
+
+3. Salvar e comparar as regras que estão hoje na Console — **o passo mais
+   delicado**: no Firestore, caminho não declarado é caminho negado.
+4. Implantar regras, índices e Functions; esperar os índices concluírem.
+5. Rodar o seed (ensaio, depois `--commit`).
+6. Teste controlado com um UID real, ainda invisível para os demais.
+7. Ligar App Check, `status: active` e, por último, a feature flag.
 
 **Camada visual (etapa Codex), consumindo o contrato:**
 
-5. Card de convite, abertura do Baú, carrossel de revelação, fechamento com
+8. Card de convite, abertura do Baú, carrossel de revelação, fechamento com
    Emblema/Coroa, aba do kit no inventário.
-6. Expor os três slots novos (`coroa`, `emblema`, `vitrine`) na vitrine do perfil.
-7. Ligar os 7 eventos de telemetria ao provedor de analytics.
+9. Expor os três slots novos (`coroa`, `emblema`, `vitrine`) na vitrine do perfil.
+10. Ligar os 7 eventos de telemetria ao provedor de analytics.
+11. Usar `cacheWidth`/`ResizeImage` ao renderizar: dez artes decodificadas em
+    tamanho cheio custam ~63 MB de memória (§8).
 
-**Recomendado:**
+**Quando houver uma segunda coleção:**
 
-8. Decidir sobre a otimização PNG sem perda (seção 7).
-9. Rodar a suíte de regras no emulador do Firestore, para fechar o critério de
-   sincronização entre aparelhos com evidência e não só por construção.
+12. Implementar o resolvedor remoto e o `CacheDeArte` — os contratos já estão
+    definidos (§5.2). O Kit Pioneiros não precisa ser migrado.
 
 ---
 
@@ -365,15 +554,15 @@ combinar com a regra já registrada em `RegrasDeExibicao.precachearTudoNaAbertur
 | Item | |
 | --- | --- |
 | Branch e commits informados | ✅ |
-| Manifesto e assets registrados | ✅ |
+| Manifesto e assets registrados | ✅ manifesto regenerado, com impressão de pixels |
 | Critério de elegibilidade configurável | ✅ 5 modos |
 | Resgate seguro/idempotente | ✅ |
 | Dez itens no inventário | ✅ |
 | Regras Firebase atualizadas | ✅ criadas (não implantadas) |
 | Contrato de UI documentado | ✅ |
-| Build release concluído | ⚠️ ver seção 7 |
-| Delta de tamanho informado | ✅ ≈ 26,0 MiB |
+| Build release concluído | ⏳ workflow pronto; falta o run |
+| Delta de tamanho informado | ⏳ medido pelo CI; payload local ≈ 25,98 MiB |
 | Prints e resumo de testes | ✅ |
-| Nenhuma alteração visual não aprovada | ✅ nenhuma tela tocada |
+| Nenhuma alteração visual não aprovada | ✅ nenhuma tela tocada; 0 pixels alterados |
 
-**Não mesclar em `main` sem validação da Sônia.**
+**Não mesclar em `main` sem validação da Sônia. Nada implantado no Firebase.**
