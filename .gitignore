@@ -1,0 +1,49 @@
+# Scaffold Flutter gerado localmente/CI (flutter create app_build).
+# Nunca versionar: e artefato de build, nao fonte.
+/app_build/
+
+# ===========================================================================
+# MATERIAL CRIPTOGRAFICO — bloqueio por PADRAO, nao por nome
+#
+# A regra vale para qualquer chave futura, com qualquer nome: chave privada de
+# assinatura nao entra no repositorio, nem convertida em base64. A chave de
+# upload de producao vive na maquina da Sonia (com backup) e no GitHub Secrets.
+#
+# Nota: `keystore/buraco-master-vip-test.jks.b64` e `keystore/debug.keystore.b64`
+# ja estavam versionados por decisao anterior do projeto e continuam assim —
+# .gitignore nao afeta arquivo ja rastreado. Nenhum dos dois assina o que vai
+# para a Play Console.
+# ===========================================================================
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.der
+*.key
+
+# Base64 de chave (o disfarce mais comum: "e so texto").
+keystore/*.b64
+*.jks.b64
+*.keystore.b64
+
+# Senhas de assinatura do Gradle.
+key.properties
+android/key.properties
+**/key.properties
+
+# Credencial da conta de servico da Google Play Developer API.
+# Vai para o Secret Manager do Firebase, nunca para o git.
+*service-account*.json
+play-service-account*.json
+
+# Variaveis de ambiente (costumam carregar senha e alias).
+.env
+.env.*
+!.env.example
+
+# Firebase Functions
+/functions/node_modules/
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
