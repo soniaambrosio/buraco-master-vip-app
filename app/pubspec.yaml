@@ -1,0 +1,88 @@
+# pubspec.yaml — dependencias e assets do Buraco Master VIP.
+#
+# ATE AQUI o repositorio nao tinha pubspec: o CI rodava `flutter create` e depois
+# `flutter pub add`, resolvendo as versoes do zero a cada build. Isso significava
+# que dois builds do MESMO commit podiam usar versoes diferentes de pacote.
+#
+# Agora este arquivo, junto de pubspec.lock, e a fonte da verdade. O workflow
+# copia ambos para dentro do scaffold e roda `flutter pub get` — sem `pub add`,
+# sem remendo de YAML em tempo de build.
+#
+# O bloco `assets` tambem migrou para ca. Antes ele era injetado por um script
+# Python dentro do workflow, com uma cadeia de "se nao achar tal linha, insere
+# depois dela". Declarar aqui e mais simples e falha mais cedo.
+
+name: buraco_master_vip
+description: "Buraco Master VIP."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  # Faixa aberta no patch de proposito: o CI fixa o Flutter em 3.44.8, e travar
+  # o Dart num patch exato quebraria o build a cada bump do canal stable.
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # --- Firebase --------------------------------------------------------------
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+
+  # Necessarios pelo modulo de colecoes (lib/colecoes/colecao_firebase.dart):
+  # o catalogo, a campanha e o inventario vivem no Firestore, e o resgate e uma
+  # Cloud Function `https.onCall` — que exige cloud_functions no cliente.
+  cloud_firestore: ^6.8.0
+  cloud_functions: ^6.3.6
+
+  # App Check: a integracao fica pronta aqui, porem DESLIGADA por padrao. Ver
+  # docs/KIT-PIONEIROS-2026-SEGURANCA.md — a ativacao acontece antes da abertura
+  # publica, nao agora.
+  firebase_app_check: ^0.4.6
+
+  google_sign_in: 6.2.1
+  audioplayers: ^6.7.1
+  web_socket_channel: ^3.0.3
+  shared_preferences: ^2.5.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # Usado pelo portao de integridade das artes: o teste decodifica cada PNG e
+  # compara o SHA-256 do RGBA cru com o do manifesto.
+  crypto: ^3.0.7
+
+  # Fakes de Firestore e Functions nos testes do adaptador, sem subir emulador.
+  fake_cloud_firestore: ^4.2.0
+
+dependency_overrides:
+  # O jni 1.0.1 (dependencia transitiva) adicionou um bloco
+  # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
+  # "Could not find method kotlin()". O 1.0.0 tem build.gradle Groovy simples e
+  # API praticamente identica.
+  jni: 1.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Flutter NAO inclui subdiretorios recursivamente: cada pasta precisa da
+  # propria linha. `assets/ranking/` nao arrasta `assets/ranking/selos/`.
+  assets:
+    - assets/splash/
+    - assets/sons/
+    - assets/baralho/
+    - assets/perfil/
+    - assets/ranking/
+    - assets/ranking/selos/
+    - assets/hall/
+    - assets/inicio/
+    - assets/configurar_mesa/
+    - assets/torneios/capas/
+    - assets/torneios/premiacao/coroas/
+    - assets/torneios/premiacao/selos/
+    - assets/colecoes/pioneiros_2026/
