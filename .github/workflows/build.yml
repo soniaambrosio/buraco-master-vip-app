@@ -142,6 +142,53 @@ jobs:
           if [ "$N_SELOS" -ne 8 ]; then echo "ERRO: esperava EXATAMENTE 8 selos, veio $N_SELOS"; exit 1; fi
           ls -l app_build/assets/torneios/premiacao/coroas/ app_build/assets/torneios/premiacao/selos/
 
+      - name: Copy Kit Pioneiros 2026 assets (colecao comemorativa)
+        # Contagem EXATA: sobrar arquivo e tao grave quanto faltar, porque
+        # app/data/colecoes/catalogo.seed.json declara exatamente 10 itens e a
+        # concessao e "tudo ou nada". Um decimo primeiro PNG na pasta indicaria
+        # arte fora do catalogo entrando no bundle sem passar pelo manifesto.
+        run: |
+          mkdir -p app_build/assets/colecoes/pioneiros_2026
+          cp app/assets/colecoes/pioneiros_2026/*.png app_build/assets/colecoes/pioneiros_2026/
+          N=$(find app_build/assets/colecoes/pioneiros_2026 -maxdepth 1 -type f -name '*.png' | wc -l)
+          echo "Kit Pioneiros 2026: $N pecas copiadas"
+          if [ "$N" -ne 10 ]; then echo "ERRO: esperava EXATAMENTE 10 pecas, veio $N"; exit 1; fi
+          echo "--- peso da colecao no bundle ---"
+          du -sh app_build/assets/colecoes/pioneiros_2026
+          ls -l app_build/assets/colecoes/pioneiros_2026/
+
+      - name: "PORTÃO DE INTEGRIDADE — SHA-256 das artes do Kit Pioneiros"
+        # A ordem de servico define os PNGs originais como fonte da verdade e
+        # proibe recorte, recolorizacao e achatamento do alpha. Um hash por
+        # arquivo transforma essa exigencia em falha de build, e nao em revisao
+        # visual no olho.
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, sys
+          man = json.load(open('app/data/colecoes/pioneiros_2026.manifest.json', encoding='utf-8'))
+          base = 'app_build/assets/colecoes/pioneiros_2026/'
+          falhas = []
+          for item in man['items']:
+              caminho = base + item['file']
+              try:
+                  dados = open(caminho, 'rb').read()
+              except FileNotFoundError:
+                  falhas.append(f"{item['id']}: arquivo ausente ({item['file']})")
+                  continue
+              sha = hashlib.sha256(dados).hexdigest()
+              if sha != item['sha256']:
+                  falhas.append(f"{item['id']}: SHA-256 divergente (esperado {item['sha256']}, veio {sha})")
+              elif len(dados) != item['bytes']:
+                  falhas.append(f"{item['id']}: tamanho divergente ({len(dados)} vs {item['bytes']})")
+              else:
+                  print(f"OK {item['id']} ({len(dados)} bytes)")
+          if falhas:
+              print('\nARTES ADULTERADAS OU AUSENTES:')
+              for f in falhas: print(' -', f)
+              sys.exit(1)
+          print(f"\nPORTAO VERDE: {len(man['items'])} artes identicas ao manifesto aprovado.")
+          PY
+
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
 
@@ -205,6 +252,29 @@ jobs:
           cd app_build
           flutter test test/torneios/reward_grants_test.dart --reporter expanded
           echo "PORTÃO VERDE: domínio de recompensas de torneios validado no commit ${GITHUB_SHA}."
+
+      - name: "PORTÃO DE QUALIDADE — Kit Pioneiros 2026 (catálogo, resgate, inventário)"
+        # Mesmo padrão do portão de torneios: roda SOMENTE este arquivo, porque o
+        # test/widget_test.dart vindo do `flutter create` tem erro pré-existente
+        # e derrubaria a suíte inteira.
+        #
+        # Os seeds REAIS de produção são copiados para dentro do teste: o portão
+        # valida a configuração que vai para a loja, não uma fixture paralela.
+        run: |
+          if [ ! -f app/test/colecoes/kit_pioneiros_test.dart ]; then
+            echo "ERRO: app/test/colecoes/kit_pioneiros_test.dart não encontrado — o portão da coleção é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/colecoes/data
+          cp app/test/colecoes/kit_pioneiros_test.dart app_build/test/colecoes/
+          cp app/data/colecoes/catalogo.seed.json app_build/test/colecoes/data/
+          cp app/data/colecoes/campanha_pioneiros_2026.seed.json app_build/test/colecoes/data/
+          cp app/data/colecoes/pioneiros_2026.manifest.json app_build/test/colecoes/data/
+          echo "seeds disponíveis para o teste:"
+          ls -l app_build/test/colecoes/data/
+          cd app_build
+          flutter test test/colecoes/kit_pioneiros_test.dart --reporter expanded
+          echo "PORTÃO VERDE: Kit Pioneiros 2026 validado no commit ${GITHUB_SHA}."
 
       - name: Bump minSdk to 23 (Firebase)
         run: |
@@ -377,6 +447,7 @@ jobs:
               '    - assets/torneios/capas/',
               '    - assets/torneios/premiacao/coroas/',
               '    - assets/torneios/premiacao/selos/',
+              '    - assets/colecoes/pioneiros_2026/',
           ]
           joined = '\n'.join(lines)
           if 'assets/baralho/' not in joined:
@@ -470,6 +541,21 @@ jobs:
               if not inserted:
                   raise AssertionError('nao encontrei assets/torneios/premiacao/coroas/ para declarar os selos')
               lines = out
+          # Kit Pioneiros 2026: pasta unica, declarada logo apos a premiacao de
+          # torneios. Flutter nao inclui subdiretorios recursivamente, entao a
+          # colecao precisa da propria linha.
+          joined = '\n'.join(lines)
+          if 'assets/colecoes/pioneiros_2026/' not in joined:
+              out = []
+              inserted = False
+              for ln in lines:
+                  out.append(ln)
+                  if ln.strip() == '- assets/torneios/premiacao/selos/':
+                      out.append('    - assets/colecoes/pioneiros_2026/')
+                      inserted = True
+              if not inserted:
+                  raise AssertionError('nao encontrei assets/torneios/premiacao/selos/ para declarar o Kit Pioneiros')
+              lines = out
           s = '\n'.join(lines)
           open(p, 'w', encoding='utf-8').write(s)
           print('----- pubspec.yaml (a partir de flutter:) -----')
@@ -477,11 +563,11 @@ jobs:
           # travas de segurança: exatamente UMA seção flutter: e todos os diretórios de assets declarados
           top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
           assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
-          for a in ('assets/splash/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/', 'assets/configurar_mesa/', 'assets/torneios/capas/', 'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
+          for a in ('assets/splash/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/', 'assets/configurar_mesa/', 'assets/torneios/capas/', 'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/', 'assets/colecoes/pioneiros_2026/'):
               assert a in s, f'FALTOU declarar {a} no pubspec!'
-          for a in ('assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
+          for a in ('assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/', 'assets/colecoes/pioneiros_2026/'):
               assert s.count(f'- {a}') == 1, f'{a} declarado mais de uma vez no pubspec!'
-          print('OK: 1 seção flutter: · splash oficial + som + sons + baralho + perfil + ranking + selos + hall + inicio + configurar_mesa + torneios/capas + torneios/premiacao (coroas e selos) declarados')
+          print('OK: 1 seção flutter: · splash oficial + som + sons + baralho + perfil + ranking + selos + hall + inicio + configurar_mesa + torneios/capas + torneios/premiacao (coroas e selos) + colecoes/pioneiros_2026 declarados')
           PY
 
       - name: Conferir assets que serão empacotados
@@ -500,6 +586,27 @@ jobs:
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/ranking/' | head -3 || true
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/inicio/' | head -3 || true
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/configurar_mesa/' | head -3 || true
+
+      - name: "Kit Pioneiros no APK + custo real da coleção"
+        # A ordem de servico exige medir e informar o impacto no artefato. O
+        # numero honesto e o COMPRIMIDO dentro do APK, nao o tamanho da pasta:
+        # o APK e um zip, e PNG ja comprimido quase nao deflaciona de novo.
+        run: |
+          APK=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          PREFIXO='assets/flutter_assets/assets/colecoes/pioneiros_2026/'
+          N=$(unzip -l "$APK" | grep -c "$PREFIXO" || true)
+          echo "pecas do Kit Pioneiros dentro do APK: $N"
+          if [ "$N" -ne 10 ]; then echo "ERRO: esperava 10 peças empacotadas, veio $N"; exit 1; fi
+          unzip -l "$APK" | grep "$PREFIXO"
+          echo "================= CUSTO DA COLEÇÃO ================="
+          BRUTO=$(unzip -l "$APK" | grep "$PREFIXO" | awk '{s+=$1} END {print s+0}')
+          COMPRIMIDO=$(unzip -lv "$APK" | grep "$PREFIXO" | awk '{s+=$2} END {print s+0}')
+          TOTAL=$(stat -c%s "$APK")
+          echo "soma descomprimida das 10 peças : $BRUTO bytes"
+          echo "soma comprimida dentro do APK   : $COMPRIMIDO bytes"
+          echo "APK arm64 completo              : $TOTAL bytes"
+          python3 -c "print('coleção representa %.1f%% do APK' % (100*$COMPRIMIDO/$TOTAL))"
+          echo "==================================================="
 
       - name: Signing report (confirma a assinatura final)
         run: |
