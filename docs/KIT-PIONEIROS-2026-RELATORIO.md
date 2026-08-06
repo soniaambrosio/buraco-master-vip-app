@@ -392,6 +392,40 @@ que o CI imprimir.**
 > de Desenvolvedor para montar plugins. Conforme orientado, não pedi essa
 > alteração: o caminho é o CI.
 
+### 7.0 O run ainda não aconteceu — e o motivo
+
+A branch foi enviada para `origin` em 06/08/2026 22:28Z, com o workflow presente
+(`.github/workflows/tamanho-aab.yml`, 9.615 bytes, confirmado na branch remota).
+**O GitHub não criou nenhum run.**
+
+Ao investigar pela API pública, o padrão do repositório ficou claro:
+
+| Últimos 10 runs | Evento | Workflow |
+| --- | --- | --- |
+| todos | `workflow_dispatch` | `.github/workflows/build.yml` |
+
+**Nenhum run deste repositório foi disparado por `push`** — nem nesta branch, nem
+nas outras. Todos são acionamentos manuais, e todos usam `build.yml`, que vive na
+branch padrão. Sem autenticação não dá para ler as permissões de Actions do
+repositório (`/actions/permissions` responde 401), então não afirmo a causa; o
+que está medido é o padrão.
+
+**Consequência prática:** `workflow_dispatch` só aparece na interface quando o
+workflow está na **branch padrão**. Como `tamanho-aab.yml` está apenas nesta
+branch, ele não é dispachável ainda.
+
+**O que destrava, e é decisão sua** — não fiz nenhuma das duas:
+
+1. **Levar só o arquivo do workflow para `main`.** É um arquivo novo, que não
+   altera build nem app; depois disso, Actions → *Tamanho do AAB* → *Run
+   workflow* → escolher esta branch.
+2. **Ou abrir o PR** desta branch e verificar, nas configurações de Actions, por
+   que eventos de `push` não disparam.
+
+Enquanto isso não acontecer, **este item continua aberto** — e, como você
+determinou, a implementação não deve ser considerada fechada sem o build de
+release concluído.
+
 ### 7.1 Otimização PNG sem perda (ajuste 3)
 
 Autorizada e aplicada. **O resultado é modesto e vale ser dito de frente: 20.812
@@ -520,7 +554,9 @@ combinar com a regra já registrada em `RegrasDeExibicao.precachearTudoNaAbertur
 
 **Antes de considerar fechado:**
 
-1. Rodar o workflow `tamanho-aab.yml` e conferir o delta e o AAB publicado.
+1. **Destravar o run do `tamanho-aab.yml`** (ver §7.0): eventos de `push` não
+   disparam neste repositório, e `workflow_dispatch` só aparece para workflows da
+   branch padrão. Depois, conferir delta e AAB publicado.
 2. Rodar `firebase/testes/seguranca.test.js` nos emuladores (passo 7 do runbook)
    — fecha a única verificação escrita e ainda não executada.
 
@@ -560,7 +596,7 @@ combinar com a regra já registrada em `RegrasDeExibicao.precachearTudoNaAbertur
 | Dez itens no inventário | ✅ |
 | Regras Firebase atualizadas | ✅ criadas (não implantadas) |
 | Contrato de UI documentado | ✅ |
-| Build release concluído | ⏳ workflow pronto; falta o run |
+| Build release concluído | ⏳ workflow pronto e branch enviada; run bloqueado (§7.0) |
 | Delta de tamanho informado | ⏳ medido pelo CI; payload local ≈ 25,98 MiB |
 | Prints e resumo de testes | ✅ |
 | Nenhuma alteração visual não aprovada | ✅ nenhuma tela tocada; 0 pixels alterados |
