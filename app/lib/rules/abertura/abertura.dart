@@ -1,15 +1,11 @@
-// C4 — jogada atômica: abertura de VÁRIOS jogos novos + VÁRIAS extensões numa
-// única ação, tudo-ou-nada, sobre o EstadoJogo imutável. SEM comportamento de
-// produção: só a suíte de testes usa isto; o motor antigo continua ativo.
+// C5 (corrigido) — jogada atômica: abertura múltipla, extensões e COMPRA DO
+// LIXO, sobre o EstadoJogo imutável. SEM comportamento de produção: só a suíte
+// de testes usa isto; o motor antigo (class Jogo) continua ativo em runtime.
 //
-// Garantias:
-//  - cada meld novo é validado individualmente (validarJogoMesa);
-//  - cada extensão é validada como [alvo + novas] inteiro;
-//  - nenhuma carta pode ser usada em dois lugares; toda carta precisa existir na mão;
-//  - o mínimo (+75/+90) é exigido sobre a SOMA dos jogos NOVOS da abertura;
-//  - o próximo estado só é produzido se TUDO validar (nenhuma mutação parcial);
-//  - em qualquer falha, o estado de entrada permanece intacto (é imutável);
-//  - os IDs das cartas são conservados (mão -> mesa), sem sumiço/duplicação.
+// INFORMAÇÃO OCULTA (Fechado/STBL): a legalidade da compra do lixo é avaliada
+// vendo APENAS a mão, o TOPO real/visível do lixo (lixo.last) e os jogos já
+// baixados (para extensão pelo topo). As cartas ENTERRADAS do lixo NÃO entram
+// na avaliação — só vão para a mão DEPOIS de a compra ser aprovada.
 import '../estado.dart';
 import '../acoes.dart';
 import '../rule_spec.dart';
@@ -48,43 +44,38 @@ class ResultadoAbertura {
       );
 }
 
-/// Avalia e (se válida) aplica a jogada atômica `Baixar` para o assento dado.
-/// Retorna o próximo estado apenas quando tudo é válido; caso contrário
-/// `proximoEstado` é null e o estado de entrada não é tocado.
-ResultadoAbertura avaliarBaixar(
-    EstadoJogo estado, int assento, Baixar acao, RuleSpec spec) {
+/// Núcleo: resolve/valida jogos e extensões, checa mínimo e aplica tudo-ou-nada.
+/// [disponiveis] = cartas utilizáveis nos jogos (mão +, na compra do lixo, SÓ o
+/// topo visível). [lixoConsumir] = lixo a mover para a mão APÓS aprovação (null
+/// = sem compra). [topoObrigatorioId] = id do topo que DEVE ser usado
+/// (Fechado/STBL) ou null. [permitirVazio] = permite ação sem baixar (compra do
+/// lixo no Aberto).
+ResultadoAbertura _avaliar(
+  EstadoJogo estado,
+  int assento,
+  RuleSpec spec, {
+  required List<List<CartaId>> jogosNovos,
+  required List<Extensao> extensoes,
+  required List<CartaSnapshot> disponiveis,
+  List<CartaSnapshot>? lixoConsumir,
+  String? topoObrigatorioId,
+  bool permitirVazio = false,
+}) {
   final dupla = _duplaDoAssento(assento);
-  final mao = estado.maos[assento];
-
-  // Compra do lixo (Fechado/STBL): `topoLixoConsumido != null` sinaliza a
-  // compra; o topo entra na jogada e (no Fechado/STBL) deve ter uso imediato.
-  final comprandoLixo = acao.topoLixoConsumido != null;
-  final lixo = estado.lixo;
-  if (comprandoLixo) {
-    if (lixo.isEmpty) {
-      return ResultadoAbertura.recusa('lixo vazio: não há topo para comprar');
-    }
-    if (lixo.last.id != acao.topoLixoConsumido) {
-      return ResultadoAbertura.recusa(
-          'topo declarado (${acao.topoLixoConsumido}) não é o topo real do lixo (${lixo.last.id})');
-    }
-  }
-  // Cartas disponíveis para os jogos: a mão e, na compra do lixo, o lixo inteiro.
-  final disponiveis =
-      comprandoLixo ? <CartaSnapshot>[...mao, ...lixo] : mao;
   final indiceCarta = <String, CartaSnapshot>{
     for (final c in disponiveis) c.id: c
   };
 
-  // 1) coletar todos os ids usados; checar duplicidade e existência na mão.
+  // 1) coletar ids; duplicidade e existência (existência = mão + topo visível;
+  //    cartas enterradas do lixo NÃO estão no índice, logo são recusadas).
   final usados = <String>[];
-  for (final jogo in acao.jogosNovos) {
+  for (final jogo in jogosNovos) {
     usados.addAll(jogo);
   }
-  for (final ext in acao.extensoes) {
+  for (final ext in extensoes) {
     usados.addAll(ext.cartas);
   }
-  if (usados.isEmpty) {
+  if (usados.isEmpty && !permitirVazio) {
     return ResultadoAbertura.recusa('nenhuma carta na jogada');
   }
   final vistos = <String>{};
@@ -94,13 +85,14 @@ ResultadoAbertura avaliarBaixar(
           'mesma carta usada em mais de um jogo: $id');
     }
     if (!indiceCarta.containsKey(id)) {
-      return ResultadoAbertura.recusa('carta inexistente ou já baixada: $id');
+      return ResultadoAbertura.recusa(
+          'carta inexistente, oculta ou já baixada: $id');
     }
   }
 
   // 2) validar cada JOGO NOVO individualmente.
   final jogosResolvidos = <List<CartaSnapshot>>[];
-  for (final jogo in acao.jogosNovos) {
+  for (final jogo in jogosNovos) {
     if (jogo.length < 3) {
       return ResultadoAbertura.recusa('um jogo tem no mínimo 3 cartas');
     }
@@ -112,12 +104,10 @@ ResultadoAbertura avaliarBaixar(
     jogosResolvidos.add(cartas);
   }
 
-  // 3) AGRUPAR todas as cartas de extensão por indiceJogo e validar o meld
-  //    FINAL [alvo + TODAS as cartas do índice] UMA ÚNICA vez. Corrige o caso
-  //    de duas extensões individualmente válidas, mas ilegais em conjunto.
+  // 3) extensões AGRUPADAS por indiceJogo; valida [alvo + todas] uma vez.
   final jogosDupla = estado.jogosDupla[dupla] ?? const <List<CartaSnapshot>>[];
   final extensoesPorIndice = <int, List<CartaSnapshot>>{};
-  for (final ext in acao.extensoes) {
+  for (final ext in extensoes) {
     if (ext.indiceJogo < 0 || ext.indiceJogo >= jogosDupla.length) {
       return ResultadoAbertura.recusa(
           'jogo a estender não existe: ${ext.indiceJogo}');
@@ -136,20 +126,18 @@ ResultadoAbertura avaliarBaixar(
     }
   }
 
-  // 3b) EXIGÊNCIA DO TOPO (Fechado/STBL): o topo precisa aparecer em ALGUM
-  //     jogo ou extensão desta ação. Em Aberto não se aplica (regra própria).
-  if (comprandoLixo && spec.exigeUsoDoTopoNoLixo) {
-    if (!vistos.contains(acao.topoLixoConsumido)) {
-      return ResultadoAbertura.recusa(
-          'o topo do lixo precisa ter uso imediato em pelo menos um jogo ou extensão');
-    }
+  // 3b) EXIGÊNCIA DO TOPO (Fechado/STBL): o topo precisa aparecer em ALGUM jogo
+  //     ou extensão desta ação (avaliado só com mão + topo visível).
+  if (topoObrigatorioId != null && !vistos.contains(topoObrigatorioId)) {
+    return ResultadoAbertura.recusa(
+        'o topo do lixo precisa ter uso imediato em pelo menos um jogo ou extensão');
   }
 
   // 4) mínimo de abertura — só na 1ª baixada da dupla, sobre os jogos NOVOS.
   final abrindo = !(estado.primeiraBaixadaFeita[dupla] ?? false);
   final pontosAbertura = jogosResolvidos.fold<int>(
       0, (s, j) => s + j.fold<int>(0, (t, c) => t + valorCarta(c)));
-  final minimo = (abrindo && acao.jogosNovos.isNotEmpty)
+  final minimo = (abrindo && jogosNovos.isNotEmpty)
       ? spec.vulnerabilidade.minimoParaDescer(
           rodadasVulneravel: estado.rodadasVulneravel[dupla] ?? 0,
           jaAbriuNaRodada: false,
@@ -171,9 +159,10 @@ ResultadoAbertura avaliarBaixar(
   // 5) tudo-ou-nada: só AGORA produzimos o próximo estado (clone profundo).
   final proximo = estado.cloneProfundo();
   proximo.maos[assento].removeWhere((c) => vistos.contains(c.id));
-  // Compra do lixo: as cartas NÃO usadas do lixo vão para a mão; o lixo esvazia.
-  if (comprandoLixo) {
-    for (final c in lixo) {
+  // Compra do lixo: as cartas NÃO usadas do lixo (enterradas + topo não usado)
+  // vão para a mão SÓ AGORA (após a aprovação); o lixo esvazia.
+  if (lixoConsumir != null) {
+    for (final c in lixoConsumir) {
       if (!vistos.contains(c.id)) proximo.maos[assento].add(c.copia());
     }
     proximo.lixo.clear();
@@ -186,7 +175,7 @@ ResultadoAbertura avaliarBaixar(
     melds.add(j);
   }
   // Só a ABERTURA (jogos novos) marca primeiraBaixadaFeita; extensão isolada não.
-  if (acao.jogosNovos.isNotEmpty) {
+  if (jogosNovos.isNotEmpty) {
     proximo.primeiraBaixadaFeita[dupla] = true;
   }
 
@@ -195,8 +184,62 @@ ResultadoAbertura avaliarBaixar(
     pontosAbertura: pontosAbertura,
     minimoExigido: minimo,
     sujeitoAoMinimo: sujeitoAoMinimo,
-    // vacuamente satisfeito quando não houve abertura sujeita a mínimo:
     atingiuMinimo: !sujeitoAoMinimo || pontosAbertura >= minimo,
     proximoEstado: proximo,
+  );
+}
+
+/// Baixar simples (SEM compra do lixo). `topoLixoConsumido` deve ser null — a
+/// compra do lixo passa por `avaliarComprarLixo`.
+ResultadoAbertura avaliarBaixar(
+    EstadoJogo estado, int assento, Baixar acao, RuleSpec spec) {
+  if (acao.topoLixoConsumido != null) {
+    return ResultadoAbertura.recusa(
+        'compra do lixo deve usar avaliarComprarLixo (não Baixar.topoLixoConsumido)');
+  }
+  return _avaliar(
+    estado,
+    assento,
+    spec,
+    jogosNovos: acao.jogosNovos,
+    extensoes: acao.extensoes,
+    disponiveis: estado.maos[assento],
+  );
+}
+
+/// Compra do lixo canônica (Fechado/STBL e Aberto). Autoriza vendo APENAS a mão,
+/// o TOPO real e os jogos já baixados. As cartas ENTERRADAS só entram na mão
+/// depois da aprovação. No Fechado/STBL o topo deve ter uso imediato; no Aberto
+/// a compra é livre (pode ocorrer sem baixar).
+ResultadoAbertura avaliarComprarLixo(
+  EstadoJogo estado,
+  int assento,
+  RuleSpec spec, {
+  String? topoDeclarado,
+  List<List<CartaId>> jogosNovos = const [],
+  List<Extensao> extensoes = const [],
+}) {
+  final lixo = estado.lixo;
+  if (lixo.isEmpty) {
+    return ResultadoAbertura.recusa('lixo vazio: não há topo para comprar');
+  }
+  final topo = lixo.last;
+  // Impede declarar um topo diferente do topo real/visível (id enterrado etc.).
+  if (topoDeclarado != null && topoDeclarado != topo.id) {
+    return ResultadoAbertura.recusa(
+        'topo declarado ($topoDeclarado) não é o topo real do lixo (${topo.id})');
+  }
+  final exige = spec.exigeUsoDoTopoNoLixo;
+  return _avaliar(
+    estado,
+    assento,
+    spec,
+    jogosNovos: jogosNovos,
+    extensoes: extensoes,
+    // Autorização vê SOMENTE a mão + o topo visível (enterradas ficam de fora).
+    disponiveis: <CartaSnapshot>[...estado.maos[assento], topo],
+    lixoConsumir: lixo,
+    topoObrigatorioId: exige ? topo.id : null,
+    permitirVazio: !exige, // Aberto: compra do lixo pode ocorrer sem baixar.
   );
 }
