@@ -1,0 +1,822 @@
+name: Release AAB (Teste interno)
+
+# ============================================================================
+# AAB OFICIAL — faixa de TESTE INTERNO da Play Console.
+#
+# Este workflow existe separado do "Build APK" porque as duas coisas NAO se
+# misturam:
+#   build.yml       -> APK de teste, applicationId .poc, keystore de teste.
+#   release-aab.yml -> AAB oficial, applicationId de producao, chave de UPLOAD.
+#
+# Objetivo imediato: publicar UMA versao contendo a Google Play Billing Library
+# para que a Play Console libere a area de produtos (assinaturas e consumiveis).
+# Nenhum ID nem preco de produto e criado aqui — os IDs definitivos so existem
+# depois que a Play Console processar este AAB.
+#
+# NAO ENVIA PARA PRODUCAO. O passo final (upload na faixa de Teste interno) e
+# manual, feito por Sonia na Play Console com o artefato baixado daqui.
+#
+# Chave de assinatura: vem 100% de GitHub Secrets. Nenhuma senha neste arquivo.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: 'versionCode (o ultimo aceito na Play Console foi 2 — precisa ser 3 ou maior)'
+        required: true
+        default: '3'
+      version_name:
+        description: 'versionName (o anterior aparece como 1.0.0.1 na Play Console)'
+        required: true
+        default: '1.0.1'
+
+permissions:
+  contents: read
+
+env:
+  # applicationId OFICIAL registrado na Play Console. IMUTAVEL apos a primeira
+  # publicacao — nao alterar por nenhum motivo.
+  BMV_APPLICATION_ID: io.github.soniaambrosio.buracomastervip
+
+  # App Android OFICIAL do Firebase, criado para o pacote acima.
+  BMV_FIREBASE_APP_ID: '1:203886484007:android:b1cd95baa0b9e6e629cc02'
+
+  # App Android do PoC, que continua valendo para o build.yml (APK de teste).
+  # Aqui ele so aparece como alvo da substituicao: o fonte em app/lib/main.dart
+  # NAO e alterado, para o APK .poc seguir intacto.
+  BMV_FIREBASE_APP_ID_POC: '1:203886484007:android:734aaa61ca5ca68b29cc02'
+
+  # SHA-1 da chave de assinatura do app administrada pelo Google (Play App
+  # Signing) — e este que precisa estar cadastrado no app Android do Firebase
+  # para o login Google funcionar em producao. NAO e a chave de upload.
+  BMV_SHA1_ASSINATURA_PLAY: '83:73:8C:7A:9A:C9:F5:00:AB:27:49:1A:04:EA:8B:EA:74:AB:CF:6A'
+
+jobs:
+  aab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: "PORTAO — versionCode precisa ser maior que o ultimo enviado (2)"
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          # O ultimo AAB aceito pela Play Console foi o versionCode 2. A Play
+          # Console recusa qualquer upload com versionCode menor ou igual, entao
+          # falhamos aqui em vez de gastar 10 minutos de build para descobrir.
+          case "$VERSION_CODE" in
+            ''|*[!0-9]*)
+              echo "ERRO: versionCode '$VERSION_CODE' nao e um numero inteiro."
+              exit 1
+              ;;
+          esac
+          if [ "$VERSION_CODE" -le 2 ]; then
+            echo "ERRO: versionCode $VERSION_CODE nao serve — o ultimo enviado a Play Console foi 2."
+            echo "Use 3 ou maior."
+            exit 1
+          fi
+          echo "versionCode $VERSION_CODE aceito (maior que 2)."
+
+      - name: "PORTAO — secrets da chave de upload precisam existir"
+        env:
+          KS_B64: ${{ secrets.BMV_UPLOAD_KEYSTORE_B64 }}
+          KS_ALIAS: ${{ secrets.BMV_UPLOAD_KEY_ALIAS }}
+          KS_STORE_PASS: ${{ secrets.BMV_UPLOAD_STORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.BMV_UPLOAD_KEY_PASSWORD }}
+        run: |
+          # Falha cedo e com nome: sem a chave de upload o AAB sai sem assinatura
+          # util e a Play Console recusa. Ver docs/PLAY-BILLING-TESTE-INTERNO.md.
+          faltou=0
+          for n in KS_B64 KS_ALIAS KS_STORE_PASS KS_KEY_PASS; do
+            eval "v=\$$n"
+            if [ -z "$v" ]; then echo "FALTOU o secret correspondente a $n"; faltou=1; fi
+          done
+          if [ "$faltou" = "1" ]; then
+            echo ""
+            echo "Cadastre em Settings > Secrets and variables > Actions:"
+            echo "  BMV_UPLOAD_KEYSTORE_B64   (base64 do .jks de upload)"
+            echo "  BMV_UPLOAD_KEY_ALIAS"
+            echo "  BMV_UPLOAD_STORE_PASSWORD"
+            echo "  BMV_UPLOAD_KEY_PASSWORD"
+            exit 1
+          fi
+          echo "Todos os secrets da chave de upload estao presentes."
+
+      - name: "PORTAO — google-services.json oficial precisa existir"
+        env:
+          GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          # O arquivo e do app Android OFICIAL do Firebase (pacote
+          # io.github.soniaambrosio.buracomastervip). Vem por secret e nao pelo
+          # repositorio: carrega chave de API e IDs de cliente OAuth, e a regra
+          # do projeto e nao versionar esse tipo de material.
+          if [ -z "$GS_B64" ]; then
+            echo "ERRO: falta o secret BMV_GOOGLE_SERVICES_JSON_B64."
+            echo ""
+            echo "Firebase Console > app Android '${BMV_APPLICATION_ID}' > baixar"
+            echo "google-services.json. Depois:"
+            echo "  base64 -w0 google-services.json     (Linux/Git Bash)"
+            echo "  [Convert]::ToBase64String([IO.File]::ReadAllBytes('google-services.json'))   (PowerShell)"
+            echo "e cadastre o resultado em BMV_GOOGLE_SERVICES_JSON_B64."
+            exit 1
+          fi
+          echo "Secret do google-services.json presente."
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Mesma versao pinada do build.yml — a resolucao de dependencias
+          # precisa ser identica a do APK que ja compila verde.
+          flutter-version: 3.44.8
+
+      - name: Scaffold Flutter project
+        # --org/--project-name IDENTICOS aos do build.yml de proposito: o nome do
+        # pacote Dart (buraco_master_vip) e importado pelas suites de teste
+        # (`package:buraco_master_vip/mesa.dart`). O applicationId oficial e
+        # aplicado depois, direto no build.gradle.kts — namespace e applicationId
+        # podem divergir sem problema no Android Gradle Plugin.
+        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+
+      - name: Overlay custom UI files
+        run: cp -R app/lib/. app_build/lib/
+
+      - name: "Apontar o FirebaseOptions para o app Android OFICIAL"
+        # A troca acontece AQUI, na copia dentro de app_build/, e nao no fonte
+        # `app/lib/main.dart`. O fonte e compartilhado com o build.yml (APK de
+        # teste, pacote .poc), que precisa continuar usando o app antigo do
+        # Firebase. Editar o fonte quebraria o login do APK de teste.
+        run: |
+          python3 - <<'PY'
+          import os
+          p = 'app_build/lib/main.dart'
+          s = open(p, encoding='utf-8').read()
+
+          antigo = os.environ['BMV_FIREBASE_APP_ID_POC']
+          novo = os.environ['BMV_FIREBASE_APP_ID']
+          server_client = '203886484007-a5e1ob9b7uequoffj6u76h5vltici9a4.apps.googleusercontent.com'
+
+          n = s.count(antigo)
+          if n != 1:
+              raise AssertionError(
+                  f'esperava exatamente 1 ocorrencia do appId do PoC em main.dart, achei {n}. '
+                  'O fonte mudou de forma — confira antes de gerar o AAB.'
+              )
+          s = s.replace(antigo, novo)
+
+          # O Web client do Google Sign-In continua o MESMO nos dois pacotes:
+          # ele identifica o projeto, nao o app Android. Trocar quebraria o login.
+          if server_client not in s:
+              raise AssertionError('serverClientId Web sumiu do main.dart — nao prosseguir.')
+
+          open(p, 'w', encoding='utf-8').write(s)
+          print('appId do Firebase no build oficial:', novo)
+          print('serverClientId Web preservado.')
+          PY
+          grep -n "appId:\|serverClientId" app_build/lib/main.dart | head -4
+          echo "--- o fonte do repositorio NAO foi tocado: ---"
+          grep -n "appId:" app/lib/main.dart
+
+      - name: Copy sound assets
+        run: |
+          mkdir -p app_build/assets/sons
+          cp app/assets/sons/*.mp3 app_build/assets/sons/
+          ls -l app_build/assets/sons/
+
+      - name: Copy card deck assets
+        run: |
+          mkdir -p app_build/assets/baralho
+          cp app/assets/baralho/*.webp app_build/assets/baralho/
+          N=$(ls app_build/assets/baralho/ | wc -l)
+          echo "cartas copiadas: $N"
+          if [ "$N" -lt 55 ]; then echo "ERRO: esperava 55 cartas, veio $N"; exit 1; fi
+
+      - name: Copy profile UI assets
+        run: |
+          mkdir -p app_build/assets/perfil
+          cp app/assets/perfil/*.webp app_build/assets/perfil/
+          N=$(ls app_build/assets/perfil/ | wc -l)
+          if [ "$N" -lt 23 ]; then echo "ERRO: esperava 23 assets do perfil, veio $N"; exit 1; fi
+
+      - name: Copy ranking UI assets
+        run: |
+          mkdir -p app_build/assets/ranking/selos
+          cp app/assets/ranking/*.webp app_build/assets/ranking/
+          cp app/assets/ranking/selos/*.webp app_build/assets/ranking/selos/
+          N_RAIZ=$(find app_build/assets/ranking -maxdepth 1 -type f -name '*.webp' | wc -l)
+          N_SELOS=$(find app_build/assets/ranking/selos -maxdepth 1 -type f -name '*.webp' | wc -l)
+          if [ "$N_RAIZ" -lt 15 ]; then echo "ERRO: esperava ao menos 15 assets do ranking, veio $N_RAIZ"; exit 1; fi
+          if [ "$N_SELOS" -lt 10 ]; then echo "ERRO: esperava 10 selos, veio $N_SELOS"; exit 1; fi
+
+      - name: Copy Hall dos Imortais asset
+        run: |
+          mkdir -p app_build/assets/hall
+          cp app/assets/hall/painel_gloria.webp app_build/assets/hall/
+          test -s app_build/assets/hall/painel_gloria.webp
+
+      - name: Copy home UI assets
+        run: |
+          mkdir -p app_build/assets/inicio
+          cp app/assets/inicio/*.webp app_build/assets/inicio/
+          N=$(find app_build/assets/inicio -maxdepth 1 -type f -name '*.webp' | wc -l)
+          if [ "$N" -lt 11 ]; then echo "ERRO: esperava 11 assets da tela inicio, veio $N"; exit 1; fi
+
+      - name: Copy configure table UI assets
+        run: |
+          mkdir -p app_build/assets/configurar_mesa
+          cp app/assets/configurar_mesa/*.webp app_build/assets/configurar_mesa/
+          N=$(find app_build/assets/configurar_mesa -maxdepth 1 -type f -name '*.webp' | wc -l)
+          if [ "$N" -lt 8 ]; then echo "ERRO: esperava 8 assets da tela configurar mesa, veio $N"; exit 1; fi
+
+      - name: Copy loja cosmetics assets
+        run: |
+          mkdir -p app_build/assets/loja
+          cp -r app/assets/loja/. app_build/assets/loja/ 2>/dev/null || true
+          find app_build/assets/loja -type f -name '*.webp' | wc -l
+
+      - name: Copy tournament cover assets
+        run: |
+          mkdir -p app_build/assets/torneios/capas
+          cp app/assets/torneios/capas/*.png app_build/assets/torneios/capas/
+          N=$(find app_build/assets/torneios/capas -maxdepth 1 -type f -name '*.png' | wc -l)
+          if [ "$N" -lt 5 ]; then echo "ERRO: esperava 5 capas, veio $N"; exit 1; fi
+
+      - name: Copy tournament reward assets
+        run: |
+          mkdir -p app_build/assets/torneios/premiacao
+          cp -R app/assets/torneios/premiacao/. app_build/assets/torneios/premiacao/
+          N_COROAS=$(find app_build/assets/torneios/premiacao/coroas -maxdepth 1 -type f -name '*.png' | wc -l)
+          N_SELOS=$(find app_build/assets/torneios/premiacao/selos -maxdepth 1 -type f -name '*.png' | wc -l)
+          if [ "$N_COROAS" -ne 7 ]; then echo "ERRO: esperava EXATAMENTE 7 coroas, veio $N_COROAS"; exit 1; fi
+          if [ "$N_SELOS" -ne 8 ]; then echo "ERRO: esperava EXATAMENTE 8 selos, veio $N_SELOS"; exit 1; fi
+
+      - name: Add Firebase + Google Sign-In + Audio deps
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+
+      - name: "Add Google Play Billing (in_app_purchase) + validacao no Firebase"
+        # in_app_purchase_android EMBUTE a Google Play Billing Library — e por ela
+        # que a permissao com.android.vending.BILLING e a classe BillingClient
+        # entram no AAB, que e exatamente o que a Play Console procura para
+        # liberar a area de produtos.
+        # cloud_functions e o canal da validacao server-side: o app NUNCA concede
+        # nada por conta propria, sempre pergunta ao backend.
+        run: |
+          cd app_build
+          # in_app_purchase_android entra EXPLICITO, e nao so como dependencia
+          # transitiva: o BillingService importa
+          # `package:in_app_purchase_android/...` para consumir o token do
+          # produto no momento certo, e o Dart so permite importar o que esta
+          # declarado como dependencia direta.
+          flutter pub add in_app_purchase in_app_purchase_android cloud_functions
+          echo "--- versoes resolvidas ---"
+          flutter pub deps --style=compact 2>/dev/null | grep -iE "in_app_purchase|cloud_functions" || true
+
+      - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
+        run: |
+          cd app_build
+          python3 - <<'PY'
+          p = 'pubspec.yaml'
+          s = open(p, encoding='utf-8').read()
+          if 'dependency_overrides:' not in s:
+              s = s.rstrip() + '\n\ndependency_overrides:\n  jni: 1.0.0\n'
+          elif 'jni:' not in s.split('dependency_overrides:')[1].split('\n\n')[0]:
+              s = s.replace('dependency_overrides:', 'dependency_overrides:\n  jni: 1.0.0', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print(s[s.find('dependency_overrides:'):])
+          PY
+          flutter pub get
+
+      - name: "PORTAO DE QUALIDADE — testes do motor"
+        run: |
+          if [ ! -f app/test/teste_motor.dart ]; then
+            echo "ERRO: app/test/teste_motor.dart nao encontrado — portao OBRIGATORIO."
+            exit 1
+          fi
+          mkdir -p app_build/test
+          cp app/test/teste_motor.dart app_build/test/
+          echo "Commit testado: ${GITHUB_SHA}"
+          sha256sum app_build/lib/mesa.dart
+          cd app_build
+          flutter test test/teste_motor.dart --reporter expanded
+
+      - name: "PORTAO DE QUALIDADE — dominio de recompensas de torneios"
+        run: |
+          if [ ! -f app/test/torneios/reward_grants_test.dart ]; then
+            echo "ERRO: app/test/torneios/reward_grants_test.dart nao encontrado — portao OBRIGATORIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/torneios/data
+          cp app/test/torneios/reward_grants_test.dart app_build/test/torneios/
+          cp app/data/torneios/assets_registry.seed.json app_build/test/torneios/data/
+          cp app/data/torneios/reward_policies.seed.json app_build/test/torneios/data/
+          cd app_build
+          flutter test test/torneios/reward_grants_test.dart --reporter expanded
+
+      - name: "PORTAO DE QUALIDADE — billing (catalogo + decisao de compra)"
+        # Dois riscos distintos:
+        #  - catalogo: nenhum ID nem preco de produto entra no codigo antes da
+        #    Play Console devolver os IDs oficiais;
+        #  - fluxo: finalizar uma compra que nao foi validada faz a Play parar de
+        #    reentrega-la, e o jogador que pagou fica sem receber.
+        run: |
+          mkdir -p app_build/test/billing
+          cp app/test/billing/billing_catalogo_test.dart app_build/test/billing/
+          cp app/test/billing/billing_fluxo_test.dart app_build/test/billing/
+          cd app_build
+          flutter test test/billing/ --reporter expanded
+
+      - name: "PORTAO DE QUALIDADE — idempotencia do backend (credito unico)"
+        # Roda sem npm install: `idempotencia.js` nao tem dependencia, de
+        # proposito. E a logica onde um bug custa dinheiro real — credito
+        # duplicado sob reentrega concorrente da Play Store.
+        run: node --test functions/test/idempotencia.test.js
+
+      - name: Bump minSdk to 23 (Firebase)
+        run: |
+          f=app_build/android/app/build.gradle.kts
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
+          grep -n "minSdk" "$f" || true
+
+      - name: "Instalar google-services.json oficial (via Secret)"
+        env:
+          GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          printf '%s' "$GS_B64" | tr -d '[:space:]' | base64 -d > app_build/android/app/google-services.json
+          test -s app_build/android/app/google-services.json
+          echo "google-services.json instalado: $(stat -c%s app_build/android/app/google-services.json) bytes"
+
+      - name: "VERIFICACAO — google-services.json corresponde ao app oficial"
+        # O plugin google-services falha o build quando o pacote do JSON nao bate
+        # com o applicationId, mas a mensagem dele e obscura. Conferir aqui da um
+        # erro legivel e tambem pega o caso pior: um JSON valido, do app ERRADO.
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          app_id_esperado = os.environ['BMV_FIREBASE_APP_ID']
+          pacote_esperado = os.environ['BMV_APPLICATION_ID']
+
+          with open('app_build/android/app/google-services.json', encoding='utf-8') as f:
+              gs = json.load(f)
+
+          projeto = gs.get('project_info', {}).get('project_id')
+          clientes = gs.get('client', [])
+
+          pacotes = []
+          app_ids = []
+          for c in clientes:
+              info = c.get('client_info', {})
+              app_ids.append(info.get('mobilesdk_app_id'))
+              pacotes.append(info.get('android_client_info', {}).get('package_name'))
+
+          print('project_id :', projeto)
+          print('pacotes    :', pacotes)
+          print('app ids    :', app_ids)
+
+          erros = []
+          if projeto != 'buraco-master-vip':
+              erros.append(f'project_id inesperado: {projeto}')
+          if pacote_esperado not in pacotes:
+              erros.append(f'o JSON nao contem o pacote oficial {pacote_esperado}')
+          if app_id_esperado not in app_ids:
+              erros.append(f'o JSON nao contem o App ID oficial {app_id_esperado}')
+          if erros:
+              raise AssertionError(
+                  'google-services.json nao corresponde ao app oficial:\n  - ' + '\n  - '.join(erros)
+                  + '\nBaixe o arquivo do app Android correto no Firebase Console.'
+              )
+          print('OK: google-services.json e do app Android oficial.')
+          PY
+
+      - name: Install UPLOAD keystore (100% via Secrets)
+        env:
+          KS_B64: ${{ secrets.BMV_UPLOAD_KEYSTORE_B64 }}
+        run: |
+          # tr remove quebras de linha e espacos que o copiar/colar do secret
+          # costuma trazer — `base64 -d` engasga com eles.
+          printf '%s' "$KS_B64" | tr -d '[:space:]' | base64 -d > app_build/android/app/upload.jks
+          test -s app_build/android/app/upload.jks
+          echo "keystore de upload instalada: $(stat -c%s app_build/android/app/upload.jks) bytes"
+
+      - name: Write key.properties
+        env:
+          KS_ALIAS: ${{ secrets.BMV_UPLOAD_KEY_ALIAS }}
+          KS_STORE_PASS: ${{ secrets.BMV_UPLOAD_STORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.BMV_UPLOAD_KEY_PASSWORD }}
+        run: |
+          cat > app_build/android/key.properties <<EOF
+          storeFile=${GITHUB_WORKSPACE}/app_build/android/app/upload.jks
+          storePassword=${KS_STORE_PASS}
+          keyAlias=${KS_ALIAS}
+          keyPassword=${KS_KEY_PASS}
+          EOF
+          sed 's/Password=.*/Password=***/' app_build/android/key.properties
+
+      - name: Patch build.gradle.kts (applicationId oficial + assinatura de upload + versao)
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          p = 'app_build/android/app/build.gradle.kts'
+          s = open(p, encoding='utf-8').read()
+          # Normaliza CRLF -> LF antes de qualquer regex. No runner Linux o
+          # scaffold ja vem com LF, mas os regexes abaixo dependem de \n literal
+          # e um dia esse patch pode rodar em outro lugar. Custa nada e elimina
+          # uma classe inteira de falha silenciosa.
+          s = s.replace('\r\n', '\n')
+          vc = os.environ['VERSION_CODE']
+          vn = os.environ['VERSION_NAME']
+          app_id = os.environ['BMV_APPLICATION_ID']
+
+          # 1) imports
+          if 'import java.util.Properties' not in s:
+              s = 'import java.util.Properties\nimport java.io.FileInputStream\n' + s
+
+          # 2) carrega key.properties antes de `android {`
+          loader = (
+              'val keystoreProperties = Properties()\n'
+              'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+              'if (keystorePropertiesFile.exists()) {\n'
+              '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
+              '}\n\n'
+          )
+          if 'val keystoreProperties' not in s:
+              s = re.sub(r'\nandroid\s*\{', '\n' + loader + 'android {', s, count=1)
+
+          # 3) signingConfig "upload"
+          signing = (
+              '\n    signingConfigs {\n'
+              '        create("upload") {\n'
+              '            keyAlias = keystoreProperties["keyAlias"] as String\n'
+              '            keyPassword = keystoreProperties["keyPassword"] as String\n'
+              '            storeFile = file(keystoreProperties["storeFile"] as String)\n'
+              '            storePassword = keystoreProperties["storePassword"] as String\n'
+              '        }\n'
+              '    }\n'
+          )
+          if 'create("upload")' not in s:
+              s = re.sub(r'android\s*\{', 'android {' + signing, s, count=1)
+
+          # 4) release assinado com a chave de upload.
+          #    Sem minify: o codigo do BillingClient precisa continuar visivel
+          #    para a analise da Play Console neste primeiro envio.
+          novo_buildtypes = (
+              '    buildTypes {\n'
+              '        getByName("release") {\n'
+              '            signingConfig = signingConfigs.getByName("upload")\n'
+              '            isMinifyEnabled = false\n'
+              '            isShrinkResources = false\n'
+              '        }\n'
+              '    }\n'
+          )
+          # Sem fallback "esperto" aqui, de proposito. A versao antiga deste patch
+          # injetava o bloco antes da ultima chave do arquivo quando o regex nao
+          # casava — e a ultima chave e a do bloco `flutter { }`, nao a do
+          # `android { }`. O resultado era um build.gradle.kts que compilava com
+          # cara de sucesso e gerava um AAB assinado com a chave de DEBUG, que a
+          # Play Console recusa. Falhar aqui e muito mais barato que descobrir
+          # isso no upload.
+          if not re.search(r'buildTypes\s*\{.*?\n    \}\n', s, flags=re.DOTALL):
+              raise AssertionError(
+                  'nao localizei o bloco buildTypes do scaffold. O template do '
+                  'Flutter provavelmente mudou de formato — ajuste este patch '
+                  'antes de gerar qualquer AAB.'
+              )
+          s = re.sub(r'buildTypes\s*\{.*?\n    \}\n', novo_buildtypes, s, count=1, flags=re.DOTALL)
+
+          # 5) applicationId OFICIAL da Play Console (o scaffold gera o .poc)
+          s2, n = re.subn(r'applicationId\s*=\s*"[^"]*"', f'applicationId = "{app_id}"', s, count=1)
+          if n != 1:
+              raise AssertionError('nao encontrei applicationId no build.gradle.kts para substituir')
+          s = s2
+
+          # 6) versao explicita (nao herda do pubspec)
+          s = re.sub(r'versionCode\s*=\s*flutter\.versionCode', f'versionCode = {vc}', s)
+          s = re.sub(r'versionName\s*=\s*flutter\.versionName', f'versionName = "{vn}"', s)
+
+          open(p, 'w', encoding='utf-8').write(s)
+
+          print('---- conferencia do patch ----')
+          # `namespace` continua com o pacote do scaffold DE PROPOSITO: ele so
+          # nomeia o pacote Java/R gerado, nao a identidade na Play Store. Quem
+          # define o app publicado e o applicationId. Por isso a checagem abaixo
+          # e especifica ao applicationId, e nao ao texto solto do pacote.
+          checks = {
+              f'applicationId = "{app_id}"': True,
+              'create("upload")': True,
+              'signingConfig = signingConfigs.getByName("upload")': True,
+              f'versionCode = {vc}': True,
+              f'versionName = "{vn}"': True,
+              'applicationId = "com.buracomastervip.poc.buraco_master_vip"': False,
+              'signingConfigs.getByName("debug")': False,
+          }
+          erro = False
+          for m, deve_ter in checks.items():
+              tem = m in s
+              ok = (tem == deve_ter)
+              print(('OK   ' if ok else 'FALHA'), '->', ('deve conter' if deve_ter else 'NAO pode conter'), repr(m))
+              if not ok:
+                  erro = True
+          if erro:
+              raise AssertionError('patch do build.gradle.kts incompleto')
+          PY
+          echo "===== build.gradle.kts final ====="
+          cat app_build/android/app/build.gradle.kts
+
+      - name: "Aplicar o plugin google-services (processa o JSON no build)"
+        # Sem o plugin, o google-services.json fica no diretorio sem efeito
+        # nenhum. Com ele, o pacote do JSON e conferido contra o applicationId e
+        # os recursos do Firebase entram no APK/AAB.
+        #
+        # Vem DEPOIS do patch do build.gradle.kts de proposito: aquele patch
+        # mexe em `android { }` e `buildTypes`, e manter os dois separados
+        # facilita achar o culpado quando algo quebrar.
+        run: |
+          python3 - <<'PY'
+          import re
+
+          VERSAO = '4.4.2'
+
+          # 1) settings.gradle.kts — declara o plugin sem aplicar
+          p = 'app_build/android/settings.gradle.kts'
+          s = open(p, encoding='utf-8').read().replace('\r\n', '\n')
+          linha = f'    id("com.google.gms.google-services") version "{VERSAO}" apply false\n'
+          if 'com.google.gms.google-services' not in s:
+              m = re.search(r'^plugins \{\n', s, flags=re.MULTILINE)
+              if not m:
+                  raise AssertionError('nao encontrei o bloco plugins { } em settings.gradle.kts')
+              s = s[:m.end()] + linha + s[m.end():]
+              open(p, 'w', encoding='utf-8').write(s)
+          print('--- settings.gradle.kts ---')
+          print(s[s.find('plugins {'):s.find('include(":app")')])
+
+          # 2) app/build.gradle.kts — aplica o plugin
+          p = 'app_build/android/app/build.gradle.kts'
+          s = open(p, encoding='utf-8').read().replace('\r\n', '\n')
+          if 'com.google.gms.google-services' not in s:
+              # Precisa vir depois do plugin do Android; o do Flutter ja e o
+              # ultimo do bloco, entao ancoramos nele.
+              alvo = '    id("dev.flutter.flutter-gradle-plugin")\n'
+              if alvo not in s:
+                  raise AssertionError('nao encontrei o plugin do Flutter em app/build.gradle.kts')
+              s = s.replace(alvo, alvo + '    id("com.google.gms.google-services")\n', 1)
+              open(p, 'w', encoding='utf-8').write(s)
+          print('--- app/build.gradle.kts (plugins) ---')
+          print(s[:s.find('}', s.find('plugins {')) + 1])
+
+          assert 'com.google.gms.google-services' in open(
+              'app_build/android/settings.gradle.kts', encoding='utf-8').read()
+          assert 'com.google.gms.google-services' in open(
+              'app_build/android/app/build.gradle.kts', encoding='utf-8').read()
+          print('OK: plugin google-services declarado e aplicado.')
+          PY
+
+      - name: "Declarar com.android.vending.BILLING no manifesto"
+        # A permissao ja entra sozinha pelo merge do manifesto da Billing Library,
+        # mas declara-la explicitamente no manifesto do app deixa a intencao
+        # registrada no fonte e sobrevive a qualquer troca de dependencia.
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'app_build/android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf-8').read()
+          if 'com.android.vending.BILLING' not in s:
+              # Insere uma linha propria imediatamente antes de <application>,
+              # herdando a indentacao dessa linha.
+              m = re.search(r'^([ \t]*)<application\b', s, flags=re.MULTILINE)
+              assert m, 'nao encontrei <application> no manifesto'
+              indent = m.group(1)
+              perm = f'{indent}<uses-permission android:name="com.android.vending.BILLING" />\n'
+              s = s[:m.start()] + perm + s[m.start():]
+              open(p, 'w', encoding='utf-8').write(s)
+          assert 'com.android.vending.BILLING' in open(p, encoding='utf-8').read()
+          print('BILLING declarado no manifesto de origem.')
+          PY
+          grep -n "BILLING" app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Set app display name
+        run: |
+          sed -i 's/android:label="[^"]*"/android:label="Buraco Master VIP"/' app_build/android/app/src/main/AndroidManifest.xml
+          grep -o 'android:label="[^"]*"' app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Desativar Impeller (renderiza webp com transparencia via Skia)
+        run: |
+          python3 - <<'PY'
+          p = 'app_build/android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf-8').read()
+          meta = '<meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false" />'
+          if 'EnableImpeller' not in s:
+              s = s.replace('</application>', '        ' + meta + '\n    </application>', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          PY
+          grep -n "EnableImpeller" app_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Copy official animated splash assets
+        run: |
+          mkdir -p app_build/assets/splash
+          cp app/assets/splash/logo_splash_oficial.webp app_build/assets/splash/
+          cp app/assets/splash/splash_intro.mp3 app_build/assets/splash/
+          test -s app_build/assets/splash/logo_splash_oficial.webp
+          test -s app_build/assets/splash/splash_intro.mp3
+
+      - name: Configure dark native launch screen
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('app_build/android/app/src/main/res')
+          color = '#050201'
+          for rel in ['values/colors.xml', 'values-night/colors.xml']:
+              p = root / rel
+              p.parent.mkdir(parents=True, exist_ok=True)
+              if p.exists():
+                  s = p.read_text(encoding='utf-8')
+                  if 'splash_background' not in s:
+                      s = s.replace('</resources>', f'    <color name="splash_background">{color}</color>\n</resources>')
+              else:
+                  s = f'<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="splash_background">{color}</color>\n</resources>\n'
+              p.write_text(s, encoding='utf-8')
+          for rel in ['drawable/launch_background.xml', 'drawable-v21/launch_background.xml']:
+              p = root / rel
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text('''<?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@color/splash_background" />
+          </layer-list>
+          ''', encoding='utf-8')
+          PY
+
+      - name: Declare assets in pubspec
+        run: |
+          python3 - <<'PY'
+          p = 'app_build/pubspec.yaml'
+          lines = open(p, encoding='utf-8').read().split('\n')
+          asset_block = [
+              '  assets:',
+              '    - assets/splash/',
+              '    - assets/sons/',
+              '    - assets/baralho/',
+              '    - assets/perfil/',
+              '    - assets/ranking/',
+              '    - assets/ranking/selos/',
+              '    - assets/hall/',
+              '    - assets/inicio/',
+              '    - assets/configurar_mesa/',
+              '    - assets/torneios/capas/',
+              '    - assets/torneios/premiacao/coroas/',
+              '    - assets/torneios/premiacao/selos/',
+          ]
+          if 'assets/baralho/' not in '\n'.join(lines):
+              out, injected = [], False
+              for ln in lines:
+                  out.append(ln)
+                  if not injected and ln.rstrip() == 'flutter:':
+                      out.extend(asset_block)
+                      injected = True
+              if not injected:
+                  out.extend(['flutter:', '  uses-material-design: true'] + asset_block)
+              lines = out
+          s = '\n'.join(lines)
+          open(p, 'w', encoding='utf-8').write(s)
+          top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
+          assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
+          for a in ('assets/splash/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/',
+                    'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/',
+                    'assets/configurar_mesa/', 'assets/torneios/capas/',
+                    'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
+              assert a in s, f'FALTOU declarar {a} no pubspec!'
+          print('OK: assets declarados')
+          PY
+
+      - name: Build release AAB
+        run: cd app_build && flutter build appbundle --release
+
+      - name: Baixar bundletool (para inspecionar o manifesto final do AAB)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo google/bundletool --pattern 'bundletool-all-*.jar' --output bundletool.jar
+          java -jar bundletool.jar version
+
+      - name: "VERIFICACAO FINAL — manifesto real dentro do AAB"
+        # Nada aqui e "confiar que o merge funcionou": lemos o manifesto que
+        # efetivamente foi para dentro do .aab e falhamos se algo divergir.
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
+          test -s "$AAB" || { echo "ERRO: AAB nao foi gerado"; exit 1; }
+          java -jar bundletool.jar dump manifest --bundle="$AAB" > manifesto-final.xml
+          echo "===================== MANIFESTO FINAL ====================="
+          cat manifesto-final.xml
+          echo "==========================================================="
+
+          erro=0
+          if grep -q 'package="'"${BMV_APPLICATION_ID}"'"' manifesto-final.xml; then
+            echo "OK    applicationId = ${BMV_APPLICATION_ID}"
+          else
+            echo "FALHA applicationId nao confere"; erro=1
+          fi
+          if grep -q 'com.android.vending.BILLING' manifesto-final.xml; then
+            echo "OK    permissao com.android.vending.BILLING presente"
+          else
+            echo "FALHA permissao com.android.vending.BILLING AUSENTE"; erro=1
+          fi
+          if grep -q 'versionCode="'"${VERSION_CODE}"'"' manifesto-final.xml; then
+            echo "OK    versionCode = ${VERSION_CODE}"
+          else
+            echo "FALHA versionCode nao confere"; erro=1
+          fi
+          if grep -q 'versionName="'"${VERSION_NAME}"'"' manifesto-final.xml; then
+            echo "OK    versionName = ${VERSION_NAME}"
+          else
+            echo "FALHA versionName nao confere"; erro=1
+          fi
+          [ "$erro" = "0" ] || { echo "VERIFICACAO REPROVADA — nao envie este AAB."; exit 1; }
+
+      - name: "VERIFICACAO FINAL — Billing Library dentro do AAB"
+        # Prova de que a biblioteca esta compilada no bundle, e nao apenas
+        # declarada no pubspec. E isso que destrava a area de produtos.
+        run: |
+          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
+          N=$(unzip -l "$AAB" | grep -c 'com/android/billingclient' || true)
+          echo "classes do BillingClient no AAB: $N"
+          unzip -l "$AAB" | grep 'com/android/billingclient' | head -5 || true
+          if [ "$N" -lt 1 ]; then
+            echo "FALHA: a Google Play Billing Library NAO esta no AAB."
+            exit 1
+          fi
+          echo "OK    Google Play Billing Library empacotada."
+
+      - name: "VERIFICACAO FINAL — assinatura do AAB"
+        # Imprime as impressoes digitais da chave que assinou. Compare com a
+        # chave de upload registrada na Play Console ANTES de enviar.
+        run: |
+          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
+          echo "===== impressoes digitais da chave que assinou o AAB ====="
+          unzip -o -q "$AAB" -d aab_extraido 'META-INF/*' || true
+          CERT=$(find aab_extraido/META-INF -type f \( -name '*.RSA' -o -name '*.EC' -o -name '*.DSA' \) | head -1)
+          if [ -n "$CERT" ]; then
+            keytool -printcert -file "$CERT" | grep -iE "SHA1:|SHA256:|Owner:|Valid"
+          else
+            echo "AVISO: nao localizei o bloco de assinatura para imprimir o certificado."
+          fi
+          echo "=========================================================="
+          echo "A chave de upload ATUAL registrada na Play Console e:"
+          echo "  SHA-1:   32:6B:CA:26:34:29:45:41:D5:DA:21:17:DB:87:80:91:32:D2:D9:9C"
+          echo "  SHA-256: AB:7A:51:93:E6:CA:FD:16:04:56:4B:3E:4B:8C:61:60:19:2C:22:28:D1:9B:32:D0:0C:5A:A5:9E:CB:FA:83:E8"
+          echo ""
+          echo "Se as impressoes acima NAO baterem, a Play Console vai recusar o upload"
+          echo "ate que o pedido de REDEFINICAO da chave de upload seja aprovado."
+          echo "Ver docs/PLAY-BILLING-TESTE-INTERNO.md."
+
+      - name: "RESUMO DO BUILD"
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
+          {
+            echo "## AAB para Teste interno"
+            echo ""
+            echo "| campo | valor |"
+            echo "|---|---|"
+            echo "| applicationId | \`${BMV_APPLICATION_ID}\` |"
+            echo "| versionCode | \`${VERSION_CODE}\` |"
+            echo "| versionName | \`${VERSION_NAME}\` |"
+            echo "| arquivo | \`app-release.aab\` |"
+            echo "| tamanho | $(du -h "$AAB" | cut -f1) |"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+            echo ""
+            echo "Baixe o artefato **bmv-aab-teste-interno** e envie MANUALMENTE na"
+            echo "faixa **Teste interno** da Play Console. NAO enviar para producao."
+            echo ""
+            echo "Firebase deste build: app Android oficial"
+            echo "\`${BMV_FIREBASE_APP_ID}\` (pacote \`${BMV_APPLICATION_ID}\`)."
+            echo "O APK de teste \`.poc\` nao foi afetado — o fonte do repositorio"
+            echo "continua apontando para o app antigo, e a troca acontece so aqui."
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bmv-aab-teste-interno
+          path: |
+            app_build/build/app/outputs/bundle/release/app-release.aab
+            manifesto-final.xml
+          if-no-files-found: error
+          retention-days: 30
+
+      # Sem passo de publicacao. O envio a Play Console e manual e vai apenas
+      # para a faixa de Teste interno.

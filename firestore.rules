@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// Regras do Firestore — a metade que sustenta a validacao de compras.
+//
+// A Cloud Function `validarCompraPlay` roda com privilegio de admin e ignora
+// estas regras. Elas existem para o outro lado: garantir que o APLICATIVO nao
+// consiga escrever aquilo que so o servidor pode conceder. Sem isto, validar a
+// compra no servidor nao adiantaria nada — bastaria o jogador escrever
+// `vip: true` no proprio documento.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Perfil do jogador. Ele le o proprio documento e edita seus campos
+    // cosmeticos; VIP, fichas e afins sao SOMENTE do servidor.
+    match /usuarios/{uid} {
+      // Campos que so a Cloud Function pode gravar.
+      function camposDeServidor() {
+        return [
+          'vip', 'vipExpiraEm', 'vipProdutoId', 'vipAtualizadoEm',
+          'fichas', 'fichasAtualizadoEm'
+        ];
+      }
+
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // No create nao existe `resource`, entao `diff` nao serve: basta exigir
+      // que nenhum campo de servidor venha no documento novo.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && !request.resource.data.keys().hasAny(camposDeServidor());
+
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data)
+             .affectedKeys()
+             .hasAny(camposDeServidor());
+
+      allow delete: if false;
+    }
+
+    // Registro de compras validadas. Leitura so do dono, escrita so do servidor.
+    // O cliente nao pode criar um documento aqui para simular uma compra ja
+    // aprovada.
+    match /compras/{chave} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Catalogo autoritativo (o que cada produto concede). Leitura publica para
+    // a vitrine; escrita apenas pelo console/admin.
+    match /configuracao/{doc} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}
