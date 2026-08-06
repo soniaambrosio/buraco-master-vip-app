@@ -11,8 +11,9 @@
     "canvas_px": "1254x1254",
     "color_mode": "RGBA",
     "real_alpha": true,
-    "total_bytes": 27241519,
-    "master_rule": "Preservar os PNGs originais como fonte da verdade. Não recortar, redesenhar, recolorir ou achatar a transparência."
+    "total_bytes": 27220707,
+    "master_rule": "Preservar os PNGs originais como fonte da verdade. Não recortar, redesenhar, recolorir ou achatar a transparência.",
+    "integrity_note": "sha256 e bytes descrevem o arquivo ATUAL. sha256_rgba descreve os PIXELS e nao muda em recompressao sem perda: e por ele que se prova equivalencia visual. origem guarda o arquivo como veio no pacote aprovado."
   },
   "campaign_defaults": {
     "feature_flag": "kitPioneiros2026Enabled",
@@ -34,13 +35,19 @@
       "category": "crown / profile ornament",
       "equipable": true,
       "notes": "Também pode identificar o card principal do Kit Pioneiros 2026.",
-      "sha256": "827fa4f52544a501d1e3f7aecdd72770413253bc8231209deea268b459e87be3",
-      "bytes": 2597073,
+      "sha256": "9590e61df454037469f0a074a7eec3492b1b6af298aa2df5694902732d2e7184",
+      "bytes": 2594662,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "827fa4f52544a501d1e3f7aecdd72770413253bc8231209deea268b459e87be3",
+        "bytes": 2597073,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "8d7da4839f2cc2bf4601f557a80ca4f5d948ece07cf806858fedad0d6b97d7c4"
     },
     {
       "order": 2,
@@ -51,13 +58,19 @@
       "category": "campaign presentation / collectible",
       "equipable": false,
       "notes": "Usar na experiência de resgate; pode constar como item comemorativo no catálogo.",
-      "sha256": "b13d6175f809a2d4977788067ba2510c6b91ffae5b02ab8cd7babeb358be2ff3",
-      "bytes": 2548389,
+      "sha256": "0b11254663264f560e0ab4b95bf7c88f8df533b57a6956383dac69318d6538a3",
+      "bytes": 2546078,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "b13d6175f809a2d4977788067ba2510c6b91ffae5b02ab8cd7babeb358be2ff3",
+        "bytes": 2548389,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "5ab3527c0d06236afa4c514f557ff3b944cca704e57fd9c08eb4baa792966e90"
     },
     {
       "order": 3,
@@ -68,13 +81,19 @@
       "category": "mascot",
       "equipable": true,
       "notes": "Não substituir por versão simplificada ou recortada.",
-      "sha256": "02a5e7be336872aed96507a653af84bae436b218c576b1f5e79cd732f6cba6a6",
-      "bytes": 2665756,
+      "sha256": "b779cf413cc6093765f70d6602c6c2a12017b727b415b3627ce4c90cfbd82798",
+      "bytes": 2663298,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "02a5e7be336872aed96507a653af84bae436b218c576b1f5e79cd732f6cba6a6",
+        "bytes": 2665756,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "c433f1b0b0dd90859e3b464792dbaf3b32135a26baa121a34472d412bf1fbc1f"
     },
     {
       "order": 4,
@@ -85,13 +104,19 @@
       "category": "mascot",
       "equipable": true,
       "notes": "Preservar cetro, cartas, faixa e acabamento completo.",
-      "sha256": "a5dc83dd9780e1deed332fbc2bd8c828a5845e48465538050785b84044982ef8",
-      "bytes": 2433273,
+      "sha256": "687fb66e88d633b9e4182ff6a6199ef50a350ceaa0cd67b9115dd5518e62f4aa",
+      "bytes": 2430592,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "a5dc83dd9780e1deed332fbc2bd8c828a5845e48465538050785b84044982ef8",
+        "bytes": 2433273,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "a27aab292705d1aa7dfa3f5c8a464124b8158b998b89bf7d600567cb2e570758"
     },
     {
       "order": 5,
@@ -102,13 +127,19 @@
       "category": "badge / emblem",
       "equipable": true,
       "notes": "É o identificador oficial da condição de Pioneiro 2026.",
-      "sha256": "71ebeb6ce5f689ac9893f7ad5a82731bb6e9a7b20c60beb11263115a2a5347f3",
-      "bytes": 2776089,
+      "sha256": "c79a519e437fa0153b2178177f1c89caa825af6577fe8e5319ecea7c56794d93",
+      "bytes": 2774353,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "71ebeb6ce5f689ac9893f7ad5a82731bb6e9a7b20c60beb11263115a2a5347f3",
+        "bytes": 2776089,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "e5c42758521cb8fb3b9ad195f2506829402824ce43ee293c51a17d0fc1259ed6"
     },
     {
       "order": 6,
@@ -119,13 +150,19 @@
       "category": "profile showcase / ornament",
       "equipable": true,
       "notes": "Não tratar como fundo de tela esticado; é uma peça isolada.",
-      "sha256": "184b8c0eb5668f6babdf89b4d651fb28fae4ba47e40272509a6e66041b04e72f",
-      "bytes": 2562322,
+      "sha256": "429285061a7f01c8ca27dd579309497ce97c2e4427e1250b5c02bea9a6493e71",
+      "bytes": 2560347,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "184b8c0eb5668f6babdf89b4d651fb28fae4ba47e40272509a6e66041b04e72f",
+        "bytes": 2562322,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "338f79aec699b64eb723a6e516fe8adddab5cf9d012c46e2174d69ea3d371a57"
     },
     {
       "order": 7,
@@ -136,13 +173,19 @@
       "category": "medallion / badge",
       "equipable": true,
       "notes": "Pode ser usado como conquista principal da coleção.",
-      "sha256": "8741fd70d600d33c4d1682a90b502fc0676d993d1a64ce42bbe8161e89d65ca9",
-      "bytes": 3174185,
+      "sha256": "559b7187e6a8c868852acb1f0579fe880dd7044259ea432312e8db784ddbcb15",
+      "bytes": 3172629,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "8741fd70d600d33c4d1682a90b502fc0676d993d1a64ce42bbe8161e89d65ca9",
+        "bytes": 3174185,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "033f16f852c14dad5dbe2ed01536a6f2beaf291e2675801abf495fd140f421c8"
     },
     {
       "order": 8,
@@ -153,13 +196,19 @@
       "category": "mascot",
       "equipable": true,
       "notes": "Garantir área visual suficiente para asas, cetro e faixa.",
-      "sha256": "5f25e220bcfe37600911a6061276b8a711ee8b3d28314f69cd77b688ce13ca67",
-      "bytes": 2900346,
+      "sha256": "b3f54efcb1b599da515c589eb15d2f3a2582a61b8100c4a20a3ae3e39b0b4bc7",
+      "bytes": 2898497,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "5f25e220bcfe37600911a6061276b8a711ee8b3d28314f69cd77b688ce13ca67",
+        "bytes": 2900346,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "90998649ad0b7039e7045631f715042164d1aff806577ff0039ac810437b2b21"
     },
     {
       "order": 9,
@@ -170,13 +219,19 @@
       "category": "victory / entrance effect",
       "equipable": true,
       "notes": "A animação, se aplicada, deve mover a peça inteira sem deformar a arte.",
-      "sha256": "b59674753dcf272c70bd33ec2b282abdeeed22477edce02f2763d797d021ec15",
-      "bytes": 3031211,
+      "sha256": "e4b4ef190c597933f10f780599133b7216fdf4e62cb559ef8bfcf4857a43e210",
+      "bytes": 3029756,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "b59674753dcf272c70bd33ec2b282abdeeed22477edce02f2763d797d021ec15",
+        "bytes": 3031211,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "4771f269fcba168c97a7292553f6cc804c733fa81c0fa1591fd3c87802f8014b"
     },
     {
       "order": 10,
@@ -187,13 +242,29 @@
       "category": "trophy / hall collectible",
       "equipable": true,
       "notes": "Não confundir com título competitivo temporário; é item comemorativo permanente.",
-      "sha256": "2b480d98b783dcbfd3fb6882ea9efd4d0f8fdabdbc68bf1ec657d508dd2b26d2",
-      "bytes": 2552875,
+      "sha256": "22248bbcd223636a8117657925e4020b8642a7cf8d89f90d811d10e2b70cc521",
+      "bytes": 2550495,
       "width": 1254,
       "height": 1254,
       "mode": "RGBA",
       "alpha_min": 0,
-      "alpha_max": 255
+      "alpha_max": 255,
+      "origem": {
+        "sha256": "2b480d98b783dcbfd3fb6882ea9efd4d0f8fdabdbc68bf1ec657d508dd2b26d2",
+        "bytes": 2552875,
+        "nota": "arquivo como entregue no pacote aprovado, antes da recompressao sem perda"
+      },
+      "sha256_rgba": "fe9e1c98207f707b0457875430715b979adbb302a9d75fd8f15b749440071b65"
     }
-  ]
+  ],
+  "otimizacao": {
+    "ferramenta": "tools/otimizar_pngs.js",
+    "node": "v24.14.0",
+    "zlib": "1.3.1-e00f703",
+    "tipo": "recompressao sem perda (refiltragem adaptativa + deflate nivel 9)",
+    "preservado": "dimensoes, bit depth, color type, alpha e todos os pixels",
+    "total_antes": 27241519,
+    "total_depois": 27220707,
+    "reducao_bytes": 20812
+  }
 }
