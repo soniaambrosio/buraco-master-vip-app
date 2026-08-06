@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "descricao": "Catalogo de colecoes comemoraveis. Descreve QUAIS itens existem, a que colecao pertencem, onde mora a arte e em que slot podem ser equipados. NAO descreve quem tem direito (ver campanha_*.seed.json) nem quem ja resgatou (ver inventario do usuario no Firestore).",
+  "convencoes": {
+    "collectionId": "identificador canonico da colecao",
+    "itemId": "identificador canonico e imutavel do item, unico em TODO o catalogo (nao apenas dentro da colecao); regras e inventario referenciam isto, nunca o nome do arquivo. Os ids vieram do manifesto oficial e usam o radical `pioneer_2026_`, enquanto a colecao se chama `pioneiros_2026`: a divergencia e do manifesto aprovado e foi preservada de proposito, entao NAO existe regra de prefixo itemId->collectionId",
+    "categoria": "papel funcional do item no produto",
+    "slot": "slot de equipagem com exclusividade; null quando o item nao e equipavel",
+    "assetPath": "caminho unico do PNG no bundle Flutter; fonte da verdade e app/data/colecoes/pioneiros_2026.manifest.json",
+    "sortOrder": "ordem de apresentacao dentro da colecao, crescente",
+    "purchasable/transferable/tradable/visibleInStore": "sempre false nesta colecao: recompensa historica, fora da economia da loja",
+    "enabled": "false desliga o item sem remove-lo do catalogo e sem quebrar inventarios ja concedidos"
+  },
+  "slots": {
+    "descricao": "Slot define exclusividade de equipagem: o jogador pode POSSUIR varios itens do mesmo slot, mas manter apenas `maxAtivos` equipado(s). `origem: existente` = slot ja usado pela vitrine do perfil (ver PerfilService._vitrinePadrao). `origem: novo` = adaptacao introduzida por esta colecao, por nao haver slot equivalente no app.",
+    "definicoes": [
+      { "slot": "mascote", "maxAtivos": 1, "origem": "existente", "nota": "Slot de mascote da vitrine do perfil. Os tres mascotes pioneiros disputam este slot." },
+      { "slot": "efeito", "maxAtivos": 1, "origem": "existente", "nota": "Slot de efeito da vitrine do perfil. Recebe o Vortice Magico." },
+      { "slot": "coroa", "maxAtivos": 1, "origem": "novo", "nota": "Nao havia slot de coroa de perfil. Introduzido aqui; a vitrine do perfil deve passar a expor este slot na etapa visual." },
+      { "slot": "emblema", "maxAtivos": 1, "origem": "novo", "nota": "Selo/medalhao de identificacao social. Emblema e Medalhao dividem o slot de proposito: o jogador escolhe qual insignia representa a condicao de Pioneiro." },
+      { "slot": "vitrine", "maxAtivos": 1, "origem": "novo", "nota": "Peca de vitrine/troféu do perfil. Trono e Estatua dividem o slot." }
+    ]
+  },
+  "colecoes": [
+    {
+      "collectionId": "pioneiros_2026",
+      "displayName": "Kit Pioneiros 2026",
+      "rarity": "pioneer",
+      "permanente": true,
+      "purchasable": false,
+      "transferable": false,
+      "tradable": false,
+      "revocable": false,
+      "manifesto": "app/data/colecoes/pioneiros_2026.manifest.json",
+      "itens": [
+        {
+          "itemId": "pioneer_2026_crown",
+          "displayName": "Coroa dos Pioneiros",
+          "categoria": "crown_profile_ornament",
+          "slot": "coroa",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/01_coroa_dos_pioneiros_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 1,
+          "enabled": true,
+          "accessibilityLabel": "Coroa dos Pioneiros, ornamento de perfil do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_chest",
+          "displayName": "Bau dos Pioneiros",
+          "categoria": "campaign_presentation",
+          "slot": null,
+          "equipavel": false,
+          "assetPath": "assets/colecoes/pioneiros_2026/02_bau_dos_pioneiros_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 2,
+          "enabled": true,
+          "accessibilityLabel": "Bau dos Pioneiros, arte de abertura do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_mascot_bulldog",
+          "displayName": "Rei Bulldog Pioneiro",
+          "categoria": "mascot",
+          "slot": "mascote",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/03_rei_bulldog_pioneiro_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 3,
+          "enabled": true,
+          "accessibilityLabel": "Rei Bulldog Pioneiro, mascote do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_mascot_owl",
+          "displayName": "Rainha da Sorte Pioneira",
+          "categoria": "mascot",
+          "slot": "mascote",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/04_rainha_da_sorte_pioneira_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 4,
+          "enabled": true,
+          "accessibilityLabel": "Rainha da Sorte Pioneira, mascote do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_emblem",
+          "displayName": "Emblema Oficial dos Pioneiros",
+          "categoria": "badge_emblem",
+          "slot": "emblema",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/05_emblema_oficial_dos_pioneiros_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 5,
+          "enabled": true,
+          "accessibilityLabel": "Emblema Oficial dos Pioneiros, identificador da condicao de Pioneiro 2026."
+        },
+        {
+          "itemId": "pioneer_2026_throne",
+          "displayName": "Trono Real dos Pioneiros",
+          "categoria": "profile_showcase",
+          "slot": "vitrine",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/06_trono_real_dos_pioneiros_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 6,
+          "enabled": true,
+          "accessibilityLabel": "Trono Real dos Pioneiros, peca de vitrine do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_medallion",
+          "displayName": "Medalhao dos Pioneiros",
+          "categoria": "medallion_badge",
+          "slot": "emblema",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/07_medalhao_dos_pioneiros_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 7,
+          "enabled": true,
+          "accessibilityLabel": "Medalhao dos Pioneiros, insignia de colecao do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_mascot_dragon",
+          "displayName": "Dragao Imperial Pioneiro",
+          "categoria": "mascot",
+          "slot": "mascote",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/08_dragao_imperial_pioneiro_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 8,
+          "enabled": true,
+          "accessibilityLabel": "Dragao Imperial Pioneiro, mascote premium do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_vortex",
+          "displayName": "Vortice Magico dos Pioneiros",
+          "categoria": "victory_effect",
+          "slot": "efeito",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/09_vortice_magico_dos_pioneiros_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 9,
+          "enabled": true,
+          "accessibilityLabel": "Vortice Magico dos Pioneiros, efeito de vitoria do Kit Pioneiros 2026."
+        },
+        {
+          "itemId": "pioneer_2026_statue",
+          "displayName": "Estatua do Campeao Pioneiro",
+          "categoria": "trophy_collectible",
+          "slot": "vitrine",
+          "equipavel": true,
+          "assetPath": "assets/colecoes/pioneiros_2026/10_estatua_do_campeao_pioneiro_buraco_master_vip_2026_alpha.png",
+          "sortOrder": 10,
+          "enabled": true,
+          "accessibilityLabel": "Estatua do Campeao Pioneiro, trofeu de vitrine do Kit Pioneiros 2026."
+        }
+      ]
+    }
+  ]
+}
