@@ -85,6 +85,21 @@ Em **Settings → Secrets and variables → Actions**, cadastre os quatro:
 | `BMV_UPLOAD_KEY_ALIAS` | o alias que você passou em `-Alias` |
 | `BMV_UPLOAD_STORE_PASSWORD` | a senha que você escolheu |
 | `BMV_UPLOAD_KEY_PASSWORD` | a mesma senha (o script usa uma só) |
+| `BMV_GOOGLE_SERVICES_JSON_B64` | base64 do `google-services.json` do app Android oficial |
+
+Para o último: Firebase Console → app Android `io.github.soniaambrosio.buracomastervip`
+→ baixar `google-services.json` → converter para base64:
+
+```bash
+base64 -w0 google-services.json
+```
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes('google-services.json'))
+```
+
+Ele vai por secret, e não pelo repositório, porque carrega chave de API e IDs de
+cliente OAuth — mesmo critério aplicado ao resto do material sensível.
 
 O workflow falha logo no começo, com o nome do que faltou, se algum não existir.
 Nenhuma senha aparece em arquivo versionado — diferente do `build.yml` de APK de
@@ -252,25 +267,44 @@ Ambos os lados têm portão no CI: `functions/test/idempotencia.test.js`
 
 ---
 
-## Ponto de atenção: login Google no pacote novo
+## Firebase do pacote oficial
 
-O `applicationId` oficial (`io.github.soniaambrosio.buracomastervip`) é diferente
-do pacote usado nos APKs de teste (`com.buracomastervip.poc.buraco_master_vip`),
-e o app do Firebase configurado em `app/lib/main.dart` está registrado no pacote
-antigo.
+Configurado e confirmado. O app Android oficial no Firebase:
 
-Consequência: **no AAB oficial, o login com Google não vai funcionar** até que,
-no Firebase Console, seja adicionado um app Android com:
+| | |
+|---|---|
+| pacote | `io.github.soniaambrosio.buracomastervip` |
+| App ID | `1:203886484007:android:b1cd95baa0b9e6e629cc02` |
+| SHA-1 da chave de assinatura Play | `83:73:8C:7A:9A:C9:F5:00:AB:27:49:1A:04:EA:8B:EA:74:AB:CF:6A` |
+| projeto | `buraco-master-vip` (o mesmo de sempre) |
 
-- pacote `io.github.soniaambrosio.buracomastervip`
-- o SHA-1 da **chave de assinatura do app** (Play Console → Assinatura de apps →
-  *Certificado da chave de assinatura do app*) — e **não** o da chave de upload,
-  porque em produção quem assina o que roda no celular é o Google
+> O SHA-1 acima é o da **chave de assinatura do app administrada pelo Google**
+> (Play Console → Assinatura de apps), e não o da chave de upload. Em produção
+> quem assina o que roda no celular é o Google — cadastrar o SHA-1 da chave de
+> upload aqui faria o login falhar em todo aparelho que instalasse pela Play.
 
-Depois disso, o `appId` em `FirebaseOptions` (`app/lib/main.dart`) precisa ser
-trocado pelo do novo app Android do Firebase.
+### Como os dois pacotes convivem
 
-Isso **não** impede o objetivo desta entrega — a Play Console processa o AAB e
-libera a área de produtos do mesmo jeito. Mas os testadores internos não vão
-conseguir entrar com a conta Google enquanto não for ajustado. Fica registrado
-aqui para não virar surpresa.
+O fonte `app/lib/main.dart` continua apontando para o app do Firebase do **PoC**,
+porque ele é compartilhado com o `build.yml` (APK de teste, pacote `.poc`). Quem
+troca o `appId` é o `release-aab.yml`, na cópia dentro de `app_build/` — o
+repositório não é alterado.
+
+Consequência prática: **o APK de teste segue funcionando exatamente como antes**.
+Nenhuma mudança desta entrega toca nele.
+
+O `serverClientId` do Google Sign-In é o **mesmo** nos dois pacotes
+(`203886484007-a5e1ob…apps.googleusercontent.com`): ele identifica o projeto, não
+o app Android. O workflow falha se ele sumir do `main.dart`.
+
+### google-services.json
+
+Entra no build a partir do secret `BMV_GOOGLE_SERVICES_JSON_B64`, e o plugin
+`com.google.gms.google-services` é aplicado no `settings.gradle.kts` e no
+`app/build.gradle.kts` do scaffold. Sem o plugin, o arquivo ficaria no diretório
+sem efeito nenhum.
+
+Antes de compilar, o workflow confere que o JSON é mesmo do app certo: `project_id`,
+presença do pacote oficial e presença do App ID oficial. O plugin também rejeita
+um pacote divergente, mas com mensagem obscura — a conferência antecipada dá um
+erro legível e ainda pega o caso pior, que é um JSON válido do app **errado**.
