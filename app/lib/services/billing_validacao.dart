@@ -1,11 +1,13 @@
-import 'package:cloud_functions/cloud_functions.dart';
-
-/// Validacao de compra no servidor.
+/// Contrato da validacao de compra no servidor — SEM dependencia de Firebase.
 ///
-/// REGRA INEGOCIAVEL: o aplicativo **nunca** concede VIP nem fichas por conta
-/// propria. Ele recebe da Play Store um token de compra, manda esse token para
-/// o backend, e o backend — que fala com a Google Play Developer API usando uma
-/// conta de servico — decide se a compra e real e o que conceder.
+/// A implementacao concreta vive em `billing_validacao_firebase.dart`. A
+/// separacao existe para que a decisao critica (conceder / adiar / recusar)
+/// possa ser testada em Dart puro, sem subir plugin nenhum.
+///
+/// REGRA INEGOCIAVEL: o aplicativo **nunca** concede VIP nem fichas. Ele recebe
+/// da Play Store um token de compra, manda esse token para o backend, e o
+/// backend — que fala com a Google Play Developer API usando uma conta de
+/// servico — decide se a compra e real e o que conceder.
 ///
 /// O motivo e simples: o retorno da Play Store chega dentro do dispositivo do
 /// jogador, e dispositivo do jogador nao e ambiente confiavel. Um aparelho com
@@ -14,6 +16,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 /// conta de servico — que vive no backend e nunca sai de la.
 ///
 /// O saldo/VIP resultante e escrito pelo backend no Firestore. O app apenas le.
+library;
 
 /// Compra que a Play Store devolveu e que precisa ser confirmada.
 class CompraParaValidar {
@@ -80,70 +83,59 @@ class ResultadoValidacao {
   /// Por que foi recusada, quando foi. Texto de diagnostico, nao de UI.
   final String? motivo;
 
-  /// `true` quando vale a pena revalidar mais tarde. Ver [ResultadoValidacao.indisponivel].
-  final bool repetivel;
-
   /// `true` quando o backend reconheceu um token que ja havia sido processado.
   /// Nao e erro: e o caminho normal de uma reentrega da Play Store. O app trata
-  /// como sucesso e apenas finaliza a compra, sem conceder de novo.
+  /// como sucesso e apenas finaliza a compra — **sem** creditar de novo, porque
+  /// quem credita e o backend, e ele ja creditou uma unica vez.
   final bool jaProcessada;
+
+  /// `true` quando vale a pena revalidar mais tarde. Ver [ResultadoValidacao.indisponivel].
+  final bool repetivel;
 
   /// O que o backend concedeu (ex.: validade do VIP, fichas creditadas).
   final Map<String, dynamic> detalhes;
 }
 
 /// Contrato do validador — abstrato de proposito, para que a mesa de testes
-/// possa injetar um dublê sem subir Firebase.
+/// possa injetar um duble sem subir Firebase.
 abstract class ValidadorDeCompra {
   Future<ResultadoValidacao> validar(CompraParaValidar compra);
 }
 
-/// Implementacao real: Cloud Function chamavel do projeto `buraco-master-vip`.
-///
-/// Usa `httpsCallable`, e nao um endpoint HTTP aberto, porque o callable ja
-/// carrega o token do Firebase Auth do jogador. O backend sabe QUEM esta
-/// comprando sem que o app precise mandar um uid — que seria falsificavel.
-class ValidadorFirebase implements ValidadorDeCompra {
-  ValidadorFirebase({
-    String regiao = 'us-central1',
-    String nomeDaFuncao = 'validarCompraPlay',
-  })  : _regiao = regiao,
-        _nomeDaFuncao = nomeDaFuncao;
+/// O que fazer com uma compra depois do veredito do backend.
+enum DestinoDaCompra {
+  /// Backend confirmou (ou reconheceu uma reentrega ja processada). Finaliza a
+  /// compra na Play Store.
+  conceder,
 
-  final String _regiao;
-  final String _nomeDaFuncao;
+  /// Nao deu para validar agora. **Nao finaliza**: a compra fica pendente de
+  /// proposito para a Play Store reentregar e revalidar.
+  adiar,
 
-  @override
-  Future<ResultadoValidacao> validar(CompraParaValidar compra) async {
-    try {
-      final callable = FirebaseFunctions.instanceFor(region: _regiao)
-          .httpsCallable(_nomeDaFuncao);
-      final resposta = await callable.call<Map<String, dynamic>>(
-        compra.paraPayload(),
-      );
-      final dados = resposta.data;
-      return ResultadoValidacao(
-        aprovada: dados['aprovada'] == true,
-        motivo: dados['motivo'] as String?,
-        jaProcessada: dados['jaProcessada'] == true,
-        detalhes: Map<String, dynamic>.from(
-          (dados['detalhes'] as Map?) ?? const <String, dynamic>{},
-        ),
-      );
-    } on FirebaseFunctionsException catch (e) {
-      final motivo = 'backend recusou: ${e.code} ${e.message ?? ''}'.trim();
-      // `unavailable`, `deadline-exceeded` e `internal` sao falhas de
-      // infraestrutura, nao vereditos sobre a compra: mantem a compra pendente
-      // para revalidar. Os demais codigos sao decisao do backend e valem como
-      // recusa definitiva.
-      const transitorios = <String>{'unavailable', 'deadline-exceeded', 'internal'};
-      return transitorios.contains(e.code)
-          ? ResultadoValidacao.indisponivel(motivo)
-          : ResultadoValidacao.recusada(motivo);
-    } catch (e) {
-      // Rede fora, funcao ainda nao publicada, timeout. NAO e recusa definitiva:
-      // a compra continua pendente na Play Store e o app tenta de novo depois.
-      return ResultadoValidacao.indisponivel('validacao indisponivel: $e');
-    }
-  }
+  /// Recusa definitiva. Finaliza para a Play parar de reentregar, sem conceder
+  /// nada.
+  recusar,
 }
+
+/// Decisao pura sobre o veredito do backend.
+///
+/// Fica separada do [ValidadorDeCompra] e do servico porque e o ponto onde um
+/// erro custa dinheiro do jogador ou do projeto: tratar uma falha de rede como
+/// recusa perde a compra paga; tratar uma recusa como falha temporaria faz a
+/// Play reentregar para sempre.
+DestinoDaCompra decidirDestinoDaCompra(ResultadoValidacao r) {
+  // `jaProcessada` entra aqui junto de `aprovada` de proposito: uma reentrega de
+  // compra ja creditada e SUCESSO, nao erro. O credito nao se repete porque o
+  // backend e idempotente por token — o app so limpa a pendencia.
+  if (r.aprovada || r.jaProcessada) return DestinoDaCompra.conceder;
+  if (r.repetivel) return DestinoDaCompra.adiar;
+  return DestinoDaCompra.recusar;
+}
+
+/// Se a compra deve ser finalizada (`completePurchase`) na Play Store.
+///
+/// Invariante de seguranca do cliente: **nunca finalizar o que nao foi
+/// validado**. Finalizar uma compra que nao conseguimos confirmar faz a Play
+/// Store parar de reentrega-la, e o jogador que pagou fica sem receber.
+bool deveFinalizarCompra(DestinoDaCompra destino) =>
+    destino != DestinoDaCompra.adiar;

@@ -6,6 +6,7 @@ import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import 'billing_catalogo.dart';
 import 'billing_validacao.dart';
+import 'billing_validacao_firebase.dart';
 
 /// Ponte com a Google Play Billing Library (via `in_app_purchase`).
 ///
@@ -182,10 +183,16 @@ class BillingService {
 
   /// Abre o fluxo de compra de um pacote de fichas.
   Future<bool> comprarConsumivel(ProductDetails produto) {
-    // `autoConsume: false` de proposito. Se a Play consumisse sozinha, o token
-    // seria queimado antes do backend confirmar — e uma falha de rede no meio
-    // do caminho custaria as fichas do jogador. Consumimos so depois do
-    // veredito, em [_consumir].
+    // `autoConsume: false` de proposito, e o consumo NAO acontece neste app.
+    //
+    // Quem consome o token e o backend, via `purchases.products.consume` da
+    // Google Play Developer API, e so DEPOIS de creditar as fichas. O motivo:
+    // consumir e o que libera o token para ser comprado de novo, entao consumir
+    // antes de creditar (ou consumir no cliente, que pode ser morto a qualquer
+    // instante) e a receita para o jogador pagar e nao receber.
+    //
+    // Aqui o app so abre o fluxo e, mais tarde, finaliza a compra localmente
+    // quando o backend confirma.
     return _loja.buyConsumable(
       purchaseParam: PurchaseParam(productDetails: produto),
       autoConsume: false,
@@ -243,52 +250,37 @@ class BillingService {
       ),
     );
 
-    if (resultado.aprovada || resultado.jaProcessada) {
-      // Reentrega de algo ja processado nao concede de novo — o backend
-      // devolve `jaProcessada` e aqui so limpamos a pendencia.
-      if (BillingCatalogo.ehConsumivel(compra.productID)) {
-        await _consumir(compra);
-      }
+    final destino = decidirDestinoDaCompra(resultado);
+
+    // A finalizacao segue a decisao, nunca o contrario: `adiar` e o unico caso
+    // em que a compra NAO e finalizada, para que a Play Store a reentregue.
+    if (deveFinalizarCompra(destino)) {
       await _finalizar(compra);
-      _emitir(EventoBilling(
-        TipoEventoBilling.concedida,
-        compra.productID,
-        detalhes: resultado.detalhes,
-      ));
-      return;
     }
 
-    if (resultado.repetivel) {
-      // NAO finaliza: deixar pendente e o que garante que a Play Store devolva
-      // esta compra na proxima abertura do app, para tentar validar de novo.
-      _emitir(EventoBilling(
-        TipoEventoBilling.adiada,
-        compra.productID,
-        mensagem: resultado.motivo,
-      ));
-      return;
-    }
-
-    // Recusa definitiva: finaliza para a Play parar de reentregar. Nada e
-    // concedido.
-    await _finalizar(compra);
-    _emitir(EventoBilling(
-      TipoEventoBilling.recusada,
-      compra.productID,
-      mensagem: resultado.motivo,
-    ));
-  }
-
-  Future<void> _consumir(PurchaseDetails compra) async {
-    if (defaultTargetPlatform != TargetPlatform.android) return;
-    try {
-      final android = _loja.getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
-      await android.consumePurchase(compra);
-    } catch (e) {
-      // Consumo falhou: o jogador ja recebeu (o backend concedeu), mas o token
-      // segue vivo na Play e sera reentregue. O backend e idempotente por
-      // token, entao a reentrega vira `jaProcessada` e nao credita em dobro.
-      debugPrint('[billing] falha ao consumir ${compra.productID}: $e');
+    switch (destino) {
+      case DestinoDaCompra.conceder:
+        // Nada e creditado aqui. O backend ja creditou (uma unica vez, mesmo se
+        // esta for a segunda entrega do mesmo token) e tambem ja consumiu o
+        // token quando o produto e consumivel. Este evento so avisa a UI para
+        // reler o saldo.
+        _emitir(EventoBilling(
+          TipoEventoBilling.concedida,
+          compra.productID,
+          detalhes: resultado.detalhes,
+        ));
+      case DestinoDaCompra.adiar:
+        _emitir(EventoBilling(
+          TipoEventoBilling.adiada,
+          compra.productID,
+          mensagem: resultado.motivo,
+        ));
+      case DestinoDaCompra.recusar:
+        _emitir(EventoBilling(
+          TipoEventoBilling.recusada,
+          compra.productID,
+          mensagem: resultado.motivo,
+        ));
     }
   }
 

@@ -251,15 +251,24 @@ jobs:
           cd app_build
           flutter test test/torneios/reward_grants_test.dart --reporter expanded
 
-      - name: "PORTAO DE QUALIDADE — catalogo de billing sem IDs provisorios"
-        # Regra do projeto: nenhum ID nem preco de produto entra no codigo antes
-        # da Play Console liberar a area de produtos e devolver os IDs oficiais.
-        # Este portao garante que ninguem "adiantou" um master_vip_mensal chutado.
+      - name: "PORTAO DE QUALIDADE — billing (catalogo + decisao de compra)"
+        # Dois riscos distintos:
+        #  - catalogo: nenhum ID nem preco de produto entra no codigo antes da
+        #    Play Console devolver os IDs oficiais;
+        #  - fluxo: finalizar uma compra que nao foi validada faz a Play parar de
+        #    reentrega-la, e o jogador que pagou fica sem receber.
         run: |
           mkdir -p app_build/test/billing
           cp app/test/billing/billing_catalogo_test.dart app_build/test/billing/
+          cp app/test/billing/billing_fluxo_test.dart app_build/test/billing/
           cd app_build
-          flutter test test/billing/billing_catalogo_test.dart --reporter expanded
+          flutter test test/billing/ --reporter expanded
+
+      - name: "PORTAO DE QUALIDADE — idempotencia do backend (credito unico)"
+        # Roda sem npm install: `idempotencia.js` nao tem dependencia, de
+        # proposito. E a logica onde um bug custa dinheiro real — credito
+        # duplicado sob reentrega concorrente da Play Store.
+        run: node --test functions/test/idempotencia.test.js
 
       - name: Bump minSdk to 23 (Firebase)
         run: |

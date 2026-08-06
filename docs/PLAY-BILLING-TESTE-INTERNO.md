@@ -32,8 +32,10 @@ do app administrada pelo Google (Play App Signing) — essa continua intacta, e 
 ela que assina o que chega no celular dos jogadores. A chave de upload só prova,
 no momento do envio, que o AAB veio de você.
 
-> A Play Console permite **uma** redefinição de chave de upload a cada 12 meses,
-> e o processamento leva até 48 h. Guarde a chave nova com cuidado.
+> Guarde a chave nova com cuidado. A Play Console impõe restrições de frequência
+> para pedidos de redefinição de chave de upload, e elas mudam — confirme a
+> política vigente na própria Console no momento do pedido, em vez de assumir
+> um intervalo fixo.
 
 ### 1. Gerar a chave nova
 
@@ -60,10 +62,16 @@ O script gera três arquivos em `keystore/` (nenhum vai para o git):
 2. **Solicitar redefinição da chave de upload**
 3. Motivo: *perdi minha chave de upload*
 4. Anexar `keystore/upload_certificate.pem`
-5. Aguardar a confirmação (até 48 h)
+5. Aguardar a confirmação da Play Console
 
-Enquanto o pedido não for aprovado, o upload do AAB vai ser recusado. O build em
-si pode ser rodado antes — só o envio depende disso.
+Não trabalhe com um prazo estimado. A Play Console informa, na própria tela de
+**Assinatura de apps** e por e-mail, a confirmação do pedido e a **data a partir
+da qual a chave nova passa a valer** para uploads. É essa data de vigência que
+manda — antes dela, o envio continua sendo recusado mesmo que o pedido já
+apareça como aceito.
+
+Registre a data informada e só envie o AAB a partir dela. O build em si pode ser
+rodado antes; só o upload depende dessa vigência.
 
 ---
 
@@ -201,17 +209,46 @@ aplicativo escreva `vip`, `vipExpiraEm`, `fichas` e afins. Sem elas, validar no
 servidor não adiantaria nada — bastaria o jogador escrever `vip: true` no próprio
 documento.
 
-### Idempotência
+### Quem consome o token
+
+O **backend** consome, via `purchases.products.consume` da Play Developer API, e
+só **depois** de creditar as fichas. O app nunca consome.
+
+Consumir é o que libera o token para ser comprado de novo. Consumir antes de
+creditar — ou consumir no cliente, que pode ser morto a qualquer instante — é a
+receita para o jogador pagar e não receber. Na ordem correta, se o consumo
+falhar o jogador já recebeu, a Play reentrega o token, e a reentrega cai na
+idempotência sem creditar duas vezes.
+
+Assinatura não se consome: é reconhecida com `subscriptions.acknowledge`. Sem
+reconhecer, a Play Store estorna automaticamente em 3 dias.
+
+### Idempotência e concorrência
 
 A Play Store reentrega compras (troca de aparelho, app fechado no meio da
-validação, reinstalação). Cada `purchaseToken` é registrado numa transação
-**antes** de qualquer crédito, então a segunda entrega devolve
-`jaProcessada: true` e não credita de novo.
+validação, reinstalação), e duas entregas podem chegar **ao mesmo tempo**.
 
-No app, o mesmo cuidado: uma falha temporária de validação (rede fora, função
-ainda não publicada) **não** finaliza a compra — ela fica pendente de propósito
-para a Play Store reentregar e revalidar. Só uma recusa definitiva do backend
-encerra a compra sem conceder nada.
+Duas garantias, ambas em `functions/idempotencia.js`:
+
+**Titularidade.** O mesmo `purchaseToken` sempre descreve a mesma compra. Se
+chegar amarrado a outro `uid`, outro `produtoId` ou outro tipo, é conflito e a
+função recusa. A conferência acontece **antes** de olhar o estado — senão um
+token de outro jogador que estivesse `concedida` devolveria a concessão alheia.
+
+**Crédito único.** A concessão e a marcação de `concedida` acontecem na **mesma
+transação**, com o documento relido dentro dela. Não existe janela entre
+"creditei" e "anotei que creditei". Duas execuções simultâneas disputam a
+transação; o Firestore serializa e faz a perdedora repetir a leitura, e aí ela vê
+`concedida` e devolve o que já foi concedido em vez de creditar de novo.
+
+No app, o cuidado equivalente: uma falha temporária de validação (rede fora,
+função ainda não publicada) **não** finaliza a compra — ela fica pendente de
+propósito para a Play Store reentregar e revalidar. Só uma recusa definitiva do
+backend encerra a compra sem conceder nada.
+
+Ambos os lados têm portão no CI: `functions/test/idempotencia.test.js`
+(concorrência e reentrega, `node --test`) e `app/test/billing/billing_fluxo_test.dart`
+(decisão de finalizar ou não).
 
 ---
 

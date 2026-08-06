@@ -58,8 +58,9 @@ if (-not $keytool) {
 Write-Host "keytool: $keytool" -ForegroundColor DarkGray
 
 # --- nao sobrescrever uma chave existente ------------------------------------
-# Perder uma chave de upload por sobrescrita e um problema serio e irreversivel:
-# a redefinicao so pode ser pedida uma vez a cada 12 meses.
+# Perder uma chave de upload por sobrescrita e um problema serio: a Play Console
+# impoe restricoes de frequencia para pedidos de redefinicao, entao voce pode
+# ficar sem conseguir enviar por um bom tempo.
 if (Test-Path $arquivoJks) {
   throw "Ja existe $arquivoJks. Se for realmente para recomeçar, mova o arquivo antigo para um lugar seguro ANTES de rodar de novo."
 }

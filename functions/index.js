@@ -8,15 +8,16 @@
  * para forjar e a resposta da Google Play Developer API, porque ela exige a
  * credencial de uma conta de servico — que vive aqui e nunca sai daqui.
  *
- * Por isso o aplicativo nao concede nada. Ele manda o `purchaseToken`, esta
- * funcao pergunta a Google se a compra e real, e SO ENTAO grava a concessao no
- * Firestore. O app descobre o que ganhou lendo o Firestore depois.
+ * Por isso o aplicativo nao concede nada e nao consome nada. Ele manda o
+ * `purchaseToken`, esta funcao pergunta a Google se a compra e real, credita, e
+ * so entao consome o token. O app descobre o que ganhou lendo o Firestore.
  *
- * IDEMPOTENCIA
+ * CREDITO UNICO SOB CONCORRENCIA
  * A Play Store reentrega compras (troca de aparelho, app fechado no meio da
- * validacao, reinstalacao). Cada token e registrado numa transacao antes de
- * qualquer credito, entao a segunda entrega devolve `jaProcessada: true` e nao
- * credita de novo.
+ * validacao, reinstalacao), e duas entregas podem chegar ao mesmo tempo. A
+ * concessao e a marcacao de `concedida` acontecem na MESMA transacao, com o
+ * documento relido dentro dela: quem perder a corrida ve `concedida` e devolve
+ * o que ja foi concedido, sem creditar de novo. Ver `idempotencia.js`.
  *
  * ESTADO ATUAL
  * O mapa de produtos vive no Firestore (`configuracao/billing`) e esta vazio
@@ -34,11 +35,19 @@ const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { google } = require('googleapis');
 const crypto = require('crypto');
 
+const {
+  ESTADO,
+  ACAO,
+  conferirTitularidade,
+  decidirSobreRegistroExistente,
+  podeConceder,
+} = require('./idempotencia');
+
 initializeApp();
 
 /**
  * JSON da conta de servico com acesso a Google Play Developer API.
- * Guardado no Secret Manager, nunca no repositorio. Ver README desta pasta.
+ * Guardado no Secret Manager, nunca no repositorio.
  */
 const CONTA_SERVICO_PLAY = defineSecret('PLAY_SERVICE_ACCOUNT_JSON');
 
@@ -100,14 +109,23 @@ async function consultarProduto(produtoId, tokenCompra) {
 }
 
 /**
- * Confirma a compra junto a Google. Sem isso, a Play Store estorna
- * automaticamente em 3 dias. O app tambem confirma pelo seu lado; confirmar
- * duas vezes nao causa problema, e a Google devolve erro que ignoramos.
+ * Fecha a compra junto a Google, DEPOIS de creditar.
+ *
+ * - Consumivel: `products.consume`, que tambem reconhece. Consumir e o que
+ *   libera o token para ser comprado de novo — por isso vem depois do credito.
+ *   Se falhar aqui, o jogador ja recebeu e a Play reentrega o token; a
+ *   reentrega cai na idempotencia e nao credita duas vezes.
+ * - Assinatura: `subscriptions.acknowledge`. Sem reconhecer, a Play Store
+ *   estorna automaticamente em 3 dias.
+ *
+ * Erros sao tolerados e registrados: a causa quase sempre e "ja consumida" ou
+ * "ja reconhecida", e transformar isso em falha da funcao faria o app achar que
+ * a compra nao valeu.
  */
-async function reconhecer(assinatura, produtoId, tokenCompra) {
+async function fecharComAGoogle(ehAssinatura, produtoId, tokenCompra) {
   const play = await androidPublisher();
   try {
-    if (assinatura) {
+    if (ehAssinatura) {
       await play.purchases.subscriptions.acknowledge({
         packageName: PACOTE,
         subscriptionId: produtoId,
@@ -115,15 +133,16 @@ async function reconhecer(assinatura, produtoId, tokenCompra) {
         requestBody: {},
       });
     } else {
-      await play.purchases.products.acknowledge({
+      await play.purchases.products.consume({
         packageName: PACOTE,
         productId: produtoId,
         token: tokenCompra,
-        requestBody: {},
       });
     }
+    return { ok: true };
   } catch (e) {
-    console.warn('[billing] reconhecimento falhou (provavelmente ja reconhecida):', e.message);
+    console.warn('[billing] fechamento junto a Google falhou:', e.message);
+    return { ok: false, erro: e.message };
   }
 }
 
@@ -146,6 +165,7 @@ exports.validarCompraPlay = onCall(
       throw new HttpsError('invalid-argument', 'tokenCompra ausente.');
     }
     const ehAssinatura = assinatura === true;
+    const ctx = { uid, produtoId, assinatura: ehAssinatura };
 
     // 3) O produto precisa existir no catalogo do servidor. Enquanto a Play
     //    Console nao liberar a area de produtos, isto recusa tudo — de proposito.
@@ -157,40 +177,40 @@ exports.validarCompraPlay = onCall(
         `Produto "${produtoId}" nao esta no catalogo do servidor.`
       );
     }
-    if (!!definicao.assinatura !== ehAssinatura) {
+    if (Boolean(definicao.assinatura) !== ehAssinatura) {
       throw new HttpsError('invalid-argument', `Tipo divergente para "${produtoId}".`);
     }
 
     const db = getFirestore();
     const refCompra = db.doc(`compras/${chaveDaCompra(tokenCompra)}`);
 
-    // 4) Idempotencia ANTES de creditar. A transacao e o que impede que duas
-    //    entregas simultaneas do mesmo token creditem duas vezes.
-    const jaExistia = await db.runTransaction(async (tx) => {
+    // 4) Registro do token. Se ja existir, decide olhando titularidade ANTES do
+    //    estado — um token de outro jogador nao pode devolver concessao alheia.
+    const decisao = await db.runTransaction(async (tx) => {
       const snap = await tx.get(refCompra);
-      if (snap.exists) return true;
+      if (snap.exists) {
+        return decidirSobreRegistroExistente(snap.data(), ctx);
+      }
       tx.set(refCompra, {
         uid,
         produtoId,
         assinatura: ehAssinatura,
         orderId: orderId || null,
-        estado: 'em_validacao',
+        estado: ESTADO.EM_VALIDACAO,
         criadoEm: FieldValue.serverTimestamp(),
       });
-      return false;
+      return { acao: ACAO.PROSSEGUIR };
     });
 
-    if (jaExistia) {
-      const atual = (await refCompra.get()).data();
-      // Uma reentrega de compra ja concedida e sucesso, nao erro.
-      if (atual.estado === 'concedida') {
-        return { aprovada: true, jaProcessada: true, detalhes: atual.concessao || {} };
-      }
-      if (atual.estado === 'recusada') {
-        return { aprovada: false, jaProcessada: true, motivo: atual.motivo || 'compra recusada' };
-      }
-      // Ficou presa em `em_validacao`: uma execucao anterior morreu no meio.
-      // Deixa seguir para revalidar — a Google e a fonte da verdade.
+    if (decisao.acao === ACAO.CONFLITO) {
+      console.error('[billing] conflito de titularidade de token:', decisao.motivo, { uid, produtoId });
+      throw new HttpsError('permission-denied', 'Esta compra nao pertence a esta conta.');
+    }
+    if (decisao.acao === ACAO.JA_CONCEDIDA) {
+      return { aprovada: true, jaProcessada: true, detalhes: decisao.concessao };
+    }
+    if (decisao.acao === ACAO.JA_RECUSADA) {
+      return { aprovada: false, jaProcessada: true, motivo: decisao.motivo };
     }
 
     // 5) Pergunta a Google.
@@ -203,7 +223,7 @@ exports.validarCompraPlay = onCall(
       console.error('[billing] Play Developer API falhou:', e.message);
       // NAO marca como recusada: pode ser instabilidade da API. O app mantem a
       // compra pendente e volta a tentar.
-      await refCompra.set({ estado: 'em_validacao', ultimoErro: e.message }, { merge: true });
+      await refCompra.set({ ultimoErro: e.message }, { merge: true });
       throw new HttpsError('unavailable', 'Nao consegui confirmar a compra agora. Tente em instantes.');
     }
 
@@ -220,25 +240,39 @@ exports.validarCompraPlay = onCall(
     }
 
     if (!valida) {
-      await refCompra.set({ estado: 'recusada', motivo }, { merge: true });
+      await refCompra.set({ estado: ESTADO.RECUSADA, motivo }, { merge: true });
       return { aprovada: false, motivo };
     }
 
-    // 7) Concede. A escrita do saldo/VIP e do servidor; as regras do Firestore
-    //    proibem o cliente de escrever nestes campos.
-    const concessao = await db.runTransaction(async (tx) => {
+    // 7) TRANSACAO DE CONCESSAO — atomicamente idempotente.
+    //
+    //    O documento e RELIDO aqui dentro. Se outra execucao ja concedeu, esta
+    //    devolve a concessao existente sem tocar no saldo. Credito e marcacao de
+    //    `concedida` sao a mesma escrita: nao existe janela entre "creditei" e
+    //    "anotei que creditei".
+    const resultadoConcessao = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(refCompra);
+      const registro = snap.exists ? snap.data() : null;
+
+      if (registro) {
+        // Defesa em profundidade: reconfere titularidade dentro da transacao.
+        const t = conferirTitularidade(registro, ctx);
+        if (!t.ok) return { conflito: true, motivo: t.motivo };
+      }
+
+      if (!podeConceder(registro)) {
+        return { jaConcedida: true, concessao: (registro && registro.concessao) || {} };
+      }
+
       const refJogador = db.doc(`usuarios/${uid}`);
-      const resultado = {};
+      const concessao = {};
 
       if (ehAssinatura) {
-        const expiraEm = compra.lineItems && compra.lineItems.length
-          ? compra.lineItems[0].expiryTime
-          : null;
-        resultado.vip = true;
-        resultado.vipExpiraEm = expiraEm;
-        resultado.planoBase = compra.lineItems && compra.lineItems.length
-          ? compra.lineItems[0].offerDetails && compra.lineItems[0].offerDetails.basePlanId
-          : null;
+        const item = compra.lineItems && compra.lineItems.length ? compra.lineItems[0] : null;
+        const expiraEm = item ? item.expiryTime : null;
+        concessao.vip = true;
+        concessao.vipExpiraEm = expiraEm;
+        concessao.planoBase = item && item.offerDetails ? item.offerDetails.basePlanId : null;
         tx.set(refJogador, {
           vip: true,
           vipExpiraEm: expiraEm,
@@ -248,7 +282,7 @@ exports.validarCompraPlay = onCall(
       } else {
         // `fichas` vem do catalogo no servidor, nunca do payload do app.
         const fichas = Number(definicao.fichas || 0);
-        resultado.fichasCreditadas = fichas;
+        concessao.fichasCreditadas = fichas;
         tx.set(refJogador, {
           fichas: FieldValue.increment(fichas),
           fichasAtualizadoEm: FieldValue.serverTimestamp(),
@@ -256,18 +290,33 @@ exports.validarCompraPlay = onCall(
       }
 
       tx.set(refCompra, {
-        estado: 'concedida',
-        concessao: resultado,
+        estado: ESTADO.CONCEDIDA,
+        concessao,
         concedidoEm: FieldValue.serverTimestamp(),
       }, { merge: true });
 
-      return resultado;
+      return { concedidaAgora: true, concessao };
     });
 
-    // 8) Reconhece na Google (depois de conceder — se falhar aqui, o jogador ja
-    //    recebeu, e a Google reentrega para reconhecermos de novo).
-    await reconhecer(ehAssinatura, produtoId, tokenCompra);
+    if (resultadoConcessao.conflito) {
+      console.error('[billing] conflito de titularidade na concessao:', resultadoConcessao.motivo);
+      throw new HttpsError('permission-denied', 'Esta compra nao pertence a esta conta.');
+    }
 
-    return { aprovada: true, jaProcessada: false, detalhes: concessao };
+    if (resultadoConcessao.jaConcedida) {
+      // Corrida perdida: outra execucao creditou. Nada a fazer alem de garantir
+      // o fechamento junto a Google, que e idempotente do lado deles.
+      await fecharComAGoogle(ehAssinatura, produtoId, tokenCompra);
+      return { aprovada: true, jaProcessada: true, detalhes: resultadoConcessao.concessao };
+    }
+
+    // 8) Fecha na Google DEPOIS de creditar. Consumir antes de creditar seria a
+    //    receita para o jogador pagar e nao receber.
+    const fechamento = await fecharComAGoogle(ehAssinatura, produtoId, tokenCompra);
+    if (!fechamento.ok) {
+      await refCompra.set({ avisoFechamento: fechamento.erro }, { merge: true });
+    }
+
+    return { aprovada: true, jaProcessada: false, detalhes: resultadoConcessao.concessao };
   }
 );
