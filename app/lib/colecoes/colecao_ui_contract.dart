@@ -15,6 +15,7 @@
 // elegibilidade por conta propria. A tela recebe [ColecaoVM] pronto e devolve
 // intencao por [ColecaoCallbacks].
 
+import 'colecao_arte.dart';
 import 'colecao_campanha.dart';
 import 'colecao_catalogo.dart';
 import 'colecao_inventario.dart';
@@ -128,8 +129,10 @@ class RecompensaVM {
   final String id;
   final String displayName;
 
-  /// Caminho do PNG no bundle. Renderizar conforme [RegrasDeExibicao].
-  final String assetPath;
+  /// De onde vem a arte. A superficie deve passar por [ResolvedorDeArte] em vez
+  /// de assumir arquivo local: hoje toda arte e de bundle, mas uma colecao
+  /// futura pode ser remota sem que o [id] mude.
+  final FonteArte arte;
 
   final String category;
 
@@ -150,7 +153,7 @@ class RecompensaVM {
   const RecompensaVM({
     required this.id,
     required this.displayName,
-    required this.assetPath,
+    required this.arte,
     required this.category,
     required this.slot,
     required this.owned,
@@ -160,6 +163,10 @@ class RecompensaVM {
     required this.accessibilityLabel,
   });
 
+  /// Caminho no bundle, ou null quando a arte e remota. Atalho para as
+  /// superficies que so lidam com arte empacotada — hoje, todas.
+  String? get assetPath => arte.assetPath;
+
   /// Projeta um item do catalogo contra o inventario do jogador.
   factory RecompensaVM.de(ColecaoItem item, InventarioUsuario inventario) {
     final owned = inventario.possui(item.itemId);
@@ -167,7 +174,7 @@ class RecompensaVM {
     return RecompensaVM(
       id: item.itemId,
       displayName: item.displayName,
-      assetPath: item.assetPath,
+      arte: item.arte,
       category: item.categoria,
       slot: item.slot,
       owned: owned,

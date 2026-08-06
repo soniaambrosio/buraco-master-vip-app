@@ -20,6 +20,8 @@
 
 import 'dart:convert';
 
+import 'colecao_arte.dart';
+
 /// Identificadores canonicos de colecao.
 abstract final class ColecaoIds {
   static const pioneiros2026 = 'pioneiros_2026';
@@ -121,8 +123,9 @@ class ColecaoItem {
 
   final bool equipavel;
 
-  /// Caminho unico do PNG no bundle Flutter.
-  final String assetPath;
+  /// De onde vem a arte: bundle hoje, possivelmente remota amanha. Ver
+  /// colecao_arte.dart — a origem pode mudar sem que o [itemId] mude.
+  final FonteArte arte;
 
   /// Ordem de apresentacao dentro da colecao, crescente.
   final int sortOrder;
@@ -140,11 +143,18 @@ class ColecaoItem {
     required this.categoria,
     required this.slot,
     required this.equipavel,
-    required this.assetPath,
+    required this.arte,
     required this.sortOrder,
     required this.enabled,
     required this.accessibilityLabel,
   });
+
+  /// Caminho no bundle. Atalho de conveniencia para as superficies que so lidam
+  /// com arte empacotada — que hoje sao todas.
+  ///
+  /// Devolve null quando a arte e remota: nesse caso a superficie precisa passar
+  /// pelo [ResolvedorDeArte], porque o arquivo pode nem estar no aparelho ainda.
+  String? get assetPath => arte.assetPath;
 
   factory ColecaoItem.fromJson(Map<String, dynamic> json, String collectionId) {
     final itemId = _textoObrigatorio(json, 'itemId');
@@ -179,7 +189,7 @@ class ColecaoItem {
       categoria: _textoObrigatorio(json, 'categoria'),
       slot: slot,
       equipavel: equipavel,
-      assetPath: _textoObrigatorio(json, 'assetPath'),
+      arte: FonteArte.fromJson(json, itemId),
       sortOrder: sortOrder,
       enabled: enabled,
       accessibilityLabel: _textoObrigatorio(json, 'accessibilityLabel'),
@@ -193,7 +203,7 @@ class ColecaoItem {
         'categoria': categoria,
         'slot': slot,
         'equipavel': equipavel,
-        'assetPath': assetPath,
+        'arte': arte.toJson(),
         'sortOrder': sortOrder,
         'enabled': enabled,
         'accessibilityLabel': accessibilityLabel,
@@ -346,15 +356,16 @@ class CatalogoColecoes {
         }
         itens[item.itemId] = item;
 
-        // Uma unica copia de cada arquivo, um unico caminho por arte. Duas
+        // Uma unica copia de cada arquivo, uma unica origem por arte. Duas
         // entradas apontando para o mesmo PNG dobrariam o peso no bundle sem
-        // que ninguem percebesse.
-        final dono = assetPaths[item.assetPath];
+        // que ninguem percebesse. A chave vem da FONTE, e nao do caminho local,
+        // para valer tambem quando a arte for remota.
+        final dono = assetPaths[item.arte.chaveCache];
         if (dono != null) {
           throw FormatException(
-              'assetPath repetido entre $dono e ${item.itemId}: ${item.assetPath}.');
+              'arte repetida entre $dono e ${item.itemId}: ${item.arte.chaveCache}.');
         }
-        assetPaths[item.assetPath] = item.itemId;
+        assetPaths[item.arte.chaveCache] = item.itemId;
 
         final slot = item.slot;
         if (slot != null && !slots.containsKey(slot)) {
