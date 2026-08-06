@@ -1,0 +1,104 @@
+rules_version = '2';
+
+// firestore.rules — regras do Kit Pioneiros 2026.
+//
+// PRINCIPIO: o cliente NUNCA escreve inventario, comprovante de resgate ou
+// elegibilidade. Toda concessao passa pela Cloud Function `claimPioneerKit`, que
+// usa o Admin SDK e por isso ignora estas regras — o `allow write: if false`
+// abaixo nao atrapalha o backend, ele apenas fecha a porta do aplicativo.
+//
+// ATENCAO AO IMPLANTAR: no Firestore, caminho nao declarado e caminho negado.
+// Este arquivo cobre somente as colecoes do Kit Pioneiros; quando `usuarios/`,
+// `partidas/` e as demais entrarem no ar, precisam ser acrescentadas aqui, sob
+// pena de o aplicativo perder acesso a elas. Ver firebase/README.md.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function ehDono(uid) {
+      return autenticado() && request.auth.uid == uid;
+    }
+
+    // Claim customizada, atribuida fora do aplicativo. Nao existe caminho pelo
+    // qual o proprio jogador se torne admin.
+    function ehAdmin() {
+      return autenticado() && request.auth.token.admin == true;
+    }
+
+    // ------------------------------------------------------------------
+    // Configuracao de campanha e feature flags.
+    // Leitura autenticada para a tela saber o que mostrar; escrita so admin.
+    // ------------------------------------------------------------------
+    match /config/{documento} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if autenticado();
+      allow write: if ehAdmin();
+
+      // Lista segura de elegiveis, em SUBCOLECAO: suporta lista grande sem
+      // empilhar milhares de UIDs num unico documento.
+      //
+      // O jogador le apenas o proprio documento — nao da para varrer a lista
+      // inteira nem descobrir quem mais foi convidado — e nao escreve nunca.
+      // E aqui que morreria a tentativa de "se marcar elegivel".
+      match /eligible/{uid} {
+        allow get: if ehDono(uid) || ehAdmin();
+        allow list: if ehAdmin();
+        allow write: if false;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Catalogo de colecoes: publico para quem esta autenticado, imutavel pelo
+    // cliente. Os precos nao sao "proibidos" aqui por acaso: o catalogo
+    // comemorativo simplesmente nao tem campo de preco (ver catalogo.seed.json).
+    // ------------------------------------------------------------------
+    match /collections/{collectionId} {
+      allow read: if autenticado();
+      allow write: if false;
+
+      match /items/{itemId} {
+        allow read: if autenticado();
+        allow write: if false;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Inventario e comprovantes do jogador.
+    //
+    // Leitura: so o dono (e o admin, para suporte).
+    // Escrita: NINGUEM pelo cliente. Sem esta linha, um aplicativo modificado
+    // poderia criar `inventory/pioneer_2026_crown` a mao, ou reescrever
+    // `source`/`campaignId` de um item legitimo para forjar procedencia.
+    // ------------------------------------------------------------------
+    match /users/{uid} {
+
+      match /inventory/{itemId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow create, update, delete: if false;
+      }
+
+      match /campaign_claims/{campaignId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow create, update, delete: if false;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Auditoria de acoes administrativas (concessao manual e revogacao).
+    // Somente a Cloud Function grava; nem o admin apaga pelo cliente, para que
+    // a trilha nao possa ser limpa por quem a gerou.
+    // ------------------------------------------------------------------
+    match /audit/{registroId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+  }
+}

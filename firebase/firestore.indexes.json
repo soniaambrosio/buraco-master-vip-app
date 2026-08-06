@@ -1,0 +1,33 @@
+{
+  "_comentario": "Indices do Kit Pioneiros 2026. As consultas do fluxo comum sao todas por caminho direto (documento por id determinístico), que nao exigem indice composto. Os dois indices abaixo servem as telas de inventario e ao suporte.",
+  "indexes": [
+    {
+      "_comentario": "Vitrine/inventario: itens de uma colecao, mais recentes primeiro. Usado ao abrir a aba do Kit Pioneiros no inventario do jogador.",
+      "collectionGroup": "inventory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "collectionId", "order": "ASCENDING" },
+        { "fieldPath": "unlockedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comentario": "Perfil/mesa: o que o jogador tem equipado agora, por colecao. Consulta pequena e frequente.",
+      "collectionGroup": "inventory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "equipped", "order": "ASCENDING" },
+        { "fieldPath": "collectionId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "_comentario": "Suporte/auditoria: quem resgatou uma campanha, em ordem cronologica. COLLECTION_GROUP porque campaign_claims vive sob cada usuario.",
+      "collectionGroup": "campaign_claims",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "claimedAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
