@@ -66,6 +66,32 @@ serialização e um getter (ver "Alterações em mesa.dart").
 | `motor/diagnostico.dart` | Diário técnico circular, sem conteúdo de carta. |
 | `motor/sessao_reconexao.dart` | Lado do app: fila de comandos pendentes, reenvio idempotente, descarte de visão velha. |
 
+## Regra de acoplamento para consumidores
+
+Registrada na revisão de 07/08/2026, **vinculante para quem for consumir este
+motor** — em especial o adaptador de torneios:
+
+> Um consumidor **não importa `mesa.dart`** e **não lê `MotorPartida.jogo`**.
+> Ele consome exclusivamente a porta pública canônica de encerramento (DTO).
+
+O motivo é o mesmo que separou esta camada do `Jogo`: quem alcança o estado
+interno passa a depender do formato dele, e aí qualquer evolução das regras vira
+quebra em cascata em módulos que nada têm a ver com buraco. Um adaptador que lê
+`MotorPartida.jogo` está lendo mão de jogador, monte e mortos para descobrir
+quem venceu — informação que ele não precisa e não deveria conseguir alcançar.
+
+**Estado atual, honestamente:** `MotorPartida.jogo` **é público hoje**, e a porta
+canônica de encerramento **ainda não existe** — a classe leitora de
+`partidaEncerrada` foi deliberadamente adiada (ver
+[`MOTOR-PARTIDAS-PROTOCOLO-SERVIDOR.md`](MOTOR-PARTIDAS-PROTOCOLO-SERVIDOR.md),
+DECISÃO 4). Portanto esta regra é hoje um **contrato declarado, não uma barreira
+imposta pelo compilador**.
+
+Fechar essa lacuna — criar o DTO de encerramento e estreitar o acesso ao `Jogo` —
+é trabalho da OS de ligação, e não foi feito aqui porque esta OS foi encerrada
+sem novas mudanças de arquitetura. Até lá, a regra vale por disciplina de quem
+escreve o adaptador.
+
 ## As cinco garantias
 
 ### 1. Snapshot determinístico e fiel (§9)
