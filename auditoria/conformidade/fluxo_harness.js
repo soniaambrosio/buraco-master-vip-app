@@ -304,6 +304,32 @@ log("T13 rodada encerrada", comprarMonte(mkJogo({ vez: 0, rodadaEncerrada: true 
   log("T14 conservacao de IDs (nada some/duplica)", conserva, true);
 }
 
+// CRIT-03 (decisão Sônia): o MOTOR do servidor ISENTA bots do foul de abertura
+// vulnerável (l.1974 `if tipo !== "humano"`), enquanto o canônico aplica o mínimo
+// +75/+90 UNIFORMEMENTE (avaliarBaixar não conhece humano/bot). Vetor cross-engine
+// específico: mesma abertura fraca de dupla vulnerável, assento BOT × assento HUMANO.
+{
+  // BOT vulnerável (nível 1 → mín 75) abre fraco (15) → servidor DEIXA em pé (sem foul).
+  const bot = mkJogo({ modalidade: "fechado", vez: 0, jaComprou: true,
+    rodadasVulneravel: { nos: 1, eles: 0 },
+    assentos: [{ tipo: "bot" }, { tipo: "humano" }, { tipo: "humano" }, { tipo: "humano" }],
+    maos: [[...seq("copas", ["3", "4", "5"], "d"), C("kx", "ouros", "K"), C("qx", "ouros", "Q")], [], [], []] });
+  baixar(bot, 0, ["d0", "d1", "d2"]);           // abre 15 pts (< 75)
+  const rb = descartar(bot, 0, "kx");            // servidor: bot isento → descarte OK e abertura FICA
+  log("CRIT-03 servidor deixa BOT abrir <minimo (fica em pe)", rb.ok === true && bot.jogosDupla.nos.length === 1, true);
+
+  // HUMANO no MESMO caso → foul: abertura ANULADA e descarte recusado (assimetria).
+  const hum = mkJogo({ modalidade: "fechado", vez: 0, jaComprou: true,
+    rodadasVulneravel: { nos: 1, eles: 0 },
+    assentos: [{ tipo: "humano" }, { tipo: "humano" }, { tipo: "humano" }, { tipo: "humano" }],
+    maos: [[...seq("copas", ["3", "4", "5"], "d"), C("kx", "ouros", "K"), C("qx", "ouros", "Q")], [], [], []] });
+  baixar(hum, 0, ["d0", "d1", "d2"]);
+  const rh = descartar(hum, 0, "kx");            // humano: foul → recusa e anula
+  log("CRIT-03 servidor ANULA HUMANO no mesmo caso (assimetria bot×humano)", rh.ok === false && hum.jogosDupla.nos.length === 0, true);
+  // Canônico: avaliarBaixar aplica o mínimo aos DOIS (rejeita no baixar). A assimetria
+  // acima é a divergência CRIT-03 — bloqueia online até o servidor validar bot=humano.
+}
+
 let falhas = 0;
 for (const r of out) {
   const marca = r.ok ? "OK " : "XX ";
