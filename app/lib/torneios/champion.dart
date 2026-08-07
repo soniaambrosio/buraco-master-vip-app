@@ -233,8 +233,11 @@ List<PremiacaoPlanejada> planejarPremiacao({
     final participante = Participante.deId(conclusao.classificacaoFinal[i]);
 
     for (final userId in participante.membros) {
-      if (faixa.assetId == null) {
-        // Faixa so de fichas: nao ha ativo de catalogo a conceder.
+      final ativos = faixa.assetIds;
+
+      if (ativos.isEmpty) {
+        // Faixa so de fichas ou so de extras: nao ha ativo de catalogo a
+        // conceder, mas a linha entra assim mesmo para as fichas nao sumirem.
         planejadas.add(PremiacaoPlanejada(
           resultado: const ResultadoConcessao.recusada(RecusaConcessao.assetInexistente),
           userId: userId,
@@ -244,31 +247,40 @@ List<PremiacaoPlanejada> planejarPremiacao({
         continue;
       }
 
-      final resultado = concederRecompensa(
-        // O rewardId identifica a LINHA; a chave de idempotencia identifica o
-        // DIREITO. Derivar o rewardId da mesma tupla mantem o registro
-        // reproduzivel sem sortear id.
-        rewardId: 'grant-${conclusao.tournamentId}-${conclusao.editionId}-$userId-${faixa.assetId}',
-        userId: userId,
-        tournamentId: conclusao.tournamentId,
-        editionId: conclusao.editionId,
-        assetId: faixa.assetId!,
-        grantedAt: agora,
-        motivo: MotivoConcessao.colocacao,
-        colocacao: colocacao,
-        assets: assets,
-        politicas: politicas,
-        proximaEdicaoEm: proximaEdicaoEm,
-        historico: acumulado,
-      );
-      if (resultado.concedida) acumulado.add(resultado.concessao!);
+      // Uma colocacao pode conceder coroa E selo — o seed aprovado premia o
+      // campeao com as duas. Cada ativo vira uma concessao propria, com chave de
+      // idempotencia propria, entao uma nao mascara a outra se uma for recusada.
+      for (var i = 0; i < ativos.length; i++) {
+        final assetId = ativos[i];
+        final resultado = concederRecompensa(
+          // O rewardId identifica a LINHA; a chave de idempotencia identifica o
+          // DIREITO. Derivar o rewardId da mesma tupla mantem o registro
+          // reproduzivel sem sortear id.
+          rewardId: 'grant-${conclusao.tournamentId}-${conclusao.editionId}-$userId-$assetId',
+          userId: userId,
+          tournamentId: conclusao.tournamentId,
+          editionId: conclusao.editionId,
+          assetId: assetId,
+          grantedAt: agora,
+          motivo: MotivoConcessao.colocacao,
+          colocacao: colocacao,
+          assets: assets,
+          politicas: politicas,
+          proximaEdicaoEm: proximaEdicaoEm,
+          historico: acumulado,
+        );
+        if (resultado.concedida) acumulado.add(resultado.concessao!);
 
-      planejadas.add(PremiacaoPlanejada(
-        resultado: resultado,
-        userId: userId,
-        colocacao: colocacao,
-        fichas: faixa.fichas,
-      ));
+        planejadas.add(PremiacaoPlanejada(
+          resultado: resultado,
+          userId: userId,
+          colocacao: colocacao,
+          // As fichas da faixa saem UMA vez, na primeira linha. Repeti-las na
+          // linha do selo pagaria o premio em dobro para quem ganha coroa e
+          // selo na mesma colocacao.
+          fichas: i == 0 ? faixa.fichas : null,
+        ));
+      }
     }
   }
 

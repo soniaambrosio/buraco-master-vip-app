@@ -55,6 +55,12 @@ abstract final class TorneioAssetIds {
   static const sealFairPlay = 'seal_fair_play';
 
   // Encerramento anual.
+  /// Capa do Torneio de Encerramento dos Campeoes do Ano.
+  ///
+  /// Referenciada por `eventoEncerramento.coverAssetId` em
+  /// tournamentTemplates.seed.json. Segue `pendingAsset`: a arte ainda nao
+  /// existe, como as quatro recompensas de encerramento.
+  static const coverClosingCard = 'cover_closing_card';
   static const sealClosingGuest = 'seal_closing_guest';
   static const sealClosingChampion = 'seal_closing_champion';
   static const sealClosingRunnerUp = 'seal_closing_runner_up';
@@ -83,6 +89,7 @@ abstract final class TorneioAssetIds {
     sealAnnualChampion,
     sealPerformance,
     sealFairPlay,
+    coverClosingCard,
     sealClosingGuest,
     sealClosingChampion,
     sealClosingRunnerUp,

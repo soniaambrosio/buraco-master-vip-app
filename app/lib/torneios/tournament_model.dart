@@ -2,49 +2,54 @@
 //
 // Camada pura: sem Firestore, sem Cloud Functions, sem UI e sem relogio.
 //
+// FONTE DE VERDADE: app/data/torneios/tournamentTemplates.seed.json, aprovado
+// fora do repositorio. Este arquivo MODELA aquele seed; ele nao define numero
+// nenhum. Nenhuma vaga, nenhum valor de entrada, nenhum premio e nenhuma
+// duracao aparece como constante aqui — se um numero de regra vier parar neste
+// arquivo, ele deixou de ser editavel no painel e virou codigo, que e
+// exatamente o que a primeira regra do seed proibe.
+//
 // DOIS NIVEIS, DE PROPOSITO:
 // - [TorneioTemplate] e o MOLDE recorrente ("Sexta Master VIP"). Vive uma vez.
 // - [EdicaoTorneio] e a OCORRENCIA datada ("Sexta Master VIP #8, 07/08/2026").
 //   E ela que tem status, inscritos, mesas, classificacao e campeao.
 //
-// Sem essa separacao, configurar um torneio novo obrigaria a duplicar o motor
-// inteiro — exatamente o que a OS 02 secao 2 proibe. O que muda entre os cinco
-// torneios previstos e DADO no template, nao codigo.
+// O QUE E DO TEMPLATE E O QUE E DA EDICAO: o seed aprovado deixa a modalidade
+// como POLITICA — "alterna", "rodizio", "definidaMensalmente",
+// "definidaPelaAdmin" — e nao como valor fixo. Numero de fases e meta de pontos
+// tambem nao aparecem nele. Isso nao e lacuna: sao decisoes de EDICAO, tomadas
+// quando a edicao e criada. Por isso [TorneioTemplate] guarda a politica e
+// [EdicaoTorneio] guarda o valor resolvido.
 //
 // VERSAO DE REGRA: [EdicaoTorneio.regraVersao] congela qual versao do template
 // regeu aquela edicao. Alterar o template amanha nao pode reinterpretar a edicao
-// de ontem — e a mesma decisao ja tomada em reward_grants.dart para o snapshot
-// de `acumulaContador`.
-//
-// PENDENCIAS: campos que o projeto ainda nao definiu ficam null e sao listados em
-// [TorneioTemplate.pendencias]. OS 02 secao 11 e secao 6 sao explicitas: nao
-// inventar criterio nao aprovado. Um null declarado e auditavel; um default
-// chutado vira regra oficial sem ninguem ter decidido.
+// de ontem — a mesma decisao ja tomada em reward_grants.dart para o snapshot de
+// `acumulaContador`.
 
 import 'tournament_lifecycle.dart';
 
-/// Os cinco torneios previstos na OS 02 secao 2.
+/// Fuso de referencia de todo horario de calendario do seed.
 ///
-/// O enum existe para que o codigo referencie o torneio por identificador
-/// canonico, nunca por nome exibido — renomear "Copa Buraco Master" na tela nao
-/// pode quebrar consulta de historico.
-enum TipoTorneio {
-  quartaVulnerabilidade('quarta_vulnerabilidade'),
-  sextaMasterVip('sexta_master_vip'),
-  copaBuracoMaster('copa_buraco_master'),
-  domingoPintando7('domingo_pintando_7'),
-  campeonatoMensal('campeonato_mensal'),
+/// String, e nao offset numerico: o Brasil ja mudou de regra de horario de verao
+/// e pode mudar de novo. Guardar "-03:00" congelaria a decisao errada.
+const fusoTorneios = 'America/Sao_Paulo';
 
-  /// Torneio festivo de encerramento do ano (OS 02 secao 16). Separado dos cinco
-  /// recorrentes porque o acesso e por convite, nao por inscricao aberta.
-  encerramentoAnual('encerramento_anual');
+/// Unica moeda do sistema (regra do seed: "Carteira unica: 'fichas'").
+const moedaTorneios = 'fichas';
+
+/// Quem pode entrar.
+enum AcessoTorneio {
+  publico('publico'),
+  vip('vip'),
+  misto('misto'),
+  somenteConvidados('somente_convidados');
 
   final String wire;
-  const TipoTorneio(this.wire);
+  const AcessoTorneio(this.wire);
 
-  static TipoTorneio? porWire(String wire) {
-    for (final t in TipoTorneio.values) {
-      if (t.wire == wire) return t;
+  static AcessoTorneio? porWire(String wire) {
+    for (final a in AcessoTorneio.values) {
+      if (a.wire == wire) return a;
     }
     return null;
   }
@@ -53,23 +58,512 @@ enum TipoTorneio {
 /// Regra de mesa. Espelha `ModalidadeTorneio` de screens/torneios_models.dart e
 /// os valores que mesa.dart ja aceita em `Jogo.modalidade`.
 enum ModalidadeMesa {
-  aberto('ABERTO'),
-  fechado('FECHADO'),
-  sbtl('SBTL');
+  aberto('aberto'),
+  fechado('fechado'),
+  stbl('stbl');
 
   final String wire;
   const ModalidadeMesa(this.wire);
 
+  /// Vocabulario que `Jogo.modalidade` espera em mesa.dart.
+  String get wireMotor => wire.toUpperCase();
+
   static ModalidadeMesa? porWire(String wire) {
+    final alvo = wire.toLowerCase();
     for (final m in ModalidadeMesa.values) {
-      if (m.wire == wire) return m;
+      if (m.wire == alvo) return m;
     }
     return null;
   }
 }
 
-/// Individual ou dupla. Governa a formacao de mesas (seating.dart) e a unidade de
-/// classificacao (standings.dart).
+/// Como a modalidade de cada edicao e escolhida.
+enum TipoPoliticaModalidade {
+  /// Sempre a mesma.
+  fixa('fixa'),
+
+  /// Alterna entre as opcoes a cada edicao.
+  alterna('alterna'),
+
+  /// Percorre as opcoes em rodizio.
+  rodizio('rodizio'),
+
+  /// A administracao define a cada mes.
+  definidaMensalmente('definidaMensalmente'),
+
+  /// A administracao define caso a caso.
+  definidaPelaAdmin('definidaPelaAdmin');
+
+  final String wire;
+  const TipoPoliticaModalidade(this.wire);
+
+  /// A modalidade sai do template sem intervencao humana.
+  bool get resolveSozinha => this == fixa || this == alterna || this == rodizio;
+
+  static TipoPoliticaModalidade? porWire(String wire) {
+    for (final t in TipoPoliticaModalidade.values) {
+      if (t.wire == wire) return t;
+    }
+    return null;
+  }
+}
+
+/// Politica de modalidade do template.
+class PoliticaModalidade {
+  final TipoPoliticaModalidade tipo;
+
+  /// Valor unico em [TipoPoliticaModalidade.fixa]; null nos demais.
+  final ModalidadeMesa? valor;
+
+  /// Opcoes de alternancia ou rodizio. Vazia em `fixa`.
+  final List<ModalidadeMesa> opcoes;
+
+  /// Modalidades reservadas a edicoes especiais.
+  final List<ModalidadeMesa> alternaEspecial;
+
+  const PoliticaModalidade({
+    required this.tipo,
+    this.valor,
+    this.opcoes = const [],
+    this.alternaEspecial = const [],
+  });
+
+  /// Modalidade da edicao de numero [numeroEdicao].
+  ///
+  /// null quando a politica exige decisao humana — nao ha default. Escolher uma
+  /// modalidade no lugar da administracao mudaria a regra da mesa, e a trava do
+  /// lixo e a obrigatoriedade da canastra limpa dependem dela.
+  ModalidadeMesa? resolverPara(int numeroEdicao) {
+    switch (tipo) {
+      case TipoPoliticaModalidade.fixa:
+        return valor;
+      case TipoPoliticaModalidade.alterna:
+      case TipoPoliticaModalidade.rodizio:
+        if (opcoes.isEmpty) return null;
+        // Edicao 1 pega a primeira opcao. O ciclo e deterministico: reprocessar
+        // a criacao da edicao 7 devolve sempre a mesma modalidade.
+        return opcoes[(numeroEdicao - 1) % opcoes.length];
+      case TipoPoliticaModalidade.definidaMensalmente:
+      case TipoPoliticaModalidade.definidaPelaAdmin:
+        return null;
+    }
+  }
+
+  factory PoliticaModalidade.fromJson(Map<String, dynamic> json, String id) {
+    final tipo = TipoPoliticaModalidade.porWire(json['tipo'] as String);
+    if (tipo == null) {
+      throw FormatException('$id: modalidade.tipo desconhecida "${json['tipo']}".');
+    }
+
+    ModalidadeMesa exigir(String bruto) {
+      final m = ModalidadeMesa.porWire(bruto);
+      if (m == null) {
+        throw FormatException('$id: modalidade desconhecida "$bruto".');
+      }
+      return m;
+    }
+
+    final valorBruto = json['valor'] as String?;
+    final opcoes = ((json['opcoes'] as List?) ?? const [])
+        .map((e) => exigir(e as String))
+        .toList(growable: false);
+
+    if (tipo == TipoPoliticaModalidade.fixa && valorBruto == null) {
+      throw FormatException('$id: modalidade fixa exige "valor".');
+    }
+    if (tipo.resolveSozinha && tipo != TipoPoliticaModalidade.fixa && opcoes.isEmpty) {
+      throw FormatException('$id: modalidade ${tipo.wire} exige "opcoes".');
+    }
+
+    return PoliticaModalidade(
+      tipo: tipo,
+      valor: valorBruto == null ? null : exigir(valorBruto),
+      opcoes: opcoes,
+      alternaEspecial: ((json['alternaEspecial'] as List?) ?? const [])
+          .map((e) => exigir(e as String))
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'tipo': tipo.wire,
+        if (valor != null) 'valor': valor!.wire,
+        if (opcoes.isNotEmpty) 'opcoes': opcoes.map((m) => m.wire).toList(),
+        if (alternaEspecial.isNotEmpty)
+          'alternaEspecial': alternaEspecial.map((m) => m.wire).toList(),
+      };
+}
+
+/// Ritmo de geracao de edicoes.
+enum TipoRecorrencia {
+  semanal('semanal'),
+  quinzenal('quinzenal'),
+  mensal('mensal'),
+
+  /// Sem recorrencia automatica: a administracao cria cada edicao.
+  nenhuma('none');
+
+  final String wire;
+  const TipoRecorrencia(this.wire);
+
+  static TipoRecorrencia? porWire(String wire) {
+    for (final r in TipoRecorrencia.values) {
+      if (r.wire == wire) return r;
+    }
+    return null;
+  }
+}
+
+/// Quando a proxima edicao acontece. Todo horario e lido em [fusoTorneios].
+class PoliticaRecorrencia {
+  final TipoRecorrencia tipo;
+
+  /// Dia da semana em recorrencia semanal (ex.: "quarta"). null nas demais.
+  final String? diaSemana;
+
+  /// Regra de recorrencia mensal (ex.: "ultimo_domingo"). null nas demais.
+  final String? regra;
+
+  /// Horario local de inicio, "HH:MM". null em [TipoRecorrencia.nenhuma].
+  final String? horario;
+
+  const PoliticaRecorrencia({
+    required this.tipo,
+    this.diaSemana,
+    this.regra,
+    this.horario,
+  });
+
+  factory PoliticaRecorrencia.fromJson(Map<String, dynamic> json, String id) {
+    final tipo = TipoRecorrencia.porWire(json['tipo'] as String);
+    if (tipo == null) {
+      throw FormatException('$id: recorrencia.tipo desconhecida "${json['tipo']}".');
+    }
+    final horario = json['horario'] as String?;
+    if (horario != null && !_horaValida(horario)) {
+      throw FormatException('$id: recorrencia.horario "$horario" fora do formato HH:MM.');
+    }
+    if (tipo != TipoRecorrencia.nenhuma && horario == null) {
+      throw FormatException('$id: recorrencia ${tipo.wire} exige horario.');
+    }
+    return PoliticaRecorrencia(
+      tipo: tipo,
+      diaSemana: json['diaSemana'] as String?,
+      regra: json['regra'] as String?,
+      horario: horario,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'tipo': tipo.wire,
+        if (diaSemana != null) 'diaSemana': diaSemana,
+        if (regra != null) 'regra': regra,
+        if (horario != null) 'horario': horario,
+      };
+}
+
+bool _horaValida(String valor) =>
+    RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(valor);
+
+/// Janela de check-in, em horario local de [fusoTorneios].
+class JanelaCheckin {
+  final String abre;
+  final String fecha;
+
+  const JanelaCheckin({required this.abre, required this.fecha});
+
+  factory JanelaCheckin.fromJson(Map<String, dynamic> json, String id) {
+    final abre = json['abre'] as String?;
+    final fecha = json['fecha'] as String?;
+    if (abre == null || !_horaValida(abre)) {
+      throw FormatException('$id: checkin.abre "$abre" fora do formato HH:MM.');
+    }
+    if (fecha == null || !_horaValida(fecha)) {
+      throw FormatException('$id: checkin.fecha "$fecha" fora do formato HH:MM.');
+    }
+    if (fecha.compareTo(abre) <= 0) {
+      throw FormatException('$id: checkin.fecha deve ser depois de checkin.abre.');
+    }
+    return JanelaCheckin(abre: abre, fecha: fecha);
+  }
+
+  Map<String, dynamic> toJson() => {'abre': abre, 'fecha': fecha};
+}
+
+/// Como se paga para entrar.
+///
+/// Guarda a estrutura do seed sem interpreta-la: a decisao de quanto cobrar de
+/// quem, e quando, sai daqui como DADO. O motor le, nunca calcula um valor que
+/// nao esteja no seed.
+class PoliticaEntrada {
+  /// `gratuito` | `paga` | `introducaoGratisDepoisPaga` | `porTrilha` | `ingresso`.
+  final String tipo;
+
+  /// Valor cobrado, em [moedaTorneios]. null quando gratuito ou por trilha.
+  final int? valor;
+
+  /// Sempre [moedaTorneios]: carteira unica.
+  final String moeda;
+
+  /// A administracao pode editar no painel.
+  final bool configuravel;
+
+  /// Quantas edicoes saem de graca antes de a cobranca comecar.
+  final int? gratisPrimeirasEdicoes;
+
+  /// Valor cobrado depois das edicoes gratuitas.
+  final int? valorApos;
+
+  /// O que conta como edicao para o contador de gratuidade.
+  final String? contador;
+
+  /// Edicoes canceladas nao consomem gratuidade.
+  final bool ignoraCanceladas;
+
+  /// Assinante entra de graca automaticamente.
+  final bool gratuidadeVipAutomatica;
+
+  /// A cobranca esta ligada. Falso em trilha configurada mas desativada.
+  final bool ativar;
+
+  /// Trilhas de entrada, quando o torneio cobra diferente por perfil de
+  /// participante (ex.: classificado entra de graca, vaga remanescente paga).
+  final Map<String, PoliticaEntrada> trilhas;
+
+  const PoliticaEntrada({
+    required this.tipo,
+    this.valor,
+    this.moeda = moedaTorneios,
+    this.configuravel = false,
+    this.gratisPrimeirasEdicoes,
+    this.valorApos,
+    this.contador,
+    this.ignoraCanceladas = false,
+    this.gratuidadeVipAutomatica = false,
+    this.ativar = true,
+    this.trilhas = const {},
+  });
+
+  /// Custo cobrado na edicao [numeroEdicao] para a trilha informada.
+  ///
+  /// Devolve null quando a decisao nao esta no seed — o chamador precisa saber
+  /// que nao ha valor, em vez de receber zero e cobrar de graca por engano.
+  int? custoPara({int numeroEdicao = 1, String? trilha}) {
+    if (trilhas.isNotEmpty) {
+      final escolhida = trilha == null ? null : trilhas[trilha];
+      if (escolhida == null) return null;
+      return escolhida.custoPara(numeroEdicao: numeroEdicao);
+    }
+    switch (tipo) {
+      case 'gratuito':
+        return 0;
+      case 'paga':
+      case 'ingresso':
+        return ativar ? valor : 0;
+      case 'introducaoGratisDepoisPaga':
+        final gratis = gratisPrimeirasEdicoes;
+        if (gratis == null) return null;
+        return numeroEdicao <= gratis ? 0 : valorApos;
+      default:
+        return null;
+    }
+  }
+
+  factory PoliticaEntrada.fromJson(Map<String, dynamic> json, String id) {
+    // Trilhas: qualquer chave cujo valor seja um objeto com "tipo" proprio.
+    final trilhas = <String, PoliticaEntrada>{};
+    for (final entrada in json.entries) {
+      final valor = entrada.value;
+      if (valor is Map<String, dynamic> && valor.containsKey('tipo')) {
+        trilhas[entrada.key] = PoliticaEntrada.fromJson(valor, '$id.${entrada.key}');
+      }
+    }
+    if (trilhas.isNotEmpty) {
+      return PoliticaEntrada(tipo: 'porTrilha', trilhas: trilhas);
+    }
+
+    final moeda = (json['moeda'] as String?) ?? moedaTorneios;
+    if (moeda != moedaTorneios) {
+      // Carteira unica e regra do seed. Uma moeda diferente aqui significaria
+      // debitar de um saldo que nao existe.
+      throw FormatException('$id: moeda "$moeda" invalida — a carteira e unica ($moedaTorneios).');
+    }
+
+    return PoliticaEntrada(
+      tipo: json['tipo'] as String,
+      valor: json['valor'] as int?,
+      moeda: moeda,
+      configuravel: (json['configuravel'] as bool?) ?? false,
+      gratisPrimeirasEdicoes: json['gratisPrimeirasEdicoes'] as int?,
+      valorApos: json['valorApos'] as int?,
+      contador: json['contador'] as String?,
+      ignoraCanceladas: (json['ignoraCanceladas'] as bool?) ?? false,
+      gratuidadeVipAutomatica: (json['gratuidadeVipAutomatica'] as bool?) ?? false,
+      ativar: (json['ativar'] as bool?) ?? true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => trilhas.isNotEmpty
+      ? {for (final t in trilhas.entries) t.key: t.value.toJson()}
+      : {
+          'tipo': tipo,
+          if (valor != null) 'valor': valor,
+          'moeda': moeda,
+          'configuravel': configuravel,
+          if (gratisPrimeirasEdicoes != null)
+            'gratisPrimeirasEdicoes': gratisPrimeirasEdicoes,
+          if (valorApos != null) 'valorApos': valorApos,
+          if (contador != null) 'contador': contador,
+          'ativar': ativar,
+        };
+}
+
+/// Premio de UMA colocacao.
+///
+/// Colocacao exata, e nao faixa: o seed aprovado premia 1o, 2o e 3o
+/// individualmente. Faixa do tipo "3o ao 8o" nao existe na entrega, e modelar
+/// uma abriria espaco para um 4o colocado entrar sem ninguem decidir — o seed
+/// e explicito em nao ter Top 4.
+class FaixaPremiacao {
+  final int colocacao;
+
+  /// Fichas concedidas. null quando o valor ficou como `configuravel` no seed.
+  final int? fichas;
+
+  /// O valor em fichas depende de decisao administrativa.
+  final bool fichasConfiguravel;
+
+  /// Coroa concedida, por `assetId` do assets_registry.
+  final String? crownAssetId;
+
+  /// Selo concedido, por `assetId` do assets_registry.
+  final String? sealAssetId;
+
+  /// Beneficios fora do catalogo de coroas e selos (hall, titulo, moldura).
+  /// Ficam registrados para a etapa que os implementar; o motor nao os concede.
+  final List<String> extras;
+
+  /// Pontos de ranking dependem de decisao administrativa.
+  final bool rankingPointsConfiguravel;
+
+  const FaixaPremiacao({
+    required this.colocacao,
+    this.fichas,
+    this.fichasConfiguravel = false,
+    this.crownAssetId,
+    this.sealAssetId,
+    this.extras = const [],
+    this.rankingPointsConfiguravel = false,
+  });
+
+  bool cobre(int posicao) => posicao == colocacao;
+
+  /// Ativos de catalogo desta faixa, em ordem estavel.
+  ///
+  /// Uma colocacao pode conceder coroa E selo — a Quarta da Vulnerabilidade
+  /// premia o campeao com as duas. Cada uma vira uma concessao propria, com
+  /// chave de idempotencia propria.
+  List<String> get assetIds => [
+        ?crownAssetId,
+        ?sealAssetId,
+      ];
+
+  factory FaixaPremiacao.fromJson(Map<String, dynamic> json, String id) {
+    final colocacao = json['colocacao'];
+    if (colocacao is! int || colocacao < 1) {
+      throw FormatException('$id: premiacao.colocacao deve ser int >= 1 (recebido: $colocacao).');
+    }
+
+    final fichasBruto = json['fichas'];
+    int? fichas;
+    var fichasConfiguravel = false;
+    if (fichasBruto is int) {
+      if (fichasBruto < 0) {
+        throw FormatException('$id: premiacao.fichas nao pode ser negativa.');
+      }
+      fichas = fichasBruto;
+    } else if (fichasBruto == 'configuravel') {
+      fichasConfiguravel = true;
+    } else if (fichasBruto != null) {
+      throw FormatException('$id: premiacao.fichas deve ser int ou "configuravel".');
+    }
+
+    final ranking = json['rankingPoints'];
+    final rankingConfiguravel =
+        ranking is Map && ranking['valor'] == 'configuravel';
+
+    final faixa = FaixaPremiacao(
+      colocacao: colocacao,
+      fichas: fichas,
+      fichasConfiguravel: fichasConfiguravel,
+      crownAssetId: json['crownAssetId'] as String?,
+      sealAssetId: json['sealAssetId'] as String?,
+      extras: ((json['extras'] as List?) ?? const [])
+          .map((e) => e as String)
+          .toList(growable: false),
+      rankingPointsConfiguravel: rankingConfiguravel,
+    );
+
+    if (faixa.assetIds.isEmpty &&
+        fichas == null &&
+        !fichasConfiguravel &&
+        faixa.extras.isEmpty) {
+      throw FormatException('$id: premiacao da colocacao $colocacao nao concede nada.');
+    }
+    return faixa;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'colocacao': colocacao,
+        if (fichas != null) 'fichas': fichas,
+        if (fichasConfiguravel) 'fichas': 'configuravel',
+        if (crownAssetId != null) 'crownAssetId': crownAssetId,
+        if (sealAssetId != null) 'sealAssetId': sealAssetId,
+        if (extras.isNotEmpty) 'extras': extras,
+      };
+}
+
+/// Criterio de desempate, aplicado em ordem (OS 02 secao 11).
+///
+/// Os quatro primeiros sao os que o projeto ja documenta, em
+/// app/lib/screens/torneios_models.dart: "1. Vitorias · 2. Saldo · 3. Pontos
+/// feitos · 4. Canastras limpas". Nenhum criterio alem desses foi inventado.
+enum CriterioDesempate {
+  vitorias('vitorias'),
+  saldoPontos('saldo_pontos'),
+  pontosFeitos('pontos_feitos'),
+  canastrasLimpas('canastras_limpas'),
+
+  /// Ultimo recurso deterministico: menor identificador de participante.
+  ///
+  /// NAO e criterio esportivo e nao substitui um criterio de projeto — existe
+  /// porque uma classificacao precisa ser uma ordem total. Sem ele, dois
+  /// participantes empatados em tudo sairiam em ordem imprevisivel a cada
+  /// leitura, e "quem avancou" mudaria entre duas aberturas da mesma tela.
+  desempateAdministrativo('desempate_administrativo');
+
+  final String wire;
+  const CriterioDesempate(this.wire);
+
+  static CriterioDesempate? porWire(String wire) {
+    for (final c in CriterioDesempate.values) {
+      if (c.wire == wire) return c;
+    }
+    return null;
+  }
+}
+
+/// Ordem de desempate que o projeto ja documenta.
+const List<CriterioDesempate> desempatePadrao = [
+  CriterioDesempate.vitorias,
+  CriterioDesempate.saldoPontos,
+  CriterioDesempate.pontosFeitos,
+  CriterioDesempate.canastrasLimpas,
+  CriterioDesempate.desempateAdministrativo,
+];
+
+/// Individual ou dupla. Governa a formacao de mesas (seating.dart) e a unidade
+/// de classificacao (standings.dart).
 enum TipoParticipacao {
   individual('individual'),
   dupla('dupla');
@@ -87,9 +581,9 @@ enum TipoParticipacao {
 
 /// Como as fases se encadeiam (OS 02 secao 8).
 ///
-/// Tres formas apenas, cobrindo o que a OS enumera. Nao ha entrada para formatos
-/// que o projeto nao descreveu: acrescentar depois e barato, remover um formato
-/// que ja gerou historico nao e.
+/// Decisao de EDICAO, nao de template: o seed aprovado nao fixa formato, e a
+/// modalidade de varios torneios muda a cada edicao. Fica aqui porque phases.dart
+/// e history.dart precisam do tipo.
 enum FormatoTorneio {
   /// Todos disputam o mesmo numero de rodadas; classifica por pontuacao.
   pontosCorridos('pontos_corridos'),
@@ -114,224 +608,148 @@ enum FormatoTorneio {
   }
 }
 
-/// Ritmo de geracao de edicoes. Espelha `Recorrencia` de torneios_models.dart.
-enum Recorrencia {
-  unico('unico'),
-  semanal('semanal'),
-  quinzenal('quinzenal'),
-  mensal('mensal'),
-  ultimoDiaDoMes('ultimo_dia_do_mes'),
-  dataEspecial('data_especial');
+/// Politica de pontuacao no ranking.
+class PoliticaRanking {
+  /// Todo participante elegivel pontua.
+  final bool todosElegiveisPontuam;
 
-  final String wire;
-  const Recorrencia(this.wire);
+  /// Participante do acesso publico pontua no ranking.
+  final bool publicoPontuaRanking;
 
-  static Recorrencia? porWire(String wire) {
-    for (final r in Recorrencia.values) {
-      if (r.wire == wire) return r;
-    }
-    return null;
-  }
-}
+  /// Assinante pontua no ranking.
+  final bool vipPontuaRanking;
 
-/// Criterio de desempate, aplicado em ordem (OS 02 secao 11).
-///
-/// Os quatro primeiros sao os que o projeto ja documenta, em
-/// app/lib/screens/torneios_models.dart: "1. Vitorias · 2. Saldo · 3. Pontos
-/// feitos · 4. Canastras limpas". Nenhum criterio alem desses foi inventado aqui.
-enum CriterioDesempate {
-  vitorias('vitorias'),
-  saldoPontos('saldo_pontos'),
-  pontosFeitos('pontos_feitos'),
-  canastrasLimpas('canastras_limpas'),
+  /// Participante do acesso publico recebe premios que nao sejam ranking.
+  final bool publicoRecebeOutrosPremios;
 
-  /// Ultimo recurso deterministico: menor identificador de participante.
-  ///
-  /// NAO e criterio esportivo e nao substitui um criterio de projeto — existe
-  /// porque uma classificacao precisa ser uma ordem total. Sem ele, dois
-  /// participantes empatados em tudo sairiam em ordem imprevisivel a cada
-  /// leitura, e "quem avancou" mudaria entre duas aberturas da mesma tela.
-  /// Enquanto a administracao nao definir o criterio real, este permanece como
-  /// pendencia declarada em [TorneioTemplate.pendencias].
-  desempateAdministrativo('desempate_administrativo');
-
-  final String wire;
-  const CriterioDesempate(this.wire);
-
-  static CriterioDesempate? porWire(String wire) {
-    for (final c in CriterioDesempate.values) {
-      if (c.wire == wire) return c;
-    }
-    return null;
-  }
-}
-
-/// Ordem de desempate que o projeto ja documenta.
-const List<CriterioDesempate> desempatePadrao = [
-  CriterioDesempate.vitorias,
-  CriterioDesempate.saldoPontos,
-  CriterioDesempate.pontosFeitos,
-  CriterioDesempate.canastrasLimpas,
-  CriterioDesempate.desempateAdministrativo,
-];
-
-/// Uma faixa de premiacao do template: "colocacao X recebe o ativo Y".
-///
-/// Referencia o ativo por `assetId` (chave para assets_registry.dart), nunca pelo
-/// nome do PNG — mesma disciplina ja adotada em reward_policies.dart.
-class FaixaPremiacao {
-  /// Colocacao inicial coberta pela faixa, >= 1.
-  final int posicaoInicial;
-
-  /// Colocacao final coberta, >= [posicaoInicial]. Igual a ela em premio de
-  /// posicao unica; maior em faixas do tipo "3o ao 8o".
-  final int posicaoFinal;
-
-  /// Chave estrangeira para assets_registry.dart. null quando a faixa concede
-  /// apenas moeda.
-  final String? assetId;
-
-  /// Fichas concedidas na faixa. null quando a faixa nao paga fichas.
-  final int? fichas;
-
-  const FaixaPremiacao({
-    required this.posicaoInicial,
-    required this.posicaoFinal,
-    this.assetId,
-    this.fichas,
+  const PoliticaRanking({
+    this.todosElegiveisPontuam = false,
+    this.publicoPontuaRanking = false,
+    this.vipPontuaRanking = false,
+    this.publicoRecebeOutrosPremios = false,
   });
 
-  bool cobre(int colocacao) =>
-      colocacao >= posicaoInicial && colocacao <= posicaoFinal;
-
-  factory FaixaPremiacao.fromJson(Map<String, dynamic> json) {
-    final inicial = json['posicaoInicial'];
-    final fim = json['posicaoFinal'];
-    if (inicial is! int || inicial < 1) {
-      throw FormatException('faixa de premiacao: posicaoInicial deve ser int >= 1 (recebido: $inicial).');
-    }
-    if (fim is! int || fim < inicial) {
-      throw FormatException('faixa de premiacao: posicaoFinal deve ser int >= posicaoInicial (recebido: $fim).');
-    }
-    final assetId = json['assetId'];
-    if (assetId != null && (assetId is! String || assetId.isEmpty)) {
-      throw FormatException('faixa de premiacao: assetId deve ser string nao vazia ou null.');
-    }
-    final fichas = json['fichas'];
-    if (fichas != null && (fichas is! int || fichas < 0)) {
-      throw FormatException('faixa de premiacao: fichas deve ser int >= 0 ou null.');
-    }
-    if (assetId == null && fichas == null) {
-      throw FormatException('faixa de premiacao $inicial-$fim: precisa conceder assetId ou fichas.');
-    }
-    return FaixaPremiacao(
-      posicaoInicial: inicial,
-      posicaoFinal: fim,
-      assetId: assetId as String?,
-      fichas: fichas as int?,
-    );
-  }
+  factory PoliticaRanking.fromJson(Map<String, dynamic> json) => PoliticaRanking(
+        todosElegiveisPontuam: (json['todosElegiveisPontuam'] as bool?) ?? false,
+        publicoPontuaRanking: (json['publicoPontuaRanking'] as bool?) ?? false,
+        vipPontuaRanking: (json['vipPontuaRanking'] as bool?) ?? false,
+        publicoRecebeOutrosPremios:
+            (json['publicoRecebeOutrosPremios'] as bool?) ?? false,
+      );
 
   Map<String, dynamic> toJson() => {
-        'posicaoInicial': posicaoInicial,
-        'posicaoFinal': posicaoFinal,
-        'assetId': assetId,
-        'fichas': fichas,
+        'todosElegiveisPontuam': todosElegiveisPontuam,
+        'publicoPontuaRanking': publicoPontuaRanking,
+        'vipPontuaRanking': vipPontuaRanking,
+        'publicoRecebeOutrosPremios': publicoRecebeOutrosPremios,
       };
 }
 
 /// Molde recorrente de um torneio. Imutavel: alterar configuracao produz uma
 /// [versao] nova, nao uma mutacao no lugar.
 class TorneioTemplate {
-  /// Identificador canonico e imutavel do torneio.
+  /// Identificador canonico e imutavel. Le a chave `templateId` do seed.
+  ///
+  /// O campo se chama `tournamentId` porque e assim que ele aparece em toda
+  /// chave de idempotencia do dominio (concessao, inscricao, resultado, tarefa).
+  /// Renomear o campo obrigaria a reescrever as chaves, e chave de idempotencia
+  /// gravada nao se reescreve sem migracao.
   final String tournamentId;
 
-  final TipoTorneio tipo;
   final String nome;
 
   /// Versao da regra. Toda edicao guarda a versao sob a qual nasceu.
   final int versao;
 
-  final ModalidadeMesa modalidade;
+  final AcessoTorneio acesso;
   final TipoParticipacao participacao;
-  final FormatoTorneio formato;
-  final Recorrencia recorrencia;
+  final PoliticaModalidade modalidade;
+  final PoliticaRecorrencia recorrencia;
 
-  /// Numero de fases previstas. null enquanto o projeto nao definir.
-  final int? numeroFases;
+  /// Vagas maximas. null apenas em template ainda sem dimensionamento.
+  final int? vagasMax;
 
-  /// Limite de participantes. null enquanto o projeto nao definir.
-  final int? limiteParticipantes;
+  /// Minimo para a edicao acontecer.
+  final int? vagasMin;
 
-  /// Minimo para a edicao acontecer. null enquanto o projeto nao definir.
-  final int? minimoParticipantes;
+  final JanelaCheckin? checkin;
+  final PoliticaEntrada? entrada;
+  final PoliticaRanking rankingPolicy;
 
-  /// Meta de pontos da partida, repassada ao Motor de Partidas.
-  /// null enquanto o projeto nao definir.
-  final int? metaPontos;
+  /// Premios por colocacao.
+  final List<FaixaPremiacao> premiacao;
 
-  /// Quanto antes do inicio as inscricoes abrem. null enquanto nao definido.
-  final Duration? antecedenciaInscricao;
-
-  /// Quanto antes do inicio as inscricoes fecham. null enquanto nao definido.
-  final Duration? encerramentoInscricao;
-
-  /// Criterios de elegibilidade exigidos. Ver eligibility.dart. Lista vazia
-  /// significa torneio aberto a todos, e e diferente de "ainda nao definido" —
-  /// este ultimo aparece em [pendencias].
-  final List<String> criteriosElegibilidade;
+  /// Selos concedidos por desempenho ou conduta, fora da colocacao.
+  final List<String> selosCondicionais;
 
   /// Ordem de desempate aplicada pela classificacao.
   final List<CriterioDesempate> criteriosDesempate;
 
-  /// Faixas de premiacao. Vazia enquanto o projeto nao definir.
-  final List<FaixaPremiacao> premiacao;
-
   /// Arte de capa, por referencia ao assets_registry.dart.
   final String? capaAssetId;
 
-  /// Campos que o projeto ainda NAO definiu, em texto legivel. OS 02 secao 11 e
-  /// secao 27 exigem pendencia declarada, nao default silencioso.
+  /// O torneio gera edicoes.
+  final bool ativo;
+
+  /// O torneio aparece para os jogadores.
+  ///
+  /// Separado de [ativo] de proposito: integrar a configuracao NAO e abrir o
+  /// torneio ao publico. O seed aprovado traz todos com `publicado: false`, e
+  /// publicar e ato administrativo posterior.
+  final bool publicado;
+
+  /// Campos que o projeto ainda NAO definiu, em texto legivel.
   final List<String> pendencias;
 
-  final bool ativo;
+  /// Observacao de origem, preservada do seed para a auditoria.
+  final String? nota;
 
   const TorneioTemplate({
     required this.tournamentId,
-    required this.tipo,
     required this.nome,
     required this.versao,
-    required this.modalidade,
+    required this.acesso,
     required this.participacao,
-    required this.formato,
+    required this.modalidade,
     required this.recorrencia,
-    this.numeroFases,
-    this.limiteParticipantes,
-    this.minimoParticipantes,
-    this.metaPontos,
-    this.antecedenciaInscricao,
-    this.encerramentoInscricao,
-    this.criteriosElegibilidade = const [],
-    this.criteriosDesempate = desempatePadrao,
+    this.vagasMax,
+    this.vagasMin,
+    this.checkin,
+    this.entrada,
+    this.rankingPolicy = const PoliticaRanking(),
     this.premiacao = const [],
+    this.selosCondicionais = const [],
+    this.criteriosDesempate = desempatePadrao,
     this.capaAssetId,
-    this.pendencias = const [],
     this.ativo = true,
+    this.publicado = false,
+    this.pendencias = const [],
+    this.nota,
   });
 
-  /// O template tem tudo que o motor precisa para rodar uma edicao de verdade.
+  /// O template tem tudo que o motor precisa para rodar uma edicao.
   ///
-  /// Consultado antes de abrir inscricoes: deixar uma edicao andar com limite de
-  /// vagas indefinido produziria uma lotacao que ninguem decidiu.
+  /// Exige exatamente o que o seed aprovado define — dimensionamento, janela de
+  /// check-in, politica de entrada e tabela de premiacao. NAO exige numero de
+  /// fases nem meta de pontos: o seed nao os traz porque sao decisao de edicao,
+  /// e cobra-los aqui reprovaria uma configuracao que ja foi aprovada.
   bool get configuracaoCompleta =>
       pendencias.isEmpty &&
-      numeroFases != null &&
-      limiteParticipantes != null &&
-      minimoParticipantes != null &&
-      metaPontos != null &&
-      antecedenciaInscricao != null &&
-      encerramentoInscricao != null &&
+      vagasMax != null &&
+      vagasMin != null &&
+      checkin != null &&
+      entrada != null &&
       premiacao.isNotEmpty;
+
+  /// Criterios de elegibilidade derivados do acesso.
+  ///
+  /// Derivado, e nao campo proprio: dois lugares dizendo quem pode entrar
+  /// divergem, e o seed ja diz isso em `acesso`.
+  List<String> get criteriosElegibilidade => switch (acesso) {
+        AcessoTorneio.vip => const ['assinatura'],
+        AcessoTorneio.somenteConvidados => ['convite:$tournamentId'],
+        AcessoTorneio.publico || AcessoTorneio.misto => const [],
+      };
 
   /// Faixa que cobre a colocacao, ou null quando a colocacao nao premia.
   FaixaPremiacao? faixaPara(int colocacao) {
@@ -341,194 +759,351 @@ class TorneioTemplate {
     return null;
   }
 
+  /// Maior colocacao premiada. Zero quando nao ha premiacao.
+  int get ultimaColocacaoPremiada => premiacao.fold(
+      0, (maior, f) => f.colocacao > maior ? f.colocacao : maior);
+
   factory TorneioTemplate.fromJson(Map<String, dynamic> json) {
-    String texto(String campo) {
-      final v = json[campo];
-      if (v is! String || v.isEmpty) {
-        throw FormatException('template: $campo deve ser string nao vazia (recebido: $v).');
-      }
-      return v;
+    final id = (json['templateId'] ?? json['tournamentId']) as String?;
+    if (id == null || id.isEmpty) {
+      throw FormatException('template: templateId deve ser string nao vazia.');
     }
 
-    int? inteiroOpcional(String campo, {int minimo = 1}) {
-      final v = json[campo];
-      if (v == null) return null;
-      if (v is! int || v < minimo) {
-        throw FormatException('template: $campo deve ser int >= $minimo ou null (recebido: $v).');
-      }
-      return v;
+    final nome = json['nome'];
+    if (nome is! String || nome.isEmpty) {
+      throw FormatException('$id: nome deve ser string nao vazia.');
     }
 
-    /// Duracao em ISO-8601 restrito, aceitando dias, horas e minutos.
-    Duration? duracaoOpcional(String campo) {
-      final v = json[campo];
-      if (v == null) return null;
-      if (v is! String) {
-        throw FormatException('template: $campo deve ser string ISO-8601 ou null (recebido: $v).');
-      }
-      final m = RegExp(r'^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$').firstMatch(v);
-      if (m == null || v == 'P' || v == 'PT') {
-        throw FormatException('template: $campo "$v" fora do formato PnDTnHnM.');
-      }
-      final d = Duration(
-        days: int.parse(m.group(1) ?? '0'),
-        hours: int.parse(m.group(2) ?? '0'),
-        minutes: int.parse(m.group(3) ?? '0'),
-      );
-      if (d <= Duration.zero) {
-        throw FormatException('template: $campo deve ser positiva (recebido: $v).');
-      }
-      return d;
+    // `acesso` vem como string simples ou como objeto {tipo, elegiveis}.
+    final acessoBruto = json['acesso'];
+    final acessoWire = acessoBruto is Map
+        ? acessoBruto['tipo'] as String?
+        : acessoBruto as String?;
+    final acesso = acessoWire == null ? null : AcessoTorneio.porWire(acessoWire);
+    if (acesso == null) {
+      throw FormatException('$id: acesso desconhecido "$acessoWire".');
     }
 
-    final tournamentId = texto('tournamentId');
-    final tipo = TipoTorneio.porWire(texto('tipo'));
-    if (tipo == null) {
-      throw FormatException('$tournamentId: tipo desconhecido "${json['tipo']}".');
-    }
-    final modalidade = ModalidadeMesa.porWire(texto('modalidade'));
-    if (modalidade == null) {
-      throw FormatException('$tournamentId: modalidade desconhecida "${json['modalidade']}".');
-    }
-    final participacao = TipoParticipacao.porWire(texto('participacao'));
+    final participacao =
+        TipoParticipacao.porWire((json['participacao'] as String?) ?? '');
     if (participacao == null) {
-      throw FormatException('$tournamentId: participacao desconhecida "${json['participacao']}".');
-    }
-    final formato = FormatoTorneio.porWire(texto('formato'));
-    if (formato == null) {
-      throw FormatException('$tournamentId: formato desconhecido "${json['formato']}".');
-    }
-    final recorrencia = Recorrencia.porWire(texto('recorrencia'));
-    if (recorrencia == null) {
-      throw FormatException('$tournamentId: recorrencia desconhecida "${json['recorrencia']}".');
+      throw FormatException('$id: participacao desconhecida "${json['participacao']}".');
     }
 
-    final versao = json['versao'];
-    if (versao is! int || versao < 1) {
-      throw FormatException('$tournamentId: versao deve ser int >= 1 (recebido: $versao).');
+    final modalidadeBruta = json['modalidade'];
+    if (modalidadeBruta is! Map<String, dynamic>) {
+      throw FormatException('$id: modalidade deve ser objeto com "tipo".');
     }
 
-    final limite = inteiroOpcional('limiteParticipantes', minimo: 2);
-    final minimo = inteiroOpcional('minimoParticipantes', minimo: 2);
-    if (limite != null && minimo != null && minimo > limite) {
-      throw FormatException('$tournamentId: minimoParticipantes ($minimo) maior que limiteParticipantes ($limite).');
+    final recorrenciaBruta = json['recorrencia'];
+    if (recorrenciaBruta is! Map<String, dynamic>) {
+      throw FormatException('$id: recorrencia deve ser objeto com "tipo".');
     }
 
-    final desempateBruto = json['criteriosDesempate'];
-    final List<CriterioDesempate> desempate;
-    if (desempateBruto == null) {
-      desempate = desempatePadrao;
-    } else {
-      if (desempateBruto is! List) {
-        throw FormatException('$tournamentId: criteriosDesempate deve ser lista ou null.');
+    int? vaga(String campo) {
+      final vagas = json['vagas'];
+      if (vagas is! Map) return null;
+      final v = vagas[campo];
+      if (v == null) return null;
+      if (v is! int || v < 2) {
+        throw FormatException('$id: vagas.$campo deve ser int >= 2 (recebido: $v).');
       }
-      desempate = desempateBruto.map((e) {
-        final c = CriterioDesempate.porWire(e as String);
-        if (c == null) {
-          throw FormatException('$tournamentId: criterio de desempate desconhecido "$e".');
-        }
-        return c;
-      }).toList(growable: false);
-      final vistos = <CriterioDesempate>{};
-      for (final c in desempate) {
-        if (!vistos.add(c)) {
-          throw FormatException('$tournamentId: criterio de desempate repetido "${c.wire}".');
-        }
-      }
+      return v;
     }
 
-    final premiacaoBruta = (json['premiacao'] as List?) ?? const [];
-    final premiacao = premiacaoBruta
-        .map((e) => FaixaPremiacao.fromJson(e as Map<String, dynamic>))
+    final max = vaga('max');
+    final min = vaga('min');
+    if (max != null && min != null && min > max) {
+      throw FormatException('$id: vagas.min ($min) maior que vagas.max ($max).');
+    }
+
+    final premiacao = ((json['premiacao'] as List?) ?? const [])
+        .map((e) => FaixaPremiacao.fromJson(e as Map<String, dynamic>, id))
         .toList(growable: false);
-    // Faixas sobrepostas dariam dois premios para a mesma colocacao e a segunda
-    // concessao cairia como duplicidade em tempo de execucao — melhor recusar o
-    // seed do que descobrir na noite do torneio.
-    for (var i = 0; i < premiacao.length; i++) {
-      for (var j = i + 1; j < premiacao.length; j++) {
-        final a = premiacao[i];
-        final b = premiacao[j];
-        if (a.posicaoInicial <= b.posicaoFinal && b.posicaoInicial <= a.posicaoFinal) {
-          throw FormatException(
-              '$tournamentId: faixas de premiacao sobrepostas (${a.posicaoInicial}-${a.posicaoFinal} e ${b.posicaoInicial}-${b.posicaoFinal}).');
-        }
+    final colocacoes = <int>{};
+    for (final faixa in premiacao) {
+      if (!colocacoes.add(faixa.colocacao)) {
+        throw FormatException('$id: colocacao ${faixa.colocacao} premiada duas vezes.');
       }
     }
+
+    // Trava de "sem Top 4": o seed aprovado premia campeao, vice e terceiro.
+    // Uma quarta colocacao entrando por edicao de seed seria justamente o Top 4
+    // que a decisao #3 exclui desta entrega — melhor recusar a carga do que
+    // descobrir na noite da final.
+    final top4 = json['top4'];
+    if (top4 is Map && top4['implementar'] == true) {
+      throw FormatException('$id: top4.implementar e true, mas Top 4 nao faz parte desta entrega.');
+    }
+    for (final faixa in premiacao) {
+      if (faixa.colocacao > 3) {
+        throw FormatException(
+            '$id: premiacao inclui a colocacao ${faixa.colocacao}; esta entrega vai ate o 3o lugar.');
+      }
+    }
+
+    final checkinBruto = json['checkin'];
+    final entradaBruta = json['entrada'];
+    final rankingBruto = json['rankingPolicy'];
 
     return TorneioTemplate(
-      tournamentId: tournamentId,
-      tipo: tipo,
-      nome: texto('nome'),
-      versao: versao,
-      modalidade: modalidade,
+      tournamentId: id,
+      nome: nome,
+      // O seed nao versiona template: ele proprio e a versao 1 da configuracao
+      // aprovada. Nao e numero de regra, e sim identidade de schema.
+      versao: (json['versao'] as int?) ?? 1,
+      acesso: acesso,
       participacao: participacao,
-      formato: formato,
-      recorrencia: recorrencia,
-      numeroFases: inteiroOpcional('numeroFases'),
-      limiteParticipantes: limite,
-      minimoParticipantes: minimo,
-      metaPontos: inteiroOpcional('metaPontos', minimo: 1),
-      antecedenciaInscricao: duracaoOpcional('antecedenciaInscricao'),
-      encerramentoInscricao: duracaoOpcional('encerramentoInscricao'),
-      criteriosElegibilidade: ((json['criteriosElegibilidade'] as List?) ?? const [])
+      modalidade: PoliticaModalidade.fromJson(modalidadeBruta, id),
+      recorrencia: PoliticaRecorrencia.fromJson(recorrenciaBruta, id),
+      vagasMax: max,
+      vagasMin: min,
+      checkin: checkinBruto is Map<String, dynamic>
+          ? JanelaCheckin.fromJson(checkinBruto, id)
+          : null,
+      entrada: entradaBruta is Map<String, dynamic>
+          ? PoliticaEntrada.fromJson(entradaBruta, id)
+          : null,
+      rankingPolicy: rankingBruto is Map<String, dynamic>
+          ? PoliticaRanking.fromJson(rankingBruto)
+          : const PoliticaRanking(),
+      premiacao: premiacao,
+      selosCondicionais: ((json['selosCondicionais'] as List?) ?? const [])
           .map((e) => e as String)
           .toList(growable: false),
-      criteriosDesempate: desempate,
-      premiacao: premiacao,
-      capaAssetId: json['capaAssetId'] as String?,
+      capaAssetId: (json['coverAssetId'] ?? json['capaAssetId']) as String?,
+      ativo: (json['ativo'] as bool?) ?? true,
+      // Default FALSE: um template que esqueca o campo nao pode aparecer para o
+      // jogador por omissao. Publicar e ato explicito.
+      publicado: (json['publicado'] as bool?) ?? false,
       pendencias: ((json['pendencias'] as List?) ?? const [])
           .map((e) => e as String)
           .toList(growable: false),
-      ativo: (json['ativo'] as bool?) ?? true,
+      nota: json['note'] as String?,
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'tournamentId': tournamentId,
-        'tipo': tipo.wire,
+        'templateId': tournamentId,
         'nome': nome,
         'versao': versao,
-        'modalidade': modalidade.wire,
+        'acesso': acesso.wire,
         'participacao': participacao.wire,
-        'formato': formato.wire,
-        'recorrencia': recorrencia.wire,
-        'numeroFases': numeroFases,
-        'limiteParticipantes': limiteParticipantes,
-        'minimoParticipantes': minimoParticipantes,
-        'metaPontos': metaPontos,
-        'antecedenciaInscricao': _duracaoWire(antecedenciaInscricao),
-        'encerramentoInscricao': _duracaoWire(encerramentoInscricao),
-        'criteriosElegibilidade': criteriosElegibilidade,
-        'criteriosDesempate': criteriosDesempate.map((c) => c.wire).toList(),
+        'modalidade': modalidade.toJson(),
+        'recorrencia': recorrencia.toJson(),
+        if (vagasMax != null || vagasMin != null)
+          'vagas': {
+            if (vagasMax != null) 'max': vagasMax,
+            if (vagasMin != null) 'min': vagasMin,
+          },
+        if (checkin != null) 'checkin': checkin!.toJson(),
+        if (entrada != null) 'entrada': entrada!.toJson(),
+        'rankingPolicy': rankingPolicy.toJson(),
         'premiacao': premiacao.map((f) => f.toJson()).toList(),
-        'capaAssetId': capaAssetId,
-        'pendencias': pendencias,
+        if (selosCondicionais.isNotEmpty) 'selosCondicionais': selosCondicionais,
+        'criteriosDesempate': criteriosDesempate.map((c) => c.wire).toList(),
+        if (capaAssetId != null) 'coverAssetId': capaAssetId,
         'ativo': ativo,
+        'publicado': publicado,
+        if (pendencias.isNotEmpty) 'pendencias': pendencias,
+        if (nota != null) 'note': nota,
       };
-
-  static String? _duracaoWire(Duration? d) {
-    if (d == null) return null;
-    final dias = d.inDays;
-    final horas = d.inHours % 24;
-    final minutos = d.inMinutes % 60;
-    final buffer = StringBuffer('P');
-    if (dias > 0) buffer.write('${dias}D');
-    if (horas > 0 || minutos > 0) {
-      buffer.write('T');
-      if (horas > 0) buffer.write('${horas}H');
-      if (minutos > 0) buffer.write('${minutos}M');
-    }
-    return buffer.toString();
-  }
 
   @override
   String toString() => 'TorneioTemplate($tournamentId v$versao)';
 }
 
+/// Configuracao estrutural do Torneio de Encerramento dos Campeoes do Ano.
+///
+/// Classe propria, e nao mais um [TorneioTemplate]: o seed aprovado o declara
+/// numa chave separada porque ele nao tem recorrencia, tem data fixa, premia por
+/// papel (campeao / vice / convidado) em vez de por colocacao, e tem um motor de
+/// convites que os outros nao tem. Forca-lo no molde comum exigiria inventar
+/// campos que o seed nao traz.
+class EventoEncerramento {
+  final String tournamentId;
+  final String nome;
+
+  /// `planejado` enquanto a etapa de convites nao for implementada.
+  final String status;
+
+  /// Data e hora oficiais, sempre em UTC apos a normalizacao.
+  final DateTime dataFixa;
+
+  final JanelaCheckin checkin;
+  final AcessoTorneio acesso;
+
+  final int? vagasMax;
+  final int? vagasMin;
+
+  /// Dimensionamentos alternativos ja aprovados.
+  final List<int> escalavelPara;
+
+  final String? capaAssetId;
+
+  /// O motor de convites esta ligado em producao.
+  ///
+  /// Falso ate a tabela oficial de pesos existir. Enquanto for falso, nenhum
+  /// convite e gerado automaticamente — a estrutura de annual_closing.dart fica
+  /// pronta e parada, que e o que a decisao #8 pede.
+  final bool convitesAtivosEmProducao;
+
+  /// Como os pesos de convite sao definidos ("configuraveis").
+  final String? pesosConvite;
+
+  /// Premiacao por papel: `campeao`, `vice`, `convidados`.
+  final Map<String, PremioEncerramento> premiacao;
+
+  final String? nota;
+
+  EventoEncerramento({
+    required this.tournamentId,
+    required this.nome,
+    required this.status,
+    required DateTime dataFixa,
+    required this.checkin,
+    required this.acesso,
+    this.vagasMax,
+    this.vagasMin,
+    this.escalavelPara = const [],
+    this.capaAssetId,
+    this.convitesAtivosEmProducao = false,
+    this.pesosConvite,
+    this.premiacao = const {},
+    this.nota,
+  }) : dataFixa = dataFixa.toUtc();
+
+  /// O evento tem dimensionamento, janela e premiacao definidos.
+  bool get configuracaoCompleta =>
+      vagasMax != null && vagasMin != null && premiacao.isNotEmpty;
+
+  factory EventoEncerramento.fromJson(Map<String, dynamic> json) {
+    final id = json['templateId'] as String?;
+    if (id == null || id.isEmpty) {
+      throw const FormatException('encerramento: templateId e obrigatorio.');
+    }
+
+    final dataBruta = json['dataFixa'] as String?;
+    final data = dataBruta == null ? null : DateTime.tryParse(dataBruta);
+    if (data == null) {
+      throw FormatException('$id: dataFixa "$dataBruta" nao e ISO-8601 valido.');
+    }
+
+    final acesso = AcessoTorneio.porWire((json['acesso'] as String?) ?? '');
+    if (acesso == null) {
+      throw FormatException('$id: acesso desconhecido "${json['acesso']}".');
+    }
+
+    int? vaga(String campo) {
+      final vagas = json['vagas'];
+      if (vagas is! Map) return null;
+      final v = vagas[campo];
+      if (v == null) return null;
+      if (v is! int || v < 2) {
+        throw FormatException('$id: vagas.$campo deve ser int >= 2 (recebido: $v).');
+      }
+      return v;
+    }
+
+    final motor = json['motorConvites'];
+    final premiacaoBruta = json['premiacao'];
+
+    return EventoEncerramento(
+      tournamentId: id,
+      nome: json['nome'] as String,
+      status: (json['status'] as String?) ?? 'planejado',
+      dataFixa: data,
+      checkin: JanelaCheckin.fromJson(json['checkin'] as Map<String, dynamic>, id),
+      acesso: acesso,
+      vagasMax: vaga('max'),
+      vagasMin: vaga('min'),
+      escalavelPara: (((json['vagas'] as Map?)?['escalavelPara'] as List?) ?? const [])
+          .map((e) => e as int)
+          .toList(growable: false),
+      capaAssetId: json['coverAssetId'] as String?,
+      convitesAtivosEmProducao:
+          motor is Map ? (motor['ativarEmProducao'] as bool?) ?? false : false,
+      pesosConvite: motor is Map ? motor['pesos'] as String? : null,
+      premiacao: premiacaoBruta is Map<String, dynamic>
+          ? {
+              for (final papel in premiacaoBruta.entries)
+                papel.key: PremioEncerramento.fromJson(
+                    papel.value as Map<String, dynamic>, '$id.${papel.key}'),
+            }
+          : const {},
+      nota: json['note'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'templateId': tournamentId,
+        'nome': nome,
+        'status': status,
+        'dataFixa': dataFixa.toIso8601String(),
+        'checkin': checkin.toJson(),
+        'acesso': acesso.wire,
+        'vagas': {
+          if (vagasMax != null) 'max': vagasMax,
+          if (vagasMin != null) 'min': vagasMin,
+          if (escalavelPara.isNotEmpty) 'escalavelPara': escalavelPara,
+        },
+        if (capaAssetId != null) 'coverAssetId': capaAssetId,
+        'motorConvites': {
+          if (pesosConvite != null) 'pesos': pesosConvite,
+          'ativarEmProducao': convitesAtivosEmProducao,
+        },
+        'premiacao': {
+          for (final p in premiacao.entries) p.key: p.value.toJson(),
+        },
+        if (nota != null) 'note': nota,
+      };
+
+  @override
+  String toString() => 'EventoEncerramento($tournamentId $status)';
+}
+
+/// Premio de um papel no encerramento anual.
+class PremioEncerramento {
+  final String? crownAssetId;
+  final String? sealAssetId;
+  final List<String> extras;
+
+  const PremioEncerramento({
+    this.crownAssetId,
+    this.sealAssetId,
+    this.extras = const [],
+  });
+
+  List<String> get assetIds => [
+        ?crownAssetId,
+        ?sealAssetId,
+      ];
+
+  factory PremioEncerramento.fromJson(Map<String, dynamic> json, String id) {
+    final premio = PremioEncerramento(
+      crownAssetId: json['crownAssetId'] as String?,
+      sealAssetId: json['sealAssetId'] as String?,
+      extras: ((json['extras'] as List?) ?? const [])
+          .map((e) => e as String)
+          .toList(growable: false),
+    );
+    if (premio.assetIds.isEmpty && premio.extras.isEmpty) {
+      throw FormatException('$id: premio do encerramento nao concede nada.');
+    }
+    return premio;
+  }
+
+  Map<String, dynamic> toJson() => {
+        if (crownAssetId != null) 'crownAssetId': crownAssetId,
+        if (sealAssetId != null) 'sealAssetId': sealAssetId,
+        if (extras.isNotEmpty) 'extras': extras,
+      };
+}
+
 /// Ocorrencia datada de um [TorneioTemplate].
 ///
-/// Imutavel: o motor devolve uma edicao nova a cada mudanca de estado, e a camada
-/// de persistencia grava. Assim nenhuma funcao muda o estado de outra por
+/// Imutavel: o motor devolve uma edicao nova a cada mudanca de estado, e a
+/// camada de persistencia grava. Assim nenhuma funcao muda o estado de outra por
 /// referencia compartilhada.
 class EdicaoTorneio {
   final String tournamentId;
@@ -540,8 +1115,7 @@ class EdicaoTorneio {
   /// Numero sequencial exibido ("edicao 12"), >= 1.
   final int numeroEdicao;
 
-  /// Temporada a que a edicao pertence, no formato do calendario do projeto
-  /// (ex.: "2026"). Usada pelo registro anual (annual_closing.dart).
+  /// Temporada a que a edicao pertence (ex.: "2026").
   final String temporada;
 
   final EdicaoStatus status;
@@ -553,11 +1127,24 @@ class EdicaoTorneio {
   /// Inicio previsto da disputa, sempre em UTC.
   final DateTime inicioPrevisto;
 
-  /// Abertura das inscricoes, em UTC. null enquanto nao calculada.
+  /// Abertura das inscricoes, em UTC. null enquanto nao definida.
   final DateTime? inscricoesAbremEm;
 
-  /// Encerramento das inscricoes, em UTC. null enquanto nao calculado.
+  /// Encerramento das inscricoes, em UTC. null enquanto nao definido.
   final DateTime? inscricoesFechamEm;
+
+  /// Modalidade resolvida para esta edicao.
+  ///
+  /// Fica na EDICAO porque a politica do template pode ser "alterna", "rodizio"
+  /// ou "definida mensalmente" — nesses casos nao existe modalidade de template,
+  /// so de edicao. null enquanto a administracao nao decidir.
+  final ModalidadeMesa? modalidade;
+
+  /// Numero de fases desta edicao. null enquanto nao definido.
+  final int? numeroFases;
+
+  /// Meta de pontos da partida, repassada ao Motor de Partidas.
+  final int? metaPontos;
 
   /// Versao do template sob a qual esta edicao nasceu. Congelada.
   final int regraVersao;
@@ -575,6 +1162,9 @@ class EdicaoTorneio {
     required DateTime inicioPrevisto,
     DateTime? inscricoesAbremEm,
     DateTime? inscricoesFechamEm,
+    this.modalidade,
+    this.numeroFases,
+    this.metaPontos,
     required this.regraVersao,
     required DateTime criadoEm,
     required DateTime atualizadoEm,
@@ -625,44 +1215,60 @@ class EdicaoTorneio {
     required DateTime em,
     EdicaoStatus? statusAnterior,
   }) =>
+      _copiar(
+        status: novo,
+        statusAnterior:
+            novo == EdicaoStatus.suspenso ? (statusAnterior ?? status) : null,
+        em: em,
+      );
+
+  /// Define a janela de inscricao da edicao.
+  ///
+  /// Recebe os instantes prontos em vez de deriva-los do template: o seed
+  /// aprovado nao traz duracao de inscricao, e calcular uma a partir do
+  /// check-in inventaria regra de calendario que ninguem decidiu.
+  EdicaoTorneio comJanela({
+    required DateTime abreEm,
+    required DateTime fechaEm,
+    required DateTime em,
+  }) =>
+      _copiar(abreEm: abreEm, fechaEm: fechaEm, em: em);
+
+  /// Resolve a modalidade a partir da politica do template.
+  ///
+  /// Devolve a edicao inalterada quando a politica exige decisao humana — nao
+  /// escolhe modalidade no lugar da administracao.
+  EdicaoTorneio comModalidadeDe(TorneioTemplate template, {required DateTime em}) {
+    final resolvida = template.modalidade.resolverPara(numeroEdicao);
+    if (resolvida == null) return this;
+    return _copiar(modalidade: resolvida, em: em);
+  }
+
+  EdicaoTorneio _copiar({
+    EdicaoStatus? status,
+    EdicaoStatus? statusAnterior,
+    DateTime? abreEm,
+    DateTime? fechaEm,
+    ModalidadeMesa? modalidade,
+    required DateTime em,
+  }) =>
       EdicaoTorneio(
         tournamentId: tournamentId,
         editionId: editionId,
         numeroEdicao: numeroEdicao,
         temporada: temporada,
-        status: novo,
-        statusAnterior: novo == EdicaoStatus.suspenso ? (statusAnterior ?? status) : null,
+        status: status ?? this.status,
+        statusAnterior: status == null ? this.statusAnterior : statusAnterior,
         inicioPrevisto: inicioPrevisto,
-        inscricoesAbremEm: inscricoesAbremEm,
-        inscricoesFechamEm: inscricoesFechamEm,
+        inscricoesAbremEm: abreEm ?? inscricoesAbremEm,
+        inscricoesFechamEm: fechaEm ?? inscricoesFechamEm,
+        modalidade: modalidade ?? this.modalidade,
+        numeroFases: numeroFases,
+        metaPontos: metaPontos,
         regraVersao: regraVersao,
         criadoEm: criadoEm,
         atualizadoEm: em,
       );
-
-  /// Calcula a janela de inscricao a partir do template.
-  ///
-  /// Devolve a propria edicao inalterada quando o template ainda nao definiu as
-  /// duracoes — nao inventa janela (OS 02 secao 3).
-  EdicaoTorneio comJanelaDe(TorneioTemplate template, {required DateTime em}) {
-    final antes = template.antecedenciaInscricao;
-    final fecha = template.encerramentoInscricao;
-    if (antes == null || fecha == null) return this;
-    return EdicaoTorneio(
-      tournamentId: tournamentId,
-      editionId: editionId,
-      numeroEdicao: numeroEdicao,
-      temporada: temporada,
-      status: status,
-      statusAnterior: statusAnterior,
-      inicioPrevisto: inicioPrevisto,
-      inscricoesAbremEm: inicioPrevisto.subtract(antes),
-      inscricoesFechamEm: inicioPrevisto.subtract(fecha),
-      regraVersao: regraVersao,
-      criadoEm: criadoEm,
-      atualizadoEm: em,
-    );
-  }
 
   /// A janela de inscricao contem o instante informado.
   ///
@@ -732,6 +1338,15 @@ class EdicaoTorneio {
       throw FormatException('edicao: regraVersao deve ser int (recebido: $regraVersao).');
     }
 
+    final modalidadeWire = json['modalidade'] as String?;
+    ModalidadeMesa? modalidade;
+    if (modalidadeWire != null) {
+      modalidade = ModalidadeMesa.porWire(modalidadeWire);
+      if (modalidade == null) {
+        throw FormatException('edicao: modalidade desconhecida "$modalidadeWire".');
+      }
+    }
+
     try {
       return EdicaoTorneio(
         tournamentId: texto('tournamentId'),
@@ -743,6 +1358,9 @@ class EdicaoTorneio {
         inicioPrevisto: instante('inicioPrevisto', obrigatorio: true)!,
         inscricoesAbremEm: instante('inscricoesAbremEm', obrigatorio: false),
         inscricoesFechamEm: instante('inscricoesFechamEm', obrigatorio: false),
+        modalidade: modalidade,
+        numeroFases: json['numeroFases'] as int?,
+        metaPontos: json['metaPontos'] as int?,
         regraVersao: regraVersao,
         criadoEm: instante('criadoEm', obrigatorio: true)!,
         atualizadoEm: instante('atualizadoEm', obrigatorio: true)!,
@@ -764,6 +1382,9 @@ class EdicaoTorneio {
         'inicioPrevisto': inicioPrevisto.toIso8601String(),
         'inscricoesAbremEm': inscricoesAbremEm?.toIso8601String(),
         'inscricoesFechamEm': inscricoesFechamEm?.toIso8601String(),
+        'modalidade': modalidade?.wire,
+        'numeroFases': numeroFases,
+        'metaPontos': metaPontos,
         'regraVersao': regraVersao,
         'criadoEm': criadoEm.toIso8601String(),
         'atualizadoEm': atualizadoEm.toIso8601String(),

@@ -39,39 +39,50 @@ Map<String, dynamic> _seed(String nome) {
 
 final _agora = DateTime.utc(2026, 8, 7, 20);
 
-/// Template COMPLETO, usado nos caminhos felizes.
+/// Template SINTETICO, usado nos caminhos felizes de mecanica.
 ///
-/// Construido em codigo, e nao lido do seed, de proposito: no seed de producao os
-/// seis torneios estao com pendencia declarada (o projeto ainda nao definiu
-/// lotacao, fases nem premiacao), e um teste que dependesse disso passaria a
-/// falhar no dia em que a Sonia preenchesse os numeros de verdade.
+/// Construido em codigo, e nao lido do seed, de proposito: os testes de mecanica
+/// (lotacao, empate, avanco) precisam de numeros pequenos e controlados, e
+/// amarra-los aos valores reais faria a suite quebrar toda vez que a Sonia
+/// ajustasse uma vaga no painel. Os testes que verificam a CONFIGURACAO APROVADA
+/// leem o seed de verdade — ver o grupo "seed aprovado".
 TorneioTemplate _template({
   TipoParticipacao participacao = TipoParticipacao.individual,
   int limite = 8,
-  int fases = 2,
-  List<String> elegibilidade = const [],
+  AcessoTorneio acesso = AcessoTorneio.publico,
   List<FaixaPremiacao> premiacao = const [
-    FaixaPremiacao(posicaoInicial: 1, posicaoFinal: 1, assetId: TorneioAssetIds.crownChampion, fichas: 1000),
-    FaixaPremiacao(posicaoInicial: 2, posicaoFinal: 2, assetId: TorneioAssetIds.crownRunnerUp, fichas: 500),
-    FaixaPremiacao(posicaoInicial: 3, posicaoFinal: 4, assetId: TorneioAssetIds.crownTop3),
+    FaixaPremiacao(
+      colocacao: 1,
+      crownAssetId: TorneioAssetIds.crownChampion,
+      fichas: 1000,
+    ),
+    FaixaPremiacao(
+      colocacao: 2,
+      crownAssetId: TorneioAssetIds.crownRunnerUp,
+      fichas: 500,
+    ),
+    FaixaPremiacao(colocacao: 3, crownAssetId: TorneioAssetIds.crownTop3),
   ],
 }) =>
     TorneioTemplate(
       tournamentId: 'copa_buraco_master',
-      tipo: TipoTorneio.copaBuracoMaster,
       nome: 'Copa Buraco Master',
       versao: 3,
-      modalidade: ModalidadeMesa.aberto,
+      acesso: acesso,
       participacao: participacao,
-      formato: FormatoTorneio.misto,
-      recorrencia: Recorrencia.dataEspecial,
-      numeroFases: fases,
-      limiteParticipantes: limite,
-      minimoParticipantes: 2,
-      metaPontos: 1500,
-      antecedenciaInscricao: const Duration(days: 7),
-      encerramentoInscricao: const Duration(minutes: 30),
-      criteriosElegibilidade: elegibilidade,
+      modalidade: const PoliticaModalidade(
+        tipo: TipoPoliticaModalidade.fixa,
+        valor: ModalidadeMesa.aberto,
+      ),
+      recorrencia: const PoliticaRecorrencia(
+        tipo: TipoRecorrencia.semanal,
+        diaSemana: 'sabado',
+        horario: '19:30',
+      ),
+      vagasMax: limite,
+      vagasMin: 2,
+      checkin: const JanelaCheckin(abre: '19:00', fecha: '19:20'),
+      entrada: const PoliticaEntrada(tipo: 'gratuito'),
       premiacao: premiacao,
       capaAssetId: TorneioAssetIds.capaCopaBuracoMaster,
     );
@@ -90,11 +101,60 @@ EdicaoTorneio _edicao({
     inicioPrevisto: base,
     inscricoesAbremEm: base.subtract(const Duration(days: 7)),
     inscricoesFechamEm: base.subtract(const Duration(minutes: 30)),
+    modalidade: ModalidadeMesa.aberto,
+    numeroFases: 2,
+    metaPontos: 1500,
     regraVersao: 3,
     criadoEm: _agora.subtract(const Duration(days: 30)),
     atualizadoEm: _agora,
   );
 }
+
+/// Catalogo real, lido do seed aprovado.
+TorneioCatalogo _catalogo() =>
+    TorneioCatalogo.fromMap(_seed('tournamentTemplates.seed.json'));
+
+/// Todos os numeros de REGRA declarados no seed: vagas, valores de entrada e
+/// premios em fichas.
+///
+/// Sao lidos do proprio seed, e nao listados a mao, para que o teste continue
+/// valendo quando a Sonia mudar um valor no painel — a lista se atualiza junto.
+///
+/// Numeros de um so digito ficam de fora de proposito: 1, 2 e 3 sao indices,
+/// colocacoes e limites estruturais, e um deles bateria com qualquer `length`
+/// ou `>= 2` legitimo do motor, transformando o teste em ruido.
+Set<int> _numerosDoSeed(Map<String, dynamic> raiz) {
+  final numeros = <int>{};
+  void varrer(Object? no) {
+    if (no is int) {
+      if (no >= 10) numeros.add(no);
+    } else if (no is List) {
+      for (final item in no) {
+        varrer(item);
+      }
+    } else if (no is Map) {
+      for (final entrada in no.entries) {
+        // `_meta` e so documentacao; nao carrega numero de regra.
+        if (entrada.key == '_meta') continue;
+        varrer(entrada.value);
+      }
+    }
+  }
+
+  varrer(raiz);
+  return numeros;
+}
+
+/// Remove comentarios de linha e de bloco, e o conteudo de strings.
+///
+/// Sem isso o teste acusaria "64" dentro de um comentario que explica um LCG de
+/// 64 bits, ou dentro de uma mensagem de erro — nenhum dos dois e regra fixa no
+/// motor.
+String _semComentarios(String fonte) => fonte
+    .replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '')
+    .replaceAll(RegExp(r'//[^\n]*'), '')
+    .replaceAll(RegExp(r"'(?:[^'\\\n]|\\.)*'"), "''")
+    .replaceAll(RegExp(r'"(?:[^"\\\n]|\\.)*"'), '""');
 
 PerfilElegibilidade _perfil(
   String id, {
@@ -175,30 +235,17 @@ void main() {
   // 1. CRIACAO DE TORNEIO
   // ===========================================================================
   group('1. criacao de torneio', () {
-    test('o catalogo carrega os cinco torneios previstos mais o encerramento anual', () {
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
+    test('o catalogo carrega os seis templates mais o evento de encerramento', () {
+      final catalogo = _catalogo();
       expect(catalogo.todos.length, TorneioIds.todos.length);
-      expect(catalogo.previstos.map((t) => t.tournamentId), TorneioIds.previstos);
-      expect(catalogo.buscar(TorneioIds.encerramentoAnual), isNotNull);
+      expect(catalogo.regulares.map((t) => t.tournamentId), TorneioIds.regulares);
+      expect(catalogo.buscar(TorneioIds.campeonatoAnual), isNotNull);
+      expect(catalogo.encerramento, isNotNull);
     });
 
-    test('as capas do catalogo existem e sao capas de verdade', () {
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
+    test('as capas e premios do catalogo existem no registro de assets', () {
       final assets = TorneioAssetsRegistry.fromMap(_seed('assets_registry.seed.json'));
-      expect(() => catalogo.validarCobertura(assets), returnsNormally);
-    });
-
-    test('todo torneio previsto declara suas pendencias enquanto nao configurado', () {
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
-      // Estado esperado HOJE: o projeto ainda nao definiu lotacao, fases,
-      // premiacao nem janelas. O teste fixa que a lacuna e DECLARADA, nao que ela
-      // exista para sempre — quando a configuracao chegar, `pendencias` esvazia e
-      // `configuracaoCompleta` passa a valer.
-      for (final t in catalogo.todos) {
-        expect(t.configuracaoCompleta, isFalse, reason: t.tournamentId);
-        expect(t.pendencias, isNotEmpty, reason: t.tournamentId);
-      }
-      expect(catalogo.pendenciasConsolidadas, isNotEmpty);
+      expect(() => _catalogo().validarCobertura(assets), returnsNormally);
     });
 
     test('a edicao congela a versao da regra sob a qual nasceu', () {
@@ -206,30 +253,230 @@ void main() {
       expect(_template().versao, 3);
     });
 
-    test('seed com tipo divergente do tournamentId e recusado', () {
-      final raiz = _seed('tournaments.seed.json');
-      (raiz['tournaments'] as List)[0]['tipo'] = 'sexta_master_vip';
+    test('templateId duplicado no seed e recusado', () {
+      final raiz = _seed('tournamentTemplates.seed.json');
+      final lista = raiz['templates'] as List;
+      lista.add(Map<String, dynamic>.from(lista.first as Map));
       expect(() => TorneioCatalogo.fromMap(raiz), throwsFormatException);
     });
 
-    test('faixas de premiacao sobrepostas sao recusadas na carga', () {
-      expect(
-        () => TorneioTemplate.fromJson({
-          'tournamentId': 'x',
-          'tipo': 'copa_buraco_master',
-          'nome': 'X',
-          'versao': 1,
-          'modalidade': 'ABERTO',
-          'participacao': 'individual',
-          'formato': 'misto',
-          'recorrencia': 'unico',
-          'premiacao': [
-            {'posicaoInicial': 1, 'posicaoFinal': 3, 'fichas': 10},
-            {'posicaoInicial': 3, 'posicaoFinal': 5, 'fichas': 5},
-          ],
-        }),
-        throwsFormatException,
+    test('colocacao premiada duas vezes e recusada na carga', () {
+      final raiz = _seed('tournamentTemplates.seed.json');
+      final primeiro = (raiz['templates'] as List).first as Map<String, dynamic>;
+      final premiacao = primeiro['premiacao'] as List;
+      premiacao.add({'colocacao': 1, 'fichas': 1});
+      expect(() => TorneioCatalogo.fromMap(raiz), throwsFormatException);
+    });
+
+    test('moeda diferente de fichas e recusada — a carteira e unica', () {
+      final raiz = _seed('tournamentTemplates.seed.json');
+      final sexta = (raiz['templates'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((t) => t['templateId'] == TorneioIds.sextaMasterVip);
+      (sexta['entrada'] as Map)['moeda'] = 'moedas';
+      expect(() => TorneioCatalogo.fromMap(raiz), throwsFormatException);
+    });
+  });
+
+  // ===========================================================================
+  // SEED APROVADO — a configuracao decidida fora do repositorio
+  // ===========================================================================
+  group('seed aprovado', () {
+    test('1. os cinco torneios regulares carregam SEM configuracaoPendente', () {
+      for (final template in _catalogo().regulares) {
+        expect(template.configuracaoCompleta, isTrue,
+            reason: '${template.tournamentId} deveria estar configurado');
+        expect(template.pendencias, isEmpty, reason: template.tournamentId);
+        expect(template.vagasMax, isNotNull, reason: template.tournamentId);
+        expect(template.vagasMin, isNotNull, reason: template.tournamentId);
+        expect(template.checkin, isNotNull, reason: template.tournamentId);
+        expect(template.entrada, isNotNull, reason: template.tournamentId);
+        expect(template.premiacao, isNotEmpty, reason: template.tournamentId);
+      }
+    });
+
+    test('1b. inscricao num torneio regular nao e recusada por configuracao', () {
+      // Prova do efeito, e nao so da flag: antes do seed aprovado esta chamada
+      // devolvia `configuracaoPendente` e nem chegava a avaliar o jogador.
+      final template = _catalogo()[TorneioIds.domingoPintando7];
+      final r = inscrever(
+        edicao: _edicao(),
+        template: template,
+        perfil: _perfil('ana'),
+        vagas: ConfiguracaoVagas(limite: template.vagasMax!),
+        agora: _agora,
+        saldoFichas: 100000,
       );
+      expect(r.recusa, isNot(MotivoRecusaInscricao.configuracaoPendente));
+      expect(r.aceita, isTrue);
+    });
+
+    test('2. o Encerramento carrega sua configuracao estrutural', () {
+      final evento = _catalogo().encerramento!;
+      expect(evento.tournamentId, TorneioIds.encerramentoCampeoesAno);
+      expect(evento.configuracaoCompleta, isTrue);
+      expect(evento.vagasMax, isNotNull);
+      expect(evento.vagasMin, isNotNull);
+      expect(evento.escalavelPara, isNotEmpty);
+      expect(evento.acesso, AcessoTorneio.somenteConvidados);
+      expect(evento.dataFixa.isUtc, isTrue);
+      // Premiacao por papel, e nao por colocacao.
+      expect(evento.premiacao.keys, containsAll(['campeao', 'vice', 'convidados']));
+    });
+
+    test('2b. o motor de convites do Encerramento continua DESATIVADO', () {
+      // Decisao #8: mock ate a tabela oficial de pesos existir.
+      expect(_catalogo().encerramento!.convitesAtivosEmProducao, isFalse);
+    });
+
+    test('3. o Campeonato Anual continua cadastrado, inativo e nao publicado', () {
+      final anual = _catalogo()[TorneioIds.campeonatoAnual];
+      expect(anual.ativo, isFalse);
+      expect(anual.publicado, isFalse);
+      expect(anual.recorrencia.tipo, TipoRecorrencia.nenhuma);
+      // Cadastrado significa presente no catalogo, o que a busca acima ja prova.
+      expect(_catalogo().ativos.map((t) => t.tournamentId),
+          isNot(contains(TorneioIds.campeonatoAnual)));
+    });
+
+    test('4. NENHUM template esta publicado automaticamente', () {
+      final catalogo = _catalogo();
+      for (final template in catalogo.todos) {
+        expect(template.publicado, isFalse,
+            reason: '${template.tournamentId} nao pode nascer publicado');
+      }
+      expect(catalogo.publicados, isEmpty);
+    });
+
+    test('4b. template que omite "publicado" nao nasce publicado', () {
+      final raiz = _seed('tournamentTemplates.seed.json');
+      for (final t in (raiz['templates'] as List).cast<Map<String, dynamic>>()) {
+        t.remove('publicado');
+      }
+      final catalogo = TorneioCatalogo.fromMap(raiz);
+      expect(catalogo.publicados, isEmpty,
+          reason: 'o default de publicado precisa ser false');
+    });
+
+    test('5. nenhuma regra numerica do seed virou constante no codigo', () {
+      // Primeira regra do seed: "TODOS os numeros sao SEEDS editaveis no painel
+      // admin. Nada fica fixo no codigo." Este teste le os numeros do proprio
+      // seed e varre o dominio atras deles.
+      final numeros = _numerosDoSeed(_seed('tournamentTemplates.seed.json'));
+      expect(numeros, isNotEmpty, reason: 'o seed precisa ter numeros a proteger');
+
+      final infracoes = <String>[];
+      for (final arquivo in Directory('lib/torneios')
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))) {
+        final codigo = _semComentarios(arquivo.readAsStringSync());
+        for (final numero in numeros) {
+          if (RegExp(r'(?<![\w.])' + numero.toString() + r'(?![\w.])')
+              .hasMatch(codigo)) {
+            infracoes.add('${arquivo.uri.pathSegments.last}: $numero');
+          }
+        }
+      }
+      expect(infracoes, isEmpty,
+          reason: 'numero de regra fixo no motor deixa de ser editavel no painel');
+    });
+
+    test('6. nao existe Top 4 em lugar nenhum', () {
+      final catalogo = _catalogo();
+      for (final template in catalogo.todos) {
+        expect(template.ultimaColocacaoPremiada, lessThanOrEqualTo(3),
+            reason: template.tournamentId);
+        expect(template.faixaPara(4), isNull, reason: template.tournamentId);
+        for (final faixa in template.premiacao) {
+          expect(faixa.colocacao, lessThanOrEqualTo(3), reason: template.tournamentId);
+        }
+      }
+      // O encerramento premia por papel; nenhum papel e "quarto".
+      expect(catalogo.encerramento!.premiacao.keys, isNot(contains('quarto')));
+    });
+
+    test('6b. um seed que tente premiar o 4o lugar e RECUSADO', () {
+      final raiz = _seed('tournamentTemplates.seed.json');
+      final copa = (raiz['templates'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((t) => t['templateId'] == TorneioIds.copaBuracoMaster);
+      (copa['premiacao'] as List).add({'colocacao': 4, 'fichas': 1});
+      expect(() => TorneioCatalogo.fromMap(raiz), throwsFormatException);
+    });
+
+    test('6c. top4.implementar = true e RECUSADO', () {
+      final raiz = _seed('tournamentTemplates.seed.json');
+      final copa = (raiz['templates'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((t) => t['templateId'] == TorneioIds.copaBuracoMaster);
+      copa['top4'] = {'implementar': true};
+      expect(() => TorneioCatalogo.fromMap(raiz), throwsFormatException);
+    });
+
+    test('a modalidade em politica resolve por edicao, sem inventar valor', () {
+      final catalogo = _catalogo();
+
+      // Fixa: sempre a mesma.
+      final sexta = catalogo[TorneioIds.sextaMasterVip].modalidade;
+      expect(sexta.tipo, TipoPoliticaModalidade.fixa);
+      expect(sexta.resolverPara(1), sexta.resolverPara(9));
+
+      // Rodizio: percorre as opcoes e volta ao inicio.
+      final copa = catalogo[TorneioIds.copaBuracoMaster].modalidade;
+      expect(copa.tipo, TipoPoliticaModalidade.rodizio);
+      expect(copa.resolverPara(1), copa.opcoes.first);
+      expect(copa.resolverPara(1 + copa.opcoes.length), copa.opcoes.first);
+
+      // Definida pela administracao: NAO resolve sozinha.
+      expect(catalogo[TorneioIds.campeonatoMensal].modalidade.resolverPara(1), isNull);
+      expect(catalogo[TorneioIds.campeonatoAnual].modalidade.resolverPara(1), isNull);
+    });
+
+    test('o acesso do seed vira criterio de elegibilidade, sem campo duplicado', () {
+      final catalogo = _catalogo();
+      expect(catalogo[TorneioIds.quartaVulnerabilidade].criteriosElegibilidade, isEmpty);
+      expect(catalogo[TorneioIds.sextaMasterVip].criteriosElegibilidade,
+          contains('assinatura'));
+      // Sem assinatura, a Sexta recusa com o motivo que a tela ja conhece.
+      final r = inscrever(
+        edicao: _edicao(),
+        template: catalogo[TorneioIds.sextaMasterVip],
+        perfil: _perfil('ana', vip: false),
+        vagas: const ConfiguracaoVagas(limite: 64),
+        agora: _agora,
+        saldoFichas: 100000,
+      );
+      expect(r.recusa, MotivoRecusaInscricao.requisitoVipNaoAtendido);
+    });
+
+    test('a entrada em duas etapas cobra a partir da edicao certa', () {
+      // Quarta da Vulnerabilidade: gratis nas primeiras edicoes, paga depois.
+      // Os numeros vem do seed; o teste so confere o COMPORTAMENTO.
+      final entrada = _catalogo()[TorneioIds.quartaVulnerabilidade].entrada!;
+      final gratis = entrada.gratisPrimeirasEdicoes!;
+      expect(entrada.custoPara(numeroEdicao: gratis), 0);
+      expect(entrada.custoPara(numeroEdicao: gratis + 1), entrada.valorApos);
+      expect(entrada.valorApos, greaterThan(0));
+    });
+
+    test('a trilha de classificado do mensal e gratuita e a paga esta desligada', () {
+      final entrada = _catalogo()[TorneioIds.campeonatoMensal].entrada!;
+      expect(entrada.trilhas.keys, containsAll(['classificados', 'vagasRemanescentes']));
+      expect(entrada.custoPara(trilha: 'classificados'), 0);
+      // `ativar: false` no seed: a cobranca existe configurada, mas desligada.
+      expect(entrada.trilhas['vagasRemanescentes']!.ativar, isFalse);
+      expect(entrada.custoPara(trilha: 'vagasRemanescentes'), 0);
+    });
+
+    test('todo horario do seed esta no formato HH:MM do fuso do projeto', () {
+      expect(fusoTorneios, 'America/Sao_Paulo');
+      for (final t in _catalogo().regulares) {
+        expect(RegExp(r'^\d{2}:\d{2}$').hasMatch(t.checkin!.abre), isTrue);
+        expect(RegExp(r'^\d{2}:\d{2}$').hasMatch(t.checkin!.fecha), isTrue);
+        expect(t.checkin!.fecha.compareTo(t.checkin!.abre) > 0, isTrue,
+            reason: t.tournamentId);
+      }
     });
   });
 
@@ -258,11 +505,12 @@ void main() {
       expect(tarefas, isEmpty);
     });
 
-    test('template com pendencia nao gera tarefa nenhuma', () {
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
+    test('template sem configuracao completa nao gera tarefa nenhuma', () {
+      // O Campeonato Anual esta cadastrado mas sem dimensionamento, janela nem
+      // entrada (decisao #6). A automacao nao pode agendar edicao dele.
       final tarefas = planejarTarefas(
         edicao: _edicao(status: EdicaoStatus.agendado),
-        template: catalogo[TorneioIds.copaBuracoMaster],
+        template: _catalogo()[TorneioIds.campeonatoAnual],
         agora: _agora,
       );
       expect(tarefas, isEmpty);
@@ -358,11 +606,10 @@ void main() {
       expect(r.recusa, MotivoRecusaInscricao.semFichas);
     });
 
-    test('template pendente recusa a inscricao', () {
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
+    test('template sem configuracao completa recusa a inscricao', () {
       final r = inscrever(
         edicao: _edicao(),
-        template: catalogo[TorneioIds.copaBuracoMaster],
+        template: _catalogo()[TorneioIds.campeonatoAnual],
         perfil: _perfil('ana'),
         vagas: const ConfiguracaoVagas(limite: 8),
         agora: _agora,
@@ -432,7 +679,7 @@ void main() {
     test('sem assinatura em torneio VIP', () {
       final r = inscrever(
         edicao: _edicao(),
-        template: _template(elegibilidade: const ['assinatura']),
+        template: _template(acesso: AcessoTorneio.vip),
         perfil: _perfil('ana', vip: false),
         vagas: const ConfiguracaoVagas(limite: 8),
         agora: _agora,
@@ -442,16 +689,17 @@ void main() {
     });
 
     test('nivel insuficiente', () {
-      final r = inscrever(
-        edicao: _edicao(),
-        template: _template(elegibilidade: const ['nivel_minimo:20']),
+      // Avaliado direto na camada de elegibilidade: o seed aprovado so expressa
+      // acesso (publico / vip / misto / somente convidados), entao nao ha
+      // template real com criterio de nivel. A camada suporta o criterio para
+      // quando o projeto o adotar — ver eligibility.dart.
+      final a = avaliarElegibilidade(
+        criterios: [const CriterioElegibilidade(TipoCriterio.nivelMinimo, '20')],
         perfil: _perfil('ana', nivel: 3),
-        vagas: const ConfiguracaoVagas(limite: 8),
-        agora: _agora,
-        saldoFichas: 0,
+        tournamentId: 'copa_buraco_master',
       );
-      expect(r.recusa, MotivoRecusaInscricao.inelegivel);
-      expect(r.avaliacao!.principal!.recusa, RecusaElegibilidade.nivelInsuficiente);
+      expect(a.elegivel, isFalse);
+      expect(a.principal!.recusa, RecusaElegibilidade.nivelInsuficiente);
     });
 
     test('perfil suspenso e recusado', () {
@@ -1039,7 +1287,8 @@ void main() {
       final fases = montarFases(
         tournamentId: 'copa_buraco_master',
         editionId: 'ed-2026-08',
-        template: _template(fases: 3),
+        totalFases: 3,
+        formato: FormatoTorneio.misto,
         semente: 10,
         ladosPorMesa: 2,
         vagasPorFase: const [4, 2],
@@ -1053,11 +1302,11 @@ void main() {
     });
 
     test('montarFases recusa numeroFases indefinido', () {
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
       expect(
         () => montarFases(
           tournamentId: 't', editionId: 'e',
-          template: catalogo[TorneioIds.copaBuracoMaster],
+          totalFases: null,
+          formato: FormatoTorneio.misto,
           semente: 1, ladosPorMesa: 2,
         ),
         throwsArgumentError,
@@ -1457,19 +1706,18 @@ void main() {
         template: _template(),
         assets: assets, politicas: politicas, agora: _agora,
       );
-      // As faixas cobrem 1 a 4; o 5o e o 6o ficam de fora.
+      // As faixas cobrem 1, 2 e 3 — nao existe Top 4. Do 4o em diante ninguem
+      // e premiado.
+      expect(planejadas.map((p) => p.userId), isNot(contains('d')));
       expect(planejadas.map((p) => p.userId), isNot(contains('e')));
-      expect(planejadas.length, 4);
+      expect(planejadas.length, 3);
     });
 
     test('arte pendente recusa a concessao com motivo explicito', () {
       final planejadas = planejarPremiacao(
         conclusao: conclusao(ordem: const ['ana']),
         template: _template(premiacao: const [
-          FaixaPremiacao(
-            posicaoInicial: 1, posicaoFinal: 1,
-            assetId: TorneioAssetIds.crownClosingChampion,
-          ),
+          FaixaPremiacao(colocacao: 1, crownAssetId: TorneioAssetIds.crownClosingChampion),
         ]),
         assets: assets, politicas: politicas, agora: _agora,
       );
@@ -1481,7 +1729,7 @@ void main() {
       final planejadas = planejarPremiacao(
         conclusao: conclusao(ordem: const ['ana']),
         template: _template(premiacao: const [
-          FaixaPremiacao(posicaoInicial: 1, posicaoFinal: 1, fichas: 800),
+          FaixaPremiacao(colocacao: 1, fichas: 800),
         ]),
         assets: assets, politicas: politicas, agora: _agora,
       );
@@ -1537,7 +1785,7 @@ void main() {
           concluidaEm: _agora,
         ),
         template: _template(premiacao: const [
-          FaixaPremiacao(posicaoInicial: 1, posicaoFinal: 1, assetId: TorneioAssetIds.crownChampion),
+          FaixaPremiacao(colocacao: 1, crownAssetId: TorneioAssetIds.crownChampion),
         ]),
         assets: assets, politicas: politicas, agora: _agora,
         historico: [
@@ -1654,6 +1902,7 @@ void main() {
       return montarHistorico(
         edicao: _edicao(status: EdicaoStatus.encerrado),
         template: _template(),
+        formato: FormatoTorneio.misto,
         conclusao: conclusao,
         classificacaoFinal: classificacao,
         fases: const ['f1'],
@@ -1685,15 +1934,13 @@ void main() {
       final premiacoes = planejarPremiacao(
         conclusao: conclusao,
         template: _template(premiacao: const [
-          FaixaPremiacao(
-            posicaoInicial: 1, posicaoFinal: 1,
-            assetId: TorneioAssetIds.crownClosingChampion,
-          ),
+          FaixaPremiacao(colocacao: 1, crownAssetId: TorneioAssetIds.crownClosingChampion),
         ]),
         assets: assets, politicas: politicas, agora: _agora,
       );
       final h = montarHistorico(
         edicao: _edicao(status: EdicaoStatus.encerrado), template: _template(),
+        formato: FormatoTorneio.misto,
         conclusao: conclusao,
         classificacaoFinal: calcularClassificacao(
           resultados: const [], criterios: desempatePadrao, participantes: const ['ana'],
@@ -2153,21 +2400,41 @@ void main() {
       );
     });
 
-    test('a janela e derivada do template, nao inventada', () {
+    test('a janela de inscricao e explicita, nunca derivada do check-in', () {
       final semJanela = EdicaoTorneio(
         tournamentId: 't', editionId: 'e', numeroEdicao: 1, temporada: '2026',
         status: EdicaoStatus.agendado, inicioPrevisto: _agora.add(const Duration(days: 10)),
         regraVersao: 1, criadoEm: _agora, atualizadoEm: _agora,
       );
-      final comJanela = semJanela.comJanelaDe(_template(), em: _agora);
-      expect(comJanela.inscricoesAbremEm, isNotNull);
+      // O seed aprovado traz janela de CHECK-IN, nao de inscricao. Derivar uma
+      // da outra inventaria regra de calendario que ninguem decidiu, entao a
+      // edicao nasce sem janela e a administracao a define ao agendar.
+      expect(semJanela.inscricoesAbremEm, isNull);
+      expect(semJanela.janelaInscricaoAbertaEm(_agora), isFalse);
 
-      final catalogo = TorneioCatalogo.fromMap(_seed('tournaments.seed.json'));
-      final semDefinicao = semJanela.comJanelaDe(
-        catalogo[TorneioIds.copaBuracoMaster], em: _agora,
+      final comJanela = semJanela.comJanela(
+        abreEm: _agora,
+        fechaEm: _agora.add(const Duration(days: 9)),
+        em: _agora,
       );
-      // O template nao definiu as duracoes: nao ha janela inventada.
-      expect(semDefinicao.inscricoesAbremEm, isNull);
+      expect(comJanela.inscricoesAbremEm, _agora);
+      expect(comJanela.janelaInscricaoAbertaEm(_agora), isTrue);
+    });
+
+    test('a modalidade da edicao vem da politica, sem inventar valor', () {
+      final base = EdicaoTorneio(
+        tournamentId: 't', editionId: 'e', numeroEdicao: 1, temporada: '2026',
+        status: EdicaoStatus.agendado, inicioPrevisto: _agora,
+        regraVersao: 1, criadoEm: _agora, atualizadoEm: _agora,
+      );
+      // Politica fixa: resolve.
+      expect(
+        base.comModalidadeDe(_template(), em: _agora).modalidade,
+        ModalidadeMesa.aberto,
+      );
+      // Politica que exige decisao humana: a edicao segue sem modalidade.
+      final mensal = _catalogo()[TorneioIds.campeonatoMensal];
+      expect(base.comModalidadeDe(mensal, em: _agora).modalidade, isNull);
     });
 
     test('participanteId de dupla mal formado e recusado', () {
@@ -2215,7 +2482,7 @@ void main() {
     });
 
     test('modalidade e participacao mapeiam para a UI', () {
-      expect(modalidadeParaUi(ModalidadeMesa.sbtl), ui.ModalidadeTorneio.stbl);
+      expect(modalidadeParaUi(ModalidadeMesa.stbl), ui.ModalidadeTorneio.stbl);
       expect(participacaoParaUi(TipoParticipacao.dupla), ui.TipoParticipacao.dupla);
       expect(ModalidadeMesa.values.length, ui.ModalidadeTorneio.values.length);
     });
@@ -2260,7 +2527,7 @@ void main() {
     test('o card monta a partir do dominio', () {
       final card = cardDaEdicao(
         edicao: _edicao(),
-        template: _template(elegibilidade: const ['assinatura']),
+        template: _template(acesso: AcessoTorneio.vip),
         inscritos: 5,
         premiacaoPrincipal: '1.000 fichas + Coroa',
         capaUrl: 'assets/torneios/capas/copa_buraco_master.png',

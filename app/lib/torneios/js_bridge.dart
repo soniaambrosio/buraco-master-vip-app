@@ -434,9 +434,15 @@ String montarHistoricoJson(String entrada) {
         ),
     ];
 
+    final formato = FormatoTorneio.porWire(json['formato'] as String? ?? '');
+    if (formato == null) {
+      throw FormatException('formato desconhecido: ${json['formato']}');
+    }
+
     final historico = montarHistorico(
       edicao: EdicaoTorneio.fromMap(json['edicao'] as Map<String, dynamic>),
       template: TorneioTemplate.fromJson(json['template'] as Map<String, dynamic>),
+      formato: formato,
       conclusao: ConclusaoEdicao(
         tournamentId: conclusaoJson['tournamentId'] as String,
         editionId: conclusaoJson['editionId'] as String,

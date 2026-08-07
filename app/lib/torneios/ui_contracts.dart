@@ -101,7 +101,7 @@ ui.ModalidadeTorneio modalidadeParaUi(ModalidadeMesa modalidade) =>
     switch (modalidade) {
       ModalidadeMesa.aberto => ui.ModalidadeTorneio.aberto,
       ModalidadeMesa.fechado => ui.ModalidadeTorneio.fechado,
-      ModalidadeMesa.sbtl => ui.ModalidadeTorneio.stbl,
+      ModalidadeMesa.stbl => ui.ModalidadeTorneio.stbl,
     };
 
 /// Traducao de [TipoParticipacao] para o enum de tela.
@@ -189,15 +189,22 @@ ui.TorneioCardVM cardDaEdicao({
     tournamentId: edicao.tournamentId,
     nome: template.nome,
     imagemUrl: capaUrl,
-    modalidade: modalidadeParaUi(template.modalidade),
-    // O acesso VIP e derivado do criterio de elegibilidade declarado, nao de um
-    // campo separado: dois lugares dizendo a mesma coisa divergem.
-    acesso: template.criteriosElegibilidade.contains('assinatura')
-        ? ui.TipoAcesso.vip
-        : ui.TipoAcesso.publico,
+    // A modalidade vem da EDICAO: a politica do template pode ser "alterna" ou
+    // "rodizio", e nesse caso nao existe modalidade de torneio, so de edicao.
+    // O fallback so vale para politica fixa, onde os dois coincidem.
+    modalidade: modalidadeParaUi(
+      edicao.modalidade ??
+          template.modalidade.valor ??
+          ModalidadeMesa.aberto,
+    ),
+    acesso: switch (template.acesso) {
+      AcessoTorneio.vip || AcessoTorneio.somenteConvidados => ui.TipoAcesso.vip,
+      AcessoTorneio.misto => ui.TipoAcesso.misto,
+      AcessoTorneio.publico => ui.TipoAcesso.publico,
+    },
     participacao: participacaoParaUi(template.participacao),
     dataHora: edicao.inicioPrevisto,
-    vagasTotais: template.limiteParticipantes ?? 0,
+    vagasTotais: template.vagasMax ?? 0,
     inscritos: inscritos,
     entrada: valorEntrada > 0 ? ui.TipoEntrada.fichas : ui.TipoEntrada.gratuito,
     valorEntrada: valorEntrada,

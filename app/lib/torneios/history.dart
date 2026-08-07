@@ -122,7 +122,15 @@ class RegistroHistorico {
   /// para explicar depois por que a classificacao saiu daquele jeito.
   final int regraVersao;
 
-  final ModalidadeMesa modalidade;
+  /// Modalidade efetivamente jogada nesta edicao.
+  ///
+  /// Vem da EDICAO, e nao do template: varios torneios tem politica "alterna",
+  /// "rodizio" ou "definidaMensalmente", entao a modalidade da Sexta Master VIP
+  /// #8 nao e uma propriedade do torneio e sim daquela noite. Nulavel porque o
+  /// historico registra o que aconteceu, e nao o que deveria ter acontecido — se
+  /// a edicao correu sem modalidade resolvida, mentir aqui esconderia o problema.
+  final ModalidadeMesa? modalidade;
+
   final TipoParticipacao participacao;
   final FormatoTorneio formato;
 
@@ -195,7 +203,7 @@ class RegistroHistorico {
         'numeroEdicao': numeroEdicao,
         'temporada': temporada,
         'regraVersao': regraVersao,
-        'modalidade': modalidade.wire,
+        'modalidade': modalidade?.wire,
         'participacao': participacao.wire,
         'formato': formato.wire,
         'criteriosDesempate': criteriosDesempate.map((c) => c.wire).toList(),
@@ -232,9 +240,11 @@ class RegistroHistorico {
       return parsed;
     }
 
-    final modalidade = ModalidadeMesa.porWire(texto('modalidade'));
-    if (modalidade == null) {
-      throw FormatException('historico: modalidade desconhecida "${json['modalidade']}".');
+    final modalidadeWire = json['modalidade'] as String?;
+    final modalidade =
+        modalidadeWire == null ? null : ModalidadeMesa.porWire(modalidadeWire);
+    if (modalidadeWire != null && modalidade == null) {
+      throw FormatException('historico: modalidade desconhecida "$modalidadeWire".');
     }
     final participacao = TipoParticipacao.porWire(texto('participacao'));
     if (participacao == null) {
@@ -293,9 +303,12 @@ class RegistroHistorico {
 ///
 /// Funcao pura: recebe a conclusao, a classificacao e o que foi premiado, e
 /// devolve o snapshot. Nada e gravado.
+/// [formato] vem por parametro, e nao do template: o seed aprovado nao fixa
+/// formato, porque ele pode mudar de edicao para edicao junto com a modalidade.
 RegistroHistorico montarHistorico({
   required EdicaoTorneio edicao,
   required TorneioTemplate template,
+  required FormatoTorneio formato,
   required ConclusaoEdicao conclusao,
   required List<LinhaClassificacao> classificacaoFinal,
   required List<String> fases,
@@ -339,9 +352,9 @@ RegistroHistorico montarHistorico({
     numeroEdicao: edicao.numeroEdicao,
     temporada: edicao.temporada,
     regraVersao: edicao.regraVersao,
-    modalidade: template.modalidade,
+    modalidade: edicao.modalidade,
     participacao: template.participacao,
-    formato: template.formato,
+    formato: formato,
     criteriosDesempate: template.criteriosDesempate,
     inicio: edicao.inicioPrevisto,
     encerramento: conclusao.concluidaEm,

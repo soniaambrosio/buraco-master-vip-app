@@ -1,0 +1,174 @@
+{
+  "_meta": {
+    "fonteDeVerdade": "Documento 'Correções torneio – implementar' (acima do Guia Administrativo).",
+    "regras": [
+      "TODOS os números (inscrição, vagas, prêmios, duração, pontos) são SEEDS editáveis no painel admin. Nada fica fixo no código.",
+      "Carteira única: 'fichas' (decisão #9). Onde as correções diziam 'moedas', lê-se fichas.",
+      "Sem Top 4 nem 4º colocado nesta 1ª entrega (decisão #3). Contrato = campeao/vice/terceiro.",
+      "Prêmios referenciam assetId do assetsRegistry, nunca nome de arquivo.",
+      "fuso: America/Sao_Paulo; região Functions: southamerica-east1."
+    ],
+    "recusaNaoVip": "requisitoVipNaoAtendido"
+  },
+  "templates": [
+    {
+      "templateId": "quarta_vulnerabilidade",
+      "nome": "Quarta da Vulnerabilidade",
+      "coverAssetId": "capa_quarta_vulnerabilidade",
+      "acesso": "publico",
+      "participacao": "individual",
+      "modalidade": { "tipo": "alterna", "opcoes": ["aberto", "fechado"] },
+      "recorrencia": { "tipo": "semanal", "diaSemana": "quarta", "horario": "20:00" },
+      "vagas": { "max": 64, "min": 16 },
+      "checkin": { "abre": "19:30", "fecha": "19:50" },
+      "entrada": {
+        "tipo": "introducaoGratisDepoisPaga",
+        "gratisPrimeirasEdicoes": 6,
+        "contador": "edicoes_validas_realizadas",
+        "ignoraCanceladas": true,
+        "valorApos": 50,
+        "moeda": "fichas",
+        "configuravel": true,
+        "note": "Decisão #11: 6 primeiras EDIÇÕES realizadas (não semanas de calendário)."
+      },
+      "rankingPolicy": {
+        "publicoPontuaRanking": false,
+        "vipPontuaRanking": true,
+        "publicoRecebeOutrosPremios": true,
+        "note": "Decisão #10: público joga e ganha fichas/selos/coroas, mas não pontua no ranking."
+      },
+      "premiacao": [
+        { "colocacao": 1, "fichas": 500, "crownAssetId": "crown_champion", "sealAssetId": "seal_champion", "rankingPoints": { "valor": "configuravel", "sujeitoA": "rankingPolicy" } },
+        { "colocacao": 2, "fichas": 300, "sealAssetId": "seal_runner_up", "rankingPoints": { "valor": "configuravel", "sujeitoA": "rankingPolicy" } },
+        { "colocacao": 3, "fichas": 150, "sealAssetId": "seal_top3", "rankingPoints": { "valor": "configuravel", "sujeitoA": "rankingPolicy" } }
+      ],
+      "selosCondicionais": ["seal_performance", "seal_fair_play"],
+      "ativo": true,
+      "publicado": false
+    },
+    {
+      "templateId": "sexta_master_vip",
+      "nome": "Sexta Master VIP",
+      "coverAssetId": "capa_sexta_master_vip",
+      "acesso": "vip",
+      "participacao": "individual",
+      "modalidade": { "tipo": "fixa", "valor": "fechado", "alternaEspecial": ["stbl"] },
+      "recorrencia": { "tipo": "semanal", "diaSemana": "sexta", "horario": "21:00" },
+      "vagas": { "max": 64, "min": 16, "note": "64 como seed editável (decisão #7)." },
+      "checkin": { "abre": "20:30", "fecha": "20:50" },
+      "entrada": { "tipo": "paga", "valor": 100, "moeda": "fichas", "gratuidadeVipAutomatica": false, "configuravel": true, "note": "Decisão #7: sem gratuidade automática para assinante." },
+      "rankingPolicy": { "todosElegiveisPontuam": true },
+      "premiacao": [
+        { "colocacao": 1, "fichas": 1200, "crownAssetId": "crown_champion", "sealAssetId": "seal_champion", "extras": ["item_premium_temporario"], "registroHistorico": true },
+        { "colocacao": 2, "fichas": 600, "sealAssetId": "seal_runner_up" },
+        { "colocacao": 3, "fichas": 300, "sealAssetId": "seal_top3" }
+      ],
+      "selosCondicionais": ["seal_performance", "seal_fair_play"],
+      "ativo": true,
+      "publicado": false
+    },
+    {
+      "templateId": "copa_buraco_master",
+      "nome": "Copa Buraco Master",
+      "coverAssetId": "capa_copa_buraco_master",
+      "acesso": "vip",
+      "participacao": "individual",
+      "modalidade": { "tipo": "rodizio", "opcoes": ["aberto", "fechado", "stbl"] },
+      "recorrencia": { "tipo": "semanal", "diaSemana": "sabado", "horario": "19:30" },
+      "vagas": { "max": 128, "min": 32 },
+      "checkin": { "abre": "19:00", "fecha": "19:20" },
+      "entrada": { "tipo": "paga", "valor": 150, "moeda": "fichas", "configuravel": true },
+      "ingressoAvulso": { "habilitado": false, "configuravel": true, "note": "Decisão #12: possibilidade fica configurável, porém desativada na 1ª entrega." },
+      "rankingPolicy": { "todosElegiveisPontuam": true },
+      "premiacao": [
+        { "colocacao": 1, "fichas": 1600, "crownAssetId": "crown_champion", "sealAssetId": "seal_champion", "extras": ["destaque_hall"] },
+        { "colocacao": 2, "fichas": 800, "sealAssetId": "seal_runner_up" },
+        { "colocacao": 3, "fichas": 400, "sealAssetId": "seal_top3" }
+      ],
+      "top4": { "implementar": false, "note": "Decisão #3: não implementar Top 4 nesta entrega, mesmo com semifinal." },
+      "selosCondicionais": ["seal_performance", "seal_fair_play"],
+      "ativo": true,
+      "publicado": false
+    },
+    {
+      "templateId": "domingo_pintando_7",
+      "nome": "Domingo Pintando o 7",
+      "coverAssetId": "capa_domingo_pintando_7",
+      "acesso": "vip",
+      "participacao": "individual",
+      "modalidade": { "tipo": "fixa", "valor": "aberto" },
+      "recorrencia": { "tipo": "semanal", "diaSemana": "domingo", "horario": "18:00" },
+      "vagas": { "max": 96, "min": 16 },
+      "checkin": { "abre": "17:30", "fecha": "17:50" },
+      "entrada": { "tipo": "paga", "valor": 100, "moeda": "fichas", "configuravel": true },
+      "ingressoAvulso": { "habilitado": false, "configuravel": true },
+      "rankingPolicy": { "todosElegiveisPontuam": true },
+      "premiacao": [
+        { "colocacao": 1, "fichas": 500, "crownAssetId": "crown_champion", "sealAssetId": "seal_champion" },
+        { "colocacao": 2, "fichas": 250, "sealAssetId": "seal_runner_up" },
+        { "colocacao": 3, "fichas": 125, "sealAssetId": "seal_top3" }
+      ],
+      "bonusConfiguraveis": { "opcoes": ["primeira_canastra_limpa", "primeiro_morto", "maior_virada", "partida_mais_rapida"], "limitePorEdicao": "configuravel" },
+      "selosCondicionais": ["seal_performance", "seal_fair_play"],
+      "ativo": true,
+      "publicado": false
+    },
+    {
+      "templateId": "campeonato_mensal",
+      "nome": "Campeonato Mensal Master VIP",
+      "coverAssetId": "capa_campeonato_mensal",
+      "acesso": { "tipo": "misto", "elegiveis": ["classificados", "convidados", "vagas_remanescentes"] },
+      "participacao": "individual",
+      "modalidade": { "tipo": "definidaMensalmente" },
+      "recorrencia": { "tipo": "mensal", "regra": "ultimo_domingo", "horario": "19:00", "note": "Decisão/Correções: último DOMINGO 19:00 (antes era sábado 19:30)." },
+      "vagas": { "max": 64, "min": 16 },
+      "checkin": { "abre": "18:00", "fecha": "18:40" },
+      "entrada": {
+        "classificados": { "tipo": "gratuito" },
+        "vagasRemanescentes": { "tipo": "ingresso", "valor": 300, "moeda": "fichas", "ativar": false, "configuravel": true }
+      },
+      "rankingPolicy": { "todosElegiveisPontuam": true },
+      "premiacao": [
+        { "colocacao": 1, "fichas": 3000, "crownAssetId": "crown_monthly_champion", "sealAssetId": "seal_monthly_champion", "extras": ["hall_dos_imortais"] },
+        { "colocacao": 2, "fichas": 1500, "sealAssetId": "seal_runner_up" },
+        { "colocacao": 3, "fichas": 750, "sealAssetId": "seal_top3" }
+      ],
+      "registroFinalistas": "historico_mensal_permanente",
+      "regraCritica": "Nunca retirar vaga de classificado confirmado para acomodar ingresso pago.",
+      "ativo": true,
+      "publicado": false
+    },
+    {
+      "templateId": "campeonato_anual",
+      "nome": "Campeonato Anual Master VIP",
+      "acesso": "vip",
+      "participacao": "individual",
+      "modalidade": { "tipo": "definidaPelaAdmin" },
+      "recorrencia": { "tipo": "none" },
+      "premiacao": [
+        { "colocacao": 1, "crownAssetId": "crown_annual_champion", "sealAssetId": "seal_annual_champion", "extras": ["maior_pacote_anual", "hall_dos_imortais", "titulo_anual"], "fichas": "configuravel" }
+      ],
+      "registered": true,
+      "ativo": false,
+      "publicado": false,
+      "note": "Decisão #6: cadastrado, inativo, não publicado, sem recorrência automática. Ativação futura pela administração."
+    }
+  ],
+  "eventoEncerramento": {
+    "templateId": "encerramento_campeoes_ano",
+    "nome": "Torneio de Encerramento dos Campeões do Ano",
+    "status": "planejado",
+    "dataFixa": "2026-12-18T20:30:00-03:00",
+    "checkin": { "abre": "20:00", "fecha": "20:20" },
+    "acesso": "somente_convidados",
+    "vagas": { "max": 16, "min": 8, "escalavelPara": [24, 32] },
+    "coverAssetId": "cover_closing_card",
+    "motorConvites": { "pesos": "configuraveis", "status": "mock ate tabela oficial (decisão #8)", "ativarEmProducao": false },
+    "premiacao": {
+      "campeao": { "crownAssetId": "crown_closing_champion", "sealAssetId": "seal_closing_champion", "extras": ["titulo_exclusivo", "fichas_premium", "hall"] },
+      "vice": { "sealAssetId": "seal_closing_runner_up", "extras": ["fichas", "moldura"] },
+      "convidados": { "sealAssetId": "seal_closing_guest" }
+    },
+    "note": "Implementação detalhada na etapa 12 (convites/suplência/artes dinâmicas). Sem Top 4 na arte de resultado."
+  }
+}

@@ -153,6 +153,13 @@
     },
 
     {
+      "assetId": "cover_closing_card",
+      "categoria": "capa",
+      "finalidade": "Capa do Torneio de Encerramento dos Campeoes do Ano. Referenciada por eventoEncerramento.coverAssetId em tournamentTemplates.seed.json; arte ainda nao produzida.",
+      "arquivoLocal": null,
+      "status": "pendingAsset"
+    },
+    {
       "assetId": "seal_closing_guest",
       "categoria": "selo",
       "finalidade": "Selo de convidado do torneio de encerramento anual.",

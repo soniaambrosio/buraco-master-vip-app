@@ -346,25 +346,28 @@ ResultadoApuracao apurarFaseDecisiva({
   );
 }
 
-/// Monta a sequencia de fases prevista pelo formato do template.
+/// Monta a sequencia de fases prevista pelo formato da edicao.
 ///
 /// [semente] gera as sementes derivadas de cada fase, mantendo tudo reproduzivel
 /// a partir de um unico numero guardado na edicao.
 ///
-/// Lanca [ArgumentError] quando o template ainda nao definiu o numero de fases:
-/// gerar uma quantidade arbitraria decidiria o formato da competicao no lugar da
-/// administracao (OS 02 secao 3).
+/// [totalFases] e [formato] vem da EDICAO, e nao do template: o seed aprovado
+/// nao fixa numero de fases nem formato, porque a modalidade de varios torneios
+/// muda a cada edicao ("alterna", "rodizio", "definidaMensalmente"). Lanca
+/// [ArgumentError] quando a edicao ainda nao os definiu — gerar uma quantidade
+/// arbitraria decidiria o formato da competicao no lugar da administracao.
 List<Fase> montarFases({
   required String tournamentId,
   required String editionId,
-  required TorneioTemplate template,
+  required int? totalFases,
+  required FormatoTorneio formato,
   required int semente,
   required int ladosPorMesa,
   List<int> vagasPorFase = const [],
 }) {
-  final total = template.numeroFases;
+  final total = totalFases;
   if (total == null) {
-    throw ArgumentError('template ${template.tournamentId}: numeroFases indefinido');
+    throw ArgumentError('edicao $editionId: numeroFases indefinido');
   }
   if (total < 1) {
     throw ArgumentError.value(total, 'numeroFases', 'deve ser >= 1');
@@ -377,11 +380,7 @@ List<Fase> montarFases({
   final fases = <Fase>[];
   for (var i = 0; i < total; i++) {
     final ultima = i == total - 1;
-    final tipo = _tipoDaFase(
-      indice: i,
-      total: total,
-      formato: template.formato,
-    );
+    final tipo = _tipoDaFase(indice: i, total: total, formato: formato);
     fases.add(Fase(
       faseId: '$editionId-fase-${i + 1}',
       tournamentId: tournamentId,
