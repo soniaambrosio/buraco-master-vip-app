@@ -2994,6 +2994,7 @@ void main() {
       List<CartaSnapshot> monte = const [],
       List<CartaSnapshot> lixo = const [],
       List<List<CartaSnapshot>> mortos = const [],
+      List<List<CartaSnapshot>> melsNos = const [],
       Map<String, bool> mortoPego = const {'nos': false, 'eles': false},
       Modalidade modalidade = Modalidade.fechado,
     }) =>
@@ -3010,7 +3011,7 @@ void main() {
             <CartaSnapshot>[],
           ],
           jogosDupla: {
-            'nos': <List<CartaSnapshot>>[],
+            'nos': [for (final m in melsNos) [...m]],
             'eles': <List<CartaSnapshot>>[],
           },
           rodadasVulneravel: const {'nos': 0, 'eles': 0},
@@ -3019,6 +3020,11 @@ void main() {
           mortoPego: {...mortoPego},
           fase: fase,
         );
+
+    List<CartaSnapshot> limpa7() => [
+          for (int i = 0; i < 7; i++)
+            csm('c$i', 'copas', const ['3', '4', '5', '6', '7', '8', '9'][i])
+        ];
 
     test('FASE-01 início (compra): pode comprar, não pode descartar', () {
       final est = estF(
@@ -3185,6 +3191,152 @@ void main() {
           modalidade: Modalidade.fechado,
           faseInicial: FaseTurno.jogo);
       expect(Replay.fromJson(rep.toJson()).faseInicial, FaseTurno.jogo); // replay
+    });
+
+    test('FASE-12 já pegou morto + canastra + descarta última → BATIDA', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [csm('u0', 'ouros', 'K')], // última carta
+          melsNos: [limpa7()], // canastra na mesa
+          mortoPego: const {'nos': true, 'eles': false}); // morto cumprido
+      final r = aplicarLegal(est, 0, const Descartar('u0'), fechado);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.rodadaEncerrada, true); // encerra como BATIDA
+      expect(prox.duplaQueBateu, 'nos');
+      expect(prox.vez, 0); // não "passa a vez" simplesmente
+    });
+
+    test('FASE-13 já pegou morto, SEM canastra, descarta última → rejeita', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [csm('u0', 'ouros', 'K')],
+          melsNos: const [], // nenhuma canastra que libere
+          mortoPego: const {'nos': true, 'eles': false});
+      final antes = est.assinatura();
+      final r = aplicarLegal(est, 0, const Descartar('u0'), fechado);
+      expect(r.legal, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes); // estado intacto
+    });
+
+    test('FASE-14 baixa todas + morto disponível → morto direto, mantém a vez', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [
+            csm('h0', 'copas', '3'),
+            csm('h1', 'copas', '4'),
+            csm('h2', 'copas', '5'),
+          ],
+          mortos: [morto11('a')]);
+      final r = aplicarLegal(
+          est, 0, const Baixar(jogosNovos: [['h0', 'h1', 'h2']]), fechado);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.maos[0].isEmpty, true);
+      expect(prox.fase, FaseTurno.jogo);
+      expect(prox.vez, 0); // mantém a vez
+      expect(acaoEhLegal(prox, 0, const PegarMorto(), fechado), true);
+    });
+
+    test('FASE-15 baixa todas + morto cumprido + canastra → pode bater', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: limpa7(), // 7 cartas formam canastra ao baixar
+          mortoPego: const {'nos': true, 'eles': false}); // morto cumprido
+      final r = aplicarLegal(
+          est,
+          0,
+          Baixar(jogosNovos: [
+            [for (final c in limpa7()) c.id]
+          ]),
+          fechado);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.maos[0].isEmpty, true);
+      expect(acaoEhLegal(prox, 0, const Bater(), fechado), true);
+    });
+
+    test('FASE-16 baixa todas sem morto nem canastra → rejeita a baixada', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [
+            csm('h0', 'copas', '3'),
+            csm('h1', 'copas', '4'),
+            csm('h2', 'copas', '5'),
+          ],
+          mortos: const [], // sem morto
+          mortoPego: const {'nos': true, 'eles': false});
+      final antes = est.assinatura();
+      final r = aplicarLegal(
+          est, 0, const Baixar(jogosNovos: [['h0', 'h1', 'h2']]), fechado);
+      expect(r.legal, false); // 3 cartas não é canastra; nada libera esvaziar
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes); // estado intacto
+    });
+
+    test('FASE-17 descarte da última com morto disponível → morto indireto', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [csm('u0', 'ouros', 'K')],
+          mortos: [morto11('a')]);
+      final r = aplicarLegal(est, 0, const Descartar('u0'), fechado);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.fase, FaseTurno.mortoPendente);
+      final ger = gerarAcoesLegais(prox, 0, fechado);
+      expect(ger.length, 1);
+      expect(ger.single, isA<PegarMorto>());
+    });
+
+    test('FASE-18 nenhuma transição deixa mão vazia + rodada aberta + 0 ações', () {
+      // (a) baixar que esvazia COM morto: aceito e há ação legal (saída existe).
+      final estA = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [
+            csm('h0', 'copas', '3'),
+            csm('h1', 'copas', '4'),
+            csm('h2', 'copas', '5'),
+          ],
+          mortos: [morto11('a')]);
+      final pA = aplicarLegal(
+              estA, 0, const Baixar(jogosNovos: [['h0', 'h1', 'h2']]), fechado)
+          .proximoEstado!;
+      expect(pA.maos[0].isEmpty && !pA.rodadaEncerrada, true);
+      expect(gerarAcoesLegais(pA, 0, fechado), isNotEmpty); // invariante
+      // (b) baixar que esvaziaria SEM saída: rejeitado (não cria estado impossível).
+      final estB = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [
+            csm('h0', 'copas', '3'),
+            csm('h1', 'copas', '4'),
+            csm('h2', 'copas', '5'),
+          ],
+          mortos: const [],
+          mortoPego: const {'nos': true, 'eles': false});
+      expect(
+          aplicarLegal(estB, 0, const Baixar(jogosNovos: [['h0', 'h1', 'h2']]),
+                  fechado)
+              .legal,
+          false);
+      // (c) descarte-batida: encerra a rodada (não fica aberta e vazia).
+      final estC = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [csm('u0', 'ouros', 'K')],
+          melsNos: [limpa7()],
+          mortoPego: const {'nos': true, 'eles': false});
+      final pC =
+          aplicarLegal(estC, 0, const Descartar('u0'), fechado).proximoEstado!;
+      expect(pC.rodadaEncerrada, true);
     });
   });
 }

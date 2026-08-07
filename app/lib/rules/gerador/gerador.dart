@@ -20,6 +20,14 @@
 // esvazia com morto disponível -> mortoPendente (mesma vez); morto direto ->
 // jogo (mesma vez, ainda descarta); morto indireto -> compra (vez++).
 //
+// ESVAZIAR A MÃO É REGRA (usa podeEsvaziarMao/duplaPodeBater como autoridade
+// canônica, sem duplicar a condição): QUALQUER ação que zere a mão só é legal se
+// terminar num estado legal — morto a pegar OU batida. Senão a PRÓPRIA ação é
+// rejeitada; nunca se cria mão vazia com a rodada aberta e sem ação legal.
+//   - baixar que zera a mão: aceita só se podeEsvaziarMao (senão recusa);
+//   - descarte que zera a mão: morto disponível -> mortoPendente (indireto);
+//     morto já cumprido + canastra -> BATIDA (avaliarBatida); nenhum -> recusa.
+//
 // Escopo ainda deixado para o fluxo/bot (commits seguintes), não silenciosamente
 // omitido: a enumeração COMBINATÓRIA de todas as baixadas possíveis (o bot
 // propõe candidatos; a legalidade — inclusive a fase — é sempre decidida aqui).
@@ -93,9 +101,16 @@ ResultadoJogada aplicarLegal(
           'baixar/estender só na fase de jogo, após comprar');
     }
     final r = avaliarBaixar(estado, assento, acao, spec);
-    return r.valido
-        ? ResultadoJogada(legal: true, proximoEstado: r.proximoEstado)
-        : ResultadoJogada.recusa(r.motivo ?? 'baixada ilegal');
+    if (!r.valido) return ResultadoJogada.recusa(r.motivo ?? 'baixada ilegal');
+    final prox = r.proximoEstado!;
+    // Esvaziar é REGRA: se a baixada zera a mão, só é legal se a dupla puder
+    // pegar o morto OU bater (podeEsvaziarMao — autoridade canônica). Senão,
+    // rejeita a própria baixada (não deixa a mão vazia em estado impossível).
+    if (prox.maos[assento].isEmpty && !podeEsvaziarMao(prox, assento, spec)) {
+      return ResultadoJogada.recusa(
+          'baixar zeraria a mão sem morto a pegar nem canastra para bater');
+    }
+    return ResultadoJogada(legal: true, proximoEstado: prox);
   }
 
   if (acao is Descartar) {
@@ -111,22 +126,35 @@ ResultadoJogada aplicarLegal(
     final idx = prox.maos[assento].indexWhere((c) => c.id == acao.carta);
     final carta = prox.maos[assento].removeAt(idx);
     prox.lixo.add(carta); // vai para o topo do lixo
+    if (prox.maos[assento].isNotEmpty) {
+      // Descarte normal encerra o turno: próximo assento inicia em compra.
+      return ResultadoJogada(
+          legal: true,
+          proximoEstado:
+              prox.copyWith(vez: (assento + 1) % 4, fase: FaseTurno.compra));
+    }
+    // O descarte ZEROU a mão. Esvaziar é REGRA: só é legal se a dupla puder
+    // pegar o morto OU bater (podeEsvaziarMao). Senão, recusa (estado intacto).
+    if (!podeEsvaziarMao(prox, assento, spec)) {
+      return ResultadoJogada.recusa(
+          'descartar a última carta sem morto a pegar nem canastra para bater');
+    }
     final dupla = assento % 2 == 0 ? 'nos' : 'eles';
-    final esvaziou = prox.maos[assento].isEmpty;
     final mortoDisponivel =
         !(prox.mortoPego[dupla] ?? false) && prox.mortos.isNotEmpty;
-    if (esvaziou && mortoDisponivel) {
-      // Descarte esvaziou a mão e há morto a pegar: morto INDIRETO pendente.
-      // A vez NÃO passa ainda; a única ação legal será PegarMorto(viaDescarte).
+    if (mortoDisponivel) {
+      // Morto INDIRETO pendente (mesma vez); única ação legal: PegarMorto(via).
       return ResultadoJogada(
           legal: true,
           proximoEstado: prox.copyWith(fase: FaseTurno.mortoPendente));
     }
-    // Descarte normal encerra o turno: próximo assento inicia na fase de compra.
-    return ResultadoJogada(
-        legal: true,
-        proximoEstado:
-            prox.copyWith(vez: (assento + 1) % 4, fase: FaseTurno.compra));
+    // Morto já cumprido (ou sem morto) + canastra que libera: o descarte é
+    // BATIDA (a legalidade é decidida por avaliarBatida — não duplicada aqui).
+    final b = avaliarBatida(prox, assento, spec);
+    return b.valido
+        ? ResultadoJogada(legal: true, proximoEstado: b.proximoEstado)
+        : ResultadoJogada.recusa(
+            b.motivo ?? 'não pode encerrar o turno com a mão vazia');
   }
 
   if (acao is PegarMorto) {
