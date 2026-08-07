@@ -206,6 +206,69 @@ jobs:
           flutter test test/torneios/reward_grants_test.dart --reporter expanded
           echo "PORTÃO VERDE: domínio de recompensas de torneios validado no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE QUALIDADE — Motor de Torneios (OS 02)"
+        # Cobre a lista obrigatória da OS 02 seção 22: criação, inscrições,
+        # elegibilidade, mesas, resultado, avanço, classificação, desempate,
+        # campeão, premiação, reprocessamento, histórico, registro anual e
+        # convites. Roda SOMENTE este arquivo, pelo mesmo motivo do portão acima:
+        # o widget_test.dart do `flutter create` tem erro pré-existente.
+        run: |
+          if [ ! -f app/test/torneios/motor_torneios_test.dart ]; then
+            echo "ERRO: app/test/torneios/motor_torneios_test.dart não encontrado — o portão do motor é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/torneios/data
+          cp app/test/torneios/motor_torneios_test.dart app_build/test/torneios/
+          # Copia TODOS os seeds de torneio: o catálogo (tournaments.seed.json)
+          # entrou nesta OS e o teste de criação de torneio lê dele.
+          cp app/data/torneios/*.json app_build/test/torneios/data/
+          echo "seeds disponíveis para o teste:"
+          ls -l app_build/test/torneios/data/
+          cd app_build
+          flutter test test/torneios/motor_torneios_test.dart --reporter expanded
+          echo "PORTÃO VERDE: Motor de Torneios validado no commit ${GITHUB_SHA}."
+
+      - name: "PORTÃO DE QUALIDADE — analyze do domínio de torneios"
+        # `flutter analyze` no repositório inteiro pegaria erros pré-existentes de
+        # outras áreas e não passaria hoje. O alvo é o que esta OS entregou.
+        run: |
+          cd app_build
+          flutter analyze lib/torneios lib/screens/torneios_models.dart test/torneios
+          echo "ANALYZE VERDE: domínio de torneios sem erros."
+
+      - name: "PORTÃO DE QUALIDADE — ponte Dart→JS das Cloud Functions"
+        # As Cloud Functions NÃO reimplementam as regras: elas carregam o domínio
+        # Dart compilado (functions/lib/domain_bundle.js). Este portão prova que a
+        # compilação continua possível e que o TypeScript casa com a ponte.
+        #
+        # Sem ele, uma mudança inocente no domínio (um `int` de 64 bits, por
+        # exemplo) quebraria o backend e só apareceria no deploy.
+        run: |
+          dart compile js -O2 -o functions/lib/domain_bundle.js app/lib/torneios/js_bridge.dart
+          node -e "
+            require('./functions/lib/domain_bundle.js');
+            const d = globalThis.bmvTorneios;
+            if (!d) { console.error('ERRO: bundle não expôs bmvTorneios'); process.exit(1); }
+            // Determinismo entre plataformas: esta distribuição é a mesma que o
+            // teste-ouro em motor_torneios_test.dart fixa na VM Dart.
+            const m = JSON.parse(d.formarMesas(JSON.stringify({
+              tournamentId:'t', editionId:'e', faseId:'f1',
+              participantes:['j0','j1','j2','j3','j4','j5','j6','j7'],
+              ladosPorMesa:2, semente:42
+            }))).mesas.map(x=>x.assentos.join('/')).join(' | ');
+            const esperado = 'j4/j6 | j5/j7 | j1/j3 | j2/j0';
+            if (m !== esperado) {
+              console.error('ERRO: sorteio divergiu entre Dart VM e JS.');
+              console.error('  esperado: ' + esperado);
+              console.error('  obtido:   ' + m);
+              process.exit(1);
+            }
+            console.log('ponte OK — ' + Object.keys(d).length + ' funções, sorteio idêntico à VM');
+          "
+          npm --prefix functions ci --no-audit --no-fund
+          npm --prefix functions run lint
+          echo "PORTÃO VERDE: ponte Dart→JS e Cloud Functions compilam no commit ${GITHUB_SHA}."
+
       - name: Bump minSdk to 23 (Firebase)
         run: |
           f=app_build/android/app/build.gradle.kts
