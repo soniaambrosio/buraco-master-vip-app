@@ -2957,6 +2957,7 @@ void main() {
           csm('h0', 'copas', '3'),
           csm('h1', 'copas', '4'),
           csm('h2', 'copas', '5'),
+          csm('h3', 'ouros', 'K'), // sobra: a baixada NÃO zera a mão
         ],
       );
       const candValido = Baixar(jogosNovos: [['h0', 'h1', 'h2']]);
@@ -3072,6 +3073,7 @@ void main() {
         csm('h0', 'copas', '3'),
         csm('h1', 'copas', '4'),
         csm('h2', 'copas', '5'),
+        csm('h3', 'ouros', 'K'), // sobra: a baixada NÃO zera a mão
       ];
       final estJogo = estF(fase: FaseTurno.jogo, mao0: maoSeq);
       final estCompra = estF(fase: FaseTurno.compra, mao0: maoSeq);
