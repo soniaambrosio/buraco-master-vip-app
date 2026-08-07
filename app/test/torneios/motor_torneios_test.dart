@@ -103,6 +103,7 @@ EdicaoTorneio _edicao({
     inscricoesFechamEm: base.subtract(const Duration(minutes: 30)),
     modalidade: ModalidadeMesa.aberto,
     numeroFases: 2,
+    formato: FormatoTorneio.misto,
     metaPontos: 1500,
     regraVersao: 3,
     criadoEm: _agora.subtract(const Duration(days: 30)),
@@ -1902,7 +1903,6 @@ void main() {
       return montarHistorico(
         edicao: _edicao(status: EdicaoStatus.encerrado),
         template: _template(),
-        formato: FormatoTorneio.misto,
         conclusao: conclusao,
         classificacaoFinal: classificacao,
         fases: const ['f1'],
@@ -1940,7 +1940,6 @@ void main() {
       );
       final h = montarHistorico(
         edicao: _edicao(status: EdicaoStatus.encerrado), template: _template(),
-        formato: FormatoTorneio.misto,
         conclusao: conclusao,
         classificacaoFinal: calcularClassificacao(
           resultados: const [], criterios: desempatePadrao, participantes: const ['ana'],
@@ -1958,6 +1957,55 @@ void main() {
       expect(volta.campeaoId, h.campeaoId);
       expect(volta.classificacaoFinal.length, h.classificacaoFinal.length);
       expect(volta.criteriosDesempate, h.criteriosDesempate);
+    });
+
+    test('o formato do historico e o da EDICAO, nao um parametro solto', () {
+      final h = montar();
+      expect(h.formato, _edicao().formato);
+      expect(h.formato, FormatoTorneio.misto);
+    });
+
+    test('edicao sem formato resolvido FALHA ALTO em vez de inventar um', () {
+      // Antes, `formato` era parametro de montarHistorico: dava para apurar a
+      // edicao em `misto` e gravar o historico como `pontos_corridos` sem nada
+      // reclamar. Agora ha uma fonte so, e a ausencia para o processo.
+      final semFormato = EdicaoTorneio(
+        tournamentId: 'copa_buraco_master', editionId: 'ed-2026-08',
+        numeroEdicao: 3, temporada: '2026', status: EdicaoStatus.encerrado,
+        inicioPrevisto: _agora, regraVersao: 3,
+        criadoEm: _agora, atualizadoEm: _agora,
+      );
+      expect(semFormato.formato, isNull);
+      expect(
+        () => montarHistorico(
+          edicao: semFormato,
+          template: _template(),
+          conclusao: ConclusaoEdicao(
+            tournamentId: 'copa_buraco_master', editionId: 'ed-2026-08',
+            campeaoId: 'ana', campeoes: const ['ana'],
+            classificacaoFinal: const ['ana'], totalParticipantes: 1,
+            concluidaEm: _agora,
+          ),
+          classificacaoFinal: const [],
+          fases: const ['f1'],
+          totalPartidas: 0,
+          premiacoes: const [],
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a edicao carrega o formato no round-trip', () {
+      final volta = EdicaoTorneio.fromMap(_edicao().toJson());
+      expect(volta.formato, FormatoTorneio.misto);
+    });
+
+    test('formato gravado desconhecido e recusado, nao lido como ausente', () {
+      // Valor corrompido nao pode virar null: a edicao pareceria "sem formato
+      // definido" e a falha apontaria para o motivo errado.
+      final json = _edicao().toJson();
+      json['formato'] = 'suico';
+      expect(() => EdicaoTorneio.fromMap(json), throwsFormatException);
     });
 
     test('consultas de jogador funcionam sobre o historico', () {

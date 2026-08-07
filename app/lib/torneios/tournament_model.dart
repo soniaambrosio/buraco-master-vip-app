@@ -1143,6 +1143,19 @@ class EdicaoTorneio {
   /// Numero de fases desta edicao. null enquanto nao definido.
   final int? numeroFases;
 
+  /// Como as fases desta edicao se encadeiam.
+  ///
+  /// Fica na EDICAO, e nao no template, pelo mesmo motivo de [modalidade]: o
+  /// seed aprovado nao fixa formato, e varios torneios decidem a cada edicao.
+  ///
+  /// Ter UM lugar so para o formato e o que impede o historico de discordar da
+  /// disputa. Enquanto ele era parametro solto de `montarHistorico`, era
+  /// possivel apurar a edicao como `misto` e grava-la no historico como
+  /// `pontos_corridos` sem nada reclamar.
+  ///
+  /// null enquanto a administracao nao definir.
+  final FormatoTorneio? formato;
+
   /// Meta de pontos da partida, repassada ao Motor de Partidas.
   final int? metaPontos;
 
@@ -1164,6 +1177,7 @@ class EdicaoTorneio {
     DateTime? inscricoesFechamEm,
     this.modalidade,
     this.numeroFases,
+    this.formato,
     this.metaPontos,
     required this.regraVersao,
     required DateTime criadoEm,
@@ -1264,6 +1278,7 @@ class EdicaoTorneio {
         inscricoesFechamEm: fechaEm ?? inscricoesFechamEm,
         modalidade: modalidade ?? this.modalidade,
         numeroFases: numeroFases,
+        formato: formato,
         metaPontos: metaPontos,
         regraVersao: regraVersao,
         criadoEm: criadoEm,
@@ -1347,6 +1362,18 @@ class EdicaoTorneio {
       }
     }
 
+    // Valor gravado que o dominio nao reconhece e registro corrompido, nao
+    // ausencia: aceitar como null faria a edicao parecer "sem formato definido"
+    // e o historico seria recusado por um motivo enganoso.
+    final formatoWire = json['formato'] as String?;
+    FormatoTorneio? formato;
+    if (formatoWire != null) {
+      formato = FormatoTorneio.porWire(formatoWire);
+      if (formato == null) {
+        throw FormatException('edicao: formato desconhecido "$formatoWire".');
+      }
+    }
+
     try {
       return EdicaoTorneio(
         tournamentId: texto('tournamentId'),
@@ -1360,6 +1387,7 @@ class EdicaoTorneio {
         inscricoesFechamEm: instante('inscricoesFechamEm', obrigatorio: false),
         modalidade: modalidade,
         numeroFases: json['numeroFases'] as int?,
+        formato: formato,
         metaPontos: json['metaPontos'] as int?,
         regraVersao: regraVersao,
         criadoEm: instante('criadoEm', obrigatorio: true)!,
@@ -1384,6 +1412,7 @@ class EdicaoTorneio {
         'inscricoesFechamEm': inscricoesFechamEm?.toIso8601String(),
         'modalidade': modalidade?.wire,
         'numeroFases': numeroFases,
+        'formato': formato?.wire,
         'metaPontos': metaPontos,
         'regraVersao': regraVersao,
         'criadoEm': criadoEm.toIso8601String(),

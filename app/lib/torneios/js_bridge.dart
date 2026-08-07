@@ -434,15 +434,12 @@ String montarHistoricoJson(String entrada) {
         ),
     ];
 
-    final formato = FormatoTorneio.porWire(json['formato'] as String? ?? '');
-    if (formato == null) {
-      throw FormatException('formato desconhecido: ${json['formato']}');
-    }
-
+    // O formato entra DENTRO de `edicao`, e nao como campo proprio da chamada:
+    // um campo proprio permitiria o chamador mandar um formato diferente do que
+    // a edicao registra, e a ponte nao teria como saber qual dos dois vale.
     final historico = montarHistorico(
       edicao: EdicaoTorneio.fromMap(json['edicao'] as Map<String, dynamic>),
       template: TorneioTemplate.fromJson(json['template'] as Map<String, dynamic>),
-      formato: formato,
       conclusao: ConclusaoEdicao(
         tournamentId: conclusaoJson['tournamentId'] as String,
         editionId: conclusaoJson['editionId'] as String,

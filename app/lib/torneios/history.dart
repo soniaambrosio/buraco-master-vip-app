@@ -303,18 +303,34 @@ class RegistroHistorico {
 ///
 /// Funcao pura: recebe a conclusao, a classificacao e o que foi premiado, e
 /// devolve o snapshot. Nada e gravado.
-/// [formato] vem por parametro, e nao do template: o seed aprovado nao fixa
-/// formato, porque ele pode mudar de edicao para edicao junto com a modalidade.
+/// O formato vem da EDICAO, e nao por parametro nem do template.
+///
+/// Como parametro, era possivel apurar a edicao em `misto` e grava-la no
+/// historico como `pontos_corridos` sem nada reclamar — o registro que deveria
+/// explicar a competicao contradiria a competicao. Lendo da edicao existe uma
+/// fonte so, e a divergencia deixa de ser representavel.
+///
+/// Lanca [ArgumentError] quando a edicao nao tem formato resolvido. Falha alto de
+/// proposito: um default aqui inventaria como a disputa foi organizada, e o
+/// historico e permanente — o chute ficaria no perfil do jogador para sempre.
 RegistroHistorico montarHistorico({
   required EdicaoTorneio edicao,
   required TorneioTemplate template,
-  required FormatoTorneio formato,
   required ConclusaoEdicao conclusao,
   required List<LinhaClassificacao> classificacaoFinal,
   required List<String> fases,
   required int totalPartidas,
   required List<PremiacaoPlanejada> premiacoes,
 }) {
+  final formato = edicao.formato;
+  if (formato == null) {
+    throw ArgumentError.value(
+      edicao.chave,
+      'edicao.formato',
+      'edicao concluida sem formato resolvido; o historico nao pode inventar um',
+    );
+  }
+
   final linhas = <LinhaHistorico>[];
   for (final linha in classificacaoFinal) {
     linhas.add(LinhaHistorico(

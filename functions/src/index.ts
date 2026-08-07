@@ -491,6 +491,34 @@ export const aoConcluirEdicao = onDocumentCreated(
       db().collection("seeds").doc("reward_policies").get(),
     ]);
 
+    const edicao = edicaoDoc.data();
+    if (!edicao) {
+      throw new Error(
+        `edicao ${tournamentId}/${editionId} nao existe: conclusao sem edicao correspondente.`
+      );
+    }
+
+    // O formato da disputa vive na EDICAO. Esta funcao nao escolhe um, nao
+    // deriva do template e nao tem default: uma edicao concluida sem formato
+    // resolvido e dado inconsistente, e o historico e permanente — um chute
+    // aqui ficaria no perfil do jogador para sempre.
+    //
+    // Falhar aqui, e nao la dentro, e deliberado: o dominio tambem recusa (ver
+    // montarHistorico), mas a mensagem dele nao sabe QUAL edicao falhou. Esta
+    // sabe, e o retry do gatilho fica rastreavel.
+    //
+    // O VALOR nao e validado aqui de proposito: quais formatos existem e regra
+    // do dominio, e repetir a lista em TypeScript criaria uma segunda fonte que
+    // divergiria na primeira mudanca. `EdicaoTorneio.fromMap` recusa o que nao
+    // reconhecer.
+    if (typeof edicao.formato !== "string" || edicao.formato.length === 0) {
+      throw new Error(
+        `edicao ${tournamentId}/${editionId} concluida sem formato resolvido ` +
+          `(recebido: ${JSON.stringify(edicao.formato)}). ` +
+          "O historico nao pode ser montado sem ele."
+      );
+    }
+
     // Concessoes ja existentes do mesmo torneio/edicao entram como historico: e
     // o que faz um reprocessamento devolver `concessao_duplicada` em vez de
     // premiar de novo.
@@ -537,7 +565,10 @@ export const aoConcluirEdicao = onDocumentCreated(
     const resultados = await edicaoRef.collection("results").get();
 
     const historico = dominio.montarHistorico({
-      edicao: edicaoDoc.data(),
+      // `formato` viaja DENTRO de `edicao`, e nao como campo irmao: campo irmao
+      // permitiria mandar um formato diferente do que a edicao registra, e a
+      // ponte nao teria como saber qual dos dois vale.
+      edicao,
       template,
       conclusao,
       classificacaoFinal: classificacao.docs.map((d) => d.data()),
