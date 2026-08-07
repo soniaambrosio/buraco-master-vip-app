@@ -203,3 +203,13 @@ Por decisão explícita da ordem de serviço, e não por falta:
 - não substitui ninguém por robô por ausência;
 - não encerra partida por inviabilidade;
 - não fala Firebase, e não substituiu o backend WebSocket por outra arquitetura.
+
+As quatro regras que faltavam para essas decisões — ação na expiração,
+penalidade por abandono, retorno após substituição e encerramento por
+inviabilidade — foram decididas em 07/08/2026 e estão em
+[`MOTOR-PARTIDAS-PROTOCOLO-SERVIDOR.md`](MOTOR-PARTIDAS-PROTOCOLO-SERVIDOR.md)
+como DECISÃO 1 a 4. Elas descrevem o que o **servidor** faz; esta camada
+continua sem tomá-las.
+
+A ligação com `online_service.dart` é OS própria, quando o protocolo real do
+Node/Railway estiver disponível.
