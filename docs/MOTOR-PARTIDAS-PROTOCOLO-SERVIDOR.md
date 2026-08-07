@@ -195,9 +195,30 @@ Quando o prazo estoura:
 4. ela **gera `eventoId` próprio** (do servidor, não do cliente),
    **incrementa `versaoEstado`** e **entra no diário estruturado**.
 
-O `eventoId` do servidor precisa ser distinguível dos do cliente — sugestão:
-prefixo `srv-`. Sem isso, o cache de idempotência não consegue separar "o
-servidor jogou por você" de "você reenviou sua jogada".
+#### Namespace de eventoId por origem (decidido em 07/08/2026)
+
+Eventos originados no servidor usam **namespace próprio: `srv-<uuid>`**.
+
+**O prefixo declara a ORIGEM AUTORITATIVA do evento — não é convenção de
+nomenclatura.** A distinção é semântica e tem três consequências operacionais:
+
+1. **Idempotência.** Sem namespaces separados, o cache não consegue distinguir
+   "o servidor jogou por você" de "você reenviou sua jogada". Um cliente que
+   volta de uma queda e reenvia a fila poderia colidir com o `eventoId` da
+   jogada automática que o servidor já executou no lugar dele.
+2. **Auditoria.** Ao ler o diário de uma reclamação, a origem do evento é a
+   primeira pergunta: a carta saiu porque o jogador mandou, ou porque o tempo
+   dele acabou? O namespace responde isso sem consultar mais nada.
+3. **Autoridade.** Um `srv-` chegando **do** cliente é, por definição,
+   falsificação de origem. O servidor deve **recusar** com `COMANDO_INVALIDO`
+   qualquer comando cujo `eventoId` use o namespace do servidor.
+
+`<uuid>` — e não um contador — porque o servidor pode reiniciar, e um contador
+reiniciado reemitiria ids já usados, fazendo o cache tratar evento novo como
+duplicado.
+
+O cliente gera os dele por `GeradorEventoId` (`app/lib/motor/sessao_reconexao.dart`),
+cujo prefixo é a sessão do jogador. Os dois espaços não se cruzam.
 
 **Não criar a regra "perdeu o turno" nesta fase.** O valor `turnoPerdido`
 continua no enum porque o contrato precisa comportar a evolução, mas nenhuma
@@ -421,7 +442,8 @@ está fechada** — não há mais nada esperando decisão.
 | 4 | Visão recortada por assento | §2 |
 | 5 | `ping`/`pong` com carimbo do servidor | §3 |
 | 6 | Prazo de turno como instante, reemitido a cada turno | §3 |
-| 7 | Jogada automática na expiração, com `eventoId` do servidor (`srv-`) | §3 · DECISÃO 1 |
+| 7 | Jogada automática na expiração, com `eventoId` no namespace `srv-<uuid>` | §3 · DECISÃO 1 |
+| 7b | Recusar comando do cliente que use o namespace `srv-` | §3 · DECISÃO 1 |
 | 8 | `heartbeat` + máquina de presença com degraus | §4 |
 | 9 | `penalidadePontos: null` e registro de abandono à parte | §5 · DECISÃO 2 |
 | 10 | Vínculo `assento → usuário` sobrevivendo à substituição por robô | §5 · DECISÃO 3 |
