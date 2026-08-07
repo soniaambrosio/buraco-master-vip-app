@@ -152,7 +152,11 @@ jobs:
             exit 1
           fi
           mkdir -p app_build/test
-          cp app/test/teste_motor.dart app_build/test/
+          # Copia a pasta de teste inteira: além do teste_motor.dart, leva os
+          # assets que ele importa (ex.: conformidade_fixture.dart do C8).
+          cp -R app/test/. app_build/test/
+          echo "arquivos de teste copiados:"
+          ls -l app_build/test/
           echo "================= REGISTRO DO PORTÃO ================="
           echo "Commit testado (GITHUB_SHA): ${GITHUB_SHA}"
           echo "SHA-256 do motor testado (código REAL de produção):"
