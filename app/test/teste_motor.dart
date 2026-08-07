@@ -23,6 +23,9 @@ import 'package:buraco_master_vip/rules/abertura/abertura.dart';
 import 'package:buraco_master_vip/rules/morto/morto.dart';
 // C7 — gerador único de ações legais (aditivo; motor antigo continua padrão).
 import 'package:buraco_master_vip/rules/gerador/gerador.dart';
+// C8 — conformidade Dart × Node (fixture do lado Node; comparação cross-engine).
+import 'dart:convert';
+import 'conformidade_fixture.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -3339,6 +3342,101 @@ void main() {
       final pC =
           aplicarLegal(estC, 0, const Descartar('u0'), fechado).proximoEstado!;
       expect(pC.rodadaEncerrada, true);
+    });
+  });
+
+  // ===================================================================
+  // C8 — CONFORMIDADE Dart × Node (modo sombra). Roda os MESMOS vetores no
+  // motor canônico e compara com o fixture do servidor deployado (só leitura).
+  // Divergências críticas conhecidas (decisão Sônia): CRIT-01 (de_500) e
+  // CRIT-02 (as_a_as) — ambas BLOQUEIAM promoção online; servidor deve ser
+  // atualizado no futuro para a regra canônica e os vetores reexecutados.
+  // ===================================================================
+  group('C8 — conformidade Dart × Node', () {
+    final fx = jsonDecode(c8FixtureJson) as Map<String, dynamic>;
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+    RuleSpec specDe(String m) =>
+        m == 'aberto' ? aberto : (m == 'fechado' ? fechado : RuleSpec.canonica(Modalidade.stbl));
+    CartaSnapshot cfx(Map<String, dynamic> c) => CartaSnapshot(
+        c['id'] as String,
+        c['naipe'] as String?,
+        c['valor'] as String,
+        c['valor'] == '2' || c['valor'] == 'JOKER');
+
+    test('C8-HASH fixture casa com o extrato de regras do servidor + versão da spec',
+        () {
+      expect(fx['hashRegrasNode'],
+          '6ade290978f7812ca85e0758775586a09d9cf96cd9c12af82203db1adabba85c');
+      expect(fx['versaoSpec'], 'bmv-regras-2026.08');
+    });
+
+    test('C8-CONFORMIDADE cross-engine: só CRIT-01 e CRIT-02 divergem', () {
+      final criticas = <String>{};
+
+      // MELD: compara legalidade e bônus de canastra (efeito), não rótulos.
+      for (final v in (fx['meld'] as List).cast<Map<String, dynamic>>()) {
+        final cartas = (v['cartas'] as List)
+            .cast<Map<String, dynamic>>()
+            .map(cfx)
+            .toList();
+        final r = validarJogoMesa(cartas, specDe(v['modalidade'] as String));
+        final dartValido = r.valido;
+        final dartBonus = bonusCanastra(r);
+        final node = v['node'] as Map<String, dynamic>;
+        final igual =
+            dartValido == (node['valido'] as bool) && dartBonus == (node['bonus'] as int);
+        final crit = v['critEsperado'] as String?;
+        if (igual) {
+          expect(crit, isNull,
+              reason:
+                  '${v['id']}: esperava divergência ($crit) mas coincidiu (valido=$dartValido bonus=$dartBonus)');
+        } else {
+          expect(crit, isNotNull,
+              reason:
+                  '${v['id']}: divergência NÃO prevista — Dart(valido=$dartValido,bonus=$dartBonus) × Node(valido=${node['valido']},bonus=${node['bonus']})');
+          criticas.add(crit!);
+        }
+      }
+
+      // PONTUAÇÃO: compara o total da rodada da dupla.
+      for (final v in (fx['score'] as List).cast<Map<String, dynamic>>()) {
+        final melds = (v['melds'] as List)
+            .map((m) =>
+                (m as List).cast<Map<String, dynamic>>().map(cfx).toList())
+            .toList();
+        final mao =
+            (v['mao'] as List).cast<Map<String, dynamic>>().map(cfx).toList();
+        final f = v['flags'] as Map<String, dynamic>;
+        final r = pontuarRodada(
+            EntradaRodada(
+              melds: melds,
+              mao: mao,
+              bateu: f['bateu'] as bool,
+              mortoPego: f['mortoPego'] as bool,
+              algumPegouMorto: f['algumPegouMorto'] as bool,
+            ),
+            fechado);
+        final dartTotal = r.total;
+        final nodeTotal = (v['node'] as Map<String, dynamic>)['total'] as int;
+        final igual = dartTotal == nodeTotal;
+        final crit = v['critEsperado'] as String?;
+        if (igual) {
+          expect(crit, isNull,
+              reason:
+                  '${v['id']}: esperava divergência ($crit) mas os totais coincidiram ($dartTotal)');
+        } else {
+          expect(crit, isNotNull,
+              reason:
+                  '${v['id']}: divergência de pontuação NÃO prevista — Dart=$dartTotal × Node=$nodeTotal');
+          criticas.add(crit!);
+        }
+      }
+
+      // O conjunto de divergências críticas tem de ser EXATAMENTE o conhecido.
+      // Se o servidor for atualizado (regra canônica), estas divergências somem
+      // e este teste falha de propósito — sinal para reclassificar/reexecutar.
+      expect(criticas, {'CRIT-01', 'CRIT-02'});
     });
   });
 }

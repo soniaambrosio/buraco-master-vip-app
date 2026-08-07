@@ -1,0 +1,751 @@
+{
+  "versaoSpec": "bmv-regras-2026.08",
+  "hashRegrasNode": "6ade290978f7812ca85e0758775586a09d9cf96cd9c12af82203db1adabba85c",
+  "origem": {
+    "repo": "soniaambrosio/buraco-servidor",
+    "commit": "be72bb6",
+    "arquivo": "server.js"
+  },
+  "dataNota": "clone só-leitura; server.js sha256 c43c3e98a6bd5d3bc1a7f184bcde33b86ee92e6ba8c935ea46139be37cf67dba",
+  "meld": [
+    {
+      "id": "M01-limpa7",
+      "desc": "sequência limpa 7 (3–9 copas)",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "a0",
+          "naipe": "copas",
+          "valor": "3"
+        },
+        {
+          "id": "a1",
+          "naipe": "copas",
+          "valor": "4"
+        },
+        {
+          "id": "a2",
+          "naipe": "copas",
+          "valor": "5"
+        },
+        {
+          "id": "a3",
+          "naipe": "copas",
+          "valor": "6"
+        },
+        {
+          "id": "a4",
+          "naipe": "copas",
+          "valor": "7"
+        },
+        {
+          "id": "a5",
+          "naipe": "copas",
+          "valor": "8"
+        },
+        {
+          "id": "a6",
+          "naipe": "copas",
+          "valor": "9"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": true,
+        "tipo": "limpa",
+        "bonus": 200
+      }
+    },
+    {
+      "id": "M02-suja7",
+      "desc": "sequência suja 7 (3–8 copas + JOKER)",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "b0",
+          "naipe": "copas",
+          "valor": "3"
+        },
+        {
+          "id": "b1",
+          "naipe": "copas",
+          "valor": "4"
+        },
+        {
+          "id": "b2",
+          "naipe": "copas",
+          "valor": "5"
+        },
+        {
+          "id": "b3",
+          "naipe": "copas",
+          "valor": "6"
+        },
+        {
+          "id": "b4",
+          "naipe": "copas",
+          "valor": "7"
+        },
+        {
+          "id": "b5",
+          "naipe": "copas",
+          "valor": "8"
+        },
+        {
+          "id": "bJ",
+          "naipe": null,
+          "valor": "JOKER"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": true,
+        "tipo": "suja",
+        "bonus": 100
+      }
+    },
+    {
+      "id": "M03-trinca3",
+      "desc": "trinca natural de 3 (K K K)",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "t0",
+          "naipe": "espadas",
+          "valor": "K"
+        },
+        {
+          "id": "t1",
+          "naipe": "copas",
+          "valor": "K"
+        },
+        {
+          "id": "t2",
+          "naipe": "ouros",
+          "valor": "K"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": true,
+        "tipo": "aberta",
+        "bonus": 0
+      }
+    },
+    {
+      "id": "M04-trinca-curinga",
+      "desc": "trinca com curinga (K K JOKER) — inválida",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "u0",
+          "naipe": "espadas",
+          "valor": "K"
+        },
+        {
+          "id": "u1",
+          "naipe": "copas",
+          "valor": "K"
+        },
+        {
+          "id": "u2",
+          "naipe": null,
+          "valor": "JOKER"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": false,
+        "tipo": null,
+        "bonus": 0
+      }
+    },
+    {
+      "id": "M05-ases3-fechado",
+      "desc": "grupo de 3 ases no Fechado (EXC-04: trinca × de_as)",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "v0",
+          "naipe": "copas",
+          "valor": "A"
+        },
+        {
+          "id": "v1",
+          "naipe": "ouros",
+          "valor": "A"
+        },
+        {
+          "id": "v2",
+          "naipe": "espadas",
+          "valor": "A"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": true,
+        "tipo": "aberta",
+        "bonus": 0
+      }
+    },
+    {
+      "id": "M06-ases3-aberto",
+      "desc": "grupo de 3 ases no Aberto — inválido nos dois",
+      "modalidade": "aberto",
+      "permiteTrinca": false,
+      "cartas": [
+        {
+          "id": "w0",
+          "naipe": "copas",
+          "valor": "A"
+        },
+        {
+          "id": "w1",
+          "naipe": "ouros",
+          "valor": "A"
+        },
+        {
+          "id": "w2",
+          "naipe": "espadas",
+          "valor": "A"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": false,
+        "tipo": null,
+        "bonus": 0
+      }
+    },
+    {
+      "id": "M07-de500",
+      "desc": "A–K limpa 13 (de_500): canônico 500 × servidor limpa 200",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "d0",
+          "naipe": "copas",
+          "valor": "A"
+        },
+        {
+          "id": "d1",
+          "naipe": "copas",
+          "valor": "2"
+        },
+        {
+          "id": "d2",
+          "naipe": "copas",
+          "valor": "3"
+        },
+        {
+          "id": "d3",
+          "naipe": "copas",
+          "valor": "4"
+        },
+        {
+          "id": "d4",
+          "naipe": "copas",
+          "valor": "5"
+        },
+        {
+          "id": "d5",
+          "naipe": "copas",
+          "valor": "6"
+        },
+        {
+          "id": "d6",
+          "naipe": "copas",
+          "valor": "7"
+        },
+        {
+          "id": "d7",
+          "naipe": "copas",
+          "valor": "8"
+        },
+        {
+          "id": "d8",
+          "naipe": "copas",
+          "valor": "9"
+        },
+        {
+          "id": "d9",
+          "naipe": "copas",
+          "valor": "10"
+        },
+        {
+          "id": "d10",
+          "naipe": "copas",
+          "valor": "J"
+        },
+        {
+          "id": "d11",
+          "naipe": "copas",
+          "valor": "Q"
+        },
+        {
+          "id": "d12",
+          "naipe": "copas",
+          "valor": "K"
+        }
+      ],
+      "critEsperado": "CRIT-01",
+      "node": {
+        "valido": true,
+        "tipo": "limpa",
+        "bonus": 200
+      }
+    },
+    {
+      "id": "M08-as_a_as",
+      "desc": "A–K–A (as_a_as): canônico válido/1000 × servidor inválido",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "e0",
+          "naipe": "copas",
+          "valor": "A"
+        },
+        {
+          "id": "e1",
+          "naipe": "copas",
+          "valor": "2"
+        },
+        {
+          "id": "e2",
+          "naipe": "copas",
+          "valor": "3"
+        },
+        {
+          "id": "e3",
+          "naipe": "copas",
+          "valor": "4"
+        },
+        {
+          "id": "e4",
+          "naipe": "copas",
+          "valor": "5"
+        },
+        {
+          "id": "e5",
+          "naipe": "copas",
+          "valor": "6"
+        },
+        {
+          "id": "e6",
+          "naipe": "copas",
+          "valor": "7"
+        },
+        {
+          "id": "e7",
+          "naipe": "copas",
+          "valor": "8"
+        },
+        {
+          "id": "e8",
+          "naipe": "copas",
+          "valor": "9"
+        },
+        {
+          "id": "e9",
+          "naipe": "copas",
+          "valor": "10"
+        },
+        {
+          "id": "e10",
+          "naipe": "copas",
+          "valor": "J"
+        },
+        {
+          "id": "e11",
+          "naipe": "copas",
+          "valor": "Q"
+        },
+        {
+          "id": "e12",
+          "naipe": "copas",
+          "valor": "K"
+        },
+        {
+          "id": "e13",
+          "naipe": "copas",
+          "valor": "A"
+        }
+      ],
+      "critEsperado": "CRIT-02",
+      "node": {
+        "valido": false,
+        "tipo": null,
+        "bonus": 0
+      }
+    },
+    {
+      "id": "M09-naipes-mistos",
+      "desc": "naipes misturados — inválido nos dois",
+      "modalidade": "fechado",
+      "permiteTrinca": true,
+      "cartas": [
+        {
+          "id": "x0",
+          "naipe": "copas",
+          "valor": "3"
+        },
+        {
+          "id": "x1",
+          "naipe": "ouros",
+          "valor": "4"
+        },
+        {
+          "id": "x2",
+          "naipe": "copas",
+          "valor": "5"
+        }
+      ],
+      "critEsperado": null,
+      "node": {
+        "valido": false,
+        "tipo": null,
+        "bonus": 0
+      }
+    }
+  ],
+  "score": [
+    {
+      "id": "S01-limpa7",
+      "desc": "canastra limpa 7 sozinha",
+      "melds": [
+        [
+          {
+            "id": "p0",
+            "naipe": "copas",
+            "valor": "3"
+          },
+          {
+            "id": "p1",
+            "naipe": "copas",
+            "valor": "4"
+          },
+          {
+            "id": "p2",
+            "naipe": "copas",
+            "valor": "5"
+          },
+          {
+            "id": "p3",
+            "naipe": "copas",
+            "valor": "6"
+          },
+          {
+            "id": "p4",
+            "naipe": "copas",
+            "valor": "7"
+          },
+          {
+            "id": "p5",
+            "naipe": "copas",
+            "valor": "8"
+          },
+          {
+            "id": "p6",
+            "naipe": "copas",
+            "valor": "9"
+          }
+        ]
+      ],
+      "mao": [],
+      "flags": {
+        "bateu": false,
+        "mortoPego": true,
+        "algumPegouMorto": false
+      },
+      "critEsperado": null,
+      "node": {
+        "total": 245,
+        "pontosCanastras": 200,
+        "pontosCartas": 45,
+        "bonusBatida": 0,
+        "penalidadeMorto": 0,
+        "descontoMao": 0
+      }
+    },
+    {
+      "id": "S02-batida",
+      "desc": "canastra limpa + batida (+100)",
+      "melds": [
+        [
+          {
+            "id": "q0",
+            "naipe": "copas",
+            "valor": "3"
+          },
+          {
+            "id": "q1",
+            "naipe": "copas",
+            "valor": "4"
+          },
+          {
+            "id": "q2",
+            "naipe": "copas",
+            "valor": "5"
+          },
+          {
+            "id": "q3",
+            "naipe": "copas",
+            "valor": "6"
+          },
+          {
+            "id": "q4",
+            "naipe": "copas",
+            "valor": "7"
+          },
+          {
+            "id": "q5",
+            "naipe": "copas",
+            "valor": "8"
+          },
+          {
+            "id": "q6",
+            "naipe": "copas",
+            "valor": "9"
+          }
+        ]
+      ],
+      "mao": [],
+      "flags": {
+        "bateu": true,
+        "mortoPego": true,
+        "algumPegouMorto": false
+      },
+      "critEsperado": null,
+      "node": {
+        "total": 345,
+        "pontosCanastras": 200,
+        "pontosCartas": 45,
+        "bonusBatida": 100,
+        "penalidadeMorto": 0,
+        "descontoMao": 0
+      }
+    },
+    {
+      "id": "S03-morto-nao-pego",
+      "desc": "morto não pego (−100)",
+      "melds": [
+        [
+          {
+            "id": "r0",
+            "naipe": "copas",
+            "valor": "3"
+          },
+          {
+            "id": "r1",
+            "naipe": "copas",
+            "valor": "4"
+          },
+          {
+            "id": "r2",
+            "naipe": "copas",
+            "valor": "5"
+          },
+          {
+            "id": "r3",
+            "naipe": "copas",
+            "valor": "6"
+          },
+          {
+            "id": "r4",
+            "naipe": "copas",
+            "valor": "7"
+          },
+          {
+            "id": "r5",
+            "naipe": "copas",
+            "valor": "8"
+          },
+          {
+            "id": "r6",
+            "naipe": "copas",
+            "valor": "9"
+          }
+        ]
+      ],
+      "mao": [],
+      "flags": {
+        "bateu": false,
+        "mortoPego": false,
+        "algumPegouMorto": true
+      },
+      "critEsperado": null,
+      "node": {
+        "total": 145,
+        "pontosCanastras": 200,
+        "pontosCartas": 45,
+        "bonusBatida": 0,
+        "penalidadeMorto": -100,
+        "descontoMao": 0
+      }
+    },
+    {
+      "id": "S04-mao-desconta",
+      "desc": "desconto das cartas na mão",
+      "melds": [
+        [
+          {
+            "id": "s0",
+            "naipe": "copas",
+            "valor": "3"
+          },
+          {
+            "id": "s1",
+            "naipe": "copas",
+            "valor": "4"
+          },
+          {
+            "id": "s2",
+            "naipe": "copas",
+            "valor": "5"
+          },
+          {
+            "id": "s3",
+            "naipe": "copas",
+            "valor": "6"
+          },
+          {
+            "id": "s4",
+            "naipe": "copas",
+            "valor": "7"
+          },
+          {
+            "id": "s5",
+            "naipe": "copas",
+            "valor": "8"
+          },
+          {
+            "id": "s6",
+            "naipe": "copas",
+            "valor": "9"
+          }
+        ]
+      ],
+      "mao": [
+        {
+          "id": "m0",
+          "naipe": "ouros",
+          "valor": "K"
+        },
+        {
+          "id": "m1",
+          "naipe": null,
+          "valor": "JOKER"
+        }
+      ],
+      "flags": {
+        "bateu": false,
+        "mortoPego": true,
+        "algumPegouMorto": false
+      },
+      "critEsperado": null,
+      "node": {
+        "total": 185,
+        "pontosCanastras": 200,
+        "pontosCartas": 45,
+        "bonusBatida": 0,
+        "penalidadeMorto": 0,
+        "descontoMao": -60
+      }
+    },
+    {
+      "id": "S05-de500-pontos",
+      "desc": "de_500 pontuação: canônico 500 × servidor 200",
+      "melds": [
+        [
+          {
+            "id": "t0",
+            "naipe": "copas",
+            "valor": "A"
+          },
+          {
+            "id": "t1",
+            "naipe": "copas",
+            "valor": "2"
+          },
+          {
+            "id": "t2",
+            "naipe": "copas",
+            "valor": "3"
+          },
+          {
+            "id": "t3",
+            "naipe": "copas",
+            "valor": "4"
+          },
+          {
+            "id": "t4",
+            "naipe": "copas",
+            "valor": "5"
+          },
+          {
+            "id": "t5",
+            "naipe": "copas",
+            "valor": "6"
+          },
+          {
+            "id": "t6",
+            "naipe": "copas",
+            "valor": "7"
+          },
+          {
+            "id": "t7",
+            "naipe": "copas",
+            "valor": "8"
+          },
+          {
+            "id": "t8",
+            "naipe": "copas",
+            "valor": "9"
+          },
+          {
+            "id": "t9",
+            "naipe": "copas",
+            "valor": "10"
+          },
+          {
+            "id": "t10",
+            "naipe": "copas",
+            "valor": "J"
+          },
+          {
+            "id": "t11",
+            "naipe": "copas",
+            "valor": "Q"
+          },
+          {
+            "id": "t12",
+            "naipe": "copas",
+            "valor": "K"
+          }
+        ]
+      ],
+      "mao": [],
+      "flags": {
+        "bateu": false,
+        "mortoPego": true,
+        "algumPegouMorto": false
+      },
+      "critEsperado": "CRIT-01",
+      "node": {
+        "total": 310,
+        "pontosCanastras": 200,
+        "pontosCartas": 110,
+        "bonusBatida": 0,
+        "penalidadeMorto": 0,
+        "descontoMao": 0
+      }
+    }
+  ]
+}
