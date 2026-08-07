@@ -2830,6 +2830,7 @@ void main() {
       List<List<CartaSnapshot>> mortos = const [],
       Map<String, bool> mortoPego = const {'nos': false, 'eles': false},
       Modalidade modalidade = Modalidade.fechado,
+      FaseTurno fase = FaseTurno.compra,
     }) =>
         EstadoJogo(
           modalidade: modalidade,
@@ -2852,6 +2853,7 @@ void main() {
           vez: vez,
           mortoPego: {...mortoPego},
           rodadaEncerrada: rodadaEncerrada,
+          fase: fase,
         );
 
     // Estado base: é a vez do assento 0; monte e lixo com carta; assento 1 com
@@ -2934,23 +2936,22 @@ void main() {
     });
 
     test('TURNO-09 assento da vez → só ações realmente legais aparecem', () {
-      final est = base(); // vez 0, monte não vazio, mão0 = a0,a1 (não é canastra)
+      final est = base(); // vez 0, FASE COMPRA (início do turno), monte não vazio
       final ger = gerarAcoesLegais(est, 0, fechado);
-      // Legais: comprar do monte + descartar cada carta da mão.
+      // Na fase de COMPRA a única ação legal aqui é comprar do monte.
       expect(ger.any((a) => a is ComprarMonte), true);
-      expect(ger.whereType<Descartar>().map((d) => d.carta).toSet(),
-          {'a0', 'a1'});
-      // Ilegais neste estado NÃO aparecem:
+      expect(ger.any((a) => a is Descartar), false); // não descarta antes de comprar
       expect(ger.any((a) => a is ComprarLixo), false); // Fechado sem uso do topo
-      expect(ger.any((a) => a is Bater), false); // mão não vazia / sem canastra
-      expect(ger.any((a) => a is PegarMorto), false); // mão não vazia
+      expect(ger.any((a) => a is Bater), false);
+      expect(ger.any((a) => a is PegarMorto), false);
     });
 
     test('TURNO-10 mesma situação para jogador e bot → mesma legalidade', () {
-      // Mão0 = 3,4,5 de copas (abre uma sequência válida). Já abriu antes,
-      // então sem mínimo. Um candidato válido e um inválido (2 cartas).
+      // Fase de JOGO (já comprou). Mão0 = 3,4,5 de copas (sequência válida);
+      // já abriu antes, então sem mínimo. Um candidato válido e um inválido.
       final est = estadoTurno(
         vez: 0,
+        fase: FaseTurno.jogo,
         monte: [csm('m0', 'copas', '7')],
         mao0: [
           csm('h0', 'copas', '3'),
@@ -2970,6 +2971,220 @@ void main() {
       ];
       expect(decisaoJogador, decisaoBot); // paridade estrutural
       expect(decisaoJogador, [true, false]);
+    });
+  });
+
+  // ===================================================================
+  // C7-fix — FASE DO TURNO (sequência temporal é regra). O gerador único
+  // só oferece/aplica ações compatíveis com estado.fase. Aditivo.
+  // ===================================================================
+  group('C7-fix — fase do turno', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+    final aberto = RuleSpec.canonica(Modalidade.aberto);
+
+    List<CartaSnapshot> morto11(String pre) =>
+        [for (int i = 0; i < 11; i++) csm('$pre$i', 'copas', '5')];
+
+    EstadoJogo estF({
+      FaseTurno fase = FaseTurno.compra,
+      int vez = 0,
+      List<CartaSnapshot> mao0 = const [],
+      List<CartaSnapshot> monte = const [],
+      List<CartaSnapshot> lixo = const [],
+      List<List<CartaSnapshot>> mortos = const [],
+      Map<String, bool> mortoPego = const {'nos': false, 'eles': false},
+      Modalidade modalidade = Modalidade.fechado,
+    }) =>
+        EstadoJogo(
+          modalidade: modalidade,
+          metaPontos: 1500,
+          monte: [...monte],
+          lixo: [...lixo],
+          mortos: [for (final m in mortos) [...m]],
+          maos: [
+            [...mao0],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+          ],
+          jogosDupla: {
+            'nos': <List<CartaSnapshot>>[],
+            'eles': <List<CartaSnapshot>>[],
+          },
+          rodadasVulneravel: const {'nos': 0, 'eles': 0},
+          primeiraBaixadaFeita: const {'nos': true, 'eles': true},
+          vez: vez,
+          mortoPego: {...mortoPego},
+          fase: fase,
+        );
+
+    test('FASE-01 início (compra): pode comprar, não pode descartar', () {
+      final est = estF(
+          fase: FaseTurno.compra,
+          monte: [csm('m0', 'copas', '7')],
+          mao0: [csm('a0', 'copas', '3')]);
+      expect(acaoEhLegal(est, 0, const ComprarMonte(), fechado), true);
+      expect(acaoEhLegal(est, 0, const Descartar('a0'), fechado), false);
+      final ger = gerarAcoesLegais(est, 0, fechado);
+      expect(ger.any((a) => a is ComprarMonte), true);
+      expect(ger.any((a) => a is Descartar), false);
+    });
+
+    test('FASE-02 após comprar do monte: não pode comprar de novo', () {
+      final est = estF(
+          fase: FaseTurno.compra,
+          monte: [csm('m0', 'copas', '7'), csm('m1', 'ouros', '8')],
+          mao0: [csm('a0', 'copas', '3')]);
+      final r = aplicarLegal(est, 0, const ComprarMonte(), fechado);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.fase, FaseTurno.jogo);
+      expect(acaoEhLegal(prox, 0, const ComprarMonte(), fechado), false);
+      expect(acaoEhLegal(prox, 0, const ComprarLixo(), fechado), false);
+    });
+
+    test('FASE-03 após comprar do lixo: não pode comprar monte/lixo de novo', () {
+      // Aberto: a compra do lixo pode ocorrer sem baixar.
+      final est = estF(
+          fase: FaseTurno.compra,
+          modalidade: Modalidade.aberto,
+          monte: [csm('m0', 'copas', '7')],
+          lixo: [csm('x0', 'ouros', '9')],
+          mao0: [csm('a0', 'copas', '3')]);
+      final r = aplicarLegal(est, 0, const ComprarLixo(), aberto);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.fase, FaseTurno.jogo);
+      expect(acaoEhLegal(prox, 0, const ComprarMonte(), aberto), false);
+      expect(acaoEhLegal(prox, 0, const ComprarLixo(), aberto), false);
+    });
+
+    test('FASE-04 após compra (fase jogo): pode baixar/estender', () {
+      final maoSeq = [
+        csm('h0', 'copas', '3'),
+        csm('h1', 'copas', '4'),
+        csm('h2', 'copas', '5'),
+      ];
+      final estJogo = estF(fase: FaseTurno.jogo, mao0: maoSeq);
+      final estCompra = estF(fase: FaseTurno.compra, mao0: maoSeq);
+      const baixada = Baixar(jogosNovos: [['h0', 'h1', 'h2']]);
+      expect(acaoEhLegal(estJogo, 0, baixada, fechado), true);
+      expect(acaoEhLegal(estCompra, 0, baixada, fechado), false);
+    });
+
+    test('FASE-05 descarte só após a fase de compra', () {
+      final est0 = estF(fase: FaseTurno.compra, mao0: [csm('a0', 'copas', '3')]);
+      final est1 = estF(
+          fase: FaseTurno.jogo,
+          mao0: [csm('a0', 'copas', '3'), csm('a1', 'copas', '4')]);
+      expect(acaoEhLegal(est0, 0, const Descartar('a0'), fechado), false);
+      expect(acaoEhLegal(est1, 0, const Descartar('a0'), fechado), true);
+    });
+
+    test('FASE-06 descarte encerra o turno; próximo começa em compra', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [csm('a0', 'copas', '3'), csm('a1', 'copas', '4')]);
+      final r = aplicarLegal(est, 0, const Descartar('a0'), fechado);
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.vez, 1); // a vez passa
+      expect(prox.fase, FaseTurno.compra); // próximo começa comprando
+    });
+
+    test('FASE-07 morto direto: mantém em fase de jogo e exige descarte', () {
+      // Mão vazia (esvaziada baixando), fase de jogo, morto disponível.
+      final est = estF(
+          fase: FaseTurno.jogo, vez: 0, mao0: const [], mortos: [morto11('a')]);
+      final r = aplicarLegal(est, 0, const PegarMorto(), fechado); // direto
+      expect(r.legal, true);
+      final prox = r.proximoEstado!;
+      expect(prox.fase, FaseTurno.jogo); // continua em jogo
+      expect(prox.vez, 0); // mesma vez
+      expect(prox.maos[0].length, 11); // pegou o morto
+      // exige descarte posterior: um descarte é legal agora
+      expect(
+          acaoEhLegal(prox, 0, Descartar(prox.maos[0].first.id), fechado), true);
+    });
+
+    test('FASE-08 morto indireto: descarte esvazia → pendente → passa a vez', () {
+      final est = estF(
+          fase: FaseTurno.jogo,
+          vez: 0,
+          mao0: [csm('a0', 'copas', '3')],
+          mortos: [morto11('a')]);
+      // Descarta a última carta → fase mortoPendente, MESMA vez.
+      final r1 = aplicarLegal(est, 0, const Descartar('a0'), fechado);
+      expect(r1.legal, true);
+      final p1 = r1.proximoEstado!;
+      expect(p1.fase, FaseTurno.mortoPendente);
+      expect(p1.vez, 0);
+      // A ÚNICA ação legal agora é pegar o morto indireto.
+      final ger = gerarAcoesLegais(p1, 0, fechado);
+      expect(ger.length, 1);
+      expect(ger.single, isA<PegarMorto>());
+      final r2 =
+          aplicarLegal(p1, 0, const PegarMorto(viaDescarte: true), fechado);
+      expect(r2.legal, true);
+      final p2 = r2.proximoEstado!;
+      expect(p2.vez, 1); // agora a vez passa
+      expect(p2.fase, FaseTurno.compra); // próximo começa comprando
+      expect(p2.maos[0].length, 11); // pegou o morto
+    });
+
+    test('FASE-09 morto indireto sem descarte real anterior → rejeita', () {
+      // Fase de jogo (não pendente), mão vazia e morto disponível.
+      final estJogo = estF(
+          fase: FaseTurno.jogo, vez: 0, mao0: const [], mortos: [morto11('a')]);
+      final r =
+          aplicarLegal(estJogo, 0, const PegarMorto(viaDescarte: true), fechado);
+      expect(r.legal, false);
+      expect(r.proximoEstado, null);
+      // Também ilegal a partir da fase de compra.
+      final estCompra =
+          estF(fase: FaseTurno.compra, vez: 0, mortos: [morto11('a')]);
+      expect(
+          acaoEhLegal(estCompra, 0, const PegarMorto(viaDescarte: true), fechado),
+          false);
+    });
+
+    test('FASE-10 nenhuma ação se repete fora da sequência permitida', () {
+      final est = estF(
+          fase: FaseTurno.compra,
+          vez: 0,
+          monte: [csm('m0', 'copas', '7'), csm('m1', 'ouros', '8')],
+          mao0: [csm('a0', 'copas', '3')]);
+      // 1) comprar do monte → jogo; comprar de novo é ilegal.
+      final p1 = aplicarLegal(est, 0, const ComprarMonte(), fechado).proximoEstado!;
+      expect(acaoEhLegal(p1, 0, const ComprarMonte(), fechado), false);
+      expect(gerarAcoesLegais(p1, 0, fechado).any((a) => a is ComprarMonte),
+          false);
+      // 2) descartar encerra → compra, vez 1; descartar de novo é ilegal.
+      final p2 =
+          aplicarLegal(p1, 0, Descartar(p1.maos[0].first.id), fechado)
+              .proximoEstado!;
+      expect(p2.fase, FaseTurno.compra);
+      expect(p2.vez, 1);
+      expect(acaoEhLegal(p2, 1, const Descartar('qualquer'), fechado), false);
+    });
+
+    test('FASE-11 fase entra em clone, normalizar, assinatura, replay e sombra',
+        () {
+      final st = estF(fase: FaseTurno.jogo, mao0: [csm('a0', 'copas', '3')]);
+      expect(st.cloneProfundo().fase, FaseTurno.jogo); // clone
+      expect(st.normalizar().fase, FaseTurno.jogo); // normalizar
+      expect(st.assinatura(), contains('fase=jogo')); // sombra (assinatura)
+      final outra = estF(fase: FaseTurno.compra, mao0: [csm('a0', 'copas', '3')]);
+      expect(st.assinatura() == outra.assinatura(), false); // fase muda assinatura
+      final rep = Replay(
+          seed: 1,
+          versaoSpec: 'x',
+          modalidade: Modalidade.fechado,
+          faseInicial: FaseTurno.jogo);
+      expect(Replay.fromJson(rep.toJson()).faseInicial, FaseTurno.jogo); // replay
     });
   });
 }

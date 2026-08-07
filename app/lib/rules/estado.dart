@@ -4,6 +4,13 @@
 // sombra. O EstadoJogo é um SNAPSHOT imutável, desacoplado da UI/mesa.dart.
 import 'modalidade.dart';
 
+/// FASE do turno (fase também é regra). Sequência canônica:
+///  compra  -> início do turno: só compra (monte OU lixo), não descarta;
+///  jogo    -> após comprar: baixar/estender, descartar, morto direto, batida;
+///  mortoPendente -> um descarte esvaziou a mão e há morto a pegar: a ÚNICA
+///                   ação legal é PegarMorto(viaDescarte:true) (morto indireto).
+enum FaseTurno { compra, jogo, mortoPendente }
+
 /// Carta imutável para snapshots do motor canônico (desacoplada da UI).
 class CartaSnapshot {
   final String id;
@@ -44,6 +51,7 @@ class EstadoJogo {
   final Map<String, bool> mortoPego; // por dupla: 'nos'/'eles'
   final bool rodadaEncerrada; // batida encerrou a rodada
   final String? duplaQueBateu;
+  final FaseTurno fase; // fase do turno (compra/jogo/mortoPendente)
 
   const EstadoJogo({
     required this.modalidade,
@@ -59,6 +67,7 @@ class EstadoJogo {
     this.mortoPego = const {'nos': false, 'eles': false},
     this.rodadaEncerrada = false,
     this.duplaQueBateu,
+    this.fase = FaseTurno.compra,
   });
 
   static List<CartaSnapshot> _copiaLista(List<CartaSnapshot> l) =>
@@ -86,6 +95,7 @@ class EstadoJogo {
         mortoPego: {...mortoPego},
         rodadaEncerrada: rodadaEncerrada,
         duplaQueBateu: duplaQueBateu,
+        fase: fase,
       );
 
   /// NORMALIZAÇÃO para comparação determinística no modo sombra.
@@ -128,6 +138,7 @@ class EstadoJogo {
       mortoPego: {...mortoPego},
       rodadaEncerrada: rodadaEncerrada,
       duplaQueBateu: duplaQueBateu,
+      fase: fase,
     );
   }
 
@@ -148,12 +159,17 @@ class EstadoJogo {
       ..writeln('rv=${n.rodadasVulneravel}')
       ..writeln('pb=${n.primeiraBaixadaFeita}')
       ..writeln('mp=${n.mortoPego}')
-      ..writeln('fim=${n.rodadaEncerrada} bateu=${n.duplaQueBateu}');
+      ..writeln('fim=${n.rodadaEncerrada} bateu=${n.duplaQueBateu}')
+      ..writeln('fase=${n.fase.name}');
     return sb.toString();
   }
 
   /// Cópia rasa alterando poucos campos (compartilha as coleções deste estado).
-  EstadoJogo copyWith({int? vez, bool? rodadaEncerrada, String? duplaQueBateu}) =>
+  EstadoJogo copyWith(
+          {int? vez,
+          bool? rodadaEncerrada,
+          String? duplaQueBateu,
+          FaseTurno? fase}) =>
       EstadoJogo(
         modalidade: modalidade,
         metaPontos: metaPontos,
@@ -168,5 +184,6 @@ class EstadoJogo {
         mortoPego: mortoPego,
         rodadaEncerrada: rodadaEncerrada ?? this.rodadaEncerrada,
         duplaQueBateu: duplaQueBateu ?? this.duplaQueBateu,
+        fase: fase ?? this.fase,
       );
 }

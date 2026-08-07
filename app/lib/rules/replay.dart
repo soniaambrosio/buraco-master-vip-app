@@ -4,6 +4,7 @@
 // modalidade + estado inicial + sequência de ações. Serve para transformar
 // QUALQUER bug real numa reprodução exata e, daí, num teste de conformidade.
 import 'acoes.dart';
+import 'estado.dart' show FaseTurno;
 import 'modalidade.dart';
 
 class Replay {
@@ -23,6 +24,10 @@ class Replay {
   /// Nulo => o estado inicial é derivado de (seed, modalidade, metaPontos).
   final Map<String, dynamic>? estadoInicialSerializado;
 
+  /// FASE do turno no estado inicial (fase também é regra — precisa ser fiel no
+  /// replay quando o bug parte do meio de um turno). Default: início (compra).
+  final FaseTurno faseInicial;
+
   const Replay({
     required this.seed,
     required this.versaoSpec,
@@ -30,6 +35,7 @@ class Replay {
     this.metaPontos = 1500,
     this.acoes = const [],
     this.estadoInicialSerializado,
+    this.faseInicial = FaseTurno.compra,
   });
 
   Map<String, dynamic> toJson() => {
@@ -38,9 +44,21 @@ class Replay {
         'modalidade': modalidade.texto,
         'metaPontos': metaPontos,
         'acoes': [for (final a in acoes) a.toJson()],
+        'faseInicial': faseInicial.name,
         if (estadoInicialSerializado != null)
           'estadoInicial': estadoInicialSerializado,
       };
+
+  static FaseTurno _faseDeTexto(String? s) {
+    switch (s) {
+      case 'jogo':
+        return FaseTurno.jogo;
+      case 'mortoPendente':
+        return FaseTurno.mortoPendente;
+      default:
+        return FaseTurno.compra;
+    }
+  }
 
   static Replay fromJson(Map<String, dynamic> j) => Replay(
         seed: j['seed'] as int,
@@ -51,6 +69,7 @@ class Replay {
           for (final a in (j['acoes'] as List? ?? const []))
             acaoDeJson((a as Map).cast<String, dynamic>()),
         ],
+        faseInicial: _faseDeTexto(j['faseInicial'] as String?),
         estadoInicialSerializado:
             (j['estadoInicial'] as Map?)?.cast<String, dynamic>(),
       );
