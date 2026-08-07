@@ -1,3 +1,12 @@
 # Scaffold Flutter gerado localmente/CI (flutter create app_build).
 # Nunca versionar: e artefato de build, nao fonte.
 /app_build/
+
+# Cloud Functions do Motor de Torneios (OS 02 secao 20).
+/functions/node_modules/
+# lib/ e 100% gerado: domain_bundle.js sai de `dart compile js` sobre
+# app/lib/torneios/js_bridge.dart, e o resto sai do tsc. Versionar o bundle
+# deixaria uma copia do motor no repositorio, que envelheceria em silencio em
+# relacao ao Dart — exatamente a divergencia que a ponte existe para evitar.
+/functions/lib/
+

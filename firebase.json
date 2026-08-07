@@ -1,0 +1,26 @@
+{
+  "//": "firebase.json — configuracao do projeto Firebase do Buraco Master VIP (OS 02 secao 20). As regras e indices ficam em firebase/; as Cloud Functions em functions/.",
+  "firestore": {
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "torneios",
+      "runtime": "nodejs20",
+      "//": "predeploy roda na ordem: primeiro o dominio Dart vira JS, depois o TypeScript compila contra ele. Inverter a ordem faria o tsc rodar sem o bundle e falhar na carga de domain.ts.",
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build:domain",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "ignore": ["node_modules", ".git", "*.log"]
+    }
+  ],
+  "emulators": {
+    "firestore": { "port": 8080 },
+    "functions": { "port": 5001 },
+    "auth": { "port": 9099 },
+    "ui": { "enabled": true }
+  }
+}

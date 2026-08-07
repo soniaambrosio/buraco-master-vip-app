@@ -1,0 +1,135 @@
+{
+  "//": "firestore.indexes.json — indices compostos exigidos pelas consultas do Motor de Torneios (OS 02 secao 20). Cada entrada existe por causa de uma consulta concreta; indice sem consulta so custa escrita.",
+  "indexes": [
+    {
+      "//": "Central de torneios: edicoes visiveis por status, mais proximas primeiro.",
+      "collectionGroup": "editions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "inicioPrevisto", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Agendador: edicoes cuja janela de inscricao ja abriu e que ainda nao abriram.",
+      "collectionGroup": "editions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "inscricoesAbremEm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Agendador: edicoes cuja janela de inscricao venceu.",
+      "collectionGroup": "editions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "inscricoesFechamEm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "'Meus torneios': onde este jogador esta inscrito, em qualquer edicao.",
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "inscritoEm", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Lista de participantes da edicao, em ordem de inscricao.",
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "inscritoEm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Convocacao da lista de espera, em ordem de fila.",
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "posicaoEspera", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Mesas de uma fase, para saber se a fase pode ser apurada.",
+      "collectionGroup": "tables",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "faseId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Resultados de uma fase, insumo da classificacao.",
+      "collectionGroup": "results",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "faseId", "order": "ASCENDING" },
+        { "fieldPath": "encerradaEm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Classificacao da edicao, ja ordenada por posicao.",
+      "collectionGroup": "standings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "faseId", "order": "ASCENDING" },
+        { "fieldPath": "posicao", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Historico de um jogador, do mais recente para o mais antigo.",
+      "collectionGroup": "tournamentHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participantesUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "encerramento", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Historico de um torneio por temporada (edicoes realizadas).",
+      "collectionGroup": "tournamentHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tournamentId", "order": "ASCENDING" },
+        { "fieldPath": "temporada", "order": "ASCENDING" },
+        { "fieldPath": "numeroEdicao", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Recompensas ativas de um jogador (OS 02 secao 13).",
+      "collectionGroup": "rewardGrants",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "grantedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Classificados ao encerramento anual, por temporada e por jogador. Sustenta a consolidacao de convites e a lista de excedentes (OS 02 secao 17).",
+      "collectionGroup": "annualQualifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "temporada", "order": "ASCENDING" },
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "registradoEm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "Painel administrativo dos convites da temporada.",
+      "collectionGroup": "closingInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "temporada", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,250 @@
+rules_version = '2';
+
+// firestore.rules — regras de seguranca do Motor de Torneios
+// (OS 02 secoes 20 e 21).
+//
+// PRINCIPIO: o jogador LE o torneio e ESCREVE apenas a propria intencao. Tudo o
+// que decide competicao — classificacao, resultado, vencedor, premio,
+// elegibilidade, status, fase, posicao, convite especial e concessao de
+// recompensa — e SOMENTE-LEITURA para o cliente, e so muda por Cloud Function
+// com credencial de admin (que ignora estas regras por design).
+//
+// A OS 02 secao 21 lista exatamente esses dez itens. Cada `allow write: if false`
+// abaixo aponta para o item da lista que ele protege.
+//
+// POR QUE NEGAR EM VEZ DE VALIDAR: seria possivel deixar o cliente gravar a
+// classificacao e validar o conteudo aqui. Nao se faz isso porque a regra teria
+// de reimplementar o motor de desempate em linguagem de regra — uma segunda
+// implementacao (OS 02 secao 1) que divergiria da primeira no dia em que um
+// criterio mudasse. Negar e a unica forma de manter UMA fonte da verdade.
+//
+// A escrita de inscricao pelo cliente e permitida sob condicoes estreitas e,
+// ainda assim, o backend revalida: as regras conferem FORMA (quem, onde, com que
+// campos), nunca REGRA DE NEGOCIO (elegibilidade, lotacao, janela). Forma o
+// Firestore sabe checar; regra de negocio precisa do motor.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Auxiliares
+    // ---------------------------------------------------------------------
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function souEu(userId) {
+      return autenticado() && request.auth.uid == userId;
+    }
+
+    // Papel administrativo vem de custom claim, nao de documento: um documento de
+    // papel poderia ser lido (e, num descuido de regra, escrito) pelo proprio
+    // cliente. O claim so e emitido pelo backend.
+    function admin() {
+      return autenticado() && request.auth.token.admin == true;
+    }
+
+    // Campos que o cliente enviou.
+    function campos() {
+      return request.resource.data.keys();
+    }
+
+    function apenasCampos(permitidos) {
+      return campos().hasOnly(permitidos);
+    }
+
+    // ---------------------------------------------------------------------
+    // Catalogo de torneios (templates) — configuracao
+    // ---------------------------------------------------------------------
+    // Leitura publica: a central precisa listar os torneios.
+    // Escrita so administrativa: modalidade, formato, criterios de desempate e
+    // tabela de premiacao sao regra de competicao.
+    match /tournaments/{tournamentId} {
+      allow read: if autenticado();
+      allow write: if admin();
+
+      // -------------------------------------------------------------------
+      // Edicoes
+      // -------------------------------------------------------------------
+      // OS 02 secao 21: "status do torneio" e somente-leitura para o jogador.
+      // Nem o admin escreve daqui: transicoes passam por Cloud Function para que
+      // o grafo de tournament_lifecycle.dart seja sempre aplicado e o evento de
+      // auditoria seja sempre gravado junto.
+      match /editions/{editionId} {
+        allow read: if autenticado();
+        allow write: if false;
+
+        // -----------------------------------------------------------------
+        // Inscricoes — o unico ponto de escrita do jogador
+        // -----------------------------------------------------------------
+        match /registrations/{userId} {
+          allow read: if souEu(userId) || admin();
+
+          // Criar a PROPRIA inscricao, em estado inicial, sem se autoconceder
+          // vaga, posicao de espera nem status avancado. A elegibilidade, a
+          // lotacao e a janela sao revalidadas pela Function que reage a este
+          // documento — aqui so se garante a forma.
+          allow create: if souEu(userId)
+                        && request.resource.data.userId == userId
+                        && request.resource.data.tournamentId == tournamentId
+                        && request.resource.data.editionId == editionId
+                        && request.resource.data.status in ['inscrito', 'aguardando_dupla', 'dupla_confirmada']
+                        && !('posicaoEspera' in campos())
+                        // O cliente nao decide quanto foi debitado dele.
+                        && !('fichasDebitadas' in campos())
+                        && apenasCampos([
+                             'userId', 'tournamentId', 'editionId', 'parceiroId',
+                             'status', 'inscritoEm', 'atualizadoEm', 'chaveIdempotencia'
+                           ]);
+
+          // A UNICA mudanca que o jogador faz na propria inscricao e cancelar.
+          // Promover-se a `convocado_para_mesa` ou `checkin_realizado` mudaria a
+          // formacao de mesas — por isso o destino e travado em 'cancelado'.
+          // O check-in em si e Function: ele depende da janela de tempo.
+          allow update: if souEu(userId)
+                        && request.resource.data.status == 'cancelado'
+                        && resource.data.status != 'cancelado'
+                        // Nada alem do status e do carimbo pode mudar.
+                        && request.resource.data.diff(resource.data)
+                             .affectedKeys().hasOnly(['status', 'atualizadoEm']);
+
+          // Historico de inscricao nao se apaga: a auditoria da inscricao
+          // (OS 02 secao 5) depende dele existir depois do cancelamento.
+          allow delete: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Fases — OS 02 secao 21: "fase"
+        // -----------------------------------------------------------------
+        match /phases/{faseId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Mesas — a formacao e sorteio do servidor
+        // -----------------------------------------------------------------
+        match /tables/{mesaId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Resultados — OS 02 secao 21: "resultado"
+        // -----------------------------------------------------------------
+        // Escrito exclusivamente pela Function que recebe o Motor de Partidas.
+        // Deixar o cliente gravar aqui seria deixar o jogador digitar o proprio
+        // placar.
+        match /results/{matchId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Classificacao — OS 02 secao 21: "classificacao" e "posicao"
+        // -----------------------------------------------------------------
+        match /standings/{participanteId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Conclusao / campeao — OS 02 secao 21: "vencedor"
+        // -----------------------------------------------------------------
+        match /conclusion/{docId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Historico (OS 02 secao 15)
+    // ---------------------------------------------------------------------
+    // Colecao de primeiro nivel, e nao subcolecao da edicao: o historico precisa
+    // sobreviver e ser consultavel por jogador e por temporada sem depender da
+    // edicao continuar nas colecoes operacionais.
+    match /tournamentHistory/{registroId} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Concessoes de recompensa — OS 02 secao 21: "premio" e "concessao de
+    // recompensa"
+    // ---------------------------------------------------------------------
+    // O jogador le as proprias; ninguem escreve pelo cliente. A chave do
+    // documento e a chave de idempotencia de reward_grants.dart, entao uma
+    // segunda gravacao do mesmo direito e a mesma escrita — a duplicidade e
+    // impossivel por construcao, nao por checagem.
+    match /rewardGrants/{chaveIdempotencia} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || admin());
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Encerramento anual (OS 02 secoes 16, 17 e 18)
+    // ---------------------------------------------------------------------
+
+    // O FATO: registro de classificacao. OS 02 secao 21: "elegibilidade".
+    match /annualQualifications/{registroId} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || admin());
+      allow write: if false;
+    }
+
+    // O DIREITO: convite. OS 02 secao 21: "convite especial".
+    match /closingInvites/{chaveIdempotencia} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || admin());
+
+      // O jogador ACEITA ou RECUSA o proprio convite, e nada mais. Gerar, enviar,
+      // confirmar presenca e marcar participacao sao do backend — deixar o
+      // cliente saltar para `participou` daria presenca a quem nao jogou.
+      allow update: if autenticado()
+                    && resource.data.userId == request.auth.uid
+                    && resource.data.status == 'convite_enviado'
+                    && request.resource.data.status in ['convite_aceito', 'convite_recusado']
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys().hasOnly(['status', 'atualizadoEm']);
+
+      allow create, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Idempotencia da automacao (OS 02 secao 19)
+    // ---------------------------------------------------------------------
+    // Uma linha por chave de tarefa executada. O id do documento E a chave, o que
+    // transforma "ja rodou?" numa leitura por id dentro da transacao.
+    match /tournamentTasks/{chaveTarefa} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Trilha de auditoria das transicoes (OS 02 secao 4)
+    // ---------------------------------------------------------------------
+    match /tournamentAudit/{eventoId} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
+    // ---------------------------------------------------------------------
+    // ATENCAO A QUEM FOR ACRESCENTAR OUTRAS COLECOES: esta regra nao vale so para
+    // torneios. Qualquer caminho nao declarado acima e negado, inclusive colecoes
+    // futuras de perfil, amigos, loja ou ranking. Cada uma precisara do proprio
+    // bloco `match`.
+    //
+    // Isso e seguro hoje porque este e o PRIMEIRO firestore.rules do projeto e
+    // nenhuma tela usa Firestore ainda — o app so consome firebase_auth. A
+    // negacao padrao e a postura correta para comecar: uma colecao que ninguem
+    // declarou nao deve ficar aberta so porque ninguem se lembrou dela.
+    match /{documento=**} {
+      allow read, write: if false;
+    }
+  }
+}
