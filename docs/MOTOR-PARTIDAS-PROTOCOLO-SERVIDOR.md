@@ -199,8 +199,24 @@ Quando o prazo estoura:
 
 Eventos originados no servidor usam **namespace próprio: `srv-<uuid>`**.
 
-**O prefixo declara a ORIGEM AUTORITATIVA do evento — não é convenção de
-nomenclatura.** A distinção é semântica e tem três consequências operacionais:
+> **O prefixo NÃO é mecanismo de autenticação nem prova de autoridade.**
+>
+> A autoridade de um evento de servidor deriva **exclusivamente de ele ter sido
+> criado pelo fluxo interno do servidor** — nunca do formato do seu id. Um id é
+> um rótulo; rótulo se escreve. `srv-<uuid>` existe para **identificação,
+> auditoria e idempotência**, e para nada além disso.
+>
+> Regra prática:
+>
+> - cliente enviou `srv-*` → **`COMANDO_INVALIDO`**;
+> - evento criado internamente pelo servidor → **pode** receber `srv-*`;
+> - **nunca confiar num evento apenas porque o id dele começa com `srv-`.**
+>
+> A rejeição de `srv-*` vindo do cliente é higiene de namespace — impede colisão
+> e mentira no log —, e não um controle de acesso. Quem faz controle de acesso é
+> o caminho por onde o evento entrou.
+
+Com isso claro, o namespace resolve três problemas concretos:
 
 1. **Idempotência.** Sem namespaces separados, o cache não consegue distinguir
    "o servidor jogou por você" de "você reenviou sua jogada". Um cliente que
@@ -209,9 +225,8 @@ nomenclatura.** A distinção é semântica e tem três consequências operacion
 2. **Auditoria.** Ao ler o diário de uma reclamação, a origem do evento é a
    primeira pergunta: a carta saiu porque o jogador mandou, ou porque o tempo
    dele acabou? O namespace responde isso sem consultar mais nada.
-3. **Autoridade.** Um `srv-` chegando **do** cliente é, por definição,
-   falsificação de origem. O servidor deve **recusar** com `COMANDO_INVALIDO`
-   qualquer comando cujo `eventoId` use o namespace do servidor.
+3. **Colisão de espaço de ids.** Dois emissores independentes gerando ids no
+   mesmo espaço acabam colidindo; separados por namespace, não.
 
 `<uuid>` — e não um contador — porque o servidor pode reiniciar, e um contador
 reiniciado reemitiria ids já usados, fazendo o cache tratar evento novo como
@@ -443,7 +458,7 @@ está fechada** — não há mais nada esperando decisão.
 | 5 | `ping`/`pong` com carimbo do servidor | §3 |
 | 6 | Prazo de turno como instante, reemitido a cada turno | §3 |
 | 7 | Jogada automática na expiração, com `eventoId` no namespace `srv-<uuid>` | §3 · DECISÃO 1 |
-| 7b | Recusar comando do cliente que use o namespace `srv-` | §3 · DECISÃO 1 |
+| 7b | Recusar comando do cliente que use o namespace `srv-` (higiene de namespace, **não** autenticação) | §3 · DECISÃO 1 |
 | 8 | `heartbeat` + máquina de presença com degraus | §4 |
 | 9 | `penalidadePontos: null` e registro de abandono à parte | §5 · DECISÃO 2 |
 | 10 | Vínculo `assento → usuário` sobrevivendo à substituição por robô | §5 · DECISÃO 3 |

@@ -27,7 +27,8 @@ a carta voltou"*, *"caí e quando voltei minha mão estava diferente"*.
 ## A forma da solução
 
 Uma camada nova em `app/lib/motor/`, **em volta** do `Jogo` — não dentro dele.
-O motor de regras não mudou de comportamento; ganhou apenas dois métodos de
+O motor de regras não mudou de comportamento: nenhuma linha preexistente de
+`mesa.dart` foi removida ou modificada; ele apenas ganhou dois métodos de
 serialização e um getter (ver "Alterações em mesa.dart").
 
 ```
@@ -167,14 +168,19 @@ O que o servidor precisa implementar do outro lado está em
 
 ## Alterações em `mesa.dart`
 
-Três adições, todas na seção do motor, nenhuma na UI, nenhuma mudança de
-comportamento:
+**Nenhuma linha preexistente de `mesa.dart` foi removida ou modificada; houve
+apenas 29 linhas adicionadas.** Três adições, todas na seção do motor, nenhuma
+na UI:
 
 - `estadoInternoParaSnapshot()` — expõe os cinco escalares privados;
 - `aplicarEstadoInternoDeSnapshot(Map)` — reaplica-os;
 - `descarteProibidoId` — getter da carta que o §5.2 do Aberto impede de devolver.
 
 Os dois primeiros existem só para o codec de snapshot; não são API de tela.
+
+Como o patch é estritamente aditivo (`git diff --numstat` → `29 0`), as 132
+asserções da suíte de regras continuam exercitando exatamente o mesmo
+comportamento de antes.
 
 ## Testes
 
