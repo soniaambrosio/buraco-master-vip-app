@@ -2693,6 +2693,30 @@ void main() {
       expect(est.mortos.length, 1);
     });
 
+    test('MORTO-07 rodada encerrada → morto não pode ser pego, estado intacto',
+        () {
+      final est = estadoMorto(mortos: [morto11('a'), morto11('b')])
+          .copyWith(rodadaEncerrada: true);
+      final antes = est.assinatura();
+      final r = pegarMorto(est, 0);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes);
+      expect(est.mortos.length, 2); // nada removido
+      expect(podeEsvaziarMao(est, 0, fechado), false); // encerrada trava tudo
+    });
+
+    test('MORTO-08 morto com tamanho ≠ 11 → rejeita sem alterar estado', () {
+      final curto = [for (int i = 0; i < 10; i++) csm('k$i', 'copas', '5')];
+      final est = estadoMorto(mortos: [curto]);
+      final antes = est.assinatura();
+      final r = pegarMorto(est, 0);
+      expect(r.valido, false);
+      expect(r.proximoEstado, null);
+      expect(est.assinatura(), antes);
+      expect(est.mortos.first.length, 10); // pile intacto, não consumido
+    });
+
     test('BATIDA-01 canastra válida + morto cumprido + mão vazia → permite', () {
       final est = estadoMorto(
           melsNos: [limpa7()],

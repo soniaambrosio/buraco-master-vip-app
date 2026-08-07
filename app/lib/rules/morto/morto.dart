@@ -62,6 +62,7 @@ bool duplaPodeBater(EstadoJogo estado, String dupla, RuleSpec spec) =>
 /// É legal a dupla ESVAZIAR a mão agora? (há morto disponível pra pegar OU já
 /// pode bater). Se não, encerrar a mão é ilegal (não pode fechar sem morto).
 bool podeEsvaziarMao(EstadoJogo estado, int assento, RuleSpec spec) {
+  if (estado.rodadaEncerrada) return false; // rodada fechada trava tudo
   final dupla = _dupla(assento);
   final mortoDisp =
       !(estado.mortoPego[dupla] ?? false) && estado.mortos.isNotEmpty;
@@ -73,6 +74,9 @@ bool podeEsvaziarMao(EstadoJogo estado, int assento, RuleSpec spec) {
 ResultadoMorto pegarMorto(EstadoJogo estado, int assento,
     {bool viaDescarte = false}) {
   final dupla = _dupla(assento);
+  if (estado.rodadaEncerrada) {
+    return ResultadoMorto.recusa('a rodada já foi encerrada');
+  }
   if (estado.maos[assento].isNotEmpty) {
     return ResultadoMorto.recusa('o morto só é pego com a mão vazia');
   }
@@ -81,6 +85,12 @@ ResultadoMorto pegarMorto(EstadoJogo estado, int assento,
   }
   if (estado.mortos.isEmpty) {
     return ResultadoMorto.recusa('não há morto disponível');
+  }
+  // Invariante do morto: o pile a ser consumido (menor índice) tem exatamente
+  // 11 cartas. Rejeita ANTES de clonar/remover — nada de mutação parcial.
+  if (estado.mortos.first.length != 11) {
+    return ResultadoMorto.recusa(
+        'morto inválido: o pile precisa ter exatamente 11 cartas');
   }
   final proximo = estado.cloneProfundo();
   final morto = proximo.mortos.removeAt(0); // menor índice disponível
