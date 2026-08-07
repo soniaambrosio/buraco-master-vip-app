@@ -9,11 +9,23 @@
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test": "node --test test/idempotencia.test.js",
+    "audit": "npm audit --omit=dev"
   },
   "dependencies": {
-    "firebase-admin": "^12.6.0",
-    "firebase-functions": "^6.1.0",
-    "googleapis": "^144.0.0"
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^6.6.0",
+    "googleapis": "^150.0.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "comentarios": {
+    "_": "npm ignora esta chave; ela existe para o proximo humano que abrir o arquivo.",
+    "firebase-admin": "12.x -> 13.x. O 13.10.0 removeu a dependencia direta de uuid e exige Node >=18. NAO subir para 14.x: exige Node >=22 e quebraria o runtime nodejs20 declarado em engines. Era exatamente isso que `npm audit fix --force` instalaria.",
+    "firebase-functions": "Piso subido de ^6.1.0 para ^6.6.0. Nao e cosmetico: o peer de firebase-admin so passou a aceitar ^13.0.0 a partir da 6.3.2 — com ^6.1.0 o npm poderia resolver 6.1.x e gerar conflito de peer. Continua na linha 6.x de proposito; migrar para 7.x nao e necessario para corrigir nada.",
+    "googleapis": "144 -> 150, o minimo que sai da faixa vulneravel do advisory (33.0.0-149.0.0, via googleapis-common <=7.2.0). A ultima publicada e 174.x, mas subir mais nao corrige nada adicional e ampliaria a superficie de regressao antes do primeiro deploy.",
+    "overrides.uuid": "GHSA-w5hq-g745-h8pq (uuid <11.1.1). A unica advisory de raiz: as outras 9 eram propagacao dela. Nao da para resolver so com as dependencias diretas — @google-cloud/firestore e @google-cloud/storage sao optionalDependencies do firebase-admin 13.x fixadas em ^7.x, e as correcoes de google-gax, teeny-request e retry-request so existem em majors alcancaveis pelo firebase-admin 14 (Node >=22). O override e cirurgico: atinge so o pacote vulneravel, e os consumidores usam `require('uuid').v4()`, padrao que o build CJS do uuid 11 mantem. Verificado com teste de fumaca sobre a superficie real usada pelo index.js."
   }
 }
