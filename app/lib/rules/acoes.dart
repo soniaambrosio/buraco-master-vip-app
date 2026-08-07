@@ -76,6 +76,22 @@ class Descartar extends Acao {
   Map<String, dynamic> toJson() => {'tipo': 'descartar', 'carta': carta};
 }
 
+/// Pegar o morto (direto = zerou baixando; indireto = zerou descartando).
+class PegarMorto extends Acao {
+  final bool viaDescarte;
+  const PegarMorto({this.viaDescarte = false});
+  @override
+  Map<String, dynamic> toJson() =>
+      {'tipo': 'pegarMorto', 'viaDescarte': viaDescarte};
+}
+
+/// Bater (encerra a rodada). Só legal com as condições da modalidade cumpridas.
+class Bater extends Acao {
+  const Bater();
+  @override
+  Map<String, dynamic> toJson() => {'tipo': 'bater'};
+}
+
 /// Reconstrói uma Acao a partir do JSON do replay (ajuste 8).
 Acao acaoDeJson(Map<String, dynamic> j) {
   switch (j['tipo'] as String) {
@@ -97,6 +113,10 @@ Acao acaoDeJson(Map<String, dynamic> j) {
       );
     case 'descartar':
       return Descartar(j['carta'] as CartaId);
+    case 'pegarMorto':
+      return PegarMorto(viaDescarte: (j['viaDescarte'] as bool?) ?? false);
+    case 'bater':
+      return const Bater();
     default:
       throw ArgumentError('Ação desconhecida no replay: ${j['tipo']}');
   }

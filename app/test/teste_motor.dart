@@ -21,6 +21,8 @@ import 'package:buraco_master_vip/rules/pontuacao_canonica.dart';
 import 'package:buraco_master_vip/rules/abertura/abertura.dart';
 // C6 — morto e batida (aditivo; motor antigo continua padrão).
 import 'package:buraco_master_vip/rules/morto/morto.dart';
+// C7 — gerador único de ações legais (aditivo; motor antigo continua padrão).
+import 'package:buraco_master_vip/rules/gerador/gerador.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -2804,6 +2806,170 @@ void main() {
       final r = avaliarBatida(est, 0, fechado);
       expect(r.valido, true);
       expect(idsDoEstado(r.proximoEstado!), idsAntes);
+    });
+  });
+
+  // ===================================================================
+  // C7 — GERADOR ÚNICO de ações legais (rules/gerador/gerador.dart).
+  // Duas travas globais (fora da vez / rodada encerrada) + paridade
+  // jogador↔bot (mesma legalidade). Aditivo: motor antigo segue ativo.
+  // ===================================================================
+  group('C7 — gerador único (turno e legalidade)', () {
+    CartaSnapshot csm(String id, String? naipe, String valor) =>
+        CartaSnapshot(id, naipe, valor, valor == '2' || valor == 'JOKER');
+    final fechado = RuleSpec.canonica(Modalidade.fechado);
+
+    EstadoJogo estadoTurno({
+      int vez = 0,
+      bool rodadaEncerrada = false,
+      List<CartaSnapshot> mao0 = const [],
+      List<CartaSnapshot> mao1 = const [],
+      List<CartaSnapshot> monte = const [],
+      List<CartaSnapshot> lixo = const [],
+      List<List<CartaSnapshot>> melsNos = const [],
+      List<List<CartaSnapshot>> mortos = const [],
+      Map<String, bool> mortoPego = const {'nos': false, 'eles': false},
+      Modalidade modalidade = Modalidade.fechado,
+    }) =>
+        EstadoJogo(
+          modalidade: modalidade,
+          metaPontos: 1500,
+          monte: [...monte],
+          lixo: [...lixo],
+          mortos: [for (final m in mortos) [...m]],
+          maos: [
+            [...mao0],
+            [...mao1],
+            <CartaSnapshot>[],
+            <CartaSnapshot>[],
+          ],
+          jogosDupla: {
+            'nos': [for (final m in melsNos) [...m]],
+            'eles': <List<CartaSnapshot>>[],
+          },
+          rodadasVulneravel: const {'nos': 0, 'eles': 0},
+          primeiraBaixadaFeita: const {'nos': true, 'eles': true},
+          vez: vez,
+          mortoPego: {...mortoPego},
+          rodadaEncerrada: rodadaEncerrada,
+        );
+
+    // Estado base: é a vez do assento 0; monte e lixo com carta; assento 1 com
+    // uma mão qualquer (para provar que o bloqueio é o TURNO, não o conteúdo).
+    EstadoJogo base() => estadoTurno(
+          vez: 0,
+          monte: [csm('m0', 'copas', '7')],
+          lixo: [csm('x0', 'ouros', '9')],
+          mao0: [csm('a0', 'copas', '3'), csm('a1', 'copas', '4')],
+          mao1: [csm('b0', 'espadas', '5'), csm('b1', 'espadas', '6')],
+        );
+
+    test('TURNO-01 compra do monte fora da vez → não gera / rejeita', () {
+      final est = base(); // vez = 0
+      final r = aplicarLegal(est, 1, const ComprarMonte(), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+      expect(r.proximoEstado, null);
+      expect(gerarAcoesLegais(est, 1, fechado), isEmpty);
+    });
+
+    test('TURNO-02 compra do lixo fora da vez → não gera / rejeita', () {
+      final est = base();
+      final r = aplicarLegal(est, 1, const ComprarLixo(), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+      expect(gerarAcoesLegais(est, 1, fechado), isEmpty);
+    });
+
+    test('TURNO-03 baixar fora da vez → não gera / rejeita', () {
+      final est = base();
+      final r = aplicarLegal(
+          est, 1, const Baixar(jogosNovos: [['b0', 'b1']]), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+    });
+
+    test('TURNO-04 estender fora da vez → não gera / rejeita', () {
+      final est = base();
+      final r = aplicarLegal(
+          est, 1, const Baixar(extensoes: [Extensao(0, ['b0'])]), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+    });
+
+    test('TURNO-05 descartar fora da vez → não gera / rejeita', () {
+      final est = base();
+      final r = aplicarLegal(est, 1, const Descartar('b0'), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+    });
+
+    test('TURNO-06 pegar morto fora da vez → não gera / rejeita', () {
+      final est = base();
+      final r = aplicarLegal(est, 1, const PegarMorto(), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+    });
+
+    test('TURNO-07 bater fora da vez → não gera / rejeita', () {
+      final est = base();
+      final r = aplicarLegal(est, 1, const Bater(), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('vez'));
+    });
+
+    test('TURNO-08 rodada encerrada → nenhuma ação legal', () {
+      final est = estadoTurno(
+        vez: 0,
+        rodadaEncerrada: true,
+        monte: [csm('m0', 'copas', '7')],
+        mao0: [csm('a0', 'copas', '3')],
+      );
+      // Mesmo sendo a vez do assento 0, a rodada fechada trava tudo.
+      expect(gerarAcoesLegais(est, 0, fechado), isEmpty);
+      final r = aplicarLegal(est, 0, const ComprarMonte(), fechado);
+      expect(r.legal, false);
+      expect(r.motivo, contains('encerrada'));
+      expect(r.proximoEstado, null);
+    });
+
+    test('TURNO-09 assento da vez → só ações realmente legais aparecem', () {
+      final est = base(); // vez 0, monte não vazio, mão0 = a0,a1 (não é canastra)
+      final ger = gerarAcoesLegais(est, 0, fechado);
+      // Legais: comprar do monte + descartar cada carta da mão.
+      expect(ger.any((a) => a is ComprarMonte), true);
+      expect(ger.whereType<Descartar>().map((d) => d.carta).toSet(),
+          {'a0', 'a1'});
+      // Ilegais neste estado NÃO aparecem:
+      expect(ger.any((a) => a is ComprarLixo), false); // Fechado sem uso do topo
+      expect(ger.any((a) => a is Bater), false); // mão não vazia / sem canastra
+      expect(ger.any((a) => a is PegarMorto), false); // mão não vazia
+    });
+
+    test('TURNO-10 mesma situação para jogador e bot → mesma legalidade', () {
+      // Mão0 = 3,4,5 de copas (abre uma sequência válida). Já abriu antes,
+      // então sem mínimo. Um candidato válido e um inválido (2 cartas).
+      final est = estadoTurno(
+        vez: 0,
+        monte: [csm('m0', 'copas', '7')],
+        mao0: [
+          csm('h0', 'copas', '3'),
+          csm('h1', 'copas', '4'),
+          csm('h2', 'copas', '5'),
+        ],
+      );
+      const candValido = Baixar(jogosNovos: [['h0', 'h1', 'h2']]);
+      const candInvalido = Baixar(jogosNovos: [['h0', 'h1']]); // < 3 cartas
+      final props = <Acao>[candValido, candInvalido];
+      // "Bot": enumera candidatos e filtra pela MESMA legalidade do gerador.
+      final ger = gerarAcoesLegais(est, 0, fechado, candidatos: props);
+      final decisaoBot = [for (final a in props) ger.contains(a)];
+      // "Jogador": pergunta a legalidade de cada ação, uma a uma.
+      final decisaoJogador = [
+        for (final a in props) acaoEhLegal(est, 0, a, fechado)
+      ];
+      expect(decisaoJogador, decisaoBot); // paridade estrutural
+      expect(decisaoJogador, [true, false]);
     });
   });
 }
