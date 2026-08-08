@@ -327,6 +327,33 @@ class Jogo {
     if ((n >= metaPontos || e >= metaPontos) && n != e) encerrada = true;
   }
 
+  // Canastras LIMPAS que a dupla fez na última rodada apurada.
+  //
+  // Existe porque o quarto critério de desempate do projeto conta canastras
+  // limpas, e quem sabe o que é limpa é este arquivo — não a camada que consome
+  // o número. Ler `pontosRodada` em vez de varrer os jogos de novo é deliberado:
+  // a classificação já foi feita em `_pontuarDupla`, e refazê-la aqui criaria uma
+  // segunda definição de "limpa" que divergiria na primeira mudança de regra.
+  //
+  // As três faixas somadas são as que `_canastraLiberaBatida` chama de LIMPA no
+  // Aberto/SBTL ("limpa, 500 ou 1000"), e as três só existem com zero curinga por
+  // construção — `_finalizar` só devolve `as_a_as`/`de_500` quando qtdCuringas é 0,
+  // e `limpa` é literalmente o caso sem curinga. Canastra suja não entra.
+  //
+  // 0 quando a rodada ainda não foi apurada: não houve apuração, não há número.
+  int canastrasLimpasNaRodada(String dupla) {
+    final r = pontosRodada?[dupla];
+    if (r is! Map) return 0;
+    final det = r['detalhe'];
+    if (det is! Map) return 0;
+    int ler(String k) {
+      final v = det[k];
+      return v is num ? v.toInt() : 0;
+    }
+
+    return ler('limpas') + ler('de500') + ler('asAas');
+  }
+
   // Nova rodada: mantém o placar, redistribui tudo o resto.
   void novaRodada() {
     if (encerrada) return;

@@ -257,13 +257,51 @@ jobs:
           flutter test test/torneios/motor_torneios_test.dart --reporter expanded
           echo "PORTÃO VERDE: Motor de Torneios validado no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE QUALIDADE — integração Motor de Partidas ↔ Motor de Torneios"
+        # Os quatro portões acima provam cada motor por dentro. Este prova a
+        # FRONTEIRA entre eles: que o resultado que sai da mesa é o mesmo que
+        # entra na classificação, que a associação participante↔assento é
+        # explícita (e não ordem de lista), que reenvio não soma ponto duas vezes
+        # e que queda de rede NÃO vira abandono.
+        #
+        # Também é aqui que mora o teste-ouro da versão 1 do sorteio na VM Dart —
+        # o portão da ponte, logo abaixo, confere a mesma distribuição no
+        # JavaScript. Os dois juntos é que provam o determinismo entre plataformas.
+        run: |
+          if [ ! -f app/test/integracao/teste_integracao_motores.dart ]; then
+            echo "ERRO: app/test/integracao/teste_integracao_motores.dart não encontrado — o portão da integração é OBRIGATÓRIO."
+            exit 1
+          fi
+          if [ ! -d app_build/lib/integracao ]; then
+            echo "ERRO: app_build/lib/integracao não foi copiado — o overlay de lib/ falhou."
+            exit 1
+          fi
+          mkdir -p app_build/test/integracao
+          cp app/test/integracao/teste_integracao_motores.dart app_build/test/integracao/
+          echo "============ REGISTRO DO PORTÃO DE INTEGRAÇÃO ============"
+          echo "Commit testado (GITHUB_SHA): ${GITHUB_SHA}"
+          echo "SHA-256 da camada de integração (código REAL de produção):"
+          sha256sum app_build/lib/integracao/*.dart
+          echo "SHA-256 do desfecho canônico do Motor de Partidas:"
+          sha256sum app_build/lib/motor/desfecho_partida.dart
+          echo "SHA-256 da suíte executada:"
+          sha256sum app_build/test/integracao/teste_integracao_motores.dart
+          echo "=========================================================="
+          cd app_build
+          flutter test test/integracao/teste_integracao_motores.dart --reporter expanded
+          echo "PORTÃO VERDE: integração entre os dois motores validada no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE QUALIDADE — analyze do domínio de torneios"
         # `flutter analyze` no repositório inteiro pegaria erros pré-existentes de
         # outras áreas e não passaria hoje. O alvo é o que esta OS entregou.
+        #
+        # lib/integracao e lib/motor entram na mesma varredura: a camada nova
+        # importa os dois domínios e é justamente onde um erro de tipo entre eles
+        # apareceria primeiro.
         run: |
           cd app_build
-          flutter analyze lib/torneios lib/screens/torneios_models.dart test/torneios
-          echo "ANALYZE VERDE: domínio de torneios sem erros."
+          flutter analyze lib/torneios lib/integracao lib/motor lib/screens/torneios_models.dart test/torneios test/integracao
+          echo "ANALYZE VERDE: domínios de torneios, partidas e integração sem erros."
 
       - name: "PORTÃO DE QUALIDADE — ponte Dart→JS das Cloud Functions"
         # As Cloud Functions NÃO reimplementam as regras: elas carregam o domínio

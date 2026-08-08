@@ -68,6 +68,15 @@ class MotorPartida {
   final Map<String, ResultadoComando> _aplicados = {};
   final List<String> _ordemAplicados = [];
 
+  // Canastras limpas somadas ao longo da PARTIDA, por dupla.
+  //
+  // `Jogo` conta por RODADA e esquece ao redistribuir — está certo assim, é o
+  // ciclo dele. Quem dura a partida inteira é este objeto, então o acumulado
+  // mora aqui. Somar não é recontar: o número de cada rodada vem pronto de
+  // `Jogo.canastrasLimpasNaRodada`, e a definição de "limpa" continua sendo só
+  // de mesa.dart.
+  final Map<String, int> _canastrasLimpas = {'nos': 0, 'eles': 0};
+
   MotorPartida({
     required this.partidaId,
     required this.jogo,
@@ -89,6 +98,13 @@ class MotorPartida {
 
   /// eventoIds memorizados, do mais antigo para o mais novo.
   List<String> get eventosAplicados => List.unmodifiable(_ordemAplicados);
+
+  /// Canastras limpas acumuladas na partida, por dupla (`nos` | `eles`).
+  ///
+  /// Só cresce em [apurarRodada], nunca em comando: uma canastra montada no meio
+  /// da rodada ainda pode ser desfeita pela apuração (jogo inválido não pontua),
+  /// e contar antes daria um número que a pontuação depois desmentiria.
+  Map<String, int> get canastrasLimpas => Map.unmodifiable(_canastrasLimpas);
 
   // ---------------------------------------------------------------- comandos
 
@@ -406,6 +422,12 @@ class MotorPartida {
     final jaTinha = jogo.pontosRodada != null;
     jogo.contarPontos();
     if (jaTinha) return false;
+    // Depois de `contarPontos` e só uma vez por rodada — o `jaTinha` acima já
+    // garante que reapurar não soma de novo.
+    for (final dupla in const ['nos', 'eles']) {
+      _canastrasLimpas[dupla] =
+          _canastrasLimpas[dupla]! + jogo.canastrasLimpasNaRodada(dupla);
+    }
     _versao++;
     diario.anotar(
       ts: agora(),
@@ -418,6 +440,8 @@ class MotorPartida {
         'placarEles': jogo.placar['eles'],
         'duplaQueBateu': jogo.duplaQueBateu,
         'partidaEncerrada': jogo.encerrada,
+        'canastrasLimpasNos': _canastrasLimpas['nos'],
+        'canastrasLimpasEles': _canastrasLimpas['eles'],
       },
     );
     return true;
@@ -480,6 +504,10 @@ class MotorPartida {
         'partidaId': partidaId,
         'versaoEstado': _versao,
         'jogo': SnapshotPartida.capturar(jogo),
+        // Acumulado de canastras limpas: `Jogo` só guarda a rodada corrente, e a
+        // partida atravessa várias. Sem isto no snapshot, um servidor que
+        // reiniciou no meio entregaria ao torneio um desempate zerado.
+        'canastrasLimpas': Map<String, int>.of(_canastrasLimpas),
         'relogio': relogio?.toJson(),
         'idempotencia': [
           for (final id in _ordemAplicados)
@@ -520,6 +548,13 @@ class MotorPartida {
       versaoInicial: versao is num ? versao.toInt() : 0,
     );
     motor.relogio = RelogioTurno.deJson(snapshot['relogio']);
+    final canastras = snapshot['canastrasLimpas'];
+    if (canastras is Map) {
+      for (final dupla in const ['nos', 'eles']) {
+        final v = canastras[dupla];
+        if (v is num) motor._canastrasLimpas[dupla] = v.toInt();
+      }
+    }
     final idem = snapshot['idempotencia'];
     if (idem is List) {
       for (final e in idem) {
