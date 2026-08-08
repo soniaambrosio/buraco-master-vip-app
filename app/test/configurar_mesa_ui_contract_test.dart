@@ -120,9 +120,49 @@ void main() {
     expect(find.text('CADEIRAS'), findsOneWidget);
     expect(find.text('Resumo da mesa'), findsOneWidget);
     expect(find.text('CRIAR MESA PRIVADA'), findsOneWidget);
+    expect(find.text('STBL'), findsOneWidget);
 
     expect(find.text('Pública'), findsNothing);
     expect(find.text('VIP'), findsNothing);
     expect(find.text('Privada'), findsNothing);
+  });
+
+  testWidgets('Mesa Privada com 2 jogadores não exibe quatro cadeiras', (tester) async {
+    final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada).copyWith(
+      modo: ModoJogo.dois,
+      aposta: const ApostaVM(
+        valor: 500,
+        opcoes: [0, 500, 1000, 5000],
+        pote: 1000,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConfigurarMesaScreen(
+          vm: vm,
+          onVoltar: () {},
+          onTipo: (_) {},
+          onTipoBloqueado: (_) {},
+          onModalidade: (_) {},
+          onVerRegras: () {},
+          onModo: (_) {},
+          onPontos: (_) {},
+          onAposta: (_) {},
+          onTempo: (_) {},
+          onChat: (_) {},
+          onEspectadores: (_) {},
+          onCopiar: () {},
+          onAlternarCadeira: (_) {},
+          onCriarMesa: () {},
+        ),
+      ),
+    );
+
+    expect(find.text('Você (dono)'), findsOneWidget);
+    expect(find.text('Cláudia'), findsOneWidget);
+    expect(find.text('Reservada'), findsNothing);
+    expect(find.text('Aberta'), findsNothing);
+    expect(find.textContaining('2 jogadores'), findsOneWidget);
   });
 }
