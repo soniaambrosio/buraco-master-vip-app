@@ -213,15 +213,59 @@ comportamento de antes.
 | Suíte | Testes | Escopo |
 | --- | ---: | --- |
 | `app/test/teste_motor.dart` | 132 | regras (pré-existente, intocada) |
-| `app/test/teste_motor_resiliencia.dart` | 130 | resiliência (nova) |
+| `app/test/teste_motor_resiliencia.dart` | 181 | resiliência (nova) |
 | `app/test/torneios/reward_grants_test.dart` | 80 | torneios (pré-existente, intocada) |
 
-Grupos da suíte nova: `SNAP` (20), `VISAO` (14), `IDEM` (10), `CONC` (7),
-`TURNO` (10), `RELOGIO` (13), `PRES` (14), `RECON` (17), `LOG` (13), `MODAL` (7),
+Grupos da suíte nova: `SNAP` (20), `ESTRITO` (10), `VISAO` (14), `FUGA` (7),
+`IDEM` (12), `CONC` (7), `TURNO` (10), `RELOGIO` (13), `PRES` (14),
+`PARAM` (7), `RECON` (17), `RETOM` (11), `LOG` (13), `JSONL` (6), `MODAL` (7),
 `E2E` (5).
+
+Os grupos `ESTRITO`, `FUGA`, `PARAM`, `RETOM` e `JSONL` nasceram da revisão do
+PR #4 — ver "Correções do PR #4" abaixo.
 
 Nenhum teste espera tempo real passar — o relógio é injetado (`FonteDeTempo`),
 o que os torna determinísticos e instantâneos.
+
+## Correções do PR #4
+
+Seis pontos apontados na revisão técnica, todos corrigidos:
+
+1. **A janela de idempotência não é mais limpa na troca de rodada.** O
+   `eventoId` identifica a INTENÇÃO do jogador, não as cartas — um comando da
+   rodada anterior pode reaparecer depois de uma queda longa, e com a janela
+   limpa seria aplicado uma segunda vez, agora sobre outro baralho. A janela
+   pertence à partida; quem a limita é `janelaIdempotencia`, e só ela.
+
+2. **A retomada integral virou máquina de estados, não recomendação.**
+   `SessaoReconexao` nasce em `aguardandoRetomada` e volta a ele a cada queda.
+   `aoReconectar()` não devolve mais a fila: quem devolve é
+   `comandosParaReenviar()`, e só depois de `aplicarRetomada()`. A retomada
+   aceita a MESMA versão — é perfeitamente possível que nada tenha mudado
+   durante a queda, e recusar travaria a sessão para sempre. Versão realmente
+   antiga continua recusada.
+
+3. **Os limiares de presença do servidor passaram a ser adotados de fato.**
+   Antes o cliente lia `presenca.assentos` e continuava calculando com a régua
+   local: as duas pontas mostrariam histórias diferentes do mesmo jogador.
+   `MapaPresenca.adotarParametros` troca a régua; configuração incoerente
+   (instável ≥ ausente) é recusada sem destruir a que já valia.
+
+4. **O snapshot ficou estrito.** Os cinco escalares internos têm presença e
+   tipo exigidos; campos de texto com número viram `ErroSnapshot` em vez de
+   `TypeError`; `partidaId` e `versaoEstado` são obrigatórios no snapshot do
+   motor. A garantia é: ou restaura exatamente a mesma partida, ou recusa —
+   nunca aproxima.
+
+5. **`paraJsonl()` produz JSON Lines de verdade** (`jsonEncode`). `Map.toString()`
+   não escapa aspas nem quebras de linha: um erro do motor com aspas no texto
+   arruinaria o arquivo inteiro que o suporte precisa ler.
+
+6. **A prova de não-vazamento parte dos ids secretos**, não do formato do campo.
+   `VisaoAssento.vazamentos` varre todo valor de texto da estrutura, sob
+   qualquer chave e em qualquer profundidade, com fronteira de token para não
+   confundir `c1` com `c10`. Um campo futuro como `proximaCartaId` é pego
+   sozinho, sem allowlist para manter atualizada.
 
 O CI ganhou um segundo portão em `.github/workflows/build.yml`, irmão do portão
 do motor: nenhum APK é gerado se a resiliência quebrar.

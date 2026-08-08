@@ -149,10 +149,11 @@ class VisaoAssento {
     };
   }
 
-  /// Todos os ids de carta que aparecem numa visão.
+  /// Ids de carta que aparecem numa visão **na forma de objeto-carta**.
   ///
-  /// Existe para o teste de vazamento: a visão do assento A não pode conter
-  /// nenhum id que esteja na mão de B, no monte ou nos mortos.
+  /// Reconhece `{id, valor, ...}`. Útil para afirmar o que a visão DEVE conter
+  /// (a mão própria, o lixo, os jogos baixados). Para provar AUSÊNCIA de
+  /// vazamento, use [vazamentos] — ver a explicação lá.
   static Set<String> idsVisiveis(Map<String, Object?> visao) {
     final ids = <String>{};
     void varrer(Object? v) {
@@ -174,5 +175,63 @@ class VisaoAssento {
 
     varrer(visao);
     return ids;
+  }
+
+  /// TODOS os valores de texto que aparecem na visão, em qualquer profundidade.
+  ///
+  /// Não olha nomes de chave: varre valores. Chaves também entram porque um id
+  /// pode ser usado como chave de mapa (`{"c37": {...}}`).
+  static List<String> textosVisiveis(Object? visao) {
+    final textos = <String>[];
+    void varrer(Object? v) {
+      if (v is String) {
+        textos.add(v);
+      } else if (v is Map) {
+        for (final e in v.entries) {
+          if (e.key is String) textos.add(e.key as String);
+          varrer(e.value);
+        }
+      } else if (v is List) {
+        for (final e in v) {
+          varrer(e);
+        }
+      }
+    }
+
+    varrer(visao);
+    return textos;
+  }
+
+  /// Ids secretos que ESCAPARAM para a visão. Conjunto vazio = sem vazamento.
+  ///
+  /// Esta é a verificação forte, e o motivo de ela não usar [idsVisiveis]:
+  /// aquela só enxerga ids dentro de um objeto que também tem `valor`. Um campo
+  /// futuro como `proximaCartaId: "c123"`, ou uma mensagem de erro que cite a
+  /// carta, passaria despercebido — a visão vazaria e o teste continuaria verde.
+  ///
+  /// Aqui a proteção parte dos **próprios ids secretos**, não de uma lista de
+  /// campos permitidos que envelheceria em silêncio: qualquer texto da
+  /// estrutura, sob qualquer chave e em qualquer profundidade, é confrontado
+  /// com o segredo.
+  ///
+  /// A comparação respeita fronteira de token para não acusar falso positivo:
+  /// os ids do motor são `c1`, `c2`, … `c108`, e uma busca por substring crua
+  /// acusaria `c1` dentro de `c10`. Só conta quando o id aparece inteiro,
+  /// delimitado por algo que não seja letra, dígito ou `_`.
+  static Set<String> vazamentos(Object? visao, Iterable<String> idsSecretos) {
+    final textos = textosVisiveis(visao);
+    final achados = <String>{};
+    for (final id in idsSecretos) {
+      if (id.isEmpty) continue;
+      final padrao = RegExp(
+          '(^|[^A-Za-z0-9_])${RegExp.escape(id)}([^A-Za-z0-9_]|\$)');
+      for (final t in textos) {
+        if (padrao.hasMatch(t)) {
+          achados.add(id);
+          break;
+        }
+      }
+    }
+    return achados;
   }
 }

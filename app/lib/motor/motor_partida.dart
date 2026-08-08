@@ -428,10 +428,18 @@ class MotorPartida {
     if (jogo.encerrada) return false;
     jogo.novaRodada();
     _versao++;
-    // Uma rodada nova é um baralho novo: os eventoIds da rodada anterior não
-    // têm mais a que se referir, e mantê-los só gastaria a janela.
-    _aplicados.clear();
-    _ordemAplicados.clear();
+    // A JANELA DE IDEMPOTÊNCIA NÃO É LIMPA AQUI — e essa ausência é a correção.
+    //
+    // A versão anterior limpava, com o raciocínio de que um baralho novo torna
+    // os eventoIds antigos sem referente. O raciocínio está errado: o eventoId
+    // não identifica cartas, identifica a INTENÇÃO do jogador. Um comando da
+    // rodada anterior pode reaparecer depois de uma queda longa — o cliente
+    // reconectou, reenviou a fila, e nesse meio-tempo a rodada virou. Com a
+    // janela limpa, esse reenvio seria tratado como comando novo e aplicado
+    // pela segunda vez, agora sobre outro baralho.
+    //
+    // A janela pertence à PARTIDA/SESSÃO. Quem a limita é `janelaIdempotencia`,
+    // e só ela.
     diario.anotar(
       ts: agora(),
       tipo: TipoEvento.rodada,
@@ -506,10 +514,24 @@ class MotorPartida {
     if (bruto is! Map) {
       throw const ErroSnapshot('ESTRUTURA_INVALIDA', 'bloco "jogo" ausente');
     }
+
+    // `partidaId` e `versaoEstado` são identidade e posição no tempo. Cair para
+    // '' e 0 quando faltam produz uma partida que se diz outra e se diz no
+    // começo — e um cliente que já viu a versão 40 passaria a receber estado
+    // "versão 1" e o descartaria para sempre. Melhor recusar.
+    final idBruto = snapshot['partidaId'];
+    if (idBruto is! String || idBruto.trim().isEmpty) {
+      throw const ErroSnapshot(
+          'PARTIDA_ID_INVALIDO', 'partidaId ausente ou vazio no snapshot');
+    }
+    final versaoBruta = snapshot['versaoEstado'];
+    if (versaoBruta is! num || versaoBruta < 0 || versaoBruta != versaoBruta.toInt()) {
+      throw const ErroSnapshot('VERSAO_ESTADO_INVALIDA',
+          'versaoEstado ausente, não numérica ou negativa no snapshot');
+    }
+
     final jogo = SnapshotPartida.restaurar(Map<String, Object?>.from(bruto));
-    final partidaId =
-        snapshot['partidaId'] is String ? snapshot['partidaId'] as String : '';
-    final versao = snapshot['versaoEstado'];
+    final partidaId = idBruto;
     final motor = MotorPartida(
       partidaId: partidaId,
       jogo: jogo,
@@ -517,7 +539,7 @@ class MotorPartida {
       presenca: presenca,
       agora: agora,
       janelaIdempotencia: janelaIdempotencia,
-      versaoInicial: versao is num ? versao.toInt() : 0,
+      versaoInicial: versaoBruta.toInt(),
     );
     motor.relogio = RelogioTurno.deJson(snapshot['relogio']);
     final idem = snapshot['idempotencia'];

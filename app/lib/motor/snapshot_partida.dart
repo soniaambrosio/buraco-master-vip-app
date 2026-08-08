@@ -146,6 +146,72 @@ class SnapshotPartida {
     throw ErroSnapshot('CAMPO_INVALIDO', '$k deveria ser texto');
   }
 
+  /// Texto opcional que precisa SER texto quando presente.
+  ///
+  /// `as String?` num valor numérico lança `TypeError`, que é falha de
+  /// programa. Aqui vira [ErroSnapshot], que é decisão de domínio.
+  static String? _strOpcional(Map<String, Object?> m, String k) {
+    final v = m[k];
+    if (v == null) return null;
+    if (v is String) return v;
+    throw ErroSnapshot('CAMPO_INVALIDO', '$k deveria ser texto ou nulo');
+  }
+
+  // ---------- campos internos obrigatórios ----------
+  //
+  // Os cinco escalares do bloco `interno` existem porque MUDAM o que é legal no
+  // turno. Deixá-los cair num default quando faltam é o pior desfecho possível:
+  // a partida reabre parecendo idêntica e jogando diferente — some a obrigação
+  // do topo do lixo, a carta proibida volta a poder ser descartada, o -100 do
+  // morto reaparece. Melhor recusar a restauração do que aproximá-la.
+
+  static int _internoInt(Map<String, Object?> m, String k) {
+    if (!m.containsKey(k)) {
+      throw ErroSnapshot('INTERNO_INCOMPLETO', 'campo obrigatório "$k" ausente');
+    }
+    final v = m[k];
+    if (v is num) return v.toInt();
+    throw ErroSnapshot('INTERNO_INVALIDO', '"$k" deveria ser número, veio ${v.runtimeType}');
+  }
+
+  static bool _internoBool(Map<String, Object?> m, String k) {
+    if (!m.containsKey(k)) {
+      throw ErroSnapshot('INTERNO_INCOMPLETO', 'campo obrigatório "$k" ausente');
+    }
+    final v = m[k];
+    if (v is bool) return v;
+    throw ErroSnapshot('INTERNO_INVALIDO', '"$k" deveria ser booleano, veio ${v.runtimeType}');
+  }
+
+  /// Texto que pode ser nulo, mas cuja CHAVE é obrigatória.
+  ///
+  /// A distinção importa: `null` significa "não há pendência", enquanto chave
+  /// ausente significa "o snapshot não sabe" — e as duas coisas não podem ser
+  /// confundidas.
+  static String? _internoTextoOuNulo(Map<String, Object?> m, String k) {
+    if (!m.containsKey(k)) {
+      throw ErroSnapshot('INTERNO_INCOMPLETO', 'campo obrigatório "$k" ausente');
+    }
+    final v = m[k];
+    if (v == null || v is String) return v as String?;
+    throw ErroSnapshot('INTERNO_INVALIDO', '"$k" deveria ser texto ou nulo, veio ${v.runtimeType}');
+  }
+
+  /// Valida o bloco `interno` inteiro antes de qualquer coisa ser aplicada.
+  static Map<String, Object?> _validarInterno(Object? bruto) {
+    if (bruto is! Map) {
+      throw const ErroSnapshot('ESTRUTURA_INVALIDA', 'bloco "interno" ausente');
+    }
+    final m = Map<String, Object?>.from(bruto);
+    return {
+      'contadorIds': _internoInt(m, 'contadorIds'),
+      'lixoUnicoCompradoId': _internoTextoOuNulo(m, 'lixoUnicoCompradoId'),
+      'mortosConvertidos': _internoInt(m, 'mortosConvertidos'),
+      'iniciadorRodada': _internoInt(m, 'iniciadorRodada'),
+      'rodadaContada': _internoBool(m, 'rodadaContada'),
+    };
+  }
+
   static List<String> _listaTexto(Object? raw, String onde, int tamanho) {
     if (raw is! List || raw.length != tamanho) {
       throw ErroSnapshot('CAMPO_INVALIDO', '$onde deveria ter $tamanho itens');
@@ -167,6 +233,10 @@ class SnapshotPartida {
       throw ErroSnapshot('VERSAO_FORMATO_INCOMPATIVEL',
           'snapshot na versão $versao, este motor lê $kVersaoFormatoSnapshot');
     }
+
+    // Valida o bloco interno ANTES de construir qualquer coisa: se ele estiver
+    // incompleto, a restauração inteira é inválida e nada deve ser montado.
+    final interno = _validarInterno(json['interno']);
 
     final apelidos = _listaTexto(json['apelidos'], 'apelidos', 4);
     final avatares = _listaTexto(json['avatares'], 'avatares', 4);
@@ -197,11 +267,11 @@ class SnapshotPartida {
       throw ErroSnapshot('ESTRUTURA_INVALIDA', 'assento da vez fora de 0..3: ${j.vez}');
     }
     j.jaComprou = json['jaComprou'] == true;
-    j.lixoTopoObrigatorio = json['lixoTopoObrigatorio'] as String?;
+    j.lixoTopoObrigatorio = _strOpcional(json, 'lixoTopoObrigatorio');
 
     j.rodada = _int(json, 'rodada');
     j.rodadaEncerrada = json['rodadaEncerrada'] == true;
-    j.duplaQueBateu = json['duplaQueBateu'] as String?;
+    j.duplaQueBateu = _strOpcional(json, 'duplaQueBateu');
     j.assentoQueBateu = json['assentoQueBateu'] == null ? null : _int(json, 'assentoQueBateu');
     j.mortoPego = {
       'nos': json['mortoPegoNos'] == true,
@@ -214,7 +284,14 @@ class SnapshotPartida {
     };
     j.encerrada = json['encerrada'] == true;
     final pr = json['pontosRodada'];
-    j.pontosRodada = pr == null ? null : Map<String, dynamic>.from(pr as Map);
+    if (pr == null) {
+      j.pontosRodada = null;
+    } else if (pr is Map) {
+      j.pontosRodada = Map<String, dynamic>.from(pr);
+    } else {
+      throw const ErroSnapshot(
+          'CAMPO_INVALIDO', 'pontosRodada deveria ser objeto ou nulo');
+    }
 
     j.rodadasVulneravel = {
       'nos': _int(json, 'rodadasVulneravelNos'),
@@ -225,11 +302,7 @@ class SnapshotPartida {
       'eles': json['primeiraBaixadaEles'] == true,
     };
 
-    final interno = json['interno'];
-    if (interno is! Map) {
-      throw ErroSnapshot('ESTRUTURA_INVALIDA', 'bloco "interno" ausente');
-    }
-    j.aplicarEstadoInternoDeSnapshot(Map<String, Object?>.from(interno));
+    j.aplicarEstadoInternoDeSnapshot(interno);
 
     // Auditoria do PRÓPRIO motor: é ela quem diz se este estado é possível.
     j.integridadeErro = null;

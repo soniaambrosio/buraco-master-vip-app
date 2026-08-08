@@ -92,6 +92,12 @@ class SessaoReconexao {
   /// pedir o estado completo ao servidor em vez de insistir.
   final List<ComandoPartida> desistidos = [];
 
+  /// A sessão está esperando a visão INTEGRAL de retomada?
+  ///
+  /// Nasce `true` e volta a `true` a cada queda. Enquanto for `true`, nenhum
+  /// comando pendente é liberado para reenvio — ver [comandosParaReenviar].
+  bool _aguardandoRetomada = true;
+
   SessaoReconexao({
     required this.partidaId,
     required this.ids,
@@ -111,6 +117,16 @@ class SessaoReconexao {
   }
 
   bool get temPendencias => _pendentes.isNotEmpty;
+
+  /// A sessão está travada esperando a retomada integral.
+  bool get aguardandoRetomada => _aguardandoRetomada;
+
+  /// A sessão pode jogar: já recebeu a retomada e conhece a versão atual.
+  ///
+  /// Ter `versaoAplicada >= 0` NÃO basta — depois de uma queda, a versão que a
+  /// sessão guarda é a de antes do apagão, e agir sobre ela é agir sobre o
+  /// passado.
+  bool get prontaParaJogar => !_aguardandoRetomada && versaoAplicada >= 0;
 
   // ------------------------------------------------------------------ envio
 
@@ -185,13 +201,30 @@ class SessaoReconexao {
 
   // ------------------------------------------------------- estado que chega
 
+  /// Aplica a visão INTEGRAL de retomada — a resposta do servidor ao `retomar`.
+  ///
+  /// É a única entrada que destrava o reenvio dos pendentes, e a única que
+  /// aceita a MESMA versão que a sessão já tinha. Aceitar a versão igual é
+  /// necessário, não é frouxidão: é perfeitamente possível que nada tenha
+  /// mudado durante a queda — ninguém jogou, o turno não virou —, e recusar
+  /// essa resposta deixaria a sessão travada para sempre esperando uma versão
+  /// maior que nunca virá.
+  ///
+  /// Versão realmente antiga continua sendo recusada, mesmo aqui.
+  bool aplicarRetomada(Object? bruta) =>
+      aplicarVisaoDoServidor(bruta, retomada: true);
+
   /// Aceita (ou descarta) uma visão vinda do servidor.
   ///
-  /// Retorna `true` quando a visão foi adotada. Descarta em silêncio — só com
-  /// registro no diário — versões iguais ou menores: depois de uma reconexão é
-  /// normal chegarem mensagens fora de ordem, e deixar uma visão velha vencer
-  /// faria a carta "voltar" na tela do jogador.
-  bool aplicarVisaoDoServidor(Object? bruta) {
+  /// Retorna `true` quando a visão foi adotada. Descarta — com registro no
+  /// diário — versões menores, e também versões repetidas quando NÃO se trata
+  /// de retomada: depois de uma reconexão é normal chegarem mensagens fora de
+  /// ordem, e deixar uma visão velha vencer faria a carta "voltar" na tela.
+  ///
+  /// Uma visão comum que chega enquanto a sessão espera retomada é aplicada
+  /// (é estado mais novo), mas **não destrava** o reenvio: só a retomada
+  /// integral faz isso.
+  bool aplicarVisaoDoServidor(Object? bruta, {bool retomada = false}) {
     final ts = agora();
     if (bruta is! Map) {
       _descartar(ts, MotivoDescarte.formatoInvalido, null);
@@ -208,7 +241,7 @@ class SessaoReconexao {
       _descartar(ts, MotivoDescarte.versaoAntiga, versao);
       return false;
     }
-    if (versao == versaoAplicada && visao != null) {
+    if (versao == versaoAplicada && visao != null && !retomada) {
       _descartar(ts, MotivoDescarte.versaoRepetida, versao);
       return false;
     }
@@ -219,14 +252,26 @@ class SessaoReconexao {
     final assento = nova['assento'];
     if (assento is num) meuAssento = assento.toInt();
     relogio = RelogioTurno.deJson(nova['relogio']);
+
+    // Presença: primeiro os LIMIARES do servidor, depois os estados. A ordem
+    // importa — adotar os estados sob a régua antiga faria a próxima
+    // reavaliação local reclassificar tudo de novo.
     final p = nova['presenca'];
-    if (p is Map) presenca.aplicarDoServidor(p['assentos']);
+    var parametrosAdotados = false;
+    if (p is Map) {
+      parametrosAdotados = presenca.adotarParametros(
+        ParametrosPresenca.deJson(p['parametros'], base: presenca.parametros),
+      );
+      presenca.aplicarDoServidor(p['assentos']);
+    }
+
+    if (retomada) _aguardandoRetomada = false;
 
     final impressao = nova['impressaoDaMao'];
     diario.anotar(
       ts: ts,
       tipo: TipoEvento.reconexao,
-      acao: 'VISAO_APLICADA',
+      acao: retomada ? 'RETOMADA_APLICADA' : 'VISAO_APLICADA',
       assento: meuAssento,
       rodada: nova['rodada'] is num ? (nova['rodada'] as num).toInt() : null,
       vez: nova['vez'] is num ? (nova['vez'] as num).toInt() : null,
@@ -237,6 +282,8 @@ class SessaoReconexao {
         // caso "voltei e minha mão estava diferente" — fica marcado no log.
         'maoMudou': anterior is String && impressao is String && anterior != impressao,
         'mesaBloqueada': nova['mesaBloqueada'] == true,
+        if (retomada) 'pendentesLiberados': _pendentes.length,
+        if (parametrosAdotados) 'parametrosPresencaAdotados': true,
       },
     );
     return true;
@@ -256,9 +303,13 @@ class SessaoReconexao {
 
   // ------------------------------------------------------------- reconexão
 
-  /// A conexão caiu. Não descarta nada: o que estava pendente continua válido
-  /// justamente porque tem eventoId.
+  /// A conexão caiu.
+  ///
+  /// Não descarta pendente nenhum — eles continuam válidos justamente porque
+  /// têm eventoId. Mas TRAVA a sessão: a partir daqui, nada é reenviado até a
+  /// retomada integral chegar.
   void aoCair() {
+    _aguardandoRetomada = true;
     diario.anotar(
       ts: agora(),
       tipo: TipoEvento.reconexao,
@@ -269,13 +320,52 @@ class SessaoReconexao {
     );
   }
 
-  /// A conexão voltou. Devolve os comandos a reenviar — com o MESMO eventoId,
-  /// o que torna o reenvio inofensivo se o servidor já os tiver aplicado.
+  /// A conexão voltou.
   ///
+  /// **Não libera nada.** Só registra que a sessão está de volta e continua
+  /// travada esperando a retomada. O app deve enviar `retomar` e, quando a
+  /// resposta chegar, passá-la por [aplicarRetomada]; só então
+  /// [comandosParaReenviar] devolve a fila.
+  ///
+  /// Essa separação é o ponto: reenviar comando sem saber a versão atual é
+  /// precisamente o que produz jogada duplicada, e um método que devolvesse a
+  /// fila aqui convidaria a esse erro.
+  void aoReconectar() {
+    _aguardandoRetomada = true;
+    diario.anotar(
+      ts: agora(),
+      tipo: TipoEvento.reconexao,
+      acao: 'RECONECTADO',
+      assento: meuAssento,
+      versaoAntes: versaoAplicada,
+      dados: {
+        'pendentes': _pendentes.length,
+        'aguardandoRetomada': true,
+        'pedirEstadoCompleto': true,
+      },
+    );
+  }
+
+  /// Comandos liberados para reenvio, com o MESMO eventoId — o que torna o
+  /// reenvio inofensivo se o servidor já os tiver aplicado.
+  ///
+  /// Devolve **lista vazia** enquanto [aguardandoRetomada] for verdadeiro.
   /// Comandos que já passaram de [maxTentativas] saem da fila e vão para
   /// [desistidos]: insistir neles esconderia um problema do servidor.
-  List<ComandoPartida> aoReconectar() {
+  List<ComandoPartida> comandosParaReenviar() {
     final ts = agora();
+    if (_aguardandoRetomada) {
+      diario.anotar(
+        ts: ts,
+        tipo: TipoEvento.reconexao,
+        acao: 'REENVIO_BLOQUEADO',
+        assento: meuAssento,
+        versaoAntes: versaoAplicada,
+        erro: 'AGUARDANDO_RETOMADA',
+        dados: {'pendentes': _pendentes.length},
+      );
+      return const [];
+    }
     final reenviar = <ComandoPartida>[];
     for (final p in pendentes) {
       final estado = _pendentes[p.eventoId]!;
@@ -291,28 +381,23 @@ class SessaoReconexao {
     diario.anotar(
       ts: ts,
       tipo: TipoEvento.reconexao,
-      acao: 'RECONECTADO',
+      acao: 'REENVIO_LIBERADO',
       assento: meuAssento,
       versaoAntes: versaoAplicada,
-      dados: {
-        'reenviar': reenviar.length,
-        'desistidos': desistidos.length,
-        // Ao voltar, o app SEMPRE pede o estado inteiro: reenviar comando sem
-        // saber a versão atual é o que produz jogada duplicada.
-        'pedirEstadoCompleto': true,
-      },
+      dados: {'reenviar': reenviar.length, 'desistidos': desistidos.length},
     );
     return List.unmodifiable(reenviar);
   }
 
   /// O app precisa pedir a retomada completa ao servidor?
   ///
-  /// Verdadeiro quando nunca recebeu estado, ou quando desistiu de algum
-  /// comando e portanto não sabe mais se ele valeu.
+  /// Verdadeiro enquanto a sessão estiver travada, enquanto nunca tiver
+  /// recebido estado, ou quando desistiu de algum comando e portanto não sabe
+  /// mais se ele valeu.
   bool get precisaRetomadaCompleta =>
-      versaoAplicada < 0 || desistidos.isNotEmpty;
+      _aguardandoRetomada || versaoAplicada < 0 || desistidos.isNotEmpty;
 
-  /// Marca que a retomada completa chegou e o buraco foi fechado.
+  /// Descarta os comandos abandonados depois que a retomada fechou o buraco.
   void retomadaConcluida() => desistidos.clear();
 
   // ---------------------------------------------------------------- relógio

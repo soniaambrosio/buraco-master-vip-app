@@ -83,20 +83,51 @@ class ParametrosPresenca {
         'prazoAbandonoMs': prazoAbandonoMs,
       };
 
-  static ParametrosPresenca deJson(Object? raw) {
-    if (raw is! Map) return padrao;
+  /// A escada faz sentido?
+  ///
+  /// Se `instavel >= ausente`, o degrau intermediário desaparece e um jogador
+  /// com oscilação leve seria classificado direto como ausente — exatamente o
+  /// que o §8 proíbe. Parâmetros incoerentes são pior que parâmetros ausentes.
+  bool get coerente =>
+      intervaloHeartbeatMs > 0 &&
+      toleranciaInstavelMs > 0 &&
+      toleranciaAusenteMs > toleranciaInstavelMs &&
+      prazoAbandonoMs >= 0;
+
+  /// Lê os parâmetros que o servidor mandou.
+  ///
+  /// [base] é o que já está em uso — e é para onde a leitura cai quando o
+  /// campo falta. Isso é deliberado: uma mensagem com um único campo não pode
+  /// zerar os outros três de volta ao padrão de fábrica. E se o conjunto final
+  /// for incoerente, [base] é devolvido inteiro: **nunca se troca uma
+  /// configuração válida por lixo.**
+  static ParametrosPresenca deJson(Object? raw, {ParametrosPresenca base = padrao}) {
+    if (raw is! Map) return base;
     int ler(String k, int padraoValor) {
       final v = raw[k];
       return v is num && v > 0 ? v.toInt() : padraoValor;
     }
 
-    return ParametrosPresenca(
-      intervaloHeartbeatMs: ler('intervaloHeartbeatMs', 5000),
-      toleranciaInstavelMs: ler('toleranciaInstavelMs', 12000),
-      toleranciaAusenteMs: ler('toleranciaAusenteMs', 45000),
-      prazoAbandonoMs: ler('prazoAbandonoMs', 180000),
+    final lido = ParametrosPresenca(
+      intervaloHeartbeatMs: ler('intervaloHeartbeatMs', base.intervaloHeartbeatMs),
+      toleranciaInstavelMs: ler('toleranciaInstavelMs', base.toleranciaInstavelMs),
+      toleranciaAusenteMs: ler('toleranciaAusenteMs', base.toleranciaAusenteMs),
+      prazoAbandonoMs: ler('prazoAbandonoMs', base.prazoAbandonoMs),
     );
+    return lido.coerente ? lido : base;
   }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ParametrosPresenca &&
+      other.intervaloHeartbeatMs == intervaloHeartbeatMs &&
+      other.toleranciaInstavelMs == toleranciaInstavelMs &&
+      other.toleranciaAusenteMs == toleranciaAusenteMs &&
+      other.prazoAbandonoMs == prazoAbandonoMs;
+
+  @override
+  int get hashCode => Object.hash(intervaloHeartbeatMs, toleranciaInstavelMs,
+      toleranciaAusenteMs, prazoAbandonoMs);
 }
 
 /// Classificação de presença a partir do silêncio observado.
@@ -202,12 +233,29 @@ class PresencaAssento {
 ///   * [reavaliarLocalmente] — palpite. Só mexe em assentos que o servidor não
 ///     declarou terminais, e só entre `online`/`instavel`/`ausente`.
 class MapaPresenca {
-  final ParametrosPresenca parametros;
-  final PoliticaPresenca _politica;
+  ParametrosPresenca _parametros;
+  PoliticaPresenca _politica;
   final Map<int, PresencaAssento> _porAssento = {};
 
-  MapaPresenca({this.parametros = ParametrosPresenca.padrao})
-      : _politica = PoliticaPresenca(parametros);
+  MapaPresenca({ParametrosPresenca parametros = ParametrosPresenca.padrao})
+      : _parametros = parametros,
+        _politica = PoliticaPresenca(parametros);
+
+  /// Limiares em uso. Começam nos padrões e passam a ser os do servidor assim
+  /// que ele os informa — ver [adotarParametros].
+  ParametrosPresenca get parametros => _parametros;
+
+  /// AUTORIDADE. Adota os limiares que o servidor mandou.
+  ///
+  /// Sem isto, o cliente pintaria "instável" num relógio e o servidor contaria
+  /// ausência noutro: as duas pontas mostrariam histórias diferentes do mesmo
+  /// jogador. Devolve `true` quando algo mudou de fato.
+  bool adotarParametros(ParametrosPresenca novos) {
+    if (!novos.coerente || novos == _parametros) return false;
+    _parametros = novos;
+    _politica = PoliticaPresenca(novos);
+    return true;
+  }
 
   PresencaAssento? operator [](int assento) => _porAssento[assento];
 
@@ -276,7 +324,7 @@ class MapaPresenca {
   }
 
   Map<String, Object?> toJson() => {
-        'parametros': parametros.toJson(),
+        'parametros': _parametros.toJson(),
         'assentos': [for (final p in todos) p.toJson()],
       };
 }

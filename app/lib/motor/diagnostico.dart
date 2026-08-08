@@ -13,6 +13,8 @@
 // Regra dura: este arquivo NUNCA registra conteúdo de carta, mão, monte ou
 // morto. `EventoDiagnostico.dados` é filtrado na construção — ver [_sanitizar].
 
+import 'dart:convert';
+
 import '../mesa.dart';
 import 'snapshot_partida.dart';
 
@@ -192,9 +194,15 @@ class DiarioPartida {
     descartados = 0;
   }
 
-  /// Despejo em JSON Lines — um evento por linha, pronto para anexar a um
-  /// chamado de suporte ou subir para o servidor.
-  String paraJsonl() => _eventos.map((e) => e.toJson().toString()).join('\n');
+  /// Despejo em JSON Lines — um evento por linha, cada linha um JSON válido e
+  /// independente, pronto para anexar a um chamado de suporte ou subir para o
+  /// servidor.
+  ///
+  /// `Map.toString()` NÃO é JSON: produz `{a: 1}` em vez de `{"a":1}`, não
+  /// escapa aspas nem acentos, e um erro do motor com aspas no texto quebraria
+  /// o arquivo inteiro. Quem for ler o despejo precisa conseguir dar
+  /// `jsonDecode` linha a linha — é para isso que o formato existe.
+  String paraJsonl() => _eventos.map((e) => jsonEncode(e.toJson())).join('\n');
 
   /// Impressão digital da mão de um assento, para anexar a um evento sem expor
   /// as cartas. Mesma mão ⇒ mesma impressão, independente da ordem.

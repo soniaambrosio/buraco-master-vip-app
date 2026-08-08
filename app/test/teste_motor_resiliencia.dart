@@ -11,6 +11,8 @@
 //     cliente real faz ao reconectar;
 //   * os testes de vazamento varrem a estrutura inteira em vez de conferir
 //     campo a campo: campo novo com carta dentro reprova sozinho.
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:buraco_master_vip/mesa.dart';
 import 'package:buraco_master_vip/motor/comando_partida.dart';
@@ -299,6 +301,128 @@ void main() {
       final b = SnapshotPartida.impressao({'y': 2, 'x': 1});
       expect(a, b);
     });
+
+    // ---- PR #4 ponto 4: snapshot ESTRITO ----
+    // A garantia: ou restaura exatamente a mesma partida, ou recusa. Nunca
+    // aproxima. Um campo interno que sumisse e caísse no default reabriria a
+    // mesa parecendo idêntica e jogando diferente.
+
+    const camposInternos = [
+      'contadorIds',
+      'lixoUnicoCompradoId',
+      'mortosConvertidos',
+      'iniciadorRodada',
+      'rodadaContada',
+    ];
+
+    for (final campo in camposInternos) {
+      test('ESTRITO-01-$campo campo interno AUSENTE é recusado', () {
+        final bruto = SnapshotPartida.capturar(novo());
+        (bruto['interno'] as Map).remove(campo);
+        expect(
+          () => SnapshotPartida.restaurar(bruto),
+          throwsA(isA<ErroSnapshot>()
+              .having((e) => e.codigo, 'codigo', 'INTERNO_INCOMPLETO')),
+          reason: '"$campo" sumiu e a restauração seguiu',
+        );
+      });
+
+      test('ESTRITO-02-$campo campo interno com TIPO errado é recusado', () {
+        final bruto = SnapshotPartida.capturar(novo());
+        (bruto['interno'] as Map)[campo] = const {'lixo': true};
+        expect(
+          () => SnapshotPartida.restaurar(bruto),
+          throwsA(isA<ErroSnapshot>()
+              .having((e) => e.codigo, 'codigo', 'INTERNO_INVALIDO')),
+        );
+      });
+    }
+
+    test('ESTRITO-03 bloco interno inteiro ausente é recusado', () {
+      final bruto = SnapshotPartida.capturar(novo());
+      bruto.remove('interno');
+      expect(() => SnapshotPartida.restaurar(bruto),
+          throwsA(isA<ErroSnapshot>()));
+    });
+
+    test('ESTRITO-04 lixoUnicoCompradoId NULO é legítimo (chave presente)', () {
+      // null significa "não há pendência"; ausente significaria "não sei".
+      final bruto = SnapshotPartida.capturar(novo());
+      expect((bruto['interno'] as Map)['lixoUnicoCompradoId'], isNull);
+      expect(SnapshotPartida.restaurar(bruto).descarteProibidoId, isNull);
+    });
+
+    test('ESTRITO-05 campo de texto com número vira ErroSnapshot, não TypeError',
+        () {
+      for (final campo in ['lixoTopoObrigatorio', 'duplaQueBateu']) {
+        final bruto = SnapshotPartida.capturar(novo());
+        bruto[campo] = 42;
+        expect(
+          () => SnapshotPartida.restaurar(bruto),
+          throwsA(isA<ErroSnapshot>()),
+          reason: '$campo numérico escapou como erro de programa',
+        );
+      }
+    });
+
+    test('ESTRITO-06 pontosRodada malformado vira ErroSnapshot', () {
+      final bruto = SnapshotPartida.capturar(novo());
+      bruto['pontosRodada'] = 'não sou objeto';
+      expect(() => SnapshotPartida.restaurar(bruto),
+          throwsA(isA<ErroSnapshot>()));
+    });
+
+    test('ESTRITO-07 partidaId ausente ou vazio é recusado no MotorPartida', () {
+      for (final valor in [null, '', '   ', 7]) {
+        final s = motorDe(novo()).snapshot();
+        if (valor == null) {
+          s.remove('partidaId');
+        } else {
+          s['partidaId'] = valor;
+        }
+        expect(
+          () => MotorPartida.restaurar(s),
+          throwsA(isA<ErroSnapshot>()
+              .having((e) => e.codigo, 'codigo', 'PARTIDA_ID_INVALIDO')),
+          reason: 'partidaId $valor foi aceito',
+        );
+      }
+    });
+
+    test('ESTRITO-08 versaoEstado ausente ou inválida é recusada', () {
+      for (final valor in [null, -1, 'x', 1.5]) {
+        final s = motorDe(novo()).snapshot();
+        if (valor == null) {
+          s.remove('versaoEstado');
+        } else {
+          s['versaoEstado'] = valor;
+        }
+        expect(
+          () => MotorPartida.restaurar(s),
+          throwsA(isA<ErroSnapshot>()
+              .having((e) => e.codigo, 'codigo', 'VERSAO_ESTADO_INVALIDA')),
+          reason: 'versaoEstado $valor foi aceita',
+        );
+      }
+    });
+
+    test('ESTRITO-09 nenhum default silencioso: versão 0 não substitui a real',
+        () {
+      final m = motorDe(novo());
+      m.aplicar(ComandoPartida.comprarMonte(
+          eventoId: 'e1', assento: m.jogo.vez));
+      final volta = MotorPartida.restaurar(m.snapshot());
+      expect(volta.versaoEstado, m.versaoEstado);
+      expect(volta.versaoEstado, isNot(0));
+      expect(volta.partidaId, m.partidaId);
+      expect(volta.partidaId, isNot(''));
+    });
+
+    test('ESTRITO-10 snapshot íntegro continua restaurando normalmente', () {
+      final m = motorDe(novo());
+      final volta = MotorPartida.restaurar(m.snapshot());
+      expect(volta.snapshot()['jogo'], m.snapshot()['jogo']);
+    });
   });
 
   // ================= VISAO — o que cada assento pode ver =================
@@ -434,6 +558,99 @@ void main() {
       expect((v['relogio'] as Map)['duracaoMs'], 45000);
       expect(v['versaoEstado'], 7);
     });
+
+    // ---- PR #4 ponto 6: vazamento provado pelos IDs SECRETOS ----
+    // A verificação antiga só enxergava ids dentro de `{id, valor}`. Um campo
+    // novo como `proximaCartaId: "c123"` vazaria sem o teste notar. Agora a
+    // varredura parte dos próprios segredos e percorre TODO valor de texto,
+    // sob qualquer chave, em qualquer profundidade — sem allowlist de campos,
+    // que envelheceria em silêncio.
+
+    Set<String> segredosPara(Jogo j, int assento) => {
+          for (var a = 0; a < 4; a++)
+            if (a != assento)
+              for (final c in j.maos[a]) c.id,
+          for (final c in j.monte) c.id,
+          for (final m in j.mortos)
+            for (final c in m) c.id,
+        };
+
+    test('FUGA-01 nenhum id secreto aparece em NENHUM texto da visão', () {
+      final j = novo();
+      for (var assento = 0; assento < 4; assento++) {
+        final v = VisaoAssento.de(j, assento);
+        expect(VisaoAssento.vazamentos(v, segredosPara(j, assento)), isEmpty,
+            reason: 'vazou para o assento $assento');
+      }
+    });
+
+    test('FUGA-02 a varredura pega id em campo de nome qualquer', () {
+      // Simula o campo futuro citado na revisão. Se a proteção dependesse do
+      // nome da chave ou de estar num objeto-carta, isto passaria batido.
+      final j = novo();
+      final segredo = j.monte.first.id;
+      final v = VisaoAssento.de(j, 0);
+      v['proximaCartaId'] = segredo;
+      expect(VisaoAssento.vazamentos(v, {segredo}), {segredo});
+    });
+
+    test('FUGA-03 pega id escondido em lista, mapa aninhado e chave de mapa',
+        () {
+      final j = novo();
+      final segredo = j.mortos.first.first.id;
+      for (final v in <Map<String, Object?>>[
+        {'a': [1, 'x', segredo]},
+        {'a': {'b': {'c': segredo}}},
+        {'a': {segredo: 'valor'}},
+        {'a': 'a carta $segredo saiu do morto'},
+      ]) {
+        expect(VisaoAssento.vazamentos(v, {segredo}), {segredo},
+            reason: 'não achou em $v');
+      }
+    });
+
+    test('FUGA-04 não acusa falso positivo por prefixo (c1 dentro de c10)', () {
+      // Os ids do motor são c1..c108: uma busca por substring crua acusaria
+      // 'c1' dentro de 'c10' e o teste viraria ruído.
+      expect(VisaoAssento.vazamentos({'x': 'c10'}, {'c1'}), isEmpty);
+      expect(VisaoAssento.vazamentos({'x': 'c1'}, {'c10'}), isEmpty);
+      expect(VisaoAssento.vazamentos({'x': 'xc1x'}, {'c1'}), isEmpty);
+      expect(VisaoAssento.vazamentos({'x': 'c1'}, {'c1'}), {'c1'});
+    });
+
+    test('FUGA-05 a própria mão NÃO é tratada como vazamento', () {
+      final j = novo();
+      final v = VisaoAssento.de(j, 0);
+      final minhas = {for (final c in j.maos[0]) c.id};
+      expect(VisaoAssento.vazamentos(v, segredosPara(j, 0)), isEmpty);
+      expect(VisaoAssento.vazamentos(v, minhas), minhas); // estão lá, e devem
+    });
+
+    test('FUGA-06 durante uma partida de robôs a visão nunca vaza', () {
+      final m = motorDe(novo());
+      for (var t = 0; t < 20 && !m.jogo.rodadaEncerrada; t++) {
+        m.conduzirRobo(m.jogo.vez, eventoId: 't$t');
+        for (var assento = 0; assento < 4; assento++) {
+          expect(
+            VisaoAssento.vazamentos(
+                m.visaoDe(assento), segredosPara(m.jogo, assento)),
+            isEmpty,
+            reason: 'turno $t, assento $assento',
+          );
+        }
+      }
+    });
+
+    test('FUGA-07 mesa bloqueada não vaza a carta citada no código de erro', () {
+      final j = novo();
+      final duplicada = j.monte.first;
+      j.mortos.first.add(duplicada); // mesma carta em duas zonas
+      j.auditarIntegridade();
+      expect(j.integridadeErro, isNotNull);
+      final v = VisaoAssento.de(j, 0);
+      expect(v['mesaBloqueada'], isTrue);
+      expect(VisaoAssento.vazamentos(v, {duplicada.id}), isEmpty);
+    });
   });
 
   // ============ IDEM — o mesmo comando não vale duas vezes (§6) ============
@@ -523,7 +740,10 @@ void main() {
       expect(volta.jogo.maos[cmd.assento].length, n);
     });
 
-    test('IDEM-09 nova rodada limpa a janela (baralho novo, ids novos)', () {
+    test('IDEM-09 nova rodada NÃO limpa a janela de idempotência', () {
+      // Correção do PR #4. A versão anterior deste teste legitimava a limpeza.
+      // A janela pertence à PARTIDA, não à rodada: o eventoId identifica a
+      // intenção do jogador, não as cartas, e sobrevive à troca de baralho.
       final j = novo();
       montar(j, mao0: [('K', 'paus')], vez: 0, jaComprou: true, mortoPegoNos: true, mesaNos: [canastraLimpa]);
       final m = motorDe(j);
@@ -531,7 +751,50 @@ void main() {
           eventoId: 'd1', assento: 0, idCarta: j.maos[0].first.id));
       m.apurarRodada();
       m.iniciarNovaRodada();
-      expect(m.eventosAplicados, isEmpty);
+      expect(m.eventosAplicados, contains('d1'));
+    });
+
+    test('IDEM-09b reenvio de comando da rodada ANTERIOR volta como duplicado',
+        () {
+      // Cenário exigido pela revisão: comando aplicado → rodada encerra →
+      // nova rodada → o mesmo eventoId reaparece (cliente reconectou e
+      // reenviou a fila). Nada pode mutar, e a versão não pode subir.
+      final j = novo();
+      montar(j, mao0: [('K', 'paus')], vez: 0, jaComprou: true, mortoPegoNos: true, mesaNos: [canastraLimpa]);
+      final m = motorDe(j);
+      final cmd = ComandoPartida.descartar(
+          eventoId: 'd1', assento: 0, idCarta: j.maos[0].first.id);
+
+      expect(m.aplicar(cmd).status, StatusComando.aplicado);
+      expect(j.rodadaEncerrada, isTrue);
+      m.apurarRodada();
+      m.iniciarNovaRodada();
+
+      final versaoDepoisDaVirada = m.versaoEstado;
+      final estadoDepoisDaVirada = m.impressao;
+
+      final reenvio = m.aplicar(cmd);
+      expect(reenvio.status, StatusComando.duplicado);
+      expect(reenvio.codigoErro, isNull);
+      expect(m.versaoEstado, versaoDepoisDaVirada, reason: 'versão subiu no reenvio');
+      expect(m.impressao, estadoDepoisDaVirada, reason: 'o reenvio mutou o estado');
+      expect(totalCartas(m.jogo), 108);
+    });
+
+    test('IDEM-09c a janela atravessa VÁRIAS rodadas', () {
+      final m = motorDe(novo());
+      final assento = m.jogo.vez;
+      final cmd =
+          ComandoPartida.comprarMonte(eventoId: 'inicio', assento: assento);
+      expect(m.aplicar(cmd).status, StatusComando.aplicado);
+      for (var r = 0; r < 3; r++) {
+        m.jogo.rodadaEncerrada = true;
+        m.apurarRodada();
+        if (m.jogo.encerrada) break;
+        m.iniciarNovaRodada();
+      }
+      expect(m.eventosAplicados, contains('inicio'));
+      expect(m.aplicar(cmd).status, StatusComando.duplicado);
     });
 
     test('IDEM-10 conduzirRobo também é idempotente', () {
@@ -981,13 +1244,17 @@ void main() {
       expect(s.temPendencias, isFalse);
     });
 
-    test('RECON-02 na volta o MESMO eventoId é reenviado', () {
+    test('RECON-02 na volta o MESMO eventoId é reenviado, DEPOIS da retomada',
+        () {
       final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 1});
       final cmd = s.novoComando(assento: 0, tipo: TipoComando.comprarMonte);
       s.registrarEnvio(cmd);
       s.aoCair();
-      final reenviar = s.aoReconectar();
-      expect(reenviar.map((c) => c.eventoId), [cmd.eventoId]);
+      s.aoReconectar();
+      expect(s.comandosParaReenviar(), isEmpty, reason: 'liberou antes da retomada');
+      s.aplicarRetomada({'versaoEstado': 1});
+      expect(s.comandosParaReenviar().map((c) => c.eventoId), [cmd.eventoId]);
     });
 
     test('RECON-03 QUEDA DURANTE A COMPRA: o reenvio não compra duas vezes', () {
@@ -1000,7 +1267,9 @@ void main() {
       final antes = m.jogo.maos[assento].length;
       m.aplicar(cmd); // o servidor recebeu…
       s.aoCair(); //    …mas a resposta se perdeu
-      for (final r in s.aoReconectar()) {
+      s.aoReconectar();
+      s.aplicarRetomada(m.visaoDe(assento)); // retomada integral primeiro
+      for (final r in s.comandosParaReenviar()) {
         expect(m.aplicar(r).status, StatusComando.duplicado);
       }
       expect(m.jogo.maos[assento].length, antes + 1);
@@ -1019,7 +1288,9 @@ void main() {
       s.registrarEnvio(cmd);
       m.aplicar(cmd);
       s.aoCair();
-      for (final r in s.aoReconectar()) {
+      s.aoReconectar();
+      s.aplicarRetomada(m.visaoDe(0));
+      for (final r in s.comandosParaReenviar()) {
         m.aplicar(r);
       }
       expect(j.lixo.length, 1);
@@ -1044,7 +1315,10 @@ void main() {
       final volta = MotorPartida.restaurar(m.snapshot());
       expect(volta.jogo.rodadaEncerrada, isTrue);
       expect(volta.jogo.duplaQueBateu, 'nos');
-      for (final r in s.aoReconectar()) {
+      s.aoCair();
+      s.aoReconectar();
+      s.aplicarRetomada(volta.visaoDe(0));
+      for (final r in s.comandosParaReenviar()) {
         expect(volta.aplicar(r).status, StatusComando.duplicado);
       }
       expect(volta.jogo.lixo.length, 1);
@@ -1104,11 +1378,13 @@ void main() {
     test('RECON-13 depois de insistir demais o app pede o estado inteiro', () {
       final s = SessaoReconexao(
           partidaId: 'p', ids: GeradorEventoId('s'), maxTentativas: 3);
-      s.aplicarVisaoDoServidor({'versaoEstado': 1}); // já conhece a partida
+      s.aplicarRetomada({'versaoEstado': 1}); // já conhece a partida
       final cmd = s.novoComando(assento: 0, tipo: TipoComando.comprarMonte);
       s.registrarEnvio(cmd);
       for (var i = 0; i < 5; i++) {
         s.aoReconectar();
+        s.aplicarRetomada({'versaoEstado': 1});
+        s.comandosParaReenviar();
       }
       expect(s.desistidos.map((c) => c.eventoId), [cmd.eventoId]);
       expect(s.precisaRetomadaCompleta, isTrue);
@@ -1150,6 +1426,288 @@ void main() {
       final g = GeradorEventoId('sessao-x');
       final ids = {for (var i = 0; i < 200; i++) g.proximo()};
       expect(ids.length, 200);
+    });
+
+    // ---- PR #4 ponto 2: a retomada integral é OBRIGATÓRIA ----
+
+    test('RETOM-01 a sessão nasce travada esperando retomada', () {
+      final s = sessao();
+      expect(s.aguardandoRetomada, isTrue);
+      expect(s.prontaParaJogar, isFalse);
+      expect(s.precisaRetomadaCompleta, isTrue);
+    });
+
+    test('RETOM-02 uma visão comum NÃO destrava a sessão', () {
+      final s = sessao();
+      expect(s.aplicarVisaoDoServidor({'versaoEstado': 7}), isTrue);
+      expect(s.versaoAplicada, 7);
+      expect(s.aguardandoRetomada, isTrue, reason: 'visão comum destravou');
+      expect(s.prontaParaJogar, isFalse);
+    });
+
+    test('RETOM-03 a retomada destrava e a sessão fica pronta', () {
+      final s = sessao();
+      expect(s.aplicarRetomada({'versaoEstado': 7, 'assento': 1}), isTrue);
+      expect(s.aguardandoRetomada, isFalse);
+      expect(s.prontaParaJogar, isTrue);
+      expect(s.meuAssento, 1);
+    });
+
+    test('RETOM-04 RECONEXÃO COM A MESMA VERSÃO é aceita (nada mudou na queda)',
+        () {
+      // Ninguém jogou durante o apagão: o servidor responde a retomada com a
+      // MESMA versão. Recusar aqui travaria a sessão para sempre.
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 12});
+      s.aoCair();
+      s.aoReconectar();
+      expect(s.aguardandoRetomada, isTrue);
+      expect(s.aplicarRetomada({'versaoEstado': 12}), isTrue);
+      expect(s.versaoAplicada, 12);
+      expect(s.prontaParaJogar, isTrue);
+    });
+
+    test('RETOM-05 RECONEXÃO COM VERSÃO MAIOR é aceita', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 12});
+      s.aoCair();
+      s.aoReconectar();
+      expect(s.aplicarRetomada({'versaoEstado': 30}), isTrue);
+      expect(s.versaoAplicada, 30);
+      expect(s.prontaParaJogar, isTrue);
+    });
+
+    test('RETOM-06 versão MENOR é recusada até numa retomada', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 12});
+      s.aoCair();
+      s.aoReconectar();
+      expect(s.aplicarRetomada({'versaoEstado': 11}), isFalse);
+      expect(s.versaoAplicada, 12);
+      expect(s.aguardandoRetomada, isTrue, reason: 'destravou com versão velha');
+    });
+
+    test('RETOM-07 pendentes NÃO são liberados antes da retomada', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 1});
+      final cmd = s.novoComando(assento: 0, tipo: TipoComando.comprarMonte);
+      s.registrarEnvio(cmd);
+      s.aoCair();
+      expect(s.comandosParaReenviar(), isEmpty);
+      s.aoReconectar();
+      expect(s.comandosParaReenviar(), isEmpty);
+      expect(s.temPendencias, isTrue, reason: 'o pendente não pode sumir');
+    });
+
+    test('RETOM-08 pendentes são liberados SÓ depois da visão integral', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 1});
+      final cmd = s.novoComando(assento: 0, tipo: TipoComando.comprarMonte);
+      s.registrarEnvio(cmd);
+      s.aoCair();
+      s.aoReconectar();
+      expect(s.comandosParaReenviar(), isEmpty);
+      s.aplicarRetomada({'versaoEstado': 4});
+      final liberados = s.comandosParaReenviar();
+      expect(liberados.map((c) => c.eventoId), [cmd.eventoId]);
+    });
+
+    test('RETOM-09 uma visão comum durante a espera não libera o reenvio', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 1});
+      final cmd = s.novoComando(assento: 0, tipo: TipoComando.comprarMonte);
+      s.registrarEnvio(cmd);
+      s.aoCair();
+      s.aoReconectar();
+      // chega estado novo, mas não é a resposta do `retomar`
+      expect(s.aplicarVisaoDoServidor({'versaoEstado': 9}), isTrue);
+      expect(s.comandosParaReenviar(), isEmpty);
+      expect(s.aguardandoRetomada, isTrue);
+    });
+
+    test('RETOM-10 o bloqueio de reenvio fica registrado no diário', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 1});
+      s.registrarEnvio(
+          s.novoComando(assento: 0, tipo: TipoComando.comprarMonte));
+      s.aoCair();
+      s.comandosParaReenviar();
+      final e = s.diario.eventos.last;
+      expect(e.acao, 'REENVIO_BLOQUEADO');
+      expect(e.erro, 'AGUARDANDO_RETOMADA');
+    });
+
+    test('RETOM-11 fluxo completo contra o motor: nenhuma jogada em dobro', () {
+      final m = motorDe(novo());
+      final assento = m.jogo.vez;
+      final s = sessao();
+      s.aplicarRetomada(m.visaoDe(assento));
+      final cmd =
+          s.novoComando(assento: assento, tipo: TipoComando.comprarMonte);
+      s.registrarEnvio(cmd);
+      final naMao = m.jogo.maos[assento].length;
+      m.aplicar(cmd); // servidor aplicou, resposta perdida
+      s.aoCair();
+      s.aoReconectar();
+      expect(s.comandosParaReenviar(), isEmpty); // travado
+      s.aplicarRetomada(m.visaoDe(assento)); // versão MAIOR agora
+      for (final r in s.comandosParaReenviar()) {
+        expect(m.aplicar(r).status, StatusComando.duplicado);
+      }
+      expect(m.jogo.maos[assento].length, naMao + 1);
+      expect(totalCartas(m.jogo), 108);
+    });
+
+    // ---- PR #4 ponto 3: parâmetros de presença do servidor ----
+
+    test('PARAM-01 a sessão adota os limiares que vieram na visão', () {
+      final s = sessao();
+      s.aplicarRetomada({
+        'versaoEstado': 1,
+        'presenca': {
+          'parametros': {
+            'intervaloHeartbeatMs': 2000,
+            'toleranciaInstavelMs': 3000,
+            'toleranciaAusenteMs': 8000,
+            'prazoAbandonoMs': 60000,
+          },
+          'assentos': const [],
+        }
+      });
+      expect(s.presenca.parametros.toleranciaInstavelMs, 3000);
+      expect(s.presenca.parametros.toleranciaAusenteMs, 8000);
+      expect(s.presenca.parametros.prazoAbandonoMs, 60000);
+    });
+
+    test('PARAM-02 a CLASSIFICAÇÃO passa a usar a régua do servidor', () {
+      // A prova que importa: não basta guardar o número, o cálculo tem de mudar.
+      final s = sessao();
+      s.presenca.registrarHeartbeat(1, 0);
+      s.presenca.reavaliarLocalmente(5000);
+      expect(s.presenca.estadoDe(1), EstadoPresenca.online); // régua padrão
+      s.aplicarRetomada({
+        'versaoEstado': 1,
+        'presenca': {
+          'parametros': {
+            'toleranciaInstavelMs': 3000,
+            'toleranciaAusenteMs': 4000,
+          },
+          'assentos': const [],
+        }
+      });
+      s.presenca.reavaliarLocalmente(5000);
+      expect(s.presenca.estadoDe(1), EstadoPresenca.ausente); // régua do servidor
+    });
+
+    test('PARAM-03 a contagem até o abandono acompanha o servidor', () {
+      final s = sessao();
+      s.presenca.registrarHeartbeat(2, 0);
+      s.aplicarRetomada({
+        'versaoEstado': 1,
+        'presenca': {
+          'parametros': {
+            'toleranciaInstavelMs': 1000,
+            'toleranciaAusenteMs': 2000,
+            'prazoAbandonoMs': 5000,
+          },
+          'assentos': const [],
+        }
+      });
+      expect(s.presenca.msAteAbandonoPossivel(2, 0), 2000 + 5000);
+    });
+
+    test('PARAM-04 parâmetros INCOERENTES não substituem os válidos', () {
+      // instável >= ausente apagaria o degrau intermediário e faria uma
+      // oscilação leve virar ausência — exatamente o que o §8 proíbe.
+      final s = sessao();
+      s.aplicarRetomada({
+        'versaoEstado': 1,
+        'presenca': {
+          'parametros': {
+            'toleranciaInstavelMs': 3000,
+            'toleranciaAusenteMs': 9000,
+          },
+          'assentos': const [],
+        }
+      });
+      final bons = s.presenca.parametros;
+      expect(
+        s.aplicarVisaoDoServidor({
+          'versaoEstado': 2,
+          'presenca': {
+            'parametros': {
+              'toleranciaInstavelMs': 50000, // maior que o de ausente
+              'toleranciaAusenteMs': 9000,
+            },
+            'assentos': const [],
+          }
+        }),
+        isTrue,
+      );
+      expect(s.presenca.parametros, bons, reason: 'aceitou lixo por cima');
+    });
+
+    test('PARAM-05 valores negativos ou zerados são ignorados', () {
+      final s = sessao();
+      s.aplicarRetomada({'versaoEstado': 1});
+      final antes = s.presenca.parametros;
+      s.aplicarVisaoDoServidor({
+        'versaoEstado': 2,
+        'presenca': {
+          'parametros': {
+            'intervaloHeartbeatMs': -1,
+            'toleranciaInstavelMs': 0,
+            'toleranciaAusenteMs': 'texto',
+          },
+          'assentos': const [],
+        }
+      });
+      expect(s.presenca.parametros, antes);
+    });
+
+    test('PARAM-06 mensagem parcial não zera os demais limiares', () {
+      final s = sessao();
+      s.aplicarRetomada({
+        'versaoEstado': 1,
+        'presenca': {
+          'parametros': {
+            'intervaloHeartbeatMs': 1000,
+            'toleranciaInstavelMs': 2000,
+            'toleranciaAusenteMs': 3000,
+            'prazoAbandonoMs': 4000,
+          },
+          'assentos': const [],
+        }
+      });
+      s.aplicarVisaoDoServidor({
+        'versaoEstado': 2,
+        'presenca': {
+          'parametros': {'toleranciaAusenteMs': 7000},
+          'assentos': const [],
+        }
+      });
+      expect(s.presenca.parametros.intervaloHeartbeatMs, 1000);
+      expect(s.presenca.parametros.toleranciaInstavelMs, 2000);
+      expect(s.presenca.parametros.toleranciaAusenteMs, 7000);
+      expect(s.presenca.parametros.prazoAbandonoMs, 4000);
+    });
+
+    test('PARAM-07 limiares e estados chegam coerentes na mesma visão', () {
+      final s = sessao();
+      s.aplicarRetomada({
+        'versaoEstado': 1,
+        'presenca': {
+          'parametros': {
+            'toleranciaInstavelMs': 1000,
+            'toleranciaAusenteMs': 2000,
+          },
+          'assentos': [
+            {'assento': 3, 'estado': 'ausente', 'ultimoHeartbeatMs': 0, 'desdeMs': 0}
+          ],
+        }
+      });
+      expect(s.presenca.parametros.toleranciaAusenteMs, 2000);
+      expect(s.presenca.estadoDe(3), EstadoPresenca.ausente);
     });
   });
 
@@ -1283,6 +1841,90 @@ void main() {
       s.aplicarVisaoDoServidor({'versaoEstado': 1, 'impressaoDaMao': 'aaa'});
       s.aplicarVisaoDoServidor({'versaoEstado': 2, 'impressaoDaMao': 'bbb'});
       expect(s.diario.eventos.last.dados['maoMudou'], isTrue);
+    });
+
+    // ---- PR #4 ponto 5: JSON Lines de verdade ----
+
+    test('JSONL-01 cada linha é JSON válido e independente', () {
+      final j = novo();
+      montar(j, mao0: [('K', 'paus'), ('Q', 'paus')], vez: 0, jaComprou: true);
+      final m = motorDe(j);
+      m.aplicar(ComandoPartida.comprarMonte(eventoId: 'x', assento: 1)); // recusa
+      m.aplicar(ComandoPartida.descartar(
+          eventoId: 'd1', assento: 0, idCarta: j.maos[0].first.id));
+      m.conduzirRobo(m.jogo.vez, eventoId: 'r1');
+
+      final linhas = m.diario.paraJsonl().split('\n');
+      expect(linhas.length, m.diario.tamanho);
+      expect(linhas.length, greaterThan(2));
+      for (final l in linhas) {
+        final obj = jsonDecode(l);
+        expect(obj, isA<Map<String, dynamic>>());
+        expect(obj['ts'], isA<int>());
+        expect(obj['partida'], 'p-teste');
+        expect(obj['tipo'], isA<String>());
+        expect(obj['acao'], isA<String>());
+      }
+    });
+
+    test('JSONL-02 os campos principais sobrevivem à ida e volta', () {
+      final m = motorDe(novo());
+      m.aplicar(ComandoPartida.comprarMonte(
+          eventoId: 'e1', assento: m.jogo.vez));
+      final ultima = m.diario.paraJsonl().split('\n').last;
+      final obj = jsonDecode(ultima) as Map<String, dynamic>;
+      expect(obj['acao'], 'COMPRAR_MONTE');
+      expect(obj['eventoId'], 'e1');
+      expect(obj['versaoAntes'], 0);
+      expect(obj['versaoDepois'], 1);
+      expect(obj['resultado'], 'aplicado');
+      expect((obj['dados'] as Map)['qtdCartas'], 0);
+    });
+
+    test('JSONL-03 texto com aspas e acento não quebra a linha', () {
+      // `Map.toString()` não escapa nada: uma mensagem de erro com aspas
+      // arruinaria o arquivo inteiro.
+      final d = DiarioPartida('p');
+      d.anotar(
+        ts: 1,
+        tipo: TipoEvento.rejeicao,
+        acao: 'X',
+        erro: 'a "carta" não pôde ser usada, veja: {a: 1}\ncom quebra',
+      );
+      final linhas = d.paraJsonl().split('\n');
+      expect(linhas.length, 1, reason: 'a quebra de linha vazou para o arquivo');
+      final obj = jsonDecode(linhas.first) as Map<String, dynamic>;
+      expect(obj['erro'], contains('"carta"'));
+    });
+
+    test('JSONL-04 a sanitização continua valendo no JSON', () {
+      final d = DiarioPartida('p');
+      d.anotar(
+        ts: 1,
+        tipo: TipoEvento.comando,
+        acao: 'X',
+        dados: {'mao': 'A-K-Q', 'token': 'segredo', 'qtdCartas': 3},
+      );
+      final obj = jsonDecode(d.paraJsonl()) as Map<String, dynamic>;
+      final dados = obj['dados'] as Map<String, dynamic>;
+      expect(dados['mao'], '<omitido>');
+      expect(dados['token'], '<omitido>');
+      expect(dados['qtdCartas'], 3);
+    });
+
+    test('JSONL-05 NENHUM id de carta aparece no JSON de uma partida real', () {
+      final m = motorDe(novo());
+      for (var t = 0; t < 8 && !m.jogo.rodadaEncerrada; t++) {
+        m.conduzirRobo(m.jogo.vez, eventoId: 't$t');
+      }
+      final despejo = m.diario.paraJsonl();
+      for (final c in zonasTodas(m.jogo)) {
+        expect(despejo, isNot(contains('"${c.id}"')));
+      }
+    });
+
+    test('JSONL-06 diário vazio produz despejo vazio, não JSON inválido', () {
+      expect(DiarioPartida('p').paraJsonl(), '');
     });
   });
 
