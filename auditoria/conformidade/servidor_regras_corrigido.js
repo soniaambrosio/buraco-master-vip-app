@@ -176,12 +176,12 @@ function valorCarta(c) {
 // suja via validarSequencia; batida +100; morto não pego -100; desconto da mão).
 function pontuarDupla(melds, { bateu, mortoPego, cartasNaMao, algumPegouMorto }) {
   let pontosCanastras = 0, pontosCartas = 0;
-  const detalhe = { de500: 0, limpas: 0, sujas: 0, baixadas: 0 };
+  const detalhe = { de500: 0, asas: 0, limpas: 0, sujas: 0, baixadas: 0 };
   for (const meld of melds) {
     if (meld.length >= 7) {
       const res = validarSequencia(meld);
       if (res.valido) {
-        if (res.tipo === "as_a_as") { pontosCanastras += 1000; detalhe.de500++; }
+        if (res.tipo === "as_a_as") { pontosCanastras += 1000; detalhe.asas++; }
         else if (res.tipo === "de_500") { pontosCanastras += 500; detalhe.de500++; }
         else if (res.tipo === "limpa") { pontosCanastras += 200; detalhe.limpas++; }
         else if (res.tipo === "suja") { pontosCanastras += 100; detalhe.sujas++; }
