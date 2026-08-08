@@ -240,6 +240,35 @@ class Jogo {
   String contagemPorZona() =>
       _zonas().entries.map((e) => '${e.key}=${e.value.length}').join(' · ');
 
+  // ===== SNAPSHOT / RETOMADA (OS-01 §9) =====
+  // O motor guarda cinco escalares privados que NÃO aparecem em nenhuma zona de
+  // cartas mas mudam o que é legal no turno. Sem eles, uma partida retomada
+  // parece igual e joga diferente. Estes dois métodos existem só para o codec de
+  // snapshot (lib/motor/snapshot_partida.dart) — não são API de tela.
+
+  /// Escalares internos que precisam viajar no snapshot para a retomada ser fiel.
+  Map<String, Object?> estadoInternoParaSnapshot() => {
+        'contadorIds': _cont,
+        'lixoUnicoCompradoId': _lixoUnicoCompradoId,
+        'mortosConvertidos': _mortosConvertidos,
+        'iniciadorRodada': _iniciadorRodada,
+        'rodadaContada': _rodadaContada,
+      };
+
+  /// Reaplica os escalares internos vindos de um snapshot.
+  void aplicarEstadoInternoDeSnapshot(Map<String, Object?> m) {
+    _cont = (m['contadorIds'] as num?)?.toInt() ?? _cont;
+    _lixoUnicoCompradoId = m['lixoUnicoCompradoId'] as String?;
+    _mortosConvertidos = (m['mortosConvertidos'] as num?)?.toInt() ?? 0;
+    _iniciadorRodada = (m['iniciadorRodada'] as num?)?.toInt() ?? -1;
+    _rodadaContada = m['rodadaContada'] == true;
+  }
+
+  /// §5.2 ABERTO: carta comprada sozinha do lixo que NÃO pode ser devolvida como
+  /// descarte neste turno. null = sem restrição. Exposto para a visão do assento
+  /// poder dizer ao dono da mão o que ele não pode descartar.
+  String? get descarteProibidoId => _lixoUnicoCompradoId;
+
   // ===== PONTUAÇÃO (porte fiel de motor/jogo.js: pontuarDuplaJogo + contarPontos) =====
   // canastra: as_a_as=1000, de_500=500, limpa=200, suja=100; + cartas baixadas;
   // + bônus de batida (100); − cartas na mão; − morto não pego (−100, só se ALGUÉM pegou).

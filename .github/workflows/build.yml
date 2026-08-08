@@ -187,6 +187,35 @@ jobs:
           flutter test test/teste_motor.dart --reporter expanded
           echo "PORTÃO VERDE: todos os testes do motor passaram no commit ${GITHUB_SHA} — seguindo pro APK."
 
+      - name: "PORTÃO DE QUALIDADE — resiliência do motor (snapshot, idempotência, reconexão)"
+        # Segundo portão, irmão do de cima. O primeiro prova que as REGRAS estão
+        # certas; este prova que elas continuam certas quando a rede está errada:
+        # comando repetido, dois jogadores ao mesmo tempo, queda no meio da
+        # jogada, volta com estado velho, app em segundo plano.
+        # Roda SOMENTE este arquivo — o widget_test.dart do `flutter create` tem
+        # erro pré-existente e derrubaria a suíte inteira.
+        run: |
+          if [ ! -f app/test/teste_motor_resiliencia.dart ]; then
+            echo "ERRO: app/test/teste_motor_resiliencia.dart não encontrado — o portão de resiliência é OBRIGATÓRIO."
+            exit 1
+          fi
+          if [ ! -d app_build/lib/motor ]; then
+            echo "ERRO: app_build/lib/motor não foi copiado — o overlay de lib/ falhou."
+            exit 1
+          fi
+          mkdir -p app_build/test
+          cp app/test/teste_motor_resiliencia.dart app_build/test/
+          echo "============ REGISTRO DO PORTÃO DE RESILIÊNCIA ============"
+          echo "Commit testado (GITHUB_SHA): ${GITHUB_SHA}"
+          echo "SHA-256 da camada de resiliência (código REAL de produção):"
+          sha256sum app_build/lib/motor/*.dart
+          echo "SHA-256 da suíte executada:"
+          sha256sum app_build/test/teste_motor_resiliencia.dart
+          echo "=========================================================="
+          cd app_build
+          flutter test test/teste_motor_resiliencia.dart --reporter expanded
+          echo "PORTÃO VERDE: resiliência validada no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE QUALIDADE — domínio de recompensas de torneios"
         # Roda SOMENTE este arquivo. O test/widget_test.dart que vem do
         # `flutter create` tem erro pré-existente e derrubaria a suíte inteira,
