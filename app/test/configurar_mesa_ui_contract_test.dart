@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/screens/configurar_mesa_screen.dart';
+import '../lib/screens/onde_jogar_screen.dart';
 
 void main() {
   group('Configuração de Mesa — contrato visual aprovado', () {
@@ -70,6 +71,20 @@ void main() {
 
       expect(aposta.valor * 4, aposta.pote);
       expect(aposta.copyWith(valor: 500, pote: 1000).pote, 1000);
+    });
+  });
+
+  group('Onde jogar — rota aprovada', () {
+    test('cada ambiente possui uma única saída e a privada não cai no lobby legado', () {
+      final vm = OndeJogarVM.mock(ehVip: true);
+      final ids = vm.opcoes.map((opcao) => opcao.id).toList();
+
+      expect(ids, ['publica', 'vip', 'privada_config', 'treino']);
+      expect(ids.toSet(), hasLength(ids.length));
+
+      final privada = vm.opcoes.singleWhere((opcao) => opcao.titulo == 'Mesa Privada');
+      expect(privada.id, 'privada_config');
+      expect(privada.id, isNot('privada'));
     });
   });
 
