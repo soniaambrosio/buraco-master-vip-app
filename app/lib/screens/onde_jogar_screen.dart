@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 // ============================================================================
-// TELA ONDE JOGAR (seletor de mesa) — build do Claude.
-// Reproduz ondejogar-appnavegavel.html: 4 cards (Pública · VIP · Privada · Treino).
-// Abre pelo JOGAR do Início → onEscolher(id) → Configurar Mesa (ou Mesa, no Treino).
+// TELA ONDE JOGAR (seletor de mesa) — build visual.
+// O jogador escolhe o ambiente aqui; a tela seguinte configura apenas o tipo
+// escolhido. Treino continua abrindo diretamente a mesa.
 // ============================================================================
 
 enum CorBadge { verde, ouro, nenhuma }
@@ -38,7 +38,10 @@ class OndeJogarVM {
             bloqueado: true,
           ),
           OpcaoMesa(
-            id: 'privada',
+            // O host legado intercepta literalmente "privada" para abrir o
+            // lobby online antigo. Este id deixa a prévia cair no fluxo novo
+            // de ConfigurarMesa, sem mexer na integração do servidor.
+            id: 'privada_config',
             icone: '🔑',
             titulo: 'Mesa Privada',
             badge: 'VIP cria',
@@ -59,7 +62,7 @@ class OndeJogarVM {
 }
 
 class OpcaoMesa {
-  final String id; // 'publica' | 'vip' | 'privada' | 'treino'
+  final String id;
   final String icone;
   final String titulo;
   final String? badge;
@@ -130,15 +133,23 @@ class OndeJogarScreen extends StatelessWidget {
                           icon: const Icon(Icons.chevron_left, color: _gold, size: 30),
                           splashRadius: 22,
                         ),
-                        const Text('Onde jogar',
-                            style: TextStyle(color: _goldHi, fontSize: 18, fontWeight: FontWeight.w800)),
+                        const Text(
+                          'Onde jogar',
+                          style: TextStyle(
+                            color: _goldHi,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   const Padding(
                     padding: EdgeInsets.fromLTRB(20, 2, 20, 8),
-                    child: Text('Escolha a mesa pra começar a partida 🃏',
-                        style: TextStyle(color: _mut, fontSize: 13)),
+                    child: Text(
+                      'Escolha a mesa pra começar a partida 🃏',
+                      style: TextStyle(color: _mut, fontSize: 13),
+                    ),
                   ),
                   Expanded(
                     child: ListView(
@@ -169,7 +180,13 @@ class OndeJogarScreen extends StatelessWidget {
             width: o.destaque ? 1.8 : 1,
           ),
           boxShadow: o.destaque
-              ? [BoxShadow(color: _gold.withValues(alpha: 0.22), blurRadius: 16, spreadRadius: -2)]
+              ? [
+                  BoxShadow(
+                    color: _gold.withValues(alpha: 0.22),
+                    blurRadius: 16,
+                    spreadRadius: -2,
+                  ),
+                ]
               : null,
         ),
         child: Row(
@@ -194,9 +211,14 @@ class OndeJogarScreen extends StatelessWidget {
                   Row(
                     children: [
                       Flexible(
-                        child: Text(o.titulo,
-                            style: const TextStyle(
-                                color: _goldHi, fontSize: 15.5, fontWeight: FontWeight.w800)),
+                        child: Text(
+                          o.titulo,
+                          style: const TextStyle(
+                            color: _goldHi,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ),
                       if (o.badge != null) ...[
                         const SizedBox(width: 8),
@@ -205,18 +227,29 @@ class OndeJogarScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(o.descricao,
-                      style: const TextStyle(color: _texto, fontSize: 12, height: 1.3)),
+                  Text(
+                    o.descricao,
+                    style: const TextStyle(color: _texto, fontSize: 12, height: 1.3),
+                  ),
                   if (o.nota != null) ...[
                     const SizedBox(height: 6),
-                    Text(o.nota!,
-                        style: const TextStyle(color: _mut, fontSize: 10.5, fontWeight: FontWeight.w600)),
+                    Text(
+                      o.nota!,
+                      style: const TextStyle(
+                        color: _mut,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ],
                 ],
               ),
             ),
             const SizedBox(width: 6),
-            const Text('›', style: TextStyle(color: _mut, fontSize: 22, fontWeight: FontWeight.w900)),
+            const Text(
+              '›',
+              style: TextStyle(color: _mut, fontSize: 22, fontWeight: FontWeight.w900),
+            ),
           ],
         ),
       ),
@@ -224,7 +257,8 @@ class OndeJogarScreen extends StatelessWidget {
   }
 
   Widget _badge(String txt, CorBadge cor) {
-    late Color bg, fg;
+    late Color bg;
+    late Color fg;
     switch (cor) {
       case CorBadge.verde:
         bg = const Color(0x3327AE60);
@@ -242,7 +276,10 @@ class OndeJogarScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
-      child: Text(txt, style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w800)),
+      child: Text(
+        txt,
+        style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w800),
+      ),
     );
   }
 }
