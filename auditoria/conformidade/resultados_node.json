@@ -1,16 +1,16 @@
 {
   "versaoSpec": "bmv-regras-2026.08",
-  "hashRegrasNode": "6ade290978f7812ca85e0758775586a09d9cf96cd9c12af82203db1adabba85c",
+  "hashRegrasNode": "81ec3255b8b67c25f6ca47a3d33486f0f81112f9da4573bb34cf3a1f1eb34281",
   "origem": {
     "repo": "soniaambrosio/buraco-servidor",
-    "commit": "be72bb6",
-    "arquivo": "server.js"
+    "commit": "09835bd",
+    "arquivo": "server.js (DEPLOYADO/corrigido)"
   },
-  "dataNota": "clone só-leitura; server.js sha256 c43c3e98a6bd5d3bc1a7f184bcde33b86ee92e6ba8c935ea46139be37cf67dba",
+  "dataNota": "gerado dos módulos REAIS do server.js deployado",
   "meld": [
     {
       "id": "M01-limpa7",
-      "desc": "sequência limpa 7 (3–9 copas)",
+      "desc": "sequência limpa 7",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -59,7 +59,7 @@
     },
     {
       "id": "M02-suja7",
-      "desc": "sequência suja 7 (3–8 copas + JOKER)",
+      "desc": "sequência suja 7",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -108,7 +108,7 @@
     },
     {
       "id": "M03-trinca3",
-      "desc": "trinca natural de 3 (K K K)",
+      "desc": "trinca natural 3",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -137,7 +137,7 @@
     },
     {
       "id": "M04-trinca-curinga",
-      "desc": "trinca com curinga (K K JOKER) — inválida",
+      "desc": "trinca com curinga (inválida)",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -166,7 +166,7 @@
     },
     {
       "id": "M05-ases3-fechado",
-      "desc": "grupo de 3 ases no Fechado (EXC-04: trinca × de_as)",
+      "desc": "grupo de 3 ases Fechado (EXC-04)",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -195,7 +195,7 @@
     },
     {
       "id": "M06-ases3-aberto",
-      "desc": "grupo de 3 ases no Aberto — inválido nos dois",
+      "desc": "grupo de 3 ases Aberto (inválido)",
       "modalidade": "aberto",
       "permiteTrinca": false,
       "cartas": [
@@ -224,7 +224,7 @@
     },
     {
       "id": "M07-de500",
-      "desc": "A–K limpa 13 (de_500): canônico 500 × servidor limpa 200",
+      "desc": "A–K limpa 13 (de_500)",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -294,16 +294,16 @@
           "valor": "K"
         }
       ],
-      "critEsperado": "CRIT-01",
+      "critEsperado": null,
       "node": {
         "valido": true,
-        "tipo": "limpa",
-        "bonus": 200
+        "tipo": "de_500",
+        "bonus": 500
       }
     },
     {
       "id": "M08-as_a_as",
-      "desc": "A–K–A (as_a_as): canônico válido/1000 × servidor inválido",
+      "desc": "A–K–A (as_a_as)",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -378,16 +378,16 @@
           "valor": "A"
         }
       ],
-      "critEsperado": "CRIT-02",
+      "critEsperado": null,
       "node": {
-        "valido": false,
-        "tipo": null,
-        "bonus": 0
+        "valido": true,
+        "tipo": "as_a_as",
+        "bonus": 1000
       }
     },
     {
       "id": "M09-naipes-mistos",
-      "desc": "naipes misturados — inválido nos dois",
+      "desc": "naipes misturados (inválido)",
       "modalidade": "fechado",
       "permiteTrinca": true,
       "cartas": [
@@ -418,7 +418,7 @@
   "score": [
     {
       "id": "S01-limpa7",
-      "desc": "canastra limpa 7 sozinha",
+      "desc": "canastra limpa 7",
       "melds": [
         [
           {
@@ -466,17 +466,12 @@
       },
       "critEsperado": null,
       "node": {
-        "total": 245,
-        "pontosCanastras": 200,
-        "pontosCartas": 45,
-        "bonusBatida": 0,
-        "penalidadeMorto": 0,
-        "descontoMao": 0
+        "total": 245
       }
     },
     {
       "id": "S02-batida",
-      "desc": "canastra limpa + batida (+100)",
+      "desc": "canastra + batida",
       "melds": [
         [
           {
@@ -524,12 +519,7 @@
       },
       "critEsperado": null,
       "node": {
-        "total": 345,
-        "pontosCanastras": 200,
-        "pontosCartas": 45,
-        "bonusBatida": 100,
-        "penalidadeMorto": 0,
-        "descontoMao": 0
+        "total": 345
       }
     },
     {
@@ -582,17 +572,12 @@
       },
       "critEsperado": null,
       "node": {
-        "total": 145,
-        "pontosCanastras": 200,
-        "pontosCartas": 45,
-        "bonusBatida": 0,
-        "penalidadeMorto": -100,
-        "descontoMao": 0
+        "total": 145
       }
     },
     {
       "id": "S04-mao-desconta",
-      "desc": "desconto das cartas na mão",
+      "desc": "desconto da mão",
       "melds": [
         [
           {
@@ -651,17 +636,12 @@
       },
       "critEsperado": null,
       "node": {
-        "total": 185,
-        "pontosCanastras": 200,
-        "pontosCartas": 45,
-        "bonusBatida": 0,
-        "penalidadeMorto": 0,
-        "descontoMao": -60
+        "total": 185
       }
     },
     {
       "id": "S05-de500-pontos",
-      "desc": "de_500 pontuação: canônico 500 × servidor 200",
+      "desc": "pontuação de_500",
       "melds": [
         [
           {
@@ -737,14 +717,9 @@
         "mortoPego": true,
         "algumPegouMorto": false
       },
-      "critEsperado": "CRIT-01",
+      "critEsperado": null,
       "node": {
-        "total": 310,
-        "pontosCanastras": 200,
-        "pontosCartas": 110,
-        "bonusBatida": 0,
-        "penalidadeMorto": 0,
-        "descontoMao": 0
+        "total": 610
       }
     }
   ]

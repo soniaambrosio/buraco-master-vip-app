@@ -3348,9 +3348,10 @@ void main() {
   // ===================================================================
   // C8 — CONFORMIDADE Dart × Node (modo sombra). Roda os MESMOS vetores no
   // motor canônico e compara com o fixture do servidor deployado (só leitura).
-  // Divergências críticas conhecidas (decisão Sônia): CRIT-01 (de_500) e
-  // CRIT-02 (as_a_as) — ambas BLOQUEIAM promoção online; servidor deve ser
-  // atualizado no futuro para a regra canônica e os vetores reexecutados.
+  // PÓS-DEPLOY (server @09835bd, sha256 81ec3255…): o servidor foi corrigido
+  // para a regra canônica (CRIT-01 de_500, CRIT-02 as_a_as, CRIT-03 bot).
+  // Todos os vetores CONVERGEM → ZERO divergências críticas. O portão agora
+  // EXIGE conjunto crítico vazio; qualquer divergência volta a bloquear online.
   // ===================================================================
   group('C8 — conformidade Dart × Node', () {
     final fx = jsonDecode(c8FixtureJson) as Map<String, dynamic>;
@@ -3367,11 +3368,11 @@ void main() {
     test('C8-HASH fixture casa com o extrato de regras do servidor + versão da spec',
         () {
       expect(fx['hashRegrasNode'],
-          '6ade290978f7812ca85e0758775586a09d9cf96cd9c12af82203db1adabba85c');
+          '81ec3255b8b67c25f6ca47a3d33486f0f81112f9da4573bb34cf3a1f1eb34281');
       expect(fx['versaoSpec'], 'bmv-regras-2026.08');
     });
 
-    test('C8-CONFORMIDADE cross-engine: só CRIT-01 e CRIT-02 divergem', () {
+    test('C8-CONFORMIDADE cross-engine: ZERO divergências críticas (pós-deploy)', () {
       final criticas = <String>{};
 
       // MELD: compara legalidade e bônus de canastra (efeito), não rótulos.
@@ -3433,10 +3434,10 @@ void main() {
         }
       }
 
-      // O conjunto de divergências críticas tem de ser EXATAMENTE o conhecido.
-      // Se o servidor for atualizado (regra canônica), estas divergências somem
-      // e este teste falha de propósito — sinal para reclassificar/reexecutar.
-      expect(criticas, {'CRIT-01', 'CRIT-02'});
+      // PÓS-DEPLOY: com o servidor na regra canônica, o conjunto crítico é
+      // VAZIO. Se qualquer divergência ressurgir (regressão no servidor ou
+      // fixture desatualizado), este teste falha e bloqueia a promoção online.
+      expect(criticas, <String>{});
     });
   });
 }
