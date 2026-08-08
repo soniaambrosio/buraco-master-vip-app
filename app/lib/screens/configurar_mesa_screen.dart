@@ -3,11 +3,8 @@ import 'package:flutter/material.dart';
 enum TipoMesa { publica, vip, privada }
 
 enum ModalidadeJogo { aberto, fechado, sbtl }
-
 enum ModoJogo { dois, quatro }
-
 enum ChatMesa { completo, soBaloes, desligado }
-
 enum EstadoCadeira { travada, liberada }
 
 class ApostaVM {
@@ -160,8 +157,12 @@ class ConfigMesaVM {
           tempo: 45,
           tempoOpcoes: const [15, 30, 45],
           chat: ChatMesa.completo,
-          aposta: null,
-          espectadores: true,
+          aposta: const ApostaVM(
+            valor: 500,
+            opcoes: [0, 500, 1000, 5000],
+            pote: 2000,
+          ),
+          espectadores: null,
           codigo: null,
           cadeiras: null,
           custoCriar: 250,
@@ -228,7 +229,6 @@ class ConfigMesaVM {
 class ConfigurarMesaScreen extends StatelessWidget {
   static const _gold = Color(0xFFEFB94A);
   static const _goldHi = Color(0xFFF6E2A6);
-  static const _dark = Color(0xFF120A06);
   static const _card = Color(0xFF1C130C);
   static const _border = Color(0x33EFB94A);
   static const _muted = Color(0xFF9D8C68);
@@ -238,8 +238,12 @@ class ConfigurarMesaScreen extends StatelessWidget {
 
   final ConfigMesaVM vm;
   final VoidCallback onVoltar;
+
+  // Mantidos no contrato para não quebrar os hosts existentes. O tipo de mesa
+  // agora é definido na tela "Onde jogar" e não pode mais ser trocado aqui.
   final ValueChanged<TipoMesa> onTipo;
   final ValueChanged<TipoMesa> onTipoBloqueado;
+
   final ValueChanged<ModalidadeJogo> onModalidade;
   final VoidCallback onVerRegras;
   final ValueChanged<ModoJogo> onModo;
@@ -290,17 +294,12 @@ class ConfigurarMesaScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 430),
               child: Column(
                 children: [
-                  _TopBar(onVoltar: onVoltar),
+                  _TopBar(tipo: vm.tipo, onVoltar: onVoltar),
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                       children: [
-                        _sectionTitle('TIPO DE MESA'),
-                        _TipoMesaControl(
-                          vm: vm,
-                          onTipo: onTipo,
-                          onTipoBloqueado: onTipoBloqueado,
-                        ),
+                        _TableIdentityHeader(tipo: vm.tipo),
                         _gap(),
                         _sectionTitle('MODALIDADE'),
                         _ModalidadeControl(
@@ -419,14 +418,21 @@ class ConfigurarMesaScreen extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
+  final TipoMesa tipo;
   final VoidCallback onVoltar;
 
-  const _TopBar({required this.onVoltar});
+  const _TopBar({required this.tipo, required this.onVoltar});
+
+  String get _titulo => switch (tipo) {
+        TipoMesa.publica => 'Configurar Mesa Pública',
+        TipoMesa.vip => 'Configurar Mesa VIP',
+        TipoMesa.privada => 'Configurar Mesa Privada',
+      };
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 48,
+      height: 54,
       child: Row(
         children: [
           IconButton(
@@ -437,12 +443,116 @@ class _TopBar extends StatelessWidget {
             splashRadius: 22,
             tooltip: 'Voltar',
           ),
-          const Text(
-            'Configurar mesa',
-            style: TextStyle(
-              color: ConfigurarMesaScreen._goldHi,
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
+          Expanded(
+            child: Text(
+              _titulo,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: ConfigurarMesaScreen._goldHi,
+                fontSize: 19,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+        ],
+      ),
+    );
+  }
+}
+
+class _TableIdentityHeader extends StatelessWidget {
+  final TipoMesa tipo;
+
+  const _TableIdentityHeader({required this.tipo});
+
+  @override
+  Widget build(BuildContext context) {
+    final data = switch (tipo) {
+      TipoMesa.publica => (
+          icone: '🌎',
+          titulo: 'Mesa Pública',
+          badge: 'GRÁTIS',
+          subtitulo: 'Aberta a todos • com anúncios',
+          badgeBg: const Color(0xFF16472B),
+          badgeFg: const Color(0xFF78E6A7),
+        ),
+      TipoMesa.vip => (
+          icone: '💎',
+          titulo: 'Mesa VIP',
+          badge: 'LOUNGE PREMIUM',
+          subtitulo: 'Só assinantes VIP • sem anúncios',
+          badgeBg: const Color(0xFF3C2A12),
+          badgeFg: ConfigurarMesaScreen._goldHi,
+        ),
+      TipoMesa.privada => (
+          icone: '🔑',
+          titulo: 'Mesa Privada',
+          badge: 'VIP cria',
+          subtitulo: 'Você cria • convidados entram com código',
+          badgeBg: const Color(0xFF3C2A12),
+          badgeFg: ConfigurarMesaScreen._goldHi,
+        ),
+    };
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0x991C130C),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ConfigurarMesaScreen._border),
+      ),
+      child: Row(
+        children: [
+          Text(data.icone, style: const TextStyle(fontSize: 27)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        data.titulo,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: ConfigurarMesaScreen._goldHi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: data.badgeBg,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        data.badge,
+                        style: TextStyle(
+                          color: data.badgeFg,
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  data.subtitulo,
+                  style: const TextStyle(
+                    color: ConfigurarMesaScreen._muted,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -451,73 +561,11 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _TipoMesaControl extends StatelessWidget {
-  final ConfigMesaVM vm;
-  final ValueChanged<TipoMesa> onTipo;
-  final ValueChanged<TipoMesa> onTipoBloqueado;
-
-  const _TipoMesaControl({
-    required this.vm,
-    required this.onTipo,
-    required this.onTipoBloqueado,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: TipoMesa.values.map((tipo) {
-        final selected = vm.tipo == tipo;
-        final blocked = !vm.ehVip && tipo != TipoMesa.publica;
-        final label = switch (tipo) {
-          TipoMesa.publica => 'Pública',
-          TipoMesa.vip => 'VIP',
-          TipoMesa.privada => 'Privada',
-        };
-        return Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(
-              right: tipo == TipoMesa.privada ? 0 : 7,
-            ),
-            child: _SegmentButton(
-              selected: selected,
-              onTap: () => blocked ? onTipoBloqueado(tipo) : onTipo(tipo),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: _segmentTextStyle(selected),
-                    ),
-                  ),
-                  if (blocked) ...[
-                    const SizedBox(width: 4),
-                    const _AssetIcon(
-                      path: 'assets/configurar_mesa/cadeado.webp',
-                      size: 17,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
 class _ModalidadeControl extends StatelessWidget {
   final ModalidadeJogo selecionada;
   final ValueChanged<ModalidadeJogo> onChanged;
 
-  const _ModalidadeControl({
-    required this.selecionada,
-    required this.onChanged,
-  });
+  const _ModalidadeControl({required this.selecionada, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -537,12 +585,10 @@ class _ModalidadeControl extends StatelessWidget {
         final selected = value == selecionada;
         return Expanded(
           child: Padding(
-            padding: EdgeInsets.only(
-              right: value == ModalidadeJogo.sbtl ? 0 : 7,
-            ),
+            padding: EdgeInsets.only(right: value == ModalidadeJogo.sbtl ? 0 : 7),
             child: _SegmentButton(
               selected: selected,
-              minHeight: 48,
+              minHeight: 52,
               onTap: () => onChanged(value),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -632,9 +678,7 @@ class _ChatControl extends StatelessWidget {
         final selected = value == selecionado;
         return Expanded(
           child: Padding(
-            padding: EdgeInsets.only(
-              right: value == ChatMesa.desligado ? 0 : 7,
-            ),
+            padding: EdgeInsets.only(right: value == ChatMesa.desligado ? 0 : 7),
             child: _SegmentButton(
               selected: selected,
               onTap: () => onChanged(value),
@@ -722,7 +766,7 @@ class _SegmentButton extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.child,
-    this.minHeight = 35,
+    this.minHeight = 40,
   });
 
   @override
@@ -740,9 +784,7 @@ class _SegmentButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(13),
             border: Border.all(
-              color: selected
-                  ? const Color(0xFFFFD66A)
-                  : ConfigurarMesaScreen._border,
+              color: selected ? const Color(0xFFFFD66A) : ConfigurarMesaScreen._border,
             ),
             gradient: selected
                 ? const LinearGradient(
@@ -792,7 +834,7 @@ class _RulesCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          height: 43,
+          height: 45,
           padding: const EdgeInsets.symmetric(horizontal: 11),
           decoration: BoxDecoration(
             color: ConfigurarMesaScreen._green,
@@ -801,10 +843,7 @@ class _RulesCard extends StatelessWidget {
           ),
           child: const Row(
             children: [
-              _AssetIcon(
-                path: 'assets/configurar_mesa/livro_regras.webp',
-                size: 24,
-              ),
+              _AssetIcon(path: 'assets/configurar_mesa/livro_regras.webp', size: 24),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -816,10 +855,7 @@ class _RulesCard extends StatelessWidget {
                   ),
                 ),
               ),
-              _AssetIcon(
-                path: 'assets/configurar_mesa/seta.webp',
-                size: 18,
-              ),
+              _AssetIcon(path: 'assets/configurar_mesa/seta.webp', size: 18),
             ],
           ),
         ),
@@ -836,7 +872,7 @@ class _PotCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(minHeight: 43),
+      constraints: const BoxConstraints(minHeight: 46),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xFF21160B),
@@ -845,10 +881,7 @@ class _PotCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const _AssetIcon(
-            path: 'assets/configurar_mesa/saco_moedas.webp',
-            size: 24,
-          ),
+          const _AssetIcon(path: 'assets/configurar_mesa/saco_moedas.webp', size: 24),
           const SizedBox(width: 7),
           const Text(
             'Pote em jogo',
@@ -859,10 +892,7 @@ class _PotCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          const _AssetIcon(
-            path: 'assets/configurar_mesa/moeda.webp',
-            size: 18,
-          ),
+          const _AssetIcon(path: 'assets/configurar_mesa/moeda.webp', size: 18),
           const SizedBox(width: 4),
           Text(
             ConfigurarMesaScreen._formatNumber(aposta.pote),
@@ -875,10 +905,7 @@ class _PotCard extends StatelessWidget {
           const Spacer(),
           const Text(
             'aposta × jogadores',
-            style: TextStyle(
-              color: ConfigurarMesaScreen._muted,
-              fontSize: 9,
-            ),
+            style: TextStyle(color: ConfigurarMesaScreen._muted, fontSize: 9),
           ),
         ],
       ),
@@ -928,14 +955,9 @@ class _CodeRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 17),
               backgroundColor: ConfigurarMesaScreen._gold,
               foregroundColor: const Color(0xFF3D280A),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            child: const Text(
-              'Copiar',
-              style: TextStyle(fontWeight: FontWeight.w900),
-            ),
+            child: const Text('Copiar', style: TextStyle(fontWeight: FontWeight.w900)),
           ),
         ),
       ],
@@ -1028,9 +1050,7 @@ class _ChairCard extends StatelessWidget {
                 height: 29,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: liberated
-                      ? const Color(0xFF0B4A31)
-                      : const Color(0xFF503606),
+                  color: liberated ? const Color(0xFF0B4A31) : const Color(0xFF503606),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Row(
@@ -1097,6 +1117,12 @@ class _Footer extends StatelessWidget {
 
   const _Footer({required this.vm, required this.onCriarMesa});
 
+  String get _botao => switch (vm.tipo) {
+        TipoMesa.publica => 'Criar mesa pública',
+        TipoMesa.vip => 'Criar mesa VIP',
+        TipoMesa.privada => 'Criar mesa privada',
+      };
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1115,18 +1141,12 @@ class _Footer extends StatelessWidget {
               children: [
                 const Text(
                   'Custo criar',
-                  style: TextStyle(
-                    color: ConfigurarMesaScreen._goldHi,
-                    fontSize: 10,
-                  ),
+                  style: TextStyle(color: ConfigurarMesaScreen._goldHi, fontSize: 10),
                 ),
                 const SizedBox(height: 1),
                 Row(
                   children: [
-                    const _AssetIcon(
-                      path: 'assets/configurar_mesa/moeda.webp',
-                      size: 18,
-                    ),
+                    const _AssetIcon(path: 'assets/configurar_mesa/moeda.webp', size: 18),
                     const SizedBox(width: 4),
                     Text(
                       vm.custoCriar == 0
@@ -1152,13 +1172,11 @@ class _Footer extends StatelessWidget {
                 style: FilledButton.styleFrom(
                   backgroundColor: ConfigurarMesaScreen._gold,
                   foregroundColor: const Color(0xFF3A2508),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
                 ),
-                child: const Text(
-                  'Criar mesa',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                child: Text(
+                  _botao,
+                  style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900),
                 ),
               ),
             ),
