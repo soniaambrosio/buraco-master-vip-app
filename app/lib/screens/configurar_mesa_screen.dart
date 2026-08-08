@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 enum TipoMesa { publica, vip, privada }
-
 enum ModalidadeJogo { aberto, fechado, sbtl }
 enum ModoJogo { dois, quatro }
 enum ChatMesa { completo, soBaloes, desligado }
@@ -235,12 +234,14 @@ class ConfigurarMesaScreen extends StatelessWidget {
   static const _text = Color(0xFFF3E9D7);
   static const _green = Color(0xFF0D422B);
   static const _greenBorder = Color(0xFF1D6B4A);
+  static const _purple = Color(0xFF6F43B5);
+  static const _purpleDark = Color(0xFF241331);
 
   final ConfigMesaVM vm;
   final VoidCallback onVoltar;
 
-  // Mantidos no contrato para não quebrar os hosts existentes. O tipo de mesa
-  // agora é definido na tela "Onde jogar" e não pode mais ser trocado aqui.
+  // Mantidos para compatibilidade com o host atual. O tipo é escolhido em
+  // "Onde jogar" e não volta a ser exibido como seletor nesta tela.
   final ValueChanged<TipoMesa> onTipo;
   final ValueChanged<TipoMesa> onTipoBloqueado;
 
@@ -280,12 +281,14 @@ class ConfigurarMesaScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black,
       body: DecoratedBox(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF241812), Color(0xFF120A06), Color(0xFF050201)],
-            stops: [0, .48, 1],
+            colors: vm.tipo == TipoMesa.vip
+                ? const [Color(0xFF28172E), Color(0xFF130A12), Color(0xFF050201)]
+                : const [Color(0xFF241812), Color(0xFF120A06), Color(0xFF050201)],
+            stops: const [0, .48, 1],
           ),
         ),
         child: SafeArea(
@@ -300,6 +303,10 @@ class ConfigurarMesaScreen extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                       children: [
                         _TableIdentityHeader(tipo: vm.tipo),
+                        if (vm.tipo == TipoMesa.vip) ...[
+                          const SizedBox(height: 10),
+                          const _VipExperienceCard(),
+                        ],
                         _gap(),
                         _sectionTitle('MODALIDADE'),
                         _ModalidadeControl(
@@ -324,16 +331,24 @@ class ConfigurarMesaScreen extends StatelessWidget {
                         ),
                         if (vm.aposta != null) ...[
                           _gap(),
-                          _sectionTitle('ENTRADA (aposta em moedas)'),
+                          _sectionTitle(
+                            vm.tipo == TipoMesa.vip
+                                ? 'APOSTA VIP (moedas)'
+                                : 'ENTRADA (aposta em moedas)',
+                          ),
                           _NumberSegments(
                             values: vm.aposta!.opcoes,
                             selected: vm.aposta!.valor,
                             labelBuilder: (value) =>
                                 value == 0 ? 'Grátis' : _formatNumber(value),
                             onChanged: onAposta,
+                            vip: vm.tipo == TipoMesa.vip,
                           ),
                           const SizedBox(height: 9),
-                          _PotCard(aposta: vm.aposta!),
+                          _PotCard(
+                            aposta: vm.aposta!,
+                            vip: vm.tipo == TipoMesa.vip,
+                          ),
                         ],
                         _gap(),
                         _sectionTitle('TEMPO POR JOGADA'),
@@ -455,7 +470,13 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 14),
+          if (tipo == TipoMesa.vip)
+            const Padding(
+              padding: EdgeInsets.only(right: 16),
+              child: Text('💎', style: TextStyle(fontSize: 20)),
+            )
+          else
+            const SizedBox(width: 14),
         ],
       ),
     );
@@ -477,14 +498,18 @@ class _TableIdentityHeader extends StatelessWidget {
           subtitulo: 'Aberta a todos • com anúncios',
           badgeBg: const Color(0xFF16472B),
           badgeFg: const Color(0xFF78E6A7),
+          border: const Color(0xFF235D43),
+          colors: const [Color(0xFF10271E), Color(0xFF18120D)],
         ),
       TipoMesa.vip => (
           icone: '💎',
           titulo: 'Mesa VIP',
           badge: 'LOUNGE PREMIUM',
           subtitulo: 'Só assinantes VIP • sem anúncios',
-          badgeBg: const Color(0xFF3C2A12),
-          badgeFg: ConfigurarMesaScreen._goldHi,
+          badgeBg: const Color(0xFF54347A),
+          badgeFg: const Color(0xFFF4E6FF),
+          border: const Color(0xFF9A72D2),
+          colors: const [Color(0xFF342047), Color(0xFF1B111D)],
         ),
       TipoMesa.privada => (
           icone: '🔑',
@@ -493,19 +518,40 @@ class _TableIdentityHeader extends StatelessWidget {
           subtitulo: 'Você cria • convidados entram com código',
           badgeBg: const Color(0xFF3C2A12),
           badgeFg: ConfigurarMesaScreen._goldHi,
+          border: const Color(0xFF6B4A0C),
+          colors: const [Color(0xFF2A1C10), Color(0xFF17100B)],
         ),
     };
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
       decoration: BoxDecoration(
-        color: const Color(0x991C130C),
+        gradient: LinearGradient(colors: data.colors),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ConfigurarMesaScreen._border),
+        border: Border.all(color: data.border),
+        boxShadow: tipo == TipoMesa.vip
+            ? const [
+                BoxShadow(
+                  color: Color(0x336F43B5),
+                  blurRadius: 18,
+                  spreadRadius: -4,
+                ),
+              ]
+            : null,
       ),
       child: Row(
         children: [
-          Text(data.icone, style: const TextStyle(fontSize: 27)),
+          Container(
+            width: 46,
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withOpacity(.22),
+              border: Border.all(color: data.border.withOpacity(.85)),
+            ),
+            child: Text(data.icone, style: const TextStyle(fontSize: 25)),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -549,6 +595,54 @@ class _TableIdentityHeader extends StatelessWidget {
                   style: const TextStyle(
                     color: ConfigurarMesaScreen._muted,
                     fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VipExperienceCard extends StatelessWidget {
+  const _VipExperienceCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2D1B3A), Color(0xFF171018)],
+        ),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: const Color(0xFF6F43B5)),
+      ),
+      child: const Row(
+        children: [
+          Text('♛', style: TextStyle(color: Color(0xFFEFB94A), fontSize: 22)),
+          SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Experiência VIP',
+                  style: TextStyle(
+                    color: Color(0xFFF6E2A6),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Aposta opcional em moedas • lounge exclusivo • sem anúncios',
+                  style: TextStyle(
+                    color: Color(0xFFC7B2D9),
+                    fontSize: 9.8,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -726,12 +820,14 @@ class _NumberSegments extends StatelessWidget {
   final int selected;
   final String Function(int value) labelBuilder;
   final ValueChanged<int> onChanged;
+  final bool vip;
 
   const _NumberSegments({
     required this.values,
     required this.selected,
     required this.labelBuilder,
     required this.onChanged,
+    this.vip = false,
   });
 
   @override
@@ -742,6 +838,7 @@ class _NumberSegments extends StatelessWidget {
           Expanded(
             child: _SegmentButton(
               selected: values[i] == selected,
+              vip: vip,
               onTap: () => onChanged(values[i]),
               child: Text(
                 labelBuilder(values[i]),
@@ -761,16 +858,22 @@ class _SegmentButton extends StatelessWidget {
   final VoidCallback onTap;
   final Widget child;
   final double minHeight;
+  final bool vip;
 
   const _SegmentButton({
     required this.selected,
     required this.onTap,
     required this.child,
     this.minHeight = 40,
+    this.vip = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final selectedColors = vip
+        ? const [Color(0xFFF1D8FF), Color(0xFFA66CD0)]
+        : const [Color(0xFFFFE9A2), Color(0xFFEFB43D)];
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -784,22 +887,26 @@ class _SegmentButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(13),
             border: Border.all(
-              color: selected ? const Color(0xFFFFD66A) : ConfigurarMesaScreen._border,
+              color: selected
+                  ? (vip ? const Color(0xFFD7A9FF) : const Color(0xFFFFD66A))
+                  : ConfigurarMesaScreen._border,
             ),
             gradient: selected
-                ? const LinearGradient(
+                ? LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Color(0xFFFFE9A2), Color(0xFFEFB43D)],
+                    colors: selectedColors,
                   )
                 : null,
             color: selected ? null : ConfigurarMesaScreen._card,
             boxShadow: selected
-                ? const [
+                ? [
                     BoxShadow(
-                      color: Color(0x55EFB94A),
+                      color: vip
+                          ? const Color(0x446F43B5)
+                          : const Color(0x55EFB94A),
                       blurRadius: 10,
-                      offset: Offset(0, 3),
+                      offset: const Offset(0, 3),
                     ),
                   ]
                 : null,
@@ -866,46 +973,65 @@ class _RulesCard extends StatelessWidget {
 
 class _PotCard extends StatelessWidget {
   final ApostaVM aposta;
+  final bool vip;
 
-  const _PotCard({required this.aposta});
+  const _PotCard({required this.aposta, this.vip = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(minHeight: 46),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      constraints: const BoxConstraints(minHeight: 50),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF21160B),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF6B4A0C)),
+        gradient: vip
+            ? const LinearGradient(colors: [Color(0xFF2D1B3A), Color(0xFF181018)])
+            : null,
+        color: vip ? null : const Color(0xFF21160B),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: vip ? const Color(0xFF6F43B5) : const Color(0xFF6B4A0C),
+        ),
       ),
       child: Row(
         children: [
-          const _AssetIcon(path: 'assets/configurar_mesa/saco_moedas.webp', size: 24),
+          const _AssetIcon(path: 'assets/configurar_mesa/saco_moedas.webp', size: 25),
           const SizedBox(width: 7),
-          const Text(
-            'Pote em jogo',
-            style: TextStyle(
-              color: ConfigurarMesaScreen._goldHi,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 8),
-          const _AssetIcon(path: 'assets/configurar_mesa/moeda.webp', size: 18),
-          const SizedBox(width: 4),
-          Text(
-            ConfigurarMesaScreen._formatNumber(aposta.pote),
-            style: const TextStyle(
-              color: ConfigurarMesaScreen._text,
-              fontSize: 17,
-              fontWeight: FontWeight.w900,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                vip ? 'Pote VIP em jogo' : 'Pote em jogo',
+                style: const TextStyle(
+                  color: ConfigurarMesaScreen._goldHi,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  const _AssetIcon(path: 'assets/configurar_mesa/moeda.webp', size: 17),
+                  const SizedBox(width: 4),
+                  Text(
+                    ConfigurarMesaScreen._formatNumber(aposta.pote),
+                    style: const TextStyle(
+                      color: ConfigurarMesaScreen._text,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
           const Spacer(),
-          const Text(
+          Text(
             'aposta × jogadores',
-            style: TextStyle(color: ConfigurarMesaScreen._muted, fontSize: 9),
+            style: TextStyle(
+              color: vip ? const Color(0xFFC7B2D9) : ConfigurarMesaScreen._muted,
+              fontSize: 9,
+            ),
           ),
         ],
       ),
@@ -1125,53 +1251,66 @@ class _Footer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final publica = vm.tipo == TipoMesa.publica;
+    final vip = vm.tipo == TipoMesa.vip;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0B0502),
-        border: Border(top: BorderSide(color: Color(0xFF155E43))),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B0502),
+        border: Border(
+          top: BorderSide(
+            color: vip ? const Color(0xFF6F43B5) : const Color(0xFF155E43),
+          ),
+        ),
       ),
       child: Row(
         children: [
-          SizedBox(
-            width: 76,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Custo criar',
-                  style: TextStyle(color: ConfigurarMesaScreen._goldHi, fontSize: 10),
-                ),
-                const SizedBox(height: 1),
-                Row(
-                  children: [
-                    const _AssetIcon(path: 'assets/configurar_mesa/moeda.webp', size: 18),
-                    const SizedBox(width: 4),
-                    Text(
-                      vm.custoCriar == 0
-                          ? 'Grátis'
-                          : ConfigurarMesaScreen._formatNumber(vm.custoCriar),
-                      style: const TextStyle(
-                        color: ConfigurarMesaScreen._goldHi,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
+          if (!publica) ...[
+            SizedBox(
+              width: 76,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Custo criar',
+                    style: TextStyle(color: ConfigurarMesaScreen._goldHi, fontSize: 10),
+                  ),
+                  const SizedBox(height: 1),
+                  Row(
+                    children: [
+                      const _AssetIcon(path: 'assets/configurar_mesa/moeda.webp', size: 18),
+                      const SizedBox(width: 4),
+                      Text(
+                        vm.custoCriar == 0
+                            ? 'Grátis'
+                            : ConfigurarMesaScreen._formatNumber(vm.custoCriar),
+                        style: const TextStyle(
+                          color: ConfigurarMesaScreen._goldHi,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: SizedBox(
               height: 50,
               child: FilledButton(
                 onPressed: onCriarMesa,
                 style: FilledButton.styleFrom(
-                  backgroundColor: ConfigurarMesaScreen._gold,
-                  foregroundColor: const Color(0xFF3A2508),
+                  backgroundColor: vip
+                      ? const Color(0xFF9A6BC3)
+                      : ConfigurarMesaScreen._gold,
+                  foregroundColor: vip
+                      ? const Color(0xFF1A0F20)
+                      : const Color(0xFF3A2508),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
                 ),
                 child: Text(
