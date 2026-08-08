@@ -35,6 +35,24 @@ import 'tournament_model.dart';
 /// impossivel. Deslocamento e XOR sobre 32 bits sao exatos nas tres plataformas,
 /// entao a sequencia e literalmente a mesma em qualquer uma.
 class SorteioDeterministico {
+  /// Versão do ALGORITMO de sorteio, não do arquivo.
+  ///
+  /// A semente sozinha não reproduz nada: ela reproduz uma distribuição PARA UM
+  /// ALGORITMO. No dia em que este xorshift32 + Fisher-Yates for trocado — por
+  /// desempenho, por qualidade de distribuição, por qualquer motivo —, todas as
+  /// edições antigas passariam a "reproduzir" mesas que nunca aconteceram, e a
+  /// pergunta "por que caí nesta mesa?" ficaria sem resposta verificável para
+  /// sempre. Gravar a versão junto da semente é o que impede isso: quem
+  /// reprocessa uma edição antiga sabe qual algoritmo usar, e o código sabe
+  /// recusar o que não consegue reproduzir.
+  ///
+  /// O xorshift32 atual é a versão 1 e permanece a versão 1.
+  static const int versaoAtual = 1;
+
+  /// Versões que este código sabe reproduzir. Cresce quando um algoritmo novo
+  /// entrar; a 1 nunca sai, senão o histórico morre.
+  static const Set<int> versoesSuportadas = {1};
+
   int _estado;
 
   SorteioDeterministico(int semente)
@@ -214,14 +232,22 @@ class ResultadoFormacao {
   /// [permitirSobra] e false, porque nesse caso a formacao inteira e recusada.
   final List<Participante> excedentes;
 
-  const ResultadoFormacao._(this.mesas, this.recusa, this.excedentes);
+  /// Versao do algoritmo que produziu estas mesas. Viaja com o resultado para
+  /// que quem for gravar o sorteio grave a versao junto da semente — ver
+  /// [SorteioDeterministico.versaoAtual].
+  final int versaoSorteio;
+
+  const ResultadoFormacao._(
+      this.mesas, this.recusa, this.excedentes, this.versaoSorteio);
 
   const ResultadoFormacao.formadas(List<Mesa> mesas,
-      {List<Participante> excedentes = const []})
-      : this._(mesas, null, excedentes);
+      {List<Participante> excedentes = const [],
+      int versaoSorteio = SorteioDeterministico.versaoAtual})
+      : this._(mesas, null, excedentes, versaoSorteio);
 
-  const ResultadoFormacao.recusada(RecusaFormacao recusa)
-      : this._(const [], recusa, const []);
+  const ResultadoFormacao.recusada(RecusaFormacao recusa,
+      {int versaoSorteio = SorteioDeterministico.versaoAtual})
+      : this._(const [], recusa, const [], versaoSorteio);
 
   bool get formada => recusa == null;
 
@@ -294,9 +320,17 @@ ResultadoFormacao formarMesas({
   required int ladosPorMesa,
   required int semente,
   bool permitirSobra = false,
+  int versaoSorteio = SorteioDeterministico.versaoAtual,
 }) {
   if (ladosPorMesa < 2) {
     throw ArgumentError.value(ladosPorMesa, 'ladosPorMesa', 'deve ser >= 2');
+  }
+  // Falha alta, e nao um fallback silencioso para a versao atual: reproduzir uma
+  // edicao antiga com o algoritmo errado devolveria mesas plausiveis e falsas —
+  // o pior resultado possivel para uma auditoria.
+  if (!SorteioDeterministico.versoesSuportadas.contains(versaoSorteio)) {
+    throw ArgumentError.value(versaoSorteio, 'versaoSorteio',
+        'este codigo nao sabe reproduzir esta versao de sorteio (suportadas: ${SorteioDeterministico.versoesSuportadas.toList()})');
   }
 
   // Duplicacao de jogador entre unidades e erro de dados, nao de sorteio.
@@ -343,6 +377,7 @@ ResultadoFormacao formarMesas({
   return ResultadoFormacao.formadas(
     mesas,
     excedentes: sorteados.sublist(aproveitados),
+    versaoSorteio: versaoSorteio,
   );
 }
 

@@ -317,12 +317,14 @@ jobs:
             const d = globalThis.bmvTorneios;
             if (!d) { console.error('ERRO: bundle não expôs bmvTorneios'); process.exit(1); }
             // Determinismo entre plataformas: esta distribuição é a mesma que o
-            // teste-ouro em motor_torneios_test.dart fixa na VM Dart.
-            const m = JSON.parse(d.formarMesas(JSON.stringify({
+            // teste-ouro em motor_torneios_test.dart e em
+            // teste_integracao_motores.dart fixa na VM Dart.
+            const r = JSON.parse(d.formarMesas(JSON.stringify({
               tournamentId:'t', editionId:'e', faseId:'f1',
               participantes:['j0','j1','j2','j3','j4','j5','j6','j7'],
               ladosPorMesa:2, semente:42
-            }))).mesas.map(x=>x.assentos.join('/')).join(' | ');
+            })));
+            const m = r.mesas.map(x=>x.assentos.join('/')).join(' | ');
             const esperado = 'j4/j6 | j5/j7 | j1/j3 | j2/j0';
             if (m !== esperado) {
               console.error('ERRO: sorteio divergiu entre Dart VM e JS.');
@@ -330,7 +332,27 @@ jobs:
               console.error('  obtido:   ' + m);
               process.exit(1);
             }
-            console.log('ponte OK — ' + Object.keys(d).length + ' funções, sorteio idêntico à VM');
+            // A semente sozinha não reproduz nada — ela reproduz uma distribuição
+            // PARA UM ALGORITMO. O bundle precisa devolver a versão junto, senão
+            // quem grava o sorteio grava metade da informação e uma edição antiga
+            // vira irreproduzível no dia em que o algoritmo mudar.
+            if (r.versaoSorteio !== 1) {
+              console.error('ERRO: versaoSorteio esperada 1, veio ' + r.versaoSorteio + '.');
+              console.error('  O xorshift32 é a versão 1 e esta OS não o altera.');
+              process.exit(1);
+            }
+            // Versão que este código não sabe reproduzir tem de falhar ALTO, e não
+            // cair de volta na atual devolvendo mesas plausíveis e falsas.
+            const futura = JSON.parse(d.formarMesas(JSON.stringify({
+              tournamentId:'t', editionId:'e', faseId:'f1',
+              participantes:['j0','j1','j2','j3'],
+              ladosPorMesa:2, semente:42, versaoSorteio:2
+            })));
+            if (!futura.erro) {
+              console.error('ERRO: versaoSorteio desconhecida foi aceita em silêncio.');
+              process.exit(1);
+            }
+            console.log('ponte OK — ' + Object.keys(d).length + ' funções, sorteio v' + r.versaoSorteio + ' idêntico à VM');
           "
           npm --prefix functions ci --no-audit --no-fund
           npm --prefix functions run lint

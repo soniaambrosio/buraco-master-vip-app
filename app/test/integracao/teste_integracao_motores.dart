@@ -24,6 +24,9 @@ import 'package:buraco_master_vip/integracao/registro_partidas.dart';
 import 'package:buraco_master_vip/integracao/vinculo_mesa.dart';
 import 'package:buraco_master_vip/torneios/match_contract.dart';
 import 'package:buraco_master_vip/torneios/participants.dart';
+import 'package:buraco_master_vip/torneios/phases.dart';
+import 'package:buraco_master_vip/torneios/seating.dart';
+import 'package:buraco_master_vip/torneios/tournament_model.dart';
 
 // ============================== ferramentas ==============================
 
@@ -1174,6 +1177,137 @@ void main() {
           '${sol.tournamentId}|${sol.editionId}|${sol.matchId}');
       expect(b.historico.processados(), isEmpty,
           reason: 'a camada do motor não grava nada na camada do torneio');
+    });
+  });
+
+  // ======================================================================
+  // VERSÃO DO SORTEIO — TESTE-OURO
+  // ======================================================================
+
+  group('SORTEIO — versão do algoritmo determinístico', () {
+    final participantes = [
+      for (var i = 0; i < 8; i++) Participante.individual('j$i')
+    ];
+
+    String distribuicao(ResultadoFormacao r) =>
+        r.mesas.map((m) => m.assentos.map((p) => p.participanteId).join('/')).join(' | ');
+
+    test('a versão 1 é o xorshift32 atual e não muda nesta OS', () {
+      expect(SorteioDeterministico.versaoAtual, 1);
+      expect(SorteioDeterministico.versoesSuportadas, {1});
+    });
+
+    test('TESTE-OURO: a versão 1 mantém EXATAMENTE a distribuição atual', () {
+      final r = formarMesas(
+        tournamentId: 't',
+        editionId: 'e',
+        faseId: 'f1',
+        participantes: participantes,
+        ladosPorMesa: 2,
+        semente: 42,
+      );
+      // Esta string é a mesma que o portão de CI confere no bundle JavaScript.
+      // Se a VM e o JS discordarem, um dos dois quebra — que é o objetivo.
+      expect(distribuicao(r), 'j4/j6 | j5/j7 | j1/j3 | j2/j0');
+      expect(r.versaoSorteio, 1);
+    });
+
+    test('pedir a versão 1 explicitamente dá o mesmo que não pedir nada', () {
+      final implicita = formarMesas(
+        tournamentId: 't', editionId: 'e', faseId: 'f1',
+        participantes: participantes, ladosPorMesa: 2, semente: 42,
+      );
+      final explicita = formarMesas(
+        tournamentId: 't', editionId: 'e', faseId: 'f1',
+        participantes: participantes, ladosPorMesa: 2, semente: 42,
+        versaoSorteio: 1,
+      );
+      expect(distribuicao(explicita), distribuicao(implicita));
+    });
+
+    test('versão desconhecida falha alto em vez de sortear com a atual', () {
+      expect(
+        () => formarMesas(
+          tournamentId: 't', editionId: 'e', faseId: 'f1',
+          participantes: participantes, ladosPorMesa: 2, semente: 42,
+          versaoSorteio: 2,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('a fase grava a versão junto da semente', () {
+      final fases = montarFases(
+        tournamentId: 't',
+        editionId: 'e',
+        totalFases: 3,
+        formato: FormatoTorneio.misto,
+        semente: 10,
+        ladosPorMesa: 2,
+        vagasPorFase: const [8, 4],
+      );
+      for (final f in fases) {
+        expect(f.versaoSorteio, 1);
+        expect(f.toJson()['versaoSorteio'], 1);
+      }
+    });
+
+    test('a versão sobrevive ao round-trip da fase', () {
+      final f = Fase(
+        faseId: 'e-fase-1',
+        tournamentId: 't',
+        editionId: 'e',
+        ordem: 1,
+        tipo: TipoFase.inicial,
+        semente: 7,
+        ladosPorMesa: 2,
+        vagasAvanco: 4,
+      );
+      final volta = Fase.fromMap(Map<String, dynamic>.from(f.toJson()));
+      expect(volta.versaoSorteio, f.versaoSorteio);
+      expect(volta.toJson(), f.toJson());
+      expect(volta.comStatus(StatusFase.emAndamento).versaoSorteio, 1);
+    });
+
+    test('fase gravada ANTES desta OS é lida como versão 1', () {
+      // Registro histórico: não tem o campo, e foi sorteado pelo xorshift32.
+      final antigo = <String, dynamic>{
+        'faseId': 'e-fase-1',
+        'tournamentId': 't',
+        'editionId': 'e',
+        'ordem': 1,
+        'tipo': 'inicial',
+        'status': 'pendente',
+        'semente': 7,
+        'ladosPorMesa': 2,
+        'vagasAvanco': 4,
+      };
+      expect(Fase.fromMap(antigo).versaoSorteio, 1);
+    });
+
+    test('fase gravada por uma versão futura é recusada na leitura', () {
+      final futuro = <String, dynamic>{
+        'faseId': 'e-fase-1',
+        'tournamentId': 't',
+        'editionId': 'e',
+        'ordem': 1,
+        'tipo': 'inicial',
+        'status': 'pendente',
+        'semente': 7,
+        'versaoSorteio': 2,
+        'ladosPorMesa': 2,
+        'vagasAvanco': 4,
+      };
+      expect(() => Fase.fromMap(futuro), throwsFormatException);
+    });
+
+    test('a semente continua reproduzindo, e sementes diferentes divergem', () {
+      String comSemente(int s) => distribuicao(formarMesas(
+            tournamentId: 't', editionId: 'e', faseId: 'f1',
+            participantes: participantes, ladosPorMesa: 2, semente: s,
+          ));
+      expect(comSemente(42), comSemente(42));
+      expect(comSemente(42), isNot(comSemente(43)));
     });
   });
 

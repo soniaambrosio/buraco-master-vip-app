@@ -81,6 +81,17 @@ class Fase {
   /// devolva exatamente as mesmas mesas (ver seating.dart).
   final int semente;
 
+  /// Versao do algoritmo que sorteou estas mesas.
+  ///
+  /// Anda colada na semente porque sozinha a semente nao reproduz nada: ela
+  /// reproduz uma distribuicao PARA UM ALGORITMO. Guardar as duas e o que
+  /// permite, daqui a dois anos e com o algoritmo ja trocado, reconstruir a fase
+  /// exatamente como ela aconteceu — ou recusar a reconstrucao em voz alta, se o
+  /// codigo daquela versao nao existir mais.
+  ///
+  /// Ver [SorteioDeterministico.versaoAtual].
+  final int versaoSorteio;
+
   /// Unidades por mesa nesta fase.
   final int ladosPorMesa;
 
@@ -98,6 +109,7 @@ class Fase {
     required this.ladosPorMesa,
     this.status = StatusFase.pendente,
     this.vagasAvanco,
+    this.versaoSorteio = SorteioDeterministico.versaoAtual,
   });
 
   /// A fase encerra a edicao.
@@ -113,6 +125,7 @@ class Fase {
         ladosPorMesa: ladosPorMesa,
         status: novo,
         vagasAvanco: vagasAvanco,
+        versaoSorteio: versaoSorteio,
       );
 
   Map<String, dynamic> toJson() => {
@@ -123,6 +136,7 @@ class Fase {
         'tipo': tipo.wire,
         'status': status.wire,
         'semente': semente,
+        'versaoSorteio': versaoSorteio,
         'ladosPorMesa': ladosPorMesa,
         'vagasAvanco': vagasAvanco,
       };
@@ -156,6 +170,22 @@ class Fase {
     if (semente is! int) {
       throw FormatException('fase: semente deve ser int (recebido: $semente).');
     }
+    // Registro gravado ANTES desta OS nao tem o campo. Ele foi sorteado pelo
+    // xorshift32, que e a versao 1 — ler como 1 e o unico valor historicamente
+    // correto, e nao um default de conveniencia.
+    final versaoSorteio = json['versaoSorteio'] ?? SorteioDeterministico.versaoAtual;
+    if (versaoSorteio is! int) {
+      throw FormatException(
+          'fase: versaoSorteio deve ser int (recebido: $versaoSorteio).');
+    }
+    // Ja aqui, na leitura: uma fase gravada por uma versao futura do app nao
+    // pode ser reproduzida por este codigo, e fingir que pode e pior do que
+    // recusar.
+    if (!SorteioDeterministico.versoesSuportadas.contains(versaoSorteio)) {
+      throw FormatException(
+          'fase ${json['faseId']}: versaoSorteio $versaoSorteio desconhecida — '
+          'este codigo reproduz ${SorteioDeterministico.versoesSuportadas.toList()}.');
+    }
     final vagas = json['vagasAvanco'];
     if (vagas != null && (vagas is! int || vagas < 1)) {
       throw FormatException('fase: vagasAvanco deve ser int >= 1 ou null (recebido: $vagas).');
@@ -172,6 +202,7 @@ class Fase {
       tipo: tipo,
       status: status,
       semente: semente,
+      versaoSorteio: versaoSorteio,
       ladosPorMesa: inteiro('ladosPorMesa', minimo: 2),
       vagasAvanco: vagas as int?,
     );
@@ -390,6 +421,9 @@ List<Fase> montarFases({
       // Semente derivada por fase: reformar a mesa da fase 2 nao pode remontar a
       // fase 1, e todas continuam reproduziveis a partir da semente da edicao.
       semente: semente + i * 7919,
+      // Explicito, e nao herdado do default: a fase nasce carimbada com o
+      // algoritmo que vai sortea-la, e e esse carimbo que sera gravado.
+      versaoSorteio: SorteioDeterministico.versaoAtual,
       ladosPorMesa: ladosPorMesa,
       vagasAvanco: ultima ? null : vagasPorFase[i],
     ));

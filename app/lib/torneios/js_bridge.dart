@@ -248,7 +248,11 @@ String apurarFaseJson(String entrada) {
 }
 
 /// `{tournamentId, editionId, faseId, participantes: [...], ladosPorMesa,
-///   semente, permitirSobra?}`
+///   semente, permitirSobra?, versaoSorteio?}`
+///
+/// `versaoSorteio` ausente significa a versao corrente — e o caso de quem esta
+/// sorteando agora. Reprocessar uma edicao antiga deve MANDAR a versao gravada
+/// na fase, e a ponte falha alto se este codigo nao souber reproduzi-la.
 String formarMesasJson(String entrada) {
   try {
     final json = jsonDecode(entrada) as Map<String, dynamic>;
@@ -261,12 +265,17 @@ String formarMesasJson(String entrada) {
       ladosPorMesa: json['ladosPorMesa'] as int,
       semente: json['semente'] as int,
       permitirSobra: (json['permitirSobra'] as bool?) ?? false,
+      versaoSorteio:
+          (json['versaoSorteio'] as int?) ?? SorteioDeterministico.versaoAtual,
     );
     return jsonEncode({
       'formada': r.formada,
       'recusa': r.recusa?.wire,
       'mesas': [for (final m in r.mesas) m.toJson()],
       'excedentes': [for (final p in r.excedentes) p.participanteId],
+      // Sai no retorno para quem grava o sorteio nao precisar saber o default:
+      // o que gravar vem junto do que foi sorteado.
+      'versaoSorteio': r.versaoSorteio,
     });
   } catch (e) {
     return _erro(e);
