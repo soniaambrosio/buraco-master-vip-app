@@ -66,6 +66,23 @@ Além das configurações de jogo, manter a camada extra aprovada:
 - cadeira reservada aguardando convidado;
 - cadeira aberta para qualquer jogador online.
 
+### Organização visual da Privada
+
+Para evitar uma tela com aparência de painel técnico, os controles exclusivos ficam agrupados depois das configurações da partida:
+
+1. **Acesso à sala** — código em destaque e ação **Copiar**, acompanhado da orientação para compartilhar com os convidados;
+2. **Espectadores** — escolha clara entre permitir ou manter a partida reservada;
+3. **Cadeiras** — lista compacta com estado visível `Travada` / `Liberada` e explicação curta do efeito de cada estado;
+4. **Resumo da mesa** — modalidade, número de jogadores, meta, aposta, tempo, chat e espectadores antes da criação.
+
+O dono e um jogador que já entrou por código aparecem protegidos e não viram vaga pública por toque acidental. Somente vagas livres/reservadas podem alternar entre **Travada** e **Liberada** na camada visual.
+
+Regra de leitura das cadeiras:
+- **Travada**: vaga destinada a convidado por código;
+- **Liberada**: pode ser completada por jogador online;
+- o criador permanece ocupando a própria cadeira;
+- convidado já presente permanece identificado como convidado por código.
+
 A integração real com servidor, saldo, criação do código, ocupação de cadeiras, permissões VIP e matchmaking será feita posteriormente pelo Claude, preservando esta UI.
 
 ## Fronteira de responsabilidade
