@@ -725,7 +725,7 @@ class _ModalidadeControl extends StatelessWidget {
     const labels = {
       ModalidadeJogo.aberto: 'Aberto',
       ModalidadeJogo.fechado: 'Fechado',
-      ModalidadeJogo.sbtl: 'SBTL',
+      ModalidadeJogo.sbtl: 'STBL',
     };
     const subtitles = {
       ModalidadeJogo.aberto: 'lixo à vista',
@@ -1114,7 +1114,10 @@ class _PrivateAccessSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cadeiras = vm.cadeiras ?? const <CadeiraVM>[];
+    final todasCadeiras = vm.cadeiras ?? const <CadeiraVM>[];
+    final cadeiras = vm.modo == ModoJogo.dois
+        ? todasCadeiras.take(2).toList()
+        : todasCadeiras;
     final abertas = cadeiras
         .where((c) => c.estado == EstadoCadeira.liberada)
         .length;
@@ -1606,7 +1609,7 @@ class _PrivateSummaryCard extends StatelessWidget {
       case ModalidadeJogo.fechado:
         return 'Fechado';
       case ModalidadeJogo.sbtl:
-        return 'SBTL';
+        return 'STBL';
     }
   }
 
