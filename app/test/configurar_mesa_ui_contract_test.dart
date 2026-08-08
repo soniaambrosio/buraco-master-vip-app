@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/screens/configurar_mesa_screen.dart';
 
@@ -27,23 +28,86 @@ void main() {
       expect(vm.cadeiras, isNull);
     });
 
-    test('Mesa Privada preserva configuração completa', () {
+    test('Mesa Privada preserva configuração completa e custo próprio', () {
       final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
 
       expect(vm.tipo, TipoMesa.privada);
       expect(vm.aposta, isNotNull);
-      expect(vm.espectadores, isNotNull);
-      expect(vm.codigo, isNotNull);
-      expect(vm.codigo, isNotEmpty);
+      expect(vm.aposta!.opcoes, [0, 500, 1000, 5000]);
+      expect(vm.espectadores, isTrue);
+      expect(vm.codigo, 'BURACO-7K2M');
       expect(vm.cadeiras, isNotNull);
       expect(vm.cadeiras, hasLength(4));
+      expect(vm.custoCriar, 500);
+    });
+
+    test('dono e convidado ficam protegidos; só vagas livres podem alternar', () {
+      final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
+      final cadeiras = vm.cadeiras!;
+
+      expect(cadeiras[0].id, 'dono');
+      expect(cadeiras[0].estado, EstadoCadeira.travada);
+      expect(cadeiras[0].podeAlternar, isFalse);
+
+      expect(cadeiras[1].id, 'convidado');
+      expect(cadeiras[1].estado, EstadoCadeira.travada);
+      expect(cadeiras[1].podeAlternar, isFalse);
+
+      expect(cadeiras[2].id, 'reservada');
+      expect(cadeiras[2].podeAlternar, isTrue);
+
+      expect(cadeiras[3].id, 'aberta');
+      expect(cadeiras[3].estado, EstadoCadeira.liberada);
+      expect(cadeiras[3].podeAlternar, isTrue);
     });
 
     test('pote acompanha aposta x quantidade de jogadores', () {
-      const aposta = ApostaVM(valor: 1000, opcoes: [0, 500, 1000, 5000], pote: 4000);
+      const aposta = ApostaVM(
+        valor: 1000,
+        opcoes: [0, 500, 1000, 5000],
+        pote: 4000,
+      );
 
       expect(aposta.valor * 4, aposta.pote);
       expect(aposta.copyWith(valor: 500, pote: 1000).pote, 1000);
     });
+  });
+
+  testWidgets('Mesa Privada organiza código, espectadores e cadeiras sem seletor de tipo',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConfigurarMesaScreen(
+          vm: ConfigMesaVM.mock(tipo: TipoMesa.privada),
+          onVoltar: () {},
+          onTipo: (_) {},
+          onTipoBloqueado: (_) {},
+          onModalidade: (_) {},
+          onVerRegras: () {},
+          onModo: (_) {},
+          onPontos: (_) {},
+          onAposta: (_) {},
+          onTempo: (_) {},
+          onChat: (_) {},
+          onEspectadores: (_) {},
+          onCopiar: () {},
+          onAlternarCadeira: (_) {},
+          onCriarMesa: () {},
+        ),
+      ),
+    );
+
+    expect(find.text('Configurar Mesa Privada'), findsOneWidget);
+    expect(find.text('Seu espaço, suas regras'), findsOneWidget);
+    expect(find.text('ACESSO À SALA'), findsOneWidget);
+    expect(find.text('BURACO-7K2M'), findsOneWidget);
+    expect(find.text('ESPECTADORES'), findsOneWidget);
+    expect(find.text('CADEIRAS'), findsOneWidget);
+    expect(find.text('Resumo da mesa'), findsOneWidget);
+    expect(find.text('CRIAR MESA PRIVADA'), findsOneWidget);
+
+    expect(find.text('Pública'), findsNothing);
+    expect(find.text('VIP'), findsNothing);
+    expect(find.text('Privada'), findsNothing);
   });
 }
