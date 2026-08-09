@@ -13,7 +13,9 @@ class OndeJogarVM {
   final bool ehVip;
   const OndeJogarVM({required this.opcoes, this.ehVip = false});
 
-  factory OndeJogarVM.mock({bool ehVip = false}) => OndeJogarVM(
+  // O mock abre como VIP para a prévia conseguir navegar por todos os ambientes.
+  // Na integração real, Claude deve passar explicitamente o status da conta.
+  factory OndeJogarVM.mock({bool ehVip = true}) => OndeJogarVM(
         ehVip: ehVip,
         opcoes: const [
           OpcaoMesa(
@@ -234,7 +236,32 @@ class OndeJogarScreen extends StatelessWidget {
                   border: Border.all(color: const Color(0x55EFB94A)),
                 ),
                 alignment: Alignment.center,
-                child: Text(o.icone, style: const TextStyle(fontSize: 26)),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Text(o.icone, style: const TextStyle(fontSize: 26)),
+                    if (bloqueadaParaUsuario)
+                      Positioned(
+                        right: -1,
+                        bottom: -1,
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0D0906),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: _gold),
+                          ),
+                          child: const Icon(
+                            Icons.lock_rounded,
+                            color: _gold,
+                            size: 11,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -262,7 +289,11 @@ class OndeJogarScreen extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       o.descricao,
-                      style: const TextStyle(color: _texto, fontSize: 12, height: 1.3),
+                      style: const TextStyle(
+                        color: _texto,
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
                     ),
                     if (o.nota != null) ...[
                       const SizedBox(height: 6),
@@ -284,7 +315,7 @@ class OndeJogarScreen extends StatelessWidget {
                     ? Icons.lock_outline_rounded
                     : Icons.chevron_right_rounded,
                 color: bloqueadaParaUsuario ? _gold : _mut,
-                size: bloqueadaParaUsuario ? 19 : 23,
+                size: 22,
               ),
             ],
           ),
@@ -312,7 +343,10 @@ class OndeJogarScreen extends StatelessWidget {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Text(
         txt,
         style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w800),
