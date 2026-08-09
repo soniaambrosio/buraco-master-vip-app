@@ -42,7 +42,8 @@ O código **não é autorização**. Criar Mesa Privada exige VIP, e jogar senta
 - botão voltar retorna ao seletor de ambiente;
 - Treino permanece fora do configurador e abre o fluxo próprio de treino;
 - a sigla visível do configurador foi uniformizada para `STBL`;
-- o mock de **Onde jogar** abre como VIP apenas para permitir inspeção de todas as telas; a integração real deve passar o status da conta explicitamente.
+- o mock de **Onde jogar** abre como VIP apenas para permitir inspeção de todas as telas; a integração real deve passar o status da conta explicitamente;
+- a animação visual de **Preparando partida** agora distribui cartas somente para as posições presentes no `PreparandoPartidaVM`: 2 destinos para partidas 1 × 1 e 4 destinos para partidas 2 × 2.
 
 ## Proposta de valor da Mesa Privada
 
@@ -133,15 +134,16 @@ Ele preserva:
 
 Os mocks de preparação agora tratam todos os jogadores da Mesa VIP e da Mesa Privada como VIP. Participantes reais com Passe Convidado serão representados a partir do estado autoritativo na integração.
 
+A tela `PreparandoPartidaScreen` não usa mais quatro destinos visuais fixos para a distribuição. Cada animação é criada a partir da posição dos participantes recebidos, o que elimina cartas “voando para cadeira fantasma” no modo de 2 jogadores.
+
 ## Achados ainda pertencentes à integração/refino final
 
 1. **O host atual ainda chama o mock antigo de Preparando partida.** O adaptador novo está pronto, mas `main.dart` deve ser ligado ao `MesaConfigContract` na integração.
 2. **O host atual não transporta todas as escolhas até a mesa.** Modo, chat, aposta, espectadores, código e cadeiras devem atravessar pelo contrato.
-3. **A animação antiga de distribuição possui quatro destinos fixos.** Ela precisa acompanhar as posições reais quando o modo for 2 jogadores antes do fechamento definitivo desse trecho visual.
-4. **A mesa de motor atual trabalha estruturalmente com quatro assentos.** Suporte autoritativo a 2 jogadores pertence ao motor/servidor e não deve ser falsificado pela UI.
-5. **`MesaVariant` possui apenas `publica` e `vip`.** A aparência efetiva da Privada deve ser ligada conscientemente.
-6. **Existem duas implementações chamadas `MesaScreen`.** O `main.dart` usa `app/lib/mesa.dart`; a integração deve escolher fonte canônica.
-7. **Ainda há texto legado `SBTL` fora do configurador.** O produto usa `STBL`; normalizar texto não pode alterar regra do jogo.
+3. **A mesa de motor atual trabalha estruturalmente com quatro assentos.** Suporte autoritativo a 2 jogadores pertence ao motor/servidor e não deve ser falsificado pela UI.
+4. **`MesaVariant` possui apenas `publica` e `vip`.** A aparência efetiva da Privada deve ser ligada conscientemente.
+5. **Existem duas implementações chamadas `MesaScreen`.** O `main.dart` usa `app/lib/mesa.dart`; a integração deve escolher fonte canônica.
+6. **Ainda há texto legado `SBTL` fora do configurador.** O produto usa `STBL`; normalizar texto não pode alterar regra do jogo.
 
 ## Portão para o Claude
 
