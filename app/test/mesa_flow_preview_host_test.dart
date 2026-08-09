@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/screens/configurar_mesa_screen.dart';
 import '../lib/screens/mesa_flow_preview_host.dart';
+import '../lib/screens/preparando_partida_screen.dart';
 
 void main() {
   testWidgets('host novo mostra STBL correto nas regras', (tester) async {
