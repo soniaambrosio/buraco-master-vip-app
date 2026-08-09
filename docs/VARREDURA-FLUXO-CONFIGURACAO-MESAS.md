@@ -43,7 +43,9 @@ O código **não é autorização**. Criar Mesa Privada exige VIP, e jogar senta
 - Treino permanece fora do configurador e abre o fluxo próprio de treino;
 - a sigla visível do configurador foi uniformizada para `STBL`;
 - o mock de **Onde jogar** abre como VIP apenas para permitir inspeção de todas as telas; a integração real deve passar o status da conta explicitamente;
-- a animação visual de **Preparando partida** agora distribui cartas somente para as posições presentes no `PreparandoPartidaVM`: 2 destinos para partidas 1 × 1 e 4 destinos para partidas 2 × 2.
+- a animação visual de **Preparando partida** agora distribui cartas somente para as posições presentes no `PreparandoPartidaVM`: 2 destinos para partidas 1 × 1 e 4 destinos para partidas 2 × 2;
+- a fronteira **Preparando → Mesa** ganhou contrato próprio para impedir perda silenciosa de configuração;
+- contexto da mesa e pele do renderer agora são conceitos separados: Pública usa pele pública; VIP e Privada usam pele premium, mas a Privada preserva contexto privado.
 
 ## Proposta de valor da Mesa Privada
 
@@ -132,22 +134,41 @@ Ele preserva:
 - espectadores na Privada;
 - contexto VIP.
 
-Os mocks de preparação agora tratam todos os jogadores da Mesa VIP e da Mesa Privada como VIP. Participantes reais com Passe Convidado serão representados a partir do estado autoritativo na integração.
+Os mocks de preparação tratam todos os jogadores da Mesa VIP e da Mesa Privada como VIP. Participantes reais com Passe Convidado serão representados a partir do estado autoritativo na integração.
 
-A tela `PreparandoPartidaScreen` não usa mais quatro destinos visuais fixos para a distribuição. Cada animação é criada a partir da posição dos participantes recebidos, o que elimina cartas “voando para cadeira fantasma” no modo de 2 jogadores.
+A tela `PreparandoPartidaScreen` não usa mais quatro destinos visuais fixos para a distribuição. Cada animação é criada a partir da posição dos participantes recebidos, eliminando cartas para cadeira fantasma no modo de 2 jogadores.
 
-## Achados ainda pertencentes à integração/refino final
+## Fronteira Preparando → Mesa
+
+Foram criados:
+
+- `app/lib/screens/mesa_launch_spec.dart`;
+- `app/lib/screens/mesa_renderer_contract.dart`.
+
+`MesaLaunchSpec` preserva, até a entrada do runtime, ambiente, modalidade, quantidade de jogadores, meta, tempo, chat, aposta/pote, espectadores, código e custo.
+
+`MesaRendererContract` resolve a ambiguidade visual sem apagar a identidade da sala:
+
+- Pública → contexto Pública + pele Pública;
+- VIP → contexto VIP + pele Premium;
+- Privada → contexto Privada + pele Premium.
+
+Assim, a Privada pode reutilizar a aparência premium já existente sem ser semanticamente convertida em Mesa VIP. Os controles sociais e de acesso continuam condicionados ao contexto privado.
+
+A fonte canônica do runtime foi registrada em `docs/MESA-CANONICA-E-FRONTEIRA.md`: `app/lib/mesa.dart` é a mesa usada pelo `main.dart`; `app/lib/screens/mesa_screen.dart` fica em quarentena como implementação paralela/protótipo e não deve receber a integração real.
+
+## Achados ainda pertencentes à integração
 
 1. **O host atual ainda chama o mock antigo de Preparando partida.** O adaptador novo está pronto, mas `main.dart` deve ser ligado ao `MesaConfigContract` na integração.
-2. **O host atual não transporta todas as escolhas até a mesa.** Modo, chat, aposta, espectadores, código e cadeiras devem atravessar pelo contrato.
-3. **A mesa de motor atual trabalha estruturalmente com quatro assentos.** Suporte autoritativo a 2 jogadores pertence ao motor/servidor e não deve ser falsificado pela UI.
-4. **`MesaVariant` possui apenas `publica` e `vip`.** A aparência efetiva da Privada deve ser ligada conscientemente.
-5. **Existem duas implementações chamadas `MesaScreen`.** O `main.dart` usa `app/lib/mesa.dart`; a integração deve escolher fonte canônica.
-6. **Ainda há texto legado `SBTL` fora do configurador.** O produto usa `STBL`; normalizar texto não pode alterar regra do jogo.
+2. **O host atual ainda envia somente parte das escolhas à MesaScreen.** Modo, chat, aposta, espectadores, código e cadeiras devem atravessar pelos contratos novos.
+3. **O host legado ainda contém `publica ? MesaVariant.publica : MesaVariant.vip`.** O novo contrato já resolve a intenção: a Privada usa pele premium, mas o contexto `privada` não pode ser descartado.
+4. **A mesa de motor atual trabalha estruturalmente com quatro assentos.** Suporte autoritativo a 2 jogadores pertence ao motor/servidor e não deve ser falsificado pela UI.
+5. **Ainda há texto legado `SBTL` no modal de regras do host em `main.dart`.** O produto usa `STBL`; a troca textual deve ocorrer quando esse host for ligado/substituído, sem alterar a regra do jogo.
+6. **Rotas antigas dentro da classe `HomeScreen` ainda apontam diretamente para o configurador.** A árvore ativa usa `SplashOficialScreen → _InicioPreviewHost → _OndeJogarPreviewHost`; portanto essas rotas são legado e não devem voltar a ser fonte de navegação.
 
 ## Portão para o Claude
 
-A camada visual estará fechada quando:
+A camada visual/contratual fica pronta para ligação quando:
 - Pública, VIP e Privada forem navegáveis sem seletor duplicado;
 - aposta/pote responderem ao modo 2/4;
 - a Privada permitir montar parceiro/oponentes por cadeira;
@@ -156,13 +177,15 @@ A camada visual estará fechada quando:
 - código/copiar e espectadores funcionarem no mock;
 - a Privada não cair no lobby legado antes de ser configurada;
 - `MesaConfigContract` preservar as escolhas;
-- o adaptador de preparação respeitar 2/4 jogadores e o contexto VIP;
+- o adaptador de preparação respeitar 2/4 jogadores e contexto VIP;
 - o validador rejeitar contratos incoerentes;
-- a animação visual de preparação respeitar 2/4 participantes;
-- a nomenclatura visível usar STBL.
+- a animação de preparação respeitar 2/4 participantes;
+- `MesaLaunchSpec` e `MesaRendererContract` preservarem contexto até o runtime;
+- a nomenclatura visível do fluxo novo usar STBL.
 
 Na integração, o Claude deve:
 - usar `MesaConfigContract` como referência de entrada;
+- usar os contratos de preparação/launch/renderer em vez de reconstruir escolhas manualmente;
 - validar VIP/Passe Convidado por cadeira no backend;
 - ligar saldo, custo e aposta autoritativamente;
 - criar/entrar na sala e gerar código real;
@@ -172,5 +195,5 @@ Na integração, o Claude deve:
 - transportar chat, modalidade, meta e tempo;
 - persistir bloqueios e registrar denúncias;
 - resolver suporte real do motor a 2 jogadores;
-- escolher implementação canônica da mesa;
+- manter `app/lib/mesa.dart` como fonte canônica do runtime;
 - preservar integralmente o layout e a hierarquia visual aprovados.
