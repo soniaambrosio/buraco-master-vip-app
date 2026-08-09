@@ -39,8 +39,7 @@ class OndeJogarVM {
           ),
           OpcaoMesa(
             // O host legado intercepta literalmente "privada" para abrir o
-            // lobby online antigo. Este id deixa a prévia cair no fluxo novo
-            // de ConfigurarMesa, sem mexer na integração do servidor.
+            // lobby online antigo. Este id mantém a prévia no fluxo novo.
             id: 'privada_config',
             icone: '🔑',
             titulo: 'Mesa Privada',
@@ -49,6 +48,7 @@ class OndeJogarVM {
             descricao:
                 'Você cria com um código e convida quem quiser. Trave as cadeiras pra jogar só com a família, ou libere pra completar com gente online.',
             nota: '🔒 Só VIP cria · convidados entram com código',
+            bloqueado: true,
           ),
           OpcaoMesa(
             id: 'treino',
@@ -96,12 +96,14 @@ class OndeJogarScreen extends StatelessWidget {
   final OndeJogarVM vm;
   final VoidCallback onVoltar;
   final ValueChanged<String> onEscolher;
+  final ValueChanged<String>? onBloqueado;
 
   const OndeJogarScreen({
     super.key,
     required this.vm,
     required this.onVoltar,
     required this.onEscolher,
+    this.onBloqueado,
   });
 
   @override
@@ -154,7 +156,7 @@ class OndeJogarScreen extends StatelessWidget {
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
-                      children: vm.opcoes.map(_cardOpcao).toList(),
+                      children: vm.opcoes.map((o) => _cardOpcao(context, o)).toList(),
                     ),
                   ),
                 ],
@@ -166,91 +168,126 @@ class OndeJogarScreen extends StatelessWidget {
     );
   }
 
-  Widget _cardOpcao(OpcaoMesa o) {
-    return GestureDetector(
-      onTap: () => onEscolher(o.id),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: o.destaque ? _gold : _borda,
-            width: o.destaque ? 1.8 : 1,
+  void _selecionar(BuildContext context, OpcaoMesa opcao) {
+    final bloqueadaParaUsuario = opcao.bloqueado && !vm.ehVip;
+    if (!bloqueadaParaUsuario) {
+      onEscolher(opcao.id);
+      return;
+    }
+
+    if (onBloqueado != null) {
+      onBloqueado!(opcao.id);
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            opcao.id == 'privada_config'
+                ? 'Criar Mesa Privada é um benefício VIP. Convidados entram pelo código recebido.'
+                : 'Mesa VIP é exclusiva para assinantes VIP.',
           ),
-          boxShadow: o.destaque
-              ? [
-                  BoxShadow(
-                    color: _gold.withValues(alpha: 0.22),
-                    blurRadius: 16,
-                    spreadRadius: -2,
-                  ),
-                ]
-              : null,
+          duration: const Duration(milliseconds: 1700),
+          backgroundColor: const Color(0xFF2A1B0E),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A1C10),
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(color: const Color(0x55EFB94A)),
-              ),
-              alignment: Alignment.center,
-              child: Text(o.icone, style: const TextStyle(fontSize: 26)),
+      );
+  }
+
+  Widget _cardOpcao(BuildContext context, OpcaoMesa o) {
+    final bloqueadaParaUsuario = o.bloqueado && !vm.ehVip;
+    return GestureDetector(
+      onTap: () => _selecionar(context, o),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 160),
+        opacity: bloqueadaParaUsuario ? .78 : 1,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: o.destaque ? _gold : _borda,
+              width: o.destaque ? 1.8 : 1,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          o.titulo,
-                          style: const TextStyle(
-                            color: _goldHi,
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w800,
+            boxShadow: o.destaque && !bloqueadaParaUsuario
+                ? [
+                    BoxShadow(
+                      color: _gold.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      spreadRadius: -2,
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A1C10),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: const Color(0x55EFB94A)),
+                ),
+                alignment: Alignment.center,
+                child: Text(o.icone, style: const TextStyle(fontSize: 26)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            o.titulo,
+                            style: const TextStyle(
+                              color: _goldHi,
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
-                      ),
-                      if (o.badge != null) ...[
-                        const SizedBox(width: 8),
-                        _badge(o.badge!, o.corBadge),
+                        if (o.badge != null) ...[
+                          const SizedBox(width: 8),
+                          _badge(o.badge!, o.corBadge),
+                        ],
                       ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    o.descricao,
-                    style: const TextStyle(color: _texto, fontSize: 12, height: 1.3),
-                  ),
-                  if (o.nota != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      o.nota!,
-                      style: const TextStyle(
-                        color: _mut,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                      ),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      o.descricao,
+                      style: const TextStyle(color: _texto, fontSize: 12, height: 1.3),
+                    ),
+                    if (o.nota != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        o.nota!,
+                        style: const TextStyle(
+                          color: _mut,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            const Text(
-              '›',
-              style: TextStyle(color: _mut, fontSize: 22, fontWeight: FontWeight.w900),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Icon(
+                bloqueadaParaUsuario
+                    ? Icons.lock_outline_rounded
+                    : Icons.chevron_right_rounded,
+                color: bloqueadaParaUsuario ? _gold : _mut,
+                size: bloqueadaParaUsuario ? 19 : 23,
+              ),
+            ],
+          ),
         ),
       ),
     );
