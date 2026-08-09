@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'configurar_mesa_screen.dart';
-
 enum AcaoSocialPrivada { silenciar, bloquear, denunciar }
 enum PapelCadeiraPrivada { dono, parceiro, oponente }
 
@@ -14,11 +12,11 @@ class MesaPrivadaPolicy {
   static const bool espectadorPrecisaVip = false;
 
   static PapelCadeiraPrivada papelDaCadeira({
-    required ModoJogo modo,
+    required int quantidadeJogadores,
     required int indice,
   }) {
     if (indice == 0) return PapelCadeiraPrivada.dono;
-    if (modo == ModoJogo.dois) return PapelCadeiraPrivada.oponente;
+    if (quantidadeJogadores == 2) return PapelCadeiraPrivada.oponente;
     if (indice == 1) return PapelCadeiraPrivada.parceiro;
     return PapelCadeiraPrivada.oponente;
   }
