@@ -1,4 +1,5 @@
 import 'configurar_mesa_screen.dart';
+import 'mesa_privada_social.dart';
 
 /// Snapshot imutável da configuração aprovada antes de atravessar a fronteira
 /// UI -> preparação/servidor/motor.
@@ -60,6 +61,18 @@ class MesaConfigContract {
   int get quantidadeJogadores => modo == ModoJogo.dois ? 2 : 4;
 
   bool get temAposta => apostaMoedas != null && apostaMoedas! > 0;
+
+  /// Regra comercial aprovada: em Mesa Privada, ocupar uma cadeira exige VIP.
+  /// O Passe Convidado VIP é uma exceção promocional curta e validada pelo
+  /// backend; o código da sala, sozinho, nunca concede o benefício.
+  bool get exigeVipDosParticipantes =>
+      tipo == TipoMesa.privada && MesaPrivadaPolicy.exigeVipParaJogar;
+
+  bool get permitePasseConvidadoVip =>
+      tipo == TipoMesa.privada && MesaPrivadaPolicy.permitePasseConvidadoVip;
+
+  bool get espectadorPodeSerNaoVip =>
+      tipo == TipoMesa.privada && !MesaPrivadaPolicy.espectadorPrecisaVip;
 
   bool get poteCoerente {
     if (apostaMoedas == null || poteMoedas == null) {
