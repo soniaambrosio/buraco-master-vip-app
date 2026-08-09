@@ -10,7 +10,8 @@ class MesaConfigValidation {
 }
 
 /// Valida apenas coerência do contrato visual. Não substitui validação
-/// autoritativa de saldo, assinatura, aposta ou regras no servidor.
+/// autoritativa de saldo, assinatura, Passe Convidado, aposta ou regras no
+/// servidor. O backend continua sendo a fonte de verdade para liberar cadeira.
 MesaConfigValidation validarMesaConfig(MesaConfigContract config) {
   final erros = <String>[];
 
@@ -71,6 +72,16 @@ MesaConfigValidation validarMesaConfig(MesaConfigContract config) {
       if (config.cadeiras == null ||
           config.cadeiras!.length < config.quantidadeJogadores) {
         erros.add('PRIVADA_CADEIRAS_INSUFICIENTES');
+      }
+
+      final ativas = config.cadeirasAtivas ?? const <CadeiraVM>[];
+      for (final cadeira in ativas) {
+        if (!cadeira.ocupada) continue;
+        final acessoValido = cadeira.ehVip ||
+            (config.permitePasseConvidadoVip && cadeira.passeConvidadoVip);
+        if (!acessoValido) {
+          erros.add('PRIVADA_PARTICIPANTE_SEM_VIP_OU_PASSE:${cadeira.id}');
+        }
       }
       break;
   }
