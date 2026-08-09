@@ -114,6 +114,31 @@ void main() {
     expect(bloqueados, ['vip', 'privada_config']);
   });
 
+  testWidgets('convidado não VIP pode escolher entrar com código', (tester) async {
+    final escolhidos = <String>[];
+    final bloqueados = <String>[];
+    var entradasPorCodigo = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OndeJogarScreen(
+          vm: OndeJogarVM.mock(ehVip: false),
+          onVoltar: () {},
+          onEscolher: escolhidos.add,
+          onBloqueado: bloqueados.add,
+          onEntrarCodigo: () => entradasPorCodigo++,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('entrar-com-codigo')));
+    await tester.pump();
+
+    expect(entradasPorCodigo, 1);
+    expect(escolhidos, isEmpty);
+    expect(bloqueados, isEmpty);
+  });
+
   testWidgets('VIP pode abrir Mesa VIP e criação da Privada', (tester) async {
     final escolhidos = <String>[];
 
