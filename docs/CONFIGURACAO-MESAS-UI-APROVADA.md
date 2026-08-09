@@ -51,40 +51,99 @@ Mostrar:
 
 Não herdar controles exclusivos da Privada, como código da sala e cadeiras.
 
-## Mesa Privada
+## Mesa Privada — proposta de valor aprovada
 
 Título: **Configurar Mesa Privada**
 
-Identidade: `🔑 Mesa Privada · VIP cria`
+Identidade: `🔑 Mesa Privada · VIP`
 
-Além das configurações de jogo, manter a camada extra aprovada:
+Mensagem central:
+
+**Monte sua mesa. Escolha seu parceiro. Escolha seus adversários. E resolvam no baralho.**
+
+A Mesa Privada é o ambiente social premium do Buraco Master VIP. O dono não recebe apenas um código: ele monta a própria partida, decide quem será seu parceiro, escolhe os adversários, reserva vagas específicas e pode liberar lugares restantes para outros jogadores elegíveis.
+
+### Regra VIP das cadeiras
+
+- criar Mesa Privada exige VIP ativo;
+- **todo jogador que ocupar uma cadeira da Mesa Privada precisa ter VIP ativo**;
+- possuir o código da sala não concede benefício VIP e não libera a cadeira por si só;
+- exceção promocional: **Passe Convidado VIP**, ocasional, limitado e validado pelo backend;
+- o Passe Convidado não pode funcionar como acesso permanente nem se renovar automaticamente;
+- cadeira liberada para matchmaking só pode ser preenchida por jogador VIP ou por participante com Passe Convidado VIP válido;
+- espectadores podem ser não VIP quando o dono permitir, pois assistir não equivale a ocupar uma cadeira.
+
+A ação **TENHO UM CÓDIGO** pode ser exibida antes da validação de assinatura: o código localiza a sala. A autorização para sentar acontece depois, de forma autoritativa, exigindo VIP ativo ou Passe Convidado VIP válido.
+
+### Montagem da turma
+
+No modo de 4 jogadores, a UI identifica claramente:
+- **DONO**;
+- **PARCEIRO**;
+- **OPONENTE**;
+- **OPONENTE**.
+
+No modo de 2 jogadores:
+- **DONO**;
+- **OPONENTE**.
+
+O dono pode convidar diretamente para cada vaga e decidir quais vagas livres ficam travadas ou liberadas. Um participante já presente não deve virar vaga pública por toque acidental.
+
+Regra de leitura das cadeiras:
+- **Travada**: vaga reservada ao convite do dono;
+- **Liberada**: o sistema pode completar com jogador elegível online;
+- participante ocupado exibe seu estado de acesso VIP/Passe;
+- o criador permanece protegido na própria cadeira.
+
+### Chat da Mesa Privada
+
+A opção equivalente a `ChatMesa.completo` é apresentada ao usuário como **Livre** na Mesa Privada.
+
+O chat livre existe para preservar a resenha e a provocação saudável do jogo presencial, mas não transforma a sala em ambiente sem regras. Cada jogador deve ter acesso, pelo menu do avatar do outro participante, a:
+- **Silenciar para mim** — para de exibir/entregar as mensagens daquele jogador apenas para quem silenciou;
+- **Bloquear jogador** — impede novas interações e convites futuros conforme política da conta;
+- **Denunciar** — envia ocorrência ao sistema para análise/moderação.
+
+Bloquear alguém durante uma partida válida **não expulsa automaticamente o jogador da partida** e não pode ser usado para alterar o resultado esportivo. O dono controla a composição da mesa, mas não vira moderador com poder de remover adversário simplesmente porque está perdendo.
+
+### Controles exclusivos da Privada
+
+Além das configurações de jogo, manter:
 - aposta em moedas;
 - espectadores;
 - código da sala com ação de copiar;
-- cadeiras individualmente travadas/liberadas;
-- indicação de convidado que entrou por código;
-- cadeira reservada aguardando convidado;
-- cadeira aberta para qualquer jogador online.
+- montagem de parceiro/oponentes por cadeira;
+- convite direto para vaga vazia;
+- cadeiras travadas/liberadas;
+- indicação de VIP ativo ou Passe Convidado VIP válido;
+- resumo antes da criação.
 
-### Organização visual da Privada
+Ordem visual aprovada:
+1. identidade e proposta de valor;
+2. regra VIP/Passe Convidado;
+3. modalidade, modo, pontos, aposta, tempo;
+4. chat **Livre / Só balões / Desligado** + proteção Silenciar/Bloquear/Denunciar;
+5. **Monte sua partida** — dono, parceiro e oponentes;
+6. acesso por código;
+7. espectadores;
+8. resumo da mesa;
+9. ação **CRIAR MESA PRIVADA**.
 
-Para evitar uma tela com aparência de painel técnico, os controles exclusivos ficam agrupados depois das configurações da partida:
+## Passe Convidado VIP
 
-1. **Acesso à sala** — código em destaque e ação **Copiar**, acompanhado da orientação para compartilhar com os convidados;
-2. **Espectadores** — escolha clara entre permitir ou manter a partida reservada;
-3. **Cadeiras** — lista compacta com estado visível `Travada` / `Liberada` e explicação curta do efeito de cada estado;
-4. **Resumo da mesa** — modalidade, número de jogadores, meta, aposta, tempo, chat e espectadores antes da criação.
+O Passe Convidado é ferramenta de aquisição/marketing, não uma quarta modalidade de acesso permanente. A UI apenas reconhece sua existência; emissão, quantidade, validade, consumo, idempotência e elegibilidade são decisões autoritativas do backend.
 
-O dono e um jogador que já entrou por código aparecem protegidos e não viram vaga pública por toque acidental. Somente vagas livres/reservadas podem alternar entre **Travada** e **Liberada** na camada visual.
-
-Regra de leitura das cadeiras:
-- **Travada**: vaga destinada a convidado por código;
-- **Liberada**: pode ser completada por jogador online;
-- o criador permanece ocupando a própria cadeira;
-- convidado já presente permanece identificado como convidado por código.
-
-A integração real com servidor, saldo, criação do código, ocupação de cadeiras, permissões VIP e matchmaking será feita posteriormente pelo Claude, preservando esta UI.
+Diretriz de produto: ele deve ser raro/ocasional, com duração curta ou limitado a partida(s), para permitir experimentação do ambiente VIP sem criar uma rota de carona recorrente.
 
 ## Fronteira de responsabilidade
 
-Esta branch fecha a camada visual Flutter e o contrato de interação. O Claude deve conectar estado, Firebase/servidor, moedas, aposta, VIP, sala e callbacks sem redesenhar nem reinterpretar o fluxo aprovado.
+A branch fecha a camada visual Flutter, os contratos e os componentes de interação. O Claude deve conectar estado real, assinatura VIP, Passe Convidado, servidor/Firebase, moedas, aposta, código, convites, cadeiras, matchmaking, chat, bloqueios e denúncias **sem redesenhar nem reinterpretar a experiência aprovada**.
+
+Regras de autoridade que não podem ficar apenas no cliente:
+- validação do VIP ativo;
+- validade/consumo do Passe Convidado;
+- autorização para ocupar cadeira;
+- saldo, custo e aposta;
+- criação/entrada da sala;
+- persistência de bloqueio;
+- registro e tratamento de denúncias.
