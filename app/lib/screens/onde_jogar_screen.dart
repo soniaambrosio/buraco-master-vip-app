@@ -99,6 +99,7 @@ class OndeJogarScreen extends StatelessWidget {
   final VoidCallback onVoltar;
   final ValueChanged<String> onEscolher;
   final ValueChanged<String>? onBloqueado;
+  final VoidCallback? onEntrarCodigo;
 
   const OndeJogarScreen({
     super.key,
@@ -106,6 +107,7 @@ class OndeJogarScreen extends StatelessWidget {
     required this.onVoltar,
     required this.onEscolher,
     this.onBloqueado,
+    this.onEntrarCodigo,
   });
 
   @override
@@ -197,8 +199,25 @@ class OndeJogarScreen extends StatelessWidget {
       );
   }
 
+  void _entrarComCodigo(BuildContext context) {
+    if (onEntrarCodigo != null) {
+      onEntrarCodigo!();
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Entrada por código pronta para ser ligada ao servidor.'),
+          duration: Duration(milliseconds: 1500),
+          backgroundColor: Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
   Widget _cardOpcao(BuildContext context, OpcaoMesa o) {
     final bloqueadaParaUsuario = o.bloqueado && !vm.ehVip;
+    final privada = o.id == 'privada_config';
     return GestureDetector(
       onTap: () => _selecionar(context, o),
       child: AnimatedOpacity(
@@ -303,6 +322,50 @@ class OndeJogarScreen extends StatelessWidget {
                           color: _mut,
                           fontSize: 10.5,
                           fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (privada) ...[
+                      const SizedBox(height: 9),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            key: const ValueKey('entrar-com-codigo'),
+                            onTap: () => _entrarComCodigo(context),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10271E),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFF235D43)),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.vpn_key_rounded,
+                                    color: Color(0xFF78E6A7),
+                                    size: 15,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'TENHO UM CÓDIGO',
+                                    style: TextStyle(
+                                      color: Color(0xFF78E6A7),
+                                      fontSize: 9.8,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ],
