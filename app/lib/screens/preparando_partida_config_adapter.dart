@@ -9,7 +9,12 @@ PreparandoPartidaVM prepararPartidaDaConfiguracao(
   MesaConfigContract config, {
   List<JogadorPreparacaoVM>? jogadores,
 }) {
-  final participantes = jogadores ?? _jogadoresMock(config.quantidadeJogadores);
+  final todosJogadoresVip = config.tipo != TipoMesa.publica;
+  final participantes = jogadores ??
+      _jogadoresMock(
+        config.quantidadeJogadores,
+        todosVip: todosJogadoresVip,
+      );
   final limite = config.quantidadeJogadores < participantes.length
       ? config.quantidadeJogadores
       : participantes.length;
@@ -56,6 +61,7 @@ String _subtitulo(MesaConfigContract config) {
     partes.add(
       config.espectadores! ? 'com espectadores' : 'sem espectadores',
     );
+    partes.add('jogadores VIP');
   }
 
   return partes.join(' • ');
@@ -83,14 +89,17 @@ String _numero(int valor) {
   return buffer.toString();
 }
 
-List<JogadorPreparacaoVM> _jogadoresMock(int quantidade) {
+List<JogadorPreparacaoVM> _jogadoresMock(
+  int quantidade, {
+  required bool todosVip,
+}) {
   if (quantidade == 2) {
-    return const [
+    return [
       JogadorPreparacaoVM(
         id: 'voce',
         nome: 'Você',
         avatar: '👑',
-        ehVip: true,
+        ehVip: todosVip,
         pronto: true,
         posicao: PosicaoJogador.baixo,
       ),
@@ -98,19 +107,19 @@ List<JogadorPreparacaoVM> _jogadoresMock(int quantidade) {
         id: 'adversario',
         nome: 'Adversário',
         avatar: '🧔🏻',
-        ehVip: false,
+        ehVip: todosVip,
         pronto: true,
         posicao: PosicaoJogador.topo,
       ),
     ];
   }
 
-  return const [
+  return [
     JogadorPreparacaoVM(
       id: 'parceiro',
       nome: 'Parceiro',
       avatar: '👩🏼',
-      ehVip: true,
+      ehVip: todosVip,
       pronto: true,
       posicao: PosicaoJogador.topo,
     ),
@@ -118,7 +127,7 @@ List<JogadorPreparacaoVM> _jogadoresMock(int quantidade) {
       id: 'adversario-direita',
       nome: 'Adversário',
       avatar: '🧔🏽',
-      ehVip: false,
+      ehVip: todosVip,
       pronto: true,
       posicao: PosicaoJogador.direita,
     ),
@@ -126,7 +135,7 @@ List<JogadorPreparacaoVM> _jogadoresMock(int quantidade) {
       id: 'voce',
       nome: 'Você',
       avatar: '👑',
-      ehVip: true,
+      ehVip: todosVip,
       pronto: true,
       posicao: PosicaoJogador.baixo,
     ),
@@ -134,7 +143,7 @@ List<JogadorPreparacaoVM> _jogadoresMock(int quantidade) {
       id: 'adversario-esquerda',
       nome: 'Adversário',
       avatar: '👩🏽',
-      ehVip: false,
+      ehVip: todosVip,
       pronto: true,
       posicao: PosicaoJogador.esquerda,
     ),
