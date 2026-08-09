@@ -45,11 +45,12 @@ class OndeJogarVM {
             id: 'privada_config',
             icone: '🔑',
             titulo: 'Mesa Privada',
-            badge: 'VIP cria',
+            badge: 'VIP',
             corBadge: CorBadge.ouro,
             descricao:
-                'Você cria com um código e convida quem quiser. Trave as cadeiras pra jogar só com a família, ou libere pra completar com gente online.',
-            nota: '🔒 Só VIP cria · convidados entram com código',
+                'Monte sua própria mesa: escolha parceiro, adversários e quem pode completar as vagas. Todos os jogadores precisam ser VIP.',
+            nota:
+                '🔒 VIP para jogar · exceção: Passe Convidado VIP ocasional e válido',
             bloqueado: true,
           ),
           OpcaoMesa(
@@ -190,10 +191,10 @@ class OndeJogarScreen extends StatelessWidget {
         SnackBar(
           content: Text(
             opcao.id == 'privada_config'
-                ? 'Criar Mesa Privada é um benefício VIP. Convidados entram pelo código recebido.'
+                ? 'Criar Mesa Privada é um benefício VIP. Para jogar, cada participante precisa de VIP ativo ou Passe Convidado VIP válido.'
                 : 'Mesa VIP é exclusiva para assinantes VIP.',
           ),
-          duration: const Duration(milliseconds: 1700),
+          duration: const Duration(milliseconds: 1900),
           backgroundColor: const Color(0xFF2A1B0E),
         ),
       );
@@ -208,8 +209,10 @@ class OndeJogarScreen extends StatelessWidget {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
-          content: Text('Entrada por código pronta para ser ligada ao servidor.'),
-          duration: Duration(milliseconds: 1500),
+          content: Text(
+            'O código localiza a Mesa Privada. O servidor valida VIP ativo ou Passe Convidado VIP antes de liberar a cadeira.',
+          ),
+          duration: Duration(milliseconds: 1900),
           backgroundColor: Color(0xFF2A1B0E),
         ),
       );
@@ -345,21 +348,36 @@ class OndeJogarScreen extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(color: const Color(0xFF235D43)),
                               ),
-                              child: const Row(
+                              child: const Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(
-                                    Icons.vpn_key_rounded,
-                                    color: Color(0xFF78E6A7),
-                                    size: 15,
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.vpn_key_rounded,
+                                        color: Color(0xFF78E6A7),
+                                        size: 15,
+                                      ),
+                                      SizedBox(width: 6),
+                                      Text(
+                                        'TENHO UM CÓDIGO',
+                                        style: TextStyle(
+                                          color: Color(0xFF78E6A7),
+                                          fontSize: 9.8,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  SizedBox(width: 6),
+                                  SizedBox(height: 3),
                                   Text(
-                                    'TENHO UM CÓDIGO',
+                                    'VIP ativo ou Passe Convidado VIP válido',
                                     style: TextStyle(
-                                      color: Color(0xFF78E6A7),
-                                      fontSize: 9.8,
-                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF9EAD9F),
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ],
