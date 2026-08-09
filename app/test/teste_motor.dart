@@ -26,6 +26,11 @@ import 'package:buraco_master_vip/rules/gerador/gerador.dart';
 // C8 — conformidade Dart × Node (fixture do lado Node; comparação cross-engine).
 import 'dart:convert';
 import 'conformidade_fixture.dart';
+// C9-A — costura: flags + contrato da porta + fábrica/seletor (aditivo; NÃO é
+// regra, NÃO é runtime; sem projeção Jogo<->EstadoJogo, sem adaptador concreto).
+import 'package:buraco_master_vip/motor/motor_config.dart';
+import 'package:buraco_master_vip/motor/porta_motor.dart';
+import 'package:buraco_master_vip/motor/fabrica_motor.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -3440,4 +3445,142 @@ void main() {
       expect(criticas, <String>{});
     });
   });
+
+  // ===================================================================
+  // C9-A — costura do motor canônico atrás de flag: FLAGS + CONTRATO da
+  // porta + FÁBRICA/SELETOR. NENHUM runtime, NENHUMA projeção Jogo<->
+  // EstadoJogo, NENHUM adaptador concreto (isso é o C9-B). Os testes só
+  // exercitam flags (independência/OFF por padrão), seleção e a fábrica com
+  // construtores INJETADOS (dublês reais — não lançam UnimplementedError).
+  // ===================================================================
+  group('C9-A — flags + porta + fábrica', () {
+    // FLAGS -----------------------------------------------------------------
+    test('C9-FLAG-01 defaults OFF (construtor padrão)', () {
+      const c = MotorConfig();
+      expect(c.canonicoAtivo, isFalse);
+      expect(c.sombraAtiva, isFalse);
+    });
+
+    test('C9-FLAG-02 doAmbiente() sem --dart-define: ambas OFF', () {
+      final c = MotorConfig.doAmbiente();
+      expect(c.canonicoAtivo, isFalse);
+      expect(c.sombraAtiva, isFalse);
+    });
+
+    test('C9-FLAG-03 flags INDEPENDENTES (sombra não liga autoridade)', () {
+      const soSombra = MotorConfig(sombraAtiva: true);
+      expect(soSombra.sombraAtiva, isTrue);
+      expect(soSombra.canonicoAtivo, isFalse);
+      const soAutoridade = MotorConfig(canonicoAtivo: true);
+      expect(soAutoridade.canonicoAtivo, isTrue);
+      expect(soAutoridade.sombraAtiva, isFalse);
+    });
+
+    // SELEÇÃO ---------------------------------------------------------------
+    test('C9-SEL-01 autoridade OFF -> legado', () {
+      expect(selecionarMotor(const MotorConfig()), TipoMotor.legado);
+    });
+
+    test('C9-SEL-02 autoridade ON -> canônico', () {
+      expect(selecionarMotor(const MotorConfig(canonicoAtivo: true)),
+          TipoMotor.canonico);
+    });
+
+    test('C9-SEL-03 sombra NÃO afeta a seleção', () {
+      // Sombra ligada, autoridade desligada => ainda legado.
+      expect(selecionarMotor(const MotorConfig(sombraAtiva: true)),
+          TipoMotor.legado);
+      // Sombra ligada, autoridade ligada => canônico (seleção só olha autoridade).
+      expect(
+          selecionarMotor(
+              const MotorConfig(canonicoAtivo: true, sombraAtiva: true)),
+          TipoMotor.canonico);
+    });
+
+    // FÁBRICA (construtores injetados; dublês reais) -------------------------
+    final construtores = <TipoMotor, ConstrutorPorta>{
+      TipoMotor.legado: () => const _PortaDupla('legado'),
+      TipoMotor.canonico: () => const _PortaDupla('canonico'),
+    };
+
+    test('C9-FAB-01 autoridade OFF -> fábrica devolve a porta LEGADA', () {
+      final fab = FabricaMotor(construtores);
+      final porta = fab.criar(const MotorConfig());
+      expect(porta, isA<PortaMotor>());
+      expect((porta as _PortaDupla).marca, 'legado');
+    });
+
+    test('C9-FAB-02 autoridade ON -> fábrica devolve a porta CANÔNICA', () {
+      final fab = FabricaMotor(construtores);
+      final porta = fab.criar(const MotorConfig(canonicoAtivo: true));
+      expect((porta as _PortaDupla).marca, 'canonico');
+    });
+
+    test('C9-FAB-03 sem construtor registrado -> StateError (não devolve fake)',
+        () {
+      // Só o legado registrado; pede autoridade ON (canônico) -> deve falhar.
+      final fab = FabricaMotor(<TipoMotor, ConstrutorPorta>{
+        TipoMotor.legado: () => const _PortaDupla('legado'),
+      });
+      expect(() => fab.criar(const MotorConfig(canonicoAtivo: true)),
+          throwsStateError);
+    });
+
+    // CONTRATO --------------------------------------------------------------
+    test('C9-CONTRATO-01 a porta é tipada em termos canônicos (implementável)',
+        () {
+      final PortaMotor porta = const _PortaDupla('legado');
+      final estado = _estadoMinimoC9();
+      final spec = RuleSpec.canonica(Modalidade.aberto);
+      // As quatro operações respondem com os TIPOS canônicos do contrato.
+      expect(porta.ehVez(estado, 0), isA<bool>());
+      expect(porta.acoesLegais(estado, 0, spec), isA<List<Acao>>());
+      expect(porta.ehLegal(estado, 0, const ComprarMonte(), spec), isA<bool>());
+      final r = porta.aplicar(estado, 0, const ComprarMonte(), spec);
+      expect(r, isA<ResultadoJogada>());
+      expect(r.legal, isFalse); // dublê recusa; contrato preserva a forma
+    });
+  });
 }
+
+// C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
+// concreta mínima e HONESTA: responde com os tipos canônicos do contrato e
+// NUNCA lança UnimplementedError. Não reimplementa regra (delega `ehVez` ao
+// `ehVezDe` canônico) e não conhece `mesa.dart` nem projeção. `marca` permite
+// identificar qual construtor a fábrica devolveu.
+class _PortaDupla implements PortaMotor {
+  final String marca;
+  const _PortaDupla(this.marca);
+
+  @override
+  bool ehVez(EstadoJogo estado, int assento) => ehVezDe(estado, assento);
+
+  @override
+  List<Acao> acoesLegais(EstadoJogo estado, int assento, RuleSpec spec,
+          {List<Acao> candidatos = const []}) =>
+      const <Acao>[];
+
+  @override
+  bool ehLegal(EstadoJogo estado, int assento, Acao acao, RuleSpec spec) =>
+      false;
+
+  @override
+  ResultadoJogada aplicar(
+          EstadoJogo estado, int assento, Acao acao, RuleSpec spec) =>
+      ResultadoJogada.recusa('dublê:$marca');
+}
+
+// Estado mínimo e válido só para exercitar a FORMA do contrato no C9-CONTRATO-01
+// (não é cenário de regra; o dublê nem consulta o conteúdo).
+EstadoJogo _estadoMinimoC9() => const EstadoJogo(
+      modalidade: Modalidade.aberto,
+      metaPontos: 1500,
+      monte: <CartaSnapshot>[],
+      lixo: <CartaSnapshot>[],
+      mortos: <List<CartaSnapshot>>[],
+      maos: <List<CartaSnapshot>>[[], [], [], []],
+      jogosDupla: <String, List<List<CartaSnapshot>>>{'nos': [], 'eles': []},
+      rodadasVulneravel: <String, int>{'nos': 0, 'eles': 0},
+      primeiraBaixadaFeita: <String, bool>{'nos': false, 'eles': false},
+      vez: 0,
+    );
