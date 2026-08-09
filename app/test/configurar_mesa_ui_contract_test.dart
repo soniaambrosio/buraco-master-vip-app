@@ -85,7 +85,54 @@ void main() {
       final privada = vm.opcoes.singleWhere((opcao) => opcao.titulo == 'Mesa Privada');
       expect(privada.id, 'privada_config');
       expect(privada.id, isNot('privada'));
+      expect(privada.bloqueado, isTrue);
     });
+  });
+
+  testWidgets('não VIP não atravessa gate da Mesa VIP nem da criação Privada',
+      (tester) async {
+    final escolhidos = <String>[];
+    final bloqueados = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OndeJogarScreen(
+          vm: OndeJogarVM.mock(ehVip: false),
+          onVoltar: () {},
+          onEscolher: escolhidos.add,
+          onBloqueado: bloqueados.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Mesa VIP'));
+    await tester.pump();
+    await tester.tap(find.text('Mesa Privada'));
+    await tester.pump();
+
+    expect(escolhidos, isEmpty);
+    expect(bloqueados, ['vip', 'privada_config']);
+  });
+
+  testWidgets('VIP pode abrir Mesa VIP e criação da Privada', (tester) async {
+    final escolhidos = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OndeJogarScreen(
+          vm: OndeJogarVM.mock(ehVip: true),
+          onVoltar: () {},
+          onEscolher: escolhidos.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Mesa VIP'));
+    await tester.pump();
+    await tester.tap(find.text('Mesa Privada'));
+    await tester.pump();
+
+    expect(escolhidos, ['vip', 'privada_config']);
   });
 
   testWidgets('Mesa Privada organiza código, espectadores e cadeiras sem seletor de tipo',
