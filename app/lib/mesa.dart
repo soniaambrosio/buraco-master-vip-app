@@ -124,6 +124,37 @@ class Jogo {
     _distribuir();
   }
 
+  // ===================================================================
+  // C9-B COSTURA (seam) — acesso MÍNIMO à projeção Jogo <-> EstadoJogo
+  // (motor/projecao_estado.dart). SÓ leitura/escrita direta de estado;
+  // NENHUMA regra aqui, NENHUM método existente alterado. Inventário desta
+  // costura (aditiva):
+  //   1) construtor `Jogo.paraCostura` — instância VAZIA (não distribui);
+  //   2) acessores dos 5 campos operacionais PRIVADOS (os demais campos do
+  //      envelope já são públicos). Autoridade OFF por padrão; comportamento
+  //      legado 100% preservado (nada abaixo é chamado no fluxo antigo).
+  // ===================================================================
+
+  /// Instância VAZIA (sem `_distribuir`) para a projeção/costura preencher o
+  /// estado a partir de um `EstadoJogo`. Não sorteia cartas; não roda regra.
+  Jogo.paraCostura(
+      {List<String>? apelidos, List<String>? avatares, List<String>? mascotes})
+      : apelidos = apelidos ?? const <String>[],
+        avatares = avatares ?? const <String>[],
+        mascotes = mascotes ?? const <String>[],
+        _rnd = Random(0);
+
+  int get costuraCont => _cont;
+  set costuraCont(int v) => _cont = v;
+  String? get costuraLixoUnicoCompradoId => _lixoUnicoCompradoId;
+  set costuraLixoUnicoCompradoId(String? v) => _lixoUnicoCompradoId = v;
+  int get costuraMortosConvertidos => _mortosConvertidos;
+  set costuraMortosConvertidos(int v) => _mortosConvertidos = v;
+  int get costuraIniciadorRodada => _iniciadorRodada;
+  set costuraIniciadorRodada(int v) => _iniciadorRodada = v;
+  bool get costuraRodadaContada => _rodadaContada;
+  set costuraRodadaContada(bool v) => _rodadaContada = v;
+
   String _duplaKey(int a) => a % 2 == 0 ? 'nos' : 'eles';
   Carta? get lixoTopo => lixo.isEmpty ? null : lixo.last;
   bool get suaVez => vez == 0;

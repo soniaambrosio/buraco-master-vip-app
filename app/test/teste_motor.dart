@@ -31,6 +31,12 @@ import 'conformidade_fixture.dart';
 import 'package:buraco_master_vip/motor/motor_config.dart';
 import 'package:buraco_master_vip/motor/porta_motor.dart';
 import 'package:buraco_master_vip/motor/fabrica_motor.dart';
+// C9-B — projeção/envelope + adaptadores concretos + composição (costura OFF).
+import 'package:buraco_master_vip/motor/envelope_runtime.dart';
+import 'package:buraco_master_vip/motor/projecao_estado.dart';
+import 'package:buraco_master_vip/motor/adaptador_canonico.dart';
+import 'package:buraco_master_vip/motor/adaptador_legado.dart';
+import 'package:buraco_master_vip/motor/composicao.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -3541,6 +3547,180 @@ void main() {
       expect(r.legal, isFalse); // dublê recusa; contrato preserva a forma
     });
   });
+
+  // ===================================================================
+  // C9-B — projeção/envelope + adaptadores concretos + composição (costura
+  // runtime AUTORIDADE OFF). Matriz completa de estado: CANÔNICO round-trip
+  // exato; DERIVADO por função pura; cada RUNTIME ENVELOPE preservado;
+  // UI/SIDECAR pass-through; nada some em silêncio.
+  // ===================================================================
+  group('C9-B — projeção + adaptadores', () {
+    test('C9-MAP-01 CANÔNICO round-trip exato (estado rico)', () {
+      final o = _origemRicaC9();
+      final a = _roundTripC9(o);
+      expect(a.modalidade, o.modalidade);
+      expect(a.metaPontos, o.metaPontos);
+      expect(a.vez, o.vez);
+      expect(a.rodadaEncerrada, o.rodadaEncerrada);
+      expect(a.duplaQueBateu, o.duplaQueBateu);
+      expect(a.jaComprou, o.jaComprou);
+      expect(a.mortoPego, o.mortoPego);
+      expect(a.rodadasVulneravel, o.rodadasVulneravel);
+      expect(a.primeiraBaixadaFeita, o.primeiraBaixadaFeita);
+      expect(_sigM(a.maos), _sigM(o.maos));
+      expect(_sig(a.monte), _sig(o.monte));
+      expect(_sig(a.lixo), _sig(o.lixo));
+      expect(_sigM(a.mortos), _sigM(o.mortos));
+      expect(_sigM(a.jogosDupla['nos']!), _sigM(o.jogosDupla['nos']!));
+      expect(_sigM(a.jogosDupla['eles']!), _sigM(o.jogosDupla['eles']!));
+    });
+
+    test('C9-MAP-02 DERIVADO fase <-> jaComprou (função pura)', () {
+      final comprou = _origemRicaC9()..jaComprou = true;
+      expect(paraCanonico(comprou).canonico.fase, FaseTurno.jogo);
+      final naoComprou = _origemRicaC9()..jaComprou = false;
+      expect(paraCanonico(naoComprou).canonico.fase, FaseTurno.compra);
+      final alvo = Jogo.paraCostura();
+      aplicarEmJogo(
+          alvo, paraCanonico(comprou).canonico, EnvelopeRuntime.vazio());
+      expect(alvo.jaComprou, isTrue);
+      aplicarEmJogo(
+          alvo, paraCanonico(naoComprou).canonico, EnvelopeRuntime.vazio());
+      expect(alvo.jaComprou, isFalse);
+    });
+
+    test('C9-MAP-03 RUNTIME ENVELOPE — cada campo preservado', () {
+      final o = _origemRicaC9();
+      final a = _roundTripC9(o);
+      // privados (via seam)
+      expect(a.costuraCont, 42);
+      expect(a.costuraLixoUnicoCompradoId, 'c200');
+      expect(a.costuraMortosConvertidos, 1);
+      expect(a.costuraIniciadorRodada, 2);
+      expect(a.costuraRodadaContada, isTrue);
+      // públicos
+      expect(a.lixoTopoObrigatorio, 'c200');
+      expect(a.integridadeErro, isNull);
+      expect(a.assentoQueBateu, isNull);
+      expect(a.rodada, 5);
+      expect(a.placar, {'nos': 120, 'eles': 80});
+      expect(a.encerrada, isFalse);
+      expect(a.pontosRodada?['x'], 1);
+    });
+
+    test('C9-MAP-04 UI/SIDECAR pass-through', () {
+      final o = _origemRicaC9();
+      final a = _roundTripC9(o);
+      expect(a.apelidos, o.apelidos);
+      expect(a.avatares, o.avatares);
+      expect(a.mascotes, o.mascotes);
+    });
+
+    test('C9-MAP-05 estados representativos round-trip sem perda', () {
+      final inicio = Jogo.paraCostura();
+      final aInicio = _roundTripC9(inicio);
+      expect(aInicio.vez, 0);
+      expect(aInicio.jaComprou, isFalse);
+      expect(_sigM(aInicio.maos), _sigM(inicio.maos));
+
+      final fim = _origemRicaC9()
+        ..rodadaEncerrada = true
+        ..duplaQueBateu = 'nos'
+        ..assentoQueBateu = 1;
+      final aFim = _roundTripC9(fim);
+      expect(aFim.rodadaEncerrada, isTrue);
+      expect(aFim.duplaQueBateu, 'nos');
+      expect(aFim.assentoQueBateu, 1);
+
+      final batida = _origemRicaC9()
+        ..maos = [
+          [Carta('u1', 'copas', 'Q', false)],
+          <Carta>[],
+          <Carta>[],
+          <Carta>[],
+        ]
+        ..vez = 0;
+      final aBatida = _roundTripC9(batida);
+      expect(_sig(aBatida.maos[0]), _sig(batida.maos[0]));
+      expect(aBatida.maos[0].length, 1);
+    });
+
+    test('C9-MAP-06 mortoPendente é canônico-only (=> jaComprou no legado)', () {
+      final base = paraCanonico(_origemRicaC9()).canonico;
+      final estadoPendente = EstadoJogo(
+        modalidade: base.modalidade,
+        metaPontos: base.metaPontos,
+        monte: base.monte,
+        lixo: base.lixo,
+        mortos: base.mortos,
+        maos: base.maos,
+        jogosDupla: base.jogosDupla,
+        rodadasVulneravel: base.rodadasVulneravel,
+        primeiraBaixadaFeita: base.primeiraBaixadaFeita,
+        vez: base.vez,
+        mortoPego: base.mortoPego,
+        rodadaEncerrada: base.rodadaEncerrada,
+        duplaQueBateu: base.duplaQueBateu,
+        fase: FaseTurno.mortoPendente,
+      );
+      final alvo = Jogo.paraCostura();
+      aplicarEmJogo(alvo, estadoPendente, EnvelopeRuntime.vazio());
+      expect(alvo.jaComprou, isTrue);
+    });
+
+    test('C9-ADAP-CAN-01 AdaptadorCanonico delega às funções canônicas', () {
+      const porta = AdaptadorCanonico();
+      final e = _estadoCompraC9();
+      final spec = RuleSpec.canonica(Modalidade.aberto);
+      expect(porta.ehVez(e, 0), ehVezDe(e, 0));
+      expect(porta.ehLegal(e, 0, const ComprarMonte(), spec),
+          acaoEhLegal(e, 0, const ComprarMonte(), spec));
+      expect(porta.acoesLegais(e, 0, spec).length,
+          gerarAcoesLegais(e, 0, spec).length);
+      final r = porta.aplicar(e, 0, const ComprarMonte(), spec);
+      expect(r.legal, aplicarLegal(e, 0, const ComprarMonte(), spec).legal);
+      expect(r.legal, isTrue);
+    });
+
+    test('C9-ADAP-LEG-01 AdaptadorLegado delega a mesa.dart (ComprarMonte)', () {
+      const porta = AdaptadorLegado();
+      final e = _estadoCompraC9();
+      final spec = RuleSpec.canonica(Modalidade.aberto);
+      final r = porta.aplicar(e, 0, const ComprarMonte(), spec);
+      expect(r.legal, isTrue);
+      expect(r.proximoEstado, isNotNull);
+      expect(r.proximoEstado!.maos[0].length, e.maos[0].length + 1);
+      expect(r.proximoEstado!.monte.length, e.monte.length - 1);
+      expect(porta.ehVez(e, 0), isTrue);
+    });
+
+    test('C9-ADAP-LEG-02 AdaptadorLegado — fronteira honesta rotulada (C9-C)',
+        () {
+      const porta = AdaptadorLegado();
+      final e = _estadoCompraC9();
+      final spec = RuleSpec.canonica(Modalidade.aberto);
+      final acoes = <Acao>[
+        const Baixar(jogosNovos: [
+          ['h1']
+        ]),
+        const PegarMorto(),
+        const Bater(),
+      ];
+      for (final acao in acoes) {
+        final r = porta.aplicar(e, 0, acao, spec);
+        expect(r.legal, isFalse);
+        expect(r.motivo, contains('C9-C'));
+      }
+    });
+
+    test('C9-COMPOSICAO-01 fábrica padrão: OFF=>legado, ON=>canônico', () {
+      final fab = fabricaPadrao();
+      expect(fab.criar(const MotorConfig()), isA<AdaptadorLegado>());
+      expect(fab.criar(const MotorConfig(canonicoAtivo: true)),
+          isA<AdaptadorCanonico>());
+      expect(portaDoAmbiente(), isA<AdaptadorLegado>());
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -3584,3 +3764,102 @@ EstadoJogo _estadoMinimoC9() => const EstadoJogo(
       primeiraBaixadaFeita: <String, bool>{'nos': false, 'eles': false},
       vez: 0,
     );
+
+// ===== C9-B — helpers de teste (projeção/adaptadores) =====
+
+CartaSnapshot _csC9(String id, String? naipe, String valor, [bool cur = false]) =>
+    CartaSnapshot(id, naipe, valor, cur);
+
+String _sigCarta(Carta c) => '${c.id}|${c.naipe}|${c.valor}|${c.ehCoringa}';
+List<String> _sig(List<Carta> l) => [for (final c in l) _sigCarta(c)];
+List<List<String>> _sigM(List<List<Carta>> m) => [for (final l in m) _sig(l)];
+
+// Estado canônico na fase de COMPRA com monte não-vazio (ComprarMonte legal).
+EstadoJogo _estadoCompraC9() => EstadoJogo(
+      modalidade: Modalidade.aberto,
+      metaPontos: 1500,
+      monte: [_csC9('m1', 'copas', '7'), _csC9('m2', 'ouros', '8')],
+      lixo: [_csC9('l1', 'paus', '3')],
+      mortos: [
+        [_csC9('d1', 'espadas', 'A')]
+      ],
+      maos: [
+        [_csC9('h1', 'copas', '4')],
+        [_csC9('h2', 'ouros', '5')],
+        [_csC9('h3', 'paus', '6')],
+        [_csC9('h4', 'espadas', '7')],
+      ],
+      jogosDupla: {
+        'nos': <List<CartaSnapshot>>[],
+        'eles': <List<CartaSnapshot>>[],
+      },
+      rodadasVulneravel: {'nos': 0, 'eles': 0},
+      primeiraBaixadaFeita: {'nos': false, 'eles': false},
+      vez: 0,
+      mortoPego: {'nos': false, 'eles': false},
+      rodadaEncerrada: false,
+      fase: FaseTurno.compra,
+    );
+
+// Jogo legado com valor distintivo em CADA campo da matriz (para round-trip).
+Jogo _origemRicaC9() {
+  final j = Jogo.paraCostura(
+    apelidos: ['P0', 'P1', 'P2', 'P3'],
+    avatares: ['av0', 'av1', 'av2', 'av3'],
+    mascotes: ['ms0', 'ms1', 'ms2', 'ms3'],
+  );
+  // CANÔNICO
+  j.modalidade = 'FECHADO';
+  j.metaPontos = 3000;
+  j.monte = [Carta('c100', 'copas', '7', false), Carta('c101', null, 'JOKER', true)];
+  j.lixo = [Carta('c200', 'ouros', '3', false)];
+  j.mortos = [
+    [Carta('c300', 'paus', 'A', false)]
+  ];
+  j.maos = [
+    [Carta('c1', 'copas', '4', false)],
+    [Carta('c2', 'espadas', 'K', false)],
+    <Carta>[],
+    [Carta('c3', 'ouros', '2', true)],
+  ];
+  j.jogosDupla = {
+    'nos': [
+      [Carta('c400', 'copas', '5', false), Carta('c401', 'copas', '6', false)]
+    ],
+    'eles': <List<Carta>>[],
+  };
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.vez = 2;
+  j.mortoPego = {'nos': true, 'eles': false};
+  j.rodadaEncerrada = false;
+  j.duplaQueBateu = null;
+  j.jaComprou = true; // DERIVADO -> fase jogo
+  // RUNTIME ENVELOPE — públicos
+  j.lixoTopoObrigatorio = 'c200';
+  j.integridadeErro = null;
+  j.assentoQueBateu = null;
+  j.rodada = 5;
+  j.placar = {'nos': 120, 'eles': 80};
+  j.encerrada = false;
+  j.pontosRodada = {'x': 1};
+  // RUNTIME ENVELOPE — privados (seam)
+  j.costuraCont = 42;
+  j.costuraLixoUnicoCompradoId = 'c200';
+  j.costuraMortosConvertidos = 1;
+  j.costuraIniciadorRodada = 2;
+  j.costuraRodadaContada = true;
+  return j;
+}
+
+// Round-trip: Jogo -> (canônico, envelope) -> Jogo alvo (sidecar via construção).
+Jogo _roundTripC9(Jogo origem) {
+  final proj = paraCanonico(origem);
+  final alvo = Jogo.paraCostura(
+    apelidos: proj.envelope.apelidos,
+    avatares: proj.envelope.avatares,
+    mascotes: proj.envelope.mascotes,
+  );
+  aplicarEmJogo(alvo, proj.canonico, proj.envelope);
+  return alvo;
+}
