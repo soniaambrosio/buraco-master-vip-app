@@ -87,11 +87,11 @@ class PreparandoPartidaVM {
   }
 }
 
-/// Transição entre a confirmação dos jogadores e a mesa de jogo.
+/// Transição visual entre a confirmação dos participantes e a mesa.
 ///
-/// A tela não conhece servidor, publicidade ou motor. Ela executa
-/// [onPrepararPartida] em paralelo à animação mínima e só chama
-/// [onConcluido] depois que ambos terminarem.
+/// Não conhece Firebase, servidor, saldo ou motor. O callback
+/// [onPrepararPartida] executa a preparação real em paralelo à animação e
+/// [onConcluido] só é chamado depois que ambas terminarem.
 class PreparandoPartidaScreen extends StatefulWidget {
   const PreparandoPartidaScreen({
     super.key,
@@ -132,8 +132,8 @@ class _PreparandoPartidaScreenState extends State<PreparandoPartidaScreen>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, value: 0);
-    _controller.addListener(_acompanharEtapas);
+    _controller = AnimationController(vsync: this, value: 0)
+      ..addListener(_acompanharEtapas);
     WidgetsBinding.instance.addPostFrameCallback((_) => _iniciar());
   }
 
@@ -158,7 +158,7 @@ class _PreparandoPartidaScreenState extends State<PreparandoPartidaScreen>
     try {
       await _audio.play(AssetSource('sons/carta.mp3'), volume: volume);
     } catch (_) {
-      // Falha de som nunca pode impedir a entrada na partida.
+      // Som é decorativo e nunca pode bloquear a partida.
     }
   }
 
@@ -283,8 +283,7 @@ class _PreparandoPartidaScreenState extends State<PreparandoPartidaScreen>
                                   ? const _BeneficioVip()
                                   : _MonetizacaoLivre(
                                       anuncio: widget.anuncio,
-                                      onSaibaMaisVip:
-                                          widget.onSaibaMaisVip,
+                                      onSaibaMaisVip: widget.onSaibaMaisVip,
                                     ),
                             ),
                             const SizedBox(height: 8),
@@ -547,32 +546,49 @@ class _MesaAnimada extends StatelessWidget {
     Offset centro,
     double deal,
   ) {
-    final destinos = <Offset>[
-      Offset(size.width / 2 - 30, 55),
-      Offset(size.width - 84, size.height / 2 - 16),
-      Offset(size.width / 2 - 30, size.height - 92),
-      Offset(54, size.height / 2 - 16),
-    ];
+    if (jogadores.isEmpty) return const <Widget>[];
+
+    final destinos = jogadores
+        .map((jogador) => _destinoCarta(jogador.posicao, size))
+        .toList(growable: false);
+    final centroVisual = (destinos.length - 1) / 2;
 
     return List.generate(destinos.length, (index) {
       final inicio = index * .10;
-      final local = ((deal - inicio) / (1 - inicio)).clamp(0.0, 1.0);
+      final denominador = math.max(.01, 1 - inicio);
+      final local = ((deal - inicio) / denominador).clamp(0.0, 1.0);
       final curva = Curves.easeOutCubic.transform(local);
       final destino = destinos[index];
       final x = centro.dx - 15 + (destino.dx - centro.dx + 15) * curva;
       final y = centro.dy - 22 + (destino.dy - centro.dy + 22) * curva;
+      final jogador = jogadores[index];
+
       return Positioned(
+        key: ValueKey('carta-distribuida-${jogador.id}'),
         left: x,
         top: y,
         child: Opacity(
           opacity: local,
           child: Transform.rotate(
-            angle: (index - 1.5) * .12,
+            angle: (index - centroVisual) * .12,
             child: const _CartaPequena(largura: 28, altura: 40),
           ),
         ),
       );
     });
+  }
+
+  Offset _destinoCarta(PosicaoJogador posicao, Size size) {
+    switch (posicao) {
+      case PosicaoJogador.topo:
+        return Offset(size.width / 2 - 30, 55);
+      case PosicaoJogador.direita:
+        return Offset(size.width - 84, size.height / 2 - 16);
+      case PosicaoJogador.baixo:
+        return Offset(size.width / 2 - 30, size.height - 92);
+      case PosicaoJogador.esquerda:
+        return Offset(54, size.height / 2 - 16);
+    }
   }
 }
 
@@ -841,9 +857,7 @@ class _EtapasPanel extends StatelessWidget {
                       height: 15,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF635A54),
-                        ),
+                        border: Border.all(color: Color(0xFF635A54)),
                       ),
                     ),
                 ],
@@ -910,9 +924,7 @@ class _ProgressoPanel extends StatelessWidget {
               value: progresso,
               minHeight: 9,
               backgroundColor: const Color(0xFF2A1332),
-              valueColor: const AlwaysStoppedAnimation(
-                Color(0xFFEFB94A),
-              ),
+              valueColor: const AlwaysStoppedAnimation(Color(0xFFEFB94A)),
             ),
           ),
           const SizedBox(height: 5),
