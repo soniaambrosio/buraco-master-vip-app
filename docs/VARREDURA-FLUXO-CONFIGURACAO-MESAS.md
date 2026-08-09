@@ -13,11 +13,11 @@ Conferir o caminho visual completo antes da integração de servidor/Firebase pe
 
 A escolha do ambiente acontece uma única vez em **Onde jogar**.
 
-Para convidado de Mesa Privada existe uma rota paralela, sem exigir assinatura:
+Para a Mesa Privada existe também a rota de convidado:
 
-`Onde jogar → Tenho um código → entrar na sala privada existente`
+`Onde jogar → Tenho um código → localizar sala → validar VIP/Passe Convidado → ocupar cadeira`
 
-Criar a Mesa Privada continua sendo benefício VIP; entrar como convidado por código não.
+O código **não é autorização**. Criar Mesa Privada exige VIP, e jogar sentado nela também exige VIP ativo, salvo Passe Convidado VIP ocasional e válido.
 
 ## Verificações concluídas
 
@@ -27,31 +27,67 @@ Criar a Mesa Privada continua sendo benefício VIP; entrar como convidado por c�
 - Mesa VIP possui aposta opcional em moedas e cálculo visual do pote;
 - Mesa VIP não herda código nem cadeiras da Mesa Privada;
 - Mesa Privada possui código, espectadores, cadeiras e aposta;
-- dono e convidado já presente ficam protegidos contra abertura acidental da cadeira;
+- Mesa Privada identifica dono, parceiro e oponentes;
+- no modo de 2 jogadores, a Privada mostra dono + oponente, sem parceiro fictício;
+- dono e participante já presente ficam protegidos contra abertura acidental da cadeira;
 - somente vagas livres/reservadas podem alternar entre Travada e Liberada;
-- no modo de 2 jogadores, a camada visual da Privada mostra somente os dois lugares aplicáveis;
+- vaga liberada deve ser completada somente por jogador elegível VIP/Passe;
+- participante ocupado registra visualmente VIP ativo ou Passe Convidado;
+- o código apenas localiza a sala e não concede benefício;
+- espectadores podem ser não VIP quando autorizados pelo dono;
+- a opção de chat completo aparece como **Livre** na Privada;
+- a UI possui componentes para **Silenciar**, **Bloquear** e **Denunciar**;
+- bloqueio não deve expulsar automaticamente alguém de partida válida;
 - Mesa Privada possui resumo antes da criação;
-- convidado não VIP possui ação visual **TENHO UM CÓDIGO** sem atravessar o gate de criação VIP;
 - botão voltar retorna ao seletor de ambiente;
 - Treino permanece fora do configurador e abre o fluxo próprio de treino;
 - a sigla visível do configurador foi uniformizada para `STBL`;
 - o mock de **Onde jogar** abre como VIP apenas para permitir inspeção de todas as telas; a integração real deve passar o status da conta explicitamente.
 
+## Proposta de valor da Mesa Privada
+
+Frase-guia aprovada:
+
+**Monte sua mesa. Escolha seu parceiro. Escolha seus adversários. E resolvam no baralho.**
+
+A Mesa Privada deixa de ser apenas uma sala com senha e passa a ser o ambiente social premium do produto. O dono monta a composição da partida, reserva lugares e decide quais vagas podem receber outros jogadores elegíveis.
+
+## Passe Convidado VIP
+
+O Passe Convidado é exceção promocional, não acesso permanente. A UI reconhece o estado, mas o backend deve ser a fonte de verdade para:
+- emissão;
+- validade;
+- limite de uso;
+- consumo;
+- idempotência;
+- elegibilidade do convidado.
+
+O passe deve ser ocasional/limitado para funcionar como aquisição e experimentação do VIP, sem permitir que um assinante mantenha três jogadores gratuitos de forma recorrente.
+
+## Chat livre com proteção
+
+Na Privada, `ChatMesa.completo` é apresentado como **Livre**.
+
+A interface Flutter deixa preparados os comandos sociais por jogador:
+- Silenciar para mim;
+- Bloquear jogador;
+- Denunciar.
+
+O dono controla a formação da mesa, mas não recebe poder para expulsar adversário arbitrariamente durante uma partida válida. Ações de moderação, persistência de bloqueio e tratamento de denúncia pertencem à integração/autorização do sistema.
+
 ## Quarentena do lobby privado legado
 
 O `main.dart` ainda contém `_OnlineLobbyHost`, criado anteriormente como prova de conexão do servidor.
 
-Ele **não pertence ao fluxo visual aprovado de criação da Mesa Privada**. Enquanto a integração final não é feita, a opção visual da Mesa Privada usa o identificador interno `privada_config`, que evita cair no atalho legado `id == 'privada'` e encaminha a navegação para `ConfigurarMesaScreen`.
-
-Essa quarentena é intencional: preserva a prova técnica do servidor sem permitir que ela substitua ou pule a nova tela aprovada.
+Ele **não pertence ao fluxo visual aprovado de criação da Mesa Privada**. Enquanto a integração final não é feita, a opção visual usa o identificador interno `privada_config`, evitando o atalho antigo que pulava `ConfigurarMesaScreen`.
 
 Na ligação final, o Claude deve retirar o atalho legado de criação e conectar:
 - **CRIAR MESA PRIVADA** → criação autoritativa da sala;
-- **TENHO UM CÓDIGO** → entrada em uma sala privada já existente.
+- **TENHO UM CÓDIGO** → localizar sala e, antes de ocupar cadeira, validar VIP ativo ou Passe Convidado válido.
 
 ## Contrato completo da configuração
 
-Foi criado `app/lib/screens/mesa_config_contract.dart` para congelar todas as escolhas antes de atravessar a fronteira UI → preparação/servidor/motor.
+`app/lib/screens/mesa_config_contract.dart` congela as escolhas antes da fronteira UI → preparação/servidor/motor.
 
 O contrato preserva:
 - tipo de mesa;
@@ -64,93 +100,75 @@ O contrato preserva:
 - aposta e pote;
 - espectadores;
 - código da sala;
-- estado das cadeiras;
+- cadeiras e estado de acesso;
 - custo de criação.
 
-O contrato também expõe:
+Também expõe:
 - quantidade de jogadores;
 - cadeiras ativas para 2/4 jogadores;
-- coerência entre aposta, pote e número de jogadores.
-
-Esse contrato não implementa servidor nem economia. Ele existe para impedir que uma configuração escolhida desapareça durante a ligação final.
-
-## Adaptador para Preparando partida
-
-Foi criado `app/lib/screens/preparando_partida_config_adapter.dart`.
-
-Ele transforma `MesaConfigContract` em `PreparandoPartidaVM`, preservando contexto visual antes da partida:
-- Pública/VIP/Privada no título;
-- modalidade;
-- 2 ou 4 jogadores;
-- meta;
-- tempo;
-- aposta quando houver;
-- espectadores na Privada;
-- status VIP para a faixa sem anúncios.
-
-O adaptador já gera exatamente 2 participantes de prévia quando o modo escolhido é 2 jogadores e 4 quando o modo é 4 jogadores. Na integração, a lista mockada deve apenas ser substituída pelos ocupantes reais da sala.
+- coerência aposta × jogadores = pote;
+- exigência de VIP dos participantes da Privada;
+- possibilidade controlada de Passe Convidado;
+- regra de espectador não VIP.
 
 ## Validador de fronteira
 
-Foi criado `app/lib/screens/mesa_config_validator.dart`.
+`app/lib/screens/mesa_config_validator.dart` detecta inconsistências visuais antes da integração, inclusive cadeira ocupada da Privada sem VIP nem Passe Convidado.
 
-Antes de a configuração atravessar para a ligação, ele detecta inconsistências como:
-- pote diferente de `aposta × jogadores`;
-- Mesa VIP criada por não assinante;
-- Mesa Privada criada por não VIP;
-- Pública herdando aposta/código/cadeiras;
-- VIP herdando controles exclusivos da Privada;
-- Privada sem código, espectadores ou cadeiras suficientes.
+Isso é defesa de apresentação. Assinatura, passe, saldo, aposta e autorização continuam obrigatoriamente validados no backend.
 
-Esse validador é defesa da camada de apresentação. Saldo, assinatura, idempotência, aposta e autoridade continuam obrigatoriamente validados no backend.
+## Adaptador para Preparando partida
 
-## Achados da varredura: Configurar → Preparando → Mesa
+`app/lib/screens/preparando_partida_config_adapter.dart` transforma o contrato em `PreparandoPartidaVM`.
 
-A inspeção encontrou dependências reais que pertencem à integração, não à tela aprovada:
+Ele preserva:
+- Pública/VIP/Privada no título;
+- modalidade;
+- 2/4 jogadores;
+- meta;
+- tempo;
+- aposta;
+- espectadores na Privada;
+- contexto VIP.
 
-1. **O host atual ainda chama o mock antigo de Preparando partida.** O adaptador novo já está pronto, mas o `main.dart` deve ser ligado ao `MesaConfigContract` na integração para o caminho ativo usar o VM configurado.
-2. **O host atual não transporta todas as escolhas até a mesa.** Hoje a prévia repassa principalmente modalidade, meta e tempo; modo, chat, aposta, espectadores, código e cadeiras precisam atravessar a fronteira pelo contrato novo.
-3. **A animação interna antiga de distribuição ainda possui quatro destinos visuais fixos.** Para o modo 2 jogadores, a lista de participantes já está correta no adaptador, mas a distribuição das cartas precisa ser parametrizada na ligação/refino da tela antes do fechamento definitivo do modo 2.
-4. **A mesa de motor atual trabalha estruturalmente com quatro assentos.** O modo de 2 jogadores exige ligação/adequação no motor autoritativo; não deve ser falsificado pela UI.
-5. **`MesaVariant` atual possui apenas `publica` e `vip`.** A Privada é um ambiente de criação/acesso, e sua aparência efetiva de mesa deve ser ligada conscientemente na integração, sem o host decidir por `else = VIP` de forma implícita.
-6. **Existem duas implementações chamadas `MesaScreen` no repositório.** O `main.dart` importa `app/lib/mesa.dart`; `app/lib/screens/mesa_screen.dart` é outra implementação visual. A integração deve escolher uma fonte canônica e evitar conectar a configuração à classe errada.
-7. **Ainda há texto legado `SBTL` fora do configurador.** O produto usa `STBL`; a ligação final deve normalizar os textos/contratos remanescentes sem mudar a regra do jogo.
+Os mocks de preparação agora tratam todos os jogadores da Mesa VIP e da Mesa Privada como VIP. Participantes reais com Passe Convidado serão representados a partir do estado autoritativo na integração.
 
-## Sigla da modalidade
+## Achados ainda pertencentes à integração/refino final
 
-A sigla oficial do produto é **STBL**. Ocorrências antigas de `SBTL` são texto legado. A regra do jogo não deve ser alterada por causa da correção de nomenclatura.
-
-## Preparando partida
-
-A tela `PreparandoPartidaScreen` continua propositalmente desacoplada de servidor e motor. Ela recebe callbacks de preparação e conclusão, portanto pode ser mantida como transição única depois da configuração.
-
-A integração deve alimentar jogadores/estado reais e executar a preparação autoritativa por callback; não deve redesenhar a tela.
+1. **O host atual ainda chama o mock antigo de Preparando partida.** O adaptador novo está pronto, mas `main.dart` deve ser ligado ao `MesaConfigContract` na integração.
+2. **O host atual não transporta todas as escolhas até a mesa.** Modo, chat, aposta, espectadores, código e cadeiras devem atravessar pelo contrato.
+3. **A animação antiga de distribuição possui quatro destinos fixos.** Ela precisa acompanhar as posições reais quando o modo for 2 jogadores antes do fechamento definitivo desse trecho visual.
+4. **A mesa de motor atual trabalha estruturalmente com quatro assentos.** Suporte autoritativo a 2 jogadores pertence ao motor/servidor e não deve ser falsificado pela UI.
+5. **`MesaVariant` possui apenas `publica` e `vip`.** A aparência efetiva da Privada deve ser ligada conscientemente.
+6. **Existem duas implementações chamadas `MesaScreen`.** O `main.dart` usa `app/lib/mesa.dart`; a integração deve escolher fonte canônica.
+7. **Ainda há texto legado `SBTL` fora do configurador.** O produto usa `STBL`; normalizar texto não pode alterar regra do jogo.
 
 ## Portão para o Claude
 
-A camada visual está fechada quando:
+A camada visual estará fechada quando:
+- Pública, VIP e Privada forem navegáveis sem seletor duplicado;
+- aposta/pote responderem ao modo 2/4;
+- a Privada permitir montar parceiro/oponentes por cadeira;
+- VIP/Passe estiver explicitado em todas as rotas de ocupação;
+- chat Livre + Silenciar/Bloquear/Denunciar estiverem prontos como componentes;
+- código/copiar e espectadores funcionarem no mock;
+- a Privada não cair no lobby legado antes de ser configurada;
+- `MesaConfigContract` preservar as escolhas;
+- o adaptador de preparação respeitar 2/4 jogadores e o contexto VIP;
+- o validador rejeitar contratos incoerentes;
+- a animação visual de preparação respeitar 2/4 participantes;
+- a nomenclatura visível usar STBL.
 
-- Pública, VIP e Privada são navegáveis sem seletor duplicado;
-- aposta/pote respondem ao modo 2/4 jogadores no configurador;
-- código/copiar, espectadores e cadeiras funcionam no mock;
-- convidado possui entrada por código independente do gate de criação VIP;
-- a Privada não cai no lobby legado antes de ser configurada;
-- o snapshot `MesaConfigContract` preserva todas as escolhas;
-- o adaptador de preparação respeita 2/4 jogadores;
-- o validador rejeita contratos visuais incoerentes;
-- a nomenclatura visível do configurador usa STBL.
-
-Na integração, o Claude deve então:
-
+Na integração, o Claude deve:
 - usar `MesaConfigContract` como referência de entrada;
-- ligar permissões VIP e saldo;
-- validar/debitar custo e aposta no backend autoritativo;
-- criar/entrar na sala real e gerar o código real;
-- ligar ocupação e trava/liberação de cadeiras;
-- usar `prepararPartidaDaConfiguracao(...)` como base para construir o `PreparandoPartidaVM` com jogadores reais;
+- validar VIP/Passe Convidado por cadeira no backend;
+- ligar saldo, custo e aposta autoritativamente;
+- criar/entrar na sala e gerar código real;
+- ligar convites, ocupação e trava/liberação de cadeiras;
+- construir `PreparandoPartidaVM` com participantes reais;
 - ligar matchmaking e espectadores;
 - transportar chat, modalidade, meta e tempo;
-- resolver o suporte real do motor a 2 jogadores;
-- parametrizar a animação de distribuição para 2/4 jogadores;
-- escolher a implementação canônica da mesa;
+- persistir bloqueios e registrar denúncias;
+- resolver suporte real do motor a 2 jogadores;
+- escolher implementação canônica da mesa;
 - preservar integralmente o layout e a hierarquia visual aprovados.
