@@ -8,19 +8,20 @@
 - **C1..C7 — CI VERDE — APROVADOS.** Motor canônico completo (`app/lib/rules/`). HEAD C7 `7d727ae` (+251).
 - **C8 — ENCERRADO OFICIALMENTE; promoção online DESBLOQUEADA.** Servidor canônico deployado (`main`, `sha256=81ec3255…`, 0 CRIT); portão `C8-CONFORMIDADE` exige conjunto crítico vazio.
 - **C9-A — `07b9ff0` — CI #136 VERDE — APROVADO.** Flags + porta tipada + fábrica/seletor.
-- **C9-B + C9-B-fix — `9332aaa` — CI #138 VERDE — APROVADO.** Projeção/envelope + adaptadores + costura runtime OFF; preserva as 3 fases (`mortoPendente` via transporte) + clone profundo `pontosRodada`.
-- **C9-C — `c822926`** (sobre `9332aaa`): modo sombra + comparador. **Bundle entregue:** `BMV-APP-C9-C-c822926.bundle` (requer `9332aaa`, fast-forward). Suíte **263 → 272 `test()`**. **ENTREGUE — pendente push + CI + revisão da Sônia.**
+- **C9-B + C9-B-fix — `9332aaa` — CI #138 VERDE — APROVADO.** Projeção/envelope + adaptadores + costura runtime OFF; preserva as 3 fases + clone profundo `pontosRodada`.
+- **C9-C — `c822926`/`3381a21` — CI #139 VERDE.** Modo sombra + comparador. (Revisão pediu 1 fix de Replay — abaixo.)
+- **C9-C-fix — `0379145`** (sobre `3381a21`): Replay de sombra persiste EstadoJogo **+ EnvelopeRuntime completo**; `reproduzivel` exige snapshot completo validável. **Entregue:** `BMV-APP-C9-C-fix-0379145.bundle` + `C9-C-fix-0379145.diff` (aplica por conteúdo sobre `3381a21`). Suíte **272 → 273 `test()`**. **ENTREGUE — pendente push + CI + revisão da Sônia.**
 
 ## C9 — motor canônico atrás de flag (plano v2.1 aprovado)
 - **C9-A (`07b9ff0`, APROVADO):** flags (2 independentes OFF), contrato tipado da porta, seletor/fábrica.
-- **C9-B+fix (`9332aaa`, APROVADO):** projeção pela matriz (CANÔNICO exato; DERIVADO+TRANSPORTE preserva `compra/jogo/mortoPendente`; ENVELOPE completo; SIDECAR; `pontosRodada` clone profundo); adaptadores concretos; composição (OFF⇒legado, não reroteia); costura mínima em `mesa.dart`. Testes C9-MAP-01..09, C9-ADAP-*, C9-COMPOSICAO-01.
-- **C9-C (`c822926`, entregue):** `modo_sombra.dart` — comparador puro, autoridade OFF, sombra separada, execução dupla sobre clones com EnvelopeRuntime COMPLETO. Pipeline: execução dupla → normalização (`assinatura()`) → comparação → classificação `CONVERGE/EXC-01..04/INESPERADA/canonicoRecusou` → diff (`CampoDiff`) → `Replay` por snapshot. Transações semânticas + estabilização (mortoPendente indireto). EXC só por id **declarado e conhecido**; não declarado/inexistente = **INESPERADA** (nada escondido).
-  - `replay.dart`: `seed` opcional (Ajuste 3) + invariante `reproduzivel` (seed OU snapshot).
-  - `projecao_estado.dart`: **descoberta da sombra** — topo do monte divergia (legado `removeAt(0)` × canônico `removeLast`); reconciliado revertendo o monte na projeção (round-trip exato preservado). Correção de mapeamento, não de regra.
-  - Testes C9-SOMBRA-01..09; **meta 0 inesperadas** nos cenários convergentes (01/02). Relatório: `RELATORIO-C9C-SOMBRA.md`.
-  - **Findings declarados p/ reconciliar antes do C9-D:** monte vazio → morto (legado converte × canônico recusa); e expandir a sombra p/ `baixar`/`bater` + cenários de EXC-01..04.
-  - **Revisão estática independente:** sem erros de compilação; 1 defeito lógico pego e corrigido (fase pós-legado estagnada → limpar transporte antes de projetar).
-- **C9-D (próximo, só após aprovação do C9-C):** ativação atrás da flag (autoridade ON, fronteira atômica mapear→aplicar→validar→commit único; fallback só técnico com telemetria/Replay). Padrão continua OFF.
+- **C9-B+fix (`9332aaa`, APROVADO):** projeção pela matriz; adaptadores concretos; composição (OFF⇒legado); costura mínima em `mesa.dart`.
+- **C9-C + C9-C-fix (`0379145`, entregue):** `modo_sombra.dart` — comparador puro, autoridade OFF, sombra separada, execução dupla sobre clones com EnvelopeRuntime COMPLETO. Pipeline de 6 etapas; classificação `CONVERGE/EXC-01..04/INESPERADA/canonicoRecusou`; EXC só por id declarado e conhecido (não declarado/inexistente = INESPERADA).
+  - **Replay (C9-C-fix):** snapshot COMPLETO `{canonico, envelope}` (15 campos runtime+sidecar); `reproduzivel` = seed **OU** snapshot completo validável (contém `canonico` E `envelope`; mapa arbitrário não conta). `rules/replay.dart` valida só o contrato de topo — segue **desacoplado** de `mesa.dart`; snapshot trafega como mapa genérico.
+  - `projecao_estado.dart`: descoberta da sombra — topo do monte reconciliado (reversão na projeção; round-trip exato).
+  - Testes C9-SOMBRA-01..10; **meta 0 inesperadas** nos convergentes (01/02). **C9-SOMBRA-10** prova reprodução de divergência DEPENDENTE do envelope (`lixoTopoObrigatorio`). Relatório: `RELATORIO-C9C-SOMBRA.md`.
+  - **Findings declarados p/ reconciliar antes do C9-D:** monte vazio → morto (legado converte × canônico recusa); expandir a sombra p/ `baixar`/`bater` + EXC-01..04 reais.
+ - **C9-C-fix — original `0379145`; aplicado por cherry-pick como `d9cd88f`.**
+  Replay agora persiste EstadoJogo + EnvelopeRuntime completo; `reproduzivel` exige seed ou snapshot completo validável; C9-SOMBRA-10 cobre divergência dependente do envelope. **Pendente: push + CI + revisão final.**
 
 ## Servidor — patch de conformidade — DEPLOYADO e validado
 - **`main`, `sha256(server.js)=81ec3255…`** (== `09835bd`); `/health`=`ok`; smoke OK. CRIT-01/02/03 corrigidos; bundle real 8/8 → 0 CRIT.
@@ -33,6 +34,6 @@ Vulnerabilidade +75/+90 (limiar meta/2 = 750, uniforme bot=humano); trinca só n
 Pontuação: A=15, JOKER=50, 2=10, 8..K=10, 3..7=5; canastra as_a_as=1000/de_500=500/limpa=200/suja=100; batida +100; mão desconta; morto não pego −100.
 
 ## Próximo
-1. **Sônia:** aplicar `BMV-APP-C9-C-c822926.bundle` (fast-forward na `auditoria/regras-bmv`, sobre `9332aaa`) → rodar o **CI "Build APK"**.
-2. **Se CI verde + revisão OK:** aprovar C9-C → decidir sobre os findings (reconciliar antes do C9-D) → iniciar **C9-D**.
-3. **Se CI falhar:** parar; diagnosticar antes do C9-D. **Não iniciar C9-D sem aprovação.**
+1. **Sônia:** versionar a atualização documental → push da branch → rodar o **CI "Build APK"**.
+2. **Se CI verde + revisão OK:** aprovar **C9-C-fix**.
+3. **C9-D continua BLOQUEADO** até reconciliar **monte vazio + morto disponível** e ampliar a sombra para **baixar/bater + cenários reais EXC-01..04**.

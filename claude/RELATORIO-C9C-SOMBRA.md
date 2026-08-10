@@ -1,44 +1,50 @@
 # Relatório de paridade — C9-C (modo sombra + comparador)
 
-**Commit:** `c822926` (sobre `9332aaa`). **Suíte:** 272 `test()`. **Autoridade:** OFF (inalterada). **Regras/spec `bmv-regras-2026.08`:** inalteradas.
+**Commit:** `0379145` (C9-C `c822926`/`3381a21` + **C9-C-fix**). **Suíte:** 273 `test()`. **Autoridade:** OFF. **Regras/spec `bmv-regras-2026.08`:** inalteradas.
+**C9-C-fix:** commit original `0379145`; aplicado na branch `auditoria/regras-bmv` por cherry-pick sobre `3381a21`, gerando `d9cd88f`.
 
+O fix passa a persistir Replay por snapshot completo `{canonico, envelope}`, incluindo o `EnvelopeRuntime` necessário à reprodução fiel. `Replay.reproduzivel` exige seed ou snapshot completo validável. O teste `C9-SOMBRA-10` comprova reprodução de divergência dependente de `lixoTopoObrigatorio`.
 ## O que o comparador faz
-`app/lib/motor/modo_sombra.dart` roda o motor LEGADO (autoritativo) e o CANÔNICO sobre o MESMO estado projetado e compara. É **puro e sem autoridade**: opera sobre **clones reconstruídos** a partir da projeção, com o **EnvelopeRuntime COMPLETO** — nenhum efeito em UI/comportamento. A flag de **SOMBRA** (`MotorConfig.sombraAtiva`) é **separada** da de autoridade.
+`app/lib/motor/modo_sombra.dart` roda o motor LEGADO (autoritativo) e o CANÔNICO sobre o MESMO estado projetado e compara. É **puro e sem autoridade**: opera sobre **clones reconstruídos** com o **EnvelopeRuntime COMPLETO** — nenhum efeito em UI/comportamento. A flag de **SOMBRA** (`MotorConfig.sombraAtiva`) é **separada** da de autoridade.
 
-**Pipeline (6 etapas):** (1) execução dupla; (2) normalização (via `EstadoJogo.assinatura()`/`normalizar()`); (3) comparação; (4) classificação `CONVERGE | EXC-01..04 | INESPERADA | canonicoRecusou`; (5) diff estruturado (`CampoDiff` por campo); (6) `Replay` automático (por **snapshot**, Ajuste 3) para toda divergência INESPERADA.
+**Pipeline (6 etapas):** (1) execução dupla; (2) normalização (`EstadoJogo.assinatura()`/`normalizar()`); (3) comparação; (4) classificação `CONVERGE | EXC-01..04 | INESPERADA | canonicoRecusou`; (5) diff estruturado (`CampoDiff`); (6) `Replay` automático (por **snapshot**) para toda divergência INESPERADA.
 
-**Transação semântica + estabilização:** chamadas legadas viram transações canônicas; a comparação só ocorre **após estabilizar** (o comparador resolve o `mortoPendente` indireto → `PegarMorto(viaDescarte)`, espelhando o que o legado dobra em `descartar`).
+**Transação semântica + estabilização:** chamadas legadas viram transações canônicas; comparação só **após estabilizar** (resolve `mortoPendente` indireto → `PegarMorto(viaDescarte)`).
 
-**Classificação honesta (Adendo 5):** uma divergência só é `EXCEÇÃO` se a transação **declarar** um id **conhecido** em `excecoesSombra` (EXC-01..04). Divergência **não declarada** ou com **id inexistente** é **sempre INESPERADA** — nada é varrido para uma EXC genérica. (Mesma disciplina do `critEsperado` do C8.)
+**Classificação honesta:** só é `EXCEÇÃO` se a transação **declarar** um id **conhecido** em `excecoesSombra`. Não declarada ou id inexistente → **INESPERADA** (nada varrido para EXC genérica).
+
+## Replay reproduzível (C9-C-fix)
+- **Snapshot COMPLETO:** `_replay()` persiste `{'canonico': EstadoJogo, 'envelope': EnvelopeRuntime completo}` (15 campos runtime+sidecar). Sem o envelope, uma divergência que **depende** dele (ex.: `lixoTopoObrigatorio`) não se reproduziria.
+- **Invariante `reproduzivel`:** `seed != null` **OU** snapshot **COMPLETO validável** — o snapshot precisa conter as duas partes (`canonico` **e** `envelope`); um mapa arbitrário (ex.: `{'a':1}`) **não** conta. A validação estrutural vive em `rules/replay.dart` de forma **genérica** (só o contrato de topo), mantendo `rules/` **desacoplado** de `mesa.dart`; o snapshot trafega como mapa genérico. Nunca se inventa seed.
 
 ## Descoberta da sombra (correção de mapeamento, não de regra)
-O comparador **imediatamente pegou uma divergência real de convenção**: o **topo do monte** difere entre os motores — legado compra `monte.removeAt(0)` (topo = frente), canônico `monte.removeLast()` (topo = último). Sem reconciliar, os dois motores comprariam **cartas diferentes** do mesmo monte. **Reconciliado revertendo o monte na projeção** (`paraCanonico`/`aplicarEmJogo`), nas duas direções — **round-trip do C9-B permanece exato** (a reversão dupla se cancela; C9-MAP-01..09 seguem verdes). É correção de **mapeamento**, não de regra.
+Topo do monte divergia — legado `monte.removeAt(0)` (frente) × canônico `monte.removeLast()` (último). Reconciliado revertendo o monte na projeção (round-trip do C9-B permanece exato). Mapeamento, não regra.
 
 ## Divergência de comportamento REGISTRADA (não escondida)
-`monte vazio + morto disponível`: o **legado converte** o morto em monte e compra (`_mortosConvertidos++`); o **canônico RECUSA** (`'monte vazio'`). O comparador classifica como `canonicoRecusou` e **gera Replay** (finding C9-SOMBRA-04). **Não é rule change do C9-C** — é uma divergência de comportamento a **reconciliar antes do roteamento (C9-D)**. Fica **declarada aqui**, não silenciada.
+`monte vazio + morto`: legado converte morto→monte e compra; canônico RECUSA. Classificado `canonicoRecusou` + Replay (C9-SOMBRA-04). Divergência a **reconciliar antes do C9-D** — declarada, não silenciada.
 
-## Paridade (cenários exercitados no C9-C)
-| Cenário | Transação | Resultado esperado | Teste |
-|---|---|---|---|
-| Compra do monte (monte não-vazio) | `comprarMonte@0` | **CONVERGE** | C9-SOMBRA-01 |
-| Descarte normal (mão ≥ 2) | `descartar@0` | **CONVERGE** | C9-SOMBRA-02 |
-| Injeção de divergência (descarta h2 legado × h1 canônico) | custom | **INESPERADA** + diff + Replay | C9-SOMBRA-03 |
-| Monte vazio + morto (legado converte × canônico recusa) | `comprarMonte@0` | **canonicoRecusou** + Replay | C9-SOMBRA-04 |
-| Divergência declarada EXC conhecida | custom (exc=EXC-01) | **excecao** (idExcecao=EXC-01) | C9-SOMBRA-05 |
-| Divergência com id EXC **inexistente** | custom (exc=EXC-99) | **INESPERADA** (não esconde) | C9-SOMBRA-06 |
-| Replay reproduzível por snapshot | — | snapshot fiel + reaplica ações | C9-SOMBRA-07 |
-| Invariante `seed` OU snapshot | — | `reproduzivel` correto | C9-SOMBRA-08 |
-| Sombra separada da autoridade | — | flag sombra ≠ autoridade | C9-SOMBRA-09 |
+## Paridade (cenários exercitados)
+| Cenário | Resultado | Teste |
+|---|---|---|
+| Compra do monte (monte não-vazio) | **CONVERGE** | C9-SOMBRA-01 |
+| Descarte normal | **CONVERGE** | C9-SOMBRA-02 |
+| Injeção (descarta h2 legado × h1 canônico) | **INESPERADA** + diff + Replay | C9-SOMBRA-03 |
+| Monte vazio + morto (legado converte × canônico recusa) | **canonicoRecusou** + Replay | C9-SOMBRA-04 |
+| Divergência declarada EXC conhecida | **excecao** (EXC-01) | C9-SOMBRA-05 |
+| Divergência com id EXC inexistente | **INESPERADA** (não esconde) | C9-SOMBRA-06 |
+| Replay reproduzível por snapshot (projeção completa) | snapshot fiel + reaplica | C9-SOMBRA-07 |
+| Invariante `seed` OU snapshot COMPLETO validável | positivo + 2 negativos + seed | C9-SOMBRA-08 |
+| Sombra separada da autoridade | flag sombra ≠ autoridade | C9-SOMBRA-09 |
+| **Divergência DEPENDENTE do envelope (`lixoTopoObrigatorio`)** | **INESPERADA**, Replay reconstrói o envelope e reproduz a MESMA classificação | **C9-SOMBRA-10** |
 
-**Meta:** ZERO divergências **inesperadas** entre os cenários **convergentes declarados** (01, 02). As divergências de 03/06 são **injeções propositais** (prova do detector); 04 é um **finding declarado**; 05 é o **mecanismo** de classificação EXC.
+**Meta:** ZERO divergências **inesperadas** entre os cenários convergentes declarados (01, 02). 03/06/10 são divergências propositais/dependentes (prova do detector e da persistência do envelope); 04 é finding declarado; 05 é o mecanismo de EXC.
 
 ## Cobertura e limites (sem "silent caps")
-- **Cobre:** transações de **compra do monte** e **descarte** (normal e, via estabilização, descarte→morto indireto), mais o pipeline completo (diff, classificação, Replay).
-- **Ainda NÃO exercitado na sombra (declarado, não escondido):** transações de **`baixar`** (atômica/multi-jogo) e **`bater`** — que no legado dobram morto/batida e no canônico são transições explícitas; e os **cenários de meld** que disparam **EXC-01..04** (trinca com curinga, abertura múltipla, lixo desacoplado, grupo de ases). Estes entram numa expansão da sombra antes do C9-D/C10.
-- **Findings a reconciliar antes do C9-D:** (a) monte vazio → morto (legado converte × canônico recusa); confirmar se o canônico modela a conversão em outro passo. (b) revisar demais caminhos de `baixar`/`bater` sob a mesma lente.
+- **Cobre:** compra do monte, descarte (normal e, via estabilização, → morto indireto), pipeline completo (diff, classificação, Replay com snapshot completo).
+- **Ainda NÃO exercitado (declarado):** transações de `baixar`/`bater` e os cenários de meld que disparam EXC-01..04. Entram numa expansão da sombra antes do C9-D/C10.
+- **Findings a reconciliar antes do C9-D:** (a) monte vazio → morto (legado converte × canônico recusa); (b) ampliar a sombra para `baixar`/`bater` + EXC-01..04 reais.
 
 ## Entregáveis
-- **Bundle:** `BMV-APP-C9-C-c822926.bundle` (requer `9332aaa`, fast-forward).
-- **Diff:** `C9-C-c822926.diff`.
-- **Arquivos:** `motor/modo_sombra.dart` (novo), `rules/replay.dart` (seed opcional + invariante), `motor/projecao_estado.dart` (reversão do monte), testes C9-SOMBRA-01..09.
-- **Revisão estática independente:** sem erros de compilação; 1 defeito lógico pego e corrigido (fase pós-legado estagnada → limpeza do transporte antes de projetar, espelhando `AdaptadorLegado._saida`).
+- **Bundle:** `BMV-APP-C9-C-fix-0379145.bundle`. **Diff:** `C9-C-fix-0379145.diff` (aplica por conteúdo sobre `3381a21`).
+- **Arquivos:** `motor/modo_sombra.dart` (serialização envelope/projeção; snapshot completo), `rules/replay.dart` (invariante `reproduzivel` corrigido), testes C9-SOMBRA-07/08/10.
+- **Revisão estática independente (2×):** sem erros de compilação; defeitos pegos e corrigidos (fase pós-legado estagnada no C9-C; snapshot sem envelope + `reproduzivel` fraco no C9-C-fix).
