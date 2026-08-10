@@ -112,13 +112,102 @@ Consequência honesta: os gates abaixo continuam **NÃO EXECUTADOS**.
 - **`MotorPartida.jogo` segue público.** Privatizar tocaria a UI; o hand-off
   tratou isso como pendência documentada e não como mudança destrutiva (§25). A
   porta canônica existe; a barreira de compilador, não.
-- **Duplicidade de contrato a resolver antes do Bloco 4.** A branch
-  `integracao/motores-torneios-partidas-v1` já contém
+- **Duplicidade de contrato — RESOLVIDA nesta branch (ver §5).** A branch
+  `integracao/motores-torneios-partidas-v1` já continha
   `app/lib/motor/desfecho_partida.dart` (`DesfechoCanonicoPartida`, com
   `MotivoEncerramento`, `OrdemDeEncerramento`, `LadoDaMesa`) e
   `app/lib/integracao/adaptador_partida_torneio.dart`. Ou seja, a lacuna que o
   hand-off descreveu como "única lacuna de código desta OS" só era lacuna vista
-  da branch de resiliência. Decisão da Sônia em 10/08/2026:
-  **`DesfechoCanonicoPartida` sobrevive como contrato canônico único** e absorve
-  integralmente as garantias de `EncerramentoPartida`; a duplicidade só é
-  eliminada depois de comprovado, item a item, que nada se perde.
+  da branch de resiliência.
+
+---
+
+## 5. Consolidação do contrato de encerramento (10/08/2026)
+
+Decisão da Sônia: **`DesfechoCanonicoPartida` sobrevive como contrato canônico
+único**, absorvendo `EncerramentoPartida`, que foi removida. A absorção só
+aconteceu depois de comprovado item a item que nada se perde — e a comprovação
+achou três lacunas reais, que viraram adições autorizadas.
+
+### 5.1 O que faltava no contrato sobrevivente
+
+| Requisito | Antes | Agora |
+|---|---|---|
+| retorno só após encerramento real | ✅ via `estado: emAndamento` | mantido |
+| vencedor pelo placar, não por quem bateu | ✅ mais estrito (`StateError` no empate) | mantido, coberto por ENCERR-03 e ENCERR-08 |
+| `partidaId` + versão | ✅ (+ `impressaoEstado`) | mantido |
+| placares, meta, modalidade, rodada | ⚠️ só placar | **`metaPontos`, `modalidade`, `rodada` adicionados** |
+| quem bateu, informativo | ❌ ausente | **`duplaQueBateuUltimaRodada` adicionado**, sem participar de nenhuma decisão |
+| serialização validada | ❌ só ida | **`deJson` em `DesfechoCanonicoPartida` e `LadoDaMesa`**, round-trip em ENCERR-05 |
+| sem id de carta / estado privado | ✅ | mantido, ENCERR-07 |
+| adaptador sem acessar `MotorPartida.jogo` | ✅ | não foi tocado |
+
+Duas mudanças de semântica, deliberadas e documentadas no cabeçalho da suíte:
+partida viva devolve `emAndamento` em vez de `null`; envelope inválido lança
+`FormatException` em vez de devolver `null`.
+
+### 5.2 O acumulador de canastras limpas
+
+`capturarDesfecho` depende de `MotorPartida.canastrasLimpas`, que não existia na
+versão corrigida do motor. É requisito real, não conveniência: `LadoResultado`
+do contrato Partida→Torneio documenta canastras limpas como **quarto critério de
+desempate** e recusa o resultado se vier ausente. Trazido de forma **aditiva**,
+sobre os seis fixes do PR #4 — nenhum arquivo do motor foi substituído pelo
+equivalente antigo da v1:
+
+- `Jogo.canastrasLimpasNaRodada(dupla)` **lê** o que `contarPontos()` já apurou
+  (`pontosRodada[dupla]['detalhe']`: `limpas + de500 + asAas`). Nenhuma regra de
+  buraco nova — recalcular criaria uma segunda definição de "limpa".
+- `MotorPartida` acumula a cada apuração, expõe `canastrasLimpas` somente
+  leitura, e persiste/restaura. A soma fica **depois** do guarda de
+  reprocessamento, então retry não infla o desempate (CAN-05).
+
+### 5.3 Fingerprint: `impressaoPartida`, novo e aditivo
+
+`SnapshotPartida.impressao` e `MotorPartida.impressao` ficam **intactos** — são o
+instrumento da invariante "comando recusado não altera nada", da qual os grupos
+IDEM/CONC dependem. Mexer neles mudaria o significado de asserções existentes
+sem que elas falhassem, que é a pior forma de mudança.
+
+`MotorPartida.impressaoPartida` compõe deterministicamente a impressão do `Jogo`
+com os dois acumuladores, e é ele que alimenta `impressaoEstado` do desfecho.
+Sem isso, dois desfechos com o mesmo placar e canastras diferentes teriam a mesma
+identidade — e um resultado que muda a classificação passaria por "estado
+equivalente" (IMPP-03, ENCERR-10). Entram só estados autoritativos da identidade
+competitiva: presença, relógio de turno e janela de idempotência ficam de fora,
+por serem sobre a sessão e não sobre o resultado.
+
+### 5.4 Versão do formato de snapshot: medida, não suposta
+
+`kVersaoFormatoSnapshot` **permanece 1**. A chave nova entra no envelope do
+`MotorPartida`, não no snapshot do `Jogo`, cujo formato está intacto; e o leitor
+ignora chaves desconhecidas. CAN-07 prova que um envelope antigo, sem a chave,
+restaura com zero e com versão, placar e idempotência intactos — e CAN-08 prova
+que valor inválido é ignorado em vez de virar lixo. Nenhuma migração é
+necessária.
+
+### 5.5 Execução
+
+```
+flutter analyze --no-fatal-infos --no-fatal-warnings ... 0 ERROS
+   105 issues, as MESMAS da baseline — nada novo introduzido.
+
+test/teste_motor.dart ...................... 132 verdes
+test/teste_motor_resiliencia.dart .......... 196 verdes  (181 + 15 novos)
+test/torneios/reward_grants_test.dart ......  80 verdes
+test/teste_encerramento.dart ...............  10 verdes  (7 migrados + 3 novos)
+                                             ─────────────
+                                             418 verdes
+```
+
+Os 181 testes originais de resiliência continuam passando: **sem regressão nos
+seis fixes do PR #4**.
+
+### 5.6 O que continua pendente
+
+A conciliação dos seis arquivos divergentes de
+`integracao/motores-torneios-partidas-v1` (`motor_partida`, `presenca`,
+`sessao_reconexao`, `snapshot_partida`, `visao_assento`, `diagnostico`, ~460
+linhas) **não foi iniciada**, por decisão explícita. Junto dela ficam
+`app/lib/integracao/` e `app/lib/torneios/match_contract.dart`, que ainda não
+existem nesta branch.
