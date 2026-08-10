@@ -69,6 +69,17 @@ class MotorPartida {
   final Map<String, ResultadoComando> _aplicados = {};
   final List<String> _ordemAplicados = [];
 
+  /// Canastras limpas acumuladas na PARTIDA, por dupla.
+  ///
+  /// Vive aqui, e não no `Jogo`, porque o `Jogo` é de rodada: `novaRodada()`
+  /// zera `pontosRodada`, e com ele o número da rodada anterior. O total da
+  /// partida é a soma das apurações, então quem acumula é quem conduz o ciclo
+  /// da rodada — este motor.
+  ///
+  /// A contagem em si NÃO é feita aqui: `Jogo.canastrasLimpasNaRodada` lê o que
+  /// `contarPontos()` já apurou. Este mapa só soma.
+  final Map<String, int> _canastrasLimpas = {'nos': 0, 'eles': 0};
+
   MotorPartida({
     required this.partidaId,
     required this.jogo,
@@ -90,6 +101,12 @@ class MotorPartida {
 
   /// eventoIds memorizados, do mais antigo para o mais novo.
   List<String> get eventosAplicados => List.unmodifiable(_ordemAplicados);
+
+  /// Canastras limpas acumuladas na partida, por dupla — somente leitura.
+  ///
+  /// É o quarto critério de desempate do projeto, então o número sai daqui e
+  /// não é recalculado por ninguém depois (ver `desfecho_partida.dart`).
+  Map<String, int> get canastrasLimpas => Map.unmodifiable(_canastrasLimpas);
 
   // ---------------------------------------------------------------- comandos
 
@@ -407,6 +424,14 @@ class MotorPartida {
     final jaTinha = jogo.pontosRodada != null;
     jogo.contarPontos();
     if (jaTinha) return false;
+    // A soma vem DEPOIS do `return false` de cima, e é isso que a torna segura
+    // em reprocessamento: uma segunda chamada de `apurarRodada()` para a mesma
+    // rodada sai antes daqui. Se somasse acima, um retry inflaria o desempate
+    // do torneio sem que nada no placar denunciasse.
+    for (final dupla in const ['nos', 'eles']) {
+      _canastrasLimpas[dupla] =
+          _canastrasLimpas[dupla]! + jogo.canastrasLimpasNaRodada(dupla);
+    }
     _versao++;
     diario.anotar(
       ts: agora(),
@@ -419,6 +444,8 @@ class MotorPartida {
         'placarEles': jogo.placar['eles'],
         'duplaQueBateu': jogo.duplaQueBateu,
         'partidaEncerrada': jogo.encerrada,
+        'canastrasLimpasNos': _canastrasLimpas['nos'],
+        'canastrasLimpasEles': _canastrasLimpas['eles'],
       },
     );
     return true;
@@ -508,11 +535,42 @@ class MotorPartida {
           for (final id in _ordemAplicados)
             if (_aplicados[id] != null) _aplicados[id]!.toJson(),
         ],
+        // Chave NOVA no envelope do motor. `kVersaoFormatoSnapshot` versiona o
+        // snapshot do `Jogo` (dentro de 'jogo') e não muda por causa dela: o
+        // formato do jogo está intacto. Envelope antigo, sem esta chave,
+        // restaura com zero — ver `restaurar`.
+        'canastrasLimpas': Map<String, int>.of(_canastrasLimpas),
       };
 
   /// Impressão digital do estado — dois pontos no tempo com a mesma impressão
   /// provam que a partida não mudou entre eles.
+  ///
+  /// Mede o `Jogo`, e só ele. É o instrumento da invariante "comando recusado
+  /// NÃO altera nada", e o significado dela NÃO muda: quem precisa da identidade
+  /// da partida inteira usa [impressaoPartida].
   String get impressao => SnapshotPartida.impressao(SnapshotPartida.capturar(jogo));
+
+  /// Impressão digital da PARTIDA — o `Jogo` mais o estado autoritativo que o
+  /// motor acumula por fora dele.
+  ///
+  /// Existe porque canastras limpas decidem desempate de torneio e NÃO estão no
+  /// `Jogo`: elas vivem em [canastrasLimpas], somadas a cada apuração. Sem isto,
+  /// dois desfechos com o mesmo placar e totais de canastra diferentes teriam a
+  /// mesma impressão — e um resultado que muda a classificação passaria por
+  /// "estado equivalente".
+  ///
+  /// O que entra: só estado autoritativo que participa da identidade competitiva
+  /// da partida. Nada cosmético, transitório ou de UI — presença, relógio de
+  /// turno e janela de idempotência ficam de fora de propósito: são sobre a
+  /// SESSÃO, não sobre o resultado.
+  ///
+  /// Determinístico e independente da ordem das chaves, porque `_canonico`
+  /// ordena as chaves do mapa antes de reduzir a texto.
+  String get impressaoPartida => SnapshotPartida.impressao({
+        'jogo': impressao,
+        'canastrasLimpasNos': _canastrasLimpas['nos'] ?? 0,
+        'canastrasLimpasEles': _canastrasLimpas['eles'] ?? 0,
+      });
 
   /// Reconstrói o motor a partir de um snapshot.
   ///
@@ -557,6 +615,17 @@ class MotorPartida {
       versaoInicial: versaoBruta.toInt(),
     );
     motor.relogio = RelogioTurno.deJson(snapshot['relogio']);
+    // Retrocompatível por construção: snapshot antigo não tem esta chave, cai
+    // no `is! Map` e os acumuladores ficam em zero — que é exatamente o estado
+    // de uma partida cujas apurações não foram registradas. Não é chute, é a
+    // ausência sendo lida como ausência.
+    final canastras = snapshot['canastrasLimpas'];
+    if (canastras is Map) {
+      for (final dupla in const ['nos', 'eles']) {
+        final v = canastras[dupla];
+        if (v is num && v >= 0) motor._canastrasLimpas[dupla] = v.toInt();
+      }
+    }
     final idem = snapshot['idempotencia'];
     if (idem is List) {
       for (final e in idem) {

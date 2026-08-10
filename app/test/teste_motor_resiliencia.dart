@@ -2043,4 +2043,246 @@ void main() {
       }
     });
   });
+
+  // ======================================================================
+  // CANASTRAS — o acumulador de canastras limpas da PARTIDA.
+  //
+  // O número é o quarto critério de desempate do torneio, então errar aqui não
+  // dá tela errada: dá classificação errada. Os testes cobrem o que pode dar
+  // errado num acumulador — somar duas vezes, somar no lado errado, perder o
+  // total na retomada e quebrar snapshot antigo.
+  // ======================================================================
+  group('CANASTRAS — acumulador de canastras limpas', () {
+    test('CAN-01 rodada não apurada: nada a somar, acumulador em zero', () {
+      final j = novo();
+      final m = motorDe(j);
+      expect(j.canastrasLimpasNaRodada('nos'), 0);
+      expect(m.canastrasLimpas, {'nos': 0, 'eles': 0});
+    });
+
+    test('CAN-02 uma canastra limpa de "nos" soma só para "nos"', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 1);
+      expect(m.apurarRodada(), isTrue);
+      expect(m.canastrasLimpas['nos'], 1);
+      expect(m.canastrasLimpas['eles'], 0, reason: 'os lados são independentes');
+    });
+
+    test('CAN-03 acumula ao longo de mais de uma rodada', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 1);
+      expect(m.apurarRodada(), isTrue);
+      expect(m.canastrasLimpas['nos'], 1);
+
+      expect(m.iniciarNovaRodada(), isTrue);
+      baterCom(j, quantas: 2);
+      expect(m.apurarRodada(), isTrue);
+      expect(m.canastrasLimpas['nos'], 3, reason: '1 da primeira + 2 da segunda');
+      expect(m.canastrasLimpas['eles'], 0);
+    });
+
+    test('CAN-04 rodada com zero canastras não mexe no acumulador', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 1);
+      expect(m.apurarRodada(), isTrue);
+      final antes = Map<String, int>.of(m.canastrasLimpas);
+
+      // Rodada que acaba SEM batida — monte e mortos esgotados (§8.1). Ninguém
+      // fechou canastra nenhuma, então não há nada a somar. É o caso que uma
+      // batida não consegue produzir: bater exige canastra.
+      expect(m.iniciarNovaRodada(), isTrue);
+      montar(j, mao0: [('K', 'paus')], vez: 0, mortos: 0);
+      j.maos[0].addAll(j.monte);
+      j.monte.clear();
+      j.auditarIntegridade();
+      expect(j.integridadeErro, isNull, reason: 'as 108 cartas continuam lá');
+      expect(j.comprarMonte(0), isFalse);
+      expect(j.rodadaEncerrada, isTrue);
+
+      expect(m.apurarRodada(), isTrue);
+      expect(j.canastrasLimpasNaRodada('nos'), 0);
+      expect(j.canastrasLimpasNaRodada('eles'), 0);
+      expect(m.canastrasLimpas, antes);
+    });
+
+    test('CAN-05 apuração repetida NÃO duplica a contagem (retry)', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 2);
+      expect(m.apurarRodada(), isTrue);
+      final depoisDaPrimeira = Map<String, int>.of(m.canastrasLimpas);
+      expect(depoisDaPrimeira['nos'], 2);
+
+      // Um reprocessamento — servidor que reiniciou, fila que reenviou — chama
+      // de novo. A segunda chamada tem que ser inerte.
+      expect(m.apurarRodada(), isFalse);
+      expect(m.apurarRodada(), isFalse);
+      expect(m.canastrasLimpas, depoisDaPrimeira);
+    });
+
+    test('CAN-06 snapshot e restauração preservam o acumulado', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 2);
+      m.apurarRodada();
+      final volta = MotorPartida.restaurar(m.snapshot());
+      expect(volta.canastrasLimpas, m.canastrasLimpas);
+      expect(volta.canastrasLimpas['nos'], 2);
+    });
+
+    test('CAN-07 snapshot ANTIGO, sem a chave, restaura compatível (zero)', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 1);
+      m.apurarRodada();
+      final envelope = m.snapshot();
+      envelope.remove('canastrasLimpas'); // exatamente o envelope pré-mudança
+      final volta = MotorPartida.restaurar(envelope);
+      expect(volta.canastrasLimpas, {'nos': 0, 'eles': 0},
+          reason: 'ausência lida como ausência, e não como erro');
+      // E o resto do envelope antigo continua atravessando inteiro.
+      expect(volta.versaoEstado, m.versaoEstado);
+      expect(volta.jogo.placar['nos'], j.placar['nos']);
+    });
+
+    test('CAN-08 valor inválido no envelope é ignorado, não vira lixo', () {
+      final j = novo();
+      final m = motorDe(j);
+      final envelope = m.snapshot();
+      envelope['canastrasLimpas'] = {'nos': -3, 'eles': 'muitas'};
+      final volta = MotorPartida.restaurar(envelope);
+      expect(volta.canastrasLimpas, {'nos': 0, 'eles': 0});
+    });
+
+    test('CAN-09 o acumulador NÃO recalcula regra: espelha o que o Jogo apurou',
+        () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 2);
+      // Antes da apuração não existe número: `pontosRodada` ainda é null.
+      expect(j.canastrasLimpasNaRodada('nos'), 0);
+      m.apurarRodada();
+      expect(m.canastrasLimpas['nos'], j.canastrasLimpasNaRodada('nos'));
+      expect(m.canastrasLimpas['nos'], 2);
+    });
+  });
+
+  // ======================================================================
+  // IMPRESSAO-PARTIDA — o fingerprint que inclui o estado autoritativo que o
+  // `Jogo` não guarda.
+  //
+  // `impressao` continua sendo do `Jogo` e só: os testes IDEM/CONC dependem
+  // desse significado. `impressaoPartida` é a identidade COMPETITIVA da
+  // partida — dois desfechos com o mesmo placar e canastras diferentes não
+  // podem colidir.
+  // ======================================================================
+  group('IMPRESSAO-PARTIDA — identidade competitiva da partida', () {
+    test('IMPP-01 é determinística: duas leituras seguidas batem', () {
+      final j = novo();
+      final m = motorDe(j);
+      expect(m.impressaoPartida, m.impressaoPartida);
+    });
+
+    test('IMPP-02 mesmo jogo e mesmas canastras: mesma impressão', () {
+      final j = novo();
+      final m = motorDe(j);
+      final envelope = m.snapshot();
+      final a = MotorPartida.restaurar(envelope);
+      final b = MotorPartida.restaurar(envelope);
+      expect(a.impressaoPartida, b.impressaoPartida);
+    });
+
+    test('IMPP-03 mesmo Jogo, canastras DIFERENTES: impressão diferente', () {
+      final j = novo();
+      final m = motorDe(j);
+      final base = m.snapshot();
+
+      final a = MotorPartida.restaurar(
+          {...base, 'canastrasLimpas': {'nos': 2, 'eles': 0}});
+      final b = MotorPartida.restaurar(
+          {...base, 'canastrasLimpas': {'nos': 0, 'eles': 2}});
+
+      // O Jogo é literalmente o mesmo — a impressão antiga NÃO os distingue.
+      expect(a.impressao, b.impressao,
+          reason: 'o contrato de `impressao` não pode ter mudado');
+      // E é exatamente por isso que a nova existe.
+      expect(a.impressaoPartida, isNot(b.impressaoPartida));
+    });
+
+    test('IMPP-04 ordem das chaves do envelope não altera a impressão', () {
+      final j = novo();
+      final m = motorDe(j);
+      final base = m.snapshot()..remove('canastrasLimpas');
+      // Mesmo conteúdo, ordens de inserção diferentes — no envelope e dentro do
+      // próprio mapa de canastras.
+      final direta = <String, Object?>{
+        'canastrasLimpas': {'nos': 1, 'eles': 2},
+        ...base,
+      };
+      final invertida = <String, Object?>{
+        ...base,
+        'canastrasLimpas': {'eles': 2, 'nos': 1},
+      };
+      final a = MotorPartida.restaurar(direta);
+      final b = MotorPartida.restaurar(invertida);
+      expect(a.canastrasLimpas, {'nos': 1, 'eles': 2});
+      expect(a.impressaoPartida, b.impressaoPartida);
+    });
+
+    test('IMPP-05 comando RECUSADO não altera impressao nem impressaoPartida',
+        () {
+      final j = novo();
+      montar(j, mao0: [('K', 'paus')], mao1: [('Q', 'paus')], vez: 0);
+      final m = motorDe(j);
+      m.apurarRodada(); // no-op: a rodada está viva
+      final impressaoAntes = m.impressao;
+      final partidaAntes = m.impressaoPartida;
+
+      // fora de turno
+      final r = m.aplicar(ComandoPartida(
+          eventoId: 'e1', assento: 1, tipo: TipoComando.descartar,
+          ids: [j.maos[1].first.id]));
+      expect(r.status, StatusComando.rejeitado);
+      expect(m.impressao, impressaoAntes);
+      expect(m.impressaoPartida, partidaAntes);
+    });
+
+    test('IMPP-06 snapshot e restauração preservam a impressão da partida', () {
+      final j = novo();
+      final m = motorDe(j);
+      baterCom(j, quantas: 1);
+      m.apurarRodada();
+      final volta = MotorPartida.restaurar(m.snapshot());
+      expect(volta.impressaoPartida, m.impressaoPartida);
+    });
+  });
+}
+
+/// Monta uma rodada em que "nos" bate com [quantas] canastras limpas na mesa e
+/// encerra a rodada. Naipes distintos porque cada canastra limpa precisa de sete
+/// cartas em sequência.
+void baterCom(Jogo j, {required int quantas}) {
+  const sequencias = <List<Spec>>[
+    canastraLimpa,
+    [
+      ('5', 'espadas'),
+      ('6', 'espadas'),
+      ('7', 'espadas'),
+      ('8', 'espadas'),
+      ('9', 'espadas'),
+      ('10', 'espadas'),
+      ('J', 'espadas'),
+    ],
+  ];
+  montar(j,
+      mao0: [('K', 'paus')],
+      vez: 0,
+      jaComprou: true,
+      mortoPegoNos: true,
+      mesaNos: sequencias.take(quantas).toList());
+  j.descartar(0, j.maos[0].first.id);
+  expect(j.rodadaEncerrada, isTrue, reason: 'a montagem deveria bater');
 }
