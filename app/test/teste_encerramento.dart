@@ -202,8 +202,34 @@ void main() {
       final j = novo();
       encerrarCom(j, nos: 1500, eles: 1234, bateu: 'eles');
       final d = capturarDesfecho(motorDe(j), encerradaEm: quando);
-      final texto = d.toJson().toString();
-      // ids de carta no jogo têm o formato c<numero> (ver visao_assento/comando).
+
+      // `impressaoEstado` sai da varredura, e o motivo importa: é um hash
+      // FNV-1a, ou seja, hexadecimal — mais cedo ou mais tarde ele contém um
+      // "c" seguido de dígito por puro acaso, e o baralho é embaralhado a cada
+      // execução, então a varredura por padrão daria um teste que passa ou
+      // falha por sorte. Hash é função de mão única: ele não pode vazar
+      // identidade de carta por construção, e que ele é o fingerprint certo já
+      // está provado em ENCERR-09 e nos IMPP.
+      final payload = d.toJson()..remove('impressaoEstado');
+      final texto = payload.toString();
+
+      // 1. Nenhum id REAL desta partida aparece — a pergunta que interessa.
+      final cartas = [
+        ...j.monte,
+        ...j.lixo,
+        for (final m in j.mortos) ...m,
+        for (final m in j.maos) ...m,
+        for (final g in j.jogosDupla['nos']!) ...g,
+        for (final g in j.jogosDupla['eles']!) ...g,
+      ];
+      expect(cartas, hasLength(108), reason: 'a varredura precisa ver o baralho todo');
+      for (final c in cartas) {
+        expect(texto.contains(c.id), isFalse,
+            reason: 'o desfecho carrega o id ${c.id}: $texto');
+      }
+
+      // 2. E nenhum id no formato c<numero> sequer — pega campo novo com carta
+      //    dentro mesmo que a carta não seja desta partida.
       expect(
         RegExp(r'c\d+').hasMatch(texto),
         isFalse,
