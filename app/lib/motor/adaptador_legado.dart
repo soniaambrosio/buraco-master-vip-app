@@ -36,6 +36,14 @@ class AdaptadorLegado implements PortaMotor {
     return j;
   }
 
+  /// Projeta o estado de SAÍDA após uma mutação legada. Limpa o transporte de
+  /// fase (setado por `_transitorio`) para que a fase reflita o estado legado
+  /// PÓS-operação (derivada de jaComprou; o legado nunca fica em mortoPendente).
+  EstadoJogo _saida(Jogo j) {
+    j.costuraFaseCanonica = null;
+    return paraCanonico(j).canonico;
+  }
+
   @override
   bool ehVez(EstadoJogo estado, int assento) {
     final j = _transitorio(estado);
@@ -50,19 +58,19 @@ class AdaptadorLegado implements PortaMotor {
       case ComprarMonte():
         final ok = j.comprarMonte(assento);
         return ok
-            ? ResultadoJogada(legal: true, proximoEstado: paraCanonico(j).canonico)
+            ? ResultadoJogada(legal: true, proximoEstado: _saida(j))
             : ResultadoJogada.recusa('motor legado recusou comprarMonte');
       case ComprarLixo():
         final r = j.comprarLixo(assento, modalidade: j.modalidade);
         final ok = r['ok'] == true;
         return ok
-            ? ResultadoJogada(legal: true, proximoEstado: paraCanonico(j).canonico)
+            ? ResultadoJogada(legal: true, proximoEstado: _saida(j))
             : ResultadoJogada.recusa(
                 (r['erro']?.toString()) ?? 'motor legado recusou comprarLixo');
       case Descartar(carta: final id):
         final err = j.descartar(assento, id);
         return err == null
-            ? ResultadoJogada(legal: true, proximoEstado: paraCanonico(j).canonico)
+            ? ResultadoJogada(legal: true, proximoEstado: _saida(j))
             : ResultadoJogada.recusa(err);
       case Baixar():
         return ResultadoJogada.recusa(

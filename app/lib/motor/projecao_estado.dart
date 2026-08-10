@@ -55,6 +55,41 @@ String _modTexto(Modalidade m) {
   }
 }
 
+// ---- FASE (DERIVADO + transporte para preservar as TRÊS fases) ----
+// Preferência: o transporte da costura (`costuraFaseCanonica`), que carrega a
+// fase canônica EXATA (compra | jogo | mortoPendente). Sem transporte (snapshot
+// legado puro), o legado NUNCA fica em repouso em `mortoPendente` — deriva-se
+// de `jaComprou`.
+FaseTurno _faseCanonicaDe(String? transporte, bool jaComprou) {
+  switch (transporte) {
+    case 'compra':
+      return FaseTurno.compra;
+    case 'jogo':
+      return FaseTurno.jogo;
+    case 'mortoPendente':
+      return FaseTurno.mortoPendente;
+    default:
+      return jaComprou ? FaseTurno.jogo : FaseTurno.compra;
+  }
+}
+
+// ---- clone PROFUNDO de mapas aninhados (pontosRodada) ----
+// Evita referências compartilhadas entre origem/envelope/alvo (o detalhe da
+// rodada contém mapas aninhados, ex.: {detalhe: {de500: 1, ...}}).
+Object? _deepCloneVal(Object? v) {
+  if (v is Map) return _deepMapClone(v);
+  if (v is List) return [for (final x in v) _deepCloneVal(x)];
+  return v; // primitivos imutáveis
+}
+
+Map<String, Object?> _deepMapClone(Map src) {
+  final out = <String, Object?>{};
+  for (final e in src.entries) {
+    out[e.key.toString()] = _deepCloneVal(e.value);
+  }
+  return out;
+}
+
 /// Jogo legado -> (EstadoJogo canônico, EnvelopeRuntime). Só leitura do Jogo.
 ProjecaoBMV paraCanonico(Jogo j) {
   final canonico = EstadoJogo(
@@ -74,10 +109,8 @@ ProjecaoBMV paraCanonico(Jogo j) {
     mortoPego: {...j.mortoPego},
     rodadaEncerrada: j.rodadaEncerrada,
     duplaQueBateu: j.duplaQueBateu,
-    // ----- DERIVADO: jaComprou -> fase -----
-    // O legado NUNCA fica em `mortoPendente` em repouso (resolvido dentro de
-    // descartar/baixar). Logo, snapshot legado => compra | jogo.
-    fase: j.jaComprou ? FaseTurno.jogo : FaseTurno.compra,
+    // ----- DERIVADO + transporte: preserva as TRÊS fases -----
+    fase: _faseCanonicaDe(j.costuraFaseCanonica, j.jaComprou),
   );
 
   final envelope = EnvelopeRuntime(
@@ -94,8 +127,7 @@ ProjecaoBMV paraCanonico(Jogo j) {
     rodada: j.rodada,
     placar: {...j.placar},
     encerrada: j.encerrada,
-    pontosRodada:
-        j.pontosRodada == null ? null : Map<String, Object?>.from(j.pontosRodada!),
+    pontosRodada: j.pontosRodada == null ? null : _deepMapClone(j.pontosRodada!),
     // UI/SIDECAR
     apelidos: [...j.apelidos],
     avatares: [...j.avatares],
@@ -129,6 +161,8 @@ void aplicarEmJogo(Jogo alvo, EstadoJogo e, EnvelopeRuntime env) {
   alvo.duplaQueBateu = e.duplaQueBateu;
   // ----- DERIVADO: fase -> jaComprou (jogo|mortoPendente => comprou) -----
   alvo.jaComprou = e.fase != FaseTurno.compra;
+  // ----- TRANSPORTE: carrega a fase canônica EXATA (as três) na costura -----
+  alvo.costuraFaseCanonica = e.fase.name;
   // ----- RUNTIME ENVELOPE (privados via seam) -----
   alvo.costuraCont = env.cont;
   alvo.costuraLixoUnicoCompradoId = env.lixoUnicoCompradoId;
@@ -144,5 +178,5 @@ void aplicarEmJogo(Jogo alvo, EstadoJogo e, EnvelopeRuntime env) {
   alvo.encerrada = env.encerrada;
   alvo.pontosRodada = env.pontosRodada == null
       ? null
-      : Map<String, dynamic>.from(env.pontosRodada!);
+      : Map<String, dynamic>.from(_deepMapClone(env.pontosRodada!));
 }

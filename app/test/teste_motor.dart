@@ -3668,6 +3668,52 @@ void main() {
       expect(alvo.jaComprou, isTrue);
     });
 
+    test('C9-MAP-07 round-trip completo mortoPendente -> Jogo -> mortoPendente',
+        () {
+      final mp = _estadoMortoPendenteC9();
+      expect(mp.fase, FaseTurno.mortoPendente); // sanidade do estado de entrada
+      final alvo = Jogo.paraCostura();
+      aplicarEmJogo(alvo, mp, EnvelopeRuntime.vazio());
+      // transporte carrega a fase EXATA (não é perdida como no bug do C9-B);
+      expect(alvo.costuraFaseCanonica, 'mortoPendente');
+      expect(alvo.jaComprou, isTrue); // coerência legada (comprou)
+      final volta = paraCanonico(alvo).canonico;
+      expect(volta.fase, FaseTurno.mortoPendente); // preservado EXATO
+    });
+
+    test('C9-MAP-08 após round-trip, PegarMorto(viaDescarte:true) segue legal',
+        () {
+      final mp = _estadoMortoPendenteC9();
+      final spec = RuleSpec.canonica(Modalidade.aberto);
+      // legal ANTES do round-trip (estado de entrada é válido)
+      expect(acaoEhLegal(mp, 0, const PegarMorto(viaDescarte: true), spec),
+          isTrue);
+      final alvo = Jogo.paraCostura();
+      aplicarEmJogo(alvo, mp, EnvelopeRuntime.vazio());
+      final volta = paraCanonico(alvo).canonico;
+      expect(volta.fase, FaseTurno.mortoPendente);
+      // e CONTINUA legal DEPOIS do round-trip pela costura
+      expect(acaoEhLegal(volta, 0, const PegarMorto(viaDescarte: true), spec),
+          isTrue);
+    });
+
+    test('C9-MAP-09 pontosRodada é clone profundo (sem referência compartilhada)',
+        () {
+      final o = Jogo.paraCostura();
+      o.pontosRodada = {
+        'detalhe': {'de500': 1}
+      };
+      final proj = paraCanonico(o);
+      // mutar a ORIGEM não afeta o envelope
+      (o.pontosRodada!['detalhe'] as Map)['de500'] = 999;
+      expect((proj.envelope.pontosRodada!['detalhe'] as Map)['de500'], 1);
+      // aplicar em alvo; mutar o ENVELOPE não afeta o alvo
+      final alvo = Jogo.paraCostura();
+      aplicarEmJogo(alvo, proj.canonico, proj.envelope);
+      (proj.envelope.pontosRodada!['detalhe'] as Map)['de500'] = 777;
+      expect((alvo.pontosRodada!['detalhe'] as Map)['de500'], 1);
+    });
+
     test('C9-ADAP-CAN-01 AdaptadorCanonico delega às funções canônicas', () {
       const porta = AdaptadorCanonico();
       final e = _estadoCompraC9();
@@ -3851,6 +3897,37 @@ Jogo _origemRicaC9() {
   j.costuraRodadaContada = true;
   return j;
 }
+
+// Morto com EXATAMENTE 11 cartas (invariante exigido por pegarMorto).
+List<CartaSnapshot> _morto11C9() =>
+    [for (var i = 0; i < 11; i++) _csC9('mk$i', 'copas', '3')];
+
+// Estado canônico em mortoPendente onde PegarMorto(viaDescarte:true) é legal:
+// vez=0 (dupla 'nos'), mão do assento 0 vazia, morto disponível (11), dupla
+// ainda não pegou o morto, rodada aberta.
+EstadoJogo _estadoMortoPendenteC9() => EstadoJogo(
+      modalidade: Modalidade.aberto,
+      metaPontos: 1500,
+      monte: [_csC9('mo1', 'copas', '7')],
+      lixo: [_csC9('lx1', 'ouros', '4')],
+      mortos: [_morto11C9()],
+      maos: [
+        <CartaSnapshot>[],
+        [_csC9('b1', 'ouros', '5')],
+        [_csC9('c1', 'paus', '6')],
+        [_csC9('d1', 'espadas', '7')],
+      ],
+      jogosDupla: {
+        'nos': <List<CartaSnapshot>>[],
+        'eles': <List<CartaSnapshot>>[],
+      },
+      rodadasVulneravel: {'nos': 0, 'eles': 0},
+      primeiraBaixadaFeita: {'nos': false, 'eles': false},
+      vez: 0,
+      mortoPego: {'nos': false, 'eles': false},
+      rodadaEncerrada: false,
+      fase: FaseTurno.mortoPendente,
+    );
 
 // Round-trip: Jogo -> (canônico, envelope) -> Jogo alvo (sidecar via construção).
 Jogo _roundTripC9(Jogo origem) {

@@ -155,6 +155,17 @@ class Jogo {
   bool get costuraRodadaContada => _rodadaContada;
   set costuraRodadaContada(bool v) => _rodadaContada = v;
 
+  // C9-B-fix — ESTADO DE TRANSPORTE mínimo da FASE canônica (compra | jogo |
+  // mortoPendente). O legado só distingue 2 estados de turno (jaComprou), então
+  // `mortoPendente` (estado semântico real do RulesEngine, exigido por
+  // PegarMorto(viaDescarte)) seria perdido no round-trip. Este slot carrega a
+  // fase EXATA através da costura. NÃO é regra: nenhum método legado lê/escreve
+  // este campo; o fluxo OFF ignora-o por completo. `null` = sem transporte
+  // (snapshot legado puro; a projeção então deriva a fase de jaComprou).
+  String? _costuraFaseCanonica;
+  String? get costuraFaseCanonica => _costuraFaseCanonica;
+  set costuraFaseCanonica(String? v) => _costuraFaseCanonica = v;
+
   String _duplaKey(int a) => a % 2 == 0 ? 'nos' : 'eles';
   Carta? get lixoTopo => lixo.isEmpty ? null : lixo.last;
   bool get suaVez => vez == 0;
