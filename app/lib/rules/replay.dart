@@ -31,9 +31,22 @@ class Replay {
   /// replay quando o bug parte do meio de um turno). Default: início (compra).
   final FaseTurno faseInicial;
 
-  /// Invariante do Ajuste 3: um replay é reproduzível se tem seed determinística
-  /// OU um snapshot inicial completo. Nunca se inventa seed.
-  bool get reproduzivel => seed != null || estadoInicialSerializado != null;
+  /// Chaves de topo EXIGIDAS de um snapshot de runtime COMPLETO (contrato do
+  /// Replay; genérico — a camada `rules/` NÃO conhece o esquema interno de cada
+  /// parte, só que um snapshot reproduzível carrega o estado canônico E o
+  /// envelope de runtime). Preenchidas pela camada de sombra (motor/).
+  static const Set<String> chavesSnapshotRuntime = {'canonico', 'envelope'};
+
+  /// True se o snapshot inicial é COMPLETO (validável): contém as duas partes
+  /// exigidas (canônico + envelope). Um mapa arbitrário (ex.: {'a':1}) NÃO é.
+  bool get snapshotCompleto =>
+      estadoInicialSerializado != null &&
+      chavesSnapshotRuntime.every(estadoInicialSerializado!.containsKey);
+
+  /// Invariante do Ajuste 3 (corrigido no C9-C-fix): um replay é reproduzível se
+  /// tem seed determinística OU um snapshot COMPLETO validável — nunca por um
+  /// simples "mapa não nulo". Nunca se inventa seed.
+  bool get reproduzivel => seed != null || snapshotCompleto;
 
   const Replay({
     this.seed,

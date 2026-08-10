@@ -18,6 +18,7 @@ import '../rules/modalidade.dart';
 import '../rules/replay.dart';
 import '../rules/rule_spec.dart';
 import '../rules/sombra.dart';
+import 'envelope_runtime.dart';
 import 'motor_config.dart';
 import 'projecao_estado.dart';
 
@@ -226,12 +227,14 @@ class ModoSombra {
   }
 
   Replay _replay(ProjecaoBMV pre, TransacaoSombra tx) => Replay(
-        // seed NULA: produção não tem seed reproduzível -> snapshot completo.
+        // seed NULA: produção não tem seed reproduzível -> snapshot COMPLETO
+        // (EstadoJogo canônico + EnvelopeRuntime completo). Sem o envelope, uma
+        // divergência dependente dele (ex.: lixoTopoObrigatorio) não reproduz.
         versaoSpec: RuleSpec.versaoCanonica,
         modalidade: pre.canonico.modalidade,
         metaPontos: pre.canonico.metaPontos,
         acoes: tx.acoesCanonicas(pre.canonico),
-        estadoInicialSerializado: serializarEstado(pre.canonico),
+        estadoInicialSerializado: serializarProjecao(pre),
         faseInicial: pre.canonico.fase,
       );
 }
@@ -310,6 +313,62 @@ FaseTurno _faseDeName(String s) {
       return FaseTurno.compra;
   }
 }
+
+// ---- EnvelopeRuntime: serialização COMPLETA (runtime + sidecar) ----
+Map<String, Object?> serializarEnvelope(EnvelopeRuntime e) => {
+      'cont': e.cont,
+      'lixoUnicoCompradoId': e.lixoUnicoCompradoId,
+      'mortosConvertidos': e.mortosConvertidos,
+      'iniciadorRodada': e.iniciadorRodada,
+      'rodadaContada': e.rodadaContada,
+      'lixoTopoObrigatorio': e.lixoTopoObrigatorio,
+      'integridadeErro': e.integridadeErro,
+      'assentoQueBateu': e.assentoQueBateu,
+      'rodada': e.rodada,
+      'placar': {...e.placar},
+      'encerrada': e.encerrada,
+      'pontosRodada': e.pontosRodada == null
+          ? null
+          : {for (final en in e.pontosRodada!.entries) en.key: en.value},
+      'apelidos': [...e.apelidos],
+      'avatares': [...e.avatares],
+      'mascotes': [...e.mascotes],
+    };
+
+EnvelopeRuntime desserializarEnvelope(Map m) => EnvelopeRuntime(
+      cont: m['cont'] as int,
+      lixoUnicoCompradoId: m['lixoUnicoCompradoId'] as String?,
+      mortosConvertidos: m['mortosConvertidos'] as int,
+      iniciadorRodada: m['iniciadorRodada'] as int,
+      rodadaContada: m['rodadaContada'] as bool,
+      lixoTopoObrigatorio: m['lixoTopoObrigatorio'] as String?,
+      integridadeErro: m['integridadeErro'] as String?,
+      assentoQueBateu: m['assentoQueBateu'] as int?,
+      rodada: m['rodada'] as int,
+      placar:
+          (m['placar'] as Map).map((k, v) => MapEntry(k as String, v as int)),
+      encerrada: m['encerrada'] as bool,
+      pontosRodada: m['pontosRodada'] == null
+          ? null
+          : (m['pontosRodada'] as Map)
+              .map((k, v) => MapEntry(k as String, v as Object?)),
+      apelidos: [for (final x in (m['apelidos'] as List)) x as String],
+      avatares: [for (final x in (m['avatares'] as List)) x as String],
+      mascotes: [for (final x in (m['mascotes'] as List)) x as String],
+    );
+
+/// Snapshot COMPLETO da projeção (estado canônico + envelope), com as chaves
+/// exigidas por `Replay.chavesSnapshotRuntime`.
+Map<String, Object?> serializarProjecao(ProjecaoBMV p) => {
+      'canonico': serializarEstado(p.canonico),
+      'envelope': serializarEnvelope(p.envelope),
+    };
+
+/// Reconstrói a projeção COMPLETA a partir do snapshot do Replay.
+ProjecaoBMV desserializarProjecao(Map m) => ProjecaoBMV(
+      desserializarEstado(m['canonico'] as Map),
+      desserializarEnvelope(m['envelope'] as Map),
+    );
 
 /// Reconstrói um EstadoJogo a partir do snapshot do Replay (reprodução).
 EstadoJogo desserializarEstado(Map m) => EstadoJogo(

@@ -3840,8 +3840,8 @@ void main() {
       final rep = Replay.fromJson(rel.replayJson!);
       expect(rep.reproduzivel, isTrue);
       expect(rep.seed, isNull);
-      final est0 = desserializarEstado(rep.estadoInicialSerializado!);
-      expect(est0.assinatura(), pre.canonico.assinatura()); // snapshot fiel
+      final proj0 = desserializarProjecao(rep.estadoInicialSerializado!);
+      expect(proj0.canonico.assinatura(), pre.canonico.assinatura()); // fiel
       EstadoJogo reaplica(EstadoJogo e0) {
         var cur = e0;
         for (final a in rep.acoes) {
@@ -3850,25 +3850,61 @@ void main() {
         }
         return cur;
       }
-      expect(reaplica(est0).assinatura(), reaplica(pre.canonico).assinatura());
+      expect(reaplica(proj0.canonico).assinatura(),
+          reaplica(pre.canonico).assinatura());
     });
 
-    test('C9-SOMBRA-08 invariante Replay: seed OU snapshot completo', () {
+    test('C9-SOMBRA-08 invariante Replay: seed OU snapshot COMPLETO validável',
+        () {
+      final snap = serializarProjecao(_preDescarteC9C()); // {canonico, envelope}
+      // POSITIVO: snapshot completo -> reproduzível.
       expect(
-          const Replay(
+          Replay(
                   versaoSpec: 'x',
                   modalidade: Modalidade.aberto,
-                  estadoInicialSerializado: {'a': 1})
+                  estadoInicialSerializado: snap)
               .reproduzivel,
           isTrue);
+      // NEGATIVO: snapshot INCOMPLETO (só canônico, sem envelope).
       expect(
-          const Replay(versaoSpec: 'x', modalidade: Modalidade.aberto)
+          Replay(
+                  versaoSpec: 'x',
+                  modalidade: Modalidade.aberto,
+                  estadoInicialSerializado: {'canonico': snap['canonico']})
               .reproduzivel,
           isFalse);
+      // NEGATIVO: mapa arbitrário não conta como snapshot.
+      expect(
+          Replay(
+                  versaoSpec: 'x',
+                  modalidade: Modalidade.aberto,
+                  estadoInicialSerializado: {'a': 1}).reproduzivel,
+          isFalse);
+      // seed válida -> reproduzível mesmo sem snapshot.
       expect(
           const Replay(seed: 7, versaoSpec: 'x', modalidade: Modalidade.aberto)
               .reproduzivel,
           isTrue);
+    });
+
+    test(
+        'C9-SOMBRA-10 Replay de divergência DEPENDENTE do envelope reconstrói e reproduz',
+        () {
+      final spec = _specAbertoC9C();
+      final pre = _preObrigacaoLixoC9C(); // lixoTopoObrigatorio no envelope
+      final tx = _txDescartaOutraC9C(spec);
+      final rel = sombra.comparar(pre, tx);
+      // legado RECUSA (obrigação do topo do lixo); canônico descarta -> divergem.
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      final rep = Replay.fromJson(rel.replayJson!);
+      expect(rep.reproduzivel, isTrue);
+      // o ENVELOPE foi persistido no snapshot:
+      final proj = desserializarProjecao(rep.estadoInicialSerializado!);
+      expect(proj.envelope.lixoTopoObrigatorio, 'topo1');
+      // e reproduz a MESMA classificação a partir do snapshot reconstruído
+      // (se o envelope tivesse se perdido, o legado não recusaria e mudaria):
+      final rel2 = sombra.comparar(proj, tx);
+      expect(rel2.classificacao, rel.classificacao);
     });
 
     test('C9-SOMBRA-09 sombra SEPARADA da autoridade (flag)', () {
@@ -4123,4 +4159,35 @@ TransacaoSombra _txInjecaoC9C(RuleSpec spec, {String? exc}) => TransacaoSombra(
       excEsperada: exc,
       aplicarLegado: (j) => j.descartar(0, 'h2') == null,
       acoesCanonicas: (e) => const [Descartar('h1')],
+    );
+
+// Pré-estado cuja DIVERGÊNCIA depende de campo do EnvelopeRuntime:
+// lixoTopoObrigatorio='topo1' (em envelope) + 'topo1' na mão. No legado, o
+// descarte de 'other' é RECUSADO (tem de usar o topo antes); no canônico (que
+// não modela a obrigação) é aceito -> divergem. Só reproduz se o envelope for
+// persistido no snapshot do Replay.
+ProjecaoBMV _preObrigacaoLixoC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [Carta('topo1', 'copas', '5', false), Carta('other', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  j.lixoTopoObrigatorio = 'topo1';
+  return paraCanonico(j);
+}
+
+TransacaoSombra _txDescartaOutraC9C(RuleSpec spec) => TransacaoSombra(
+      rotulo: 'descartaOutra(obrigacao do topo)',
+      assento: 0,
+      spec: spec,
+      excEsperada: null,
+      aplicarLegado: (j) => j.descartar(0, 'other') == null,
+      acoesCanonicas: (e) => const [Descartar('other')],
     );
