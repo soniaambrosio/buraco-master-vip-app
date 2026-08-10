@@ -205,9 +205,82 @@ seis fixes do PR #4**.
 
 ### 5.6 O que continua pendente
 
-A conciliação dos seis arquivos divergentes de
-`integracao/motores-torneios-partidas-v1` (`motor_partida`, `presenca`,
-`sessao_reconexao`, `snapshot_partida`, `visao_assento`, `diagnostico`, ~460
-linhas) **não foi iniciada**, por decisão explícita. Junto dela ficam
-`app/lib/integracao/` e `app/lib/torneios/match_contract.dart`, que ainda não
-existem nesta branch.
+Nada deste bloco. A conciliação Partidas ↔ Torneios está na §6.
+
+---
+
+## 6. Conciliação Partidas ↔ Torneios (10/08/2026)
+
+Conciliação **seletiva** de `integracao/motores-torneios-partidas-v1`. Sem merge
+integral. Regra aplicada: esta branch é a fonte da verdade para os seis fixes de
+resiliência do PR #4, e nada da v1 entra por cima deles.
+
+### 6.1 Mapa dos seis arquivos divergentes
+
+O resultado é uniforme e vale registrar: **nenhum dos seis tinha algo a trazer.**
+A divergência de ~460 linhas era a v1 estar atrás, não à frente.
+
+| Arquivo | Diferença | A trazer | A descartar | Risco de regressão | Teste que protege |
+|---|---|---|---|---|---|
+| `diagnostico.dart` | v1 tem `paraJsonl()` com `toJson().toString()`; aqui é `jsonEncode` | nada | a versão da v1 — `Map.toString()` não é JSON (`{a: 1}`), não escapa aspas, e um erro com aspas quebraria o despejo inteiro | alto se trazido: log de suporte ilegível | grupo JSONL de `teste_motor_resiliencia` |
+| `motor_partida.dart` | v1 **limpa a janela de idempotência** em `iniciarNovaRodada()`; v1 aceita `partidaId`/`versaoEstado` ausentes caindo para `''`/`0` | nada (o `canastrasLimpas` já veio na §5.2) | ambos — são dois dos seis fixes | altíssimo: reenvio pós-queda seria aplicado 2ª vez em outro baralho; partida restaurada se diria outra e no começo | grupos IDEM e ESTRITO/SNAP |
+| `presenca.dart` | v1 tem `ParametrosPresenca.deJson` com defaults fixos; aqui há `deJson(raw, {base})` | nada | a forma antiga — aqui o servidor pode mandar só os campos que mudou | médio: parâmetros parciais do servidor zerariam o resto | grupo de presença |
+| `sessao_reconexao.dart` | v1 tem `aplicarVisaoDoServidor(bruta)` e `aoReconectar()` devolvendo lista; aqui há `aplicarVisaoDoServidor(bruta, {retomada})`, que separa `RETOMADA_APLICADA` de `VISAO_APLICADA` | nada | a forma antiga | médio: perda da distinção no diário | grupo FUGA/reconexão |
+| `snapshot_partida.dart` | v1 aplica o bloco `interno` direto; aqui cada escalar é validado antes de qualquer coisa ser aplicada | nada | a forma antiga | alto: snapshot corrompido reabriria em silêncio | grupo ESTRITO |
+| `visao_assento.dart` | v1 **não tem nada** que esta branch não tenha | nada | — | nenhum | grupo VISAO |
+
+Nenhum conflito de regra ou de comportamento foi encontrado, então a conciliação
+seguiu de forma aditiva, como autorizado.
+
+### 6.2 O que foi trazido
+
+Fechamento de dependências medido a partir dos imports reais, não presumido:
+
+- `app/lib/integracao/` — `adaptador_partida_torneio`, `registro_partidas`,
+  `vinculo_mesa` (3 arquivos novos);
+- `app/lib/torneios/` — 16 arquivos novos, mais `assets_registry.dart`;
+- `app/data/torneios/tournamentTemplates.seed.json` (novo) e
+  `assets_registry.seed.json` (+7 linhas).
+
+`assets_registry.dart` e seu seed são **um par**: esta branch estava atrás em
+`cover_closing_card`, e trazer só o `.dart` faz o registro recusar o seed na
+carga. É o único arquivo já existente que a conciliação alterou, e a alteração é
+aditiva.
+
+A camada de integração **não importa** `presenca`, `sessao_reconexao`,
+`visao_assento` nem `snapshot_partida` — é por isso que a superfície real da
+conciliação é muito menor que a divergência bruta.
+
+### 6.3 Um ajuste em teste da v1
+
+`INT-08` afirmava `d.impressaoEstado == motor.impressao`. Foi escrito antes da
+decisão de o desfecho usar o fingerprint completo, e apontava para a impressão do
+`Jogo` — que não distingue dois desfechos de mesmo placar e canastras diferentes.
+Passou a apontar para `impressaoPartida`, com o motivo escrito no próprio teste.
+É o único teste da v1 alterado.
+
+### 6.4 Execução
+
+```
+flutter analyze --no-fatal-infos --no-fatal-warnings ... 0 ERROS
+   105 issues — as mesmas da baseline; a camada nova não introduziu nenhuma.
+
+teste_motor ................................ 132 verdes
+teste_motor_resiliencia .................... 196 verdes
+teste_encerramento .........................  10 verdes
+torneios/reward_grants .....................  80 verdes
+torneios/motor_torneios .................... 179 verdes
+integracao/teste_integracao_motores ........  64 verdes
+                                             ─────────────
+                                             661 verdes
+```
+
+O workflow de CI passou a copiar e executar as duas suítes novas, com gates e
+evidência próprios.
+
+### 6.5 O que continua pendente
+
+- O portão de CI segue **NÃO EXECUTADO** pelo motivo da §3.
+- A infraestrutura Firebase (`functions/`, `firestore.rules`) continua fora desta
+  branch, então o job de Emulator Suite segue NÃO EXECUTADO com motivo.
+- Fluxo de Mesas não faz parte desta OS e não foi tocado nesta worktree.
