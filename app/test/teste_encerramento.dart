@@ -5,9 +5,13 @@
 // dupla vencedora vem do PLACAR (não de quem bateu na última rodada), que o
 // desfecho sobrevive a toJson/deJson e que ele NÃO carrega nenhum id de carta.
 //
-// STATUS DE EXECUÇÃO: escrita na sessão de nuvem, que não roda o toolchain
-// Flutter/Dart (rede bloqueada). Ainda NÃO EXECUTADA aqui (OS §18). A validação
-// é do CI (GitHub Actions) / máquina da Sônia.
+// STATUS DE EXECUÇÃO: EXECUTADA em 10/08/2026 na máquina da Sônia, com o mesmo
+// harness do CI (flutter create + overlay de `app/lib`) — Flutter 3.41.4 /
+// Dart 3.11.1. 7 testes verdes, junto de teste_motor (132),
+// teste_motor_resiliencia (181) e torneios/reward_grants (80), com
+// `flutter analyze` sem nenhum ERRO. O CI (GitHub Actions) segue pendente:
+// neste repositório o workflow só é dispachável depois de chegar à branch
+// padrão, e push não dispara run (OS §18).
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:buraco_master_vip/mesa.dart';
