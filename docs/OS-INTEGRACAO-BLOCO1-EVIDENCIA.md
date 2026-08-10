@@ -259,21 +259,58 @@ decisão de o desfecho usar o fingerprint completo, e apontava para a impressão
 Passou a apontar para `impressaoPartida`, com o motivo escrito no próprio teste.
 É o único teste da v1 alterado.
 
-### 6.4 Execução
+### 6.4 Execução — evidência local detalhada
+
+Overlay reconstruído do zero a partir do estado commitado (`flutter create` +
+cópia de `app/lib`, `app/test` e `app/data`), para a evidência não depender de
+resíduo de execução anterior.
+
+**Toolchain:** Flutter 3.41.4 (canal stable, engine `e4b8dca3f1`) · Dart 3.11.1 ·
+Windows 11 x64. O CI pina Flutter 3.44.8 — a divergência segue registrada na §4.
+
+**1. Análise estática**
 
 ```
-flutter analyze --no-fatal-infos --no-fatal-warnings ... 0 ERROS
-   105 issues — as mesmas da baseline; a camada nova não introduziu nenhuma.
-
-teste_motor ................................ 132 verdes
-teste_motor_resiliencia .................... 196 verdes
-teste_encerramento .........................  10 verdes
-torneios/reward_grants .....................  80 verdes
-torneios/motor_torneios .................... 179 verdes
-integracao/teste_integracao_motores ........  64 verdes
-                                             ─────────────
-                                             661 verdes
+$ flutter analyze --no-fatal-infos --no-fatal-warnings
+105 issues found (5.9s) — exit 0
 ```
+
+| Severidade | Qtd | Onde |
+|---|---|---|
+| **error** | **0** | — |
+| warning | 13 | `main.dart` (3 imports não usados), `mesa.dart` (5), `screens/` (5) |
+| info | 92 | `screens/` — `deprecated_member_use`, `unnecessary_underscores` |
+
+**Zero issues** em `lib/motor/`, `lib/integracao/` e `lib/torneios/`. As 105 são
+pré-existentes na camada de UI e idênticas à baseline do Bloco 1.
+
+**2 a 6. Suítes** — comando `flutter test <arquivo> --reporter expanded`:
+
+| # | Suíte | Testes | Verdes | Falhas | Pulados | Tempo | Status |
+|---|---|---|---|---|---|---|---|
+| 2 | `test/teste_motor.dart` | 132 | 132 | 0 | 0 | 21,6 s | exit 0 |
+| 2 | `test/teste_motor_resiliencia.dart` | 196 | 196 | 0 | 0 | 8,3 s | exit 0 |
+| 3 | `test/teste_encerramento.dart` | 10 | 10 | 0 | 0 | 6,5 s | exit 0 |
+| 4 | `test/integracao/teste_integracao_motores.dart` | 64 | 64 | 0 | 0 | 8,2 s | exit 0 |
+| 5 | `test/torneios/motor_torneios_test.dart` | 179 | 179 | 0 | 0 | 7,7 s | exit 0 |
+| 6 | `test/torneios/reward_grants_test.dart` | 80 | 80 | 0 | 0 | 6,9 s | exit 0 |
+| | **Total** | **661** | **661** | **0** | **0** | **~59 s** | |
+
+Nenhum teste pulado (`skip`) em nenhuma suíte. As seis são todas as suítes
+versionadas em `app/test` — conferido com `git ls-files app/test`, não por
+inspeção visual.
+
+**Defeito encontrado e corrigido nesta rodada.** `ENCERR-07` reprovou, e a causa
+não era o código: a varredura de vazamento procurava o padrão `c<número>` no
+desfecho serializado **inteiro**, inclusive `impressaoEstado`, que é um FNV-1a
+hexadecimal. O hash `23a6c14704b2117e` contém `c14704`. Como o baralho é
+embaralhado a cada execução, o teste passava ou falhava **por sorte** — os verdes
+anteriores foram acaso. Corrigido em `4a2ded4`: o fingerprint sai da varredura
+(hash é função de mão única e não pode vazar identidade de carta; que ele é o
+fingerprint certo já está provado em ENCERR-09 e nos IMPP), e a varredura passa a
+conferir os **108 ids reais** daquela partida, no estilo dos testes FUGA, além de
+manter a regex sobre um payload sem hash. Estabilidade confirmada em **8
+execuções seguidas**.
 
 O workflow de CI passou a copiar e executar as duas suítes novas, com gates e
 evidência próprios.
