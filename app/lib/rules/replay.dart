@@ -9,7 +9,10 @@ import 'modalidade.dart';
 
 class Replay {
   /// Semente da distribuição determinística (Jogo(..., seed:)).
-  final int seed;
+  /// C9-C (Ajuste 3): OPCIONAL. Produção usa `Random()` sem seed reproduzível,
+  /// então um replay de runtime reproduz-se pelo `estadoInicialSerializado`
+  /// completo. Invariante: `reproduzivel` = seed != null OU snapshot completo.
+  final int? seed;
 
   /// Versão da RuleSpec sob a qual o replay foi gravado (RuleSpec.versaoCanonica).
   final String versaoSpec;
@@ -28,8 +31,12 @@ class Replay {
   /// replay quando o bug parte do meio de um turno). Default: início (compra).
   final FaseTurno faseInicial;
 
+  /// Invariante do Ajuste 3: um replay é reproduzível se tem seed determinística
+  /// OU um snapshot inicial completo. Nunca se inventa seed.
+  bool get reproduzivel => seed != null || estadoInicialSerializado != null;
+
   const Replay({
-    required this.seed,
+    this.seed,
     required this.versaoSpec,
     required this.modalidade,
     this.metaPontos = 1500,
@@ -39,7 +46,7 @@ class Replay {
   });
 
   Map<String, dynamic> toJson() => {
-        'seed': seed,
+        if (seed != null) 'seed': seed,
         'versaoSpec': versaoSpec,
         'modalidade': modalidade.texto,
         'metaPontos': metaPontos,
@@ -61,7 +68,7 @@ class Replay {
   }
 
   static Replay fromJson(Map<String, dynamic> j) => Replay(
-        seed: j['seed'] as int,
+        seed: j['seed'] as int?,
         versaoSpec: j['versaoSpec'] as String,
         modalidade: Modalidade.deTexto(j['modalidade'] as String),
         metaPontos: (j['metaPontos'] as int?) ?? 1500,

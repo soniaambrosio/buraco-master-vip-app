@@ -37,6 +37,8 @@ import 'package:buraco_master_vip/motor/projecao_estado.dart';
 import 'package:buraco_master_vip/motor/adaptador_canonico.dart';
 import 'package:buraco_master_vip/motor/adaptador_legado.dart';
 import 'package:buraco_master_vip/motor/composicao.dart';
+// C9-C — modo sombra + comparador.
+import 'package:buraco_master_vip/motor/modo_sombra.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -3767,6 +3769,119 @@ void main() {
       expect(portaDoAmbiente(), isA<AdaptadorLegado>());
     });
   });
+
+  // ===================================================================
+  // C9-C — modo sombra + comparador. Autoridade OFF; sombra separada da
+  // autoridade; execução dupla sem efeito (opera sobre clones). Pipeline:
+  // execução dupla -> normalização -> comparação -> classificação
+  // (CONVERGE | EXC-01..04 | INESPERADA) -> diff -> Replay (por snapshot).
+  // ===================================================================
+  group('C9-C — modo sombra + comparador', () {
+    const sombra = ModoSombra();
+
+    test('C9-SOMBRA-01 comprarMonte CONVERGE (normaliza + compara)', () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preComprarMonteC9C(), TransacaoSombra.comprarMonte(0, spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+      expect(rel.assinaturaLegado, rel.assinaturaCanonico);
+      expect(rel.replayJson, isNull);
+    });
+
+    test('C9-SOMBRA-02 descarte normal CONVERGE', () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preDescarteC9C(), TransacaoSombra.descartar(0, 'h2', spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+    });
+
+    test('C9-SOMBRA-03 injeção de divergência -> INESPERADA + diff + Replay',
+        () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(_preDescarteC9C(), _txInjecaoC9C(spec));
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      expect(rel.diff, isNotEmpty);
+      expect(rel.replayJson, isNotNull);
+    });
+
+    test('C9-SOMBRA-04 divergência REAL (monte vazio+morto): canônico RECUSA',
+        () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preMonteVazioMortoC9C(), TransacaoSombra.comprarMonte(0, spec));
+      expect(rel.classificacao, ClassificacaoSombra.canonicoRecusou);
+      expect(rel.replayJson, isNotNull);
+    });
+
+    test('C9-SOMBRA-05 divergência declarada como EXC conhecida -> excecao', () {
+      final spec = _specAbertoC9C();
+      final rel =
+          sombra.comparar(_preDescarteC9C(), _txInjecaoC9C(spec, exc: 'EXC-01'));
+      expect(rel.classificacao, ClassificacaoSombra.excecao);
+      expect(rel.idExcecao, 'EXC-01');
+      expect(rel.replayJson, isNull);
+    });
+
+    test('C9-SOMBRA-06 EXC id DESCONHECIDO não esconde: continua INESPERADA',
+        () {
+      final spec = _specAbertoC9C();
+      final rel =
+          sombra.comparar(_preDescarteC9C(), _txInjecaoC9C(spec, exc: 'EXC-99'));
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      expect(rel.replayJson, isNotNull);
+    });
+
+    test('C9-SOMBRA-07 Replay reproduzível por snapshot', () {
+      final spec = _specAbertoC9C();
+      final pre = _preDescarteC9C();
+      final rel = sombra.comparar(pre, _txInjecaoC9C(spec));
+      final rep = Replay.fromJson(rel.replayJson!);
+      expect(rep.reproduzivel, isTrue);
+      expect(rep.seed, isNull);
+      final est0 = desserializarEstado(rep.estadoInicialSerializado!);
+      expect(est0.assinatura(), pre.canonico.assinatura()); // snapshot fiel
+      EstadoJogo reaplica(EstadoJogo e0) {
+        var cur = e0;
+        for (final a in rep.acoes) {
+          final r = aplicarLegal(cur, cur.vez, a, spec);
+          if (r.legal) cur = r.proximoEstado!;
+        }
+        return cur;
+      }
+      expect(reaplica(est0).assinatura(), reaplica(pre.canonico).assinatura());
+    });
+
+    test('C9-SOMBRA-08 invariante Replay: seed OU snapshot completo', () {
+      expect(
+          const Replay(
+                  versaoSpec: 'x',
+                  modalidade: Modalidade.aberto,
+                  estadoInicialSerializado: {'a': 1})
+              .reproduzivel,
+          isTrue);
+      expect(
+          const Replay(versaoSpec: 'x', modalidade: Modalidade.aberto)
+              .reproduzivel,
+          isFalse);
+      expect(
+          const Replay(seed: 7, versaoSpec: 'x', modalidade: Modalidade.aberto)
+              .reproduzivel,
+          isTrue);
+    });
+
+    test('C9-SOMBRA-09 sombra SEPARADA da autoridade (flag)', () {
+      expect(
+          sombra.habilitado(
+              const MotorConfig(sombraAtiva: true, canonicoAtivo: false)),
+          isTrue);
+      expect(
+          sombra.habilitado(
+              const MotorConfig(sombraAtiva: false, canonicoAtivo: true)),
+          isFalse);
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -3940,3 +4055,72 @@ Jogo _roundTripC9(Jogo origem) {
   aplicarEmJogo(alvo, proj.canonico, proj.envelope);
   return alvo;
 }
+
+// ===== C9-C — helpers de teste (modo sombra) =====
+
+RuleSpec _specAbertoC9C() => RuleSpec.canonica(Modalidade.aberto);
+
+// Pré-estado: fase compra, monte não-vazio (ComprarMonte legal e convergente).
+ProjecaoBMV _preComprarMonteC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '7', false), Carta('mo2', 'ouros', '8', false)];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Pré-estado: fase jogo, mão com 2 cartas (descarte normal, converge).
+ProjecaoBMV _preDescarteC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Pré-estado: fase compra, monte VAZIO + morto disponível. Divergência real:
+// legado converte morto->monte e compra; canônico RECUSA (monte vazio).
+ProjecaoBMV _preMonteVazioMortoC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'ABERTO';
+  j.monte = <Carta>[];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'copas', '3', false)]
+  ];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Transação injetada: legado descarta 'h2', canônico descarta 'h1' -> divergem.
+TransacaoSombra _txInjecaoC9C(RuleSpec spec, {String? exc}) => TransacaoSombra(
+      rotulo: 'injecao(descarta h2 legado x h1 canonico)',
+      assento: 0,
+      spec: spec,
+      excEsperada: exc,
+      aplicarLegado: (j) => j.descartar(0, 'h2') == null,
+      acoesCanonicas: (e) => const [Descartar('h1')],
+    );

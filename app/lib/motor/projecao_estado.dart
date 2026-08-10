@@ -96,7 +96,12 @@ ProjecaoBMV paraCanonico(Jogo j) {
     // ----- CANÔNICO (1:1) -----
     modalidade: _modDe(j.modalidade),
     metaPontos: j.metaPontos,
-    monte: _lcs(j.monte),
+    // C9-C: convenção do TOPO do monte difere entre os motores — legado compra
+    // `monte.removeAt(0)` (topo = frente), canônico `monte.removeLast()` (topo =
+    // último). Para representar a MESMA próxima-compra, o monte é REVERTIDO na
+    // projeção (e revertido de volta em aplicarEmJogo). Round-trip permanece
+    // exato; sem isto os dois motores comprariam cartas diferentes.
+    monte: _lcs(j.monte).reversed.toList(),
     lixo: _lcs(j.lixo),
     mortos: _mcs(j.mortos),
     maos: _mcs(j.maos),
@@ -146,7 +151,9 @@ void aplicarEmJogo(Jogo alvo, EstadoJogo e, EnvelopeRuntime env) {
   // ----- CANÔNICO -----
   alvo.modalidade = _modTexto(e.modalidade);
   alvo.metaPontos = e.metaPontos;
-  alvo.monte = _lc(e.monte);
+  // C9-C: reverte de volta o monte (ver paraCanonico) — topo canônico (último)
+  // volta a ser o topo legado (frente). Round-trip exato.
+  alvo.monte = _lc(e.monte).reversed.toList();
   alvo.lixo = _lc(e.lixo);
   alvo.mortos = _mc(e.mortos);
   alvo.maos = _mc(e.maos);
