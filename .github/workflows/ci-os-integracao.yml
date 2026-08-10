@@ -73,7 +73,7 @@ jobs:
 
       - name: Copiar suítes de teste + seeds de torneios
         run: |
-          mkdir -p app_build/test/torneios/data
+          mkdir -p app_build/test/torneios/data app_build/test/integracao
           cp app/test/teste_motor.dart app_build/test/
           cp app/test/teste_motor_resiliencia.dart app_build/test/
           cp app/test/torneios/reward_grants_test.dart app_build/test/torneios/
@@ -81,6 +81,16 @@ jobs:
           cp app/data/torneios/reward_policies.seed.json app_build/test/torneios/data/
           # Suíte do encerramento (Bloco 1) — copiada só quando já existir.
           if [ -f app/test/teste_encerramento.dart ]; then cp app/test/teste_encerramento.dart app_build/test/; fi
+          # Bloco Partidas <-> Torneios: as duas suítes e o seed de templates.
+          if [ -f app/data/torneios/tournamentTemplates.seed.json ]; then
+            cp app/data/torneios/tournamentTemplates.seed.json app_build/test/torneios/data/
+          fi
+          if [ -f app/test/torneios/motor_torneios_test.dart ]; then
+            cp app/test/torneios/motor_torneios_test.dart app_build/test/torneios/
+          fi
+          if [ -f app/test/integracao/teste_integracao_motores.dart ]; then
+            cp app/test/integracao/teste_integracao_motores.dart app_build/test/integracao/
+          fi
           # O widget_test.dart do scaffold tem erro pré-existente conhecido; removê-lo
           # evita que ele derrube `flutter analyze` sem relação com o motor.
           rm -f app_build/test/widget_test.dart
@@ -95,7 +105,13 @@ jobs:
           if [ -f app_build/test/teste_encerramento.dart ]; then
             ( cd app_build && flutter test test/teste_encerramento.dart --reporter expanded ) 2>&1 | tee t_encerr.log; echo ${PIPESTATUS[0]} > exit_encerr
           fi
-          echo "== exit codes =="; for k in analyze motor resil torneios encerr; do [ -f exit_$k ] && echo "$k=$(cat exit_$k)"; done
+          if [ -f app_build/test/torneios/motor_torneios_test.dart ]; then
+            ( cd app_build && flutter test test/torneios/motor_torneios_test.dart --reporter expanded ) 2>&1 | tee t_mtorneios.log; echo ${PIPESTATUS[0]} > exit_mtorneios
+          fi
+          if [ -f app_build/test/integracao/teste_integracao_motores.dart ]; then
+            ( cd app_build && flutter test test/integracao/teste_integracao_motores.dart --reporter expanded ) 2>&1 | tee t_integr.log; echo ${PIPESTATUS[0]} > exit_integr
+          fi
+          echo "== exit codes =="; for k in analyze motor resil torneios encerr mtorneios integr; do [ -f exit_$k ] && echo "$k=$(cat exit_$k)"; done
 
       - name: "3 — Emulator Suite Firebase (Rules + Functions + Auth), quando aplicável"
         run: |
@@ -150,7 +166,7 @@ jobs:
             echo "- data UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo
             echo "## Exit codes (0 = verde; ausente = não rodou)"
-            for k in analyze motor resil torneios encerr emul; do [ -f exit_$k ] && echo "- ${k}: \`$(cat exit_$k)\`"; done
+            for k in analyze motor resil torneios encerr mtorneios integr emul; do [ -f exit_$k ] && echo "- ${k}: \`$(cat exit_$k)\`"; done
             if [ -f status_emul ]; then echo "- emuladores: **$(cat status_emul)** (ver seção abaixo)"; fi
             echo
             echo "## flutter analyze (tail)"; echo '```'; tail -n 60 analyze.log 2>/dev/null; echo '```'
@@ -158,6 +174,8 @@ jobs:
             echo "## teste_motor_resiliencia (tail)"; echo '```'; tail -n 40 t_resil.log 2>/dev/null; echo '```'
             echo "## torneios/reward_grants (tail)"; echo '```'; tail -n 20 t_torneios.log 2>/dev/null; echo '```'
             if [ -f t_encerr.log ]; then echo "## teste_encerramento (tail)"; echo '```'; tail -n 40 t_encerr.log; echo '```'; fi
+            if [ -f t_mtorneios.log ]; then echo "## torneios/motor_torneios (tail)"; echo '```'; tail -n 20 t_mtorneios.log; echo '```'; fi
+            if [ -f t_integr.log ]; then echo "## integracao/teste_integracao_motores (tail)"; echo '```'; tail -n 40 t_integr.log; echo '```'; fi
             echo "## Emuladores Firebase"; echo '```'; tail -n 40 emul.log 2>/dev/null; echo '```'
           } > "$EV"
           git clone --depth 1 "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" evrepo
@@ -179,7 +197,7 @@ jobs:
         run: |
           fail=0
           # Gates reais: só entram os que produziram exit code (rodaram de fato).
-          for k in analyze motor resil torneios encerr emul; do
+          for k in analyze motor resil torneios encerr mtorneios integr emul; do
             if [ -f exit_$k ]; then v=$(cat exit_$k); echo "gate $k=$v"; [ "$v" = "0" ] || fail=1; fi
           done
           if [ -f status_emul ]; then echo "emuladores: $(cat status_emul) (não conta como verde nem como falha)"; fi
