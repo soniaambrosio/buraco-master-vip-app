@@ -33,7 +33,6 @@
 import '../mesa.dart';
 import 'comando_partida.dart';
 import 'diagnostico.dart';
-import 'encerramento_partida.dart';
 import 'presenca.dart';
 import 'relogio_turno.dart';
 import 'snapshot_partida.dart';
@@ -480,18 +479,13 @@ class MotorPartida {
   }
 
   // -------------------------------------------------------- encerramento
-
-  /// Porta canônica de encerramento — ver `encerramento_partida.dart`.
-  ///
-  /// `null` enquanto a partida não encerrou. É o ÚNICO contrato que um
-  /// consumidor externo (ex.: adaptador de torneios, §4) deve ler para saber o
-  /// desfecho: ninguém lê `jogo` para descobrir quem venceu. Derrama só placar,
-  /// meta, modalidade e a dupla vencedora — nenhuma carta.
-  EncerramentoPartida? get encerramento => EncerramentoPartida.doJogo(
-        jogo,
-        partidaId: partidaId,
-        versaoEstado: _versao,
-      );
+  //
+  // A porta canônica de encerramento NÃO é um getter daqui: é
+  // `capturarDesfecho(motor, ...)`, em `desfecho_partida.dart`. Fica lá, e não
+  // aqui, porque o desfecho precisa de `encerradaEm` e da eventual
+  // `OrdemDeEncerramento` — dados que vêm da autoridade, não do motor. Um getter
+  // sem parâmetro teria que ler relógio ou inventar motivo, e é exatamente isso
+  // que o contrato proíbe.
 
   // ------------------------------------------------------------------ visão
 
