@@ -70,14 +70,40 @@ async function lerEdicao(tournamentId: string, editionId: string) {
   return doc.data() as Record<string, unknown>;
 }
 
-/// Monta o retrato de elegibilidade do jogador.
+/// Monta o retrato de elegibilidade do jogador a partir das FONTES REAIS.
 ///
-/// Le de varias colecoes DE PROPOSITO em vez de confiar num campo denormalizado
-/// no perfil: um `nivel` copiado para o documento do jogador seria escrito pelo
-/// cliente em algum momento e viraria porta para autoconceder elegibilidade.
+/// O QUE MUDOU AQUI, E POR QUE (correcao P0-1)
+///
+/// Esta funcao lia `players/{uid}` — uma colecao que NENHUM produtor alimenta.
+/// Nao havia Function, seed ou script que a escrevesse, e nao havia `match
+/// /players` em `firestore.rules`, entao nem o cliente a criava. O documento
+/// nunca existia, `dados` era sempre `{}`, e as duas flags que decidem quem joga
+/// nasciam ambas `false`:
+///
+///   assinaturaAtiva  -> todo assinante VIP era recusado em torneio VIP
+///   suspenso         -> todo jogador suspenso continuava se inscrevendo
+///
+/// A correcao nao foi criar `players/{uid}` e copiar campos para la. Cada dominio
+/// continua dono do seu estado e o retrato e COMPOSTO na leitura:
+///
+///   playerModeration/{uid}    dono: moderacao   (suspensao, prazo, permanencia)
+///   playerEntitlements/{uid}  dono: billing     (estado do VIP e ate quando)
+///
+/// A composicao — inclusive as duas perguntas temporais, "a sancao ainda vale?" e
+/// "o VIP ainda vale?" — e do DOMINIO Dart, via `comporElegibilidade`. Esta
+/// camada le documento e entrega; nao interpreta nenhum dos dois. Foi
+/// interpretar por conta propria, com nome de campo escolhido aqui, que produziu
+/// o defeito.
+///
+/// `nivel`, `posicaoRanking` e `conquistas` NAO tem produtor nesta arvore
+/// (ranking, nivel e conquista nao tem autoridade que os publique) e por isso vao
+/// ausentes. O dominio ja recusa os criterios correspondentes por
+/// `dado_indisponivel` — que e o comportamento que o sistema ja tinha na pratica,
+/// agora declarado em vez de acidental.
 async function montarPerfil(userId: string): Promise<Record<string, unknown>> {
-  const [perfil, convites, historico] = await Promise.all([
-    db().collection("players").doc(userId).get(),
+  const [moderacao, entitlement, convites, historico] = await Promise.all([
+    db().collection("playerModeration").doc(userId).get(),
+    db().collection("playerEntitlements").doc(userId).get(),
     db().collection("closingInvites")
       .where("userId", "==", userId)
       .where("status", "in", ["convite_aceito", "confirmado"])
@@ -87,7 +113,6 @@ async function montarPerfil(userId: string): Promise<Record<string, unknown>> {
       .get(),
   ]);
 
-  const dados = perfil.data() ?? {};
   const titulos = new Set<string>();
   const participacoes = new Set<string>();
   const temporadas = new Set<string>();
@@ -100,20 +125,18 @@ async function montarPerfil(userId: string): Promise<Record<string, unknown>> {
     }
   }
 
-  return {
+  return dominio.comporElegibilidade({
     userId,
-    nivel: dados.nivel ?? null,
-    posicaoRanking: dados.posicaoRanking ?? null,
-    assinaturaAtiva: dados.assinaturaAtiva === true,
+    agora: agoraUtc(),
+    moderacao: moderacao.exists ? moderacao.data() : null,
+    entitlement: entitlement.exists ? entitlement.data() : null,
     // O convite habilita o torneio de encerramento; a colecao guarda a temporada,
     // nao o torneio, entao a traducao acontece aqui.
     convitesAtivos: convites.empty ? [] : ["encerramento_anual"],
-    conquistas: Array.isArray(dados.conquistas) ? dados.conquistas : [],
     participacoes: [...participacoes],
     titulos: [...titulos],
     temporadasAtivas: [...temporadas],
-    suspenso: dados.suspenso === true,
-  };
+  }) as unknown as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------

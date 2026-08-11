@@ -260,6 +260,55 @@ service cloud.firestore {
     }
 
     // =====================================================================
+    // BLOCO 2b/3 — ENTITLEMENT VIP
+    // origem: correcao/p0-elegibilidade-vip-lifecycle (esta OS)
+    //
+    // FONTE CANONICA do direito VIP. Bloco proprio, e nao um acrescimo ao de
+    // `usuarios/`, porque o cabecalho deste arquivo declara `usuarios/` como
+    // namespace LEGADO com migracao propria: fazer um consumidor novo depender
+    // dele contrariaria decisao ja registrada.
+    // =====================================================================
+
+    // O ESTADO CONSOLIDADO. O jogador le o proprio para a tela poder dizer
+    // "seu VIP vale ate tal dia" em vez de falhar sem explicacao — mesma razao
+    // pela qual `playerModeration/{uid}` e legivel pelo dono.
+    //
+    // Leitura restrita ao dono tambem impede a enumeracao de quem paga.
+    //
+    // ESCRITA FECHADA PARA TODOS, INCLUSIVE O DONO E O ADMIN. E aqui que morre
+    // a tentativa de se autoconceder VIP, de esticar `expiraEm`, de trocar
+    // `produtoId` ou de desfazer uma revogacao. Quem escreve e a Cloud Function
+    // de Billing, com o Admin SDK, depois de perguntar a Google — e o Admin SDK
+    // ignora estas regras. `allow write: if false` fecha a porta do APLICATIVO,
+    // nunca a do backend.
+    match /playerEntitlements/{uid} {
+      allow read: if ehDono(uid) || ehAdmin();
+      allow write: if false;
+
+      // O QUE O DONO NAO PODE VER. `purchaseToken`, hash, carimbos de
+      // verificacao e tipo do ultimo evento vivem AQUI, e nao no documento
+      // acima, porque regra do Firestore libera o DOCUMENTO INTEIRO: nao ha como
+      // conceder `vipAtivo` e esconder o token no mesmo lugar. Projetar campo a
+      // campo so e possivel gravando dois documentos — a mesma separacao que
+      // existe entre `reports` (interno) e `reportReceipts` (do denunciante).
+      //
+      // Fechado tambem para admin: um operador nao precisa do token para operar,
+      // e a reconciliacao manual e uma Cloud Function, nao uma leitura.
+      match /interno/{documento} {
+        allow read, write: if false;
+      }
+    }
+
+    // Trilha das notificacoes da Play ja processadas (id = messageId do Pub/Sub).
+    // E a barreira de idempotencia do RTDN, entao o cliente nao pode nem ler nem
+    // criar: criar um documento aqui faria o sistema descartar como "repetida"
+    // uma notificacao de estorno que ainda nao chegou.
+    match /billingEvents/{messageId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // =====================================================================
     // BLOCO 3/3 — TORNEIOS
     // origem: integracao/motores-torneios-partidas-v1 : firebase/firestore.rules
     // =====================================================================

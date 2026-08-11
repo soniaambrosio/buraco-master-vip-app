@@ -455,6 +455,21 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "//": "Varredura de vencimento do VIP: quem ainda esta marcado ativo com o prazo ja vencido. E a consulta de reconciliarEntitlements, e ela e a rede de seguranca de quando a notificacao de expiracao nao chega. [origem: correcao/p0-elegibilidade-vip-lifecycle]",
+      "collectionGroup": "playerEntitlements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "vipAtivo",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "expiraEm",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "//fieldOverrides": "Vazio de proposito. As consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore. Declara-las aqui seria criar indice que o Firestore ja mantem. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",

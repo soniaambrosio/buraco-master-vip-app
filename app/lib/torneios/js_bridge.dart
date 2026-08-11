@@ -25,6 +25,7 @@ import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import '../elegibilidade/composicao.dart';
 import 'annual_closing.dart';
 import 'assets_registry.dart';
 import 'automation.dart';
@@ -54,6 +55,53 @@ external set _bmvTorneios(JSObject valor);
 typedef _Ponte = String Function(String);
 
 String _erro(Object e) => jsonEncode({'erro': e.toString()});
+
+/// `{userId, agora, moderacao?: {...}, entitlement?: {...}, convitesAtivos?: [],
+///   participacoes?: [], titulos?: [], temporadasAtivas?: []}`
+///
+/// Monta o retrato de elegibilidade a partir dos DOCUMENTOS REAIS das fontes
+/// (`playerModeration/{uid}` e `playerEntitlements/{uid}`) e devolve o mesmo
+/// formato de perfil que `avaliarElegibilidade` e `inscrever` ja consomem.
+///
+/// Esta entrada existe para que a Cloud Function de torneios pare de projetar
+/// campos por conta propria: era exatamente ali que `assinaturaAtiva` e
+/// `suspenso` viravam `false` para todo mundo, porque o documento consultado nao
+/// existia. Quem decide continua sendo o dominio; a Function so le e obedece.
+String comporElegibilidadeJson(String entrada) {
+  try {
+    final json = jsonDecode(entrada) as Map<String, dynamic>;
+    Set<String> conjunto(String campo) => _textos(json[campo]).toSet();
+
+    final perfil = comporPerfil(
+      userId: json['userId'] as String,
+      agora: _instante(json['agora']),
+      moderacao: json['moderacao'] as Map<String, dynamic>?,
+      entitlement: json['entitlement'] as Map<String, dynamic>?,
+      convitesAtivos: conjunto('convitesAtivos'),
+      participacoes: conjunto('participacoes'),
+      titulos: conjunto('titulos'),
+      temporadasAtivas: conjunto('temporadasAtivas'),
+      nivel: json['nivel'] as int?,
+      posicaoRanking: json['posicaoRanking'] as int?,
+      conquistas: conjunto('conquistas'),
+    );
+
+    return jsonEncode({
+      'userId': perfil.userId,
+      'nivel': perfil.nivel,
+      'posicaoRanking': perfil.posicaoRanking,
+      'assinaturaAtiva': perfil.assinaturaAtiva,
+      'convitesAtivos': perfil.convitesAtivos.toList(growable: false),
+      'conquistas': perfil.conquistas.toList(growable: false),
+      'participacoes': perfil.participacoes.toList(growable: false),
+      'titulos': perfil.titulos.toList(growable: false),
+      'temporadasAtivas': perfil.temporadasAtivas.toList(growable: false),
+      'suspenso': perfil.suspenso,
+    });
+  } catch (e) {
+    return _erro(e);
+  }
+}
 
 /// `{criterios: [...], perfil: {...}, tournamentId: "..."}`
 String avaliarElegibilidadeJson(String entrada) {
@@ -536,6 +584,7 @@ List<LinhaClassificacao> _linhas(Object? valor) => [
 
 void main() {
   final api = <String, _Ponte>{
+    'comporElegibilidade': comporElegibilidadeJson,
     'avaliarElegibilidade': avaliarElegibilidadeJson,
     'inscrever': inscreverJson,
     'avaliarTransicao': avaliarTransicaoJson,
