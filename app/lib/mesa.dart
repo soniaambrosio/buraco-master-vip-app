@@ -3103,9 +3103,6 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _playerDock({bool horizontal = false}) {
     final active = _j.vez == 0 && !_j.rodadaEncerrada;
-    // Chat/expressões/som ficam numa coluna vertical à direita da mesa
-    // (_actionRail no _board). Aqui no rodapé fica só o jogador.
-    final identidade = _identidadeDoJogador(active, horizontal: horizontal);
 
     // Deitado a identidade fica AO LADO da mão: a largura sobra e a altura nao,
     // entao a mao continua no mesmo tamanho em vez de disputar espaco vertical.
@@ -3113,58 +3110,71 @@ class _MesaScreenState extends State<MesaScreen> {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(width: 132, child: Center(child: identidade)),
+          SizedBox(
+            width: 132,
+            child: Center(child: _identidadeEmColuna(active)),
+          ),
           Expanded(child: _hand()),
         ],
       );
     }
 
+    // Em retrato, a composicao aprovada fica como estava, linha por linha.
     return Column(
       children: [
-        SizedBox(height: 52, child: Center(child: identidade)),
+        SizedBox(
+          height: 52,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: () => setState(() => _expandedAvatarSeat = 0),
+                child: _avatarCircle(0, size: 50, active: active),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                'VOCÊ  •  ${_j.maos[0].length} cartas',
+                style: TextStyle(
+                  color: active ? _mPurpleHi : _mGoldHi,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              if (active) ...[
+                const SizedBox(width: 10),
+                _turnBadge(compact: true),
+              ],
+              // Chat/expressões/som agora ficam numa coluna vertical à direita
+              // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
+            ],
+          ),
+        ),
         Expanded(child: _hand()),
       ],
     );
   }
 
-  Widget _identidadeDoJogador(bool active, {required bool horizontal}) {
-    final avatar = GestureDetector(
-      onTap: () => setState(() => _expandedAvatarSeat = 0),
-      child: _avatarCircle(0, size: 50, active: active),
-    );
-    final rotulo = Text(
-      'VOCÊ  •  ${_j.maos[0].length} cartas',
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: active ? _mPurpleHi : _mGoldHi,
-        fontSize: 11,
-        fontWeight: FontWeight.w900,
-      ),
-    );
-
-    if (horizontal) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          avatar,
-          const SizedBox(height: 4),
-          rotulo,
-          if (active) ...[
-            const SizedBox(height: 4),
-            _turnBadge(compact: true),
-          ],
-        ],
-      );
-    }
-
-    return Row(
+  /// Identidade do jogador empilhada, para o rodape deitado.
+  Widget _identidadeEmColuna(bool active) {
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        avatar,
-        const SizedBox(width: 7),
-        rotulo,
+        GestureDetector(
+          onTap: () => setState(() => _expandedAvatarSeat = 0),
+          child: _avatarCircle(0, size: 50, active: active),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'VOCÊ  •  ${_j.maos[0].length} cartas',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: active ? _mPurpleHi : _mGoldHi,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
         if (active) ...[
-          const SizedBox(width: 10),
+          const SizedBox(height: 4),
           _turnBadge(compact: true),
         ],
       ],

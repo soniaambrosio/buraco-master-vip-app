@@ -249,7 +249,14 @@ Nenhum foi removido. Precisam de decisão explícita antes de qualquer limpeza.
 
 ## M. Confirmação de isolamento (até aqui)
 
-Nenhum arquivo foi alterado. Nenhum merge feito. `main`, `consolidacao`, backend/Firebase,
-Billing e motores **não foram tocados**. A branch `integracao/fluxo-mesas` existe apenas
-localmente, criada a partir de `a1a1927…`. **Aguardando decisão nas divergências A, B, C
-(e G) antes de escrever qualquer código.**
+Nenhum merge feito. `main`, `consolidacao`, backend/Firebase, Billing e motores **não
+foram tocados**. A branch `integracao/fluxo-mesas` nasceu de `a1a1927…`.
+
+> **Atualização — decisões tomadas e execução concluída.**
+> As divergências foram decididas: **A1** (preservar a composição de assentos aprovada
+> *e* implementar V/H/A com layout horizontal real) e **B1** (ligar a camada
+> UI/contratos agora; o que exige autoridade de backend/motor fica registrado como
+> integração futura). A divergência **C** foi resolvida por **C1**: o scaffold do CI foi
+> reproduzido localmente e `flutter analyze` + `flutter test` rodaram de verdade.
+> O resultado da execução está em `docs/RESULTADO-INTEGRACAO-FLUXO-MESAS.md`.
+> A seção **J** (arquivos estranhos, §22) continua **só registrada** — nada foi apagado.
