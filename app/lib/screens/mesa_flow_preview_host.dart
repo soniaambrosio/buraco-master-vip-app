@@ -137,6 +137,10 @@ class _MesaFlowPreviewHostState extends State<MesaFlowPreviewHost> {
       return;
     }
 
+    // `variant` continua sendo preenchido para as chamadas legadas, mas quem
+    // manda na apresentacao e o `renderer`: ele carrega o contexto (Privada
+    // continua Privada) e o `MesaLaunchSpec` inteiro — modalidade, meta, tempo,
+    // chat, aposta/pote, espectadores e codigo da sala.
     final variant = plan.legacyRendererSkinCode == 'publica'
         ? MesaVariant.publica
         : MesaVariant.vip;
@@ -153,6 +157,7 @@ class _MesaFlowPreviewHostState extends State<MesaFlowPreviewHost> {
                   modalidade: plan.launch.modalidade,
                   metaPontos: plan.launch.metaPontos,
                   tempoSegundos: plan.launch.tempoSegundos,
+                  renderer: plan.renderer,
                 ),
               ),
             );

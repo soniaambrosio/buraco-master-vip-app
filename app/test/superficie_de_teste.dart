@@ -43,6 +43,39 @@ void ignorarOverflowDaFonteDeTeste() {
   addTearDown(() => FlutterError.onError = anterior);
 }
 
+/// Avanca o relogio, quadro a quadro, ate [alvo] aparecer.
+///
+/// Serve para telas que nunca "assentam" — a preparacao anima do inicio ao fim
+/// e a Mesa tem relogio de turno periodico, entao `pumpAndSettle` estoura o
+/// tempo limite em vez de esperar. O limite mantem a falha legivel: se o alvo
+/// nao aparecer, o teste quebra na verificacao seguinte, e nao num travamento.
+Future<void> avancarAte(
+  WidgetTester tester,
+  Finder alvo, {
+  Duration passo = const Duration(milliseconds: 100),
+  int limiteDePassos = 150,
+}) async {
+  for (var i = 0; i < limiteDePassos; i++) {
+    if (alvo.evaluate().isNotEmpty) return;
+    await tester.pump(passo);
+  }
+}
+
+/// Desmonta a arvore e deixa os temporizadores pendentes expirarem.
+///
+/// A Mesa agenda o turno dos robos com `Future.delayed`. Ao sair da mesa esse
+/// temporizador continua marcado ate vencer, e o `flutter_test` reprova o teste
+/// que termina com timer pendente. Desmontar e depois adiantar o relogio deixa
+/// o laco perceber que a tela sumiu e encerrar — que e exatamente o que
+/// acontece no aparelho quando o jogador sai.
+Future<void> desmontarEDrenarTimers(
+  WidgetTester tester, {
+  Duration folga = const Duration(seconds: 1),
+}) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(folga);
+}
+
 /// Superficie de telefone deitado, para validar a orientacao horizontal.
 void usarTelefoneHorizontal(
   WidgetTester tester, {

@@ -27,6 +27,7 @@ import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
 import 'screens/onde_jogar_screen.dart';
+import 'screens/mesa_flow_preview_host.dart';
 import 'widgets/convite_vip.dart';
 import 'mesa.dart';
 
@@ -1000,13 +1001,17 @@ class _HallPreviewHost extends StatelessWidget {
 
 
 // ===================== ONDE JOGAR (host) =====================
+// Esta e a UNICA porta de entrada do fluxo de mesas: o tipo de mesa se escolhe
+// aqui e em lugar nenhum mais. O configurador nao repete o seletor de tipo — ele
+// so configura o ambiente que ja chegou decidido daqui.
 class _OndeJogarPreviewHost extends StatelessWidget {
   const _OndeJogarPreviewHost();
 
   @override
   Widget build(BuildContext context) {
+    final vm = OndeJogarVM.mock();
     return OndeJogarScreen(
-      vm: OndeJogarVM.mock(),
+      vm: vm,
       onVoltar: () => Navigator.of(context).maybePop(),
       onEscolher: (id) {
         if (id == 'treino') {
@@ -1015,20 +1020,18 @@ class _OndeJogarPreviewHost extends StatelessWidget {
           );
           return;
         }
-        if (id == 'privada') {
-          // ONLINE de verdade (Trilha A): criar/entrar por código no servidor.
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const _OnlineLobbyHost()),
-          );
-          return;
-        }
-        final tipo = id == 'publica'
-            ? TipoMesa.publica
-            : id == 'vip'
-                ? TipoMesa.vip
-                : TipoMesa.privada;
+        final tipo = switch (id) {
+          'publica' => TipoMesa.publica,
+          'vip' => TipoMesa.vip,
+          _ => TipoMesa.privada,
+        };
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => _ConfigMesaPreviewHost(tipoInicial: tipo)),
+          MaterialPageRoute(
+            builder: (_) => MesaFlowPreviewHost(
+              tipoInicial: tipo,
+              ehVip: vm.ehVip,
+            ),
+          ),
         );
       },
     );
@@ -1039,6 +1042,11 @@ class _OndeJogarPreviewHost extends StatelessWidget {
 // Conecta no servidor real (Railway), cria/entra numa mesa por código e mostra o
 // estado que o servidor devolve. Prova a conexão ponta-a-ponta do app com o online.
 // A mesa visual completa (renderizar a partida do servidor) é a próxima fatia (A2).
+//
+// EM QUARENTENA (OS §17 — sem faxina destrutiva): prova de conexão, fora do
+// fluxo aprovado. Nenhuma tela navega mais para cá — a Privada passa pelo
+// configurador, como as demais. Entrar numa sala de verdade por código depende
+// de autoridade de backend e está registrada como integração futura.
 class _OnlineLobbyHost extends StatefulWidget {
   const _OnlineLobbyHost();
   @override
@@ -1355,8 +1363,22 @@ class _RecompensasPreviewHostState extends State<_RecompensasPreviewHost> {
 }
 
 // ===================== CONFIGURAR MESA — PRÉVIA VISUAL CODEX =====================
+// EM QUARENTENA (OS §17 — sem faxina destrutiva).
+//
+// Este host montava a configuracao a mao e perdia escolhas na fronteira:
+// abria a Mesa com `publica ? publica : vip` (o que transformava Privada em
+// VIP), entregava `PreparandoPartidaVM.mock` em vez da preparacao real e nao
+// levava modo, chat, aposta, espectadores, codigo nem cadeiras adiante. Ele
+// tambem repetia o seletor de tipo que pertence so a tela Onde jogar.
+//
+// O fluxo ativo agora e `MesaFlowPreviewHost`, que atravessa a mesma fronteira
+// por `MesaFlowPlan`. Nada mais navega para ca; o codigo fica preservado como
+// referencia do comportamento antigo ate a sessao de limpeza autorizada.
 class _ConfigMesaPreviewHost extends StatefulWidget {
   final TipoMesa tipoInicial;
+  // Ninguem mais passa este parametro porque ninguem mais navega para ca; ele
+  // fica como estava para a quarentena preservar o host intacto.
+  // ignore: unused_element_parameter
   const _ConfigMesaPreviewHost({this.tipoInicial = TipoMesa.privada});
 
   @override
@@ -1844,8 +1866,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _botaoJogar() {
     return GestureDetector(
+      // Jogar entra pela unica porta aprovada: Onde jogar decide o tipo de mesa.
+      // Antes esta rota caia direto no configurador legado, criando uma segunda
+      // escolha de tipo fora do fluxo.
       onTap: () => Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const _ConfigMesaPreviewHost())),
+          .push(MaterialPageRoute(builder: (_) => const _OndeJogarPreviewHost())),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 18),
@@ -1891,9 +1916,10 @@ class _HomeScreenState extends State<HomeScreen> {
               : label == 'Recompensas'
                   ? _abrirRecompensas
                   : label == 'Jogar'
+                      // Mesma porta unica do _botaoJogar: Onde jogar primeiro.
                       ? () => Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => const _ConfigMesaPreviewHost(),
+                              builder: (_) => const _OndeJogarPreviewHost(),
                             ),
                           )
                       : () => _breve(label),

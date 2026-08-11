@@ -7,6 +7,9 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'screens/configurar_mesa_screen.dart' show ChatMesa;
+import 'screens/mesa_launch_spec.dart';
+import 'screens/mesa_renderer_contract.dart';
 import 'screens/resultado_partida_screen.dart';
 import 'screens/resultado_vitoria_adapter.dart';
 import 'screens/resultado_partida_celebrado.dart';
@@ -1280,6 +1283,17 @@ class MesaScreen extends StatefulWidget {
   final int? vulnerabilidadeNos;
   final int? vulnerabilidadeEles;
 
+  /// Escolhas completas feitas no configurador, atravessando a fronteira
+  /// Preparando -> Mesa sem perder nada pelo caminho.
+  ///
+  /// Aditivo e opcional: sem ele a Mesa se comporta exatamente como antes,
+  /// decidindo a pele por [variant]. Com ele, o contrato passa a ser a
+  /// autoridade de apresentacao — e o contexto continua vivo, entao uma Mesa
+  /// Privada usa a pele premium sem virar Mesa VIP. Ele carrega tambem o
+  /// [MesaLaunchSpec] (modalidade, meta, tempo, chat, aposta/pote,
+  /// espectadores, codigo da sala), que sobrepoe os parametros soltos.
+  final MesaRendererContract? renderer;
+
   const MesaScreen({
     super.key,
     this.variant = MesaVariant.vip,
@@ -1288,6 +1302,7 @@ class MesaScreen extends StatefulWidget {
     this.tempoSegundos = 45,
     this.vulnerabilidadeNos,
     this.vulnerabilidadeEles,
+    this.renderer,
   });
 
   @override
@@ -1327,8 +1342,23 @@ class _MesaScreenState extends State<MesaScreen> {
   AudioPlayer? _pCarta;
   AudioPlayer? _pEvento;
 
-  String get _modalidade => widget.modalidade;
-  bool get _mesaVip => widget.variant == MesaVariant.vip;
+  /// Parametros vindos do configurador. Ausente = chamada legada (padroes).
+  MesaLaunchSpec? get _launch => widget.renderer?.launch;
+
+  String get _modalidade => _launch?.modalidade ?? widget.modalidade;
+  int get _metaPontos => _launch?.metaPontos ?? widget.metaPontos;
+  int get _tempoSegundos => _launch?.tempoSegundos ?? widget.tempoSegundos;
+
+  /// Pele da mesa. Publica usa o feltro publico; VIP e Privada usam o premium.
+  bool get _mesaVip =>
+      widget.renderer?.usaPelePremium ?? (widget.variant == MesaVariant.vip);
+
+  /// Contexto da sala — diferente da pele. E ele que autoriza os controles
+  /// privados, entao compartilhar aparencia nunca transforma Privada em VIP.
+  bool get _contextoPrivado =>
+      widget.renderer?.habilitaContextoPrivado ?? false;
+
+  ChatMesa get _chatConfigurado => _launch?.chat ?? ChatMesa.completo;
   Color get _feltColor =>
       _mesaVip ? _mFelt : const Color(0xFF062719);
   String get _cardBackAsset => _mesaVip
@@ -1349,8 +1379,8 @@ class _MesaScreenState extends State<MesaScreen> {
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
     );
-    jogo.metaPontos = widget.metaPontos;
-    jogo.modalidade = widget.modalidade;
+    jogo.metaPontos = _metaPontos;
+    jogo.modalidade = _modalidade;
     _partidaSeq++;
     return jogo;
   }
@@ -1359,7 +1389,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void initState() {
     super.initState();
     _j = _novoJogo();
-    _turnSeconds = widget.tempoSegundos;
+    _turnSeconds = _tempoSegundos;
     _clockSeat = _j.vez;
     try {
       _pCarta = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
@@ -1396,7 +1426,7 @@ class _MesaScreenState extends State<MesaScreen> {
       if (_clockSeat != _j.vez) {
         setState(() {
           _clockSeat = _j.vez;
-          _turnSeconds = widget.tempoSegundos;
+          _turnSeconds = _tempoSegundos;
         });
         return;
       }
@@ -1434,7 +1464,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void _syncTurnClock({bool force = false}) {
     if (force || _clockSeat != _j.vez) {
       _clockSeat = _j.vez;
-      _turnSeconds = widget.tempoSegundos;
+      _turnSeconds = _tempoSegundos;
     }
   }
 
@@ -1667,6 +1697,13 @@ class _MesaScreenState extends State<MesaScreen> {
     _botsRodando = true;
     while (_j.vez != 0 && !_j.rodadaEncerrada && _j.integridadeErro == null) {
       await Future.delayed(const Duration(milliseconds: 650));
+      // Sair da mesa encerra o turno dos robos. Sem esta saida o laco seguia
+      // jogando depois do dispose: mexia no audio e nos ScrollController ja
+      // descartados, e a partida continuava andando numa tela que nao existe.
+      if (!mounted) {
+        _botsRodando = false;
+        return;
+      }
       _j.botJoga(_j.vez);
       _somCarta();
       _syncTurnClock();
@@ -2823,9 +2860,12 @@ class _MesaScreenState extends State<MesaScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _railButton(Icons.chat_bubble_rounded, () {
-          setState(() => _msg = 'Chat — ligação final com o Claude.');
-        }),
+        _railButton(
+          _chatConfigurado == ChatMesa.desligado
+              ? Icons.speaker_notes_off_rounded
+              : Icons.chat_bubble_rounded,
+          () => setState(() => _msg = _avisoDoChat()),
+        ),
         const SizedBox(height: 7),
         _railButton(Icons.sentiment_satisfied_alt_rounded, () {
           setState(() => _msg = 'Expressões — ligação final com o Claude.');
@@ -2837,6 +2877,23 @@ class _MesaScreenState extends State<MesaScreen> {
         ),
       ],
     );
+  }
+
+  /// O chat foi escolhido no configurador e a mesa responde de acordo. A
+  /// conversa em si (transporte, moderacao, historico) continua sendo
+  /// integracao de backend — o que muda aqui e a mesa parar de ignorar a
+  /// escolha do jogador.
+  String _avisoDoChat() {
+    switch (_chatConfigurado) {
+      case ChatMesa.desligado:
+        return 'Chat desligado na configuração desta mesa.';
+      case ChatMesa.soBaloes:
+        return 'Só balões nesta mesa — texto livre está desligado.';
+      case ChatMesa.completo:
+        return _contextoPrivado
+            ? 'Chat livre da Mesa Privada — ligação final com o Claude.'
+            : 'Chat — ligação final com o Claude.';
+    }
   }
 
   Widget _railButton(IconData icon, VoidCallback onTap) {

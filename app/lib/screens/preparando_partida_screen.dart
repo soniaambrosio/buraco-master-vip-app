@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
@@ -194,7 +195,10 @@ class _PreparandoPartidaScreenState extends State<PreparandoPartidaScreen>
         ),
         curve: Curves.easeOutCubic,
       );
-      if (widget.habilitarSom) await _tocarCarta(.25);
+      // Som decorativo nao pode segurar a partida: quando o dispositivo nao
+      // tem audio disponivel, esta chamada nunca completa e o jogador fica
+      // preso na preparacao. Dispara e segue.
+      if (widget.habilitarSom) unawaited(_tocarCarta(.25));
       await Future<void>.delayed(const Duration(milliseconds: 420));
       if (!mounted || _finalizada) return;
       _finalizada = true;
