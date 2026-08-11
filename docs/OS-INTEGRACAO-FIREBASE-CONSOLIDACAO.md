@@ -156,11 +156,34 @@ alterar um byte** nesta toolchain (Flutter 3.41.4 / Dart 3.11.1), conferido por
 
 ## 7. Resultado dos testes
 
-```
-flutter analyze --no-fatal-infos --no-fatal-warnings ... 0 ERROS
-   105 issues (13 warning + 92 info), as MESMAS da baseline.
-   Zero em lib/motor, lib/integracao, lib/torneios e lib/colecoes.
-```
+### 7.0 `flutter analyze` — árvore real e scaffold
+
+Depois da limpeza da §10, o analyze passou a ser rodado **sobre a árvore real do
+pacote** (`cd app && flutter pub get && flutter analyze`), sem overlay e sem
+excluir arquivo nenhum.
+
+| | Árvore real `app/` (antes da limpeza) | **Árvore real `app/` (agora)** | Scaffold `app_build` |
+|---|---|---|---|
+| **errors** | 16 | **0** | 0 |
+| warnings | 13 | 13 | 13 |
+| infos | 45 | 29 | 92 |
+| total | 74 | **42** | 105 |
+| exit | 1 | **0** | 0 |
+
+**Gate do bloco atendido: 0 errors.** Os 13 warnings e 29 infos são
+pré-existentes, todos em `main.dart`, `mesa.dart` e `lib/screens/` — nenhum em
+`lib/motor`, `lib/integracao`, `lib/torneios` ou `lib/colecoes`, e nenhum
+introduzido por esta OS.
+
+A diferença de infos entre árvore real (29) e scaffold (92) **não é código**: é
+conjunto de lints. O scaffold herda o `analysis_options.yaml` do
+`flutter create`; `app/` não tem esse arquivo, embora declare `flutter_lints`
+como dev dependency.
+
+> **Dívida técnica registrada, não resolvida nesta OS:** falta
+> `app/analysis_options.yaml` para ativar o `flutter_lints` que o pubspec já
+> declara. Introduzi-lo agora só mudaria a contagem de infos sem melhorar nada
+> do que este bloco entrega, então fica anotado como item próprio.
 
 | Suíte | Testes | Resultado |
 |---|---|---|
@@ -189,21 +212,98 @@ captura ficou de fora. Corrigido, roda em ~1 s.
 Provavelmente nunca havia sido executada: como push não dispara CI neste
 repositório, a suíte da branch de origem nunca teve execução real.
 
-## 8. Emulator Suite
+## 8. Emulator Suite — EXECUTADO
 
-**NÃO EXECUTADO localmente — motivo real: não há Java nesta máquina**
-(`java: command not found`), e o emulador do Firestore exige JVM. O `firebase`
-CLI 15.26.0 está instalado; a barreira é só a JVM.
+A primeira medição registrou "não há Java nesta máquina". Estava incompleta: o
+**JBR que acompanha o Android Studio** serve, e foi usado apenas como ferramenta
+de execução (`JAVA_HOME`/`PATH` na sessão), sem instalar nada nem alterar o
+repositório.
 
-Consequência honesta: **`firebase/firestore.rules` teve validação estrutural, não
-compilação.** Verificado: chaves balanceadas (69/69), `rules_version` único,
-`service`/`match` raiz únicos, nenhuma função duplicada, 16 blocos `match` de
-topo correspondendo exatamente à soma dos três conjuntos. **Não** foi verificado
-pelo compilador de regras do Firestore.
+| Item | Versão |
+|---|---|
+| Java | OpenJDK **21.0.9** (JBR do Android Studio) — o emulador exige 11+ |
+| Firebase CLI | **15.26.0** |
+| Emulador Firestore | cloud-firestore-emulator **v1.22.0** |
+| Node | v24.14.0 |
 
-No CI isso roda: o workflow instala Java 17 e `firebase-tools`, e executa
-`firebase emulators:exec --only firestore,auth,functions --project demo-bmv` com
-o harness de `firebase/testes`.
+Comando exato:
+
+```bash
+firebase emulators:exec --only firestore,auth,functions --project demo-bmv \
+  "set FUNCTIONS_EMULATOR_HOST=127.0.0.1:5001 && cd firebase\testes && npm test"
+```
+
+### 8.1 Compilação das Rules: **PASSOU**
+
+O emulador carregou, compilou e **avaliou** `firebase/firestore.rules`. A prova
+não é indireta: as negações no log citam `@ L426`, e a linha 426 do arquivo
+unido é exatamente o fecho `allow read, write: if false`. As regras foram
+exercitadas contra ~19 asserções reais de permissão, não apenas parseadas.
+
+### 8.2 Functions: **11 carregadas, as três codebases**
+
+```
+colecoes  claimPioneerKit, grantPioneerEligibility, revokePioneerKit
+billing   validarCompraPlay
+torneios  inscreverEmTorneio, cancelarInscricaoTorneio, receberResultadoPartida,
+          tickTorneios, aoConcluirEdicao, consolidarConvitesDaTemporada,
+          responderConviteEncerramento
+```
+
+O `predeploy` de Torneios foi executado de verdade: `dart compile js` produziu o
+bundle (162.838 caracteres) e o `tsc` compilou (`--noEmit` exit 0). A cadeia
+declarada no `firebase.json` está validada ponta a ponta.
+
+### 8.3 Testes de segurança: 19 no total, **15 verdes, 4 vermelhos**
+
+| Bloco | Testes | Resultado |
+|---|---|---|
+| inventário: o cliente não concede itens | 5 | verdes |
+| inventário: isolamento entre jogadores | 4 | verdes |
+| elegibilidade | 3 | verdes |
+| catálogo e campanha | 2 | verdes |
+| `claimPioneerKit` | 5 | 1 verde, **4 vermelhos** |
+
+Nenhum pulado.
+
+### 8.4 Três defeitos encontrados ao rodar isto pela primeira vez
+
+O harness nunca havia sido executado — push não dispara CI neste repositório, e
+a branch de origem não tinha outra forma de rodá-lo. Três problemas apareceram em
+sequência, cada um escondendo o seguinte:
+
+1. **`PROJETO` fixo** (`buraco-master-vip-testes`) não batia com o `--project` do
+   emulador. As chamadas de Cloud Function iam para um projeto não servido: 404,
+   entregue pelo SDK como `not-found`, reprovando o bloco inteiro sem tocar em
+   regra nenhuma. **Corrigido**: sai de `GCLOUD_PROJECT`, que `emulators:exec`
+   exporta.
+2. **`admin.firestore.FieldValue` indefinido sob o emulador.** As duas formas são
+   equivalentes em produção, mas o runtime do emulador substitui
+   `admin.firestore` por um wrapper sem os estáticos do namespace. **Corrigido**
+   com a importação modular, em commit isolado e autorizado.
+3. **Fixture da campanha incompleto** — este **não** foi corrigido, por decisão
+   de escopo. Ver §8.5.
+
+### 8.5 Os 4 vermelhos restantes: fixture, não produção
+
+```
+Value for argument "data" is not a valid Firestore document.
+Cannot use "undefined" as a Firestore value (found in field "collectionId").
+  em gravarItens — firebase/functions/index.js:286
+```
+
+`gravarItens` grava `collectionId: campanha.collectionId`. O seed de produção
+(`app/data/colecoes/campanha_pioneiros_2026.seed.json`) **tem**
+`"collectionId": "pioneiros_2026"`. O fixture do harness monta o documento da
+campanha com `campaignId`, `version`, `status`, `eligibilityMode`, `featureFlag`
+e `rewardIds` — **sem `collectionId`**.
+
+É a mesma classe do defeito do `eligibilityMode`: o fixture é uma réplica
+incompleta do documento real, e a função está correta. Nada aqui indica falha em
+produção. A correção é uma linha no fixture, e **foi deixada para autorização**.
+
+Progresso medido: o erro de `serverTimestamp` desapareceu por completo do log
+(0 ocorrências) e a execução avançou até este ponto.
 
 ## 9. Correção obrigatória do CI
 
