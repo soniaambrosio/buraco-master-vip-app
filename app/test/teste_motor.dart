@@ -4109,13 +4109,22 @@ void main() {
       expect(rel.diff, isEmpty);
     });
 
-    test('C9-SOMBRA-05 divergência declarada como EXC conhecida -> excecao', () {
+    test('C9-SOMBRA-05 EXC classificada por condição REAL verificada -> excecao',
+        () {
+      // Atualizado ao contrato do C9-C2c: a tag conhecida NÃO basta — exige a
+      // condição concreta verificada. Usa a abertura múltipla vulnerável real
+      // (economia comprovada pelo verificador), que É a única EXC viva
+      // dirigível por sombra. Prova a CLASSE `excecao` sem afrouxar o
+      // verificador. (C9-EXC02-REAL segue como prova principal da exceção.)
       final spec = _specAbertoC9C();
-      final rel =
-          sombra.comparar(_preDescarteC9C(), _txInjecaoC9C(spec, exc: 'EXC-01'));
+      final rel = sombra.comparar(
+          _preEXC02C9C(),
+          TransacaoSombra.aberturaMultipla(0, const ['3c', '4c', '5c'],
+              const ['6d', '7d', '8d', '9d', '10d', 'Jd', 'Qd'], spec,
+              excEsperada: 'EXC-02'));
       expect(rel.classificacao, ClassificacaoSombra.excecao);
-      expect(rel.idExcecao, 'EXC-01');
-      expect(rel.replayJson, isNull);
+      expect(rel.idExcecao, 'EXC-02');
+      expect(rel.replayJson, isNull); // excecao não carrega Replay (só INESPERADA)
     });
 
     test('C9-SOMBRA-06 EXC id DESCONHECIDO não esconde: continua INESPERADA',
