@@ -73,6 +73,13 @@ before(async () => {
       // modo do seed de producao (campanha_pioneiros_2026.seed.json) e o unico
       // coerente com o `naAllowlist: true` semeado logo abaixo.
       eligibilityMode: 'allowlist',
+      // `gravarItens` grava `collectionId: campanha.collectionId` em cada item
+      // do inventario; sem o campo, a transacao morre com "Cannot use
+      // 'undefined' as a Firestore value". O seed de producao
+      // (campanha_pioneiros_2026.seed.json) traz "collectionId":
+      // "pioneiros_2026", que e exatamente o valor de CAMPANHA — a constante ja
+      // usada nas semeaduras de inventario logo abaixo.
+      collectionId: CAMPANHA,
       featureFlag: 'kitPioneiros2026Enabled', rewardIds: ITENS,
     });
     await setDoc(doc(db, `campaigns/${CAMPANHA}/eligible/${DONO}`), { naAllowlist: true });
