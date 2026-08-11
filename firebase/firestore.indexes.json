@@ -267,6 +267,66 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "//": "Freio de abuso de denuncia: quantas o mesmo denunciante registrou na ultima hora. Igualdade + intervalo exige indice composto. Consultado por `registrarDenuncia` a CADA denuncia, entao precisa ser barato — por isso e `count()`, que nao baixa documento nenhum. [origem: moderacao]",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "denuncianteUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Fila de triagem: denuncias por status, mais antigas primeiro (quem esperou mais e atendido antes). Consumidor: ferramenta administrativa ainda nao construida — o indice acompanha a colecao para que a primeira consulta nao precise de um deploy separado. [origem: moderacao]",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Historico disciplinar de um jogador, mais recente primeiro. Consultado ao aplicar sancao (para consolidar o efeito vigente) e pela triagem. [origem: moderacao]",
+      "collectionGroup": "sanctions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inicio",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Denuncias recebidas sobre um mesmo jogador, para a triagem ver reincidencia. [origem: moderacao]",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "denunciadoUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

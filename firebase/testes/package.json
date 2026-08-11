@@ -3,8 +3,11 @@
   "description": "Prova as regras do Firestore e a idempotencia do resgate contra os emuladores.",
   "private": true,
   "scripts": {
-    "test": "node --test seguranca.test.js",
-    "emulador": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd testes && npm test\""
+    "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um arquivo renomeado sairia da suite em silencio.",
+    "test": "node --test seguranca.test.js moderacao.test.js",
+    "emulador": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd testes && npm test\"",
+    "//emulador-regras": "So Firestore: prova as REGRAS sem precisar compilar as Functions. E o que roda quando se mexe apenas em firestore.rules.",
+    "emulador-regras": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm test\""
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^4.0.1",
