@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../lib/screens/preparando_partida_screen.dart';
+import 'superficie_de_teste.dart';
 
 void main() {
   Widget appCom(PreparandoPartidaVM vm) {
@@ -17,6 +18,8 @@ void main() {
 
   testWidgets('modo 2 distribui cartas somente para os dois participantes',
       (tester) async {
+    usarTelefoneRetrato(tester);
+    ignorarOverflowDaFonteDeTeste();
     const jogadores = [
       JogadorPreparacaoVM(
         id: 'voce',
@@ -65,6 +68,8 @@ void main() {
 
   testWidgets('modo 4 distribui uma carta visual para cada participante',
       (tester) async {
+    usarTelefoneRetrato(tester);
+    ignorarOverflowDaFonteDeTeste();
     const jogadores = [
       JogadorPreparacaoVM(
         id: 'topo',

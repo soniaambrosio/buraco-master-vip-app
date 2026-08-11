@@ -6,6 +6,7 @@ import '../lib/screens/mesa_config_contract.dart';
 import '../lib/screens/mesa_config_validator.dart';
 import '../lib/screens/mesa_privada_social.dart';
 import '../lib/screens/onde_jogar_screen.dart';
+import 'superficie_de_teste.dart';
 
 void main() {
   group('Configuração de Mesa — contrato visual aprovado', () {
@@ -157,6 +158,7 @@ void main() {
     });
 
     testWidgets('não VIP não cria VIP nem Privada', (tester) async {
+      usarTelefoneRetrato(tester);
       final escolhidos = <String>[];
       final bloqueados = <String>[];
 
@@ -182,6 +184,7 @@ void main() {
 
     testWidgets('código pode ser informado antes da validação VIP/Passe no servidor',
         (tester) async {
+      usarTelefoneRetrato(tester);
       var entradasPorCodigo = 0;
 
       await tester.pumpWidget(
@@ -195,6 +198,10 @@ void main() {
         ),
       );
 
+      // O atalho fica no cartao da Privada, o terceiro da lista: em telefone
+      // ele nasce logo abaixo da dobra e precisa entrar em cena antes do toque.
+      await tester.ensureVisible(find.byKey(const ValueKey('entrar-com-codigo')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('entrar-com-codigo')));
       await tester.pump();
 
@@ -208,6 +215,7 @@ void main() {
 
   testWidgets('Privada mostra slogan, chat livre, segurança e montagem da turma',
       (tester) async {
+    usarTelefoneRetrato(tester);
     await tester.pumpWidget(
       MaterialApp(
         home: ConfigurarMesaScreen(
@@ -237,7 +245,6 @@ void main() {
     );
     expect(find.text('Todos os jogadores são VIP'), findsOneWidget);
     expect(find.text('STBL'), findsOneWidget);
-    expect(find.text('Livre'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.text('Chat livre, com proteção'),
@@ -245,6 +252,9 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Chat livre, com proteção'), findsOneWidget);
+    // 'Livre' e o rotulo do chat completo quando a mesa e privada; ele vive no
+    // mesmo bloco do chat, entao so existe depois desta rolagem.
+    expect(find.text('Livre'), findsOneWidget);
     expect(find.text('Silenciar'), findsOneWidget);
     expect(find.text('Bloquear'), findsOneWidget);
     expect(find.text('Denunciar'), findsOneWidget);
@@ -262,6 +272,10 @@ void main() {
 
   testWidgets('menu do convidado expõe silenciar, bloquear e denunciar',
       (tester) async {
+    usarTelefoneRetrato(tester);
+    // O menu suspenso poe icone e rotulo na mesma linha: com a fonte do runner
+    // o rotulo fica largo demais e a linha estoura na horizontal.
+    ignorarOverflowDaFonteDeTeste();
     final acoes = <AcaoSocialPrivada>[];
 
     await tester.pumpWidget(
@@ -292,6 +306,8 @@ void main() {
       350,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.ensureVisible(find.byTooltip('Ações do jogador'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Ações do jogador'));
     await tester.pumpAndSettle();
     expect(find.text('Silenciar para mim'), findsOneWidget);
@@ -305,6 +321,7 @@ void main() {
 
   testWidgets('Privada de 2 jogadores mostra dono e oponente, sem parceiro',
       (tester) async {
+    usarTelefoneRetrato(tester);
     final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada).copyWith(
       modo: ModoJogo.dois,
       aposta: const ApostaVM(

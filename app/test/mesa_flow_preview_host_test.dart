@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/screens/configurar_mesa_screen.dart';
 import '../lib/screens/mesa_flow_preview_host.dart';
 import '../lib/screens/preparando_partida_screen.dart';
+import 'superficie_de_teste.dart';
 
 void main() {
   testWidgets('host novo mostra STBL correto nas regras', (tester) async {
+    usarTelefoneRetrato(tester);
     await tester.pumpWidget(
       const MaterialApp(
         home: MesaFlowPreviewHost(tipoInicial: TipoMesa.publica),
@@ -25,6 +27,7 @@ void main() {
 
   testWidgets('host novo não abre motor de 4 assentos para seleção 1 x 1',
       (tester) async {
+    usarTelefoneRetrato(tester);
     await tester.pumpWidget(
       const MaterialApp(
         home: MesaFlowPreviewHost(tipoInicial: TipoMesa.privada),
