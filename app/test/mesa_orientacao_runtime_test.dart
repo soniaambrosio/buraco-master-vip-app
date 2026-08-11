@@ -190,6 +190,50 @@ void main() {
     });
   });
 
+  group('O menu nao mexe nos controles da partida', () {
+    // O acesso ao menu nasceu na coluna de acoes e foi movido para o
+    // cabecalho: a coluna e ancorada pela base, entao um quarto botao empurrava
+    // chat, expressoes e som 45 px para cima. Trocar orientacao e configuracao,
+    // nao jogada, e nao pode deslocar controle ja aprovado da partida.
+    for (final tela in const [Size(390, 844), Size(320, 640)]) {
+      testWidgets('em ${tela.width.toInt()}x${tela.height.toInt()} o menu fica '
+          'no cabecalho, sem encostar no placar', (tester) async {
+        usarTelefoneRetrato(tester, logico: tela);
+        ignorarOverflowDaFonteDeTeste();
+
+        await tester.pumpWidget(const MaterialApp(home: MesaScreen()));
+        await tester.pump();
+
+        final menu = tester.getRect(find.byTooltip('Menu da mesa'));
+        final chat = tester.getRect(find.byIcon(Icons.chat_bubble_rounded));
+        final placar = tester.getRect(find.text('Pontuação'));
+
+        // Esta no cabecalho, muito acima do rail — nao e um quarto botao dele.
+        expect(menu.bottom, lessThan(chat.top));
+        // E nao invade a ultima metrica do cabecalho.
+        expect(placar.right, lessThanOrEqualTo(menu.left));
+        // Continua dentro da tela.
+        expect(menu.right, lessThanOrEqualTo(tela.width));
+
+        // A coluna de acoes segue com os tres botoes de sempre.
+        expect(find.byIcon(Icons.chat_bubble_rounded), findsOneWidget);
+        expect(
+          find.byIcon(Icons.sentiment_satisfied_alt_rounded),
+          findsOneWidget,
+        );
+        expect(find.byIcon(Icons.volume_up_rounded), findsOneWidget);
+
+        // E o menu abre de dentro da partida.
+        await tester.tap(find.byTooltip('Menu da mesa'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(MesaOrientacaoSelector), findsOneWidget);
+
+        await desmontarEDrenarTimers(tester);
+      });
+    }
+  });
+
   group('Responsividade (adendo §9)', () {
     // Sem `ignorarOverflowDaFonteDeTeste` de proposito: aqui o estouro de
     // layout e justamente o que se quer detectar. Confirmado que a Mesa nao

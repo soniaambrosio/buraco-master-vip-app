@@ -1971,7 +1971,30 @@ class _MesaScreenState extends State<MesaScreen> {
             flex: 32,
             child: _scoreMetric(),
           ),
+          _menuDaMesaNoCabecalho(),
         ],
+      ),
+    );
+  }
+
+  /// Acesso ao menu da Mesa, no canto do cabecalho.
+  ///
+  /// Trocar orientacao e configuracao, nao jogada: fica longe de chat,
+  /// expressoes e som, que sao os controles da partida. Discreto de proposito —
+  /// sem o circulo dos botoes do rail, so o icone na mesma paleta do cabecalho.
+  Widget _menuDaMesaNoCabecalho() {
+    return Tooltip(
+      message: 'Menu da mesa',
+      child: InkResponse(
+        onTap: _abrirMenuDaMesa,
+        radius: 22,
+        // Estreito para tirar o minimo do cabecalho, mas alto o bastante para
+        // o dedo acertar: a area de toque cresce na altura, que sobra.
+        child: const SizedBox(
+          width: 30,
+          height: 45,
+          child: Icon(Icons.tune_rounded, color: _mGold, size: 20),
+        ),
       ),
     );
   }
@@ -3050,14 +3073,10 @@ class _MesaScreenState extends State<MesaScreen> {
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
         ),
-        const SizedBox(height: 7),
-        // Menu da Mesa — hoje leva a orientacao, que o adendo exige aqui alem
-        // de Configuracoes, para o jogador trocar sem sair da partida.
-        _railButton(
-          Icons.screen_rotation_rounded,
-          _abrirMenuDaMesa,
-          tooltip: 'Menu da mesa',
-        ),
+        // O menu da Mesa NAO entra aqui. Esta coluna e ancorada pela base, e um
+        // quarto botao empurrava chat, expressoes e som 45 px para cima — os
+        // controles da partida, ja aprovados, mudariam de lugar por causa de um
+        // acesso de configuracao. O menu vive no cabecalho.
       ],
     );
   }
@@ -3079,8 +3098,8 @@ class _MesaScreenState extends State<MesaScreen> {
     }
   }
 
-  Widget _railButton(IconData icon, VoidCallback onTap, {String? tooltip}) {
-    final botao = GestureDetector(
+  Widget _railButton(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
       onTap: onTap,
       child: Container(
         width: 38,
@@ -3097,8 +3116,6 @@ class _MesaScreenState extends State<MesaScreen> {
         child: Icon(icon, color: _mGoldHi, size: 20),
       ),
     );
-    if (tooltip == null) return botao;
-    return Tooltip(message: tooltip, child: botao);
   }
 
   Widget _playerDock({bool horizontal = false}) {

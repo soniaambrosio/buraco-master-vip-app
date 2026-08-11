@@ -7,6 +7,9 @@ Fecha o ciclo aberto por `docs/MAPA-INTEGRACAO-FLUXO-MESAS.md` e
 - Base: `a1a1927680ba4cff431650d09519675bdf10aad4` (`codex/configuracao-mesas-fluxo`)
 - Sem merge, sem release, sem deploy. `main`, `consolidacao/apk-geral-bmv`,
   backend/Firebase, Billing e as branches de motor não foram tocados.
+- **Status: encerrada.** Aprovação técnica em 11/08/2026; o único ponto visual
+  que ficara em aberto (o deslocamento da coluna de ações) foi resolvido levando
+  o menu para o cabeçalho — ver seção 4.
 
 ---
 
@@ -31,7 +34,9 @@ meta, tempo, chat, aposta/pote, espectadores e código da sala chegam ao runtime
 a pele sai do contexto — Mesa Privada usa a pele premium **sem virar Mesa VIP**.
 
 **Orientação V/H/A.** Disponível em Configurações → JOGO e no menu da própria
-Mesa. O `MesaOrientationGuard` entra abaixo da camada de estado: girar escolhe
+Mesa, acessível pelo ícone discreto no canto do cabeçalho — fora da coluna de
+ações, que é só dos controles da partida. O `MesaOrientationGuard` entra abaixo
+da camada de estado: girar escolhe
 entre `_buildMesaVertical` e `_buildMesaHorizontal` e nada mais. O horizontal é
 composição nova — as três faixas empilhadas viram três colunas e o rodapé põe a
 identidade ao lado da mão — sem `RotatedBox`.
@@ -56,17 +61,20 @@ arquivo, documentados, sem nenhuma rota apontando para eles.
 Scaffold reproduzido conforme `.github/workflows/build.yml` (`flutter create` +
 overlay de `app/lib`, `app/test`, `app/assets` + as mesmas deps + `jni: 1.0.0`).
 
-> **Divergência de ambiente:** a máquina tem **Flutter 3.41.4 / Dart 3.11.1**; o CI
-> fixa **3.44.8**. Os números abaixo são desta versão. Vale reconfirmar no CI.
-
 | | base `a1a1927` | HEAD desta branch |
 |---|---|---|
 | `flutter analyze` | 0 erros · 13 warnings · 120 infos (**133**) | 0 erros · 13 warnings · 138 infos (**151**) |
-| `flutter test` | **117 verdes · 6 falhas** | **149 verdes · 0 falhas · 0 pulados** |
+| `flutter test` | **117 verdes · 6 falhas** | **151 verdes · 0 falhas · 0 pulados** |
 
 Os 18 infos novos são todos `avoid_relative_lib_imports`, dos arquivos de teste
 novos — a mesma convenção `../lib/...` que os 11 arquivos de teste já existentes
 seguem. **Nenhum erro e nenhum warning novo.**
+
+> **Ambiente da validação.** Os números acima vieram de **Flutter 3.41.4 /
+> Dart 3.11.1**, a versão instalada na máquina; o CI fixa **3.44.8**. Rodar de
+> novo em 3.44.8 é **conferência de ambiente/CI, não pendência funcional desta
+> OS**: o comportamento entregue está verificado, e o que uma versão diferente
+> pode mexer é a contagem de `info` do analyzer, não o que foi implementado.
 
 As 6 falhas da base não vinham do código: o `flutter_test` roda em 800×600
 lógicos, uma janela de desktop deitada, e as telas do fluxo são desenhadas para
@@ -78,20 +86,27 @@ os widgets nem chegavam a ser construídos.
 ## 4. Regressão visual (§25)
 
 A mesa vertical aprovada foi medida geometricamente na base e no HEAD, nas mesmas
-superfícies. **Todas as regiões conferidas ficaram idênticas** — cabeçalho
-(modalidade, rodada, pontuação), bandeja central (monte, mortos) e o rodapé do
-jogador, em 390×844 e em 320×640.
+superfícies (390×844 e 320×640).
 
-> ### ⚠️ Uma mudança perceptível, aguardando aprovação
->
-> A coluna de ações da mesa (chat / expressões / som) **subiu 45 px**, porque
-> ganhou um quarto botão: o **menu da Mesa**, que o adendo §5 exige para trocar a
-> orientação sem sair da partida. A coluna é ancorada pela base, então qualquer
-> botão novo desloca os anteriores para cima. Os três botões antigos mantêm
-> tamanho, ordem e alinhamento — só a altura mudou.
->
-> Se a posição atual não puder mudar, a alternativa é tirar o menu do rail e
-> colocá-lo em outro ponto da mesa — o que precisa de decisão de layout.
+**Idênticos à base, ao pixel:** os três botões da coluna de ações
+(chat `y=531`, expressões `y=576`, som `y=621` em 390×844), a bandeja central
+(monte e mortos) e o rodapé do jogador.
+
+Uma primeira versão punha o menu da Mesa como quarto botão da coluna de ações, o
+que empurrava os três para cima em 45 px. Isso foi **desfeito**: a coluna é
+ancorada pela base, e um acesso de configuração não pode deslocar controle de
+partida já aprovado. O menu passou para o **canto direito do cabeçalho**, como
+ícone discreto — sem o círculo dos botões do rail, na mesma paleta, com área de
+toque crescendo na altura (30×45) para não roubar largura.
+
+**O que mudou, e é o custo de caber no cabeçalho:** as quatro métricas
+(Modalidade, Mesa, Rodada, Pontuação) cedem 30 px ao ícone e por isso deslocam
+para a esquerda e reduzem — no máximo 21 px de deslocamento e ~12% de redução
+tipográfica, em 320×640. Elas vivem dentro de `FittedBox(scaleDown)`, então
+**encolhem sem cortar**. Folga medida entre a Pontuação e o ícone: **5 px** nas
+duas superfícies, e o ícone termina dentro da tela. Coberto por teste em ambos os
+tamanhos (`mesa_orientacao_runtime_test.dart`), que falha se algum dia
+encostarem.
 
 O horizontal é composição **nova** e não tem referência aprovada para comparar.
 A matriz de responsividade do adendo §9 roda como teste, sem filtro de overflow,
