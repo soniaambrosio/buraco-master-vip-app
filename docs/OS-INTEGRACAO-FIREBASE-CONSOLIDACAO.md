@@ -222,28 +222,40 @@ O workflow novo:
 - usa o `pubspec.yaml`/`lock` versionados em vez de `pub add`;
 - copia `app/assets` **excluindo `*.dart`** (ver §10).
 
-## 10. Achado registrado, não corrigido: `.dart` soltos na árvore
+## 10. Limpeza dos sete `.dart` órfãos — registro antes da remoção
 
-Existem 7 arquivos `.dart` versionados fora de `app/lib` e `app/test`:
+Sete arquivos `.dart` estavam versionados fora de `app/lib` e `app/test`. Todos
+entraram por commits **"Add files via upload"** — upload pela interface do
+GitHub, sem estrutura de pastas — entre 27 e 30/07/2026, antes de todo o
+trabalho de motor. **Nenhum é referenciado**: não há `import`, e nenhum `.yml`
+de workflow menciona os `.dart` vizinhos. Os sufixos `_1` são a assinatura de
+reenvio duplicado.
 
-```
-main.dart                                   (raiz do repositório)
-app/assets/loja_categoria_screen.dart
-app/assets/loja_categoria_screen_1.dart
-.github/workflows/main.dart
-.github/workflows/screens/como_jogar_screen.dart
-.github/workflows/screens/configuracoes_screen.dart
-.github/workflows/screens/loja_screen.dart
-```
+Este é o registro exigido antes da remoção (§21). O histórico do Git preserva
+integralmente todas as versões, inclusive as que divergiam do canônico, então
+não foi criada cópia separada de nenhuma.
 
-Ninguém os importa — a tela real é `app/lib/screens/loja_categoria_screen.dart`.
-Eles só apareceram agora porque o overlay passou a copiar `app/assets` (o pubspec
-declara assets), e os dois de `app/assets/` produziam **16 erros** de
-`flutter analyze`.
+| # | Caminho | Commit de origem | SHA do blob | Equivalente canônico | Comparação | Referenciado | Motivo da remoção |
+|---|---|---|---|---|---|---|---|
+| 1 | `app/assets/loja_categoria_screen.dart` | `fec5700` (30/07) | `a7c052a3` | `app/lib/screens/loja_categoria_screen.dart` (`a7c052a3`) | **idêntico** | não | cópia órfã byte a byte; causava 8 dos 16 errors do analyze |
+| 2 | `app/assets/loja_categoria_screen_1.dart` | `9add150` (30/07) | `a7c052a3` | idem (`a7c052a3`) | **idêntico** (e ao #1) | não | reenvio duplicado do #1; outros 8 errors |
+| 3 | `main.dart` (raiz) | `eaef82c` (27/07) | `4c1c13c3` | `app/lib/main.dart` (`4c8aea6e`) | **diverge** (41 vs 2020 linhas) | não | fragmento antigo fora da árvore do pacote; versão preservada no Git |
+| 4 | `.github/workflows/main.dart` | `ea1bd0c` (29/07) | `4f2d132a` | `app/lib/main.dart` (`4c8aea6e`) | **diverge** (4198 vs 2020 linhas) | não | `.dart` dentro de `workflows/` não tem função; versão preservada no Git |
+| 5 | `.github/workflows/screens/como_jogar_screen.dart` | `ea1bd0c` (29/07) | `9c6ba8f5` | `app/lib/screens/como_jogar_screen.dart` (`9c6ba8f5`) | **idêntico** | não | cópia órfã em diretório de workflows |
+| 6 | `.github/workflows/screens/configuracoes_screen.dart` | `ea1bd0c` (29/07) | `dae0b4ba` | `app/lib/screens/configuracoes_screen.dart` (`66d69fa8`) | **diverge** (955 vs 930 linhas) | não | versão antiga em diretório de workflows; preservada no Git |
+| 7 | `.github/workflows/screens/loja_screen.dart` | `ea1bd0c` (29/07) | `816b2859` | `app/lib/screens/loja_screen.dart` (`816b2859`) | **idêntico** | não | cópia órfã em diretório de workflows |
 
-Não foram apagados: a OS exige registro antes de remover (§21). O overlay os
-exclui da cópia, o que mantém o portão honesto sem deletar arquivo versionado.
-**Recomendação:** removê-los em commit próprio, com esta lista como registro.
+**Nenhum equivalente canônico de `app/lib/` foi tocado.** Os hashes acima
+provam quais sobreviveram: `a7c052a3`, `4c8aea6e`, `9c6ba8f5`, `66d69fa8`,
+`816b2859`.
+
+Efeito medido no `flutter analyze` sobre a árvore real (`app/`), antes e depois:
+**16 errors / exit 1 → 0 errors / exit 0**. Os 16 vinham exclusivamente de #1 e
+#2; os outros cinco estão fora do pacote Flutter e nunca eram analisados.
+
+Com a remoção feita, a exclusão de `*.dart` na cópia de assets do workflow deixa
+de ser necessária como solução e permanece apenas como salvaguarda barata contra
+reincidência do mesmo tipo de upload.
 
 ## 11. Onde isto para
 
