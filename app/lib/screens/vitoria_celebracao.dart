@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
@@ -90,19 +91,23 @@ class _CelebracaoVitoriaLayerState extends State<CelebracaoVitoriaLayer>
       ..stop()
       ..value = 0;
 
+    // Áudio nunca pode bloquear nem quebrar a tela de resultado: sem plugin de
+    // som disponível esta chamada não completa, e esperar por ela engolia o
+    // confete inteiro. O adendo §10.5 é explícito — som mudo mantém o visual.
     if (widget.vm.tocarSomLocal) {
-      try {
-        await _audio.play(
-          AssetSource('sons/vitoria.mp3'),
-          volume: .78,
-        );
-      } catch (_) {
-        // Áudio nunca pode bloquear nem quebrar a tela de resultado.
-      }
+      unawaited(_tocarSomDaVitoria());
     }
 
     if (mounted) {
       await _controller.forward();
+    }
+  }
+
+  Future<void> _tocarSomDaVitoria() async {
+    try {
+      await _audio.play(AssetSource('sons/vitoria.mp3'), volume: .78);
+    } catch (_) {
+      // Som é comemoração, não requisito.
     }
   }
 

@@ -162,6 +162,13 @@ void main() {
       expect(_assinaturaDaPartida(tester), antes);
       // E continua sendo a MESMA MesaScreen — nao houve recriacao de estado.
       expect(find.byType(MesaScreen), findsOneWidget);
+      // A composicao mudou de verdade.
+      expect(find.byKey(const ValueKey('mesa-horizontal')), findsOneWidget);
+      // Nada some ao girar: rodape do jogador, rail de acoes e o placar
+      // continuam na tela (adendo §3).
+      expect(find.textContaining('VOCÊ'), findsOneWidget);
+      expect(find.byTooltip('Menu da mesa'), findsOneWidget);
+      expect(find.byIcon(Icons.chat_bubble_rounded), findsOneWidget);
 
       await desmontarEDrenarTimers(tester);
     });
