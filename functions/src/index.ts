@@ -696,3 +696,19 @@ export const responderConviteEncerramento = onCall(opcoesCliente, async (req) =>
     return { status: destino, jaEstava: false };
   });
 });
+
+// ---------------------------------------------------------------------------
+// RASTREABILIDADE DE PARTIDAS
+// ---------------------------------------------------------------------------
+//
+// Modulo proprio, re-exportado aqui porque o Firebase descobre as funcoes a
+// partir de `main` (lib/index.js) e so dali. UMA linha, aditiva: o resto deste
+// arquivo continua sendo do Motor de Torneios.
+//
+// O modulo carrega DEPOIS de `initializeApp()` acima, e depende disso — ele nao
+// chama `initializeApp` de novo, porque a segunda chamada no mesmo processo
+// lanca.
+//
+// Expoe: registrarEncerramentoPartida, consultarPartidaPorMatchId,
+// consultarExtratoCompetitivo, registrarSinalAntifraude.
+export * from "./rastreabilidade";

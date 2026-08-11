@@ -167,6 +167,26 @@ service cloud.firestore {
         allow get, list: if ehDono(uid) || ehAdmin();
         allow create, update, delete: if false;
       }
+
+      // ------------------------------------------------------------------
+      // Historico de partidas DO JOGADOR (OS Rastreabilidade secoes 11 e 15).
+      //
+      // Esta e a VISAO DO JOGADOR, e ela e uma projecao — nao e o registro
+      // tecnico. O registro tecnico vive em `matches/` e o jogador nao le.
+      // A separacao e a de secao 15: o que serve para ele conferir a propria
+      // partida NAO e o que serve para o suporte auditar a mesa.
+      //
+      // Escrita: NINGUEM pelo cliente. Sem esta linha, um aplicativo
+      // modificado inventaria vitorias no proprio historico — e §34 exige
+      // exatamente que "cliente nao cria historico competitivo falso" e
+      // "jogador nao edita proprio historico".
+      //
+      // Apagar tambem e negado: historico que o proprio interessado pode
+      // sumir nao serve a investigacao nenhuma.
+      match /matchHistory/{matchId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow create, update, delete: if false;
+      }
     }
 
     // ------------------------------------------------------------------
@@ -407,6 +427,96 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     match /tournamentAudit/{eventoId} {
       allow read: if admin();
+      allow write: if false;
+    }
+
+    // =====================================================================
+    // BLOCO 4/4 — RASTREABILIDADE DE PARTIDAS
+    // origem: claude/buraco-vip-game-traceability (OS Rastreabilidade)
+    //
+    // PRINCIPIO DESTE BLOCO, EM UMA FRASE: o cliente NAO ESCREVE NADA AQUI.
+    // Nao ha um unico `allow write` verdadeiro em todo o bloco, e nao e
+    // descuido — e a resposta a secao 24 item por item:
+    //
+    //   criar partida finalizada falsa .... `matches` create negado
+    //   editar resultado ................. `matches` update negado
+    //   editar historico ................. `users/{uid}/matchHistory` negado
+    //   aumentar a propria pontuacao ..... `rankingLedger` write negado
+    //   diminuir a de terceiros .......... idem
+    //   alterar participantes ............ `matches` update negado
+    //   criar evento administrativo ...... `matches/{id}/events` negado
+    //   apagar partida ................... `matches` delete negado
+    //   apagar trilha competitiva ........ `rankingLedger` delete negado
+    //   marcar-se vencedor ............... `matches` write negado
+    //   consultar dado alheio ............ leitura restrita, ver abaixo
+    //
+    // Toda escrita passa pelo backend autorizado (Admin SDK, que ignora estas
+    // regras) — `registrarEncerramentoPartida` em functions/src/rastreabilidade.ts,
+    // que exige o claim `motorDePartidas` ou `admin`.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Registro tecnico da partida (secoes 5 e 14)
+    // ---------------------------------------------------------------------
+    // LEITURA SO ADMINISTRATIVA, e esta e a linha que responde a secao 14:
+    // "o jogador comum nao deve ganhar acesso administrativo so por conhecer
+    // um matchId". Conhecer o id nao abre nada — nem para quem jogou a
+    // partida. O que o jogador le e a projecao dele, em
+    // `users/{uid}/matchHistory/{matchId}`.
+    //
+    // A consulta de suporte (que ve menos que a de admin) NAO passa por
+    // regra: ela e uma Cloud Function chamavel, porque o recorte por nivel de
+    // acesso e logica, e regra do Firestore nao sabe projetar documento.
+    match /matches/{matchId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+
+      // -------------------------------------------------------------------
+      // Trilha de eventos auditaveis (secao 8)
+      // -------------------------------------------------------------------
+      // Subcolecao, e nao colecao de primeiro nivel: os eventos so fazem
+      // sentido dentro da partida, e assim uma consulta nunca precisa
+      // filtrar por matchId — ela ja esta no caminho.
+      //
+      // O id do documento E o `eventId`. Gravar duas vezes o mesmo evento e a
+      // MESMA escrita: a duplicidade fica impossivel por construcao, e nao
+      // por checagem — mesma disciplina de `rewardGrants` e `tournamentTasks`.
+      match /events/{eventId} {
+        allow read: if ehAdmin();
+        allow write: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Ledger competitivo — antes/delta/depois (secoes 12 e 13)
+    // ---------------------------------------------------------------------
+    // O jogador le os PROPRIOS lancamentos: ele tem direito de saber por que a
+    // pontuacao dele mudou, e esconder isso so gera chamado de suporte.
+    // O que ele nao faz e escrever — nem para si, nem contra terceiros.
+    //
+    // O id do documento e `matchId|userId|motivo`, a chave de idempotencia do
+    // dominio. Uma segunda gravacao do mesmo lancamento e a mesma escrita, e e
+    // isso que impede ranking aplicado duas vezes no nivel do banco, alem da
+    // barreira que o dominio ja aplica.
+    match /rankingLedger/{chaveIdempotencia} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || ehAdmin());
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Sinais antifraude (secoes 16 e 17)
+    // ---------------------------------------------------------------------
+    // LEITURA SO ADMINISTRATIVA, e aqui a restricao protege o jogador, nao o
+    // sistema: um sinal e SUSPEITA, nao veredito (o proprio documento carrega
+    // `geraPunicao: false`), e expo-lo ao alvo ou a terceiros transformaria uma
+    // observacao estatistica em acusacao publica.
+    //
+    // Escrita negada tambem para o admin pelo cliente: a trilha de sinais nao
+    // pode ser plantada nem limpa por quem for investigado ou investigar.
+    // Secao 35: "jogador nao cria flag administrativa contra terceiros".
+    match /fraudSignals/{chaveIdempotencia} {
+      allow read: if ehAdmin();
       allow write: if false;
     }
 

@@ -8,6 +8,10 @@
 /app/.dart_tool/
 /app/.flutter-plugins-dependencies
 
+# Saida de `flutter test` rodado direto em app/. Mesmo caso do .dart_tool acima:
+# artefato de build, aparece assim que a suite roda na arvore de verdade.
+/app/build/
+
 # Log do emulador do Firestore.
 firestore-debug.log
 ui-debug.log

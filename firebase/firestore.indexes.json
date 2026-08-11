@@ -267,7 +267,136 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas de um jogador, mais recentes primeiro. E a consulta que sustenta a investigacao administrativa por jogador e a reconstrucao do historico dele quando a projecao precisar ser refeita. `userIdsCompetidores` e denormalizado no documento justamente porque `array-contains` nao alcanca campo dentro de objeto aninhado. [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userIdsCompetidores",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas de um jogador dentro de um tipo (so ranqueadas, so torneio). Sustenta a apuracao de 'ganho de ranking atipico' sem varrer a colecao. [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userIdsCompetidores",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "tipo",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas por status e periodo. Duas leituras: mesas presas em estado nao terminal (operacao) e volume por janela (investigacao). [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas encerradas por abandono num periodo. `motivoEncerramento` a frente de `encerradaEm` porque o filtro e por igualdade e a ordenacao por intervalo. [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "motivoEncerramento",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 12 — o ledger de um jogador, em ordem cronologica. E a consulta que responde 'por que este jogador esta com esta pontuacao?': lida na ordem, a sequencia antes/delta/depois se encadeia. ASCENDING de proposito — o extrato se le do comeco. [origem: rastreabilidade]",
+      "collectionGroup": "rankingLedger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 14 — lancamentos de UMA partida, para a visao administrativa dela. [origem: rastreabilidade]",
+      "collectionGroup": "rankingLedger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "matchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 16 — fila de investigacao: sinais que citam uma conta, mais recentes primeiro. Sinal e SUSPEITA, nao veredito — esta consulta monta a fila de quem vai olhar, nunca uma lista de culpados. [origem: rastreabilidade]",
+      "collectionGroup": "fraudSignals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "alvos",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "observadoEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 16 — sinais de um tipo, por intensidade e data. Sustenta a priorizacao do operador sem varrer a colecao. [origem: rastreabilidade]",
+      "collectionGroup": "fraudSignals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "suspectedPattern",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "intensidade",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "observadoEm",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
+  "//fieldOverrides": "Vazio de proposito. As consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore. Declara-las aqui seria criar indice que o Firestore ja mantem. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",
   "fieldOverrides": []
 }
