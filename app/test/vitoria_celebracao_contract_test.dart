@@ -84,4 +84,19 @@ void main() {
 
     expect(vm.ativa, isFalse);
   });
+
+  test('efeitos sonoros desligados silenciam o som mas mantêm o visual', () {
+    final vm = celebracaoVitoriaDoResultado(
+      eventoId: 'resultado-partida-004',
+      fimPartida: true,
+      assentosVencedores: const {0, 2},
+      jogadores: jogadores,
+      somHabilitado: false,
+    );
+
+    // Adendo §10.5: efeitosSonoros == false silencia o som sem remover o visual.
+    expect(vm.ativa, isTrue);
+    expect(vm.usarConfetePadrao, isTrue);
+    expect(vm.tocarSomLocal, isFalse);
+  });
 }
