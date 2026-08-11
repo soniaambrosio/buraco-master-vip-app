@@ -15,6 +15,19 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { logger } = require('firebase-functions');
 const admin = require('firebase-admin');
+// Importacao MODULAR do FieldValue, e nao `admin.firestore.FieldValue`.
+//
+// As duas sao equivalentes em producao. A diferenca aparece sob o Emulator
+// Suite: o runtime do emulador substitui `admin.firestore` por um wrapper que
+// aponta para o emulador, e o wrapper nao carrega os estaticos do namespace —
+// `admin.firestore.FieldValue` vira `undefined` e a transacao de resgate morre
+// com "Cannot read properties of undefined (reading 'serverTimestamp')". Sem
+// isto, `claimPioneerKit` e intestavel localmente.
+//
+// Mesma forma que `functions-billing/index.js` ja usava. Nenhuma regra de
+// negocio, elegibilidade, concessao ou escrita de inventario muda por causa
+// desta linha.
+const { FieldValue } = require('firebase-admin/firestore');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -233,7 +246,7 @@ exports.claimPioneerKit = onCall(OPCOES, async (request) => {
       throw new HttpsError('permission-denied', veredicto.recusa);
     }
 
-    const agora = admin.firestore.FieldValue.serverTimestamp();
+    const agora = FieldValue.serverTimestamp();
     tx.set(refComprovante, {
       userId: uid,
       campaignId: CAMPAIGN_ID,
@@ -300,7 +313,7 @@ function registrarAuditoria(batchOuTx, { acao, autor, alvo, detalhe }) {
     alvo,
     campaignId: CAMPAIGN_ID,
     detalhe: detalhe || null,
-    em: admin.firestore.FieldValue.serverTimestamp(),
+    em: FieldValue.serverTimestamp(),
   });
 }
 
@@ -322,7 +335,7 @@ exports.grantPioneerEligibility = onCall(OPCOES, async (request) => {
     {
       concessaoAdministrativa: true,
       concedidaPor: autor,
-      concedidaEm: admin.firestore.FieldValue.serverTimestamp(),
+      concedidaEm: FieldValue.serverTimestamp(),
     },
     { merge: true },
   );
