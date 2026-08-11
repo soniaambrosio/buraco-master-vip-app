@@ -1,15 +1,14 @@
 // kit_pioneiros_test.dart — cobertura do dominio do Kit Pioneiros 2026.
 //
 // Dart puro sobre flutter_test: nao sobe widget, nao toca Firebase e nao le
-// rede. Os seeds reais entram por arquivo (copiados para test/colecoes/data/
-// pelo workflow), de modo que o teste valida a CONFIGURACAO DE PRODUCAO e nao
-// apenas o codigo.
+// rede. Os seeds reais entram por arquivo, localizados por
+// test/suporte/seeds.dart, de modo que o teste valida a CONFIGURACAO DE PRODUCAO
+// e nao apenas o codigo.
 //
 // A suite esta organizada pelos criterios de aceite da ordem de servico: cada
 // grupo abaixo corresponde a uma linha da secao 9.
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:buraco_master_vip/colecoes/colecao_campanha.dart';
 import 'package:buraco_master_vip/colecoes/colecao_catalogo.dart';
@@ -18,19 +17,16 @@ import 'package:buraco_master_vip/colecoes/colecao_resgate.dart';
 import 'package:buraco_master_vip/colecoes/colecao_ui_contract.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../suporte/seeds.dart';
+
 const _uid = 'uid_pioneiro_1';
 const _outroUid = 'uid_pioneiro_2';
 
 /// Instante de referencia. Fixo de proposito: nenhum teste le o relogio.
 final _agora = DateTime.utc(2026, 8, 6, 12);
 
-String _lerArquivo(String nome) {
-  final arquivo = File('test/colecoes/data/$nome');
-  if (!arquivo.existsSync()) {
-    throw StateError('arquivo de teste nao encontrado: ${arquivo.path}');
-  }
-  return arquivo.readAsStringSync();
-}
+String _lerArquivo(String nome) =>
+    arquivoDeSeed('colecoes', nome).readAsStringSync();
 
 Map<String, dynamic> _lerJson(String nome) =>
     jsonDecode(_lerArquivo(nome)) as Map<String, dynamic>;

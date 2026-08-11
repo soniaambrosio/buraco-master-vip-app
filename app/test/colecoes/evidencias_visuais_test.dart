@@ -31,6 +31,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../suporte/seeds.dart';
+
 const _uid = 'uid_evidencia';
 final _agora = DateTime.utc(2026, 8, 6, 12);
 const _saida = 'test/colecoes/evidencias';
@@ -38,9 +40,7 @@ const _saida = 'test/colecoes/evidencias';
 /// Chave do trecho capturado.
 final _alvo = GlobalKey();
 
-Map<String, dynamic> _lerJson(String nome) => jsonDecode(
-      File('test/colecoes/data/$nome').readAsStringSync(),
-    ) as Map<String, dynamic>;
+Map<String, dynamic> _lerJson(String nome) => lerSeed('colecoes', nome);
 
 /// Tenta usar uma fonte real do sistema. Sem isso o ambiente de teste desenha
 /// cada glifo como um retangulo e o print fica ilegivel. Se nao achar nenhuma, a
