@@ -3885,16 +3885,78 @@ void main() {
       expect(comConv.total, 0); // conversão isenta o -100
     });
 
-    test('C9-C2a-fix-NEG ComprarMonte ilegal (fase jogo) NÃO transporta conversão',
+    test('C9-C2a-fix-NEG ComprarMonte ilegal (fase jogo): ambos recusam -> CONVERGE, 0 conversões',
         () {
-      // Monte vazio + morto disponível, MAS ComprarMonte é ilegal (fase jogo).
-      // Como aplicarLegal recusa, nenhuma conversão é contada/transportada.
+      // Monte vazio + morto disponível, MAS ComprarMonte é ilegal (fase jogo)
+      // nos DOIS motores -> estado inalterado dos dois lados -> convergência;
+      // e NENHUMA conversão é contada/transportada (a recusa vem antes).
       final spec = _specAbertoC9C();
       final rel = sombra.comparar(_preMonteVazioMortoFaseJogoC9C(),
           TransacaoSombra.comprarMonte(0, spec));
-      expect(rel.classificacao, ClassificacaoSombra.canonicoRecusou);
+      expect(rel.classificacao, ClassificacaoSombra.converge);
       expect(rel.envRelevanteCanonico['mortosConvertidos'], '0'); // 0 transportadas
       expect(rel.envRelevanteLegado['mortosConvertidos'], '0'); // legado tb recusa
+    });
+
+    // ---- C9-C2b: baixar/bater como transações semânticas ----
+    test('C9-BAIXAR-01 baixar normal (não esvazia) CONVERGE', () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(_preBaixarNormalC9C(),
+          TransacaoSombra.baixar(0, const ['3c', '4c', '5c'], spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+    });
+
+    test('C9-BAIXAR-02 baixar inválido: ambos recusam -> CONVERGE (estado intacto)',
+        () {
+      final spec = _specAbertoC9C();
+      // [3,5,7] copas: não é sequência nem trinca -> os dois motores recusam.
+      final rel = sombra.comparar(_preBaixarNormalC9C(),
+          TransacaoSombra.baixar(0, const ['3c', '5c', '7c'], spec));
+      // legalidade EXPLÍCITA: os dois recusaram.
+      expect(rel.legadoRecusou, isTrue);
+      expect(rel.canonicoRecusou, isTrue);
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+    });
+
+    test('C9-C2b-fix-ASSIM assimetria de legalidade com ESTADO IGUAL -> INESPERADA',
+        () {
+      // Detector: legado "aplica" sem mudar o estado (dublê) e o canônico RECUSA.
+      // Estados finais coincidem, mas a LEGALIDADE diverge -> NÃO pode convergir.
+      final spec = _specAbertoC9C();
+      final txAssim = TransacaoSombra(
+        rotulo: 'assimetria-estado-igual',
+        assento: 0,
+        spec: spec,
+        excEsperada: null,
+        aplicarLegado: (j) => true, // dublê: legado "aplicou" sem mutar estado
+        acoesCanonicas: (e) => const [Descartar('inexistente')], // canônico recusa
+      );
+      final rel = sombra.comparar(_preDescarteC9C(), txAssim);
+      expect(rel.legadoAplicou, isTrue);
+      expect(rel.canonicoAplicou, isFalse);
+      // apesar do estado final igual, a assimetria de legalidade é divergência:
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      expect(rel.replayJson, isNotNull); // Replay completo na assimetria
+    });
+
+    test('C9-BAIXAR-03 baixar que ESVAZIA -> morto DIRETO (estabilizado) CONVERGE',
+        () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(_preBaixarEsvaziaMortoC9C(),
+          TransacaoSombra.baixar(0, const ['3c', '4c', '5c'], spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+    });
+
+    test('C9-BATER-01 baixar que ESVAZIA com morto pego + canastra -> BATIDA CONVERGE',
+        () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(_preBaterViaBaixarC9C(),
+          TransacaoSombra.baixar(0, const ['Xc', 'Yc', 'Zc'], spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
     });
 
     test('C9-SOMBRA-05 divergência declarada como EXC conhecida -> excecao', () {
@@ -4294,3 +4356,94 @@ TransacaoSombra _txDescartaOutraC9C(RuleSpec spec) => TransacaoSombra(
       aplicarLegado: (j) => j.descartar(0, 'other') == null,
       acoesCanonicas: (e) => const [Descartar('other')],
     );
+
+// ===== C9-C2b — helpers de teste (baixar / bater na sombra) =====
+
+// Fase jogo; mão com 3c,4c,5c (sequência) + 7c + Ac. baixar [3,4,5] NÃO esvazia;
+// baixar [3,5,7] é inválido (os dois motores recusam). Dupla não vulnerável.
+ProjecaoBMV _preBaixarNormalC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true; // fase jogo
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+      Carta('7c', 'copas', '7', false),
+      Carta('Ac', 'copas', 'A', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Fase jogo; mão = EXATAMENTE [3c,4c,5c]. baixar esvazia -> morto DIRETO
+// (morto disponível, dupla nos não pegou). Não vulnerável.
+ProjecaoBMV _preBaixarEsvaziaMortoC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'ouros', '3', false)]
+  ];
+  j.mortoPego = {'nos': false, 'eles': false};
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Fase jogo; dupla nos JÁ pegou o morto e tem uma canastra limpa (7) baixada;
+// mão = [Xc,Yc,Zc] (10,J,Q). baixar esvazia -> BATIDA (canastra libera).
+ProjecaoBMV _preBaterViaBaixarC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('Xc', 'copas', '10', false),
+      Carta('Yc', 'copas', 'J', false),
+      Carta('Zc', 'copas', 'Q', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.jogosDupla = {
+    'nos': [
+      [
+        Carta('3c', 'copas', '3', false),
+        Carta('4c', 'copas', '4', false),
+        Carta('5c', 'copas', '5', false),
+        Carta('6c', 'copas', '6', false),
+        Carta('7c', 'copas', '7', false),
+        Carta('8c', 'copas', '8', false),
+        Carta('9c', 'copas', '9', false),
+      ]
+    ],
+    'eles': <List<Carta>>[],
+  };
+  j.mortoPego = {'nos': true, 'eles': false};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.mortos = <List<Carta>>[];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}

@@ -23,6 +23,9 @@ import 'motor_config.dart';
 import 'projecao_estado.dart';
 
 /// Classificação da comparação de UMA transação.
+/// (`canonicoRecusou` foi aposentado no C9-C2b: recusa agora é comparada por
+/// estado — ambos recusam ⇒ CONVERGE; assimétrico ⇒ INESPERADA/EXC. Mantido no
+/// enum por compatibilidade; não é mais produzido.)
 enum ClassificacaoSombra { converge, excecao, inesperada, canonicoRecusou }
 
 /// Diferença estruturada de um campo entre o pós-legado e o pós-canônico.
@@ -52,6 +55,10 @@ class RelatorioSombra {
   // comparação (declarado, não silencioso).
   final Map<String, String> envRelevanteLegado;
   final Map<String, String> envRelevanteCanonico;
+  // Legalidade EXPLÍCITA de cada motor (C9-C2b-fix): quem APLICOU a transação.
+  // A legalidade NÃO é deduzida da igualdade de estado — é capturada direto.
+  final bool legadoAplicou;
+  final bool canonicoAplicou;
   const RelatorioSombra({
     required this.rotulo,
     required this.classificacao,
@@ -63,7 +70,12 @@ class RelatorioSombra {
     required this.replayJson,
     required this.envRelevanteLegado,
     required this.envRelevanteCanonico,
+    required this.legadoAplicou,
+    required this.canonicoAplicou,
   });
+
+  bool get legadoRecusou => !legadoAplicou;
+  bool get canonicoRecusou => !canonicoAplicou;
 
   bool get inesperada => classificacao == ClassificacaoSombra.inesperada;
 }
@@ -111,6 +123,23 @@ class TransacaoSombra {
         aplicarLegado: (j) => j.descartar(assento, cartaId) == null,
         acoesCanonicas: (e) => [Descartar(cartaId)],
       );
+
+  /// Baixar um jogo novo (transação semântica). Se a baixada ESVAZIAR a mão, a
+  /// estabilização do comparador resolve o que o legado dobra em `baixar`:
+  /// morto DIRETO (PegarMorto direto) se houver morto, ou BATIDA (Bater). Não é
+  /// comparação de chamada crua: legado `baixar` × canônico `Baixar` + estabiliza.
+  static TransacaoSombra baixar(int assento, List<CartaId> ids, RuleSpec spec,
+          {String? excEsperada}) =>
+      TransacaoSombra(
+        rotulo: 'baixar(${ids.length})@$assento',
+        assento: assento,
+        spec: spec,
+        excEsperada: excEsperada,
+        aplicarLegado: (j) => j.baixar(assento, ids)['ok'] == true,
+        acoesCanonicas: (e) => [
+          Baixar(jogosNovos: [ids])
+        ],
+      );
 }
 
 class _ResCanonico {
@@ -145,20 +174,20 @@ class ModoSombra {
       mascotes: pre.envelope.mascotes,
     );
     aplicarEmJogo(jl, pre.canonico, pre.envelope);
-    tx.aplicarLegado(jl); // roda a chamada legada (dobra morto/batida sozinho)
+    // LEGALIDADE do legado CAPTURADA explicitamente (não descartada).
+    final legadoAplicou = tx.aplicarLegado(jl);
     // Espelha AdaptadorLegado._saida: limpa o transporte de fase (setado na
-    // montagem) para que a fase PÓS-legado derive do jaComprou pós-operação —
-    // senão a fase ficaria estagnada na fase PRÉ-transação e divergiria.
+    // montagem) para que a fase PÓS-legado derive do jaComprou pós-operação.
     jl.costuraFaseCanonica = null;
     final posLegadoProj = paraCanonico(jl);
     final posLegado = posLegadoProj.canonico;
 
     // CANÔNICO: aplica a sequência semântica e ESTABILIZA antes de comparar.
     final rc = _rodarCanonico(pre.canonico, tx);
+    final canonicoAplicou = !rc.recusou; // legalidade EXPLÍCITA do canônico
+    final posCanonico = rc.estado;
 
     // ---------- ENVELOPE operacional relevante (C9-C2a-fix) ----------
-    // Legado: mortosConvertidos pós-transação (efeito real). Canônico: o efeito
-    // TRANSPORTADO pela transação = pré + nº de conversões morto->monte.
     final envLeg = _envRelevante(
         mortosConvertidos: posLegadoProj.envelope.mortosConvertidos);
     final envCan = _envRelevante(
@@ -168,75 +197,66 @@ class ModoSombra {
         if (envLeg[k] != envCan[k]) CampoDiff('env.$k', envLeg[k]!, envCan[k]!),
     ];
 
-    if (rc.recusou) {
-      return RelatorioSombra(
-        rotulo: tx.rotulo,
-        classificacao: ClassificacaoSombra.canonicoRecusou,
-        iguais: false,
-        assinaturaLegado: posLegado.assinatura(),
-        assinaturaCanonico: '(recusa canônica)',
-        diff: [CampoDiff('canonico', 'aplicou a transação', 'RECUSOU: ${rc.motivo}')],
-        idExcecao: null,
-        replayJson: _replay(pre, tx).toJson(),
-        envRelevanteLegado: envLeg,
-        envRelevanteCanonico: envCan,
-      );
-    }
-    final posCanonico = rc.estado;
-
-    // ---------- (2)(3) NORMALIZAR + COMPARAR (estado + envelope relevante) ----
     final aL = posLegado.assinatura();
     final aC = posCanonico.assinatura();
-    final diff = <CampoDiff>[..._diff(posLegado, posCanonico), ...diffEnv];
-    if (diff.isEmpty) {
-      // Converge SÓ quando cartas + fase + envelope relevante coincidem.
-      return RelatorioSombra(
-        rotulo: tx.rotulo,
-        classificacao: ClassificacaoSombra.converge,
-        iguais: true,
-        assinaturaLegado: aL,
-        assinaturaCanonico: aC,
-        diff: const [],
-        idExcecao: null,
-        replayJson: null,
-        envRelevanteLegado: envLeg,
-        envRelevanteCanonico: envCan,
-      );
+    final diffEstadoEnv = <CampoDiff>[
+      ..._diff(posLegado, posCanonico),
+      ...diffEnv,
+    ];
+    final excConhecida = tx.excEsperada != null &&
+        excecoesSombra.any((e) => e.id == tx.excEsperada);
+
+    RelatorioSombra mk(ClassificacaoSombra c,
+            {required bool iguais,
+            required List<CampoDiff> diff,
+            String? idExc,
+            Map<String, dynamic>? replay}) =>
+        RelatorioSombra(
+          rotulo: tx.rotulo,
+          classificacao: c,
+          iguais: iguais,
+          assinaturaLegado: aL,
+          assinaturaCanonico: aC,
+          diff: diff,
+          idExcecao: idExc,
+          replayJson: replay,
+          envRelevanteLegado: envLeg,
+          envRelevanteCanonico: envCan,
+          legadoAplicou: legadoAplicou,
+          canonicoAplicou: canonicoAplicou,
+        );
+
+    // ---------- QUADRANTES DE LEGALIDADE (explícitos) ----------
+    // Legalidade NÃO é deduzida da igualdade de estado.
+    if (legadoAplicou != canonicoAplicou) {
+      // ASSIMETRIA: um aplicou, o outro recusou -> SEMPRE divergência, mesmo que
+      // os estados finais coincidam. EXC só se declarada+conhecida; senão
+      // INESPERADA + Replay completo.
+      final diffAssim = <CampoDiff>[
+        CampoDiff('legalidade', legadoAplicou ? 'aplicou' : 'recusou',
+            canonicoAplicou ? 'aplicou' : 'recusou'),
+        ...diffEstadoEnv,
+      ];
+      return excConhecida
+          ? mk(ClassificacaoSombra.excecao,
+              iguais: false, diff: diffAssim, idExc: tx.excEsperada)
+          : mk(ClassificacaoSombra.inesperada,
+              iguais: false,
+              diff: diffAssim,
+              replay: _replay(pre, tx).toJson());
     }
 
-    // ---------- (4) CLASSIFICAR ----------
-    // Só é EXCEÇÃO se a transação DECLAROU um id conhecido em excecoesSombra.
-    // Divergência não declarada (excEsperada == null) OU id inexistente NUNCA é
-    // varrida para uma EXC genérica: cai em INESPERADA.
-    if (tx.excEsperada != null &&
-        excecoesSombra.any((e) => e.id == tx.excEsperada)) {
-      return RelatorioSombra(
-        rotulo: tx.rotulo,
-        classificacao: ClassificacaoSombra.excecao,
-        iguais: false,
-        assinaturaLegado: aL,
-        assinaturaCanonico: aC,
-        diff: diff,
-        idExcecao: tx.excEsperada,
-        replayJson: null,
-        envRelevanteLegado: envLeg,
-        envRelevanteCanonico: envCan,
-      );
+    // SIMÉTRICO (ambos aplicam OU ambos recusam): compara estado + envelope.
+    if (diffEstadoEnv.isEmpty) {
+      return mk(ClassificacaoSombra.converge, iguais: true, diff: const []);
     }
-
-    // ---------- (5)(6) INESPERADA: diff + Replay reproduzível ----------
-    return RelatorioSombra(
-      rotulo: tx.rotulo,
-      classificacao: ClassificacaoSombra.inesperada,
-      iguais: false,
-      assinaturaLegado: aL,
-      assinaturaCanonico: aC,
-      diff: diff,
-      idExcecao: null,
-      replayJson: _replay(pre, tx).toJson(),
-      envRelevanteLegado: envLeg,
-      envRelevanteCanonico: envCan,
-    );
+    return excConhecida
+        ? mk(ClassificacaoSombra.excecao,
+            iguais: false, diff: diffEstadoEnv, idExc: tx.excEsperada)
+        : mk(ClassificacaoSombra.inesperada,
+            iguais: false,
+            diff: diffEstadoEnv,
+            replay: _replay(pre, tx).toJson());
   }
 
   /// Roda um lote de transações e retorna a paridade (uma linha por transação).
@@ -260,14 +280,34 @@ class ModoSombra {
       if (vaiConverter) conversoes++;
       cur = r.proximoEstado!;
     }
-    // ESTABILIZA: resolve o morto indireto pendente (limite de segurança).
+    // ESTABILIZA as transições compostas que o legado DOBRA numa só chamada:
+    //  - mortoPendente (descarte indireto) -> PegarMorto(viaDescarte:true);
+    //  - mão vazia em fase JOGO (esvaziou BAIXANDO) -> morto DIRETO
+    //    (PegarMorto direto, se morto disponível) OU BATIDA (Bater).
+    // (limite de segurança contra laço).
     var guarda = 0;
-    while (cur.fase == FaseTurno.mortoPendente && guarda < 4) {
+    while (guarda < 6 && !cur.rodadaEncerrada) {
       guarda++;
-      final r =
-          aplicarLegal(cur, tx.assento, const PegarMorto(viaDescarte: true), tx.spec);
-      if (!r.legal) break;
-      cur = r.proximoEstado!;
+      if (cur.fase == FaseTurno.mortoPendente) {
+        final r = aplicarLegal(
+            cur, tx.assento, const PegarMorto(viaDescarte: true), tx.spec);
+        if (!r.legal) break;
+        cur = r.proximoEstado!;
+        continue;
+      }
+      if (cur.fase == FaseTurno.jogo && cur.maos[tx.assento].isEmpty) {
+        final dupla = tx.assento % 2 == 0 ? 'nos' : 'eles';
+        final mortoDisp =
+            !(cur.mortoPego[dupla] ?? false) && cur.mortos.isNotEmpty;
+        // morto DIRETO deixa a mão cheia (morto) -> o laço para na iteração
+        // seguinte; BATIDA encerra a rodada -> o laço sai pela condição.
+        final r = aplicarLegal(cur, tx.assento,
+            mortoDisp ? const PegarMorto() : const Bater(), tx.spec);
+        if (!r.legal) break;
+        cur = r.proximoEstado!;
+        continue;
+      }
+      break;
     }
     return _ResCanonico(false, null, cur, conversoes);
   }
