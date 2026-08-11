@@ -254,7 +254,7 @@ O `predeploy` de Torneios foi executado de verdade: `dart compile js` produziu o
 bundle (162.838 caracteres) e o `tsc` compilou (`--noEmit` exit 0). A cadeia
 declarada no `firebase.json` está validada ponta a ponta.
 
-### 8.3 Testes de segurança: 19 no total, **15 verdes, 4 vermelhos**
+### 8.3 Testes de segurança: **19/19 verdes**
 
 | Bloco | Testes | Resultado |
 |---|---|---|
@@ -262,9 +262,18 @@ declarada no `firebase.json` está validada ponta a ponta.
 | inventário: isolamento entre jogadores | 4 | verdes |
 | elegibilidade | 3 | verdes |
 | catálogo e campanha | 2 | verdes |
-| `claimPioneerKit` | 5 | 1 verde, **4 vermelhos** |
+| `claimPioneerKit` | 5 | **verdes** |
+| **Total** | **19** | **19 verdes, 0 falhas, 0 pulados** — `exit 0` |
 
-Nenhum pulado.
+O bloco `claimPioneerKit` exercita a Cloud Function de ponta a ponta contra o
+emulador: recusa sem autenticação, concessão dos dez itens, segunda chamada
+devolvendo `alreadyClaimed` sem gravar, UID do payload sendo ignorado em favor do
+contexto autenticado, e **cinco chamadas simultâneas ainda deixando dez itens** —
+a prova de idempotência sob corrida, que levou 4,1 s.
+
+As Rules foram avaliadas em oito pontos distintos do arquivo unido
+(`L99`, `L104`, `L115`, `L126`, `L150`, `L161`, `L179`, `L426`), cobrindo blocos
+das três origens e o fecho padrão. Zero erros residuais no log.
 
 ### 8.4 Três defeitos encontrados ao rodar isto pela primeira vez
 
@@ -281,29 +290,21 @@ sequência, cada um escondendo o seguinte:
    equivalentes em produção, mas o runtime do emulador substitui
    `admin.firestore` por um wrapper sem os estáticos do namespace. **Corrigido**
    com a importação modular, em commit isolado e autorizado.
-3. **Fixture da campanha incompleto** — este **não** foi corrigido, por decisão
-   de escopo. Ver §8.5.
+3. **Fixture da campanha sem `collectionId`.** `gravarItens` grava
+   `collectionId: campanha.collectionId` em cada item do inventário; sem o campo
+   a transação morria com *"Cannot use 'undefined' as a Firestore value"*. O
+   seed de produção (`campanha_pioneiros_2026.seed.json`) **tem**
+   `"collectionId": "pioneiros_2026"`. **Corrigido** no fixture, em commit
+   isolado.
 
-### 8.5 Os 4 vermelhos restantes: fixture, não produção
+Os três eram do harness, não da produção — e estavam **enfileirados**, cada um
+escondendo o seguinte. Só apareceram porque o Emulator Suite rodou de verdade
+pela primeira vez.
 
-```
-Value for argument "data" is not a valid Firestore document.
-Cannot use "undefined" as a Firestore value (found in field "collectionId").
-  em gravarItens — firebase/functions/index.js:286
-```
-
-`gravarItens` grava `collectionId: campanha.collectionId`. O seed de produção
-(`app/data/colecoes/campanha_pioneiros_2026.seed.json`) **tem**
-`"collectionId": "pioneiros_2026"`. O fixture do harness monta o documento da
-campanha com `campaignId`, `version`, `status`, `eligibilityMode`, `featureFlag`
-e `rewardIds` — **sem `collectionId`**.
-
-É a mesma classe do defeito do `eligibilityMode`: o fixture é uma réplica
-incompleta do documento real, e a função está correta. Nada aqui indica falha em
-produção. A correção é uma linha no fixture, e **foi deixada para autorização**.
-
-Progresso medido: o erro de `serverTimestamp` desapareceu por completo do log
-(0 ocorrências) e a execução avançou até este ponto.
+Em toda a consolidação, a **única** alteração em código de produção foi a
+importação modular do `FieldValue` (item 2 acima) — autorizada, restrita a de
+onde o símbolo vem, e sem efeito semântico. Nenhuma regra de negócio, nenhuma
+Rule e nenhum seed foram tocados.
 
 ## 9. Correção obrigatória do CI
 
