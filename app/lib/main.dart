@@ -28,6 +28,8 @@ import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
 import 'screens/onde_jogar_screen.dart';
 import 'screens/mesa_flow_preview_host.dart';
+import 'screens/mesa_orientation_contract.dart';
+import 'services/mesa_orientation_service.dart';
 import 'widgets/convite_vip.dart';
 import 'mesa.dart';
 
@@ -614,6 +616,9 @@ class _ConfiguracoesPreviewHostState
     extends State<_ConfiguracoesPreviewHost> {
   // Estado REAL: carrega do disco (SharedPreferences) e persiste cada mudança.
   Configuracoes _config = const Configuracoes(versaoApp: '1.0.0');
+  // A orientacao da Mesa tem servico e chave proprios, entao viaja separada.
+  MesaOrientacaoPreferida _orientacaoMesa =
+      MesaOrientationService.instance.atual;
 
   @override
   void initState() {
@@ -621,6 +626,14 @@ class _ConfiguracoesPreviewHostState
     ConfiguracoesService.instance.carregar(versaoApp: '1.0.0').then((c) {
       if (mounted) setState(() => _config = c);
     });
+    MesaOrientationService.instance.carregar().then((o) {
+      if (mounted) setState(() => _orientacaoMesa = o);
+    });
+  }
+
+  Future<void> _salvarOrientacao(MesaOrientacaoPreferida preferencia) async {
+    setState(() => _orientacaoMesa = preferencia);
+    await MesaOrientationService.instance.salvar(preferencia);
   }
 
   void _aviso(String texto) {
@@ -727,6 +740,8 @@ class _ConfiguracoesPreviewHostState
     return ConfiguracoesScreen(
       perfil: _montarPerfil(),
       config: _config,
+      orientacaoMesa: _orientacaoMesa,
+      onOrientacaoMesa: _salvarOrientacao,
       onVoltar: () => Navigator.of(context).maybePop(),
       callbacks: ConfiguracoesCallbacks(
         onAlterar: _salvar,

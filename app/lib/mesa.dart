@@ -9,7 +9,10 @@ import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'screens/configurar_mesa_screen.dart' show ChatMesa;
 import 'screens/mesa_launch_spec.dart';
+import 'screens/mesa_orientation_contract.dart';
+import 'screens/mesa_orientation_widgets.dart';
 import 'screens/mesa_renderer_contract.dart';
+import 'services/mesa_orientation_service.dart';
 import 'screens/resultado_partida_screen.dart';
 import 'screens/resultado_vitoria_adapter.dart';
 import 'screens/resultado_partida_celebrado.dart';
@@ -1318,6 +1321,7 @@ class _MesaScreenState extends State<MesaScreen> {
   bool _botsRodando = false;
   bool _soundEnabled = true;
   int _partidaSeq = 0;
+  MesaOrientacaoPreferida _orientacao = MesaOrientationService.instance.atual;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
   String? _lastPurchaseSource;
@@ -1398,6 +1402,7 @@ class _MesaScreenState extends State<MesaScreen> {
       // A mesa continua funcional mesmo quando o dispositivo não oferece áudio.
     }
     _startTurnClock();
+    _carregarOrientacao();
     // §3.2: o 1º jogador é SORTEADO — se caiu num robô, os robôs abrem a rodada.
     if (_j.vez != 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1416,6 +1421,80 @@ class _MesaScreenState extends State<MesaScreen> {
     _pCarta?.dispose();
     _pEvento?.dispose();
     super.dispose();
+  }
+
+  /// Le a preferencia salva em Configuracoes -> JOGO. Sem armazenamento
+  /// disponivel a mesa continua no padrao Vertical, que e a mesa aprovada.
+  Future<void> _carregarOrientacao() async {
+    try {
+      final salva = await MesaOrientationService.instance.carregar();
+      if (mounted && salva != _orientacao) {
+        setState(() => _orientacao = salva);
+      }
+    } catch (_) {
+      // Preferencia e conforto, nunca motivo para a partida nao abrir.
+    }
+  }
+
+  /// Troca de orientacao pelo menu da propria Mesa, sem sair da partida.
+  ///
+  /// So mexe em `_orientacao`: a arvore de estado autoritativo fica acima do
+  /// guard, entao rodada, motor, relogio, mao, lixo, mortos, placar e conexao
+  /// atravessam a troca intactos (adendo §4).
+  Future<void> _trocarOrientacao(MesaOrientacaoPreferida preferencia) async {
+    if (preferencia == _orientacao) return;
+    setState(() => _orientacao = preferencia);
+    try {
+      await MesaOrientationService.instance.salvar(preferencia);
+    } catch (_) {
+      // A troca ja vale nesta partida mesmo se a persistencia falhar.
+    }
+  }
+
+  /// Menu da Mesa com a mesma escolha de orientacao das Configuracoes.
+  void _abrirMenuDaMesa() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C130C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          // Deitado a folha tem pouca altura; sem rolagem o conteudo estoura.
+          padding: const EdgeInsets.fromLTRB(22, 18, 22, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Orientação da mesa',
+                style: TextStyle(
+                  color: _mGoldHi,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Vale só para a Mesa. A partida continua de onde parou.',
+                style: TextStyle(color: Color(0xFFC8BDB6), fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              StatefulBuilder(
+                builder: (context, setSheetState) => MesaOrientacaoSelector(
+                  valor: _orientacao,
+                  onChanged: (valor) {
+                    setSheetState(() {});
+                    _trocarOrientacao(valor);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _startTurnClock() {
@@ -1776,16 +1855,70 @@ class _MesaScreenState extends State<MesaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _header(),
-            Expanded(child: _board()),
-          ],
+    // O guard fica ABAIXO da camada de estado (docs/OS-CLAUDE-ADENDO-ORIENTACAO-MESA
+    // §4 e §7): girar troca so a composicao. `_j`, motor, relogio de turno,
+    // conexao, mao, lixo, mortos e placar nao passam por aqui.
+    return MesaOrientationGuard(
+      preferencia: _orientacao,
+      builder: (context, efetiva) => Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Pedir a rotacao nao garante que ela aconteca: rotacao travada
+              // no sistema, tablet em janela, desktop e web podem manter a tela
+              // estreita. A composicao deitada precisa de largura para as tres
+              // colunas, entao sem essa largura a mesa fica na composicao que
+              // cabe em vez de cortar carta.
+              final cabeDeitada =
+                  constraints.maxWidth >= _larguraMinimaDeitada;
+              return efetiva == MesaOrientacaoEfetiva.horizontal && cabeDeitada
+                  ? _buildMesaHorizontal()
+                  : _buildMesaVertical();
+            },
+          ),
         ),
       ),
+    );
+  }
+
+  /// Largura util minima da composicao deitada.
+  ///
+  /// O centro guarda monte + lixo + dois mortos em tamanho unico (272) e ocupa
+  /// 46/90 da largura do feltro; abaixo disso a bandeja central nao caberia e
+  /// as colunas de jogos ficariam mais estreitas que uma carta. Um telefone
+  /// comum deitado (640 x 360 em diante) passa com folga.
+  static const double _larguraMinimaDeitada = 560;
+
+  /// Composicao aprovada, em retrato: faixa de metricas no topo e o feltro
+  /// ocupando o resto da tela.
+  Widget _buildMesaVertical() {
+    return Column(
+      key: const ValueKey('mesa-vertical'),
+      children: [
+        _header(),
+        Expanded(child: _board()),
+      ],
+    );
+  }
+
+  /// Composicao propria para telefone deitado — nao e a arvore vertical girada.
+  ///
+  /// Deitado sobra largura e falta altura, entao as bandejas deixam de ser tres
+  /// faixas empilhadas e viram tres colunas (jogos deles | monte, lixo e mortos
+  /// | nossos jogos), e o rodape do jogador poe a identidade ao lado da mao em
+  /// vez de acima dela. Assim o feltro devolve altura para a mao continuar do
+  /// mesmo tamanho, sem encolher carta nem cortar jogo.
+  ///
+  /// A composicao de assentos aprovada e preservada: voce embaixo, o parceiro
+  /// na borda inferior esquerda e os oponentes nas bordas superiores.
+  Widget _buildMesaHorizontal() {
+    return Column(
+      key: const ValueKey('mesa-horizontal'),
+      children: [
+        _header(),
+        Expanded(child: _board(horizontal: true)),
+      ],
     );
   }
 
@@ -1955,13 +2088,15 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
-  Widget _board() {
+  Widget _board({bool horizontal = false}) {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Núcleo central deliberadamente compacto. A altura economizada é
         // devolvida principalmente à área de jogos da dupla de baixo.
         const centralHeight = 118.0;
-        const playerDockHeight = 180.0;
+        // Deitado o rodapé poe a identidade do jogador ao lado da mão em vez de
+        // acima dela, e por isso precisa de menos altura que em retrato.
+        final double playerDockHeight = horizontal ? 126.0 : 180.0;
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
           padding: const EdgeInsets.all(2),
@@ -1989,29 +2124,38 @@ class _MesaScreenState extends State<MesaScreen> {
                   ),
                 ),
                 Positioned.fill(
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 11,
-                        child: _meldArea('eles', top: true),
-                      ),
-                      SizedBox(height: centralHeight, child: _centralTray()),
-                      Expanded(
-                        flex: 12,
-                        child: _meldArea('nos', top: false),
-                      ),
-                      const SizedBox(height: playerDockHeight),
-                    ],
-                  ),
+                  child: horizontal
+                      ? Padding(
+                          padding:
+                              EdgeInsets.only(bottom: playerDockHeight),
+                          child: _bandejasEmColunas(),
+                        )
+                      : Column(
+                          children: [
+                            Expanded(
+                              flex: 11,
+                              child: _meldArea('eles', top: true),
+                            ),
+                            SizedBox(
+                              height: centralHeight,
+                              child: _centralTray(),
+                            ),
+                            Expanded(
+                              flex: 12,
+                              child: _meldArea('nos', top: false),
+                            ),
+                            SizedBox(height: playerDockHeight),
+                          ],
+                        ),
                 ),
                 Positioned(
                   left: 1,
-                  top: 56,
+                  top: horizontal ? 8 : 56,
                   child: _sidePlayer(1, left: true),
                 ),
                 Positioned(
                   right: 1,
-                  top: 56,
+                  top: horizontal ? 8 : 56,
                   child: _sidePlayer(3, left: false),
                 ),
                 Positioned(
@@ -2030,7 +2174,7 @@ class _MesaScreenState extends State<MesaScreen> {
                   right: 0,
                   bottom: 0,
                   height: playerDockHeight,
-                  child: _playerDock(),
+                  child: _playerDock(horizontal: horizontal),
                 ),
                 if (_msg != null)
                   Positioned(
@@ -2050,6 +2194,33 @@ class _MesaScreenState extends State<MesaScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Bandejas do feltro deitado: as tres faixas do retrato viram tres colunas.
+  ///
+  /// A largura extra vai para os jogos das duas duplas, e a altura poupada
+  /// volta para a mao. O centro guarda a largura minima do conjunto
+  /// monte + lixo + dois mortos para nenhuma carta encolher.
+  Widget _bandejasEmColunas() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: 22, child: _meldArea('eles', top: true)),
+        Expanded(
+          flex: 46,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                minWidth: 272,
+                maxHeight: 118,
+              ),
+              child: _centralTray(),
+            ),
+          ),
+        ),
+        Expanded(flex: 22, child: _meldArea('nos', top: false)),
+      ],
     );
   }
 
@@ -2875,6 +3046,14 @@ class _MesaScreenState extends State<MesaScreen> {
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
         ),
+        const SizedBox(height: 7),
+        // Menu da Mesa — hoje leva a orientacao, que o adendo exige aqui alem
+        // de Configuracoes, para o jogador trocar sem sair da partida.
+        _railButton(
+          Icons.screen_rotation_rounded,
+          _abrirMenuDaMesa,
+          tooltip: 'Menu da mesa',
+        ),
       ],
     );
   }
@@ -2896,8 +3075,8 @@ class _MesaScreenState extends State<MesaScreen> {
     }
   }
 
-  Widget _railButton(IconData icon, VoidCallback onTap) {
-    return GestureDetector(
+  Widget _railButton(IconData icon, VoidCallback onTap, {String? tooltip}) {
+    final botao = GestureDetector(
       onTap: onTap,
       child: Container(
         width: 38,
@@ -2914,40 +3093,76 @@ class _MesaScreenState extends State<MesaScreen> {
         child: Icon(icon, color: _mGoldHi, size: 20),
       ),
     );
+    if (tooltip == null) return botao;
+    return Tooltip(message: tooltip, child: botao);
   }
 
-  Widget _playerDock() {
+  Widget _playerDock({bool horizontal = false}) {
     final active = _j.vez == 0 && !_j.rodadaEncerrada;
+    // Chat/expressões/som ficam numa coluna vertical à direita da mesa
+    // (_actionRail no _board). Aqui no rodapé fica só o jogador.
+    final identidade = _identidadeDoJogador(active, horizontal: horizontal);
+
+    // Deitado a identidade fica AO LADO da mão: a largura sobra e a altura nao,
+    // entao a mao continua no mesmo tamanho em vez de disputar espaco vertical.
+    if (horizontal) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(width: 132, child: Center(child: identidade)),
+          Expanded(child: _hand()),
+        ],
+      );
+    }
+
     return Column(
       children: [
-        SizedBox(
-          height: 52,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              GestureDetector(
-                onTap: () => setState(() => _expandedAvatarSeat = 0),
-                child: _avatarCircle(0, size: 50, active: active),
-              ),
-              const SizedBox(width: 7),
-              Text(
-                'VOCÊ  •  ${_j.maos[0].length} cartas',
-                style: TextStyle(
-                  color: active ? _mPurpleHi : _mGoldHi,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              if (active) ...[
-                const SizedBox(width: 10),
-                _turnBadge(compact: true),
-              ],
-              // Chat/expressões/som agora ficam numa coluna vertical à direita
-              // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
-            ],
-          ),
-        ),
+        SizedBox(height: 52, child: Center(child: identidade)),
         Expanded(child: _hand()),
+      ],
+    );
+  }
+
+  Widget _identidadeDoJogador(bool active, {required bool horizontal}) {
+    final avatar = GestureDetector(
+      onTap: () => setState(() => _expandedAvatarSeat = 0),
+      child: _avatarCircle(0, size: 50, active: active),
+    );
+    final rotulo = Text(
+      'VOCÊ  •  ${_j.maos[0].length} cartas',
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: active ? _mPurpleHi : _mGoldHi,
+        fontSize: 11,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+
+    if (horizontal) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          avatar,
+          const SizedBox(height: 4),
+          rotulo,
+          if (active) ...[
+            const SizedBox(height: 4),
+            _turnBadge(compact: true),
+          ],
+        ],
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        avatar,
+        const SizedBox(width: 7),
+        rotulo,
+        if (active) ...[
+          const SizedBox(width: 10),
+          _turnBadge(compact: true),
+        ],
       ],
     );
   }
