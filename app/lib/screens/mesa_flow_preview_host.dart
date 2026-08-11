@@ -32,6 +32,12 @@ class _MesaFlowPreviewHostState extends State<MesaFlowPreviewHost> {
     ehVip: widget.ehVip,
   );
 
+  /// Enquanto a preparacao esta aberta, CRIAR MESA nao cria outra.
+  ///
+  /// Sem esta trava um toque duplo empilha duas preparacoes e, no fim, duas
+  /// partidas — cada uma com seu motor, seu relogio e sua aposta.
+  bool _criandoMesa = false;
+
   int get _jogadores => _vm.modo == ModoJogo.dois ? 2 : 4;
 
   void _aviso(String texto) {
@@ -123,6 +129,7 @@ class _MesaFlowPreviewHostState extends State<MesaFlowPreviewHost> {
   }
 
   void _criarMesa() {
+    if (_criandoMesa) return;
     final plan = MesaFlowPlan.fromVm(_vm);
     if (!plan.valido) {
       _aviso('Revise a mesa: ${plan.validation.erros.join(', ')}');
@@ -145,26 +152,33 @@ class _MesaFlowPreviewHostState extends State<MesaFlowPreviewHost> {
         ? MesaVariant.publica
         : MesaVariant.vip;
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PreparandoPartidaScreen(
-          vm: plan.preparacao,
-          onConcluido: () {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (_) => MesaScreen(
-                  variant: variant,
-                  modalidade: plan.launch.modalidade,
-                  metaPontos: plan.launch.metaPontos,
-                  tempoSegundos: plan.launch.tempoSegundos,
-                  renderer: plan.renderer,
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
+    setState(() => _criandoMesa = true);
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => PreparandoPartidaScreen(
+              vm: plan.preparacao,
+              onConcluido: () {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => MesaScreen(
+                      variant: variant,
+                      modalidade: plan.launch.modalidade,
+                      metaPontos: plan.launch.metaPontos,
+                      tempoSegundos: plan.launch.tempoSegundos,
+                      renderer: plan.renderer,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        )
+        // Voltar da partida devolve o botao: a mesma configuracao pode abrir
+        // outra mesa, so nao duas ao mesmo tempo.
+        .whenComplete(() {
+          if (mounted) setState(() => _criandoMesa = false);
+        });
   }
 
   @override

@@ -1322,6 +1322,7 @@ class _MesaScreenState extends State<MesaScreen> {
   bool _soundEnabled = true;
   int _partidaSeq = 0;
   MesaOrientacaoPreferida _orientacao = MesaOrientationService.instance.atual;
+  bool _menuAberto = false;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
   String? _lastPurchaseSource;
@@ -1453,6 +1454,9 @@ class _MesaScreenState extends State<MesaScreen> {
 
   /// Menu da Mesa com a mesma escolha de orientacao das Configuracoes.
   void _abrirMenuDaMesa() {
+    // Toque duplo no rail nao empilha duas folhas.
+    if (_menuAberto) return;
+    _menuAberto = true;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF1C130C),
@@ -1494,7 +1498,7 @@ class _MesaScreenState extends State<MesaScreen> {
           ),
         ),
       ),
-    );
+    ).whenComplete(() => _menuAberto = false);
   }
 
   void _startTurnClock() {

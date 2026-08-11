@@ -1019,20 +1019,38 @@ class _HallPreviewHost extends StatelessWidget {
 // Esta e a UNICA porta de entrada do fluxo de mesas: o tipo de mesa se escolhe
 // aqui e em lugar nenhum mais. O configurador nao repete o seletor de tipo — ele
 // so configura o ambiente que ja chegou decidido daqui.
-class _OndeJogarPreviewHost extends StatelessWidget {
+class _OndeJogarPreviewHost extends StatefulWidget {
   const _OndeJogarPreviewHost();
 
   @override
+  State<_OndeJogarPreviewHost> createState() => _OndeJogarPreviewHostState();
+}
+
+class _OndeJogarPreviewHostState extends State<_OndeJogarPreviewHost> {
+  final OndeJogarVM _vm = OndeJogarVM.mock();
+
+  /// Um ambiente por vez: dois toques rapidos no mesmo cartao (ou em dois
+  /// cartoes seguidos) empilhavam duas telas.
+  bool _abrindo = false;
+
+  void _abrir(Widget destino) {
+    if (_abrindo) return;
+    setState(() => _abrindo = true);
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => destino))
+        .whenComplete(() {
+          if (mounted) setState(() => _abrindo = false);
+        });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final vm = OndeJogarVM.mock();
     return OndeJogarScreen(
-      vm: vm,
+      vm: _vm,
       onVoltar: () => Navigator.of(context).maybePop(),
       onEscolher: (id) {
         if (id == 'treino') {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const MesaScreen()),
-          );
+          _abrir(const MesaScreen());
           return;
         }
         final tipo = switch (id) {
@@ -1040,14 +1058,7 @@ class _OndeJogarPreviewHost extends StatelessWidget {
           'vip' => TipoMesa.vip,
           _ => TipoMesa.privada,
         };
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => MesaFlowPreviewHost(
-              tipoInicial: tipo,
-              ehVip: vm.ehVip,
-            ),
-          ),
-        );
+        _abrir(MesaFlowPreviewHost(tipoInicial: tipo, ehVip: _vm.ehVip));
       },
     );
   }
