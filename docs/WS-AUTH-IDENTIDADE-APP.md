@@ -21,15 +21,19 @@ Agora:
 ```
 conectar()
    ↓
-obter Firebase ID Token          ← sem token, nem abre socket
+obter Firebase ID Token             ← sem token, nem abre socket
    ↓
 abrir WebSocket
    ↓
-{tipo:"auth", token}             ← PRIMEIRA mensagem, sempre
+{tipo:"auth", token, protocolo:2}   ← PRIMEIRA mensagem, sempre
    ↓
-esperar {tipo:"autenticado"}     ← status = autenticando; nada mais sai
+esperar {tipo:"autenticado"}        ← status = autenticando; nada mais sai
+   ↓                                  (desiste em 15s se o servidor não responder)
+soltar a fila de comandos           ← status = conectado
    ↓
-soltar a fila de comandos        ← status = conectado
+{tipo:"authExpirou"} do servidor    ← a credencial venceu com a conexão de pé
+   ↓
+pegar token novo e reapresentar     ← no MESMO socket; a fila volta a segurar
 ```
 
 ### Arquivos
@@ -37,8 +41,8 @@ soltar a fila de comandos        ← status = conectado
 | Arquivo | O quê |
 |---|---|
 | [app/lib/services/online_service.dart](app/lib/services/online_service.dart) | credencial antes do socket, máquina de estados, fila presa até autenticar, reconexão com token novo |
-| [app/lib/main.dart](app/lib/main.dart) | dois estados novos no chip de status (o `switch` é exaustivo, então tinha que ser tratado) |
-| [app/test/online_auth_test.dart](app/test/online_auth_test.dart) | 20 testes do portão |
+| [app/lib/main.dart](app/lib/main.dart) | quatro estados novos no chip de status (o `switch` é exaustivo, então tinham que ser tratados) |
+| [app/test/online_auth_test.dart](app/test/online_auth_test.dart) | 31 testes do portão |
 | [.github/workflows/build.yml](.github/workflows/build.yml) | portão de CI para a suíte nova + deps de teste |
 
 ---
@@ -85,10 +89,45 @@ Reconectar **nunca** reaproveita identidade anterior: a volta para a mesa
 código da mesa diz *para onde* voltar, não *quem* está voltando — quem, o
 servidor decide pelo token.
 
+### Renovação de credencial sem perder o assento
+
+O servidor avisa (`authExpirou`) quando o token da conexão vence, e dá uma
+carência curta. O app pega um token novo e reapresenta **no mesmo socket**.
+Enquanto isso o status volta a `autenticando` e a fila de comandos segura de
+novo — igual à primeira autenticação.
+
+Renovar **não** reenvia `entrarMesa`: o socket nunca caiu e o assento continua
+nosso. Reentrar pegaria outro lugar na mesa. É a diferença entre renovar
+credencial e reconectar — o app distingue as duas.
+
+Sem credencial na hora da renovação (a sessão do Firebase caiu no meio-tempo),
+vira falha terminal, como qualquer outra ausência de credencial.
+
+### Estados terminais
+
+Três situações em que insistir não resolveria, e o app para de tentar:
+
+| Estado | Quando | O que a pessoa vê |
+|---|---|---|
+| `naoAutenticado` | sem usuário no Firebase, ou credencial recusada | "entre na sua conta para jogar online" |
+| `atualizacaoObrigatoria` | o servidor exige protocolo mais novo | "atualize o aplicativo para jogar online" |
+| `servidorDesatualizado` | o servidor ainda não fala o protocolo autenticado | "servidor em atualização — tente mais tarde" |
+
+`servidorDesatualizado` é detectado pelo erro que o servidor antigo devolve ao
+`{tipo:"auth"}` (`"tipo desconhecido: auth"`). **Não existe caminho de jogo a
+partir daí, de propósito:** jogar contra o servidor antigo exigiria o app voltar
+a declarar `jogadorId`, que é exatamente o buraco fechado. O que o app garante é
+falhar de forma explícita em vez de travar — e voltar sozinho assim que o
+servidor subir.
+
+Um servidor que simplesmente **não responde** ao `auth` também não pendura o
+app: 15 segundos e ele desiste desta tentativa, caindo no backoff normal.
+
 ### O token não vaza
 
-Ele sai uma única vez, dentro da mensagem `auth`, e não aparece em `erro`,
-`status`, `visao`, `toString()` nem em log nenhum. Dois testes cobrem isso.
+Ele sai uma única vez por autenticação, dentro da mensagem `auth`, e não aparece
+em `erro`, `status`, `visao`, `toString()` nem em log nenhum. Vale igual para o
+token renovado. Três testes cobrem isso.
 
 ---
 
@@ -112,16 +151,21 @@ Nenhum outro comportamento foi alterado.
 
 **Não existe compatibilidade cruzada, e é proposital:**
 
-- este app **não** funciona contra o servidor atual em produção (`1828d42`): o
-  `{tipo:"auth"}` cai no `default` do `switch` de lá, volta `"tipo desconhecido"`
-  e o app trata como falha de autenticação;
-- o app atual em produção **não** funciona contra o servidor novo: nunca
-  autentica, e todo comando volta `NAO_AUTENTICADO`.
+- este app **não** joga contra o servidor atual em produção (`1828d42`) — mostra
+  "servidor em atualização" no online, e o resto do app (jogo local, torneios,
+  perfil) segue funcionando normalmente;
+- o app atual em produção **não** joga contra o servidor novo: nunca autentica, e
+  o primeiro comando volta com `ATUALIZACAO_OBRIGATORIA` e a mensagem "atualize o
+  aplicativo para continuar jogando online".
 
-A implantação precisa ser **coordenada**. A ordem recomendada e os riscos estão
-em `docs/WS-AUTH-IDENTIDADE.md` do repositório do servidor, incluindo a decisão
-pendente sobre as contas hoje chaveadas pelos ids que os navegadores inventaram
-em `localStorage`.
+A implantação precisa ser **coordenada**: `FIREBASE_PROJECT_ID` no Railway → app
+publicado nas lojas → servidor implantado. A ordem completa, a janela de
+indisponibilidade e o porquê de não existir ponte funcional estão em
+`docs/WS-AUTH-IDENTIDADE.md` do repositório do servidor, §5.
+
+Lá também está a decisão fechada sobre as contas legadas `j-<random>`: **corte
+limpo, sem migração automática**. Nada neste app envia identificador legado, e
+nada deve passar a enviar.
 
 ---
 
@@ -129,7 +173,7 @@ em `localStorage`.
 
 ```
 flutter test test/teste_motor.dart test/torneios/reward_grants_test.dart test/online_auth_test.dart
-→ 232 testes, 232 verdes (20 deles novos)
+→ 243 testes, 243 verdes (31 deles novos)
 
 flutter analyze lib test
 → 105 issues, exatamente a linha de base anterior (nenhum nos arquivos desta OS)

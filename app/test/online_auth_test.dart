@@ -425,6 +425,172 @@ void main() {
     });
   });
 
+  group('ponte de versão do protocolo', () {
+    test('a autenticação declara a versão do protocolo', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+
+      expect(c.canal.mensagens.first['protocolo'], OnlineService.protocolo);
+      expect(OnlineService.protocolo, greaterThanOrEqualTo(2));
+    });
+
+    test('servidor exigindo versão mais nova: falha terminal explícita', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      c.canal.servidorEnvia({
+        'tipo': 'atualizacaoObrigatoria',
+        'codigo': 'ATUALIZACAO_OBRIGATORIA',
+        'motivo': 'atualize o aplicativo para continuar jogando online',
+        'protocoloMinimo': 3,
+      });
+      await c.assentar();
+
+      expect(c.servico.status, OnlineStatus.atualizacaoObrigatoria);
+      expect(c.servico.erro, contains('atualize o aplicativo'));
+      expect(c.canal.fechado, isTrue);
+
+      c.servico.criarMesa(apelido: 'Sônia');
+      await c.assentar();
+      expect(c.canais, hasLength(1), reason: 'não adianta reconectar');
+    });
+
+    test('erro com codigo ATUALIZACAO_OBRIGATORIA também é terminal', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      c.canal.servidorEnvia({
+        'tipo': 'erro',
+        'codigo': 'ATUALIZACAO_OBRIGATORIA',
+        'motivo': 'atualize o aplicativo para continuar jogando online',
+      });
+      await c.assentar();
+
+      expect(c.servico.status, OnlineStatus.atualizacaoObrigatoria);
+    });
+
+    test('servidor ANTIGO (não conhece auth): falha explícita, sem fallback', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      // é exatamente o que o servidor em 1828d42 responde a {tipo:"auth"}
+      c.canal.servidorEnvia({'tipo': 'erro', 'motivo': 'tipo desconhecido: auth'});
+      await c.assentar();
+
+      expect(c.servico.status, OnlineStatus.servidorDesatualizado);
+      expect(c.servico.erro, contains('servidor'));
+      expect(c.canal.fechado, isTrue);
+
+      // e o app NÃO cai para um modo sem autenticação
+      c.servico.criarMesa(apelido: 'Sônia');
+      await c.assentar();
+      expect(c.canais, hasLength(1));
+      expect(c.canal.doTipo('criarMesa'), isEmpty);
+    });
+
+    test('erro comum DEPOIS de autenticado continua sendo erro comum', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      await c.servidorAceita();
+      c.canal.servidorEnvia({'tipo': 'erro', 'motivo': 'você não está numa mesa'});
+      await c.assentar();
+
+      expect(c.servico.status, OnlineStatus.conectado);
+      expect(c.servico.erro, 'você não está numa mesa');
+    });
+
+    test('servidor mudo na autenticação não pendura o app', () {
+      fakeAsync((async) {
+        final c = _Cenario(token: kToken);
+        c.servico.conectar();
+        async.elapse(const Duration(milliseconds: 1));
+        expect(c.servico.status, OnlineStatus.autenticando);
+
+        // o servidor simplesmente não responde
+        async.elapse(OnlineService.limiteDeAutenticacao + const Duration(seconds: 1));
+
+        expect(c.servico.status, isNot(OnlineStatus.autenticando));
+        expect(c.canal.fechado, isTrue);
+        c.servico.desligar();
+      });
+    });
+  });
+
+  group('expiração da credencial com a conexão de pé', () {
+    test('authExpirou reapresenta um token NOVO no mesmo socket', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      await c.servidorAceita();
+      expect(c.pedidosDeToken, 1);
+
+      c.trocarToken('$kToken.renovado');
+      c.canal.servidorEnvia({'tipo': 'authExpirou', 'motivo': 'credencial expirada'});
+      await c.assentar();
+
+      expect(c.pedidosDeToken, 2, reason: 'tem que buscar credencial nova');
+      expect(c.canais, hasLength(1), reason: 'renovar não abre outro socket');
+      final auths = c.canal.doTipo('auth');
+      expect(auths, hasLength(2));
+      expect(auths.last['token'], '$kToken.renovado');
+      expect(c.servico.status, OnlineStatus.autenticando);
+    });
+
+    test('enquanto renova, nenhum comando de jogador sai', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      await c.servidorAceita();
+      c.canal.servidorEnvia({'tipo': 'authExpirou'});
+      await c.assentar();
+
+      c.servico.comprarMonte();
+      await c.assentar();
+      expect(c.canal.doTipo('jogada'), isEmpty, reason: 'a fila segura durante a renovação');
+
+      await c.servidorAceita();
+      expect(c.canal.doTipo('jogada'), hasLength(1), reason: 'e sai quando o servidor aceita');
+    });
+
+    test('renovar NÃO reentra na mesa (o assento nunca foi perdido)', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      await c.servidorAceita();
+      c.canal.servidorEnvia({'tipo': 'entrou', 'codigo': 'MESA-1', 'assento': 0});
+      await c.assentar();
+
+      c.canal.servidorEnvia({'tipo': 'authExpirou'});
+      await c.assentar();
+      await c.servidorAceita();
+
+      expect(c.canal.doTipo('entrarMesa'), isEmpty,
+          reason: 'reentrar pegaria OUTRO assento — o socket nunca caiu');
+      expect(c.servico.status, OnlineStatus.conectado);
+    });
+
+    test('sem credencial na renovação, vira falha terminal', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      await c.servidorAceita();
+
+      c.trocarToken(null); // a sessão do Firebase caiu nesse meio-tempo
+      c.canal.servidorEnvia({'tipo': 'authExpirou'});
+      await c.assentar();
+
+      expect(c.servico.status, OnlineStatus.naoAutenticado);
+      expect(c.canal.fechado, isTrue);
+    });
+
+    test('a credencial renovada também não vaza para fora da mensagem auth', () async {
+      final c = _Cenario(token: kToken);
+      await c.conectar();
+      await c.servidorAceita();
+      c.trocarToken('$kToken.renovado');
+      c.canal.servidorEnvia({'tipo': 'authExpirou'});
+      await c.assentar();
+
+      final comToken = c.canal.enviadas.where((s) => s.contains('$kToken.renovado'));
+      expect(comToken, hasLength(1));
+      expect(jsonDecode(comToken.single)['tipo'], 'auth');
+      expect(c.servico.erro ?? '', isNot(contains(kToken)));
+    });
+  });
+
   group('desligar', () {
     test('desligar limpa a fila e não deixa comando pendurado', () async {
       final c = _Cenario(token: kToken);
