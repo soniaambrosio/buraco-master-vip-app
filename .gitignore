@@ -2,6 +2,17 @@
 # Nunca versionar: e artefato de build, nao fonte.
 /app_build/
 
+# Resíduo de `flutter pub get` rodado direto em app/ (o pacote real). Útil para
+# rodar `flutter analyze` sobre a árvore de verdade, sem overlay; nada disso é
+# fonte.
+/app/.dart_tool/
+/app/.flutter-plugins-dependencies
+
+# Log do emulador do Firestore.
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+
 # Dependencias e saida de build das Cloud Functions. Cada codebase tem as suas.
 # `functions/lib/` inclui o domain_bundle.js, que e GERADO pelo predeploy
 # (`dart compile js` sobre app/lib/torneios/js_bridge.dart) — versionar o bundle

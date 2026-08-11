@@ -34,7 +34,13 @@ const {
   doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs,
 } = require('firebase/firestore');
 
-const PROJETO = 'buraco-master-vip-testes';
+// O projeto vem do emulador quando ha um: `firebase emulators:exec` exporta
+// GCLOUD_PROJECT para o processo filho. Fixar o id aqui fazia as chamadas de
+// Cloud Function irem para um projeto que o emulador nao servia — a resposta era
+// 404, que o SDK entrega como `not-found`, e o bloco claimPioneerKit inteiro
+// reprovava sem tocar em regra nenhuma. O valor antigo fica como padrao para
+// quem rodar o harness contra um emulador ja de pe.
+const PROJETO = process.env.GCLOUD_PROJECT || 'buraco-master-vip-testes';
 const CAMPANHA = 'pioneiros_2026';
 const DONO = 'uid_dono';
 const ALHEIO = 'uid_alheio';
@@ -61,6 +67,12 @@ before(async () => {
     const db = ctx.firestore();
     await setDoc(doc(db, `campaigns/${CAMPANHA}`), {
       campaignId: CAMPANHA, version: 1, status: 'active',
+      // Sem `eligibilityMode` a funcao recusa com
+      // "eligibilityMode desconhecido: undefined" antes de olhar a evidencia —
+      // o fixture nao satisfazia o contrato da propria funcao. `allowlist` e o
+      // modo do seed de producao (campanha_pioneiros_2026.seed.json) e o unico
+      // coerente com o `naAllowlist: true` semeado logo abaixo.
+      eligibilityMode: 'allowlist',
       featureFlag: 'kitPioneiros2026Enabled', rewardIds: ITENS,
     });
     await setDoc(doc(db, `campaigns/${CAMPANHA}/eligible/${DONO}`), { naAllowlist: true });
