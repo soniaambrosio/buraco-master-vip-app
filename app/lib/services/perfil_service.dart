@@ -2,6 +2,18 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../screens/perfil_screen.dart';
 
+/// O perfil pedido não pôde ser carregado por falta de fonte (jogador de fora,
+/// perfil removido, ou origem ainda não publicada).
+class PerfilIndisponivel implements Exception {
+  /// Texto curto, já em português e exibível ao jogador.
+  final String motivo;
+
+  const PerfilIndisponivel(this.motivo);
+
+  @override
+  String toString() => 'PerfilIndisponivel: $motivo';
+}
+
 /// Origem dos dados do Perfil (camada de lógica — Claude).
 ///
 /// FASE 1: identidade REAL (Firebase Auth) + arquitetura pronta. Como ainda não
@@ -65,9 +77,31 @@ class PerfilService {
     return (n != null && n.isNotEmpty) ? n : 'Jogador(a)';
   }
 
+  /// UID do jogador autenticado, ou `null` sem Firebase disponível.
+  String? uidAtual() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null; // Firebase indisponível (web de teste) — segue sem identidade.
+    }
+  }
+
   /// Carrega o perfil. FASE 2: substituir o corpo por leitura no Firestore.
-  Future<PerfilVM> carregar({bool ehMeuPerfil = true}) async {
+  ///
+  /// [jogadorId] é o seam aberto pela integração de Ranking/Hall: tocar num
+  /// jogador da lista chega aqui com o **identificador público** (UID), nunca
+  /// com e-mail. Quando ele aponta para outra pessoa, não há de onde ler — não
+  /// existe persistência de perfil de terceiro — e o método falha em vez de
+  /// devolver dado inventado. Ligar a fonte real é trocar só este trecho.
+  Future<PerfilVM> carregar({bool ehMeuPerfil = true, String? jogadorId}) async {
     await Future.delayed(const Duration(milliseconds: 350)); // simula I/O (Fase 2: await Firestore)
+
+    if (jogadorId != null && jogadorId.isNotEmpty && jogadorId != uidAtual()) {
+      throw const PerfilIndisponivel(
+        'O perfil deste jogador ainda não está disponível.',
+      );
+    }
+
     return _montar(ehMeuPerfil: ehMeuPerfil, nome: _nomeReal(), demo: statsDemo);
   }
 

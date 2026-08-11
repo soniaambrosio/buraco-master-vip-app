@@ -38,6 +38,14 @@ class PodioEntry {
   final int pontos;
   final bool ehVoce;
 
+  /// Identificador público do jogador, usado para abrir o perfil.
+  ///
+  /// Aditivo e com padrão vazio: `onVerJogador` continua entregando a POSIÇÃO
+  /// (a API da tela não mudou), e quem hospeda a tela resolve posição → id na
+  /// página que já tem em mãos. Vazio significa “sem id publicado” — aí a
+  /// navegação para o perfil não acontece.
+  final String jogadorId;
+
   const PodioEntry({
     required this.posicao,
     required this.nome,
@@ -45,6 +53,7 @@ class PodioEntry {
     required this.moldura,
     required this.pontos,
     required this.ehVoce,
+    this.jogadorId = '',
   });
 }
 
@@ -59,6 +68,9 @@ class RankingRow {
   final bool ehVoce;
   final String? selo;
 
+  /// Identificador público do jogador — ver [PodioEntry.jogadorId].
+  final String jogadorId;
+
   const RankingRow({
     required this.posicao,
     required this.nome,
@@ -69,6 +81,7 @@ class RankingRow {
     required this.delta,
     required this.ehVoce,
     this.selo,
+    this.jogadorId = '',
   });
 }
 
@@ -84,11 +97,15 @@ class LigaEscada {
   });
 }
 
-/// View-model visual do contrato entregue pelo Claude.
+/// View-model **visual** da tela de Ranking.
 ///
-/// Os tipos ficam temporariamente neste arquivo para a fatia visual compilar de
-/// forma isolada. Na integração, o Claude pode movê-los para `lib/models/`
-/// preservando exatamente esta API pública.
+/// É só apresentação: o que a fonte oficial publica está em
+/// `lib/ranking/ranking_contract.dart`, e a tradução de um para o outro em
+/// `lib/ranking/ranking_apresentacao.dart`.
+///
+/// A `factory RankingVM.mock()` que existia aqui foi retirada na integração: ela
+/// era a única origem dos dados da tela e viajava dentro do APK. Dado de exemplo
+/// agora vive apenas nos testes (`app/test/`), como manda a OS.
 class RankingVM {
   final RankingAba aba;
   final String faixaTempo;
@@ -107,142 +124,6 @@ class RankingVM {
     required this.lista,
     required this.escadaLigas,
   });
-
-  factory RankingVM.mock({RankingAba aba = RankingAba.temporada}) {
-    final temporada = aba == RankingAba.temporada;
-
-    return RankingVM(
-      aba: aba,
-      faixaTempo: temporada ? 'Temporada acaba em 12d 6h' : '',
-      mostrarHall: true,
-      divisao: temporada
-          ? const DivisaoAtual(
-              nome: 'Diamante III',
-              icone: 'assets/ranking/divisao_diamante.webp',
-              pontos: 1240,
-              pontosProxima: 1500,
-              faltamPontos: 260,
-              proximaDivisao: 'Diamante II',
-              posicaoLiga: 12,
-            )
-          : null,
-      podio: const [
-        PodioEntry(
-          posicao: 1,
-          nome: 'Sônia Rainha',
-          avatar: '👑',
-          moldura: 'assets/ranking/podio_ouro.webp',
-          pontos: 5020,
-          ehVoce: false,
-        ),
-        PodioEntry(
-          posicao: 2,
-          nome: 'Marina',
-          avatar: '🐱',
-          moldura: 'assets/ranking/podio_prata.webp',
-          pontos: 4180,
-          ehVoce: false,
-        ),
-        PodioEntry(
-          posicao: 3,
-          nome: 'Beto',
-          avatar: '🦊',
-          moldura: 'assets/ranking/podio_bronze.webp',
-          pontos: 3910,
-          ehVoce: false,
-        ),
-      ],
-      lista: const [
-        RankingRow(
-          posicao: 4,
-          nome: 'Cláudia',
-          avatar: '🐰',
-          liga: 'Diamante',
-          pontos: 3640,
-          direcao: Direcao.subiu,
-          delta: 2,
-          ehVoce: false,
-          selo: 'assets/ranking/selos/sequencia_quente.webp',
-        ),
-        RankingRow(
-          posicao: 5,
-          nome: 'Ricardo',
-          avatar: '🐻',
-          liga: 'Diamante',
-          pontos: 3500,
-          direcao: Direcao.desceu,
-          delta: 1,
-          ehVoce: false,
-          selo: 'assets/ranking/selos/canastra_limpa.webp',
-        ),
-        RankingRow(
-          posicao: 12,
-          nome: 'Você',
-          avatar: '👑',
-          liga: 'Diamante III',
-          pontos: 1240,
-          direcao: Direcao.subiu,
-          delta: 3,
-          ehVoce: true,
-          selo: 'assets/ranking/selos/campeao_do_dia.webp',
-        ),
-        RankingRow(
-          posicao: 13,
-          nome: 'Fernanda',
-          avatar: '🐶',
-          liga: 'Diamante',
-          pontos: 1180,
-          direcao: Direcao.subiu,
-          delta: 1,
-          ehVoce: false,
-          selo: 'assets/ranking/selos/subiu_no_ranking.webp',
-        ),
-        RankingRow(
-          posicao: 14,
-          nome: 'Paulo',
-          avatar: '🐵',
-          liga: 'Ouro',
-          pontos: 1090,
-          direcao: Direcao.desceu,
-          delta: 2,
-          ehVoce: false,
-          selo: 'assets/ranking/selos/rei_do_morto.webp',
-        ),
-      ],
-      escadaLigas: const [
-        LigaEscada(
-          nome: 'Bronze',
-          icone: 'assets/ranking/liga_bronze.webp',
-          atual: false,
-        ),
-        LigaEscada(
-          nome: 'Prata',
-          icone: 'assets/ranking/liga_prata.webp',
-          atual: false,
-        ),
-        LigaEscada(
-          nome: 'Ouro',
-          icone: 'assets/ranking/liga_ouro.webp',
-          atual: false,
-        ),
-        LigaEscada(
-          nome: 'Platina',
-          icone: 'assets/ranking/liga_platina.webp',
-          atual: false,
-        ),
-        LigaEscada(
-          nome: 'Diamante',
-          icone: 'assets/ranking/liga_diamante.webp',
-          atual: true,
-        ),
-        LigaEscada(
-          nome: 'Imperial',
-          icone: 'assets/ranking/liga_imperial.webp',
-          atual: false,
-        ),
-      ],
-    );
-  }
 }
 
 class RankingScreen extends StatelessWidget {

@@ -8,10 +8,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'pages/perfil_page.dart';
+import 'pages/ranking_page.dart';
 import 'pages/torneios_preview_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
 import 'screens/inicio_screen.dart';
-import 'screens/ranking_screen.dart';
 import 'screens/recompensas_screen.dart';
 import 'screens/configurar_mesa_screen.dart';
 import 'screens/resultado_partida_screen.dart';
@@ -25,7 +25,6 @@ import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
-import 'screens/hall_screen.dart';
 import 'screens/onde_jogar_screen.dart';
 import 'screens/mesa_flow_preview_host.dart';
 import 'screens/mesa_orientation_contract.dart';
@@ -269,7 +268,7 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
 
   void _abrirRanking() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+      MaterialPageRoute(builder: (_) => const RankingPage()),
     );
   }
 
@@ -809,7 +808,7 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
 
   void _abrirRanking() {
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+      MaterialPageRoute(builder: (_) => const RankingPage()),
     );
   }
 
@@ -891,7 +890,7 @@ class _LojaCategoriaPreviewHost extends StatelessWidget {
         break;
       case NavDestino.ranking:
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+          MaterialPageRoute(builder: (_) => const RankingPage()),
         );
         break;
       case NavDestino.perfil:
@@ -921,95 +920,6 @@ class _LojaCategoriaPreviewHost extends StatelessWidget {
       onEnviarPresente: (itemId, jogadorId) =>
           _aviso(context, 'Presente $itemId enviado para $jogadorId'),
       onNav: (destino) => _nav(context, destino),
-    );
-  }
-}
-
-
-// ===================== HALL DOS IMORTAIS (host) =====================
-class _HallPreviewHost extends StatelessWidget {
-  const _HallPreviewHost();
-
-  void _aviso(BuildContext context, String texto) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(texto),
-          duration: const Duration(milliseconds: 1500),
-          backgroundColor: const Color(0xFF2A1B0E),
-        ),
-      );
-  }
-
-  // Modal de "Regras do Hall" — explica as 5 categorias de glória (antes não abria nada).
-  void _mostrarRegras(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xF2160D08),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: const BorderSide(color: Color(0x55EFB94A)),
-        ),
-        title: const Text('📜 Regras do Hall',
-            style: TextStyle(color: Color(0xFFF6E2A6), fontWeight: FontWeight.w900)),
-        content: const SingleChildScrollView(
-          child: Text(
-            'O Hall dos Imortais celebra os melhores por período:\n\n'
-            '🏆 Campeão de hoje — quem mais venceu no dia.\n'
-            '👑 Melhor dupla — a parceria mais afiada.\n'
-            '🔥 Maior sequência — o maior embalo de vitórias.\n'
-            '⭐ Rei/Rainha da semana — o destaque dos últimos 7 dias.\n'
-            '🌙 Lenda do mês — o nome que dominou o mês.\n\n'
-            'Tudo é automático pelos resultados das partidas. Jogue, vença e '
-            'entre para a história! 🃏',
-            style: TextStyle(color: Color(0xFFEFE3CC), fontSize: 13, height: 1.4),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Entendi',
-                style: TextStyle(color: Color(0xFFEFB94A), fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return HallScreen(
-      vm: HallVM.mock(),
-      onVoltar: () => Navigator.of(context).maybePop(),
-      onVerRegras: () => _mostrarRegras(context),
-      onVerPerfil: (id) => _aviso(context, 'Abrir perfil: $id'),
-      onPresentear: (id) => _aviso(context, 'Escolha um presente para homenagear $id 👑'),
-      onEnviarPresente: (id, presenteId) =>
-          _aviso(context, 'Presente $presenteId enviado para $id'),
-      onNav: (destino) {
-        switch (destino) {
-          case 'ranking':
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
-            );
-            break;
-          case 'perfil':
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const PerfilPage()),
-            );
-            break;
-          case 'estatisticas':
-            _aviso(context, 'Minhas estatísticas — integração fica com o Claude');
-            break;
-          case 'presentes':
-            _aviso(context, 'Inventário de presentes — integração fica com o Claude');
-            break;
-          default:
-            break;
-        }
-      },
     );
   }
 }
@@ -1611,7 +1521,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // RankingPage/RankingService quando conectar os dados reais.
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const _RankingPreviewHost(),
+        builder: (_) => const RankingPage(),
       ),
     );
   }
@@ -2012,61 +1922,4 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ===================== RANKING — PRÉVIA VISUAL CODEX =====================
-class _RankingPreviewHost extends StatefulWidget {
-  const _RankingPreviewHost();
-
-  @override
-  State<_RankingPreviewHost> createState() => _RankingPreviewHostState();
-}
-
-class _RankingPreviewHostState extends State<_RankingPreviewHost> {
-  RankingAba _aba = RankingAba.temporada;
-
-  void _aviso(String texto) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(texto),
-          duration: const Duration(milliseconds: 1400),
-          backgroundColor: const Color(0xFF2A1B0E),
-        ),
-      );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final vm = RankingVM.mock(aba: _aba);
-
-    return RankingScreen(
-      vm: vm,
-      onVoltar: () => Navigator.of(context).maybePop(),
-      onTrocarAba: (aba) => setState(() => _aba = aba),
-      onAbrirHall: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const _HallPreviewHost()),
-      ),
-      onVerJogador: (posicao) => _aviso('Perfil da posição #$posicao'),
-      onRecarregar: () => setState(() {}),
-      onCarregarMais: null,
-      onNavTap: (destino) {
-        switch (destino) {
-          case NavDestino.inicio:
-            Navigator.of(context).maybePop();
-            break;
-          case NavDestino.ranking:
-            break;
-          case NavDestino.loja:
-            _aviso('Loja VIP — chega nas próximas fatias 👍');
-            break;
-          case NavDestino.perfil:
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const PerfilPage()),
-            );
-            break;
-        }
-      },
-    );
-  }
-}
 
