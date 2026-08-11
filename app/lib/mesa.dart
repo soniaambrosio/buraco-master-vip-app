@@ -8,6 +8,9 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'screens/resultado_partida_screen.dart';
+import 'screens/resultado_vitoria_adapter.dart';
+import 'screens/resultado_partida_celebrado.dart';
+import 'services/configuracoes_service.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -1299,6 +1302,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   bool _botsRodando = false;
   bool _soundEnabled = true;
+  int _partidaSeq = 0;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
   String? _lastPurchaseSource;
@@ -1347,6 +1351,7 @@ class _MesaScreenState extends State<MesaScreen> {
     );
     jogo.metaPontos = widget.metaPontos;
     jogo.modalidade = widget.modalidade;
+    _partidaSeq++;
     return jogo;
   }
 
@@ -3345,7 +3350,7 @@ class _MesaScreenState extends State<MesaScreen> {
       title = 'BARALHO ESGOTADO';
     }
 
-    return ResultadoPartidaScreen(
+    final resultado = ResultadoPartidaScreen(
       fimPartida: finalPartida,
       mesaVip: _mesaVip,
       rodada: _j.rodada,
@@ -3368,6 +3373,33 @@ class _MesaScreenState extends State<MesaScreen> {
       onAdicionarAmigo: _adicionarAmigo,
       onVerAnuncio: _verAnuncioRecompensado,
     );
+
+    // Celebração de vitória (docs/OS-CLAUDE-ADENDO-CELEBRACAO-VITORIA.md):
+    // camada additiva e IDEMPOTENTE por eventoId, dispara só no FIM da partida
+    // (fim de rodada intermediária não comemora). A fonte de verdade do runtime
+    // offline atual é o motor local (_j). Quando existir motor/servidor
+    // autoritativo, trocar SOMENTE a origem de eventoId + assentos vencedores.
+    final celebracao = celebracaoVitoriaDoResultado(
+      eventoId: 'fim-partida-$_partidaSeq',
+      fimPartida: finalPartida,
+      assentosVencedores: _assentosVencedores(),
+      jogadores: _jogadoresResultado(),
+      somHabilitado:
+          _soundEnabled && ConfiguracoesService.instance.atual.efeitosSonoros,
+    );
+    return ResultadoPartidaCelebrado(
+      resultado: resultado,
+      celebracao: celebracao,
+    );
+  }
+
+  /// Assentos da dupla vencedora, derivados do placar do motor local
+  /// (nós = {0,2}; eles = {1,3}, conforme Jogo._duplaKey e a apuração).
+  /// Não decide regra: só traduz o placar já apurado do motor.
+  Set<int> _assentosVencedores() {
+    if (!_j.encerrada) return const <int>{};
+    final nosVenceu = (_j.placar['nos'] ?? 0) >= (_j.placar['eles'] ?? 0);
+    return nosVenceu ? const <int>{0, 2} : const <int>{1, 3};
   }
 
 }
