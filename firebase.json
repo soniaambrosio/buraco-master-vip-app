@@ -1,0 +1,45 @@
+{
+  "//": "firebase.json — MANIFESTO UNICO do projeto Firebase do Buraco Master VIP. Substitui as tres configuracoes que viviam em branches separadas (firebase/firebase.json do kit-pioneiros, firebase.json da raiz do billing e firebase.json da raiz do v1). Regras e indices vivem em firebase/; cada frente de Functions tem codebase e source PROPRIOS.",
+
+  "firestore": {
+    "//": "Arquivo unico, resultado da UNIAO dos tres conjuntos disjuntos. Ver o cabecalho de firebase/firestore.rules.",
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
+  },
+
+  "functions": [
+    {
+      "//": "COLECOES / KIT PIONEIROS — claimPioneerKit, grantPioneerEligibility, revokePioneerKit. Origem: claude/kit-pioneiros-2026-1b56ed (firebase/functions).",
+      "source": "firebase/functions",
+      "codebase": "colecoes",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "BILLING — validarCompraPlay. Origem: feat/play-billing-aab-interno (functions/ na raiz). O diretorio foi MOVIDO para functions-billing/ por uma unica razao: o codebase de torneios ja ocupa functions/. Os arquivos de logica (index.js, idempotencia.js, test/) sao byte a byte identicos a origem.",
+      "source": "functions-billing",
+      "codebase": "billing",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log"]
+    },
+    {
+      "//": "TORNEIOS — inscreverEmTorneio, cancelarInscricaoTorneio, receberResultadoPartida, tickTorneios, aoConcluirEdicao, consolidarConvitesDaTemporada, responderConviteEncerramento. Origem: integracao/motores-torneios-partidas-v1 (functions/, TypeScript).",
+      "source": "functions",
+      "codebase": "torneios",
+      "runtime": "nodejs20",
+      "//predeploy": "A ordem importa: primeiro o dominio Dart vira JS, depois o TypeScript compila contra ele. Inverter faria o tsc rodar sem o bundle e falhar na carga de domain.ts.",
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build:domain",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "ignore": ["node_modules", ".git", "*.log"]
+    }
+  ],
+
+  "emulators": {
+    "firestore": { "port": 8080 },
+    "functions": { "port": 5001 },
+    "auth": { "port": 9099 },
+    "ui": { "enabled": true }
+  }
+}

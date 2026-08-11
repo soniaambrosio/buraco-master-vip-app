@@ -1,16 +1,23 @@
-name: CI OS Integração (analyze + motor + emuladores Firebase)
+name: CI OS Integração (analyze + suítes + três codebases Firebase)
 
 # Autoridade de validação da OS "Integração Final Backend ↔ Flutter".
 #
 # Escopo (executa "quando aplicável", nunca afrouxa teste para ficar verde):
 #   1. flutter analyze  (erro é fatal; warning/info não)
-#   2. flutter test — suítes do Motor de Partidas e domínio de torneios
-#   3. Emulator Suite (Firestore Rules + Functions + Auth) QUANDO a branch já
-#      contiver firebase.json/firestore.rules/functions. Enquanto não contiver,
-#      é reportado como NÃO EXECUTADO, com motivo (OS §18) — jamais como "passou".
+#   2. flutter test — Motor de Partidas, encerramento, torneios, integração e
+#      coleções/Kit Pioneiros
+#   3. as TRÊS codebases Firebase, cada uma descoberta pelo próprio caminho:
+#        colecoes -> firebase/functions   + regras em firebase/testes (emulador)
+#        billing  -> functions-billing    (node --test, sem emulador)
+#        torneios -> functions            (tsc --noEmit)
+#
+# REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
+# descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
+# existe e mesmo assim não roda, o motivo é impresso e o gate falha. NÃO
+# EXECUTADO é reservado a ausência real do artefato.
 #
 # Evidência (logs + exit codes + NÃO EXECUTADOs) é publicada na branch
-# `ci-evidencias` via git, auditável mesmo sem acesso à API do GitHub.
+# `ci-evidencias`, auditável mesmo sem acesso à API do GitHub.
 #
 # NÃO gera APK, NÃO faz deploy, NÃO roda em main/master/consolidacao.
 
@@ -30,13 +37,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java (exigido pelo emulador do Firestore)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Node (para firebase-tools)
+      - name: Setup Node (firebase-tools e testes das Functions)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -50,114 +57,98 @@ jobs:
       - name: Scaffold do projeto Flutter
         run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
 
-      - name: Overlay do código REAL (app/lib -> app_build/lib)
-        run: cp -R app/lib/. app_build/lib/
-
-      - name: Dependências (idênticas ao build oficial)
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
-
-      - name: Travar jni em 1.0.0 (o 1.0.1 quebra o android/build.gradle)
+      # As dependências são as do REPOSITÓRIO, não as que o CI resolver na hora.
+      # Antes daqui havia `flutter pub add` + um remendo Python no pubspec para
+      # travar o jni: os dois sumiram porque `app/pubspec.yaml` (com
+      # `dependency_overrides`) e `app/pubspec.lock` agora são a fonte da verdade.
+      - name: Dependências versionadas (pubspec.yaml + pubspec.lock do repo)
         run: |
-          cd app_build
-          python3 - <<'PY'
-          p = 'pubspec.yaml'
-          s = open(p, encoding='utf-8').read()
-          if 'dependency_overrides:' not in s:
-              s = s.rstrip() + '\n\ndependency_overrides:\n  jni: 1.0.0\n'
-          elif 'jni:' not in s.split('dependency_overrides:')[1].split('\n\n')[0]:
-              s = s.replace('dependency_overrides:', 'dependency_overrides:\n  jni: 1.0.0', 1)
-          open(p, 'w', encoding='utf-8').write(s)
-          print(s[s.find('dependency_overrides:'):])
-          PY
-          flutter pub get
+          cp app/pubspec.yaml app/pubspec.lock app_build/
+          cd app_build && flutter pub get
 
-      - name: Copiar suítes de teste + seeds de torneios
+      - name: Overlay do código e dos assets REAIS
         run: |
-          mkdir -p app_build/test/torneios/data app_build/test/integracao
-          cp app/test/teste_motor.dart app_build/test/
-          cp app/test/teste_motor_resiliencia.dart app_build/test/
-          cp app/test/torneios/reward_grants_test.dart app_build/test/torneios/
-          cp app/data/torneios/assets_registry.seed.json app_build/test/torneios/data/
-          cp app/data/torneios/reward_policies.seed.json app_build/test/torneios/data/
-          # Suíte do encerramento (Bloco 1) — copiada só quando já existir.
-          if [ -f app/test/teste_encerramento.dart ]; then cp app/test/teste_encerramento.dart app_build/test/; fi
-          # Bloco Partidas <-> Torneios: as duas suítes e o seed de templates.
-          if [ -f app/data/torneios/tournamentTemplates.seed.json ]; then
-            cp app/data/torneios/tournamentTemplates.seed.json app_build/test/torneios/data/
-          fi
-          if [ -f app/test/torneios/motor_torneios_test.dart ]; then
-            cp app/test/torneios/motor_torneios_test.dart app_build/test/torneios/
-          fi
-          if [ -f app/test/integracao/teste_integracao_motores.dart ]; then
-            cp app/test/integracao/teste_integracao_motores.dart app_build/test/integracao/
-          fi
-          # O widget_test.dart do scaffold tem erro pré-existente conhecido; removê-lo
-          # evita que ele derrube `flutter analyze` sem relação com o motor.
+          cp -R app/lib/. app_build/lib/
+          # `-name '*.dart'` excluído de propósito: há .dart soltos versionados
+          # dentro de app/assets/ (cópias antigas de tela, que ninguém importa).
+          # Copiá-los faria o analyze reprovar por lixo de árvore, não por código
+          # nosso. A remoção deles é decisão registrada à parte.
+          cd app && find assets -type f ! -name '*.dart' -exec sh -c 'mkdir -p "../app_build/$(dirname "$1")" && cp "$1" "../app_build/$1"' _ {} \;
+
+      - name: Copiar suítes de teste + seeds
+        run: |
+          mkdir -p app_build/test/torneios/data app_build/test/integracao app_build/test/colecoes/data
+          cp -R app/test/. app_build/test/
+          cp app/data/torneios/*.json app_build/test/torneios/data/
+          cp app/data/colecoes/*.json app_build/test/colecoes/data/
+          # O widget_test.dart do scaffold tem erro pré-existente conhecido.
           rm -f app_build/test/widget_test.dart
 
       - name: "1+2 — analyze + suítes Flutter (captura exit codes sem abortar)"
         run: |
           set +e
           ( cd app_build && flutter analyze --no-fatal-infos --no-fatal-warnings ) 2>&1 | tee analyze.log; echo ${PIPESTATUS[0]} > exit_analyze
-          ( cd app_build && flutter test test/teste_motor.dart --reporter expanded ) 2>&1 | tee t_motor.log; echo ${PIPESTATUS[0]} > exit_motor
-          ( cd app_build && flutter test test/teste_motor_resiliencia.dart --reporter expanded ) 2>&1 | tee t_resil.log; echo ${PIPESTATUS[0]} > exit_resil
-          ( cd app_build && flutter test test/torneios/reward_grants_test.dart --reporter expanded ) 2>&1 | tee t_torneios.log; echo ${PIPESTATUS[0]} > exit_torneios
-          if [ -f app_build/test/teste_encerramento.dart ]; then
-            ( cd app_build && flutter test test/teste_encerramento.dart --reporter expanded ) 2>&1 | tee t_encerr.log; echo ${PIPESTATUS[0]} > exit_encerr
-          fi
-          if [ -f app_build/test/torneios/motor_torneios_test.dart ]; then
-            ( cd app_build && flutter test test/torneios/motor_torneios_test.dart --reporter expanded ) 2>&1 | tee t_mtorneios.log; echo ${PIPESTATUS[0]} > exit_mtorneios
-          fi
-          if [ -f app_build/test/integracao/teste_integracao_motores.dart ]; then
-            ( cd app_build && flutter test test/integracao/teste_integracao_motores.dart --reporter expanded ) 2>&1 | tee t_integr.log; echo ${PIPESTATUS[0]} > exit_integr
-          fi
-          echo "== exit codes =="; for k in analyze motor resil torneios encerr mtorneios integr; do [ -f exit_$k ] && echo "$k=$(cat exit_$k)"; done
+          roda() { # roda <chave> <caminho>
+            local k="$1" t="$2"
+            if [ ! -f "app_build/$t" ]; then echo "ausente: $t" > "nao_$k"; return; fi
+            ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
+          }
+          roda motor      test/teste_motor.dart
+          roda resil      test/teste_motor_resiliencia.dart
+          roda encerr     test/teste_encerramento.dart
+          roda torneios   test/torneios/reward_grants_test.dart
+          roda mtorneios  test/torneios/motor_torneios_test.dart
+          roda integr     test/integracao/teste_integracao_motores.dart
+          roda colarte    test/colecoes/colecao_arte_test.dart
+          roda colfire    test/colecoes/colecao_firebase_test.dart
+          roda colkit     test/colecoes/kit_pioneiros_test.dart
+          # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
+          # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
+          # produz PNG e depende de fonte do sistema, não afirma regressão.
+          ( cd app_build && flutter test test/colecoes/evidencias_visuais_test.dart ) 2>&1 | tee t_colevid.log; echo ${PIPESTATUS[0]} > info_colevid
 
-      - name: "3 — Emulator Suite Firebase (Rules + Functions + Auth), quando aplicável"
+      - name: "3a — codebase BILLING (functions-billing), sem emulador"
         run: |
           set +e
-          # Descobre onde estão os artefatos Firebase nesta branch (raiz ou firebase/).
-          DIR=""
-          for d in firebase .; do
-            if [ -f "$d/firebase.json" ] || [ -f "$d/firestore.rules" ]; then DIR="$d"; break; fi
-          done
-          if [ -z "$DIR" ]; then
-            echo "NAO_EXECUTADO" > status_emul
-            {
-              echo "NÃO EXECUTADO — Emulator Suite (Firestore Rules / Functions / Auth)."
-              echo "Motivo: a branch de integração ainda não contém firebase.json/firestore.rules/functions."
-              echo "Esses artefatos chegam quando os blocos de consolidação forem trazidos:"
-              echo "  - Catálogo/Inventário §9 + Kit Pioneiros §10  -> claude/kit-pioneiros-2026-1b56ed (firebase/functions, firebase/firestore.rules)"
-              echo "  - Partidas↔Torneios §4                         -> integracao/motores-torneios-partidas-v1 (functions/src, firebase/firestore.rules)"
-              echo "  - Regras de Segurança §16                      -> auditoria/regras-bmv"
-              echo "Ação: este job passa a EXECUTAR automaticamente assim que firebase.json/rules/functions existirem na branch."
-            } | tee emul.log
-            exit 0
+          if [ ! -d functions-billing ]; then echo "diretorio functions-billing ausente" > nao_billing; exit 0; fi
+          ( cd functions-billing && npm test ) 2>&1 | tee t_billing.log; echo ${PIPESTATUS[0]} > exit_billing
+
+      - name: "3b — codebase TORNEIOS (functions), typecheck"
+        run: |
+          set +e
+          if [ ! -f functions/package.json ]; then echo "functions/package.json ausente" > nao_torneiosfn; exit 0; fi
+          ( cd functions && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
+          ( cd functions && npx tsc --noEmit ) 2>&1 | tee t_torneiosfn.log; echo ${PIPESTATUS[0]} > exit_torneiosfn
+
+      - name: "3c — codebase COLECOES: regras + Functions no Emulator Suite"
+        run: |
+          set +e
+          # Caminho FIXO do harness de segurança. Ele não fica em
+          # `<dir>/emulator-tests` nem em `functions/package.json`: fica em
+          # firebase/testes/. Procurar pelos dois padrões antigos reportava
+          # "sem harness" para um harness que existe — erro de descoberta, que
+          # esta versão elimina.
+          if [ ! -f firebase/testes/package.json ]; then
+            echo "firebase/testes/package.json ausente" > nao_regras; exit 0
           fi
-          echo "Artefatos Firebase encontrados em: $DIR" | tee emul.log
-          npm i -g firebase-tools 2>&1 | tail -3
-          # Instala deps das Functions, se houver.
-          if [ -f "$DIR/functions/package.json" ]; then ( cd "$DIR/functions" && npm ci 2>&1 | tail -5 || npm install 2>&1 | tail -5 ); fi
-          # Harness de teste de emuladores (rules/functions). Convenção procurada:
-          #   <DIR>/emulator-tests   (script executável)  OU  functions com `npm test`.
-          if [ -x "$DIR/emulator-tests" ]; then
-            ( cd "$DIR" && firebase emulators:exec --only firestore,auth,functions "./emulator-tests" ) 2>&1 | tee -a emul.log; echo ${PIPESTATUS[0]} > exit_emul
-          elif [ -f "$DIR/functions/package.json" ] && grep -q '"test"' "$DIR/functions/package.json"; then
-            ( cd "$DIR" && firebase emulators:exec --only firestore,auth,functions "npm --prefix functions test" ) 2>&1 | tee -a emul.log; echo ${PIPESTATUS[0]} > exit_emul
-          else
-            echo "NAO_EXECUTADO" > status_emul
-            {
-              echo "NÃO EXECUTADO — Emulator Suite: artefatos presentes, porém sem harness de teste."
-              echo "Motivo: não há <firebase>/emulator-tests nem script 'test' em functions/package.json."
-              echo "Ação: definir o harness de testes de Rules/Functions no bloco correspondente."
-            } | tee -a emul.log
+          if [ ! -f firebase.json ]; then
+            echo "firebase.json ausente na raiz" > nao_regras; exit 0
           fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd firebase/functions && npm install 2>&1 | tail -3 )
+          ( cd firebase/testes && npm install 2>&1 | tail -3 )
+          # `--project demo-bmv` mantém tudo no emulador: nenhum projeto real é
+          # tocado e não é preciso credencial.
+          firebase emulators:exec --only firestore,auth,functions --project demo-bmv \
+            "cd firebase/testes && npm test" 2>&1 | tee t_regras.log
+          echo ${PIPESTATUS[0]} > exit_regras
 
       - name: Publicar evidência na branch ci-evidencias
         if: always()
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -165,18 +156,30 @@ jobs:
             echo "- commit: \`${SHA}\`"
             echo "- data UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo
-            echo "## Exit codes (0 = verde; ausente = não rodou)"
-            for k in analyze motor resil torneios encerr mtorneios integr emul; do [ -f exit_$k ] && echo "- ${k}: \`$(cat exit_$k)\`"; done
-            if [ -f status_emul ]; then echo "- emuladores: **$(cat status_emul)** (ver seção abaixo)"; fi
+            echo "## Resultado por gate"
             echo
-            echo "## flutter analyze (tail)"; echo '```'; tail -n 60 analyze.log 2>/dev/null; echo '```'
-            echo "## teste_motor (tail)"; echo '```'; tail -n 20 t_motor.log 2>/dev/null; echo '```'
-            echo "## teste_motor_resiliencia (tail)"; echo '```'; tail -n 40 t_resil.log 2>/dev/null; echo '```'
-            echo "## torneios/reward_grants (tail)"; echo '```'; tail -n 20 t_torneios.log 2>/dev/null; echo '```'
-            if [ -f t_encerr.log ]; then echo "## teste_encerramento (tail)"; echo '```'; tail -n 40 t_encerr.log; echo '```'; fi
-            if [ -f t_mtorneios.log ]; then echo "## torneios/motor_torneios (tail)"; echo '```'; tail -n 20 t_mtorneios.log; echo '```'; fi
-            if [ -f t_integr.log ]; then echo "## integracao/teste_integracao_motores (tail)"; echo '```'; tail -n 40 t_integr.log; echo '```'; fi
-            echo "## Emuladores Firebase"; echo '```'; tail -n 40 emul.log 2>/dev/null; echo '```'
+            echo "| gate | status | exit |"
+            echo "|---|---|---|"
+            for k in $GATES; do
+              if [ -f "exit_$k" ]; then
+                v=$(cat "exit_$k")
+                [ "$v" = "0" ] && echo "| $k | EXECUTADO | $v |" || echo "| $k | **FALHOU** | $v |"
+              elif [ -f "nao_$k" ]; then
+                echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+              else
+                echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+              fi
+            done
+            if [ -f info_colevid ]; then
+              echo
+              echo "Fora do portão: \`evidencias_visuais\` exit \`$(cat info_colevid)\` (gerador de PNG)."
+            fi
+            echo
+            echo "## flutter analyze (tail)"; echo '```'; tail -n 40 analyze.log 2>/dev/null; echo '```'
+            for k in $GATES; do
+              [ -f "t_$k.log" ] || continue
+              echo "## $k (tail)"; echo '```'; tail -n 25 "t_$k.log"; echo '```'
+            done
           } > "$EV"
           git clone --depth 1 "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" evrepo
           cd evrepo
@@ -192,14 +195,19 @@ jobs:
           git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
           git push origin ci-evidencias
 
-      - name: Portão verde/vermelho (só falha em teste que REALMENTE rodou e falhou)
+      - name: Portão verde/vermelho (só falha em gate que REALMENTE rodou e falhou)
         if: always()
         run: |
           fail=0
-          # Gates reais: só entram os que produziram exit code (rodaram de fato).
-          for k in analyze motor resil torneios encerr mtorneios integr emul; do
-            if [ -f exit_$k ]; then v=$(cat exit_$k); echo "gate $k=$v"; [ "$v" = "0" ] || fail=1; fi
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn regras; do
+            if [ -f "exit_$k" ]; then
+              v=$(cat "exit_$k"); echo "gate $k = $v"
+              [ "$v" = "0" ] || fail=1
+            elif [ -f "nao_$k" ]; then
+              echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
+            else
+              echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+            fi
           done
-          if [ -f status_emul ]; then echo "emuladores: $(cat status_emul) (não conta como verde nem como falha)"; fi
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
           exit $fail

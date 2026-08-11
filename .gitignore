@@ -1,3 +1,10 @@
 # Scaffold Flutter gerado localmente/CI (flutter create app_build).
 # Nunca versionar: e artefato de build, nao fonte.
 /app_build/
+
+# Dependencias e saida de build das Cloud Functions. Cada codebase tem as suas.
+# `functions/lib/` inclui o domain_bundle.js, que e GERADO pelo predeploy
+# (`dart compile js` sobre app/lib/torneios/js_bridge.dart) — versionar o bundle
+# faria conviver duas copias do dominio, uma delas silenciosamente velha.
+node_modules/
+/functions/lib/
