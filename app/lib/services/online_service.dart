@@ -37,13 +37,21 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 enum OnlineStatus {
   desconectado,
   conectando,
-  /// Socket aberto, credencial ainda não aceita. Nenhum comando roda aqui.
+  /// Socket aberto, credencial ainda não aceita (primeira autenticação OU
+  /// renovação depois do token vencer). Nenhum comando roda aqui.
   autenticando,
   conectado,
   erro,
   /// Não há usuário logado no Firebase, ou o servidor recusou a credencial.
   /// Falha terminal: não adianta reconectar sozinho.
   naoAutenticado,
+  /// O servidor exige uma versão de protocolo mais nova que a deste app.
+  /// Falha terminal: só sai daqui atualizando o aplicativo.
+  atualizacaoObrigatoria,
+  /// O servidor ainda não foi atualizado e não fala o protocolo autenticado.
+  /// Falha terminal — de propósito: jogar assim exigiria voltar a declarar
+  /// identidade pelo cliente, que é exatamente o buraco que foi fechado.
+  servidorDesatualizado,
 }
 
 /// Fonte da credencial da conexão. Assinatura própria (e não o `User` do
@@ -57,6 +65,18 @@ class OnlineService extends ChangeNotifier {
   // Servidor de produção já no ar (ver NO-AR.md). Trocável se mudar de host.
   static const String servidorUrl =
       'wss://buraco-servidor-production.up.railway.app';
+
+  /// Versão do protocolo de conexão que este app fala.
+  ///   1 = antigo, sem autenticação (identidade declarada pelo cliente)
+  ///   2 = este: apresenta credencial, o servidor deriva a identidade
+  /// Vai junto com a credencial para o servidor conseguir recusar cliente
+  /// incompatível com uma resposta que a pessoa entenda.
+  static const int protocolo = 2;
+
+  /// Quanto se espera o servidor responder à autenticação antes de desistir
+  /// desta tentativa. Sem isso, um servidor que ignora o `auth` deixaria o app
+  /// pendurado em "identificando você…" para sempre.
+  static const Duration limiteDeAutenticacao = Duration(seconds: 15);
 
   OnlineService({ObterIdToken? obterIdToken, AbrirCanal? abrirCanal})
       : _obterIdToken = obterIdToken ?? _idTokenDoFirebase,
@@ -105,6 +125,13 @@ class OnlineService extends ChangeNotifier {
   // sempre. Era defeito pré-existente, e ele precisa estar de pé aqui: se a
   // reconexão não roda, ela também não reautentica.
   bool _abrindo = false;
+
+  // Esta conexão já teve UMA autenticação aceita? Distingue a primeira
+  // autenticação (que precisa reentrar na mesa) da renovação de credencial
+  // (que não precisa: o assento continua lá, a conexão nunca caiu).
+  bool _jaAutenticouNestaConexao = false;
+
+  Timer? _limiteAuthTimer;
 
   bool get conectado => status == OnlineStatus.conectado;
   bool get autenticado => status == OnlineStatus.conectado;
@@ -159,8 +186,7 @@ class OnlineService extends ChangeNotifier {
 
       // 3) CREDENCIAL NA PRIMEIRA MENSAGEM. Até o servidor responder
       //    "autenticado", nada mais é enviado.
-      status = OnlineStatus.autenticando;
-      notifyListeners();
+      _jaAutenticouNestaConexao = false;
 
       _sub = _canal!.stream.listen(
         _aoReceber,
@@ -172,10 +198,37 @@ class OnlineService extends ChangeNotifier {
         cancelOnError: true,
       );
 
-      _bruto({'tipo': 'auth', 'token': token});
+      _mandarCredencial(token);
     } finally {
       _abrindo = false;
     }
+  }
+
+  /// Escreve a credencial no socket e arma o limite de espera. Serve tanto para
+  /// a primeira autenticação quanto para a renovação depois do token vencer.
+  void _mandarCredencial(String token) {
+    status = OnlineStatus.autenticando;
+    notifyListeners();
+
+    _limiteAuthTimer?.cancel();
+    _limiteAuthTimer = Timer(limiteDeAutenticacao, _aoEstourarLimiteDeAuth);
+
+    _bruto({'tipo': 'auth', 'token': token, 'protocolo': protocolo});
+  }
+
+  /// O servidor não respondeu à autenticação. Pode ser rede ruim ou servidor
+  /// que ignora o `auth` — em qualquer caso não dá para jogar nesta conexão.
+  /// Fecha e deixa o backoff tentar de novo; não é falha terminal.
+  void _aoEstourarLimiteDeAuth() {
+    if (status != OnlineStatus.autenticando) return;
+    _sub?.cancel();
+    _sub = null;
+    _canal?.sink.close();
+    _canal = null;
+    status = OnlineStatus.erro;
+    erro = 'o servidor não respondeu à identificação';
+    notifyListeners();
+    if (_querConectado) _agendarReconexao();
   }
 
   String _meuApelido = 'Você';
@@ -229,6 +282,8 @@ class OnlineService extends ChangeNotifier {
   void desligar() {
     _querConectado = false;
     _reconectarTimer?.cancel();
+    _limiteAuthTimer?.cancel();
+    _limiteAuthTimer = null;
     _sub?.cancel();
     _sub = null;
     _canal?.sink.close();
@@ -244,7 +299,7 @@ class OnlineService extends ChangeNotifier {
   /// fila — que é liberada no "autenticado", nunca no "socket abriu".
   void _enviar(Map<String, dynamic> msg) {
     if (status != OnlineStatus.conectado || _canal == null) {
-      if (status == OnlineStatus.naoAutenticado) return; // insistir não ajuda
+      if (_estadoTerminal) return; // insistir não ajuda
       _pendentes.add(msg); // guarda pra enviar quando autenticar
       conectar();
       return;
@@ -276,6 +331,18 @@ class OnlineService extends ChangeNotifier {
         // com a mesma credencial ruim só daria laço.
         _falhaDeCredencial('não foi possível validar sua conta');
         return;
+      case 'authExpirou':
+        // A credencial venceu com a conexão de pé. O servidor dá uma carência
+        // curta para apresentar um token novo — sem derrubar ninguém da mesa.
+        _renovarCredencial();
+        return;
+      case 'atualizacaoObrigatoria':
+        _falhaTerminal(
+          OnlineStatus.atualizacaoObrigatoria,
+          (msg['motivo'] as String?) ??
+              'atualize o aplicativo para continuar jogando online',
+        );
+        return;
       case 'entrou':
         if (msg['codigo'] != null) codigo = msg['codigo'] as String;
         meuAssento = msg['assento'] as int?;
@@ -286,6 +353,24 @@ class OnlineService extends ChangeNotifier {
         erro = null;
         break;
       case 'erro':
+        if (msg['codigo'] == 'ATUALIZACAO_OBRIGATORIA') {
+          _falhaTerminal(
+            OnlineStatus.atualizacaoObrigatoria,
+            (msg['motivo'] as String?) ??
+                'atualize o aplicativo para continuar jogando online',
+          );
+          return;
+        }
+        // Servidor ANTIGO: ele não conhece o tipo `auth` e responde com um erro
+        // genérico. Não existe caminho de jogo aqui — jogar contra ele exigiria
+        // voltar a declarar identidade pelo cliente. Falha explícita, então.
+        if (status == OnlineStatus.autenticando) {
+          _falhaTerminal(
+            OnlineStatus.servidorDesatualizado,
+            'o servidor ainda não foi atualizado — tente de novo mais tarde',
+          );
+          return;
+        }
         erro = (msg['motivo'] as String?) ?? 'erro no servidor';
         break;
       default:
@@ -294,8 +379,36 @@ class OnlineService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// A credencial venceu com a conexão de pé: pega um token novo e reapresenta
+  /// no MESMO socket. Enquanto isso o status volta a `autenticando`, então os
+  /// comandos voltam para a fila — igual à primeira autenticação.
+  Future<void> _renovarCredencial() async {
+    if (_canal == null) return;
+    status = OnlineStatus.autenticando;
+    notifyListeners();
+
+    String? token;
+    try {
+      token = await _obterIdToken();
+    } catch (_) {
+      token = null;
+    }
+    if (_canal == null) return; // caiu enquanto buscava o token
+    if (token == null || token.isEmpty) {
+      _falhaDeCredencial('entre na sua conta para continuar jogando online');
+      return;
+    }
+    _mandarCredencial(token);
+  }
+
   /// Credencial aceita: a conexão passa a valer e a fila é liberada.
   void _aoAutenticar() {
+    _limiteAuthTimer?.cancel();
+    _limiteAuthTimer = null;
+
+    final primeiraDestaConexao = !_jaAutenticouNestaConexao;
+    _jaAutenticouNestaConexao = true;
+
     status = OnlineStatus.conectado;
     _tentativas = 0;
     erro = null;
@@ -304,7 +417,10 @@ class OnlineService extends ChangeNotifier {
     // Se caímos e voltamos com uma mesa aberta, tenta reentrar na mesma mesa.
     // Quem essa reentrada pertence é decidido pelo servidor, a partir do token —
     // o código da mesa aqui só diz PARA ONDE voltar, não QUEM está voltando.
-    if (codigo != null && _pendentes.isEmpty) {
+    //
+    // Só na PRIMEIRA autenticação da conexão: numa renovação de credencial o
+    // socket nunca caiu e o assento continua nosso — reentrar pegaria outro.
+    if (primeiraDestaConexao && codigo != null && _pendentes.isEmpty) {
       _bruto({'tipo': 'entrarMesa', 'codigo': codigo, 'apelido': _meuApelido});
     }
     final fila = List<Map<String, dynamic>>.from(_pendentes);
@@ -314,26 +430,40 @@ class OnlineService extends ChangeNotifier {
     }
   }
 
-  /// Sem credencial ou credencial recusada. Estado terminal: derruba o socket,
-  /// esvazia a fila e NÃO agenda reconexão.
-  void _falhaDeCredencial(String mensagem) {
+  /// Sem credencial ou credencial recusada.
+  void _falhaDeCredencial(String mensagem) =>
+      _falhaTerminal(OnlineStatus.naoAutenticado, mensagem);
+
+  /// Estado terminal: derruba o socket, esvazia a fila e NÃO agenda reconexão.
+  /// Usado quando insistir não resolveria — credencial recusada, app velho
+  /// demais, servidor velho demais.
+  void _falhaTerminal(OnlineStatus novo, String mensagem) {
     _querConectado = false;
     _reconectarTimer?.cancel();
+    _limiteAuthTimer?.cancel();
+    _limiteAuthTimer = null;
     _sub?.cancel();
     _sub = null;
     _canal?.sink.close();
     _canal = null;
     _pendentes.clear();
-    status = OnlineStatus.naoAutenticado;
+    status = novo;
     erro = mensagem;
     notifyListeners();
   }
 
+  bool get _estadoTerminal =>
+      status == OnlineStatus.naoAutenticado ||
+      status == OnlineStatus.atualizacaoObrigatoria ||
+      status == OnlineStatus.servidorDesatualizado;
+
   void _aoCair() {
+    _limiteAuthTimer?.cancel();
+    _limiteAuthTimer = null;
     _sub?.cancel();
     _sub = null;
     _canal = null;
-    if (status == OnlineStatus.naoAutenticado) return; // já é falha terminal
+    if (_estadoTerminal) return; // insistir não resolveria
     if (status == OnlineStatus.conectado ||
         status == OnlineStatus.autenticando) {
       status = OnlineStatus.conectando; // vamos tentar voltar
