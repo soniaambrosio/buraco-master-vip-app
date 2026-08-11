@@ -80,8 +80,12 @@ ResultadoJogada aplicarLegal(
       // ao motor legado, que compra `monte.removeAt(0)`). Sem morto disponível,
       // não há o que comprar (a rodada encerra por exaustão — tratado no fluxo).
       if (prox.mortos.isEmpty) {
-        return ResultadoJogada.recusa(
-            'monte e mortos vazios: não há carta para comprar');
+        // §8.x — baralho EXAURIDO (monte E mortos vazios): a rodada ENCERRA por
+        // falta de compra — MESMO efeito do legado (que encerra a rodada e não
+        // compra carta). Transição LEGAL de fim de rodada, sem carta comprada.
+        // (Reconcilia o finding "monte e mortos ambos vazios" do C9-C2.)
+        return ResultadoJogada(
+            legal: true, proximoEstado: prox.copyWith(rodadaEncerrada: true));
       }
       // `monte` é final no EstadoJogo (snapshot imutável) — muta a lista clonada
       // in-place em vez de reatribuir o campo.

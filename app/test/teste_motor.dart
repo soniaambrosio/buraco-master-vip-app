@@ -3941,6 +3941,156 @@ void main() {
       expect(rel.replayJson, isNotNull); // Replay completo na assimetria
     });
 
+    // ==================== C9-C2c: EXC reais + classificador verificador ====
+    test('C9-C2c-EXHAUSTO monte E mortos vazios RECONCILIADO -> CONVERGE', () {
+      // Reconciliação do finding: legado encerra a rodada e retorna false; o
+      // canônico agora também ENCERRA a rodada (transição legal de exaustão).
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preExaustoC9C(), TransacaoSombra.comprarMonte(0, spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+    });
+
+    test('C9-EXC02-REAL abertura múltipla vulnerável: EXC-02 VERIFICADA', () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preEXC02C9C(),
+          TransacaoSombra.aberturaMultipla(0, const ['3c', '4c', '5c'],
+              const ['6d', '7d', '8d', '9d', '10d', 'Jd', 'Qd'], spec,
+              excEsperada: 'EXC-02'));
+      expect(rel.legadoAplicou, isFalse); // legado recusa (1º jogo < mínimo)
+      expect(rel.canonicoAplicou, isTrue); // canônico aceita (soma ≥ mínimo)
+      expect(rel.classificacao, ClassificacaoSombra.excecao);
+      expect(rel.idExcecao, 'EXC-02');
+    });
+
+    test('C9-EXC02-NAO-DECLARADA condição real de EXC-02 SEM tag -> INESPERADA',
+        () {
+      // Condição real presente, mas excEsperada=null: NÃO pode ser mascarada.
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preEXC02C9C(),
+          TransacaoSombra.aberturaMultipla(0, const ['3c', '4c', '5c'],
+              const ['6d', '7d', '8d', '9d', '10d', 'Jd', 'Qd'], spec));
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      expect(rel.replayJson, isNotNull);
+    });
+
+    test('C9-EXC02-SEM-COND EXC-02 declarada SEM a condição real -> INESPERADA',
+        () {
+      // Divergência que NÃO é abertura múltipla (descarte h2×h1), tagueada
+      // EXC-02: o verificador recusa -> INESPERADA (não vira EXC pela tag).
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preDescarteC9C(), _txInjecaoC9C(spec, exc: 'EXC-02'));
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      expect(rel.replayJson, isNotNull);
+    });
+
+    test('C9-EXC02-FORMATO-SEM-ECONOMIA formato de abertura múltipla vulnerável '
+        '+ assimetria injetada, mas 1º jogo já atinge o mínimo -> INESPERADA',
+        () {
+      // Detector NEGATIVO do verificador econômico: satisfaz TUDO que o
+      // predicado antigo exigia (≥2 jogos, dupla vulnerável abrindo,
+      // legado-recusa/canônico-aplica), MAS o 1º jogo SOZINHO já bate o mínimo
+      // (75 ≥ 75) — não é a SOMA que salva. Logo NÃO é EXC-02: o verificador
+      // recusa e cai em INESPERADA, nunca `excecao`. (Recusa do legado injetada
+      // para forçar a assimetria sem depender da economia.)
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preAberturaJogo1SozinhoC9C(),
+          _txAberturaInjetadaC9C(
+              const ['8c', '9c', '10c', 'Jc', 'Qc', 'Kc', 'Ac'], // sozinho = 75
+              const ['3d', '4d', '5d'], // +15 -> conjunto 90
+              spec,
+              exc: 'EXC-02'));
+      expect(rel.legadoAplicou, isFalse); // recusa injetada
+      expect(rel.canonicoAplicou, isTrue); // canônico aplica a abertura atômica
+      expect(rel.classificacao, ClassificacaoSombra.inesperada);
+      expect(rel.idExcecao, isNull); // não é mascarada como EXC-02
+      expect(rel.replayJson, isNotNull); // INESPERADA gera Replay completo
+    });
+
+    test('C9-EXC01-RECONC trinca com curinga (Fechado): RECONCILIADA -> CONVERGE',
+        () {
+      // O legado atual JÁ rejeita trinca com JOKER (igual ao canônico).
+      final specF = RuleSpec.canonica(Modalidade.fechado);
+      final rel = sombra.comparar(_preEXC01C9C(),
+          TransacaoSombra.baixar(0, const ['Qs', 'Qc', 'JK'], specF,
+              excEsperada: 'EXC-01'));
+      expect(rel.legadoRecusou, isTrue); // ambos recusam
+      expect(rel.canonicoRecusou, isTrue);
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+    });
+
+    test('C9-EXC04-RECONC-FECHADO grupo de ases (Fechado): ambos TRINCA -> CONVERGE',
+        () {
+      final specF = RuleSpec.canonica(Modalidade.fechado);
+      final rel = sombra.comparar(_preEXC04C9C('FECHADO'),
+          TransacaoSombra.baixar(0, const ['Ac', 'Ao', 'As'], specF,
+              excEsperada: 'EXC-04'));
+      expect(rel.legadoAplicou, isTrue); // ambos aceitam como trinca
+      expect(rel.canonicoAplicou, isTrue);
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+    });
+
+    test('C9-EXC04-RECONC-ABERTO grupo de ases (Aberto): ambos RECUSAM -> CONVERGE',
+        () {
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(_preEXC04C9C('ABERTO'),
+          TransacaoSombra.baixar(0, const ['Ac', 'Ao', 'As'], spec,
+              excEsperada: 'EXC-04'));
+      expect(rel.legadoRecusou, isTrue); // ambos recusam (ás só em sequência)
+      expect(rel.canonicoRecusou, isTrue);
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+    });
+
+    test('C9-EXC03-FUNC lixo fechado desacoplado: legado RECUSA × canônico ACEITA (nível-função)',
+        () {
+      // EXC-03 real, mas NÃO dirigível por transação de sombra (o Acao
+      // ComprarLixo não carrega jogosNovos). Verificada em nível de FUNÇÃO.
+      final specF = RuleSpec.canonica(Modalidade.fechado);
+      final j = Jogo.paraCostura();
+      j.vez = 0;
+      j.jaComprou = false;
+      j.modalidade = 'FECHADO';
+      j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+      j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+      j.monte = [Carta('mo', 'copas', '2', false)];
+      j.lixo = [Carta('4c', 'copas', '4', false)]; // topo = 4c
+      j.maos = [
+        [
+          Carta('3c', 'copas', '3', false),
+          Carta('5c', 'copas', '5', false),
+          Carta('10c', 'copas', '10', false),
+          Carta('Jc', 'copas', 'J', false),
+          Carta('Qc', 'copas', 'Q', false),
+          Carta('Kc', 'copas', 'K', false),
+          Carta('10d', 'ouros', '10', false),
+          Carta('Jd', 'ouros', 'J', false),
+          Carta('Qd', 'ouros', 'Q', false),
+          Carta('Kd', 'ouros', 'K', false),
+        ],
+        <Carta>[],
+        <Carta>[],
+        <Carta>[],
+      ];
+      // LEGADO: comprarLixo Fechado exige o meld do TOPO bater o mínimo sozinho.
+      final rLeg = j.comprarLixo(0, modalidade: 'FECHADO');
+      expect(rLeg['ok'], isFalse); // recusa (topo meld [3,4,5]=15 < 75)
+      // CANÔNICO: avaliarComprarLixo desacopla — topo só precisa ter uso; o
+      // mínimo é a SOMA de todos os jogos novos (95 ≥ 75).
+      final estado = paraCanonico(j).canonico;
+      final rCan = avaliarComprarLixo(estado, 0, specF, topoDeclarado: '4c',
+          jogosNovos: const [
+            ['4c', '3c', '5c'],
+            ['10c', 'Jc', 'Qc', 'Kc'],
+            ['10d', 'Jd', 'Qd', 'Kd'],
+          ]);
+      expect(rCan.valido, isTrue); // aceita (desacoplado)
+    });
+
     test('C9-BAIXAR-03 baixar que ESVAZIA -> morto DIRETO (estabilizado) CONVERGE',
         () {
       final spec = _specAbertoC9C();
@@ -4447,3 +4597,175 @@ ProjecaoBMV _preBaterViaBaixarC9C() {
   j.lixo = [Carta('lx', 'espadas', '3', false)];
   return paraCanonico(j);
 }
+
+// ===== C9-C2c — helpers de teste (EXC reais + exaustão do baralho) =====
+
+// Baralho EXAURIDO: monte E mortos vazios, fase compra. O legado encerra a
+// rodada (comprarMonte -> rodadaEncerrada=true e retorna false, sem comprar); o
+// canônico agora TAMBÉM encerra (transição legal de exaustão em ComprarMonte).
+// Ambos só escrevem rodadaEncerrada=true -> assinaturas iguais -> CONVERGE.
+// (Reconcilia o finding "monte e mortos ambos vazios: legado encerra × canônico
+// recusava" do C9-C2.)
+ProjecaoBMV _preExaustoC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false; // fase compra
+  j.modalidade = 'ABERTO';
+  j.monte = <Carta>[];
+  j.mortos = <List<Carta>>[];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// EXC-02 — ABERTURA MÚLTIPLA. Dupla NOS vulnerável (rodadasVulneravel=1 ->
+// mínimo 75) e abrindo (primeiraBaixadaFeita=false). A mão traz DUAS corridas
+// legais que só JUNTAS batem o mínimo: [3c,4c,5c] copas = 15 e a corrida de
+// ouros 6..Q (7 cartas) = 60 -> soma 75. O legado baixa UM jogo por chamada (o
+// 1º sozinho = 15 < 75 -> RECUSA); o canônico soma os dois numa abertura atômica
+// -> ACEITA. Assimetria de legalidade real (EXC-02). Duas reservas (Kc, 9p) só
+// para a baixada não esvaziar a mão.
+ProjecaoBMV _preEXC02C9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true; // fase jogo
+  j.modalidade = 'ABERTO';
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+      Carta('6d', 'ouros', '6', false),
+      Carta('7d', 'ouros', '7', false),
+      Carta('8d', 'ouros', '8', false),
+      Carta('9d', 'ouros', '9', false),
+      Carta('10d', 'ouros', '10', false),
+      Carta('Jd', 'ouros', 'J', false),
+      Carta('Qd', 'ouros', 'Q', false),
+      Carta('Kc', 'copas', 'K', false), // reserva (não usada nos jogos)
+      Carta('9p', 'paus', '9', false), // reserva
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// EXC-01 — TRINCA COM CURINGA (Fechado). Mão = [Q espadas, Q copas, JOKER] +
+// reserva. baixar [Qs,Qc,JK]: o legado ATUAL recusa (Joker fora da trinca; e o
+// par de naipes distintos não forma sequência) e o canônico também recusa
+// (trinca só natural). Ambos RECUSAM -> estado inalterado -> CONVERGE
+// (EXC-01 RECONCILIADA: o legado já não aceita curinga em trinca).
+ProjecaoBMV _preEXC01C9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true; // fase jogo
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [
+      Carta('Qs', 'espadas', 'Q', false),
+      Carta('Qc', 'copas', 'Q', false),
+      Carta('JK', null, 'JOKER', true),
+      Carta('rp', 'paus', '5', false), // reserva
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// EXC-04 — GRUPO SÓ DE ASES [Ac,Ao,As]. Dupla NÃO vulnerável (mínimo 0, sem
+// interferência de abertura). FECHADO: legado e canônico ACEITAM como TRINCA
+// (mesmo meld, mesma ordem de entrada) -> ambos APLICAM -> CONVERGE. ABERTO:
+// ambos RECUSAM ("trinca só vale no Fechado; ás só em sequência") -> CONVERGE.
+// EXC-04 RECONCILIADA nas duas modalidades. Reservas (Kc, 9p) para a mão não
+// esvaziar quando ambos aplicam (Fechado).
+ProjecaoBMV _preEXC04C9C(String modalidade) {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true; // fase jogo
+  j.modalidade = modalidade;
+  j.rodadasVulneravel = {'nos': 0, 'eles': 0}; // não vulnerável
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [
+      Carta('Ac', 'copas', 'A', false),
+      Carta('Ao', 'ouros', 'A', false),
+      Carta('As', 'espadas', 'A', false),
+      Carta('Kc', 'copas', 'K', false), // reserva
+      Carta('9p', 'paus', '9', false), // reserva
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Detector NEGATIVO do verificador econômico da EXC-02. Dupla NOS vulnerável
+// (mínimo 75) e abrindo, mas a mão traz um 1º jogo que SOZINHO já bate o mínimo:
+// a sequência 8..A de copas (7 cartas) = 75, mais [3d,4d,5d] = 15 (conjunto 90).
+// Como NÃO é a soma que salva o mínimo, o par recusa/aplica não é EXC-02.
+// Reservas (rp, rq) para a baixada canônica não esvaziar a mão.
+ProjecaoBMV _preAberturaJogo1SozinhoC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true; // fase jogo
+  j.modalidade = 'ABERTO';
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('8c', 'copas', '8', false),
+      Carta('9c', 'copas', '9', false),
+      Carta('10c', 'copas', '10', false),
+      Carta('Jc', 'copas', 'J', false),
+      Carta('Qc', 'copas', 'Q', false),
+      Carta('Kc', 'copas', 'K', false),
+      Carta('Ac', 'copas', 'A', false), // 8..A copas = 75 (sozinho ≥ mínimo)
+      Carta('3d', 'ouros', '3', false),
+      Carta('4d', 'ouros', '4', false),
+      Carta('5d', 'ouros', '5', false),
+      Carta('rp', 'paus', '9', false), // reserva
+      Carta('rq', 'espadas', '8', false), // reserva
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Abertura múltipla com a RECUSA do legado INJETADA — força a assimetria
+// (legado recusa / canônico aplica) SEM depender da economia, para o detector
+// negativo do verificador. O canônico aplica os dois jogos atômicos.
+TransacaoSombra _txAberturaInjetadaC9C(
+        List<String> jogo1, List<String> jogo2, RuleSpec spec,
+        {String? exc}) =>
+    TransacaoSombra(
+      rotulo: 'aberturaInjetada(recusaLegadoForcada)@0',
+      assento: 0,
+      spec: spec,
+      excEsperada: exc,
+      aplicarLegado: (j) => false, // recusa injetada (assimetria)
+      acoesCanonicas: (e) => [
+        Baixar(jogosNovos: [jogo1, jogo2])
+      ],
+    );

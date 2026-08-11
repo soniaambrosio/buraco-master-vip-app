@@ -11,6 +11,7 @@
 // (5) diff estruturado; (6) Replay automático (por snapshot, Ajuste 3) para
 // qualquer divergência INESPERADA.
 import '../mesa.dart';
+import '../rules/abertura/abertura.dart';
 import '../rules/acoes.dart';
 import '../rules/estado.dart';
 import '../rules/gerador/gerador.dart';
@@ -99,14 +100,21 @@ class TransacaoSombra {
     required this.acoesCanonicas,
   });
 
-  /// Comprar o monte (transação simples).
+  /// Comprar o monte (transação simples). `aplicarLegado` é ciente da EXAUSTÃO
+  /// do baralho: o legado encerra a rodada e retorna `false` quando monte E
+  /// mortos estão vazios — nesse caso a transição ("rodada encerrou") ocorreu,
+  /// então "aplicou" = comprou OU a rodada acabou de encerrar por exaustão.
   static TransacaoSombra comprarMonte(int assento, RuleSpec spec) =>
       TransacaoSombra(
         rotulo: 'comprarMonte@$assento',
         assento: assento,
         spec: spec,
         excEsperada: null,
-        aplicarLegado: (j) => j.comprarMonte(assento),
+        aplicarLegado: (j) {
+          final antes = j.rodadaEncerrada;
+          final ok = j.comprarMonte(assento);
+          return ok || (!antes && j.rodadaEncerrada);
+        },
         acoesCanonicas: (e) => const [ComprarMonte()],
       );
 
@@ -138,6 +146,24 @@ class TransacaoSombra {
         aplicarLegado: (j) => j.baixar(assento, ids)['ok'] == true,
         acoesCanonicas: (e) => [
           Baixar(jogosNovos: [ids])
+        ],
+      );
+
+  /// ABERTURA MÚLTIPLA atômica (EXC-02). O legado só sabe baixar UM jogo por
+  /// chamada (`baixar` single-meld) — para abrir vulnerável, tenta o 1º jogo,
+  /// que sozinho não atinge o mínimo -> RECUSA. O canônico soma os DOIS numa
+  /// abertura atômica -> ACEITA. Divergência real de legalidade (EXC-02).
+  static TransacaoSombra aberturaMultipla(
+          int assento, List<CartaId> jogo1, List<CartaId> jogo2, RuleSpec spec,
+          {String? excEsperada}) =>
+      TransacaoSombra(
+        rotulo: 'aberturaMultipla@$assento',
+        assento: assento,
+        spec: spec,
+        excEsperada: excEsperada,
+        aplicarLegado: (j) => j.baixar(assento, jogo1)['ok'] == true,
+        acoesCanonicas: (e) => [
+          Baixar(jogosNovos: [jogo1, jogo2])
         ],
       );
 }
@@ -203,8 +229,14 @@ class ModoSombra {
       ..._diff(posLegado, posCanonico),
       ...diffEnv,
     ];
-    final excConhecida = tx.excEsperada != null &&
-        excecoesSombra.any((e) => e.id == tx.excEsperada);
+    // EXCEÇÃO VERIFICADA (C9-C2c): não basta declarar `excEsperada` — a condição
+    // CONCRETA da exceção precisa ser confirmada. EXC declarada sem condição real
+    // -> cai em INESPERADA; condição real sem id correto -> também INESPERADA
+    // (nunca mascarada numa EXC).
+    final excVerificada = tx.excEsperada != null &&
+        excecoesSombra.any((e) => e.id == tx.excEsperada) &&
+        _verificarExc(
+            tx.excEsperada!, pre, tx, legadoAplicou, canonicoAplicou);
 
     RelatorioSombra mk(ClassificacaoSombra c,
             {required bool iguais,
@@ -237,7 +269,7 @@ class ModoSombra {
             canonicoAplicou ? 'aplicou' : 'recusou'),
         ...diffEstadoEnv,
       ];
-      return excConhecida
+      return excVerificada
           ? mk(ClassificacaoSombra.excecao,
               iguais: false, diff: diffAssim, idExc: tx.excEsperada)
           : mk(ClassificacaoSombra.inesperada,
@@ -250,7 +282,7 @@ class ModoSombra {
     if (diffEstadoEnv.isEmpty) {
       return mk(ClassificacaoSombra.converge, iguais: true, diff: const []);
     }
-    return excConhecida
+    return excVerificada
         ? mk(ClassificacaoSombra.excecao,
             iguais: false, diff: diffEstadoEnv, idExc: tx.excEsperada)
         : mk(ClassificacaoSombra.inesperada,
@@ -263,6 +295,65 @@ class ModoSombra {
   List<RelatorioSombra> compararLote(
           List<(ProjecaoBMV, TransacaoSombra)> casos) =>
       [for (final c in casos) comparar(c.$1, c.$2)];
+
+  // ----- CLASSIFICADOR VERIFICADOR de EXC (C9-C2c) -----
+  // Só confirma uma EXC se a CONDIÇÃO CONCRETA dela estiver presente na
+  // transação/divergência — não basta a tag `excEsperada`.
+  bool _verificarExc(String id, ProjecaoBMV pre, TransacaoSombra tx,
+      bool legadoAplicou, bool canonicoAplicou) {
+    switch (id) {
+      case 'EXC-02':
+        return _ehEXC02(pre, tx, legadoAplicou, canonicoAplicou);
+      // EXC-01 e EXC-04: RECONCILIADAS no código atual (os dois motores
+      //   convergem) — não há divergência de transação para verificar.
+      // EXC-03: manifesta-se SÓ via chamada direta de `avaliarComprarLixo` (o
+      //   Acao `ComprarLixo` não carrega `jogosNovos`) — não é dirigível por
+      //   transação de sombra; verificada em teste de nível-função à parte.
+      default:
+        return false;
+    }
+  }
+
+  /// Condição CONCRETA da ABERTURA MÚLTIPLA atômica (EXC-02) — não basta o
+  /// formato. Exige, comprovando pela AUTORIDADE canônica de abertura
+  /// (`avaliarBaixar`, que já aplica a tabela de pontos e o mínimo de
+  /// vulnerabilidade — nada é reimplementado aqui):
+  ///   (1) direção da assimetria: legado RECUSOU e canônico APLICOU;
+  ///   (2) ação canônica = UM `Baixar` atômico com ≥2 jogos novos;
+  ///   (3) dupla VULNERÁVEL e ainda ABRINDO (1ª baixada não feita);
+  ///   (4) o PRIMEIRO jogo, ISOLADO, NÃO atinge o mínimo de abertura
+  ///       (sujeito ao mínimo e abaixo dele — economia real da EXC-02);
+  ///   (5) o CONJUNTO atômico ATINGE o mínimo (é a SOMA que salva);
+  ///   (6) todos os jogos VÁLIDOS segundo a autoridade canônica (o conjunto
+  ///       `válido` implica melds legais + mínimo satisfeito).
+  /// Sem (4)+(5) comprovados, um mero par recusa/aplica vulnerável NÃO é EXC-02.
+  bool _ehEXC02(ProjecaoBMV pre, TransacaoSombra tx, bool legadoAplicou,
+      bool canonicoAplicou) {
+    if (legadoAplicou || !canonicoAplicou) return false; // (1) direção
+    final acoes = tx.acoesCanonicas(pre.canonico);
+    if (acoes.length != 1) return false;
+    final a = acoes.first;
+    if (a is! Baixar || a.jogosNovos.length < 2) return false; // (2) ≥2 jogos
+    final dupla = tx.assento % 2 == 0 ? 'nos' : 'eles';
+    final vuln = (pre.canonico.rodadasVulneravel[dupla] ?? 0) >= 1;
+    final abrindo = !(pre.canonico.primeiraBaixadaFeita[dupla] ?? false);
+    if (!vuln || !abrindo) return false; // (3) vulnerável e abrindo
+
+    // (5)+(6): o CONJUNTO atômico é válido E atinge o mínimo — pela autoridade
+    // canônica de abertura (sem duplicar tabela de pontos nem regra econômica).
+    final conjunto = avaliarBaixar(pre.canonico, tx.assento, a, tx.spec);
+    if (!conjunto.valido || !conjunto.atingiuMinimo) return false;
+
+    // (4): o PRIMEIRO jogo, isolado, é sujeito ao mínimo e fica ABAIXO dele.
+    // (avaliarBaixar de um meld VÁLIDO porém insuficiente devolve
+    // sujeitoAoMinimo=true / atingiuMinimo=false; um meld inválido devolve
+    // sujeitoAoMinimo=false, logo NÃO satisfaz esta condição — não mascara.)
+    final soPrimeiro = avaliarBaixar(pre.canonico, tx.assento,
+        Baixar(jogosNovos: [a.jogosNovos.first]), tx.spec);
+    final primeiroAbaixoDoMinimo =
+        soPrimeiro.sujeitoAoMinimo && !soPrimeiro.atingiuMinimo;
+    return primeiroAbaixoDoMinimo;
+  }
 
   // ----- canônico: aplica a sequência e estabiliza mortoPendente -----
   _ResCanonico _rodarCanonico(EstadoJogo pre, TransacaoSombra tx) {

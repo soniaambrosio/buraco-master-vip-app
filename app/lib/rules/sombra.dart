@@ -29,10 +29,13 @@ const List<ExcecaoSombra> excecoesSombra = [
     id: 'EXC-01',
     descricao:
         'Trinca com curinga: o antigo aceitava 1 curinga; o canônico rejeita '
-        '(trinca somente natural; Joker e 2 fora).',
+        '(trinca somente natural; Joker e 2 fora). RECONCILIADA (C9-C2c): o '
+        'legado ATUAL já recusa Joker em trinca — os dois motores CONVERGEM '
+        '(ambos recusam). Não é divergência dirigível por transação de sombra.',
     casoEspecifico:
-        'FECHADO: [Q espadas, Q copas, JOKER] -> antigo VÁLIDO, canônico INVÁLIDO.',
-    testeCobertura: 'TRIN-02 (Joker) / TRIN-03 (2 como curinga)',
+        'FECHADO: [Q espadas, Q copas, JOKER] -> hoje antigo e canônico ambos '
+        'INVÁLIDO (teste C9-EXC01-RECONC).',
+    testeCobertura: 'TRIN-02 (Joker) / TRIN-03 (2 como curinga) / C9-EXC01-RECONC',
     etapaRemocao: 'C10 (aposentadoria do motor antigo)',
   ),
   ExcecaoSombra(
@@ -60,14 +63,19 @@ const List<ExcecaoSombra> excecoesSombra = [
   ExcecaoSombra(
     id: 'EXC-04',
     descricao:
-        'Grupo só de ases: o antigo aceita como "de_as" (família sequência); o '
-        'canônico classifica como TRINCA no Fechado, NUNCA sequência; no Aberto '
-        'e no STBL é inválido. Trinca de ases não forma canastra, não recebe '
-        'bônus e não libera batida.',
+        'Grupo só de ases: o antigo classificava como "de_as" (família '
+        'sequência); o canônico classifica como TRINCA no Fechado, NUNCA '
+        'sequência; no Aberto e no STBL é inválido. Trinca de ases não forma '
+        'canastra, não recebe bônus e não libera batida. RECONCILIADA (C9-C2c): '
+        'em NÍVEL DE ESTADO os dois motores CONVERGEM — no Fechado ambos ACEITAM '
+        '(mesmo meld baixado) e no Aberto ambos RECUSAM (o legado atual barra o '
+        'grupo de ases fora do Fechado). A diferença remanescente é só de '
+        'CLASSIFICAÇÃO/pontuação (de_as × trinca), fora do alcance da assinatura '
+        'de estado.',
     casoEspecifico:
-        'A copas, A ouros, A espadas -> antigo de_as (sequência), canônico '
-        'TRINCA (Fechado); inválido no Aberto/STBL.',
-    testeCobertura: 'MELD-AS-01',
+        'A copas, A ouros, A espadas -> Fechado: ambos ACEITAM; Aberto: ambos '
+        'RECUSAM (testes C9-EXC04-RECONC-FECHADO / C9-EXC04-RECONC-ABERTO).',
+    testeCobertura: 'MELD-AS-01 / C9-EXC04-RECONC-FECHADO / C9-EXC04-RECONC-ABERTO',
     etapaRemocao: 'C10',
   ),
 ];
