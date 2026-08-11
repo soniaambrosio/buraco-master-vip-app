@@ -11,6 +11,11 @@ cliente:
 
 E, para antifraude: **registrar evidência primeiro, julgar depois.**
 
+> **Status:** aprovada tecnicamente em 11/08/2026, no commit de entrega. As
+> pendências de produto da seção 18 foram declaradas **não bloqueantes** e serão
+> tratadas em frentes próprias — nenhuma delas deve ser preenchida com palpite
+> por quem mexer nesta camada depois.
+
 ---
 
 ## 0. Mapa da auditoria inicial (§2)
@@ -156,9 +161,13 @@ conta neste arquivo, ela está no lugar errado.
 a **única** definição de "vale ranking" no sistema. O tipo é dado de **criação**,
 imutável, e nunca inferido do resultado.
 
-`privada` não pontua de propósito: quem cria a sala escolhe os adversários, o que
-torna a pontuação combinável por construção. `contra_robos` não pontua porque
-seria a forma mais barata de farmar ranking que existe.
+**DECISÃO DE PRODUTO REGISTRADA (11/08/2026): partidas privadas e partidas
+contra robôs NÃO alteram ranking.** Isto deixou de ser argumento técnico desta
+camada e passou a ser regra do projeto — não reabrir sem decisão nova.
+
+O raciocínio que a sustenta, para quem for revisitá-la: em `privada` quem cria a
+sala escolhe os adversários, o que torna a pontuação combinável por construção;
+`contra_robos` seria a forma mais barata de farmar ranking que existe.
 
 ### Participantes (§7)
 
@@ -694,25 +703,43 @@ exigiria alterar o `js_bridge.dart` de torneios, que pertence a outra frente.
 
 **Consequência:** duas constantes estão duplicadas entre Dart e TypeScript —
 `papeisDeAutoridade` e o predicado `terminal`. Estão anotadas nos dois lados.
-Unificá-las (criando `app/lib/rastreabilidade/js_bridge_rastreabilidade.dart` e
-um segundo bundle) é a próxima OS natural desta frente.
+
+**A duplicação foi ACEITA nesta OS (11/08/2026).** Unificá-la — criando
+`app/lib/rastreabilidade/js_bridge_rastreabilidade.dart` e um segundo bundle —
+é OS própria, e **não deve** ser feita agora: tocaria `js_bridge.dart`, torneios,
+Motor de Partidas ou integrações, que estão fora do escopo desta frente.
 
 ---
 
-## 18. Decisões de produto pendentes
+## 18. Decisões de produto
+
+### Decidido
+
+- **Quais modos são ranqueados** — decidido em 11/08/2026: `publica_ranqueada` e
+  `torneio` pontuam; **`privada` e `contra_robos` não**. Já implementado em
+  `TipoDePartida.alteraRanking`; comportamento atual mantido, sem alteração
+  pendente.
+- **Duplicação de constantes Dart/TS** (`papeisDeAutoridade` e o predicado
+  `terminal`) — **aceita nesta OS**. Unificá-la exigiria mexer em
+  `js_bridge.dart`, torneios, Motor de Partidas ou integrações, e isso é OS
+  própria. Não fazer agora.
+
+### Pendentes — declaradas NÃO BLOQUEANTES desta OS
+
+Tratadas em frentes separadas. **Nenhuma deve ser preenchida com palpite:** a
+infraestrutura de cada uma está pronta e desligada, e um valor inventado aqui
+seria pior que a ausência.
 
 1. **Fórmula de ranking.** Quanto vale vitória, derrota e abandono. Sem ela,
    `PoliticaDeRanking.pendente` mantém o caminho desligado e **nenhum lançamento
    é produzido**.
-2. **Quais modos são ranqueados.** Hoje: `publica_ranqueada` e `torneio`.
-   `privada` e `contra_robos` estão fora por argumento técnico (combinável /
-   farmável), não por decisão registrada.
-3. **Regras formais de integridade.** Quais combinações de sinais merecem
+2. **Regras formais de integridade.** Quais combinações de sinais merecem
    investigação, e qual é o fluxo disciplinar. §17 proíbe inventá-las aqui.
-4. **Retenção.** Prazos de TTL e arquivamento (§14 deste documento).
-5. **Fluxo de correção administrativa.** `MotivoLancamento.correcaoAdministrativa`
+3. **Retenção.** Prazos de TTL e arquivamento (§14 deste documento). Nada apaga
+   dado nesta OS.
+4. **Fluxo de correção administrativa.** `MotivoLancamento.correcaoAdministrativa`
    existe no modelo; a interface e a autorização não foram implementadas.
-6. **Convidado sem conta.** `ClasseDeParticipante.convidado` existe no modelo
+5. **Convidado sem conta.** `ClasseDeParticipante.convidado` existe no modelo
    porque a distinção é barata agora e cara depois; o produto ainda não decidiu
    se convidado existirá.
 
@@ -741,3 +768,31 @@ cd app && flutter test test/rastreabilidade
 ```bash
 cd firebase/testes && npm install && npm run emulador:rastreabilidade
 ```
+
+### Baseline registrado (evidência, não pendência)
+
+Medido nesta máquina, antes e depois da entrega. Nada disto foi corrigido: são
+condições **pré-existentes de outras frentes**, registradas para que ninguém as
+confunda com regressão desta OS.
+
+| Medida | Antes | Depois |
+|---|---|---|
+| Testes Dart executáveis | 370 passando, 2 falhando | **501 passando, 2 falhando** |
+| `flutter analyze` | 42 issues | **42 issues** (medido por stash: idêntico com e sem esta camada) |
+| Rules no emulador | — | **28/28 verdes** |
+
+**As 2 falhas Dart** são erros de CARGA, não de asserção: quatro suítes procuram
+fixtures em `app/test/{torneios,colecoes}/data/*.seed.json`, e os seeds vivem em
+`app/data/`. Afeta `motor_torneios_test`, `reward_grants_test`,
+`kit_pioneiros_test` e `evidencias_visuais_test`. Pertence às frentes donas
+desses seeds.
+
+**Os 42 issues** do analisador estão todos em `lib/screens/` (depreciações de
+Flutter e dois campos não usados). Esta camada contribui **zero**.
+
+**Os 5 SKIPs** de `seguranca.test.js` (bloco `claimPioneerKit`) são de ambiente:
+`firebase-tools` 15 exige JDK 21 e a máquina só tem o JRE 11 que vem com o IRPF
+(`C:\Arquivos de Programas RFB\IRPF2025\jre`). A saída foi `npx firebase-tools@13`,
+que aceita Java 11 mas não exporta `FUNCTIONS_EMULATOR_HOST` ao processo filho —
+o bloco se auto-pula. Os outros 14 casos passam, e as quatro Functions desta OS
+inicializam no emulador junto das dez existentes.
