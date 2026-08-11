@@ -8,6 +8,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'screens/resultado_partida_screen.dart';
+// C9-D — camada de costura da AUTORIDADE canônica (atrás da flag; OFF por padrão).
+import 'motor/motor_config.dart';
+import 'motor/autoridade_canonica.dart';
+import 'rules/acoes.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -119,9 +123,44 @@ class Jogo {
   final List<String> apelidos;
   final List<String> avatares;
   final List<String> mascotes;
-  Jogo(this.apelidos, this.avatares, this.mascotes, {int? seed})
+
+  // ===== C9-D — AUTORIDADE canônica atrás da flag =====
+  /// Flag de AUTORIDADE (e sombra). PADRÃO OFF => o fluxo permanece 100% legado,
+  /// sem alterar resultado observável, pontuação, turno, lixo, morto, jogos,
+  /// eventos ou sidecars. Só com `canonicoAtivo=true` o caminho canônico assume.
+  final MotorConfig motorConfig;
+
+  /// Injeção do projetor SÓ para exercitar a FALHA técnica de projeção nos
+  /// testes (null => a autoridade usa `paraCanonico`). Nunca setado em produção.
+  Projetor? projetorAutoridadeTest;
+
+  /// Telemetria/diagnóstico do último FALLBACK técnico (falha de costura/
+  /// projeção/transporte). NÃO é game-state (fora da projeção/envelope); só
+  /// registra evidência quando o fallback técnico ocorre. Null caso contrário.
+  Map<String, dynamic>? ultimoFallbackTecnico;
+
+  Jogo(this.apelidos, this.avatares, this.mascotes,
+      {int? seed, this.motorConfig = const MotorConfig()})
       : _rnd = seed == null ? Random() : Random(seed) {
     _distribuir();
+  }
+
+  /// Roteia a jogada pela autoridade canônica (fronteira atômica). Usa o
+  /// projetor injetado (testes) ou `paraCanonico` (produção).
+  ResultadoAutoridade _rodarAutoridade(int assento, List<Acao> acoes) =>
+      projetorAutoridadeTest == null
+          ? aplicarComAutoridade(this, assento, acoes)
+          : aplicarComAutoridade(this, assento, acoes,
+              projetar: projetorAutoridadeTest!);
+
+  /// Registra a evidência do fallback TÉCNICO (única situação em que, sob
+  /// autoridade ON, o fluxo cai para o legado). Recusa de REGRA nunca passa aqui.
+  void _registrarFallbackTecnico(String metodo, ResultadoAutoridade r) {
+    ultimoFallbackTecnico = {
+      'metodo': metodo,
+      'motivo': r.motivo,
+      'evidencia': r.evidencia,
+    };
   }
 
   // ===================================================================
@@ -138,7 +177,10 @@ class Jogo {
   /// Instância VAZIA (sem `_distribuir`) para a projeção/costura preencher o
   /// estado a partir de um `EstadoJogo`. Não sorteia cartas; não roda regra.
   Jogo.paraCostura(
-      {List<String>? apelidos, List<String>? avatares, List<String>? mascotes})
+      {List<String>? apelidos,
+      List<String>? avatares,
+      List<String>? mascotes,
+      this.motorConfig = const MotorConfig()})
       : apelidos = apelidos ?? const <String>[],
         avatares = avatares ?? const <String>[],
         mascotes = mascotes ?? const <String>[],
@@ -632,6 +674,13 @@ class Jogo {
 
   // ---------- JOGADAS ----------
   bool comprarMonte(int assento) {
+    // C9-D — AUTORIDADE ON: o canônico decide/aplica (transação atômica).
+    if (motorConfig.canonicoAtivo) {
+      final r = _rodarAutoridade(assento, const [ComprarMonte()]);
+      if (r.aplicou) return true;
+      if (r.recusaCanonica) return false; // recusa de REGRA — SEM fallback legado
+      _registrarFallbackTecnico('comprarMonte', r); // falha técnica -> legado
+    }
     if (integridadeErro != null) return false; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento || jaComprou) return false;
     if (monte.isEmpty) {
@@ -651,6 +700,22 @@ class Jogo {
   // - FECHADO/SBTL: só pode pegar se a carta do TOPO tiver USO IMEDIATO — formar
   //   um jogo novo com 2 cartas da mão OU estender um jogo já baixado da dupla.
   Map<String, dynamic> comprarLixo(int assento, {String modalidade = 'ABERTO'}) {
+    // C9-D — AUTORIDADE ON: o canônico decide/aplica (transação atômica).
+    // Nota: o `Acao ComprarLixo` canônico não carrega jogos (limite EXC-03
+    // nível-função). No Fechado/STBL, comprar exige uso ATÔMICO do topo, então o
+    // canônico RECUSA a compra sem jogos — divergência REAL, exposta (não
+    // mascarada). No Aberto, converge (compra o lixo para a mão).
+    if (motorConfig.canonicoAtivo) {
+      final r = _rodarAutoridade(assento, const [ComprarLixo()]);
+      if (r.aplicou) return {'ok': true};
+      if (r.recusaCanonica) {
+        return {
+          'ok': false,
+          'erro': r.motivo ?? 'compra do lixo recusada pelo motor canônico',
+        };
+      }
+      _registrarFallbackTecnico('comprarLixo', r); // falha técnica -> legado
+    }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
     if (lixo.isEmpty) return {'ok': false, 'erro': 'o lixo está vazio'};
@@ -854,6 +919,21 @@ class Jogo {
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
+    // C9-D — AUTORIDADE ON: baixada como transação canônica ATÔMICA (com
+    // estabilização de morto direto/batida quando a baixada zera a mão).
+    if (motorConfig.canonicoAtivo) {
+      final r = _rodarAutoridade(assento, [
+        Baixar(jogosNovos: [ids])
+      ]);
+      if (r.aplicou) return {'ok': true};
+      if (r.recusaCanonica) {
+        return {
+          'ok': false,
+          'erro': r.motivo ?? 'baixada recusada pelo motor canônico',
+        };
+      }
+      _registrarFallbackTecnico('baixar', r); // falha técnica -> legado
+    }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
     if (ids.length < 3) return {'ok': false, 'erro': 'um jogo tem no mínimo 3 cartas'};
@@ -947,6 +1027,16 @@ class Jogo {
 
   // retorna null se ok; senão string de erro
   String? descartar(int assento, String idCarta) {
+    // C9-D — AUTORIDADE ON: descarte como transação canônica ATÔMICA (com
+    // estabilização de morto INDIRETO/batida quando o descarte zera a mão).
+    if (motorConfig.canonicoAtivo) {
+      final r = _rodarAutoridade(assento, [Descartar(idCarta)]);
+      if (r.aplicou) return null;
+      if (r.recusaCanonica) {
+        return r.motivo ?? 'descarte recusado pelo motor canônico';
+      }
+      _registrarFallbackTecnico('descartar', r); // falha técnica -> legado
+    }
     if (integridadeErro != null) return integridadeErro;
     if (rodadaEncerrada || vez != assento || !jaComprou) return 'não é sua vez';
     // Fechado/SBTL: pegou o lixo? tem que USAR o topo antes de descartar.

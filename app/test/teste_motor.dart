@@ -39,6 +39,7 @@ import 'package:buraco_master_vip/motor/adaptador_legado.dart';
 import 'package:buraco_master_vip/motor/composicao.dart';
 // C9-C — modo sombra + comparador.
 import 'package:buraco_master_vip/motor/modo_sombra.dart';
+import 'package:buraco_master_vip/motor/autoridade_canonica.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -4221,6 +4222,205 @@ void main() {
           isFalse);
     });
   });
+
+  // ==================================================================
+  // C9-D — AUTORIDADE canônica atrás da flag (troca real de autoridade)
+  // ==================================================================
+  group('C9-D — autoridade canônica atrás da flag', () {
+    String _assin(Jogo j) => paraCanonico(j).canonico.assinatura();
+
+    test('C9D-OFF-LEGADO flag OFF: fluxo permanece LEGADO (regressão zero)', () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig()); // ambas OFF
+      final maoAntes = j.maos[0].length;
+      final monteAntes = j.monte.length;
+      final ok = j.comprarMonte(0);
+      expect(ok, isTrue); // legado aplicou
+      expect(j.jaComprou, isTrue);
+      expect(j.maos[0].length, maoAntes + 1);
+      expect(j.monte.length, monteAntes - 1);
+      expect(j.ultimoFallbackTecnico, isNull); // autoridade nunca tocada
+    });
+
+    test('C9D-ON-CANONICO flag ON: o canônico assume e aplica', () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final maoAntes = j.maos[0].length;
+      final ok = j.comprarMonte(0);
+      expect(ok, isTrue); // canônico aplicou (transação atômica)
+      expect(j.jaComprou, isTrue); // pós-estado COMMITADO
+      expect(j.maos[0].length, maoAntes + 1);
+      expect(j.ultimoFallbackTecnico, isNull); // aplicou -> sem fallback
+    });
+
+    test('C9D-COMMIT-INTEGRAL o pós-estado commitado É o pós-estado canônico',
+        () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final pre = paraCanonico(j);
+      final esperado = aplicarLegal(pre.canonico, 0, const ComprarMonte(),
+              RuleSpec.canonica(pre.canonico.modalidade))
+          .proximoEstado!;
+      j.comprarMonte(0);
+      // A assinatura do Jogo após o commit é IDÊNTICA à do estado canônico.
+      expect(_assin(j), esperado.assinatura());
+    });
+
+    test('C9D-SOMBRA-INDEP sombra ON não liga autoridade por consequência', () {
+      // Sombra ON, autoridade OFF + projetor que LANÇARIA se a autoridade fosse
+      // (erradamente) acionada. Como a autoridade NÃO é acionada pela sombra, o
+      // projetor nunca é chamado e o legado roda normalmente.
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(sombraAtiva: true));
+      j.projetorAutoridadeTest = (_) => throw StateError('não deveria rodar');
+      final ok = j.comprarMonte(0);
+      expect(ok, isTrue); // legado rodou
+      expect(j.jaComprou, isTrue);
+      expect(j.ultimoFallbackTecnico, isNull); // autoridade jamais tocada
+    });
+
+    test('C9D-RECUSA-INTACTO recusa canônica deixa o estado INTACTO', () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final antes = _assin(j);
+      // assento 1 fora da vez -> recusa de REGRA.
+      final r = aplicarComAutoridade(j, 1, const [ComprarMonte()]);
+      expect(r.recusaCanonica, isTrue);
+      expect(r.falhaTecnica, isFalse);
+      expect(_assin(j), antes); // nada mudou
+    });
+
+    test('C9D-SEM-FALLBACK-SEMANTICO recusa de REGRA NÃO aciona fallback', () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      j.jaComprou = true; // fase jogo -> ComprarMonte é ilegal (recusa de regra)
+      final antes = _assin(j);
+      final ok = j.comprarMonte(0);
+      expect(ok, isFalse); // recusa canônica
+      expect(j.ultimoFallbackTecnico, isNull); // legado NÃO foi chamado
+      expect(_assin(j), antes); // estado intacto
+    });
+
+    test('C9D-FALHA-TECNICA-EVIDENCIA falha de projeção -> técnica + evidência',
+        () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final r = aplicarComAutoridade(j, 0, const [ComprarMonte()],
+          projetar: (_) => throw StateError('projeção quebrou'));
+      expect(r.falhaTecnica, isTrue);
+      expect(r.recusaCanonica, isFalse);
+      expect(r.evidencia, isNotNull); // telemetria/diagnóstico presente
+      expect(r.evidencia!['falhaTecnica'], 'projecao');
+    });
+
+    test('C9D-FALLBACK-TECNICO-ROTEADO falha técnica permite o fallback legado',
+        () {
+      final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      final maoAntes = j.maos[0].length;
+      final ok = j.comprarMonte(0);
+      expect(ok, isTrue); // legado rodou (fallback TÉCNICO)
+      expect(j.maos[0].length, maoAntes + 1);
+      expect(j.ultimoFallbackTecnico, isNotNull); // evidência do fallback
+      expect(j.ultimoFallbackTecnico!['metodo'], 'comprarMonte');
+      expect(j.ultimoFallbackTecnico!['evidencia'], isNotNull);
+    });
+
+    test('C9D-ATOMICIDADE operação composta que recusa não deixa estado parcial',
+        () {
+      final j = _jgAtomicidadeC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final antes = _assin(j);
+      final convAntes = j.costuraMortosConvertidos;
+      final placarAntes = {...j.placar};
+      // 1º Baixar VÁLIDO (aplica no snapshot); 2º Baixar INVÁLIDO (recusa) -> a
+      // transação inteira é recusada e NADA é commitado.
+      final r = aplicarComAutoridade(j, 0, [
+        Baixar(jogosNovos: const [
+          ['3c', '4c', '5c']
+        ]),
+        Baixar(jogosNovos: const [
+          ['9c', '2s', '7d'] // não forma jogo -> recusa
+        ]),
+      ]);
+      expect(r.recusaCanonica, isTrue);
+      expect(_assin(j), antes); // mão/jogos/lixo/mortos/turno/fase intactos
+      expect(j.costuraMortosConvertidos, convAntes); // envelope intacto
+      expect(j.placar, placarAntes);
+      expect(j.jogosDupla['nos'], isEmpty); // o 1º jogo NÃO vazou
+    });
+
+    test('C9D-ABERTURA-MULTIPLA autoridade exerce a vantagem canônica real', () {
+      // Canônico: abertura atômica de 2 jogos que só JUNTOS batem o mínimo 75.
+      final jOn = _jgAberturaMultiplaC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final r = aplicarComAutoridade(jOn, 0, [
+        Baixar(jogosNovos: const [
+          ['3c', '4c', '5c'],
+          ['6d', '7d', '8d', '9d', '10d', 'Jd', 'Qd']
+        ])
+      ]);
+      expect(r.aplicou, isTrue); // abertura atômica ACEITA
+      expect(jOn.jogosDupla['nos']!.length, 2); // os dois jogos na mesa
+      expect(jOn.primeiraBaixadaFeita['nos'], isTrue);
+      // Contraste: o legado single-meld NÃO abre com o 1º jogo sozinho (15<75).
+      final jLeg = _jgAberturaMultiplaC9D(cfg: const MotorConfig());
+      final rLeg = jLeg.baixar(0, ['3c', '4c', '5c']);
+      expect(rLeg['ok'], isFalse);
+    });
+
+    test('C9D-EXHAUSTO autoridade ON: exaustão encerra a rodada (commitado)', () {
+      final j = _jgExaustoC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final ok = j.comprarMonte(0);
+      expect(ok, isTrue); // transição legal de exaustão (aplicou)
+      expect(j.rodadaEncerrada, isTrue); // encerramento COMMITADO
+    });
+
+    test('C9D-CONVERSAO-MORTO autoridade ON: §8.1 converte e conta no envelope',
+        () {
+      final j = _jgMonteVazioMortoC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final convAntes = j.costuraMortosConvertidos;
+      final ok = j.comprarMonte(0);
+      expect(ok, isTrue);
+      expect(j.costuraMortosConvertidos, convAntes + 1); // paridade de envelope
+      expect(j.jaComprou, isTrue);
+    });
+
+    test('C9D-MORTO-DIRETO autoridade ON: baixar que esvazia pega o morto DIRETO',
+        () {
+      final j = _jgBaixarEsvaziaMortoC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final r = j.baixar(0, ['3c', '4c', '5c']); // esvazia -> morto direto
+      expect(r['ok'], isTrue);
+      expect(j.mortoPego['nos'], isTrue); // morto pego (commitado)
+      expect(j.maos[0].isNotEmpty, isTrue); // mão reabastecida pelo morto
+    });
+
+    test('C9D-MORTO-INDIRETO autoridade ON: descarte que esvazia pega o INDIRETO',
+        () {
+      final j = _jgDescarteEsvaziaMortoC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final err = j.descartar(0, 'h1'); // última carta -> morto indireto
+      expect(err, isNull);
+      expect(j.mortoPego['nos'], isTrue);
+      expect(j.maos[0].isNotEmpty, isTrue);
+    });
+
+    test('C9D-BATIDA autoridade ON: baixar que esvazia com canastra BATE', () {
+      final j = _jgBaterViaBaixarC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final r = j.baixar(0, ['Xc', 'Yc', 'Zc']); // esvazia com morto pego -> batida
+      expect(r['ok'], isTrue);
+      expect(j.rodadaEncerrada, isTrue);
+      expect(j.duplaQueBateu, 'nos');
+    });
+
+    test('C9D-ANTI-MASCARAMENTO canônico recusa onde o legado aceitaria', () {
+      // OFF: o legado ACEITA comprar o lixo no Fechado (obrigação do topo DIFERIDA).
+      final jOff = _jgComprarLixoFechadoC9D(cfg: const MotorConfig());
+      final rOff = jOff.comprarLixo(0, modalidade: 'FECHADO');
+      expect(rOff['ok'], isTrue); // legado compra o lixo
+      expect(jOff.lixo, isEmpty); // lixo recolhido pelo legado
+      // ON: o canônico RECUSA (ComprarLixo atômico sem jogos) -> SEM fallback; o
+      // legado NÃO é chamado, o estado permanece intacto (nada mascarado).
+      final jOn = _jgComprarLixoFechadoC9D(cfg: const MotorConfig(canonicoAtivo: true));
+      final lixoAntes = jOn.lixo.length;
+      final maoAntes = jOn.maos[0].length;
+      final rOn = jOn.comprarLixo(0, modalidade: 'FECHADO');
+      expect(rOn['ok'], isFalse); // recusa canônica
+      expect(jOn.lixo.length, lixoAntes); // lixo NÃO recolhido (legado não rodou)
+      expect(jOn.maos[0].length, maoAntes);
+      expect(jOn.ultimoFallbackTecnico, isNull); // recusa de REGRA, não técnica
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -4778,3 +4978,233 @@ TransacaoSombra _txAberturaInjetadaC9C(
         Baixar(jogosNovos: [jogo1, jogo2])
       ],
     );
+
+// ===== C9-D — helpers: Jogo VIVO com flag de autoridade (motorConfig) =====
+
+// Fase compra, monte não-vazio: ComprarMonte legal e convergente.
+Jogo _jgComprarMonteC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '7', false), Carta('mo2', 'ouros', '8', false)];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; dupla NÃO vulnerável. Mão tem [3c,4c,5c] (jogo válido) + [9c,2s,7d]
+// (não forma jogo) + reserva. Para o detector de atomicidade (1º válido, 2º
+// inválido -> transação recusada, nada commitado).
+Jogo _jgAtomicidadeC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+      Carta('9c', 'copas', '9', false),
+      Carta('2s', 'espadas', '2', true),
+      Carta('7d', 'ouros', '7', false),
+      Carta('rp', 'paus', 'K', false), // reserva (mão não esvazia)
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; dupla NOS vulnerável (mínimo 75) abrindo. Duas corridas que só
+// JUNTAS batem o mínimo: [3c,4c,5c]=15 + ouros 6..Q=60. Reservas p/ não esvaziar.
+Jogo _jgAberturaMultiplaC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+      Carta('6d', 'ouros', '6', false),
+      Carta('7d', 'ouros', '7', false),
+      Carta('8d', 'ouros', '8', false),
+      Carta('9d', 'ouros', '9', false),
+      Carta('10d', 'ouros', '10', false),
+      Carta('Jd', 'ouros', 'J', false),
+      Carta('Qd', 'ouros', 'Q', false),
+      Carta('Kc', 'copas', 'K', false), // reserva
+      Carta('9p', 'paus', '9', false), // reserva
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Baralho EXAURIDO: monte E mortos vazios, fase compra.
+Jogo _jgExaustoC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'ABERTO';
+  j.monte = <Carta>[];
+  j.mortos = <List<Carta>>[];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase compra, monte VAZIO + morto disponível (11): §8.1 converte morto->monte.
+Jogo _jgMonteVazioMortoC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'ABERTO';
+  j.monte = <Carta>[];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'copas', '3', false)]
+  ];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; mão = EXATAMENTE [3c,4c,5c]. Baixar esvazia -> morto DIRETO
+// (morto disponível 11; dupla nos não pegou). Não vulnerável.
+Jogo _jgBaixarEsvaziaMortoC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'ouros', '3', false)]
+  ];
+  j.mortoPego = {'nos': false, 'eles': false};
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; mão = EXATAMENTE [h1]. Descarte esvazia -> morto INDIRETO
+// (morto disponível 11; dupla nos não pegou).
+Jogo _jgDescarteEsvaziaMortoC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'ouros', '3', false)]
+  ];
+  j.mortoPego = {'nos': false, 'eles': false};
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; dupla nos JÁ pegou o morto e tem uma canastra limpa (7) baixada;
+// mão = [Xc,Yc,Zc] (10,J,Q). Baixar esvazia -> BATIDA (canastra libera).
+Jogo _jgBaterViaBaixarC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = true;
+  j.modalidade = 'ABERTO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('Xc', 'copas', '10', false),
+      Carta('Yc', 'copas', 'J', false),
+      Carta('Zc', 'copas', 'Q', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.jogosDupla = {
+    'nos': [
+      [
+        Carta('3c', 'copas', '3', false),
+        Carta('4c', 'copas', '4', false),
+        Carta('5c', 'copas', '5', false),
+        Carta('6c', 'copas', '6', false),
+        Carta('7c', 'copas', '7', false),
+        Carta('8c', 'copas', '8', false),
+        Carta('9c', 'copas', '9', false),
+      ]
+    ],
+    'eles': <List<Carta>>[],
+  };
+  j.mortoPego = {'nos': true, 'eles': false};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.mortos = <List<Carta>>[];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase compra, FECHADO. Topo do lixo = 5c; mão tem 3c,4c -> o topo forma
+// [5c,3c,4c] (uso imediato) => o LEGADO aceita comprar o lixo (obrigação do topo
+// diferida). O canônico ComprarLixo (sem jogos) RECUSA no Fechado.
+Jogo _jgComprarLixoFechadoC9D({required MotorConfig cfg}) {
+  final j = Jogo.paraCostura(motorConfig: cfg);
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('k1', 'paus', 'K', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [
+    Carta('bur', 'ouros', '9', false),
+    Carta('5c', 'copas', '5', false), // topo = last
+  ];
+  return j;
+}
