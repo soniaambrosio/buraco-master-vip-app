@@ -1465,7 +1465,7 @@ class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
               SizedBox(height: 8),
               Text('Fechado — compra justificada e aceita trinca.'),
               SizedBox(height: 8),
-              Text('SBTL — sem trinca e bate somente com canastra limpa.'),
+              Text('STBL — sem trinca e bate somente com canastra limpa.'),
             ],
           ),
         ),
