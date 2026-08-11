@@ -4228,6 +4228,13 @@ void main() {
   // ==================================================================
   group('C9-D — autoridade canônica atrás da flag', () {
     String _assin(Jogo j) => paraCanonico(j).canonico.assinatura();
+    // Snapshot DETERMINÍSTICO e COMPLETO: estado canônico + EnvelopeRuntime
+    // inteiro (cont, lixoUnicoCompradoId, mortosConvertidos, iniciadorRodada,
+    // rodadaContada, lixoTopoObrigatorio, integridadeErro, assentoQueBateu,
+    // rodada, placar, encerrada, pontosRodada + sidecars). Prova ausência de
+    // QUALQUER mutação parcial (estado E envelope) numa só comparação.
+    String _snapshotProjecao(Jogo j) =>
+        jsonEncode(serializarProjecao(paraCanonico(j)));
 
     test('C9D-OFF-LEGADO flag OFF: fluxo permanece LEGADO (regressão zero)', () {
       final j = _jgComprarMonteC9D(cfg: const MotorConfig()); // ambas OFF
@@ -4322,9 +4329,10 @@ void main() {
     test('C9D-ATOMICIDADE operação composta que recusa não deixa estado parcial',
         () {
       final j = _jgAtomicidadeC9D(cfg: const MotorConfig(canonicoAtivo: true));
-      final antes = _assin(j);
-      final convAntes = j.costuraMortosConvertidos;
-      final placarAntes = {...j.placar};
+      // Prova COMPLETA: snapshot determinístico do estado canônico + do
+      // EnvelopeRuntime INTEIRO antes da operação.
+      final snapAntes = _snapshotProjecao(j);
+      final assinAntes = _assin(j);
       // 1º Baixar VÁLIDO (aplica no snapshot); 2º Baixar INVÁLIDO (recusa) -> a
       // transação inteira é recusada e NADA é commitado.
       final r = aplicarComAutoridade(j, 0, [
@@ -4336,9 +4344,13 @@ void main() {
         ]),
       ]);
       expect(r.recusaCanonica, isTrue);
-      expect(_assin(j), antes); // mão/jogos/lixo/mortos/turno/fase intactos
-      expect(j.costuraMortosConvertidos, convAntes); // envelope intacto
-      expect(j.placar, placarAntes);
+      // Nenhuma mutação parcial: mão, jogos, lixo, mortos, turno, fase E TODOS
+      // os campos do envelope (cont, lixoUnicoCompradoId, mortosConvertidos,
+      // iniciadorRodada, rodadaContada, lixoTopoObrigatorio, integridadeErro,
+      // assentoQueBateu, rodada, placar, encerrada, pontosRodada) intactos.
+      expect(_snapshotProjecao(j), snapAntes);
+      // Comparação da assinatura canônica preservada (prova redundante e legível).
+      expect(_assin(j), assinAntes);
       expect(j.jogosDupla['nos'], isEmpty); // o 1º jogo NÃO vazou
     });
 
