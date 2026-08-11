@@ -14,6 +14,7 @@
 
 import { getFirestore, Firestore, Transaction } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
+import { HttpsError } from "firebase-functions/v2/https";
 
 export const COLECAO_TAREFAS = "moderationTasks";
 
@@ -26,8 +27,84 @@ export interface RegistroTarefa {
   tarefa: string;
   ator: string;
   alvo: string | null;
+  /// Digest dos campos do pedido que NAO entram na chave (tipo de sancao,
+  /// categoria da denuncia). Ver `conferirConformidade`.
+  impressao: string;
   executadaEm: string;
   resultado: string;
+}
+
+/// Metadados que descrevem o PEDIDO — o que se compara numa repeticao.
+export type PedidoTarefa = Omit<
+  RegistroTarefa,
+  "chave" | "executadaEm" | "resultado"
+>;
+
+export const ACAO_RESERVA = {
+  /// Chave livre: reservar e rodar o corpo.
+  EXECUTAR: "executar",
+  /// Mesma chave, MESMO pedido: convergir e responder sucesso repetido.
+  REPETICAO: "repeticao",
+  /// Mesma chave, pedido DIFERENTE: a intencao foi reaproveitada.
+  CONFLITO: "conflito",
+} as const;
+
+export type AcaoReserva = (typeof ACAO_RESERVA)[keyof typeof ACAO_RESERVA];
+
+/// O registro reservado descreve exatamente o pedido que chegou?
+///
+/// PORQUE ISTO EXISTE, e porque nao existia antes: o cabecalho deste arquivo
+/// dizia "mesmo desenho de functions/src/idempotency.ts", e la a chave CARREGA o
+/// payload (`tournamentId|editionId|alvo`), o que torna a simples existencia do
+/// documento prova de que o pedido e o mesmo. Aqui as chaves sao
+/// `${responsavel}|${sancaoIntentId}` e `${denuncianteUid}|${reportIntentId}`:
+/// elas nao carregam o alvo nem o tipo. Sem esta conferencia, um intent id
+/// reaproveitado contra OUTRA pessoa encontrava a chave reservada e a Function
+/// respondia sucesso sem ter feito nada — a sancao ou a denuncia pedida sumia em
+/// silencio.
+///
+/// E a mesma disciplina que `functions-billing/idempotencia.js` ja aplica em
+/// `conferirTitularidade`, onde a chave (hash do purchaseToken) tambem nao
+/// carrega o payload.
+///
+/// So compara campos do PEDIDO. `executadaEm` e `resultado` pertencem ao
+/// registro, e compara-los faria toda repeticao legitima virar conflito.
+export function conferirConformidade(
+  registro: Partial<RegistroTarefa>,
+  pedido: PedidoTarefa
+): { ok: boolean; motivo?: string } {
+  if (registro.tarefa !== pedido.tarefa) {
+    return { ok: false, motivo: "chave reservada por outra tarefa" };
+  }
+  if (registro.ator !== pedido.ator) {
+    return { ok: false, motivo: "chave reservada por outro ator" };
+  }
+  if ((registro.alvo ?? null) !== (pedido.alvo ?? null)) {
+    return { ok: false, motivo: "chave reservada para outro alvo" };
+  }
+  // COMPATIBILIDADE: documentos gravados antes desta conferencia nao tem
+  // `impressao`. Tratar a ausencia como divergencia transformaria todo retry
+  // legitimo de um registro antigo em conflito.
+  if (registro.impressao !== undefined && registro.impressao !== pedido.impressao) {
+    return { ok: false, motivo: "chave reservada com outra impressao do pedido" };
+  }
+  return { ok: true };
+}
+
+/// Decide o que fazer diante do documento de reserva (ou da ausencia dele).
+///
+/// Pura de proposito: recebe o documento como DADO, sem Firestore, sem relogio e
+/// sem rede, para que `test/idempotencia.test.js` prove os tres desfechos.
+export function decidirSobreReserva(
+  existente: Partial<RegistroTarefa> | null | undefined,
+  pedido: PedidoTarefa
+): { acao: AcaoReserva; motivo?: string } {
+  if (!existente) return { acao: ACAO_RESERVA.EXECUTAR };
+
+  const c = conferirConformidade(existente, pedido);
+  if (!c.ok) return { acao: ACAO_RESERVA.CONFLITO, motivo: c.motivo };
+
+  return { acao: ACAO_RESERVA.REPETICAO };
 }
 
 /// Executa `corpo` no maximo UMA vez para a `chave`, sob transacao.
@@ -39,14 +116,35 @@ export interface RegistroTarefa {
 /// tambem "falharia" — um laco que so termina quando o jogador desiste.
 export async function executarUmaVez<T>(
   chave: string,
-  metadados: Omit<RegistroTarefa, "chave" | "executadaEm" | "resultado">,
+  metadados: PedidoTarefa,
   corpo: (tx: Transaction) => Promise<T>
 ): Promise<{ executou: boolean; valor?: T }> {
   const ref = db().collection(COLECAO_TAREFAS).doc(chave);
 
   return db().runTransaction(async (tx) => {
     const existente = await tx.get(ref);
-    if (existente.exists) {
+    const decisao = decidirSobreReserva(
+      existente.exists ? (existente.data() as Partial<RegistroTarefa>) : null,
+      metadados
+    );
+
+    if (decisao.acao === ACAO_RESERVA.CONFLITO) {
+      // NAO e sucesso silencioso e NAO e repeticao: o chamador reaproveitou uma
+      // intencao ja gasta para descrever outra operacao. Responder sucesso aqui
+      // faria a operacao pedida desaparecer com uma confirmacao na mao do
+      // chamador — que era exatamente o defeito.
+      logger.warn("intencao de moderacao reaproveitada", {
+        chave,
+        motivo: decisao.motivo,
+        tarefa: metadados.tarefa,
+      });
+      throw new HttpsError("failed-precondition", "intencaoReutilizada", {
+        recusa: "intencaoReutilizada",
+        motivo: decisao.motivo,
+      });
+    }
+
+    if (decisao.acao === ACAO_RESERVA.REPETICAO) {
       logger.info("tarefa de moderacao ja executada, ignorando", { chave });
       return { executou: false };
     }

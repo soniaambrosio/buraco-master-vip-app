@@ -215,7 +215,14 @@ export const registrarDenuncia = onCall(opcoesCliente, async (req) => {
 
   const resultado = await executarUmaVez(
     reportId,
-    { tarefa: "registrarDenuncia", ator: denuncianteUid, alvo: denunciadoUid },
+    {
+      tarefa: "registrarDenuncia",
+      ator: denuncianteUid,
+      alvo: denunciadoUid,
+      // O que a chave `${uid}|${reportIntentId}` NAO carrega. Sem isto, o mesmo
+      // intent id reaproveitado com outro tipo/categoria passaria por repeticao.
+      impressao: `${tipo}|${categoria}`,
+    },
     async (tx) => {
       // O REGISTRO ADMINISTRATIVO. Leitura restrita a admin pelas regras: e aqui
       // que fica a identidade do denunciante, e e por isso que o denunciado nao
@@ -411,7 +418,15 @@ export const aplicarSancao = onCall(opcoesCliente, async (req) => {
 
   const resultado = await executarUmaVez(
     sancaoId,
-    { tarefa: "aplicarSancao", ator: responsavel, alvo: userId },
+    {
+      tarefa: "aplicarSancao",
+      ator: responsavel,
+      alvo: userId,
+      // O que a chave `${responsavel}|${sancaoIntentId}` NAO carrega. Sem isto,
+      // escalar de silencio para suspensao reusando o intent id sumiria em
+      // silencio com um `{aplicada: true}` na resposta.
+      impressao: `${tipo}|${typeof fim === "string" ? fim : "null"}`,
+    },
     async (tx) => {
       // As sancoes vigentes precisam ser lidas DENTRO da transacao: consolidar
       // sobre uma leitura de fora deixaria duas aplicacoes simultaneas gravarem

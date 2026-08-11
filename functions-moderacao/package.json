@@ -10,6 +10,8 @@
     "build:domain": "cd .. && dart compile js -O2 -o functions-moderacao/lib/domain_bundle.js app/lib/moderacao/js_bridge.dart",
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "//test": "Compila primeiro porque o alvo do teste e a barreira JA compilada (lib/idempotency.js). Nao precisa do domain_bundle: o teste nao carrega index.js, so a barreira, que e pura.",
+    "test": "tsc && node --test test/idempotencia.test.js",
     "serve": "npm run build && firebase emulators:start --only functions:moderacao",
     "deploy": "firebase deploy --only functions:moderacao"
   },
