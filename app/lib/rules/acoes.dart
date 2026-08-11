@@ -25,9 +25,25 @@ class ComprarMonte extends Acao {
 
 /// Comprar o lixo inteiro. No Fechado/STBL exige uso do topo (ajuste da spec).
 class ComprarLixo extends Acao {
-  const ComprarLixo();
+  /// C10 — uso ATÔMICO do topo no Fechado/STBL (opcionais; vazios = compra do
+  /// Aberto "para a mão", inalterada). Só o topo visível + a mão justificam a
+  /// compra/o mínimo; cartas enterradas seguem ocultas até a autorização.
+  final CartaId? topoDeclarado;
+  final List<List<CartaId>> jogosNovos;
+  final List<Extensao> extensoes;
+  const ComprarLixo({
+    this.topoDeclarado,
+    this.jogosNovos = const [],
+    this.extensoes = const [],
+  });
   @override
-  Map<String, dynamic> toJson() => {'tipo': 'comprarLixo'};
+  Map<String, dynamic> toJson() => {
+        'tipo': 'comprarLixo',
+        if (topoDeclarado != null) 'topoDeclarado': topoDeclarado,
+        if (jogosNovos.isNotEmpty) 'jogosNovos': jogosNovos,
+        if (extensoes.isNotEmpty)
+          'extensoes': [for (final e in extensoes) e.toJson()],
+      };
 }
 
 /// Extensão de um jogo já baixado da dupla.
@@ -98,7 +114,17 @@ Acao acaoDeJson(Map<String, dynamic> j) {
     case 'comprarMonte':
       return const ComprarMonte();
     case 'comprarLixo':
-      return const ComprarLixo();
+      return ComprarLixo(
+        topoDeclarado: j['topoDeclarado'] as CartaId?,
+        jogosNovos: [
+          for (final g in (j['jogosNovos'] as List? ?? const []))
+            (g as List).cast<CartaId>(),
+        ],
+        extensoes: [
+          for (final e in (j['extensoes'] as List? ?? const []))
+            Extensao.fromJson((e as Map).cast<String, dynamic>()),
+        ],
+      );
     case 'baixar':
       return Baixar(
         jogosNovos: [

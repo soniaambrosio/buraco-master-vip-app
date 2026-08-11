@@ -4433,6 +4433,106 @@ void main() {
       expect(jOn.ultimoFallbackTecnico, isNull); // recusa de REGRA, não técnica
     });
   });
+
+  // ==================================================================
+  // C10 — corte canônico. PARTE 1: contrato ATÔMICO da compra do lixo
+  // Fechado/STBL (EXC-03) + auto-derivação + MotorConfig.producao.
+  // (Exercita o motor pela AUTORIDADE; o flip do ROOT/pontuação/estender
+  // é a PARTE 2.)
+  // ==================================================================
+  group('C10 — corte canônico (parte 1: contrato do lixo Fechado/STBL)', () {
+    String _snap(Jogo j) => jsonEncode(serializarProjecao(paraCanonico(j)));
+    final specF = RuleSpec.canonica(Modalidade.fechado);
+
+    test('C10-PROD-01 MotorConfig.producao nasce CANÔNICO e sombra OFF', () {
+      final cfg = MotorConfig.producao();
+      expect(cfg.canonicoAtivo, isTrue);
+      expect(cfg.sombraAtiva, isFalse);
+      // rollback explícito continua sendo legado (pré-transação).
+      expect(MotorConfig.legadoRollback().canonicoAtivo, isFalse);
+    });
+
+    test('C10-LIXO-01 Fechado: topo usado em JOGO NOVO -> compra ATÔMICA aceita',
+        () {
+      final j = _jgLixoFechadoNovoMeldC10();
+      final acao =
+          derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF);
+      expect(acao, isNotNull); // auto-derivou [5c,3c,4c]
+      final r = aplicarComAutoridade(j, 0, [acao!]);
+      expect(r.aplicou, isTrue);
+      expect(j.jogosDupla['nos']!.length, 1); // meld baixado atomicamente
+      expect(j.lixo, isEmpty); // lixo recolhido
+      expect(j.maos[0].any((c) => c.id == '5c'), isFalse); // topo foi à mesa
+      expect(j.maos[0].any((c) => c.id == 'ent'), isTrue); // enterrada revelada DEPOIS
+      expect(j.jaComprou, isTrue); // fase compra -> jogo
+    });
+
+    test('C10-LIXO-02 Fechado: topo usado em EXTENSÃO -> aceita', () {
+      final j = _jgLixoFechadoExtensaoC10();
+      final acao =
+          derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF);
+      expect(acao, isNotNull);
+      final r = aplicarComAutoridade(j, 0, [acao!]);
+      expect(r.aplicou, isTrue);
+      expect(j.jogosDupla['nos']![0].length, 4); // 3-4-5 + 6 (topo)
+      expect(j.lixo, isEmpty);
+    });
+
+    test('C10-LIXO-03 Fechado: topo SEM uso -> recusa, estado intacto', () {
+      final j = _jgLixoFechadoSemUsoC10();
+      expect(derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF),
+          isNull);
+      final antes = _snap(j);
+      final r = aplicarComAutoridade(j, 0, const [ComprarLixo()]);
+      expect(r.recusaCanonica, isTrue);
+      expect(_snap(j), antes); // lixo/mão/mesa intactos
+    });
+
+    test('C10-LIXO-04 carta ENTERRADA não justifica a compra', () {
+      final j = _jgLixoFechadoEnterradaC10();
+      final antes = _snap(j);
+      // declara um jogo usando a carta enterrada 'ent' (4c) -> oculta -> recusa.
+      final r = aplicarComAutoridade(j, 0, [
+        ComprarLixo(topoDeclarado: 'topo5', jogosNovos: const [
+          ['topo5', 'ent', '3c']
+        ])
+      ]);
+      expect(r.recusaCanonica, isTrue);
+      expect(_snap(j), antes);
+    });
+
+    test('C10-LIXO-05 enterrada não completa o mínimo antes da autorização', () {
+      final j = _jgLixoFechadoVulneravelC10();
+      // Vulnerável (mínimo 75): topo+2 da mão somam 30 (<75); auto-derive NÃO abre.
+      expect(derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF),
+          isNull);
+      final antes = _snap(j);
+      // tentar completar o mínimo com cartas ENTERRADAS -> ocultas -> recusa.
+      final r = aplicarComAutoridade(j, 0, [
+        ComprarLixo(topoDeclarado: 'topo10', jogosNovos: const [
+          ['topo10', 'Jc', 'Qc', 'entK', 'entA']
+        ])
+      ]);
+      expect(r.recusaCanonica, isTrue);
+      expect(_snap(j), antes);
+    });
+
+    test('C10-LIXO-06 sucesso move topo/jogo e só DEPOIS revela as enterradas',
+        () {
+      final j = _jgLixoFechadoNovoMeldC10();
+      final idsAntes = j.lixo.map((c) => c.id).toList(); // [ent, 5c]
+      final acao =
+          derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF)!;
+      aplicarComAutoridade(j, 0, [acao]);
+      // topo 5c (id preservado) foi para a MESA no meld; enterrada 'ent' foi para
+      // a mão (revelada só após a autorização); IDs físicos conservados.
+      final meld = j.jogosDupla['nos']![0].map((c) => c.id).toSet();
+      expect(meld.contains('5c'), isTrue);
+      expect(meld.contains('ent'), isFalse); // enterrada NÃO entrou no meld
+      expect(j.maos[0].any((c) => c.id == 'ent'), isTrue);
+      expect(idsAntes.contains('5c') && idsAntes.contains('ent'), isTrue);
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -5217,6 +5317,119 @@ Jogo _jgComprarLixoFechadoC9D({required MotorConfig cfg}) {
   j.lixo = [
     Carta('bur', 'ouros', '9', false),
     Carta('5c', 'copas', '5', false), // topo = last
+  ];
+  return j;
+}
+
+// ===== C10 — helpers (parte 1: compra atômica do lixo Fechado/STBL) =====
+
+// Fechado, fase compra. Topo do lixo = 5c; mão tem 3c,4c -> auto-derive [5c,3c,4c].
+// Enterrada 'ent' (abaixo do topo) só entra na mão APÓS a autorização.
+Jogo _jgLixoFechadoNovoMeldC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('rp', 'paus', 'K', false), // reserva (mão não esvazia)
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  // topo = last; 'ent' fica ENTERRada (abaixo do topo).
+  j.lixo = [Carta('ent', 'ouros', '9', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// Fechado, fase compra. Dupla nos já abriu ([3c,4c,5c]); topo = 6c estende.
+Jogo _jgLixoFechadoExtensaoC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.jogosDupla = {
+    'nos': [
+      [
+        Carta('3c', 'copas', '3', false),
+        Carta('4c', 'copas', '4', false),
+        Carta('5c', 'copas', '5', false),
+      ]
+    ],
+    'eles': <List<Carta>>[],
+  };
+  j.maos = [
+    [Carta('r1', 'paus', 'K', false), Carta('r2', 'espadas', '8', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '9', false), Carta('6c', 'copas', '6', false)];
+  return j;
+}
+
+// Fechado, fase compra. Topo = K paus SEM uso (mão não forma jogo com ele).
+Jogo _jgLixoFechadoSemUsoC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [Carta('3o', 'ouros', '3', false), Carta('8s', 'espadas', '8', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'copas', '9', false), Carta('topoK', 'paus', 'K', false)];
+  return j;
+}
+
+// Fechado, fase compra. O único jogo que usa o topo (5c) precisaria da carta
+// ENTERRADA 'ent' (4c) — a mão não tem 4c. Declarar 'ent' -> oculta -> recusa.
+Jogo _jgLixoFechadoEnterradaC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [Carta('3c', 'copas', '3', false), Carta('9s', 'espadas', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'copas', '4', false), Carta('topo5', 'copas', '5', false)];
+  return j;
+}
+
+// Fechado, fase compra, dupla VULNERÁVEL (mínimo 75) abrindo. topo10+Jc+Qc=30<75
+// (não abre); cartas ENTERRADAS entK/entA não podem completar o mínimo.
+Jogo _jgLixoFechadoVulneravelC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos = [
+    [Carta('Jc', 'copas', 'J', false), Carta('Qc', 'copas', 'Q', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  // topo = topo10 (last); entA/entK ENTERRadas.
+  j.lixo = [
+    Carta('entA', 'copas', 'A', false),
+    Carta('entK', 'copas', 'K', false),
+    Carta('topo10', 'copas', '10', false),
   ];
   return j;
 }

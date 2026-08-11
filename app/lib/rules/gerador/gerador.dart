@@ -102,7 +102,13 @@ ResultadoJogada aplicarLegal(
       return ResultadoJogada.recusa(
           'compra do lixo só na fase de compra (fase = ${estado.fase.name})');
     }
-    final r = avaliarComprarLixo(estado, assento, spec);
+    // C10 — contrato ATÔMICO: repassa o uso do topo (jogos/extensões) para o
+    // avaliador congelado. Sem jogos (Aberto), avaliarComprarLixo compra "para a
+    // mão"; no Fechado/STBL sem uso do topo, ele mesmo RECUSA (topoObrigatorio).
+    final r = avaliarComprarLixo(estado, assento, spec,
+        topoDeclarado: acao.topoDeclarado,
+        jogosNovos: acao.jogosNovos,
+        extensoes: acao.extensoes);
     return r.valido
         ? ResultadoJogada(
             legal: true,

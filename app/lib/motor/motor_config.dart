@@ -20,6 +20,19 @@ class MotorConfig {
   /// costura. Ambas OFF por padrão.
   const MotorConfig({this.canonicoAtivo = false, this.sombraAtiva = false});
 
+  /// C10 — configuração de PRODUÇÃO: o app real NASCE canônico (autoridade ON),
+  /// sombra OFF e independente. É o padrão do ROOT de criação da partida local;
+  /// o rollback para o legado exige escolher EXPLICITAMENTE `const MotorConfig()`
+  /// (ou `MotorConfig.legadoRollback()`) antes da partida — nunca por jogada.
+  factory MotorConfig.producao() =>
+      const MotorConfig(canonicoAtivo: true, sombraAtiva: false);
+
+  /// C10 — ROLLBACK explícito e pré-transação para o motor LEGADO (diagnóstico/
+  /// rollback controlado). NÃO é fallback: é uma escolha de configuração antes
+  /// da partida. Rotulado para não ser alcançado pela configuração padrão.
+  factory MotorConfig.legadoRollback() =>
+      const MotorConfig(canonicoAtivo: false, sombraAtiva: false);
+
   /// Config a partir do AMBIENTE DE COMPILAÇÃO (compile-time). Ambas OFF por
   /// padrão; nada muda em runtime sem passar `--dart-define` explícito.
   factory MotorConfig.doAmbiente() => const MotorConfig(

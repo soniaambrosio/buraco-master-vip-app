@@ -29,6 +29,7 @@
 // e a MESMA estabilização do modo sombra (morto direto/indireto, batida,
 // conversão §8.1, exaustão). RuleSpec `bmv-regras-2026.08` inalterada.
 import '../mesa.dart';
+import '../rules/abertura/abertura.dart';
 import '../rules/acoes.dart';
 import '../rules/estado.dart';
 import '../rules/replay.dart';
@@ -79,6 +80,45 @@ class ResultadoAutoridade {
 /// Assinatura do projetor (injetável para testar a FALHA técnica de projeção;
 /// produção usa `paraCanonico`). Tear-off de função top-level é constante.
 typedef Projetor = ProjecaoBMV Function(Jogo);
+
+/// C10 — AUTO-DERIVAÇÃO do meld que usa o topo, para a compra ATÔMICA do lixo no
+/// Fechado/STBL (decisão de produto: manter o toque único; o código escolhe um
+/// meld LEGAL que usa o topo). Espelha a autorização legada (`_topoLixoTemUso`):
+/// tenta uma EXTENSÃO de um jogo já baixado; senão um JOGO NOVO de 3 (topo + 2
+/// cartas da mão). A legalidade e o mínimo são decididos pela AUTORIDADE
+/// canônica (`avaliarComprarLixo`, spec congelada) — cartas ENTERRADAS nunca
+/// entram (só mão + topo visível). Devolve a `ComprarLixo` atômica ou `null`
+/// (topo sem uso legal → a compra é recusada, como no legado).
+ComprarLixo? derivarCompraLixoFechado(
+    EstadoJogo estado, int assento, RuleSpec spec) {
+  if (estado.lixo.isEmpty) return null;
+  final topoId = estado.lixo.last.id;
+  final dupla = assento % 2 == 0 ? 'nos' : 'eles';
+  final melds = estado.jogosDupla[dupla] ?? const <List<CartaSnapshot>>[];
+  // 1) EXTENSÃO: o topo estende um jogo já baixado da dupla.
+  for (var i = 0; i < melds.length; i++) {
+    final ext = [Extensao(i, [topoId])];
+    final r = avaliarComprarLixo(estado, assento, spec,
+        topoDeclarado: topoId, extensoes: ext);
+    if (r.valido) {
+      return ComprarLixo(topoDeclarado: topoId, extensoes: ext);
+    }
+  }
+  // 2) JOGO NOVO de 3: topo + 2 cartas da mão (a autoridade cobra o mínimo se
+  //    a dupla estiver abrindo vulnerável).
+  final mao = estado.maos[assento];
+  for (var i = 0; i < mao.length; i++) {
+    for (var j = i + 1; j < mao.length; j++) {
+      final jogo = [topoId, mao[i].id, mao[j].id];
+      final r = avaliarComprarLixo(estado, assento, spec,
+          topoDeclarado: topoId, jogosNovos: [jogo]);
+      if (r.valido) {
+        return ComprarLixo(topoDeclarado: topoId, jogosNovos: [jogo]);
+      }
+    }
+  }
+  return null;
+}
 
 class _RunCanonico {
   final bool recusou;
