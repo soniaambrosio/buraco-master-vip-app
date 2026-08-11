@@ -1,4 +1,4 @@
-name: CI OS Integração (analyze + suítes + três codebases Firebase)
+name: CI OS Integração (analyze + suítes + codebases Firebase)
 
 # Autoridade de validação da OS "Integração Final Backend ↔ Flutter".
 #
@@ -6,10 +6,15 @@ name: CI OS Integração (analyze + suítes + três codebases Firebase)
 #   1. flutter analyze  (erro é fatal; warning/info não)
 #   2. flutter test — Motor de Partidas, encerramento, torneios, integração e
 #      coleções/Kit Pioneiros
-#   3. as TRÊS codebases Firebase, cada uma descoberta pelo próprio caminho:
+#   3. as codebases Firebase, cada uma descoberta pelo próprio caminho:
 #        colecoes -> firebase/functions   + regras em firebase/testes (emulador)
 #        billing  -> functions-billing    (node --test, sem emulador)
 #        torneios -> functions            (tsc --noEmit)
+#        ranking  -> functions-ranking    (tsc + node --test)
+#      As regras rodam por `test:integrado`, que prova os quatro blocos de
+#      firestore.rules cobertos por suíte no MESMO arquivo.
+#      NÃO COBERTO, e registrado como tal: `functions-moderacao` não tem passo
+#      próprio aqui. É anterior a esta OS e está fora do escopo dela.
 #
 # REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
 # descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
@@ -120,6 +125,18 @@ jobs:
           ( cd functions && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
           ( cd functions && npx tsc --noEmit ) 2>&1 | tee t_torneiosfn.log; echo ${PIPESTATUS[0]} > exit_torneiosfn
 
+      - name: "3d — codebase RANKING (functions-ranking), tsc + unitários"
+        run: |
+          set +e
+          if [ ! -f functions-ranking/package.json ]; then
+            echo "functions-ranking/package.json ausente" > nao_rankingfn; exit 0
+          fi
+          ( cd functions-ranking && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
+          # `npm test` deste codebase JÁ compila antes de rodar (`tsc && node --test`),
+          # então este passo cobre typecheck e suíte de uma vez. As regras do
+          # bloco de Ranking são provadas no passo 3c, contra o emulador.
+          ( cd functions-ranking && npm test ) 2>&1 | tee t_rankingfn.log; echo ${PIPESTATUS[0]} > exit_rankingfn
+
       - name: "3c — codebase COLECOES: regras + Functions no Emulator Suite"
         run: |
           set +e
@@ -139,8 +156,12 @@ jobs:
           ( cd firebase/testes && npm install 2>&1 | tail -3 )
           # `--project demo-bmv` mantém tudo no emulador: nenhum projeto real é
           # tocado e não é preciso credencial.
+          # `test:integrado`, e não `npm test`: o alvo curto roda só segurança +
+          # moderação, e deixava rastreabilidade e ranking fora do portão. Os
+          # quatro blocos precisam ser provados no MESMO firestore.rules, que é
+          # justamente onde um bloco novo poderia afrouxar o do vizinho.
           firebase emulators:exec --only firestore,auth,functions --project demo-bmv \
-            "cd firebase/testes && npm test" 2>&1 | tee t_regras.log
+            "cd firebase/testes && npm run test:integrado" 2>&1 | tee t_regras.log
           echo ${PIPESTATUS[0]} > exit_regras
 
       - name: Publicar evidência na branch ci-evidencias
@@ -148,7 +169,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn rankingfn regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo

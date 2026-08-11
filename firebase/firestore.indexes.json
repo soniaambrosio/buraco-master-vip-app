@@ -455,6 +455,74 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "//": "A ORDEM OFICIAL DO RANKING DE UMA TEMPORADA. Serve as tres consultas que produzem classificacao: a pagina (`abrirRanking`/`paginarRanking`), o podio e a varredura da apuracao. Os tres campos existem por motivos distintos e nenhum e dispensavel: `seasonId` isola a temporada (sem ele, a classificacao de 2026-A misturaria com a de 2026-B); `pontos DESC` e a ordem competitiva; `publicPlayerId ASC` e o desempate TECNICO que torna a ordem TOTAL — sem ele o `startAfter` do cursor nao consegue apontar para um ponto unico da lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Ver o cabecalho de functions-ranking/src/ordenacao.ts. [origem: ranking]",
+      "collectionGroup": "rankingStandings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "seasonId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "pontos",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicPlayerId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "A mesma ordem, para o agregado de vida inteira (o escopo `global` das tres abas do cliente). Colecao diferente e campo de pontuacao diferente (`pontosTotais`), entao e um indice proprio e nao uma variacao do anterior. [origem: ranking]",
+      "collectionGroup": "rankingPlayers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "pontosTotais",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicPlayerId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Extrato competitivo por temporada: os lancamentos de UM jogador numa temporada, em ordem cronologica. E o que permite conferir a cadeia `antes+delta==depois` de uma temporada sem ler o ledger inteiro do jogador. A consulta equivalente sem `seasonId` (o extrato de vida inteira, em functions/src/rastreabilidade.ts) e servida pelo indice automatico de campo unico. [origem: ranking]",
+      "collectionGroup": "rankingLedger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "seasonId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Reprocessamento (secao 22): as contribuicoes de uma temporada, na ordem em que foram aplicadas. E a consulta que permite recalcular uma temporada e comparar o resultado com o consolidado. [origem: ranking]",
+      "collectionGroup": "rankingContributions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "seasonId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "processadoEm",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "//fieldOverrides": "Vazio de proposito. As consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore. Declara-las aqui seria criar indice que o Firestore ja mantem. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",

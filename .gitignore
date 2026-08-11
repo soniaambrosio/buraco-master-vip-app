@@ -26,3 +26,8 @@ node_modules/
 # Mesma razao para o codebase de moderacao: o bundle sai de
 # `app/lib/moderacao/js_bridge.dart` e nao pode ser versionado ao lado da fonte.
 /functions-moderacao/lib/
+# O codebase de ranking nao tem domain_bundle (nao ha dominio Dart de ranking —
+# ver functions-ranking/src/politica.ts), mas `lib/` continua sendo saida de
+# `tsc`. Versiona-la faria os testes rodarem contra um JS que pode nao
+# corresponder ao TypeScript ao lado.
+/functions-ranking/lib/

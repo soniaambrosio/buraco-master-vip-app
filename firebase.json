@@ -45,6 +45,16 @@
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
       "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "RANKING / LIGAS / TEMPORADAS — aoRegistrarResultadoOficial, processarResultado, abrirTemporadaDeRanking, encerrarTemporadaDeRanking, apurarRanking, diagnosticarRanking, abrirRanking, paginarRanking, consultarJogadorPorIdPublico, garantirIdentidadePublica, consultarHall. Origem: claude/ranking-ligas-backend-auth (OS Backend Autoritativo de Ranking).",
+      "source": "functions-ranking",
+      "codebase": "ranking",
+      "runtime": "nodejs20",
+      "//codebase-proprio": "Pelo mesmo motivo que separa os outros quatro: sao unidades de implantacao independentes. Um deploy de ranking nao pode derrubar a inscricao em torneio, a validacao de compra nem a moderacao. E vale ao contrario tambem — este codebase reage a TODA escrita em `matches`, e um erro nele nao pode impedir a partida de ser registrada.",
+      "//sem-predeploy-de-dominio": "Torneios e moderacao compilam um dominio Dart antes do tsc porque a regra competitiva deles mora em Dart. A regra competitiva do ranking NAO EXISTE — nao ha formula de pontuacao decidida em lugar nenhum do projeto (ver functions-ranking/src/politica.ts). Nao ha dominio a compilar, e um bundle vazio so para imitar o vizinho seria cerimonia sem conteudo. Quando a formula existir, ela entra por politica.ts; se vier a morar em Dart, esta entrada ganha o mesmo par build:domain + build dos vizinhos.",
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
 

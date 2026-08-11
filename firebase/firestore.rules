@@ -2,7 +2,7 @@ rules_version = '2';
 
 // firestore.rules — ESPINHA UNICA DE REGRAS DO BURACO MASTER VIP.
 //
-// Este arquivo e a UNIAO de cinco conjuntos que viviam em branches separadas, e
+// Este arquivo e a UNIAO de seis conjuntos que viviam em branches separadas, e
 // nao a escolha de um deles. Os blocos sao disjuntos em caminho, entao a uniao
 // nao perde nem afrouxa nenhuma regra:
 //
@@ -18,8 +18,14 @@ rules_version = '2';
 //   * MODERACAO                 <- claude/moderation-reports-blocking-social-08ef72
 //     reports, sanctions, playerModeration, moderationAudit, moderationTasks,
 //     users/{uid}/reportReceipts, users/{uid}/blocks, users/{uid}/mutes
+//   * RANKING / LIGAS / TEMPORADAS <- claude/ranking-ligas-backend-auth
+//     rankingSeasons, rankingLadders, rankingStandings, rankingPlayers,
+//     rankingPublicIds, rankingContributions, rankingBacklog, rankingAudit,
+//     rankingTasks, hallEntries
+//     (`rankingLedger` NAO entra nesta lista: ela e da RASTREABILIDADE, e o
+//      bloco de ranking escreve nela sem redefinir a regra dela.)
 //
-// Os dois ultimos blocos foram unidos pela homologacao P0 integrada
+// Os blocos 4/6 e 5/6 foram unidos pela homologacao P0 integrada
 // (homologacao/p0-integrada-a90557): as branches de RASTREABILIDADE e MODERACAO
 // eram IRMAS sobre o mesmo pai e cada uma acrescentou o seu bloco no mesmo
 // ponto do arquivo, o que produziu um conflito de ANEXO, nao de conteudo.
@@ -666,13 +672,162 @@ service cloud.firestore {
       }
     }
 
+    // =====================================================================
+    // BLOCO 6/6 — RANKING, LIGAS E TEMPORADAS
+    // origem: claude/ranking-ligas-backend-auth (OS Backend Autoritativo de
+    // Ranking, Ligas e Temporadas)
+    //
+    // O PRINCIPIO DESTE BLOCO, e ele e o mesmo do Bloco 4/5: o cliente NAO
+    // ESCREVE NADA AQUI. Nao ha um unico `allow write` verdadeiro, e essa e a
+    // resposta a secao 20 da OS, item por item:
+    //
+    //   escrever a propria pontuacao ..... `rankingStandings` write negado
+    //   escrever a propria posicao ....... idem
+    //   escrever a propria Liga .......... idem
+    //   escolher a temporada ............. `rankingSeasons` write negado
+    //   se colocar no Hall ............... `hallEntries` write negado
+    //   marcar partida como processada ... `rankingContributions` write negado
+    //   alterar o resultado oficial ...... `matches` (Bloco 4/5) ja nega
+    //   inventar uma escada de ligas ..... `rankingLadders` write negado
+    //   apagar a propria derrota ......... delete negado em tudo
+    //
+    // A ESCRITA INTEIRA passa por `functions-ranking/`, que usa o Admin SDK e
+    // ignora estas regras.
+    //
+    // A POSTURA DE LEITURA E MAIS FECHADA QUE A DO RESTO DO ARQUIVO, e vale
+    // explicar por que, ja que ranking e uma lista publica por natureza.
+    //
+    // `rankingStandings` guarda o `uid` do jogador junto com a pontuacao. Regra
+    // do Firestore libera ou nega o DOCUMENTO INTEIRO — nao ha como permitir ler
+    // pontos e esconder o uid. Entao a leitura da lista NAO passa por regra: ela
+    // e a Cloud Function `abrirRanking`/`paginarRanking`, que projeta campo a
+    // campo e publica `publicPlayerId` no lugar do uid (secoes 16 e 17). E a
+    // mesma decisao, pelo mesmo motivo, que o Bloco 5/5 tomou para as denuncias:
+    // "projetar campo a campo so e possivel gravando dois documentos" — ou, como
+    // aqui, devolvendo por Function.
+    //
+    // O que fica legivel direto sao as duas colecoes de CONFIGURACAO, que nao
+    // tem dado de pessoa nenhuma: a temporada e a escada de ligas.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Temporada e escada de ligas — configuracao, sem dado pessoal
+    // ---------------------------------------------------------------------
+    // Leitura autenticada: a tela precisa saber qual temporada esta correndo e
+    // quais sao os degraus para desenhar a escada. Nenhum dos dois documentos
+    // contem uid, apelido ou pontuacao de ninguem.
+    //
+    // Escrita negada inclusive para o admin pelo cliente. Trocar a politica de
+    // uma temporada em andamento pelo console mudaria o significado dos
+    // lancamentos ja gravados; a transicao passa por Function para que a
+    // conferencia de "no maximo uma vigente" e a trilha de auditoria acontecam
+    // na mesma transacao.
+    match /rankingSeasons/{seasonId} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    match /rankingLadders/{ladderId} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Classificacao — a linha do jogador numa temporada
+    // ---------------------------------------------------------------------
+    // ESTA E A COLECAO QUE O JOGADOR MAIS QUERERIA ESCREVER, e a que mais
+    // precisa estar fechada: um `update` aqui e literalmente "escolher a propria
+    // pontuacao e a propria posicao".
+    //
+    // Leitura negada ate para o dono. Nao e desconfianca do dono — e que liberar
+    // `get` no proprio documento liberaria tambem a forma de descobrir o uid
+    // por tras de um id publico, bastando tentar `rankingStandings/{season}|{uid}`
+    // com uids conhecidos. O proprio jogador ve a propria linha pelo campo `eu`
+    // de `abrirRanking`, que a Function projeta.
+    match /rankingStandings/{chave} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Identidade publica e agregado de vida inteira
+    // ---------------------------------------------------------------------
+    // `rankingPlayers` e indexado por uid e guarda o mapeamento uid -> id
+    // publico. Liberar a leitura para o dono seria inofensivo; liberar a LISTA
+    // permitiria varrer o mapeamento inteiro. Como regra do Firestore nao
+    // distingue "meu documento" de "consulta que filtra pelo meu documento" sem
+    // cuidado, e como a Function ja devolve o id publico do proprio jogador em
+    // `garantirIdentidadePublica`, a colecao fica fechada.
+    match /rankingPlayers/{uid} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // O indice reverso id publico -> uid e o unico documento do sistema que
+    // desfaz a separacao da secao 16. Ele NUNCA e legivel pelo cliente: entrega-
+    // lo seria o mesmo que nao ter separado nada.
+    match /rankingPublicIds/{publicPlayerId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Trilha: contribuicao, backlog e auditoria (secoes 6, 21 e 22)
+    // ---------------------------------------------------------------------
+    // A prova de que uma partida contribuiu para o ranking, com os deltas por
+    // jogador. So admin le: os deltas de terceiros nao sao do jogador.
+    //
+    // Escrita negada tambem para o admin, e este e o ponto: o id do documento E
+    // a chave de idempotencia. Quem conseguisse cria-lo a mao faria o sistema
+    // considerar uma partida "ja processada" sem que ela tivesse pontuado — ou,
+    // apagando-o, faria a mesma partida pontuar duas vezes.
+    match /rankingContributions/{chaveIdempotencia} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // Resultados oficiais que ainda nao viraram pontuacao (hoje: todos, porque
+    // nao ha formula registrada). E a lista de trabalho do reprocessamento.
+    match /rankingBacklog/{matchId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // Mesmo desenho de `audit/`, `tournamentAudit/` e `moderationAudit/`: nem o
+    // admin apaga pelo cliente, para que a trilha nao possa ser limpa por quem a
+    // gerou.
+    match /rankingAudit/{eventoId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /rankingTasks/{chaveTarefa} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Hall dos Imortais (secao 14)
+    // ---------------------------------------------------------------------
+    // Fechado para leitura direta pelo mesmo motivo dos standings: a entrada
+    // carrega o uid do homenageado ao lado do id publico. O quadro sai pela
+    // Function `consultarHall`, que projeta.
+    //
+    // Escrita negada para todos. A colecao esta VAZIA e vai continuar vazia ate
+    // que existam criterios de elegibilidade — e a linha abaixo e o que garante
+    // que ela nao seja preenchida por um cliente impaciente enquanto isso.
+    match /hallEntries/{chave} {
+      allow read: if false;
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
     // ---------------------------------------------------------------------
     // ATENCAO A QUEM FOR ACRESCENTAR OUTRAS COLECOES: esta regra nao vale so para
     // torneios. Qualquer caminho nao declarado acima e negado, inclusive colecoes
-    // futuras de perfil, amigos, loja ou ranking. Cada uma precisara do proprio
-    // bloco `match`.
+    // futuras de perfil, amigos ou loja. Cada uma precisara do proprio bloco
+    // `match` — o Bloco 6/6 e o exemplo mais recente de como isso e feito.
     //
     // Isso e seguro hoje porque este e o PRIMEIRO firestore.rules do projeto e
     // nenhuma tela usa Firestore ainda — o app so consome firebase_auth. A
