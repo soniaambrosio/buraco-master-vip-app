@@ -2,7 +2,7 @@ rules_version = '2';
 
 // firestore.rules — ESPINHA UNICA DE REGRAS DO BURACO MASTER VIP.
 //
-// Este arquivo e a UNIAO de tres conjuntos que viviam em branches separadas, e
+// Este arquivo e a UNIAO de cinco conjuntos que viviam em branches separadas, e
 // nao a escolha de um deles. Os blocos sao disjuntos em caminho, entao a uniao
 // nao perde nem afrouxa nenhuma regra:
 //
@@ -13,6 +13,17 @@ rules_version = '2';
 //   * TORNEIOS                  <- integracao/motores-torneios-partidas-v1
 //     tournaments, tournamentHistory, rewardGrants, annualQualifications,
 //     closingInvites, tournamentTasks, tournamentAudit
+//   * RASTREABILIDADE           <- claude/buraco-vip-game-traceability-3eb66c
+//     matches, matches/{id}/events, rankingLedger, fraudSignals
+//   * MODERACAO                 <- claude/moderation-reports-blocking-social-08ef72
+//     reports, sanctions, playerModeration, moderationAudit, moderationTasks,
+//     users/{uid}/reportReceipts, users/{uid}/blocks, users/{uid}/mutes
+//
+// Os dois ultimos blocos foram unidos pela homologacao P0 integrada
+// (homologacao/p0-integrada-a90557): as branches de RASTREABILIDADE e MODERACAO
+// eram IRMAS sobre o mesmo pai e cada uma acrescentou o seu bloco no mesmo
+// ponto do arquivo, o que produziu um conflito de ANEXO, nao de conteudo.
+// A resolucao e a uniao literal dos dois blocos; nenhuma condicao foi tocada.
 //
 // NAMESPACES DE IDENTIDADE — LEIA ANTES DE ACRESCENTAR COLECAO:
 //
@@ -431,7 +442,7 @@ service cloud.firestore {
     }
 
     // =====================================================================
-    // BLOCO 4/4 — RASTREABILIDADE DE PARTIDAS
+    // BLOCO 4/5 — RASTREABILIDADE DE PARTIDAS
     // origem: claude/buraco-vip-game-traceability (OS Rastreabilidade)
     //
     // PRINCIPIO DESTE BLOCO, EM UMA FRASE: o cliente NAO ESCREVE NADA AQUI.
@@ -518,6 +529,141 @@ service cloud.firestore {
     match /fraudSignals/{chaveIdempotencia} {
       allow read: if ehAdmin();
       allow write: if false;
+    }
+
+    // =====================================================================
+    // BLOCO 5/5 — MODERACAO
+    // origem: claude/moderation-reports-blocking-social-08ef72
+    //
+    // O PRINCIPIO DESTE BLOCO, e o que o diferencia dos tres acima: aqui a
+    // leitura e tao perigosa quanto a escrita. Nos outros blocos, negar escrita
+    // basta — ninguem se prejudica por ler o catalogo de torneios. Aqui, LER a
+    // denuncia errada revela quem denunciou quem, e isso e o dano.
+    //
+    // Por isso a postura padrao deste bloco nao e "todo autenticado le": e
+    // "somente o dono, e somente do proprio". Nenhuma colecao de moderacao tem
+    // `allow read: if autenticado()`.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Denuncias — o REGISTRO ADMINISTRATIVO
+    // ---------------------------------------------------------------------
+    // Somente admin le. Esta unica linha e o que protege a identidade do
+    // denunciante: o documento carrega `denuncianteUid`, e nao ha regra que o
+    // entregue ao denunciado, ao proprio denunciante ou a qualquer terceiro.
+    //
+    // O denunciante NAO le a propria denuncia aqui — ele le o comprovante em
+    // `users/{uid}/reportReceipts`, que e outro documento, com outros campos.
+    // A separacao existe porque as regras liberam ou negam o DOCUMENTO INTEIRO:
+    // nao ha como permitir ler quatro campos e esconder evidencia e status
+    // interno. Projetar campo a campo so e possivel gravando dois documentos.
+    //
+    // Escrita fechada para todos, inclusive admin: quem grava e a Cloud
+    // Function, com o `createdAt` do servidor e o denunciante tirado do contexto
+    // autenticado. Deixar o cliente criar aqui seria deixa-lo escolher em nome
+    // de quem denuncia e em que data.
+    match /reports/{reportId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Sancoes e estado disciplinar
+    // ---------------------------------------------------------------------
+    // Historico completo: so admin. Contem motivo, responsavel e a denuncia de
+    // origem — nada disso e do jogador sancionado.
+    match /sanctions/{sancaoId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // O EFEITO consolidado, este sim legivel pelo proprio: a tela precisa poder
+    // dizer "voce esta silenciado ate tal hora" em vez de falhar sem explicacao.
+    //
+    // Leitura restrita ao dono impede a enumeracao que a secao 18 da OS pede
+    // para evitar: sem isso, qualquer pessoa varreria a colecao para descobrir
+    // quem esta suspenso.
+    //
+    // Escrita fechada — inclusive para o dono. E o ponto exato onde morre a
+    // tentativa de "apagar a propria punicao".
+    match /playerModeration/{uid} {
+      allow read: if ehDono(uid) || ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Trilha e idempotencia da moderacao
+    // ---------------------------------------------------------------------
+    // Mesmo desenho de `audit/` e `tournamentAudit/`: nem o admin apaga pelo
+    // cliente, para que a trilha nao possa ser limpa por quem a gerou.
+    match /moderationAudit/{eventoId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /moderationTasks/{chaveTarefa} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Relacao social do jogador — subcolecoes de `users/{uid}`
+    // ---------------------------------------------------------------------
+    // Este e um SEGUNDO bloco `match /users/{uid}`, e nao um acrescimo ao do
+    // Bloco 1/3. A duplicacao e intencional: as regras do Firestore avaliam
+    // todos os blocos que casam com o caminho e concedem se QUALQUER um
+    // conceder, entao separar nao afrouxa nada — e mantem o bloco de origem
+    // conferivel linha a linha contra a branch do Kit Pioneiros, que e a
+    // propriedade que o cabecalho deste arquivo pediu para preservar.
+    match /users/{uid} {
+
+      // COMPROVANTE DE DENUNCIA. Protocolo, data, tipo, categoria e status
+      // generico — o que a secao 6 da OS autoriza o denunciante a ver. Nao tem
+      // denunciadoUid, comentario, evidencia nem status interno, porque quem
+      // grava e a Function e ela nao poe esses campos aqui.
+      match /reportReceipts/{reportId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow write: if false;
+      }
+
+      // BLOQUEIOS. Leitura so do dono; escrita so pela Function.
+      //
+      // Por que nao deixar o cliente gravar direto, como acontece com
+      // `equipped` no inventario: o teto de bloqueios (kLimiteBloqueios) e uma
+      // contagem, e regra do Firestore nao conta documentos de uma colecao. Sem
+      // a Function, o teto simplesmente nao existiria. Alem disso, bloqueio
+      // afeta o que OUTRA pessoa consegue fazer — e a secao 8 da OS exige que o
+      // servidor seja a fonte da verdade.
+      match /blocks/{alvoUid} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow write: if false;
+      }
+
+      // SILENCIO PESSOAL. Aqui o cliente ESCREVE, e a diferenca em relacao ao
+      // bloqueio e deliberada: mute nao afeta ninguem alem de quem o configurou
+      // — e uma preferencia de exibicao, sem teto a contar e sem efeito sobre
+      // terceiros. Gastar uma Cloud Function em cada toque seria custo sem
+      // ganho de seguranca.
+      //
+      // O que a regra ainda garante:
+      //   * so o dono escreve na propria lista (`ehDono`);
+      //   * auto-mute e recusado — `alvoUid != uid` compara os dois parametros
+      //     do caminho, sem precisar ler o documento;
+      //   * o documento tem forma fixa: `apenasCampos` impede pendurar campo
+      //     administrativo aqui e tentar que alguem o leia como se fosse
+      //     sancao;
+      //   * `alvoUid` no corpo tem que bater com o id do documento, senao a
+      //     lista teria um registro que aponta para outra pessoa.
+      match /mutes/{alvoUid} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+
+        allow create, update: if ehDono(uid)
+          && alvoUid != uid
+          && request.resource.data.alvoUid == alvoUid
+          && apenasCampos(['alvoUid', 'criadoEm']);
+
+        allow delete: if ehDono(uid);
+      }
     }
 
     // ---------------------------------------------------------------------

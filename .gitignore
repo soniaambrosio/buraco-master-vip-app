@@ -23,3 +23,6 @@ firebase-debug.log
 # faria conviver duas copias do dominio, uma delas silenciosamente velha.
 node_modules/
 /functions/lib/
+# Mesma razao para o codebase de moderacao: o bundle sai de
+# `app/lib/moderacao/js_bridge.dart` e nao pode ser versionado ao lado da fonte.
+/functions-moderacao/lib/

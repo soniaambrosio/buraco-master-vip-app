@@ -3,11 +3,18 @@
   "description": "Prova as regras do Firestore e a idempotencia do resgate contra os emuladores.",
   "private": true,
   "scripts": {
-    "test": "node --test seguranca.test.js",
+    "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um arquivo renomeado sairia da suite em silencio.",
+    "test": "node --test seguranca.test.js moderacao.test.js",
     "test:rastreabilidade": "node --test rastreabilidade.test.js",
+    "//test:integrado": "Uniao das tres suites. E o alvo da homologacao P0 integrada: prova os cinco blocos de firestore.rules no MESMO arquivo de regras, que e onde um bloco poderia afrouxar o do vizinho.",
+    "test:integrado": "node --test seguranca.test.js moderacao.test.js rastreabilidade.test.js",
     "emulador": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd testes && npm test\"",
+    "//emulador-regras": "So Firestore: prova as REGRAS sem precisar compilar as Functions. E o que roda quando se mexe apenas em firestore.rules.",
+    "emulador-regras": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm test\"",
     "//emulador:rastreabilidade": "So firestore: este harness prova REGRAS, e nao chama Cloud Function nenhuma. Subir functions aqui obrigaria a compilar o bundle do dominio de torneios para provar regra de rastreabilidade, que e dependencia que a suite nao tem.",
-    "emulador:rastreabilidade": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm run test:rastreabilidade\""
+    "emulador:rastreabilidade": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm run test:rastreabilidade\"",
+    "//emulador:integrado": "O run que a homologacao P0 exige: um emulador, um firestore.rules, as tres suites.",
+    "emulador:integrado": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm run test:integrado\""
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^4.0.1",
