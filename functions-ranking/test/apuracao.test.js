@@ -160,7 +160,7 @@ describe("apuracao: posicao com 1 a 5+ digitos", () => {
     // A OS pede posicao com 1, 2, 3, 4 e 5+ digitos. Aqui se prova o lado da
     // autoridade: o numero sai inteiro e exato. O lado da tela ja esta coberto
     // por `ranking_regressao_visual_test.dart`, na branch do cliente.
-    for (const inicio of [1, 42, 573, 9999, 123456]) {
+    for (const inicio of [1, 42, 573, 9999, 54321, 123456]) {
       const r = apurarLote({
         linhas: [linha("a", 10, "PA")],
         primeiraPosicao: inicio,
