@@ -72,10 +72,21 @@ ResultadoJogada aplicarLegal(
       return ResultadoJogada.recusa(
           'compra do monte só na fase de compra (fase = ${estado.fase.name})');
     }
-    if (estado.monte.isEmpty) {
-      return ResultadoJogada.recusa('monte vazio: não há carta para comprar');
-    }
     final prox = estado.cloneProfundo();
+    if (prox.monte.isEmpty) {
+      // §8.1 (regra congelada) — monte vazio: o MORTO de menor índice vira o
+      // novo monte. Na convenção canônica (topo = último), o pile entra
+      // REVERTIDO, para que a próxima compra seja a 1ª carta do morto (idêntico
+      // ao motor legado, que compra `monte.removeAt(0)`). Sem morto disponível,
+      // não há o que comprar (a rodada encerra por exaustão — tratado no fluxo).
+      if (prox.mortos.isEmpty) {
+        return ResultadoJogada.recusa(
+            'monte e mortos vazios: não há carta para comprar');
+      }
+      // `monte` é final no EstadoJogo (snapshot imutável) — muta a lista clonada
+      // in-place em vez de reatribuir o campo.
+      prox.monte.addAll(prox.mortos.removeAt(0).reversed);
+    }
     final topo = prox.monte.removeLast(); // topo do monte = último
     prox.maos[assento].add(topo);
     return ResultadoJogada(

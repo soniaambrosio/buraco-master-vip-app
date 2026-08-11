@@ -3806,13 +3806,95 @@ void main() {
       expect(rel.replayJson, isNotNull);
     });
 
-    test('C9-SOMBRA-04 divergência REAL (monte vazio+morto): canônico RECUSA',
+    test('C9-SOMBRA-04 monte vazio+morto RECONCILIADO -> CONVERGE (C9-C2a)', () {
+      // Antes do C9-C2a divergia (legado converte morto->monte; canônico
+      // recusava). Com a §8.1 no canônico, ambos convertem e compram -> converge.
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(
+          _preMonteVazioMortoC9C(), TransacaoSombra.comprarMonte(0, spec));
+      expect(rel.classificacao, ClassificacaoSombra.converge);
+      expect(rel.diff, isEmpty);
+      expect(rel.replayJson, isNull);
+      // C9-C2a-fix: converge SÓ com o envelope relevante também coincidindo.
+      expect(rel.envRelevanteLegado['mortosConvertidos'], '1');
+      expect(rel.envRelevanteCanonico['mortosConvertidos'], '1');
+    });
+
+    test('C9-C2a-MONTE-CONV canônico: monte vazio + morto -> morto vira monte',
+        () {
+      final spec = _specAbertoC9C();
+      final morto = [for (var i = 0; i < 11; i++) _csC9('k$i', 'copas', '3')];
+      final est = EstadoJogo(
+        modalidade: Modalidade.aberto,
+        metaPontos: 1500,
+        monte: const <CartaSnapshot>[],
+        lixo: const <CartaSnapshot>[],
+        mortos: [morto],
+        maos: [<CartaSnapshot>[], <CartaSnapshot>[], <CartaSnapshot>[], <CartaSnapshot>[]],
+        jogosDupla: {
+          'nos': <List<CartaSnapshot>>[],
+          'eles': <List<CartaSnapshot>>[]
+        },
+        rodadasVulneravel: const {'nos': 0, 'eles': 0},
+        primeiraBaixadaFeita: const {'nos': false, 'eles': false},
+        vez: 0,
+        fase: FaseTurno.compra,
+      );
+      final r = aplicarLegal(est, 0, const ComprarMonte(), spec);
+      expect(r.legal, isTrue);
+      expect(r.proximoEstado!.mortos.length, 0); // morto consumido
+      expect(r.proximoEstado!.monte.length, 10); // 11 - 1 comprada
+      expect(r.proximoEstado!.maos[0].length, 1); // comprou 1
+      expect(r.proximoEstado!.fase, FaseTurno.jogo);
+    });
+
+    test('C9-C2a-fix-ENV mortosConvertidos igual nos dois lados após conversão',
         () {
       final spec = _specAbertoC9C();
       final rel = sombra.comparar(
           _preMonteVazioMortoC9C(), TransacaoSombra.comprarMonte(0, spec));
+      expect(rel.envRelevanteLegado['mortosConvertidos'], '1'); // legado +1
+      expect(rel.envRelevanteCanonico['mortosConvertidos'], '1'); // transportado
+      expect(rel.envRelevanteLegado['mortosConvertidos'],
+          rel.envRelevanteCanonico['mortosConvertidos']);
+    });
+
+    test('C9-C2a-fix-SCORE consequência: morto convertido mantém a isenção do -100',
+        () {
+      final spec = RuleSpec.canonica(Modalidade.aberto);
+      // dupla NÃO pegou o morto e alguém pegou -> -100, EXCETO se houve conversão.
+      final semConv = pontuarRodada(
+          const EntradaRodada(
+              melds: [],
+              mao: [],
+              bateu: false,
+              mortoPego: false,
+              algumPegouMorto: true,
+              mortoConvertido: false),
+          spec);
+      final comConv = pontuarRodada(
+          const EntradaRodada(
+              melds: [],
+              mao: [],
+              bateu: false,
+              mortoPego: false,
+              algumPegouMorto: true,
+              mortoConvertido: true),
+          spec);
+      expect(semConv.total, -100); // penalidade aplicada
+      expect(comConv.total, 0); // conversão isenta o -100
+    });
+
+    test('C9-C2a-fix-NEG ComprarMonte ilegal (fase jogo) NÃO transporta conversão',
+        () {
+      // Monte vazio + morto disponível, MAS ComprarMonte é ilegal (fase jogo).
+      // Como aplicarLegal recusa, nenhuma conversão é contada/transportada.
+      final spec = _specAbertoC9C();
+      final rel = sombra.comparar(_preMonteVazioMortoFaseJogoC9C(),
+          TransacaoSombra.comprarMonte(0, spec));
       expect(rel.classificacao, ClassificacaoSombra.canonicoRecusou);
-      expect(rel.replayJson, isNotNull);
+      expect(rel.envRelevanteCanonico['mortosConvertidos'], '0'); // 0 transportadas
+      expect(rel.envRelevanteLegado['mortosConvertidos'], '0'); // legado tb recusa
     });
 
     test('C9-SOMBRA-05 divergência declarada como EXC conhecida -> excecao', () {
@@ -4136,6 +4218,27 @@ ProjecaoBMV _preMonteVazioMortoC9C() {
   final j = Jogo.paraCostura();
   j.vez = 0;
   j.jaComprou = false;
+  j.modalidade = 'ABERTO';
+  j.monte = <Carta>[];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'copas', '3', false)]
+  ];
+  j.maos = [
+    [Carta('h1', 'copas', '4', false), Carta('h2', 'paus', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return paraCanonico(j);
+}
+
+// Como _preMonteVazioMortoC9C, mas em fase JOGO (jaComprou=true): ComprarMonte
+// é ilegal (fase != compra) tanto no canônico quanto no legado -> 0 conversões.
+ProjecaoBMV _preMonteVazioMortoFaseJogoC9C() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = true; // fase jogo -> ComprarMonte ilegal
   j.modalidade = 'ABERTO';
   j.monte = <Carta>[];
   j.mortos = [

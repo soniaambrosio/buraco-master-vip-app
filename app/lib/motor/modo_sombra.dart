@@ -45,6 +45,13 @@ class RelatorioSombra {
   final List<CampoDiff> diff;
   final String? idExcecao; // preenchido quando classificacao == excecao
   final Map<String, dynamic>? replayJson; // preenchido quando inesperada
+  // Campos OPERACIONAIS relevantes do EnvelopeRuntime comparados pós-transação
+  // (C9-C2a-fix). Hoje: 'mortosConvertidos' — o único efeito operacional que a
+  // transação canônica produz/transporta. Outros campos do envelope são
+  // legado-runtime/UI (o canônico não os modela) e por isso NÃO entram na
+  // comparação (declarado, não silencioso).
+  final Map<String, String> envRelevanteLegado;
+  final Map<String, String> envRelevanteCanonico;
   const RelatorioSombra({
     required this.rotulo,
     required this.classificacao,
@@ -54,6 +61,8 @@ class RelatorioSombra {
     required this.diff,
     required this.idExcecao,
     required this.replayJson,
+    required this.envRelevanteLegado,
+    required this.envRelevanteCanonico,
   });
 
   bool get inesperada => classificacao == ClassificacaoSombra.inesperada;
@@ -108,8 +117,14 @@ class _ResCanonico {
   final bool recusou;
   final String? motivo;
   final EstadoJogo estado;
-  const _ResCanonico(this.recusou, this.motivo, this.estado);
+  final int conversoes; // nº de mortos convertidos em monte na transação
+  const _ResCanonico(this.recusou, this.motivo, this.estado, this.conversoes);
 }
+
+// Campos OPERACIONAIS do EnvelopeRuntime que a transação canônica é capaz de
+// produzir/transportar e que, portanto, ENTRAM na comparação de paridade.
+Map<String, String> _envRelevante({required int mortosConvertidos}) =>
+    {'mortosConvertidos': '$mortosConvertidos'};
 
 /// Comparador do modo sombra.
 class ModoSombra {
@@ -135,10 +150,24 @@ class ModoSombra {
     // montagem) para que a fase PÓS-legado derive do jaComprou pós-operação —
     // senão a fase ficaria estagnada na fase PRÉ-transação e divergiria.
     jl.costuraFaseCanonica = null;
-    final posLegado = paraCanonico(jl).canonico;
+    final posLegadoProj = paraCanonico(jl);
+    final posLegado = posLegadoProj.canonico;
 
     // CANÔNICO: aplica a sequência semântica e ESTABILIZA antes de comparar.
     final rc = _rodarCanonico(pre.canonico, tx);
+
+    // ---------- ENVELOPE operacional relevante (C9-C2a-fix) ----------
+    // Legado: mortosConvertidos pós-transação (efeito real). Canônico: o efeito
+    // TRANSPORTADO pela transação = pré + nº de conversões morto->monte.
+    final envLeg = _envRelevante(
+        mortosConvertidos: posLegadoProj.envelope.mortosConvertidos);
+    final envCan = _envRelevante(
+        mortosConvertidos: pre.envelope.mortosConvertidos + rc.conversoes);
+    final diffEnv = <CampoDiff>[
+      for (final k in envLeg.keys)
+        if (envLeg[k] != envCan[k]) CampoDiff('env.$k', envLeg[k]!, envCan[k]!),
+    ];
+
     if (rc.recusou) {
       return RelatorioSombra(
         rotulo: tx.rotulo,
@@ -149,15 +178,18 @@ class ModoSombra {
         diff: [CampoDiff('canonico', 'aplicou a transação', 'RECUSOU: ${rc.motivo}')],
         idExcecao: null,
         replayJson: _replay(pre, tx).toJson(),
+        envRelevanteLegado: envLeg,
+        envRelevanteCanonico: envCan,
       );
     }
     final posCanonico = rc.estado;
 
-    // ---------- (2)(3) NORMALIZAR + COMPARAR ----------
-    final diff = _diff(posLegado, posCanonico);
+    // ---------- (2)(3) NORMALIZAR + COMPARAR (estado + envelope relevante) ----
     final aL = posLegado.assinatura();
     final aC = posCanonico.assinatura();
+    final diff = <CampoDiff>[..._diff(posLegado, posCanonico), ...diffEnv];
     if (diff.isEmpty) {
+      // Converge SÓ quando cartas + fase + envelope relevante coincidem.
       return RelatorioSombra(
         rotulo: tx.rotulo,
         classificacao: ClassificacaoSombra.converge,
@@ -167,6 +199,8 @@ class ModoSombra {
         diff: const [],
         idExcecao: null,
         replayJson: null,
+        envRelevanteLegado: envLeg,
+        envRelevanteCanonico: envCan,
       );
     }
 
@@ -185,6 +219,8 @@ class ModoSombra {
         diff: diff,
         idExcecao: tx.excEsperada,
         replayJson: null,
+        envRelevanteLegado: envLeg,
+        envRelevanteCanonico: envCan,
       );
     }
 
@@ -198,6 +234,8 @@ class ModoSombra {
       diff: diff,
       idExcecao: null,
       replayJson: _replay(pre, tx).toJson(),
+      envRelevanteLegado: envLeg,
+      envRelevanteCanonico: envCan,
     );
   }
 
@@ -209,9 +247,17 @@ class ModoSombra {
   // ----- canônico: aplica a sequência e estabiliza mortoPendente -----
   _ResCanonico _rodarCanonico(EstadoJogo pre, TransacaoSombra tx) {
     var cur = pre;
+    var conversoes = 0;
     for (final a in tx.acoesCanonicas(pre)) {
+      // §8.1: ComprarMonte com monte vazio + morto disponível CONVERTERIA o
+      // morto em monte. Só conta o efeito (mortosConvertidos +1) se a ação for
+      // EFETIVAMENTE aplicada — se aplicarLegal recusar por outra precondição
+      // (fora da vez / fase errada / rodada encerrada), NÃO houve conversão.
+      final vaiConverter =
+          a is ComprarMonte && cur.monte.isEmpty && cur.mortos.isNotEmpty;
       final r = aplicarLegal(cur, tx.assento, a, tx.spec);
-      if (!r.legal) return _ResCanonico(true, r.motivo, cur);
+      if (!r.legal) return _ResCanonico(true, r.motivo, cur, conversoes);
+      if (vaiConverter) conversoes++;
       cur = r.proximoEstado!;
     }
     // ESTABILIZA: resolve o morto indireto pendente (limite de segurança).
@@ -223,7 +269,7 @@ class ModoSombra {
       if (!r.legal) break;
       cur = r.proximoEstado!;
     }
-    return _ResCanonico(false, null, cur);
+    return _ResCanonico(false, null, cur, conversoes);
   }
 
   Replay _replay(ProjecaoBMV pre, TransacaoSombra tx) => Replay(
