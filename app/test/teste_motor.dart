@@ -4743,6 +4743,321 @@ void main() {
       expect(d1.nosMeld * 8 < (1 << n), isTrue);
     });
   });
+
+  // ==================================================================
+  // C10 — corte canônico. PARTE 2: PROMOÇÃO DO CONSUMIDOR REAL.
+  // A Parte 1 provou o CONTRATO; esta parte prova o FLUXO: a partida
+  // local nasce canônica, não existe fallback, `estender` e a pontuação
+  // passam pela autoridade, o consumidor consome os candidatos do lixo,
+  // e o robô joga sob a mesma autoridade do humano.
+  // ==================================================================
+  group('C10 — corte canônico (parte 2: promoção do consumidor real)', () {
+    String snap(Jogo j) => jsonEncode(serializarProjecao(paraCanonico(j)));
+
+    // ---------- ROOT e rollback ----------
+
+    test('C10-PROD-02 o ROOT da mesa local NASCE em produção (canônico ON)', () {
+      // Mesma expressão que `_novoJogo` usa. Sem `motorConfig`, produção.
+      const mesa = MesaScreen();
+      expect(mesa.motorConfig, isNull); // nenhuma config explícita
+      expect(mesa.configEfetivaDoMotor.canonicoAtivo, isTrue);
+      expect(mesa.configEfetivaDoMotor.sombraAtiva, isFalse); // sombra OFF
+    });
+
+    test('C10-ROLLBACK-01 rollback é CONFIGURAÇÃO explícita e pré-transação',
+        () {
+      final mesa = MesaScreen(motorConfig: MotorConfig.legadoRollback());
+      expect(mesa.configEfetivaDoMotor.canonicoAtivo, isFalse);
+      expect(mesa.configEfetivaDoMotor.sombraAtiva, isFalse);
+      // E a config é imutável para a partida: o `Jogo` a recebe na CONSTRUÇÃO
+      // (campo final), então nenhuma jogada pode trocá-la no meio do caminho.
+      final j = Jogo.paraCostura(motorConfig: MotorConfig.producao());
+      expect(j.motorConfig.canonicoAtivo, isTrue);
+      expect(j.motorConfig, isA<MotorConfig>());
+    });
+
+    // ---------- autoridade única: sem fallback de espécie alguma ----------
+
+    test('C10-NO-FALLBACK-01 recusa de REGRA não roda o legado', () {
+      // Fechado, topo SEM uso: o legado também recusaria, mas o ponto aqui é
+      // que a recusa é canônica e NADA é tocado nem registrado como técnico.
+      final j = _jgSemUsoC10();
+      final antes = snap(j);
+      final r = j.comprarLixo(0, modalidade: 'FECHADO');
+      expect(r['ok'], isFalse);
+      expect(r['escolhaNecessaria'], isNull);
+      expect(snap(j), antes); // estado intacto
+      expect(j.ultimaFalhaTecnica, isNull); // regra, não técnica
+    });
+
+    test('C10-NO-FALLBACK-02 falha TÉCNICA é fail-closed em TODOS os métodos',
+        () {
+      for (final caso in <String>['baixar', 'estender', 'descartar']) {
+        final j = _jgBaixarEsvaziaMortoC10();
+        j.jogosDupla['nos']!.add([
+          Carta('e1', 'ouros', '3', false),
+          Carta('e2', 'ouros', '4', false),
+          Carta('e3', 'ouros', '5', false),
+        ]);
+        final antes = snap(j);
+        j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+        final Object? saida = switch (caso) {
+          'baixar' => j.baixar(0, ['3c', '4c', '5c']),
+          'estender' => j.estender(0, 0, ['3c']),
+          _ => j.descartar(0, '3c'),
+        };
+        // recusado, com mensagem — e sem NENHUM efeito no estado.
+        if (saida is Map) {
+          expect(saida['ok'], isFalse, reason: caso);
+        } else {
+          expect(saida, isNotNull, reason: caso); // descartar devolve o erro
+        }
+        j.projetorAutoridadeTest = null;
+        expect(snap(j), antes, reason: caso);
+        expect(j.ultimaFalhaTecnica, isNotNull, reason: caso);
+        expect(j.ultimaFalhaTecnica!['metodo'], caso);
+        expect(j.ultimaFalhaTecnica!['evidencia'], isNotNull, reason: caso);
+      }
+    });
+
+    // ---------- compra do lixo: 0 / 1 / 2+ no consumidor real ----------
+
+    test('C10-ATOMIC-01 consumidor real compra o lixo de forma ATÔMICA', () {
+      final j = _jgAtomicoUmC10();
+      final r = j.comprarLixo(0, modalidade: 'FECHADO'); // 1 candidato -> executa
+      expect(r['ok'], isTrue);
+      expect(j.lixo, isEmpty); // lixo recolhido
+      expect(j.jogosDupla['nos']!.length, 1); // e o topo JÁ está na mesa
+      expect(j.jogosDupla['nos']![0].any((c) => c.id == '5c'), isTrue);
+      expect(j.lixoTopoObrigatorio, isNull); // nenhuma obrigação diferida
+      expect(j.maos[0].any((c) => c.id == 'ent'), isTrue); // enterrada só depois
+      expect(j.jaComprou, isTrue);
+    });
+
+    test('C10-ATOMIC-02 2+ usos legais: NÃO escolhe pelo jogador', () {
+      final j = _jgAtomicoDoisC10();
+      final antes = snap(j);
+      final r = j.comprarLixo(0, modalidade: 'FECHADO');
+      expect(r['ok'], isFalse); // não executou nada
+      expect(r['escolhaNecessaria'], isTrue);
+      final cands = r['candidatos'] as List<ComprarLixo>;
+      expect(cands.length, greaterThanOrEqualTo(2));
+      expect(snap(j), antes); // mesa intacta esperando a escolha
+      // escolhida UMA, a transação acontece — e é a escolhida.
+      final escolha = cands.first;
+      expect(j.comprarLixoAtomico(0, escolha)['ok'], isTrue);
+      expect(j.lixo, isEmpty);
+    });
+
+    test('C10-ATOMIC-03 Aberto continua compra LIVRE (sem uso do topo)', () {
+      final j = _jgLixoAbertoC10();
+      expect(j.candidatosCompraLixo(0), isEmpty); // Aberto não deriva candidato
+      final r = j.comprarLixo(0, modalidade: 'ABERTO');
+      expect(r['ok'], isTrue);
+      expect(j.lixo, isEmpty);
+      expect(j.jogosDupla['nos'], isEmpty); // foi para a MÃO, sem baixar
+      expect(j.maos[0].any((c) => c.id == 'topoA'), isTrue);
+    });
+
+    // ---------- estender e abertura múltipla ----------
+
+    test('C10-ESTENDER-01 estender passa pela autoridade canônica', () {
+      final j = _jgEstenderC10();
+      final r = j.estender(0, 0, ['6c']);
+      expect(r['ok'], isTrue);
+      expect(j.jogosDupla['nos']![0].length, 4); // 3-4-5 + 6
+      expect(j.maos[0].any((c) => c.id == '6c'), isFalse);
+      // extensão ILEGAL é recusada pela MESMA autoridade, sem mutar nada.
+      final antes = snap(j);
+      expect(j.estender(0, 0, ['kx'])['ok'], isFalse);
+      expect(snap(j), antes);
+    });
+
+    test('C10-ABERTURA-01 abertura MÚLTIPLA atômica no consumidor real', () {
+      // Dupla vulnerável (mínimo 75). Nenhum jogo isolado atinge o mínimo;
+      // juntos, sim. O legado baixava um por chamada e recusaria o primeiro.
+      final j = _jgAberturaMultiplaC10();
+      final isolado = j.baixarAtomico(0, jogosNovos: [
+        ['3c', '4c', '5c']
+      ]);
+      expect(isolado['ok'], isFalse); // 15 pts < 75
+      final junto = j.baixarAtomico(0, jogosNovos: [
+        ['3c', '4c', '5c'],
+        ['Ko', 'Qo', 'Jo'],
+        ['Ae', 'Ke', 'Qe'],
+      ]);
+      expect(junto['ok'], isTrue, reason: junto['erro']?.toString());
+      expect(j.jogosDupla['nos']!.length, 3); // os três num commit só
+      expect(j.primeiraBaixadaFeita['nos'], isTrue);
+    });
+
+    // ---------- pontuação canônica (EXC-04) ----------
+
+    test('C10-SCORE-01 fim de rodada conta pela autoridade canônica', () {
+      final j = _jgPontuacaoC10(cfg: MotorConfig.producao());
+      j.rodadaEncerrada = true;
+      j.duplaQueBateu = 'nos';
+      j.contarPontos();
+      final nos = (j.pontosRodada!['nos'] as Map).cast<String, dynamic>();
+      // canastra limpa 3..9 copas = 200 de bônus + 45 de cartas.
+      expect(nos['canastras'], 200);
+      expect((nos['detalhe'] as Map)['limpas'], 1);
+      expect((nos['detalhe'] as Map)['baixadas'], 45);
+      expect(nos['bonusBatida'], 100);
+      expect(nos['total'], 200 + 45 + 100);
+      expect(j.placar['nos'], 345);
+    });
+
+    test('C10-SCORE-02 EXC-04: grupo de ases classificado SÓ pelo canônico',
+        () {
+      // Fechado: 7 ases é TRINCA para o canônico — nunca canastra, sem bônus,
+      // mas as cartas pontuam. Era exatamente aqui que o rótulo divergia
+      // (`de_as` do classificador legado × `trinca` do canônico).
+      final j = _jgAsesC10(cfg: MotorConfig.producao());
+      j.rodadaEncerrada = true;
+      j.contarPontos();
+      final nos = (j.pontosRodada!['nos'] as Map).cast<String, dynamic>();
+      expect(nos['canastras'], 0); // trinca NUNCA é canastra
+      final det = nos['detalhe'] as Map;
+      expect(det['limpas'], 0);
+      expect(det['sujas'], 0);
+      expect(det['asAas'], 0);
+      expect(det['baixadas'], 7 * 15); // as cartas pontuam normalmente
+      // e o placar ao vivo concorda com o fim de rodada (mesma autoridade).
+      expect(j.pontosMesaAoVivo('nos'), 7 * 15);
+    });
+
+    // ---------- morto, batida, conversão §8.1, exaustão ----------
+
+    test('C10-MORTO-01 morto DIRETO pelo caminho de produção', () {
+      final j = _jgBaixarEsvaziaMortoC10();
+      final r = j.baixar(0, ['3c', '4c', '5c']); // zera a mão baixando
+      expect(r['ok'], isTrue);
+      expect(r['pegouMorto'], isTrue); // o consumidor recebe o feedback
+      expect(j.mortoPego['nos'], isTrue);
+      expect(j.maos[0].length, 11); // morto na mão
+      expect(j.rodadaEncerrada, isFalse);
+    });
+
+    test('C10-MORTO-02 morto INDIRETO pelo caminho de produção', () {
+      final j = _jgDescarteEsvaziaMortoC10();
+      expect(j.descartar(0, 'h1'), isNull); // descarte que zera
+      expect(j.mortoPego['nos'], isTrue);
+      expect(j.maos[0].length, 11);
+      expect(j.rodadaEncerrada, isFalse);
+      expect(j.vez, 1); // morto indireto encerra o turno
+    });
+
+    test('C10-BATIDA-01 batida pelo caminho de produção', () {
+      final j = _jgBaterViaBaixarC10();
+      final r = j.baixar(0, ['Xc', 'Yc', 'Zc']);
+      expect(r['ok'], isTrue);
+      expect(r['bateu'], isTrue); // feedback que a mesa usa para 'Você bateu!'
+      expect(j.rodadaEncerrada, isTrue);
+      expect(j.duplaQueBateu, 'nos');
+    });
+
+    test('C10-CONVERSAO-01 §8.1 converte morto em monte pela produção', () {
+      final j = _jgMonteVazioMortoC10();
+      final antes = j.costuraMortosConvertidos;
+      expect(j.comprarMonte(0), isTrue);
+      expect(j.costuraMortosConvertidos, antes + 1); // envelope contou
+      expect(j.mortos, isEmpty); // morto virou monte
+      expect(j.maos[0].length, 3); // comprou 1
+      expect(j.rodadaEncerrada, isFalse);
+    });
+
+    test('C10-EXAUSTAO-01 monte E mortos vazios encerram a rodada', () {
+      final j = _jgExaustoC10();
+      j.comprarMonte(0);
+      expect(j.rodadaEncerrada, isTrue);
+      expect(j.maos[0].length, 2); // nenhuma carta comprada
+      // e a contagem fecha pelo caminho canônico, sem exceção.
+      j.contarPontos();
+      expect(j.pontosRodada, isNotNull);
+    });
+
+    // ---------- robô ----------
+
+    test('C10-BOT-01 robô compra o lixo ATOMICAMENTE, sem obrigação diferida',
+        () {
+      final j = _jgBotLixoFechadoC10();
+      j.botJoga(0);
+      expect(j.lixo.isEmpty || j.lixo.length == 1, isTrue); // recolheu e descartou
+      expect(j.jogosDupla['nos']!.isNotEmpty, isTrue); // topo foi à mesa
+      expect(j.lixoTopoObrigatorio, isNull); // NUNCA nasce sob o canônico
+      expect(j.vez, 1); // o turno terminou por descarte, não por atalho
+      expect(j.ultimaFalhaTecnica, isNull); // nenhuma rede ilegal acionada
+    });
+
+    test('C10-BOT-02 robô só escolhe DENTRO dos candidatos da autoridade', () {
+      final j = _jgBotLixoFechadoC10();
+      final cands = j.candidatosCompraLixo(0);
+      expect(cands, isNotEmpty);
+      final assinaturas = {
+        for (final c in cands) jsonEncode(c.toJson()),
+      };
+      j.botJoga(0);
+      // o meld que foi à mesa tem que sair de algum candidato legal.
+      final naMesa = j.jogosDupla['nos']!
+          .expand((m) => m.map((c) => c.id))
+          .toSet();
+      final algumCandidatoExplica = assinaturas.any((s) {
+        final ids = <String>{};
+        final m = jsonDecode(s) as Map<String, dynamic>;
+        for (final g in (m['jogosNovos'] as List? ?? const [])) {
+          ids.addAll((g as List).cast<String>());
+        }
+        for (final e in (m['extensoes'] as List? ?? const [])) {
+          ids.addAll(((e as Map)['cartas'] as List).cast<String>());
+        }
+        return ids.every(naMesa.contains) && ids.isNotEmpty;
+      });
+      expect(algumCandidatoExplica, isTrue);
+    });
+
+    // ---------- contrato que a UI aprovada consome ----------
+
+    test('C10-UI-01 baixada devolve tipo/pegouMorto/bateu à mesa', () {
+      // meld curto: 'aberta' -> a mesa NÃO celebra canastra.
+      final j = _jgEstenderC10();
+      final curto = j.baixarAtomico(0, jogosNovos: [
+        ['9o', '10o', 'Jo']
+      ]);
+      expect(curto['ok'], isTrue, reason: curto['erro']?.toString());
+      expect(curto['tipo'], 'aberta');
+      expect(curto['bateu'], isNull);
+      expect(curto['pegouMorto'], isNull);
+      // canastra limpa (7) -> classificação que aciona tarja e som.
+      final j2 = _jgCanastraC10();
+      final r = j2.baixar(0, ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
+      expect(r['ok'], isTrue, reason: r['erro']?.toString());
+      expect(r['tipo'], 'limpa');
+    });
+
+    // ---------- rollback legado permanece intacto ----------
+
+    test('C10-LEGACY-01 sob rollback, o legado continua exatamente o legado',
+        () {
+      final j = _jgComprarLixoFechadoC9D(cfg: MotorConfig.legadoRollback());
+      final r = j.comprarLixo(0, modalidade: 'FECHADO');
+      expect(r['ok'], isTrue);
+      expect(j.jogosDupla['nos'], isEmpty); // legado NÃO baixa junto
+      expect(j.lixoTopoObrigatorio, '5c'); // e DEFERE a obrigação
+      // baixada atômica não existe fora da autoridade canônica.
+      expect(
+          j.baixarAtomico(0, jogosNovos: [
+            ['3c', '4c', '5c']
+          ])['ok'],
+          isFalse);
+      // e a pontuação legada continua sendo a legada.
+      final p = _jgPontuacaoC10(cfg: MotorConfig.legadoRollback());
+      p.rodadaEncerrada = true;
+      p.duplaQueBateu = 'nos';
+      p.contarPontos();
+      expect((p.pontosRodada!['nos'] as Map)['canastras'], 200);
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -5912,5 +6227,314 @@ Jogo _jgLixoGrandeRuidosoC10() {
     <Carta>[],
   ];
   j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// ===== C10 — helpers (parte 2: promoção do consumidor real) =====
+// Todos nascem em `MotorConfig.producao()` por padrão: é o estado do ROOT
+// depois do flip. Onde o teste precisa comparar com o legado, a config vem
+// por parâmetro.
+
+Jogo _c10Base({MotorConfig? cfg, String modalidade = 'ABERTO'}) {
+  final j = Jogo.paraCostura(motorConfig: cfg ?? MotorConfig.producao());
+  j.vez = 0;
+  j.modalidade = modalidade;
+  j.mortoPego = {'nos': false, 'eles': false};
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.rodadasVulneravel = {'nos': 0, 'eles': 0};
+  j.maos = [<Carta>[], <Carta>[], <Carta>[], <Carta>[]];
+  j.jogosDupla = {'nos': <List<Carta>>[], 'eles': <List<Carta>>[]};
+  j.monte = <Carta>[];
+  j.mortos = <List<Carta>>[];
+  j.lixo = <Carta>[];
+  return j;
+}
+
+// Aberto, fase compra: lixo com 2 cartas; compra LIVRE, vai toda para a mão.
+Jogo _jgLixoAbertoC10() {
+  final j = _c10Base();
+  j.jaComprou = false;
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos[0] = [Carta('k1', 'paus', 'K', false)];
+  j.lixo = [
+    Carta('entA', 'ouros', '9', false),
+    Carta('topoA', 'espadas', '4', false), // topo
+  ];
+  return j;
+}
+
+// Fase jogo; mesa da dupla tem 3-4-5 copas; mão tem 6c (estende) e kx (não).
+Jogo _jgEstenderC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos[0] = [
+    Carta('6c', 'copas', '6', false),
+    Carta('kx', 'paus', 'K', false),
+    Carta('9o', 'ouros', '9', false),
+    Carta('10o', 'ouros', '10', false),
+    Carta('Jo', 'ouros', 'J', false),
+  ];
+  j.jogosDupla['nos'] = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+    ]
+  ];
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo, dupla VULNERÁVEL (mínimo 75). Três jogos de 3 cartas: nenhum
+// atinge 75 sozinho (15 / 30 / 35), os três juntos somam 80.
+Jogo _jgAberturaMultiplaC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos[0] = [
+    Carta('3c', 'copas', '3', false),
+    Carta('4c', 'copas', '4', false),
+    Carta('5c', 'copas', '5', false),
+    Carta('Jo', 'ouros', 'J', false),
+    Carta('Qo', 'ouros', 'Q', false),
+    Carta('Ko', 'ouros', 'K', false),
+    Carta('Qe', 'espadas', 'Q', false),
+    Carta('Ke', 'espadas', 'K', false),
+    Carta('Ae', 'espadas', 'A', false),
+    Carta('guard', 'paus', '8', false), // sobra: não zera a mão
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Mesa: canastra LIMPA 3..9 copas (45 pts de cartas + 200 de bônus).
+Jogo _jgPontuacaoC10({required MotorConfig cfg}) {
+  final j = _c10Base(cfg: cfg);
+  j.jaComprou = true;
+  j.mortoPego = {'nos': true, 'eles': true};
+  j.jogosDupla['nos'] = [
+    [
+      Carta('c1', 'copas', '3', false),
+      Carta('c2', 'copas', '4', false),
+      Carta('c3', 'copas', '5', false),
+      Carta('c4', 'copas', '6', false),
+      Carta('c5', 'copas', '7', false),
+      Carta('c6', 'copas', '8', false),
+      Carta('c7', 'copas', '9', false),
+    ]
+  ];
+  return j;
+}
+
+// FECHADO: sete ases baixados (trinca de 7 cartas). EXC-04.
+Jogo _jgAsesC10({required MotorConfig cfg}) {
+  final j = _c10Base(cfg: cfg, modalidade: 'FECHADO');
+  j.jaComprou = true;
+  j.mortoPego = {'nos': true, 'eles': true};
+  j.jogosDupla['nos'] = [
+    [
+      Carta('a1', 'copas', 'A', false),
+      Carta('a2', 'ouros', 'A', false),
+      Carta('a3', 'paus', 'A', false),
+      Carta('a4', 'espadas', 'A', false),
+      Carta('a5', 'copas', 'A', false),
+      Carta('a6', 'ouros', 'A', false),
+      Carta('a7', 'paus', 'A', false),
+    ]
+  ];
+  return j;
+}
+
+// Fase jogo; mão = EXATAMENTE [3c,4c,5c]; morto disponível -> morto DIRETO.
+Jogo _jgBaixarEsvaziaMortoC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos[0] = [
+    Carta('3c', 'copas', '3', false),
+    Carta('4c', 'copas', '4', false),
+    Carta('5c', 'copas', '5', false),
+  ];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'ouros', '3', false)]
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; mão = EXATAMENTE [h1]; morto disponível -> morto INDIRETO.
+Jogo _jgDescarteEsvaziaMortoC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos[0] = [Carta('h1', 'copas', '4', false)];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'ouros', '3', false)]
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo; morto já pego + canastra limpa na mesa; mão = [Xc,Yc,Zc] -> BATIDA.
+Jogo _jgBaterViaBaixarC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos[0] = [
+    Carta('Xc', 'copas', '10', false),
+    Carta('Yc', 'copas', 'J', false),
+    Carta('Zc', 'copas', 'Q', false),
+  ];
+  j.jogosDupla['nos'] = [
+    [
+      Carta('b1', 'ouros', '3', false),
+      Carta('b2', 'ouros', '4', false),
+      Carta('b3', 'ouros', '5', false),
+      Carta('b4', 'ouros', '6', false),
+      Carta('b5', 'ouros', '7', false),
+      Carta('b6', 'ouros', '8', false),
+      Carta('b7', 'ouros', '9', false),
+    ]
+  ];
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.mortoPego = {'nos': true, 'eles': false};
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase compra, monte VAZIO + 1 morto disponível: §8.1 converte morto -> monte.
+Jogo _jgMonteVazioMortoC10() {
+  final j = _c10Base();
+  j.jaComprou = false;
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'copas', '3', false)]
+  ];
+  j.maos[0] = [
+    Carta('h1', 'copas', '4', false),
+    Carta('h2', 'paus', '9', false),
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase compra, monte E mortos VAZIOS: exaustão encerra a rodada.
+Jogo _jgExaustoC10() {
+  final j = _c10Base();
+  j.jaComprou = false;
+  j.maos[0] = [
+    Carta('h1', 'copas', '4', false),
+    Carta('h2', 'paus', '9', false),
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// FECHADO, fase compra. Topo 5c + mão (3c,4c) forma jogo; sobram cartas para o
+// robô descartar depois, para o turno terminar pelo caminho normal.
+Jogo _jgBotLixoFechadoC10() {
+  final j = _c10Base(modalidade: 'FECHADO');
+  j.jaComprou = false;
+  j.monte = [
+    Carta('mo1', 'paus', '8', false),
+    Carta('mo2', 'paus', '9', false),
+  ];
+  j.mortos = [
+    [for (var i = 0; i < 11; i++) Carta('mk$i', 'ouros', '3', false)]
+  ];
+  j.maos[0] = [
+    Carta('3c', 'copas', '3', false),
+    Carta('4c', 'copas', '4', false),
+    Carta('kx', 'paus', 'K', false),
+    Carta('qx', 'espadas', 'Q', false),
+  ];
+  j.lixo = [
+    Carta('bur', 'ouros', '9', false),
+    Carta('5c', 'copas', '5', false), // topo
+  ];
+  return j;
+}
+
+// Fase jogo; mão contém exatamente uma canastra LIMPA de 7 (3..9 copas) + sobra.
+Jogo _jgCanastraC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'paus', '2', false)];
+  j.maos[0] = [
+    Carta('c1', 'copas', '3', false),
+    Carta('c2', 'copas', '4', false),
+    Carta('c3', 'copas', '5', false),
+    Carta('c4', 'copas', '6', false),
+    Carta('c5', 'copas', '7', false),
+    Carta('c6', 'copas', '8', false),
+    Carta('c7', 'copas', '9', false),
+    Carta('sobra', 'paus', 'K', false),
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Os três cenários de compra do lixo Fechado — agora em CONFIG DE PRODUÇÃO.
+// Os homônimos da Parte 1 nascem em config legada de propósito: lá o alvo era o
+// DERIVADOR (chamado direto). Aqui o alvo é o CONSUMIDOR, que só existe com a
+// autoridade ligada.
+
+// 1 candidato: topo 5c + mão (3c,4c) formam 3-4-5 copas. 'ent' fica enterrada.
+Jogo _jgAtomicoUmC10() {
+  final j = _c10Base(modalidade: 'FECHADO');
+  j.jaComprou = false;
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos[0] = [
+    Carta('3c', 'copas', '3', false),
+    Carta('4c', 'copas', '4', false),
+    Carta('rp', 'paus', 'K', false), // reserva: a mão não esvazia
+  ];
+  j.lixo = [
+    Carta('ent', 'ouros', '9', false),
+    Carta('5c', 'copas', '5', false), // topo
+  ];
+  return j;
+}
+
+// 2+ candidatos: topo 6c estende 3-4-5 na mesa E fecha 6-7-8 com a mão.
+Jogo _jgAtomicoDoisC10() {
+  final j = _c10Base(modalidade: 'FECHADO');
+  j.jaComprou = false;
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.jogosDupla['nos'] = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5c', 'copas', '5', false),
+    ]
+  ];
+  j.maos[0] = [
+    Carta('7c', 'copas', '7', false),
+    Carta('8c', 'copas', '8', false),
+    Carta('9s', 'espadas', '9', false),
+  ];
+  j.lixo = [
+    Carta('ent', 'ouros', '2', false),
+    Carta('6c', 'copas', '6', false), // topo
+  ];
+  return j;
+}
+
+// 0 candidatos: topo K paus não forma jogo nem estende nada.
+Jogo _jgSemUsoC10() {
+  final j = _c10Base(modalidade: 'FECHADO');
+  j.jaComprou = false;
+  j.monte = [Carta('mo1', 'copas', '7', false)];
+  j.maos[0] = [
+    Carta('3o', 'ouros', '3', false),
+    Carta('8s', 'espadas', '8', false),
+  ];
+  j.lixo = [
+    Carta('ent', 'copas', '9', false),
+    Carta('topoK', 'paus', 'K', false), // topo
+  ];
   return j;
 }

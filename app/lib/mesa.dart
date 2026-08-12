@@ -1777,6 +1777,13 @@ class MesaScreen extends StatefulWidget {
   /// recusa de regra, nunca por falha técnica.
   final MotorConfig? motorConfig;
 
+  /// Configuração EFETIVA do motor desta mesa — a MESMA expressão que o ROOT
+  /// usa para nascer. Pública para que o portão de qualidade prove o padrão
+  /// (produção) sem precisar montar a tela inteira: o teste de widget exigiria
+  /// os assets do baralho declarados no pubspec, o que no CI só acontece
+  /// DEPOIS do portão.
+  MotorConfig get configEfetivaDoMotor => motorConfig ?? MotorConfig.producao();
+
   const MesaScreen({
     super.key,
     this.variant = MesaVariant.vip,
@@ -1852,7 +1859,7 @@ class _MesaScreenState extends State<MesaScreen> {
       const ['você', 'Cláudia', 'Mateus', 'Sofia'],
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
-      motorConfig: widget.motorConfig ?? MotorConfig.producao(),
+      motorConfig: widget.configEfetivaDoMotor,
     );
     jogo.metaPontos = widget.metaPontos;
     jogo.modalidade = widget.modalidade;
