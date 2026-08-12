@@ -13,6 +13,7 @@ import 'motor/motor_config.dart';
 import 'motor/autoridade_canonica.dart';
 // C10 — costura da classificação/pontuação canônicas no consumidor real.
 import 'motor/pontuacao_costura.dart';
+import 'motor/projecao_estado.dart' show paraCanonico;
 import 'rules/acoes.dart';
 import 'rules/rule_spec.dart';
 
@@ -795,23 +796,83 @@ class Jogo {
   // - ABERTO: compra LIVRE, sem obrigação de usar o topo (regra confirmada).
   // - FECHADO/SBTL: só pode pegar se a carta do TOPO tiver USO IMEDIATO — formar
   //   um jogo novo com 2 cartas da mão OU estender um jogo já baixado da dupla.
+  /// C10 — TODOS os candidatos ATÔMICOS de compra do lixo Fechado/STBL para
+  /// `assento`, derivados pela autoridade canônica a partir do topo VISÍVEL +
+  /// mão + jogos já expostos da dupla (cartas enterradas ficam de fora).
+  ///
+  /// Auto-derivar ≠ auto-decidir: esta função ENUMERA; quem consome decide
+  /// (0 -> recusa, 1 -> executa, 2+ -> o jogador escolhe). No Aberto devolve
+  /// lista vazia — lá a compra é livre e não precisa justificar o topo.
+  List<ComprarLixo> candidatosCompraLixo(int assento, {DiagnosticoLixo? diag}) {
+    final spec = specCanonica;
+    if (!spec.exigeUsoDoTopoNoLixo) return const <ComprarLixo>[];
+    return derivarCandidatosCompraLixoFechado(
+        paraCanonico(this).canonico, assento, spec,
+        diag: diag);
+  }
+
+  /// C10 — executa UMA compra do lixo já escolhida, como transação ATÔMICA
+  /// (recolhe o lixo E baixa/estende o uso do topo no mesmo commit).
+  Map<String, dynamic> comprarLixoAtomico(int assento, ComprarLixo escolha) {
+    if (!motorConfig.canonicoAtivo) {
+      return {
+        'ok': false,
+        'erro': 'compra atômica do lixo só existe sob a autoridade canônica',
+      };
+    }
+    final antes = _instantaneoDupla(assento);
+    final qtd = lixo.length;
+    final r = _rodarAutoridade(assento, [escolha]);
+    if (r.aplicou) {
+      return {
+        'ok': true,
+        'qtd': qtd,
+        ..._desfechoBaixada(assento, antes, escolha.jogosNovos, escolha.extensoes),
+      };
+    }
+    if (r.recusaCanonica) {
+      return {
+        'ok': false,
+        'erro': r.motivo ?? 'compra do lixo recusada pelo motor canônico',
+      };
+    }
+    // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+    return {'ok': false, 'erro': _falharFechado('comprarLixo', r)};
+  }
+
+  /// Compra do lixo. O parâmetro `modalidade` é do contrato LEGADO; sob
+  /// autoridade canônica a modalidade vem da própria partida (fonte única).
+  ///
+  /// C10 — no Fechado/STBL aplica o contrato ATÔMICO derivando os candidatos:
+  /// 0 -> recusa; 1 -> executa; 2+ -> NÃO escolhe pelo jogador, devolve
+  /// `escolhaNecessaria` com os candidatos para o consumidor apresentar. É
+  /// PROIBIDO resolver a ambiguidade voltando ao comportamento diferido legado
+  /// (comprar agora e cobrar o uso do topo depois).
   Map<String, dynamic> comprarLixo(int assento, {String modalidade = 'ABERTO'}) {
-    // C9-D — AUTORIDADE ON: o canônico decide/aplica (transação atômica).
-    // Nota: o `Acao ComprarLixo` canônico não carrega jogos (limite EXC-03
-    // nível-função). No Fechado/STBL, comprar exige uso ATÔMICO do topo, então o
-    // canônico RECUSA a compra sem jogos — divergência REAL, exposta (não
-    // mascarada). No Aberto, converge (compra o lixo para a mão).
     if (motorConfig.canonicoAtivo) {
-      final r = _rodarAutoridade(assento, const [ComprarLixo()]);
-      if (r.aplicou) return {'ok': true};
-      if (r.recusaCanonica) {
+      if (!specCanonica.exigeUsoDoTopoNoLixo) {
+        // Aberto: compra LIVRE, para a mão — sem uso obrigatório do topo.
+        return comprarLixoAtomico(assento, const ComprarLixo());
+      }
+      final cands = candidatosCompraLixo(assento);
+      if (cands.isEmpty) {
         return {
           'ok': false,
-          'erro': r.motivo ?? 'compra do lixo recusada pelo motor canônico',
+          'erro': lixo.isEmpty
+              ? 'o lixo está vazio'
+              : 'No fechado, só dá pra pegar o lixo se o topo '
+                  '(${_cartaRotulo(lixo.last)}) tiver uso imediato: formar um '
+                  'jogo novo com cartas da mão ou estender um jogo já baixado.',
         };
       }
-      // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
-      return {'ok': false, 'erro': _falharFechado('comprarLixo', r)};
+      if (cands.length == 1) return comprarLixoAtomico(assento, cands.single);
+      return {
+        'ok': false,
+        'escolhaNecessaria': true,
+        'candidatos': cands,
+        'erro': 'há ${cands.length} formas legais de usar o topo '
+            '(${_cartaRotulo(lixo.last)}): escolha uma.',
+      };
     }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
@@ -1668,6 +1729,9 @@ class _MesaScreenState extends State<MesaScreen> {
   final ScrollController _discardScroll = ScrollController();
 
   bool _botsRodando = false;
+  /// C10 — a derivação dos candidatos do lixo está agendada/rodando. Serve só
+  /// para não aceitar um segundo toque no meio e para o feltro sinalizar espera.
+  bool _derivandoLixo = false;
   bool _soundEnabled = true;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
@@ -1904,9 +1968,21 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   void _tapMonte() {
-    if (!_minhaVezAtiva || _j.jaComprou) return;
+    if (!_minhaVezAtiva || _j.jaComprou || _derivandoLixo) return;
     final antes = _j.maos[0].map((c) => c.id).toSet();
-    if (!_j.comprarMonte(0)) return;
+    final ok = _j.comprarMonte(0);
+    // C10 — EXAUSTÃO (monte E mortos vazios): sob a autoridade canônica a
+    // compra é uma transição LEGAL que ENCERRA a rodada sem carta comprada.
+    // O consumidor precisa fechar a contagem, senão a rodada morre sem placar.
+    if (_j.rodadaEncerrada) {
+      _j.contarPontos();
+      setState(() {
+        _msg = 'Acabaram as cartas: a rodada encerrou.';
+        _syncTurnClock();
+      });
+      return;
+    }
+    if (!ok) return;
     _j.ordenar(0);
     final novos = _j.maos[0]
         .where((c) => !antes.contains(c.id))
@@ -1916,24 +1992,90 @@ class _MesaScreenState extends State<MesaScreen> {
     _somCompra();
   }
 
-  Future<void> _tapLixo() async {
-    if (!_minhaVezAtiva) return;
-    if (!_j.jaComprou) {
-      final antes = _j.maos[0].map((c) => c.id).toSet();
-      final resultado = _j.comprarLixo(0, modalidade: _modalidade);
-      if (resultado['ok'] != true) {
-        setState(() => _msg = resultado['erro'] as String?);
-        _somErro();
-        return;
+  /// C10 — COMPRA do lixo no consumidor real, sob o contrato ATÔMICO.
+  ///
+  /// Aberto: compra livre. Fechado/STBL: os candidatos vêm da autoridade
+  /// canônica e o consumidor aplica 0 -> recusa / 1 -> executa / 2+ -> o
+  /// JOGADOR escolhe. Nunca compra "para a mão" com a obrigação do topo
+  /// pendente — esse era o comportamento diferido do legado.
+  ///
+  /// RESPONSIVIDADE: a derivação é AGENDADA fora do frame do toque (`Future`),
+  /// com a mesa marcada como ocupada. O conjunto de candidatos LEGAIS não é
+  /// tocado — nada de teto, amostragem ou corte semântico para "ficar rápido".
+  /// O que muda é quando a travessia roda, não o que ela produz.
+  Future<void> _comprarLixoNoToque() async {
+    if (_derivandoLixo) return; // reentrância: um toque por vez
+    final antes = _j.maos[0].map((c) => c.id).toSet();
+
+    Map<String, dynamic> resultado;
+    if (!_j.specCanonica.exigeUsoDoTopoNoLixo) {
+      resultado = _j.comprarLixo(0, modalidade: _modalidade);
+    } else {
+      setState(() {
+        _derivandoLixo = true;
+        // Usa o canal de mensagem que já existe — nenhum elemento novo entra no
+        // layout aprovado só por causa da espera.
+        _msg = 'Conferindo os usos do topo…';
+      });
+      try {
+        final cands =
+            await Future<List<ComprarLixo>>(() => _j.candidatosCompraLixo(0));
+        if (!mounted) return;
+        if (cands.isEmpty) {
+          resultado = _j.comprarLixo(0, modalidade: _modalidade); // recusa
+        } else if (cands.length == 1) {
+          resultado = _j.comprarLixoAtomico(0, cands.single);
+        } else {
+          setState(() => _derivandoLixo = false);
+          final escolha = await _escolherCompraLixo(cands);
+          if (!mounted) return;
+          if (escolha == null) {
+            setState(() => _msg = null); // jogador desistiu: nada acontece
+            return;
+          }
+          resultado = _j.comprarLixoAtomico(0, escolha);
+        }
+      } finally {
+        if (mounted && _derivandoLixo) setState(() => _derivandoLixo = false);
       }
-      _j.ordenar(0);
-      final novos = _j.maos[0]
-          .where((c) => !antes.contains(c.id))
-          .map((c) => c.id)
-          .toSet();
-      _sel.clear();
-      _mostrarCompra(novos, 'lixo');
+    }
+
+    if (resultado['ok'] != true) {
+      setState(() => _msg = resultado['erro'] as String?);
+      _somErro();
+      return;
+    }
+    _j.ordenar(0);
+    final novos = _j.maos[0]
+        .where((c) => !antes.contains(c.id))
+        .map((c) => c.id)
+        .toSet();
+    _sel.clear();
+    _mostrarCompra(novos, 'lixo');
+    // A compra ATÔMICA pode ter baixado/estendido, virado canastra, pego o
+    // morto ou até batido no mesmo commit — o feedback segue o desfecho real.
+    final tipo = resultado['tipo'] as String?;
+    final novaCanastra = tipo != null && tipo != 'aberta';
+    if (resultado['bateu'] == true ||
+        resultado['pegouMorto'] == true ||
+        novaCanastra) {
+      _somJogada(resultado, novaCanastra: novaCanastra);
+    } else {
       _somCompra();
+    }
+    if (_j.rodadaEncerrada) _j.contarPontos();
+    setState(() {
+      _msg = resultado['bateu'] == true
+          ? 'Você bateu!'
+          : (resultado['pegouMorto'] == true ? 'Você pegou o morto.' : null);
+      _syncTurnClock();
+    });
+  }
+
+  Future<void> _tapLixo() async {
+    if (!_minhaVezAtiva || _derivandoLixo) return;
+    if (!_j.jaComprou) {
+      await _comprarLixoNoToque();
       return;
     }
 
@@ -3496,6 +3638,110 @@ class _MesaScreenState extends State<MesaScreen> {
               fontSize: 9,
               fontWeight: FontWeight.w800,
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// C10 — rótulo legível de UM candidato de compra do lixo, para o seletor.
+  /// Descreve o que a transação faz; não decide nada.
+  String _rotuloCandidatoLixo(ComprarLixo c) {
+    final partes = <String>[];
+    final mesa = _j.jogosDupla['nos']!;
+    for (final ext in c.extensoes) {
+      final cartas = _cartasPorIds(ext.cartas).map(_cartaRotulo).join(' ');
+      partes.add('estender o jogo ${ext.indiceJogo + 1} com $cartas');
+    }
+    for (final jogo in c.jogosNovos) {
+      final cartas = _cartasPorIds(jogo).map(_cartaRotulo).join(' ');
+      partes.add('baixar $cartas');
+    }
+    if (partes.isEmpty) return 'pegar o lixo';
+    // Mostra o tamanho do jogo estendido para o jogador comparar alternativas.
+    if (c.jogosNovos.isEmpty && c.extensoes.length == 1) {
+      final i = c.extensoes.single.indiceJogo;
+      if (i >= 0 && i < mesa.length) {
+        partes[0] = '${partes[0]} (jogo de ${mesa[i].length} cartas)';
+      }
+    }
+    return partes.join(' + ');
+  }
+
+  List<Carta> _cartasPorIds(List<String> ids) {
+    final visiveis = <Carta>[..._j.maos[0], if (_j.lixo.isNotEmpty) _j.lixo.last];
+    return [
+      for (final id in ids)
+        ...visiveis.where((c) => c.id == id).take(1),
+    ];
+  }
+
+  /// C10 — SELETOR MÍNIMO: quando há 2+ usos legais do topo, quem escolhe é o
+  /// jogador. A lista vem inteira da autoridade canônica (nenhum candidato é
+  /// omitido); a folha só apresenta. Cancelar não compra nada.
+  Future<ComprarLixo?> _escolherCompraLixo(List<ComprarLixo> cands) {
+    final topo = _j.lixo.isEmpty ? '' : _cartaRotulo(_j.lixo.last);
+    return showModalBottomSheet<ComprarLixo>(
+      context: context,
+      backgroundColor: const Color(0xF4120D14),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        side: BorderSide(color: _mGold, width: 1.1),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Como usar o topo ($topo)?',
+                style: const TextStyle(
+                  color: _mGoldHi,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'O lixo só vem junto com um destes usos.',
+                style: TextStyle(color: Color(0xFFB6A8BE), fontSize: 10.5),
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: cands.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 6),
+                  itemBuilder: (_, i) => InkWell(
+                    onTap: () => Navigator.of(ctx).pop(cands[i]),
+                    borderRadius: BorderRadius.circular(11),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1220),
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(color: _mPurple, width: 1),
+                      ),
+                      child: Text(
+                        _rotuloCandidatoLixo(cands[i]),
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12.2),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancelar',
+                    style: TextStyle(color: Color(0xFFB6A8BE))),
+              ),
+            ],
           ),
         ),
       ),
