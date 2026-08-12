@@ -4422,22 +4422,37 @@ void main() {
       expect(j.duplaQueBateu, 'nos');
     });
 
-    test('C9D-ANTI-MASCARAMENTO canônico recusa onde o legado aceitaria', () {
-      // OFF: o legado ACEITA comprar o lixo no Fechado (obrigação do topo DIFERIDA).
+    // C10 — contrato REVISTO. No C9-D a `Acao ComprarLixo` não carregava jogos,
+    // então no Fechado o canônico só sabia RECUSAR e a prova de anti-mascaramento
+    // era a recusa. Com o contrato ATÔMICO da Parte 1 os dois motores ACEITAM a
+    // mesma compra — e a divergência REAL passa a ser OUTRA, mais funda: o
+    // legado compra PARA A MÃO e DEFERE a obrigação do topo; o canônico só
+    // compra com o topo JÁ na mesa, no mesmo commit. É esse diferimento que o
+    // §5 proíbe, e é ele que este teste passa a provar.
+    test('C9D-ANTI-MASCARAMENTO canônico não DEFERE a obrigação do topo', () {
+      // OFF: o legado recolhe o lixo para a mão e deixa a obrigação PENDENTE.
       final jOff = _jgComprarLixoFechadoC9D(cfg: const MotorConfig());
       final rOff = jOff.comprarLixo(0, modalidade: 'FECHADO');
-      expect(rOff['ok'], isTrue); // legado compra o lixo
-      expect(jOff.lixo, isEmpty); // lixo recolhido pelo legado
-      // ON: o canônico RECUSA (ComprarLixo atômico sem jogos) -> SEM fallback; o
-      // legado NÃO é chamado, o estado permanece intacto (nada mascarado).
-      final jOn = _jgComprarLixoFechadoC9D(cfg: const MotorConfig(canonicoAtivo: true));
-      final lixoAntes = jOn.lixo.length;
-      final maoAntes = jOn.maos[0].length;
+      expect(rOff['ok'], isTrue);
+      expect(jOff.lixo, isEmpty); // lixo recolhido
+      expect(jOff.jogosDupla['nos'], isEmpty); // NADA foi para a mesa
+      expect(jOff.lixoTopoObrigatorio, '5c'); // obrigação DIFERIDA
+      expect(jOff.maos[0].any((c) => c.id == '5c'), isTrue); // topo na mão
+
+      // ON: mesma mesa, mesma compra — mas ATÔMICA. O topo vai para a mesa no
+      // MESMO commit e não sobra obrigação nenhuma para cobrar depois.
+      final jOn =
+          _jgComprarLixoFechadoC9D(cfg: const MotorConfig(canonicoAtivo: true));
       final rOn = jOn.comprarLixo(0, modalidade: 'FECHADO');
-      expect(rOn['ok'], isFalse); // recusa canônica
-      expect(jOn.lixo.length, lixoAntes); // lixo NÃO recolhido (legado não rodou)
-      expect(jOn.maos[0].length, maoAntes);
-      expect(jOn.ultimaFalhaTecnica, isNull); // recusa de REGRA, não técnica
+      expect(rOn['ok'], isTrue);
+      expect(jOn.lixo, isEmpty);
+      expect(jOn.jogosDupla['nos']!.length, 1); // 3c-4c-5c baixado junto
+      expect(jOn.jogosDupla['nos']![0].map((c) => c.id).toSet(),
+          {'3c', '4c', '5c'});
+      expect(jOn.lixoTopoObrigatorio, isNull); // nada diferido
+      expect(jOn.maos[0].any((c) => c.id == '5c'), isFalse); // topo foi à mesa
+      expect(jOn.maos[0].any((c) => c.id == 'bur'), isTrue); // enterrada revelada
+      expect(jOn.ultimaFalhaTecnica, isNull); // caminho de REGRA, não técnico
     });
   });
 
