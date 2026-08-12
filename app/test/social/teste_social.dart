@@ -844,6 +844,18 @@ void main() {
       expect(p.itens[2].publicId, 'P0000000000GH');
     });
 
+    test('LST-01b apelido que é prefixo de outro vem primeiro', () {
+      // A propriedade que o separador da chave garante. Sem ela, "Ana Bia"
+      // poderia cair antes de "Ana" só porque o publicId dela é menor — e a
+      // lista pareceria desordenada para quem olha.
+      final p = paginarAmigos([
+        entrada('P0000000000ZZ', 'Ana Bia'),
+        entrada('P0000000000AA', 'Anabia'),
+        entrada('P0000000000MM', 'Ana'),
+      ], limite: 10);
+      expect(p.itens.map((e) => e.apelido).toList(), ['Ana', 'Ana Bia', 'Anabia']);
+    });
+
     test('LST-02 paginação percorre a lista inteira sem repetir nem pular', () {
       final vistos = <String>[];
       String? cursor;
