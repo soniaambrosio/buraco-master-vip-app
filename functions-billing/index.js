@@ -50,7 +50,6 @@ const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue, FieldPath } = require('firebase-admin/firestore');
 const { google } = require('googleapis');
-const crypto = require('crypto');
 
 const {
   ESTADO,
@@ -63,14 +62,18 @@ const {
 const {
   ESTADO: ESTADO_VIP,
   consolidarAssinatura,
-  consolidarTerminal,
-  interpretarNotificacao,
-  decidirAtualizacao,
-  documentosDeEntitlement,
   instante,
   anteriorA,
   rotuloToken,
 } = require('./entitlement');
+
+const {
+  COL_ENTITLEMENT,
+  chaveDaCompra,
+  criarStore,
+} = require('./entitlementStore');
+const { criarReconciliador } = require('./reconciliacao');
+const { criarProcessadorRtdn } = require('./rtdn');
 
 initializeApp();
 
@@ -99,12 +102,6 @@ const ASSINATURA_VALIDA = new Set([
   'SUBSCRIPTION_STATE_IN_GRACE_PERIOD',
 ]);
 
-/** Fonte canonica do direito VIP. Escrita SO por este codebase. */
-const COL_ENTITLEMENT = 'playerEntitlements';
-
-/** Trilha de notificacoes processadas — id do documento = messageId do Pub/Sub. */
-const COL_EVENTOS = 'billingEvents';
-
 let clientePlay = null;
 
 async function androidPublisher() {
@@ -119,12 +116,42 @@ async function androidPublisher() {
 }
 
 /**
- * Chave do registro de compra. Hash do token porque o token e longo demais
- * para ID de documento do Firestore (limite de 1500 bytes) e nao ha motivo
- * para guardar o valor bruto como identificador.
+ * As dependencias de infraestrutura, montadas UMA vez e sob demanda.
+ *
+ * Preguicoso pela mesma razao que `androidPublisher()`: `getFirestore()` so pode
+ * ser chamado depois de `initializeApp()`, e montar isto no topo do modulo
+ * amarraria a carga do arquivo a ordem de inicializacao do Admin SDK.
+ *
+ * E AQUI QUE AS PORTAS SAO LIGADAS. Store, reconciliador e processador de RTDN
+ * nao conhecem `firebase-admin` nem `googleapis`; conhecem as funcoes que este
+ * bloco entrega. E por isso que `node --test` consegue exercita-los sem
+ * `node_modules`, e por isso que trocar o cliente da Play amanha nao encosta na
+ * politica economica.
  */
-function chaveDaCompra(tokenCompra) {
-  return crypto.createHash('sha256').update(tokenCompra).digest('hex');
+let infra = null;
+
+function dependencias() {
+  if (infra) return infra;
+
+  const store = criarStore({
+    db: getFirestore(),
+    carimbo: () => FieldValue.serverTimestamp(),
+  });
+
+  const reconciliador = criarReconciliador({
+    consultarAssinatura,
+    aplicarProposta: store.aplicarProposta,
+  });
+
+  const rtdn = criarProcessadorRtdn({
+    pacote: PACOTE,
+    store,
+    reconciliador,
+    log: console,
+  });
+
+  infra = { store, reconciliador, rtdn };
+  return infra;
 }
 
 /** Le o catalogo autoritativo. O app NAO decide o que cada produto concede. */
@@ -194,167 +221,12 @@ async function fecharComAGoogle(ehAssinatura, produtoId, tokenCompra) {
 // ===========================================================================
 // ENTITLEMENT — a fonte canonica do direito VIP
 // ===========================================================================
-
-/**
- * Os dois documentos do entitlement de um jogador.
- *
- *   playerEntitlements/{uid}                  o dono le: estado, prazo, produto
- *   playerEntitlements/{uid}/interno/billing   ninguem le: token e verificacao
- *
- * Dois porque regra do Firestore libera o documento INTEIRO. A separacao repete
- * a que a moderacao fez entre `reports` e `reportReceipts`, pelo mesmo motivo.
- */
-function refsEntitlement(uid) {
-  const publico = getFirestore().collection(COL_ENTITLEMENT).doc(uid);
-  return { publico, interno: publico.collection('interno').doc('billing') };
-}
-
-/**
- * Grava a proposta, se ela puder ser gravada.
- *
- * TODA escrita de entitlement passa por aqui, e por uma razao so: a decisao
- * precisa ser tomada com o documento RELIDO DENTRO DA TRANSACAO. Ler o estado,
- * decidir fora e escrever depois deixaria duas notificacoes simultaneas — ou uma
- * validacao manual concorrendo com um RTDN — gravarem estados que ignoram um ao
- * outro, e a ultima a commitar venceria mesmo tendo consultado a Google primeiro.
- *
- * `set` sem `merge` e deliberado: o estado consolidado e completo, e um merge
- * deixaria campo velho de um estado anterior sobrevivendo ao lado do novo.
- *
- * @param {object} proposta ver `decidirAtualizacao` em entitlement.js
- * @param {{id: string, tipo?: number|null, motivo?: string}} [evento]
- *        notificacao que originou a proposta. Registrada na MESMA transacao: o
- *        efeito e a marca de "ja processei" nascem juntos, ou nao nascem.
- */
-async function aplicarProposta(proposta, evento) {
-  const db = getFirestore();
-  const { publico, interno } = refsEntitlement(proposta.uid);
-  const refEvento = evento ? db.collection(COL_EVENTOS).doc(evento.id) : null;
-
-  return db.runTransaction(async (tx) => {
-    const [pub, int, ev] = await Promise.all([
-      tx.get(publico),
-      tx.get(interno),
-      refEvento ? tx.get(refEvento) : Promise.resolve(null),
-    ]);
-
-    // Reentrega do Pub/Sub. A entrega e "pelo menos uma vez" por contrato, entao
-    // ver a mesma mensagem duas vezes e rotina, nao anomalia.
-    if (ev && ev.exists && ev.data().estado === 'concluido') {
-      return { aplicado: false, motivo: 'evento_repetido' };
-    }
-
-    const atual =
-      pub.exists || int.exists
-        ? { ...(pub.data() || {}), ...(int.data() || {}) }
-        : null;
-
-    const decisao = decidirAtualizacao(atual, proposta);
-
-    if (decisao.aplicar) {
-      const docs = documentosDeEntitlement(atual, proposta);
-      tx.set(publico, docs.publico);
-      tx.set(interno, docs.interno);
-    }
-
-    if (refEvento) {
-      tx.set(refEvento, {
-        messageId: evento.id,
-        estado: 'concluido',
-        tipo: evento.tipo != null ? evento.tipo : null,
-        decisao: decisao.motivo,
-        aplicado: decisao.aplicar,
-        uid: proposta.uid,
-        // Rotulo curto do hash — nunca o token, nunca o hash inteiro.
-        token: rotuloToken(proposta.purchaseTokenHash),
-        processadoEm: FieldValue.serverTimestamp(),
-      });
-    }
-
-    return {
-      aplicado: decisao.aplicar,
-      motivo: decisao.motivo,
-      estado: decisao.aplicar ? proposta.estado : atual && atual.estado,
-      vipAtivo: decisao.aplicar
-        ? proposta.vipAtivo === true
-        : Boolean(atual && atual.vipAtivo),
-    };
-  });
-}
-
-/**
- * Consulta autoritativa + consolidacao + gravacao, para um token de assinatura.
- *
- * `consultadoEm` e capturado ANTES da chamada de rede, de proposito: uma
- * resposta que demorou dez segundos descreve o mundo de dez segundos atras, e
- * carimba-la com o instante da volta a faria ganhar de uma consulta mais nova
- * que respondeu rapido.
- */
-async function reconsultarEAplicar({
-  uid,
-  produtoId,
-  tokenCompra,
-  fonte,
-  eventoEm = null,
-  eventoTipo = null,
-  evento = null,
-}) {
-  const consultadoEm = new Date().toISOString();
-  const resposta = await consultarAssinatura(tokenCompra);
-  const consolidado = consolidarAssinatura(resposta, consultadoEm);
-
-  return aplicarProposta(
-    {
-      uid,
-      ...consolidado,
-      produtoId: consolidado.produtoId || produtoId || null,
-      origem: 'play',
-      purchaseTokenHash: chaveDaCompra(tokenCompra),
-      purchaseToken: tokenCompra,
-      verificadoEm: consultadoEm,
-      eventoEm,
-      eventoTipo,
-      fonte,
-    },
-    evento
-  );
-}
-
-/**
- * Quem e o dono deste `purchaseToken`?
- *
- * A notificacao da Google traz o token e mais nada sobre identidade — ela nao
- * sabe o que e um UID do Firebase. O elo e o registro que `validarCompraPlay`
- * ja grava em `compras/{hash}`, com o uid tirado do contexto AUTENTICADO da
- * chamada. Sem esse registro nao ha titular comprovavel, e o evento e
- * descartado: atribuir um direito por palpite seria pior que perder o evento.
- */
-async function titularDoToken(tokenCompra) {
-  const hash = chaveDaCompra(tokenCompra);
-  const doc = await getFirestore().collection('compras').doc(hash).get();
-  if (!doc.exists) return { ok: false, motivo: 'compra_desconhecida', hash };
-  const dados = doc.data();
-  if (!dados.uid) return { ok: false, motivo: 'registro_sem_uid', hash };
-  if (dados.assinatura !== true) {
-    return { ok: false, motivo: 'nao_e_assinatura', hash };
-  }
-  return { ok: true, uid: dados.uid, produtoId: dados.produtoId || null, hash };
-}
-
-/** Anota um evento que nao produziu efeito, para a trilha nao ter buraco. */
-async function registrarEventoSemEfeito(messageId, dados) {
-  if (!messageId) return;
-  await getFirestore().collection(COL_EVENTOS).doc(messageId).set(
-    {
-      messageId,
-      estado: 'concluido',
-      aplicado: false,
-      processadoEm: FieldValue.serverTimestamp(),
-      ...dados,
-    },
-    { merge: true }
-  );
-}
+//
+// As escritas moraram aqui ate esta OS. Hoje vivem em `entitlementStore.js`
+// (a transacao) e `reconciliacao.js` (a consulta autoritativa), com o Firestore
+// injetado — o que as tornou alcancaveis por `node --test`, que este codebase
+// roda sem `node_modules`. O CORPO delas nao mudou; mudou de onde vem o `db`.
+// Ver o cabecalho daqueles dois arquivos.
 
 exports.validarCompraPlay = onCall(
   { secrets: [CONTA_SERVICO_PLAY], region: 'us-central1' },
@@ -429,7 +301,7 @@ exports.validarCompraPlay = onCall(
         return { aprovada: true, jaProcessada: true, detalhes: decisao.concessao };
       }
       try {
-        const refresco = await reconsultarEAplicar({
+        const refresco = await dependencias().reconciliador.reconsultarEAplicar({
           uid,
           produtoId,
           tokenCompra,
@@ -495,7 +367,7 @@ exports.validarCompraPlay = onCall(
     let entitlement = null;
     if (ehAssinatura) {
       const consolidado = consolidarAssinatura(compra, consultadoEm);
-      entitlement = await aplicarProposta({
+      entitlement = await dependencias().store.aplicarProposta({
         uid,
         ...consolidado,
         produtoId: consolidado.produtoId || produtoId,
@@ -629,30 +501,17 @@ exports.validarCompraPlay = onCall(
 // ===========================================================================
 
 /**
- * Consumidor das notificacoes da Play.
+ * Consumidor das notificacoes da Play — o ADAPTADOR.
  *
- * A NOTIFICACAO E UM SINAL, NAO UM VEREDITO. Fora os dois desfechos terminais
- * (revogacao e anulacao, que a consulta de estado nao expressa), nenhum estado e
- * derivado do payload: o que a mensagem faz e mandar PERGUNTAR a Google qual e o
- * estado agora. Confiar no payload seria confiar num evento que pode ter sido
- * emitido antes de outro que ja processamos.
+ * O que este bloco faz e so ligar o gatilho do Pub/Sub ao processador de
+ * `rtdn.js`, que e onde o caminho inteiro esta descrito e testado. Nada de
+ * politica economica mora aqui.
  *
- * TRES ENTREGAS ANORMAIS SAO TRATADAS COMO NORMAIS:
- *
- *   repetida    o Pub/Sub entrega "pelo menos uma vez". `billingEvents/{messageId}`
- *               e escrito na MESMA transacao do efeito — ou os dois acontecem, ou
- *               nenhum dos dois.
- *   fora de ordem  o carimbo comparado nao e o do evento, e o da CONSULTA que
- *               produziu a proposta (`decidirAtualizacao`). Um evento antigo que
- *               chega depois faz uma consulta nova, e consulta nova nunca regride.
- *   sobre token velho  a proposta e descartada por `token_superado`: uma
- *               expiracao da assinatura anterior nao derruba a assinatura atual.
- *
- * `retry: true` e deliberado: falha na Play Developer API tem que voltar como
- * reentrega do Pub/Sub, que e a reconciliacao posterior deste desenho. Como o
- * registro de "ja processei" so e gravado junto com o efeito, a reentrega
- * encontra trabalho a fazer — e nao um evento marcado como concluido sem ter
- * concluido nada.
+ * `retry: true` e deliberado, e e METADE do tratamento de falha transitoria: a
+ * outra metade e `processarNotificacao` DEIXAR A EXCECAO SUBIR quando a Play
+ * Developer API falha. Uma coisa sem a outra nao funciona — sem `retry` a
+ * excecao viraria mensagem perdida, e sem a excecao o `retry` nunca dispararia.
+ * Ver o cabecalho de `rtdn.js` e o teste RTDN-11.
  */
 exports.notificacoesPlay = onMessagePublished(
   {
@@ -663,114 +522,11 @@ exports.notificacoesPlay = onMessagePublished(
   },
   async (event) => {
     const mensagem = (event.data && event.data.message) || {};
-    const messageId = mensagem.messageId || event.id || null;
-
-    let corpo;
-    try {
-      corpo = JSON.parse(Buffer.from(mensagem.data || '', 'base64').toString('utf8'));
-    } catch (e) {
-      // Mensagem ilegivel nao melhora com retry: registrar e seguir.
-      console.error('[billing] RTDN ilegivel:', e.message, { messageId });
-      await registrarEventoSemEfeito(messageId, { decisao: 'corpo_ilegivel' });
-      return;
-    }
-
-    const leitura = interpretarNotificacao(corpo, PACOTE);
-
-    if (leitura.acao === 'ignorar') {
-      console.info('[billing] RTDN ignorada', { messageId, motivo: leitura.motivo });
-      await registrarEventoSemEfeito(messageId, { decisao: leitura.motivo });
-      return;
-    }
-
-    if (!leitura.purchaseToken) {
-      console.error('[billing] RTDN sem purchaseToken', { messageId });
-      await registrarEventoSemEfeito(messageId, { decisao: 'sem_token' });
-      return;
-    }
-
-    // Atalho barato antes de gastar uma chamada de rede. NAO e a barreira de
-    // idempotencia — essa esta dentro da transacao, onde a corrida existe.
-    if (messageId) {
-      const jaVisto = await getFirestore().collection(COL_EVENTOS).doc(messageId).get();
-      if (jaVisto.exists && jaVisto.data().estado === 'concluido') {
-        console.info('[billing] RTDN repetida, ja concluida', { messageId });
-        return;
-      }
-    }
-
-    // TITULARIDADE. A Google conhece o token; quem conhece o dono e o registro
-    // que a validacao gravou com o uid autenticado.
-    const titular = await titularDoToken(leitura.purchaseToken);
-    if (!titular.ok) {
-      console.warn('[billing] RTDN sem titular comprovavel', {
-        messageId,
-        motivo: titular.motivo,
-        token: rotuloToken(titular.hash),
-      });
-      await registrarEventoSemEfeito(messageId, {
-        decisao: titular.motivo,
-        token: rotuloToken(titular.hash),
-      });
-      return;
-    }
-
-    // Mensagem sem id nao tem como ser deduplicada. Ela ainda e processada — o
-    // efeito importa mais que a trilha —, e a idempotencia real continua sendo a
-    // de `decidirAtualizacao`: reprocessar a mesma consulta nao muda nada.
-    const evento = messageId
-      ? { id: messageId, tipo: leitura.tipo != null ? leitura.tipo : null }
-      : null;
-
-    // DESFECHO TERMINAL: o fato esta no payload, e nao ha consulta que o
-    // expresse. Esperar para confirmar deixaria uma janela em que o estornado
-    // continua VIP.
-    if (leitura.acao === 'aplicar_terminal') {
-      const agora = new Date().toISOString();
-      const resultado = await aplicarProposta(
-        {
-          uid: titular.uid,
-          ...consolidarTerminal(leitura.terminal, agora),
-          produtoId: leitura.produtoId || titular.produtoId || null,
-          origem: 'play',
-          purchaseTokenHash: titular.hash,
-          purchaseToken: leitura.purchaseToken,
-          verificadoEm: agora,
-          eventoEm: leitura.eventoEm,
-          eventoTipo: leitura.tipo != null ? leitura.tipo : null,
-          fonte: 'rtdn',
-        },
-        evento
-      );
-      console.info('[billing] entitlement encerrado por notificacao', {
-        messageId,
-        uid: titular.uid,
-        estado: leitura.terminal,
-        decisao: resultado.motivo,
-        token: rotuloToken(titular.hash),
-      });
-      return;
-    }
-
-    // RECONCILIACAO: pergunta a Google e grava o que ela responder.
-    const resultado = await reconsultarEAplicar({
-      uid: titular.uid,
-      produtoId: leitura.produtoId || titular.produtoId,
-      tokenCompra: leitura.purchaseToken,
-      fonte: 'rtdn',
-      eventoEm: leitura.eventoEm,
-      eventoTipo: leitura.tipo != null ? leitura.tipo : null,
-      evento,
-    });
-
-    console.info('[billing] entitlement reconciliado por notificacao', {
-      messageId,
-      uid: titular.uid,
-      tipo: leitura.tipo,
-      estado: resultado.estado,
-      vipAtivo: resultado.vipAtivo,
-      decisao: resultado.motivo,
-      token: rotuloToken(titular.hash),
+    await dependencias().rtdn.processarNotificacao({
+      // `event.id` e a rede de seguranca: o envelope do CloudEvent carrega o
+      // mesmo identificador quando `message.messageId` nao vem preenchido.
+      messageId: mensagem.messageId || event.id || null,
+      data: mensagem.data,
     });
   }
 );
@@ -809,8 +565,8 @@ exports.reconciliarEntitlements = onSchedule(
     for (const doc of vencidos.docs) {
       const uid = doc.id;
       try {
-        const interno = await refsEntitlement(uid).interno.get();
-        const resultado = await aplicarProposta({
+        const interno = await dependencias().store.refsEntitlement(uid).interno.get();
+        const resultado = await dependencias().store.aplicarProposta({
           uid,
           estado: ESTADO_VIP.EXPIRADO,
           vipAtivo: false,
@@ -857,7 +613,7 @@ exports.reconciliarEntitlementDoJogador = onCall(
       throw new HttpsError('invalid-argument', 'uid e obrigatorio.');
     }
 
-    const interno = await refsEntitlement(uid).interno.get();
+    const interno = await dependencias().store.refsEntitlement(uid).interno.get();
     const dados = interno.exists ? interno.data() : null;
     if (!dados || !dados.purchaseToken) {
       throw new HttpsError(
@@ -866,7 +622,7 @@ exports.reconciliarEntitlementDoJogador = onCall(
       );
     }
 
-    const resultado = await reconsultarEAplicar({
+    const resultado = await dependencias().reconciliador.reconsultarEAplicar({
       uid,
       produtoId: dados.produtoId,
       tokenCompra: dados.purchaseToken,
@@ -956,7 +712,7 @@ exports.migrarEntitlementsLegado = onCall(
       }
 
       const vigente = anteriorA(agora, expiraEm);
-      const resultado = await aplicarProposta({
+      const resultado = await dependencias().store.aplicarProposta({
         uid,
         estado: vigente ? ESTADO_VIP.ATIVO : ESTADO_VIP.EXPIRADO,
         vipAtivo: vigente,
