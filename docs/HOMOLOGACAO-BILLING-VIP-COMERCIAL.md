@@ -413,9 +413,9 @@ tocado e nenhuma migração foi disparada.
 
 | item | valor |
 |---|---|
-| hash final (local) | `db6ddef2b222d8cf52d30d62749cf89d29cbae3e` |
-| hash remoto (`git ls-remote`) | `db6ddef2b222d8cf52d30d62749cf89d29cbae3e` |
-| `local == remoto` | **sim** |
+| commit de implementação | `db6ddef2b222d8cf52d30d62749cf89d29cbae3e` — correção, testes e a primeira versão deste relatório |
+| commit final | este commit de documentação, que só acrescenta §13 |
+| `local == remoto` | **sim**, conferido por `git ls-remote` após cada push |
 | push executado | sim, `origin/homologacao/billing-vip-comercial` (branch nova) |
 | force push | **não** |
 | árvore limpa | sim — `git status --porcelain` vazio |
