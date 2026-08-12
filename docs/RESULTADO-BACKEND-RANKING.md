@@ -1,5 +1,25 @@
 # RESULTADO — Backend autoritativo de Ranking, Ligas e Temporadas
 
+> **SUPERADO EM PARTE PELA POLÍTICA COMPETITIVA V1.** Este é o relatório da OS
+> **anterior**, preservado como registro. Duas das suas conclusões centrais
+> deixaram de valer:
+>
+> 1. **"A regra competitiva continua não existindo"** — existe agora, e está em
+>    [`POLITICA-COMPETITIVA-V1.md`](POLITICA-COMPETITIVA-V1.md): Elo em dupla
+>    versionado como `competitiva@v1`, sete Ligas, colocação/revalidação, soft
+>    reset e desempate de cinco critérios. `PoliticaDeRanking.pendente` deixou de
+>    ser a política ativa, embora continue existindo como valor legítimo.
+> 2. **A lacuna de teste declarada na §7 foi FECHADA.** A transação, a
+>    idempotência de banco, a concorrência e a paginação por cursor passaram a ser
+>    exercitadas contra o Firestore real — 16 provas em
+>    `functions-ranking/test/integracao.emulador.test.js`, via
+>    `npm run test:emulador`. O que **continua** sem exercício de ponta a ponta são
+>    as Cloud Functions **chamáveis** (App Check, claims, `onCall`); a integração
+>    ataca a camada de execução (`firestore.ts`) diretamente.
+>
+> Tudo o mais deste documento continua válido, inclusive as pendências de
+> apelido/avatar, grafo social e Hall, que a OS nova **não** tocou.
+
 Fecha o ciclo aberto por [`MAPA-BACKEND-RANKING.md`](MAPA-BACKEND-RANKING.md).
 Relatório exigido pela seção 30 da OS.
 

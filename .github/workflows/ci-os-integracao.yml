@@ -137,6 +137,26 @@ jobs:
           # bloco de Ranking são provadas no passo 3c, contra o emulador.
           ( cd functions-ranking && npm test ) 2>&1 | tee t_rankingfn.log; echo ${PIPESTATUS[0]} > exit_rankingfn
 
+      - name: "3e — codebase RANKING: integração contra o Firestore (emulador)"
+        run: |
+          set +e
+          # FECHA A LACUNA QUE A OS ANTERIOR DECLAROU. O passo 3d prova a lógica
+          # pura; este prova o que só o banco prova: transação, idempotência por
+          # id de documento, concorrência (lost update) e paginação por cursor.
+          #
+          # Separado do 3d de propósito: o unitário não pode passar a exigir
+          # emulador, senão deixa de rodar na máquina de quem está escrevendo.
+          if [ ! -f functions-ranking/test/integracao.emulador.test.js ]; then
+            echo "suíte de integração ausente" > nao_rankingint; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd functions-ranking && npx tsc ) 2>&1 | tail -3
+          # Do mesmo lugar que o passo 3c: a raiz, onde mora o firebase.json.
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-ranking && node --test test/integracao.emulador.test.js" \
+            2>&1 | tee t_rankingint.log
+          echo ${PIPESTATUS[0]} > exit_rankingint
+
       - name: "3c — codebase COLECOES: regras + Functions no Emulator Suite"
         run: |
           set +e
@@ -169,7 +189,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn rankingfn regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn rankingfn rankingint regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo

@@ -1,5 +1,31 @@
 # CONTRATO — o que o backend publica, e como ligá-lo ao cliente
 
+> **ATUALIZADO PELA POLÍTICA COMPETITIVA V1.** O mapeamento de `RankingJogador`
+> continua valendo campo a campo, e **nenhum campo mudou de nome ou de tipo**. O
+> que mudou:
+>
+> - **`JogadorPublicado` ganhou sete campos** (§24 da OS nova): `ligaId`,
+>   `estado`, `qualificacaoRestante`, `partidas`, `vitorias`, `derrotas`,
+>   `aproveitamento`. São **acréscimos** — um adaptador escrito contra a forma
+>   antiga continua funcionando.
+> - **`liga` deixou de sair vazio.** Agora traz o rótulo pronto: o nome da Liga
+>   para quem consolidou, `Em colocação` / `Em revalidação` para quem está em
+>   qualificação. `RankingJogador.liga` exibe a coisa certa sem mudar uma linha
+>   de tela.
+> - **`escadaLigas` deixou de sair vazio**: as sete Ligas oficiais.
+> - **`pontos` deixou de ser sempre `0`**: é o rating da temporada.
+> - **O cursor passou para a versão 2**, com seis critérios em vez de dois. Um
+>   cursor v1 no bolso de um cliente é **recusado** (`invalid-argument`), e não
+>   reinterpretado — o adaptador deve tratar isso recomeçando a lista.
+> - **Uma função chamável nova**: `reprocessarBacklogDeRanking` (admin).
+>
+> Continuam vazios e **não foram fabricados**: `apelido`, `avatar`, `selo`,
+> `divisao`, o Hall e a aba **amigos**. Ver a §5 abaixo, que segue válida para
+> esses.
+>
+> A regra por trás disso está em
+> [`POLITICA-COMPETITIVA-V1.md`](POLITICA-COMPETITIVA-V1.md).
+
 Cumpre a seção 25 da OS: mapeia a autoridade criada em `functions-ranking/` para
 os contratos que já existem em `integracao/ranking-ligas-hall` (`428c458`).
 
@@ -161,10 +187,11 @@ sabe exibir todos estes casos.
 
 | campo | valor hoje | o que falta |
 |---|---|---|
-| `pontos` de todo mundo | `0`, e nenhuma linha criada | a **fórmula de pontuação** |
-| `liga` | `""` | a lista oficial de ligas e as faixas |
-| `escadaLigas` | `[]` | idem |
-| `divisao` | `null` | regra de divisão **dentro** de uma liga e de "faltam X pontos" |
+| ~~`pontos` de todo mundo~~ | ~~`0`~~ → **resolvido na v1**: é o rating | — |
+| ~~`liga`~~ | ~~`""`~~ → **resolvido na v1**: rótulo pronto | — |
+| ~~`escadaLigas`~~ | ~~`[]`~~ → **resolvido na v1**: as sete Ligas | — |
+| `divisao` | `null` | regra de divisão **dentro** de uma liga. A §15 da OS nova **proíbe** divisões I/II/III na v1, então isto deixou de ser lacuna e virou decisão. `qualificacaoRestante` cobre o caso de "faltam X partidas" |
+| `icone` das Ligas | `""` | o asset da 6ª liga se chama `liga_imperial` e a OS a nomeia `Mestre`; a associação não foi inventada |
 | `apelido` / `avatar` | `""` | uma fonte de perfil no backend |
 | `selo` | `null` | critérios dos 9 selos que a arte já tem |
 | Hall (5 categorias) | `criterio_nao_definido` | critérios de elegibilidade |
@@ -193,13 +220,18 @@ Efeito colateral bem-vindo: o app não ganha dependência de `cloud_firestore`.
 
 ## 7. Ordem de ligação sugerida
 
-1. Registrar uma política em `functions-ranking/src/politica.ts` (**exige a
-   fórmula decidida**) e abrir uma temporada com ela.
-2. Esvaziar o backlog: `processarResultado({ matchId })` para cada partida em
-   `rankingBacklog`.
-3. Rodar `apurarRanking({})` para atribuir posições.
-4. Só então escrever o adaptador — antes disso ele receberia listas vazias e não
-   haveria como distinguir "adaptador errado" de "ranking sem dado".
+**Atualizada pela Política Competitiva v1.** O passo 1 deixou de ser decisão de
+produto: a política existe e é o padrão.
 
-O passo 1 é decisão de produto. Os passos 2 a 4 são operação, e as três funções
-já existem.
+1. `abrirTemporadaDeRanking({ seasonId, inicioEm, fimEm })` — sem informar
+   `politica` nem `ladderId`, ela nasce com `competitiva@v1` e a escada das sete
+   Ligas. A duração aprovada é de **8 semanas**; as datas são parâmetros.
+2. Esvaziar o backlog: `reprocessarBacklogDeRanking({})` em laço, repassando o
+   `cursor` devolvido até `fim: true`.
+3. `apurarRanking({})` para atribuir posições.
+4. Escrever o adaptador. Agora ele recebe dado de verdade, então "adaptador
+   errado" e "ranking sem dado" ficaram distinguíveis.
+
+Ao encerrar a temporada, `encerrarTemporadaDeRanking({ seasonId })` já faz a
+apuração final, o fechamento e a consolidação (o carimbo que alimenta o soft
+reset da temporada seguinte) numa chamada só.

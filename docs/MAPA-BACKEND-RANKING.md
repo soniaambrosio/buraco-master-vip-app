@@ -1,5 +1,21 @@
 # MAPA — Backend autoritativo de Ranking, Ligas e Temporadas
 
+> **ATUALIZADO PELA OS DA POLÍTICA COMPETITIVA V1.** Este documento é o retrato
+> da investigação da OS **anterior**, e foi mantido porque explica por que as
+> peças têm a forma que têm. Três das ausências que ele registra foram
+> **resolvidas** — fórmula de pontuação, faixas de liga e desempate competitivo —
+> e estão marcadas abaixo. As demais continuam abertas.
+>
+> A regra que passou a valer está em
+> [`POLITICA-COMPETITIVA-V1.md`](POLITICA-COMPETITIVA-V1.md).
+>
+> **Divergência de árvore registrada nesta OS:** `integracao/ranking-ligas-hall`
+> (`428c458`) **não contém** `af57fe8` — são duas linhas paralelas. Aquela é
+> cliente (contratos, telas, Hall) sobre `7a75bab`; esta é backend sobre
+> `f9814f9`. Nenhuma foi mesclada na outra, e esta OS não tocou no cliente.
+
+---
+
 Investigação exigida pela seção 5 da OS, feita **antes** de alterar qualquer
 arquivo. Registra o que existe, onde existe e o que não existe.
 
@@ -105,6 +121,14 @@ função `deltaZero` marcada como exclusiva de teste.
 Ou seja: a seção 7 da OS ("verificar se a fórmula já foi definida") tem resposta
 **não**, e a resposta é anterior a esta OS.
 
+> **Resolvido na Política Competitiva v1.** `PoliticaDeRanking.pendente` continua
+> existindo como valor legítimo ("ainda não decidido"), mas deixou de ser a
+> resposta do projeto: ao lado dela há agora
+> `PoliticaDeRanking.competitivaV1 = (id: 'competitiva', versao: 1)`, espelhando
+> `POLITICA_COMPETITIVA_V1` do servidor. O `typedef CalculoDeDelta` do Dart
+> **continua sem implementação de produção**, e deve continuar: quem calcula
+> delta é a autoridade, nunca o cliente (§28).
+
 ---
 
 ## 4. Consolidação Firebase (seção 5.3)
@@ -137,9 +161,16 @@ ou **ranking**. Cada uma precisará do próprio bloco `match`."*
 
 A investigação confirmou a seção 4 da OS, e foi além dela.
 
+> **Estado atualizado após a Política Competitiva v1:** as linhas de *fórmula de
+> pontuação* e *liga* foram **resolvidas** — há Elo v1 versionado em
+> `functions-ranking/src/elo.ts` e as sete faixas oficiais em `DEGRAUS_V1`. Todas
+> as outras linhas da tabela **continuam como estão**: identidade pública já
+> existia desde a OS anterior; Hall, fonte de apelido/avatar e grafo social
+> continuam sem existir, e esta OS não os criou.
+
 | conceito | situação encontrada |
 |---|---|
-| fórmula de pontuação | **não existe**, e está declarada como pendente no domínio |
+| fórmula de pontuação | **não existe**, e está declarada como pendente no domínio — *resolvido na v1* |
 | temporada de ranking | **não existe**. `temporada` aparece em `annualQualifications` e `closingInvites`, mas ali é um campo de **texto livre** que o Motor de Torneios usa como rótulo de agrupamento anual — não é uma entidade, não tem início, fim nem status |
 | liga | **não existe** como dado. Existem 7 arquivos de arte (`liga_bronze` … `liga_lenda`) na branch do cliente, e nada mais. Sem lista oficial, sem faixas, sem promoção/rebaixamento |
 | posição oficial | **não existe** |
@@ -196,6 +227,10 @@ contrato do cliente definíveis.
 documento do Firestore seria editável sem revisão, sem teste e sem histórico, e
 mudaria a pontuação de todo mundo entre duas leituras. O que fica em documento é
 **qual** política uma temporada usa; o que ela calcula entra por deploy versionado.
+
+> A v1 estendeu essa mesma decisão às **faixas de Liga**: `lerEscada` consulta o
+> registro em código **antes** do Firestore, para que um documento adulterado em
+> `rankingLadders` não consiga rebaixar ninguém.
 
 ---
 
