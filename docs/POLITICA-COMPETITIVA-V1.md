@@ -466,9 +466,10 @@ colocação, soft reset, posição ou elegibilidade. Nenhuma função chamável 
    registro oficial. O critério 4 do desempate é um no-op até que exista fonte.
 3. **Ícones das Ligas vazios** — o asset da 6ª liga se chama `liga_imperial` e a
    OS a nomeia `Mestre`. Associação não inventada.
-4. **Apelido e avatar vazios** — não há fonte de perfil no backend.
-5. **Escopo `amigos`** continua recusando com `failed-precondition`: não há grafo
-   social no projeto.
+4. **Apelido e avatar vazios** — não há fonte de perfil **nesta árvore**. Ver a
+   §21: existe fonte numa branch paralela.
+5. **Escopo `amigos`** continua recusando com `failed-precondition` — não há
+   grafo social **nesta árvore**. Idem §21.
 6. **O emulador do Firestore não exige índice composto** — ele os cria sozinho.
    Um `firestore.indexes.json` incompleto passaria na integração e falharia em
    produção. A conferência do índice é por leitura, e continua sendo **portão de
@@ -485,7 +486,51 @@ colocação, soft reset, posição ou elegibilidade. Nenhuma função chamável 
 
 ---
 
-## 20. O que esta OS NÃO implementou (§32)
+## 20. Divergências de árvore registradas (§2)
+
+A OS manda registrar divergência entre o que ela descreve e a árvore real. São
+duas, e nenhuma foi mesclada — esta OS trabalhou sobre `af57fe8`, como mandado.
+
+### 20.1 `integracao/ranking-ligas-hall` (`428c458`)
+
+**Não contém `af57fe8`.** É a linha do **cliente** (contratos `RankingJogador` /
+`HallQuadro`, telas, `RankingSemFonte`), construída sobre `7a75bab`. Esta OS é
+backend, sobre `f9814f9`. As duas se encontram pelo adaptador descrito em
+[`CONTRATO-RANKING-CLIENTE.md`](CONTRATO-RANKING-CLIENTE.md), que continua sendo
+a peça que falta.
+
+### 20.2 `claude/identidade-publica-grafo-social-78d184` (`fddcecc`) — **importante**
+
+**Também não contém `af57fe8`**, e resolve duas coisas que este documento
+declara como ausentes. Ela entrega o codebase `functions-social` com:
+
+| ela tem | o que isso resolve aqui |
+|---|---|
+| `publicProfiles/{publicId}` com `apelido` e `avatarRef` | a fonte de perfil que falta às limitações 4 |
+| grafo social (amizades) | a fonte que falta ao escopo `amigos`, limitação 5 |
+| `playerIdentities/{uid}` + `publicIdIndex/{publicId}` | **uma segunda autoridade de identidade pública** |
+
+**O ponto que exige atenção na consolidação:** hoje existem **duas autoridades
+cunhando identidade pública** — `garantirIdPublico` em
+[`functions-ranking/src/firestore.ts`](../functions-ranking/src/firestore.ts)
+(`rankingPlayers.publicPlayerId` + `rankingPublicIds`) e `playerIdentities` +
+`publicIdIndex` daquela branch. O **formato é deliberadamente idêntico** nas duas
+(`P` + 12 símbolos de base32 de Crockford sem I/L/O/U), o que faz do encontro uma
+**reconciliação de dados, e não uma quebra de contrato**.
+
+Quando as duas linhas se juntarem, `garantirIdPublico` deve **parar de cunhar** e
+passar a ler `playerIdentities/{uid}`; e `rankingStandings.apelido`/`.avatar` —
+que hoje são lidos e nunca escritos por ninguém — saem, ou viram leitura de
+`publicProfiles`. A `JogadorPublicado` já publica `apelido` e `avatar`, então o
+contrato do cliente **não muda**: os campos apenas deixam de vir vazios.
+
+Nada disso foi feito aqui, e nem deveria: a §32 desta OS proíbe explicitamente
+criar fonte de apelido/avatar e grafo social. O registro existe para que a
+consolidação não descubra o conflito tarde.
+
+---
+
+## 21. O que esta OS NÃO implementou (§32)
 
 Nada disto foi criado: Hall da Imortalidade, selos, premiação de temporada,
 cosméticos, economia/fichas, cobrança, Billing, anúncios, grafo social, amizades,
