@@ -61,6 +61,14 @@ dependencies:
   # o de menor superficie e maior manutencao.
   in_app_purchase: ^3.3.0
 
+  # Declarado EXPLICITO, e nao deixado como dependencia transitiva: o cliente
+  # importa `package:in_app_purchase_android/...` para ler o `basePlanId` e o
+  # `offerToken` de cada plano-base, e para escolher o plano na hora da compra.
+  # Depender disso por transitividade funciona ate o dia em que a resolucao
+  # muda de forma — e ai o erro aparece como "pacote nao encontrado" num build
+  # de release, nao aqui.
+  in_app_purchase_android: ^0.5.0
+
   # Usado por `lib/billing/validacao.dart` para derivar o MESMO rotulo de token
   # que o backend usa em log (`rotuloToken` = 8 primeiros hex do SHA-256). E o
   # que permite correlacionar uma compra entre app e servidor sem que o
