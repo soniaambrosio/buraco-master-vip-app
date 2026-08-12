@@ -455,6 +455,55 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "//": "SOCIAL §22 — lista de amigos de um jogador, por apelido normalizado, com o publicId como desempate tecnico. O desempate NAO e decorativo: apelido nao e unico (§7), e sem um segundo criterio a ordem entre dois homonimos seria indefinida entre paginas — a paginacao por cursor pularia ou repetiria itens. COLLECTION (e nao COLLECTION_GROUP) porque a consulta sempre parte de um dono conhecido: `users/{uid}/friends`. [origem: social]",
+      "collectionGroup": "friends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "apelidoOrdenacao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §23 e §24 — solicitacoes recebidas ou enviadas, mais recentes primeiro. Ordenadas por instante, e nao por apelido, porque §25 proibe teto de solicitacoes RECEBIDAS: essa lista e ilimitada por decisao antiabuso e nao caberia num carregamento unico como a de amigos cabe. `publicId` fecha o desempate para o cursor ser estavel quando duas solicitacoes chegam no mesmo milissegundo. [origem: social]",
+      "collectionGroup": "friendRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "direcao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "solicitadaEm",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §20 e §22 — as amizades ATIVAS de um jogador, na fonte de verdade. Sustenta duas coisas: o leque que propaga a chave de ordenacao quando o apelido muda, e a reconciliacao que reconstroi as projecoes a partir do canonico. `membros` e denormalizado como array justamente porque `array-contains` e a unica forma de perguntar 'as relacoes deste jogador' num documento cuja chave e o PAR. [origem: social]",
+      "collectionGroup": "friendships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "membros",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "//fieldOverrides": "Vazio de proposito. As consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore. Declara-las aqui seria criar indice que o Firestore ja mantem. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",

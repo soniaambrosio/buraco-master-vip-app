@@ -18,6 +18,15 @@ rules_version = '2';
 //   * MODERACAO                 <- claude/moderation-reports-blocking-social-08ef72
 //     reports, sanctions, playerModeration, moderationAudit, moderationTasks,
 //     users/{uid}/reportReceipts, users/{uid}/blocks, users/{uid}/mutes
+//   * IDENTIDADE PUBLICA / SOCIAL  <- OS de Identidade Publica e Grafo Social
+//     playerIdentities, publicIdIndex, publicProfiles, friendships,
+//     playerSocial, users/{uid}/friends, users/{uid}/friendRequests
+//
+// O BLOCO SOCIAL (6/6) e o unico que NAO veio de uma branch: ele nasceu direto
+// sobre esta uniao, e por isso e tambem o unico que ja pode ser lido como
+// definitivo em vez de "copia conferivel contra a origem". Ele acrescenta o
+// PRIMEIRO documento deliberadamente publico do banco — ver o cabecalho do
+// proprio bloco.
 //
 // Os dois ultimos blocos foram unidos pela homologacao P0 integrada
 // (homologacao/p0-integrada-a90557): as branches de RASTREABILIDADE e MODERACAO
@@ -663,6 +672,155 @@ service cloud.firestore {
           && apenasCampos(['alvoUid', 'criadoEm']);
 
         allow delete: if ehDono(uid);
+      }
+    }
+
+    // =====================================================================
+    // BLOCO 6/6 — IDENTIDADE PUBLICA E GRAFO SOCIAL
+    // origem: OS de Identidade Publica e Grafo Social
+    //
+    // O PRINCIPIO DESTE BLOCO, e o que o diferencia do de moderacao: aqui
+    // existe, pela primeira vez no banco, um documento DELIBERADAMENTE PUBLICO —
+    // `publicProfiles/{publicId}`. Todos os outros blocos partem de "so o dono
+    // le"; este declara um documento que qualquer autenticado le, porque perfil
+    // publico e exatamente isso.
+    //
+    // E por isso a disciplina do bloco e a INVERSA da dos outros. Nos demais, a
+    // pergunta e "quem pode ler este documento?". Aqui, a pergunta e "o que pode
+    // existir DENTRO deste documento?" — porque regra do Firestore libera ou nega
+    // o documento inteiro, e nao ha projecao de campo. A resposta esta em
+    // `camposPublicos`, em app/lib/social/apresentacao.dart, e a trava que a
+    // aplica roda no servidor (`exigirDocumentoPublicoLimpo`) antes de cada
+    // escrita. Uma regra nao conseguiria fazer isso; o codigo consegue.
+    //
+    // SAO TRES DOCUMENTOS DE IDENTIDADE, E NAO UM, pela mesma razao:
+    //
+    //   playerIdentities/{uid} ..... uid -> publicId. O dono le o proprio.
+    //   publicIdIndex/{publicId} ... publicId -> uid. CARREGA UID, portanto e
+    //                                negado a TODO cliente, inclusive ao dono.
+    //   publicProfiles/{publicId} .. apelido e avatar. Publico.
+    //
+    // Junta-los seria escolher entre publicar o UID e nao ter perfil publico.
+    //
+    // ESCRITA: NINGUEM, PELO CLIENTE, EM LUGAR NENHUM DESTE BLOCO. Nao ha um
+    // unico `allow write` verdadeiro, e nao e descuido — e a resposta a §33 item
+    // por item:
+    //
+    //   criar identidade para outro UID ..... `playerIdentities` write negado
+    //   mudar o proprio publicId ............ idem (a Function tambem nao atualiza)
+    //   adulterar amizade ................... `friendships` write negado
+    //   aceitar em nome de terceiro ......... idem
+    //   criar relacao bilateral direta ...... idem
+    //   remover amizade alheia .............. idem
+    //   forjar remetente .................... idem (`solicitanteUid` e do servidor)
+    //   ultrapassar bloqueio ................ a Function le `blocks` na transacao
+    //   ler dado privado pelo perfil ........ `publicProfiles` so tem campo publico
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Identidade interna do jogador — uid -> publicId
+    // ---------------------------------------------------------------------
+    // O dono le a PROPRIA: ele precisa saber qual e o seu codigo para
+    // compartilhar. Ler a de terceiro daria o mapa `uid -> publicId`, que e
+    // metade do que o publicId existe para esconder.
+    match /playerIdentities/{uid} {
+      allow get: if ehDono(uid) || ehAdmin();
+      // `list` negado ate para o dono: varrer a colecao entregaria a base
+      // inteira de identidades numa consulta so.
+      allow list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Mapa reverso — publicId -> uid
+    // ---------------------------------------------------------------------
+    // NEGADO A TODO CLIENTE, inclusive ao dono do proprio documento. Este e o
+    // unico lugar do banco onde o caminho de volta existe, e §31-D exige que ele
+    // seja "exclusivamente no backend". Um jogador que lesse aqui converteria
+    // qualquer publicId visto no ranking no UID correspondente — e o publicId
+    // deixaria de proteger coisa nenhuma.
+    //
+    // Admin le para suporte ("quem e o jogador P0123456789AB?"), que e uma
+    // pergunta legitima de quem investiga denuncia.
+    match /publicIdIndex/{publicId} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Perfil publico — a fonte UNICA de apelido e avatar (§31)
+    // ---------------------------------------------------------------------
+    // Leitura por qualquer autenticado: e o que permite `Ranking/Hall ->
+    // publicId -> Ver Perfil` sem que nenhuma dessas telas conheca UID.
+    //
+    // Escrita fechada, inclusive para o dono. Nao e desconfianca do jogador: e
+    // que a alteracao precisa normalizar o apelido (produzindo
+    // `apelidoOrdenacao`) e propagar a chave de ordenacao para as projecoes dos
+    // amigos. Regra do Firestore nao normaliza texto nem escreve em 200
+    // documentos — deixar o cliente gravar aqui daria um perfil com ordenacao
+    // incoerente e um apelido que nunca passou por validacao.
+    match /publicProfiles/{publicId} {
+      allow get, list: if autenticado();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // A relacao canonica de amizade — fonte de verdade (§20)
+    // ---------------------------------------------------------------------
+    // NEGADA AO CLIENTE ATE NA LEITURA, e a razao nao e sigilo da amizade: o
+    // documento carrega `membros`, `solicitanteUid` e `destinatarioUid`, que sao
+    // UIDs. Liberar a leitura para os proprios membros — que parece inofensivo,
+    // porque a amizade e deles — entregaria o UID do amigo a qualquer aplicativo
+    // modificado, e §21 e explicita: "Nao retornar UID simplesmente porque ele
+    // facilita implementacao."
+    //
+    // O jogador ve os amigos por `listarAmigos`, que devolve publicId, apelido e
+    // avatar — e nada mais.
+    match /friendships/{pairKey} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Contadores sociais
+    // ---------------------------------------------------------------------
+    // O dono le os proprios (a tela mostra "142 de 200 amigos"). Escrita
+    // fechada: e aqui que morreria a tentativa de zerar o contador para furar o
+    // teto de §25.
+    match /playerSocial/{uid} {
+      allow get: if ehDono(uid) || ehAdmin();
+      allow list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Projecoes sociais — subcolecoes de `users/{uid}`
+    // ---------------------------------------------------------------------
+    // TERCEIRO bloco `match /users/{uid}` do arquivo, pelo mesmo motivo que o
+    // segundo existe: as regras avaliam todos os blocos que casam e concedem se
+    // QUALQUER um conceder, entao separar nao afrouxa nada — e mantem os blocos
+    // anteriores conferiveis linha a linha contra as branches de origem.
+    match /users/{uid} {
+
+      // AMIGOS e SOLICITACOES, em projecao derivada.
+      //
+      // NEGADAS ATE AO DONO, e este e o detalhe que se perde numa leitura
+      // rapida: o ID DO DOCUMENTO E O UID DO OUTRO JOGADOR. Um `list` aqui
+      // devolveria a lista de UIDs dos amigos sem que nenhum CAMPO carregasse
+      // UID — o vazamento estaria na chave, nao no valor. Por isso a leitura
+      // passa obrigatoriamente pelas Functions, que projetam para publicId.
+      //
+      // A fonte de verdade e `friendships`; estas duas sao visoes derivadas,
+      // escritas na MESMA transacao, e reconstrutiveis por
+      // `reconciliarPerfilSocial`.
+      match /friends/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+
+      match /friendRequests/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
       }
     }
 

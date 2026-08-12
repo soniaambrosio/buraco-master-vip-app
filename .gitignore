@@ -26,3 +26,8 @@ node_modules/
 # Mesma razao para o codebase de moderacao: o bundle sai de
 # `app/lib/moderacao/js_bridge.dart` e nao pode ser versionado ao lado da fonte.
 /functions-moderacao/lib/
+# E para o codebase social: o bundle sai de `app/lib/social/js_bridge.dart` e
+# carrega junto o dominio de moderacao que ele importa (avaliarContato). Duas
+# copias compiladas do MESMO dominio, versionadas, seria a forma mais rapida de
+# uma delas ficar velha sem ninguem ver.
+/functions-social/lib/
