@@ -314,18 +314,50 @@ Domínio e espectador (sem emulador):
 cd app && flutter test test/moderacao/teste_moderacao.dart test/motor/teste_visao_espectador.dart
 ```
 
-Regras e Functions (Emulator Suite; exige Java 11+):
+Só as **regras** (Emulator Suite; exige Java 11+). Os dois blocos de Function
+saem como `# SKIP` aqui, de propósito — este alvo não sobe Functions:
 
 ```bash
 cd firebase/testes && npm install && npm run emulador
 ```
 
-Numa máquina sem Java no PATH mas com Android Studio:
+Regras **e** as chamadas reais às Cloud Functions — compila o domínio Dart e o
+TypeScript, sobe `firestore,auth,functions:moderacao` e roda os 45 casos:
 
 ```bash
-JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" npm run emulador
+cd firebase/testes && npm run emulador:moderacao
 ```
 
-Para que os blocos de Function rodem em vez de serem pulados, é preciso
-`FUNCTIONS_EMULATOR_HOST=127.0.0.1:5001` — `emulators:exec` não exporta essa
-variável, e sem ela o `skip` do harness silencia a suíte inteira de callables.
+Numa máquina sem Java no PATH mas com Android Studio, o `java` precisa estar no
+PATH (o Firebase CLI não lê `JAVA_HOME` para escolher o binário):
+
+```bash
+PATH="/c/Program Files/Android/Android Studio/jbr/bin:$PATH" npm run emulador:moderacao
+```
+
+### Por que `emulador:moderacao` existe
+
+`emulators:exec` exporta `FIRESTORE_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`
+e `GCLOUD_PROJECT` — e **nada** para Functions. Como os dois blocos de callable
+são guardados por `skip: !process.env.FUNCTIONS_EMULATOR_HOST`, subir o emulador
+pela via normal os pulava em silêncio: o resumo dizia `fail 0` e nenhuma chamada
+tinha sido feita. Foi assim desde a entrega da OS de Moderação.
+
+Quem fecha o buraco é `firebase/testes/com-functions.js`: ele confere que a porta
+5001 atende, **falha** se não atender — em vez de pular — e só então exporta a
+variável. O mesmo runner serve a suíte social, via `--codebase=<nome>`.
+
+Duas coisas que a primeira execução de verdade revelou, já corrigidas:
+
+1. **`CONCORRENCIA` não provava nada.** A asserção filtrava `reports` por id de
+   documento e conferia que sobrava um — o que é verdade por construção, já que
+   id é único. Agora conta a trilha em `moderationAudit`, que tem id automático e
+   é o único artefato que denunciaria o corpo da transação executado duas vezes.
+2. **A direção que a §8 exige não era testada.** O caso chamado "o contato do
+   bloqueado com o bloqueador" media a direção oposta (`bloqueouODestino`, que é
+   decisão deste projeto, não exigência da OS). O caso de `bloqueadoPeloDestino`
+   foi acrescentado.
+
+Rodar dois `emulador:*` em sequência exige esperar o anterior liberar as portas
+5001/8080/9099; encavalar faz o segundo run morrer com `port taken` ou responder
+`functions/not-found` em toda chamada.

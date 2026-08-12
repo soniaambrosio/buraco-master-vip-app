@@ -18,7 +18,12 @@
 //      estiver — em vez de pular em silencio;
 //   2. exporta `FUNCTIONS_EMULATOR_HOST` para a suite, que entao roda de fato.
 //
-// Uso:  node com-functions.js social.test.js
+// Uso:  node com-functions.js [--codebase=<nome>] social.test.js
+//
+// `--codebase` so muda a MENSAGEM DE ERRO: cada suite depende de um codebase
+// diferente (`functions-social`, `functions-moderacao`), e mandar quem esbarrou
+// no erro compilar o bundle errado gasta o tempo de quem ja esta bloqueado. A
+// verificacao em si e a mesma para todas: a porta 5001 atende ou nao atende.
 
 'use strict';
 
@@ -27,11 +32,25 @@ const { spawn } = require('node:child_process');
 
 const HOST = process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001';
 const [host, porta] = HOST.split(':');
-const alvos = process.argv.slice(2);
+
+const argumentos = process.argv.slice(2);
+const codebase = (argumentos.find((a) => a.startsWith('--codebase=')) || '')
+  .split('=')[1] || null;
+const alvos = argumentos.filter((a) => !a.startsWith('--'));
 
 if (alvos.length === 0) {
-  console.error('uso: node com-functions.js <arquivo de teste> [...]');
+  console.error('uso: node com-functions.js [--codebase=<nome>] <arquivo de teste> [...]');
   process.exit(2);
+}
+
+function comoSubir() {
+  if (!codebase) {
+    return '  suba o emulador com o codebase de Functions que esta suite exige.\n';
+  }
+  return (
+    `  cd functions-${codebase} && npm run build:domain && npm run build\n` +
+    `  cd firebase/testes && npm run emulador:${codebase}\n`
+  );
 }
 
 /// Conexao TCP crua, e nao um HTTP GET: o emulador de Functions responde 404 a
@@ -58,8 +77,7 @@ function portaAberta() {
       `\nO emulador de Functions nao esta atendendo em ${HOST}.\n` +
       'Esta suite prova CHAMADAS REAIS as Cloud Functions; rodar sem elas seria\n' +
       'declarar integracao onde so houve funcao pura. Suba assim:\n\n' +
-      '  cd functions-social && npm run build:domain && npm run build\n' +
-      '  cd firebase/testes && npm run emulador:social\n',
+      comoSubir(),
     );
     process.exit(1);
   }

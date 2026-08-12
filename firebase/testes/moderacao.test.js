@@ -9,9 +9,23 @@
 // terceiro e por parametro adulterado) tambem vivem aqui, na secao ESPECTADOR do
 // fim: eles sao de autorizacao, e nao de recorte.
 //
+// DUAS SUITES NUM ARQUIVO SO, e a divisao esta marcada no meio:
+//
+//   REGRAS ..... rodam com `--only firestore`. Sem `dart compile js`, sem tsc.
+//   FUNCTIONS .. rodam SOMENTE quando `FUNCTIONS_EMULATOR_HOST` existe. Sao as
+//                que provam idempotencia, concorrencia e o UID do payload
+//                ignorado — coisas que regra nenhuma alcanca.
+//
+// O `skip` dos dois describes de Function nao basta para que eles rodem: como
+// `emulators:exec` NAO exporta `FUNCTIONS_EMULATOR_HOST`, quem sobe o emulador
+// pela via normal os pula em silencio e ve a suite verde. Quem exporta a
+// variavel — e FALHA se a porta 5001 nao atender — e `com-functions.js`, atras
+// de `npm run emulador:moderacao`.
+//
 // Uso:
 //   cd firebase/testes && npm install
-//   npm run emulador
+//   npm run emulador                        # so as regras (Functions puladas)
+//   npm run emulador:moderacao              # regras + Functions de moderacao
 //
 // Numa maquina sem Java no PATH mas com Android Studio instalado:
 //   JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" npm run emulador
@@ -368,7 +382,7 @@ describe('registrarDenuncia', { skip: !process.env.FUNCTIONS_EMULATOR_HOST }, ()
     getFunctions, connectFunctionsEmulator, httpsCallable,
   } = require('firebase/functions');
 
-  let denunciar, bloquear, desbloquear, contato, uid;
+  let denunciar, uid;
 
   before(async () => {
     const app = initializeApp({ projectId: PROJETO, apiKey: 'fake' }, 'moderacao');
@@ -380,9 +394,6 @@ describe('registrarDenuncia', { skip: !process.env.FUNCTIONS_EMULATOR_HOST }, ()
     const fn = getFunctions(app, 'southamerica-east1');
     connectFunctionsEmulator(fn, host, Number(porta));
     denunciar = httpsCallable(fn, 'registrarDenuncia');
-    bloquear = httpsCallable(fn, 'bloquearJogador');
-    desbloquear = httpsCallable(fn, 'desbloquearJogador');
-    contato = httpsCallable(fn, 'consultarContato');
   });
 
   test('sem autenticacao, recusa', async () => {
@@ -438,11 +449,30 @@ describe('registrarDenuncia', { skip: !process.env.FUNCTIONS_EMULATOR_HOST }, ()
     ]);
 
     await ambiente.withSecurityRulesDisabled(async (ctx) => {
-      const s = await getDoc(doc(ctx.firestore(), `reports/${uid}|corrida1`));
-      assert.equal(s.exists(), true);
-      const todas = await getDocs(collection(ctx.firestore(), 'reports'));
-      const dessa = todas.docs.filter((d) => d.id === `${uid}|corrida1`);
-      assert.equal(dessa.length, 1);
+      const db = ctx.firestore();
+      const reportId = `${uid}|corrida1`;
+      assert.equal((await getDoc(doc(db, `reports/${reportId}`))).exists(), true);
+
+      // CONTAR A TRILHA, e nao os documentos de `reports`.
+      //
+      // A versao anterior deste teste filtrava `reports` por id e conferia que
+      // sobrava um — assercao que NAO PODE FALHAR, porque id de documento e
+      // unico por construcao: cinco criacoes concorrentes da mesma chave
+      // deixariam um documento mesmo se a barreira de idempotencia nao
+      // existisse. O teste passava sem provar nada, e ninguem percebeu porque o
+      // bloco inteiro estava permanentemente pulado.
+      //
+      // `moderationAudit` e o unico artefato que DENUNCIA a execucao dupla: os
+      // documentos tem id automatico, entao um corpo de transacao executado
+      // duas vezes deixa duas linhas de trilha para o mesmo `reportId`.
+      const trilha = await getDocs(collection(db, 'moderationAudit'));
+      const dessa = trilha.docs.filter((d) => d.data().reportId === reportId);
+      assert.equal(dessa.length, 1, 'o corpo da transacao rodou mais de uma vez');
+
+      const recibos = await getDocs(collection(db, `users/${uid}/reportReceipts`));
+      assert.equal(
+        recibos.docs.filter((d) => d.id === reportId).length, 1,
+      );
     });
   });
 
@@ -542,7 +572,12 @@ describe('bloqueio pela Function', { skip: !process.env.FUNCTIONS_EMULATOR_HOST 
     await bloquear({ bloqueadoUid: DENUNCIADO });
     await ambiente.withSecurityRulesDisabled(async (ctx) => {
       const s = await getDocs(collection(ctx.firestore(), `users/${uid}/blocks`));
-      assert.equal(s.docs.filter((d) => d.id === DENUNCIADO).length, 1);
+      // A LISTA INTEIRA, e nao os documentos com aquele id: filtrar por id so
+      // pode devolver zero ou um, entao a assercao antiga nao alcancava o
+      // defeito que o teste descreve. Contar a lista pega a gravacao duplicada
+      // sob outra chave — que e a forma que a duplicidade teria.
+      assert.equal(s.docs.length, 1);
+      assert.equal(s.docs[0].id, DENUNCIADO);
     });
   });
 
@@ -553,7 +588,12 @@ describe('bloqueio pela Function', { skip: !process.env.FUNCTIONS_EMULATOR_HOST 
     );
   });
 
-  test('o contato do bloqueado com o bloqueador e barrado', async () => {
+  test('quem BLOQUEOU tambem nao alcanca quem ele bloqueou', async () => {
+    // O nome antigo deste caso ("o contato do bloqueado com o bloqueador")
+    // descrevia a direcao OPOSTA a que ele media: aqui quem chama e o
+    // bloqueador, e `bloqueouODestino` e justamente o motivo da outra ponta.
+    // A direcao que a §8 da OS EXIGE — o bloqueado nao alcanca o bloqueador —
+    // nao era coberta por teste nenhum; ela vive no caso seguinte.
     const r = await contato({ alvoUid: DENUNCIADO });
     assert.equal(r.data.permitido, false);
     assert.equal(r.data.motivo, 'bloqueouODestino');
@@ -564,6 +604,26 @@ describe('bloqueio pela Function', { skip: !process.env.FUNCTIONS_EMULATOR_HOST 
     await desbloquear({ bloqueadoUid: DENUNCIADO });
     const r = await contato({ alvoUid: DENUNCIADO });
     assert.equal(r.data.permitido, true);
+  });
+
+  test('o BLOQUEADO nao alcanca quem o bloqueou (§8 da OS)', async () => {
+    // Roda DEPOIS do desbloqueio de proposito: sem bloqueio na ida, uma recusa
+    // aqui so pode vir da volta. Se as duas pontas estivessem bloqueadas, o
+    // teste passaria pelo motivo errado e a §8 seguiria sem prova.
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `users/${DENUNCIADO}/blocks/${uid}`), {
+        bloqueadorUid: DENUNCIADO, bloqueadoUid: uid, criadoEm: new Date(),
+        esquema: 1,
+      });
+    });
+
+    const r = await contato({ alvoUid: DENUNCIADO });
+    assert.equal(r.data.permitido, false);
+    assert.equal(r.data.motivo, 'bloqueadoPeloDestino');
+
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      await deleteDoc(doc(ctx.firestore(), `users/${DENUNCIADO}/blocks/${uid}`));
+    });
   });
 
   test('consultar contato com UID desconhecido responde neutro', async () => {
