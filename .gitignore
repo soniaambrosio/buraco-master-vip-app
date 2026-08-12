@@ -31,3 +31,8 @@ node_modules/
 # `tsc`. Versiona-la faria os testes rodarem contra um JS que pode nao
 # corresponder ao TypeScript ao lado.
 /functions-ranking/lib/
+# E para o codebase social: o bundle sai de `app/lib/social/js_bridge.dart` e
+# carrega junto o dominio de moderacao que ele importa (avaliarContato). Duas
+# copias compiladas do MESMO dominio, versionadas, seria a forma mais rapida de
+# uma delas ficar velha sem ninguem ver.
+/functions-social/lib/

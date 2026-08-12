@@ -55,6 +55,19 @@
       "//sem-predeploy-de-dominio": "Torneios e moderacao compilam um dominio Dart antes do tsc porque a regra competitiva deles mora em Dart. A regra competitiva do ranking NAO EXISTE — nao ha formula de pontuacao decidida em lugar nenhum do projeto (ver functions-ranking/src/politica.ts). Nao ha dominio a compilar, e um bundle vazio so para imitar o vizinho seria cerimonia sem conteudo. Quando a formula existir, ela entra por politica.ts; se vier a morar em Dart, esta entrada ganha o mesmo par build:domain + build dos vizinhos.",
       "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
       "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "SOCIAL — obterMinhaIdentidade, atualizarPerfilPublico, verPerfilPublico, localizarJogadorPorIdentidade, enviarSolicitacaoAmizade, aceitarSolicitacaoAmizade, recusarSolicitacaoAmizade, cancelarSolicitacaoAmizade, removerAmizade, listarAmigos, listarSolicitacoesRecebidas, listarSolicitacoesEnviadas, aoBloquearJogador, reconciliarPerfilSocial. Origem: OS de Identidade Publica e Grafo Social.",
+      "//porque-codebase-proprio": "Pelo MESMO criterio que ja separa os quatro acima, e nao por comodidade: sao unidades de implantacao independentes. O caso decisivo e o gatilho `aoBloquearJogador`, que reage a `users/{uid}/blocks`. Se ele morasse no codebase de moderacao, um deploy quebrado da faxina social derrubaria junto a capacidade de BLOQUEAR alguem — a ferramenta de protecao mais urgente do aplicativo. A dependencia tem que apontar para o lado seguro: o social reage ao bloqueio, a moderacao nao espera pelo social.",
+      "source": "functions-social",
+      "codebase": "social",
+      "runtime": "nodejs20",
+      "//predeploy": "Mesma ordem obrigatoria: o dominio Dart vira JS antes do tsc. Aqui o bundle carrega TAMBEM o dominio de moderacao, porque js_bridge.dart importa `avaliarContato` de app/lib/moderacao/relacao_social.dart — §18 manda consumir o bloqueio existente, e a forma mais forte de consumir e compilar a mesma funcao.",
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build:domain",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
 

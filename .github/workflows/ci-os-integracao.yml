@@ -4,17 +4,29 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 #
 # Escopo (executa "quando aplicável", nunca afrouxa teste para ficar verde):
 #   1. flutter analyze  (erro é fatal; warning/info não)
-#   2. flutter test — Motor de Partidas, encerramento, torneios, integração e
-#      coleções/Kit Pioneiros
+#   2. flutter test — Motor de Partidas, encerramento, torneios, integração,
+#      coleções/Kit Pioneiros e domínio social
 #   3. as codebases Firebase, cada uma descoberta pelo próprio caminho:
 #        colecoes -> firebase/functions   + regras em firebase/testes (emulador)
 #        billing  -> functions-billing    (node --test, sem emulador)
 #        torneios -> functions            (tsc --noEmit)
 #        ranking  -> functions-ranking    (tsc + node --test)
-#      As regras rodam por `test:integrado`, que prova os quatro blocos de
+#        social   -> functions-social     (dart compile js + tsc + node --test,
+#                                          e um passo PRÓPRIO de Emulator Suite
+#                                          com chamadas reais às callables)
+#      As regras rodam por `test:integrado`, que prova os cinco blocos de
 #      firestore.rules cobertos por suíte no MESMO arquivo.
 #      NÃO COBERTO, e registrado como tal: `functions-moderacao` não tem passo
 #      próprio aqui. É anterior a esta OS e está fora do escopo dela.
+#
+# NENHUM GATE FOI REMOVIDO NEM AFROUXADO por estas adições (OS Identidade Pública
+# §38, OS Política Competitiva, OS de integração de identidade). Os gates de
+# social são: `social` (domínio Dart), `socialdom` (o bundle do domínio compila),
+# `socialfn` (typecheck + testes puros do codebase) e `socialemu` (Functions
+# reais no emulador). Os de ranking são `rankingfn` e `rankingemu`. As Rules dos
+# dois blocos entram no gate `regras` que já existia, porque
+# `firebase/testes/npm run test:integrado` passou a incluir `social.test.js` e
+# `ranking.test.js` no MESMO arquivo de regras.
 #
 # REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
 # descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
@@ -107,6 +119,10 @@ jobs:
           roda colarte    test/colecoes/colecao_arte_test.dart
           roda colfire    test/colecoes/colecao_firebase_test.dart
           roda colkit     test/colecoes/kit_pioneiros_test.dart
+          # OS Identidade Publica e Grafo Social: o dominio puro (apelido,
+          # publicId, estados da amizade, limites, paginacao). Autorizacao e
+          # provada pelas Rules, no gate `regras`.
+          roda social     test/social/teste_social.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -125,7 +141,7 @@ jobs:
           ( cd functions && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
           ( cd functions && npx tsc --noEmit ) 2>&1 | tee t_torneiosfn.log; echo ${PIPESTATUS[0]} > exit_torneiosfn
 
-      - name: "3d — codebase RANKING (functions-ranking), tsc + unitários"
+      - name: "3e — codebase RANKING (functions-ranking), tsc + unitários"
         run: |
           set +e
           if [ ! -f functions-ranking/package.json ]; then
@@ -137,10 +153,10 @@ jobs:
           # bloco de Ranking são provadas no passo 3c, contra o emulador.
           ( cd functions-ranking && npm test ) 2>&1 | tee t_rankingfn.log; echo ${PIPESTATUS[0]} > exit_rankingfn
 
-      - name: "3e — codebase RANKING: integração contra o Firestore (emulador)"
+      - name: "3f — codebase RANKING: integração contra o Firestore (emulador)"
         run: |
           set +e
-          # FECHA A LACUNA QUE A OS ANTERIOR DECLAROU. O passo 3d prova a lógica
+          # FECHA A LACUNA QUE A OS ANTERIOR DECLAROU. O passo 3e prova a lógica
           # pura; este prova o que só o banco prova: transação, idempotência por
           # id de documento, concorrência (lost update) e paginação por cursor.
           #
@@ -157,7 +173,42 @@ jobs:
             2>&1 | tee t_rankingint.log
           echo ${PIPESTATUS[0]} > exit_rankingint
 
-      - name: "3c — codebase COLECOES: regras + Functions no Emulator Suite"
+      - name: "3c — codebase SOCIAL (functions-social): dominio Dart, typecheck e testes puros"
+        run: |
+          set +e
+          if [ ! -f functions-social/package.json ]; then
+            echo "functions-social/package.json ausente" > nao_socialfn; exit 0
+          fi
+          ( cd functions-social && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
+          # `flutter pub get` em app/ ANTES do build:domain: `dart compile js`
+          # precisa da resolucao de pacotes da arvore real, e nao do scaffold.
+          ( cd app && flutter pub get 2>&1 | tail -2 )
+          # A ordem importa, como nos outros codebases: o dominio Dart vira JS
+          # antes do tsc, que compila contra ele. Este passo tambem e o que deixa
+          # o codebase `social` CARREGAVEL pelo emulador do passo 3d — sem ele o
+          # Emulator Suite falharia ao montar a Function.
+          ( cd functions-social && npm run build:domain ) 2>&1 | tee t_socialdom.log
+          echo ${PIPESTATUS[0]} > exit_socialdom
+          ( cd functions-social && npm test ) 2>&1 | tee t_socialfn.log
+          echo ${PIPESTATUS[0]} > exit_socialfn
+
+      - name: "3d — Functions SOCIAIS contra o Emulator Suite (chamadas reais)"
+        run: |
+          set +e
+          # Este gate existe porque a suite de regras, sozinha, NAO prova
+          # idempotencia, concorrencia nem ausencia de UID nas RESPOSTAS. O runner
+          # `com-functions.js` falha se o emulador de Functions nao estiver
+          # atendendo, para que "verde" nunca signifique "pulado".
+          if [ ! -f functions-social/lib/index.js ]; then
+            echo "functions-social nao foi compilado no passo 3c" > nao_socialemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd firebase/testes && npm install 2>&1 | tail -3 )
+          firebase emulators:exec --only firestore,auth,functions:social --project demo-bmv \
+            "cd firebase/testes && npm run test:social:functions" 2>&1 | tee t_socialemu.log
+          echo ${PIPESTATUS[0]} > exit_socialemu
+
+      - name: "3g — codebase COLECOES: regras + Functions no Emulator Suite"
         run: |
           set +e
           # Caminho FIXO do harness de segurança. Ele não fica em
@@ -177,9 +228,12 @@ jobs:
           # `--project demo-bmv` mantém tudo no emulador: nenhum projeto real é
           # tocado e não é preciso credencial.
           # `test:integrado`, e não `npm test`: o alvo curto roda só segurança +
-          # moderação, e deixava rastreabilidade e ranking fora do portão. Os
-          # quatro blocos precisam ser provados no MESMO firestore.rules, que é
-          # justamente onde um bloco novo poderia afrouxar o do vizinho.
+          # moderação + social, e deixava rastreabilidade e ranking fora do
+          # portão. Os CINCO blocos precisam ser provados no MESMO
+          # firestore.rules, que é justamente onde um bloco novo poderia
+          # afrouxar o do vizinho — e social e ranking são os dois que falam de
+          # `publicId`, então separá-los esconderia a regressão que a OS de
+          # integração de identidade existe para impedir.
           firebase emulators:exec --only firestore,auth,functions --project demo-bmv \
             "cd firebase/testes && npm run test:integrado" 2>&1 | tee t_regras.log
           echo ${PIPESTATUS[0]} > exit_regras
@@ -189,7 +243,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn rankingfn rankingint regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -240,7 +294,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit billing torneiosfn regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

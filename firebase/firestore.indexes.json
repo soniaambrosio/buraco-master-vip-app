@@ -457,6 +457,55 @@
       ]
     },
     {
+      "//": "SOCIAL §22 — lista de amigos de um jogador, por apelido normalizado, com o publicId como desempate tecnico. O desempate NAO e decorativo: apelido nao e unico (§7), e sem um segundo criterio a ordem entre dois homonimos seria indefinida entre paginas — a paginacao por cursor pularia ou repetiria itens. COLLECTION (e nao COLLECTION_GROUP) porque a consulta sempre parte de um dono conhecido: `users/{uid}/friends`. [origem: social]",
+      "collectionGroup": "friends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "apelidoOrdenacao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §23 e §24 — solicitacoes recebidas ou enviadas, mais recentes primeiro. Ordenadas por instante, e nao por apelido, porque §25 proibe teto de solicitacoes RECEBIDAS: essa lista e ilimitada por decisao antiabuso e nao caberia num carregamento unico como a de amigos cabe. `publicId` fecha o desempate para o cursor ser estavel quando duas solicitacoes chegam no mesmo milissegundo. [origem: social]",
+      "collectionGroup": "friendRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "direcao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "solicitadaEm",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §20 e §22 — as amizades ATIVAS de um jogador, na fonte de verdade. Sustenta duas coisas: o leque que propaga a chave de ordenacao quando o apelido muda, e a reconciliacao que reconstroi as projecoes a partir do canonico. `membros` e denormalizado como array justamente porque `array-contains` e a unica forma de perguntar 'as relacoes deste jogador' num documento cuja chave e o PAR. [origem: social]",
+      "collectionGroup": "friendships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "membros",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "//": "A ORDEM OFICIAL DO RANKING DE UMA TEMPORADA. Serve as quatro consultas que produzem classificacao: a pagina (`abrirRanking`/`paginarRanking`), o podio, a varredura da apuracao e a da consolidacao. ATUALIZADO PELA POLITICA COMPETITIVA V1: ate ela, a ordem era `seasonId, pontos DESC, publicPlayerId ASC`, porque nao havia decisao de produto sobre desempate. A secao 17 decidiu CINCO criterios competitivos, e todos os cinco precisam estar aqui — um `orderBy` sem indice correspondente e recusado pelo Firestore em producao, e a lista simplesmente nao abre. Campo a campo: `seasonId` isola a temporada (sem ele, 2026-A misturaria com 2026-B); `pontos DESC` e o rating; `vitorias DESC`, `saldoPontos DESC`, `abandonos ASC` (o unico ascendente) e `ratingAtingidoEm ASC` (quem chegou ao rating primeiro) sao os criterios 2 a 5; `publicPlayerId ASC` e o desempate TECNICO que torna a ordem TOTAL — sem ele o `startAfter` do cursor nao aponta para um ponto unico da lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Ver o cabecalho de functions-ranking/src/ordenacao.ts. [origem: ranking]",
       "collectionGroup": "rankingStandings",
       "queryScope": "COLLECTION",
