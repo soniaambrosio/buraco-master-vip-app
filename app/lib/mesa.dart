@@ -11,7 +11,10 @@ import 'screens/resultado_partida_screen.dart';
 // C9-D — camada de costura da AUTORIDADE canônica (atrás da flag; OFF por padrão).
 import 'motor/motor_config.dart';
 import 'motor/autoridade_canonica.dart';
+// C10 — costura da classificação/pontuação canônicas no consumidor real.
+import 'motor/pontuacao_costura.dart';
 import 'rules/acoes.dart';
+import 'rules/rule_spec.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -682,6 +685,62 @@ class Jogo {
     return null;
   }
 
+  /// C10 — RuleSpec canônica desta partida (modalidade + meta). É a MESMA spec
+  /// que a autoridade deriva da projeção; aqui serve à classificação e à
+  /// pontuação do consumidor.
+  RuleSpec get specCanonica =>
+      specCanonicaDaPartida(modalidade, metaPontos);
+
+  /// Instantâneo mínimo (antes da transação) do que a UI aprovada precisa saber
+  /// depois: quantos jogos a dupla tinha, se já havia pego o morto e se a
+  /// rodada já estava encerrada.
+  (int, bool, bool) _instantaneoDupla(int assento) {
+    final dupla = _duplaKey(assento);
+    return (
+      jogosDupla[dupla]!.length,
+      mortoPego[dupla] ?? false,
+      rodadaEncerrada,
+    );
+  }
+
+  /// C10 — reconstrói, a partir do PÓS-ESTADO canônico já commitado, as três
+  /// chaves de FEEDBACK que a mesa aprovada consome (`tipo`, `pegouMorto`,
+  /// `bateu`). Não é regra: a regra já decidiu; isto é leitura do resultado.
+  ///
+  /// `tipo` = classificação canônica do ÚLTIMO meld tocado pela jogada (o jogo
+  /// novo mais recente ou, se a jogada só estendeu, o jogo estendido) — é o
+  /// meld que a tela celebra. `tipos` traz todos os melds tocados, para a
+  /// jogada composta (abertura múltipla).
+  Map<String, dynamic> _desfechoBaixada(
+    int assento,
+    (int, bool, bool) antes,
+    List<List<String>> jogosNovos,
+    List<Extensao> extensoes,
+  ) {
+    final dupla = _duplaKey(assento);
+    final melds = jogosDupla[dupla]!;
+    final spec = specCanonica;
+    final indices = <int>[
+      for (final e in extensoes)
+        if (e.indiceJogo >= 0 && e.indiceJogo < melds.length) e.indiceJogo,
+      for (var i = antes.$1; i < melds.length; i++) i,
+    ];
+    final tipos = <String>[];
+    for (final i in indices) {
+      final t = tipoCanonicoDeMeld(melds[i], spec);
+      if (t != null) tipos.add(t);
+    }
+    final pegouMorto = !antes.$2 && (mortoPego[dupla] ?? false);
+    final bateu =
+        !antes.$3 && rodadaEncerrada && duplaQueBateu == dupla;
+    return {
+      if (tipos.isNotEmpty) 'tipo': tipos.last,
+      if (tipos.isNotEmpty) 'tipos': tipos,
+      if (pegouMorto) 'pegouMorto': true,
+      if (bateu) 'bateu': true,
+    };
+  }
+
   // ---------- JOGADAS ----------
   bool comprarMonte(int assento) {
     // C10 — AUTORIDADE ÚNICA: o canônico decide/aplica (transação atômica) e é
@@ -931,22 +990,47 @@ class Jogo {
     return out;
   }
 
+  /// C10 — BAIXADA ATÔMICA canônica: um ou mais jogos NOVOS + extensões numa
+  /// ÚNICA transação. É a forma pela qual a abertura MÚLTIPLA (EXC-02) e a
+  /// extensão existem sob a autoridade única — não há rota paralela.
+  /// Exige autoridade canônica (sob rollback legado, o legado não representa
+  /// jogada composta; ver `baixar`/`estender`).
+  Map<String, dynamic> baixarAtomico(
+    int assento, {
+    List<List<String>> jogosNovos = const [],
+    List<Extensao> extensoes = const [],
+    String rotulo = 'baixar',
+  }) {
+    if (!motorConfig.canonicoAtivo) {
+      return {
+        'ok': false,
+        'erro': 'baixada atômica só existe sob a autoridade canônica',
+      };
+    }
+    final antes = _instantaneoDupla(assento);
+    final r = _rodarAutoridade(
+        assento, [Baixar(jogosNovos: jogosNovos, extensoes: extensoes)]);
+    if (r.aplicou) {
+      return {
+        'ok': true,
+        ..._desfechoBaixada(assento, antes, jogosNovos, extensoes),
+      };
+    }
+    if (r.recusaCanonica) {
+      return {
+        'ok': false,
+        'erro': r.motivo ?? 'baixada recusada pelo motor canônico',
+      };
+    }
+    // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+    return {'ok': false, 'erro': _falharFechado(rotulo, r)};
+  }
+
   Map<String, dynamic> baixar(int assento, List<String> ids) {
-    // C9-D — AUTORIDADE ON: baixada como transação canônica ATÔMICA (com
+    // C10 — AUTORIDADE ÚNICA: baixada é transação canônica atômica (com
     // estabilização de morto direto/batida quando a baixada zera a mão).
     if (motorConfig.canonicoAtivo) {
-      final r = _rodarAutoridade(assento, [
-        Baixar(jogosNovos: [ids])
-      ]);
-      if (r.aplicou) return {'ok': true};
-      if (r.recusaCanonica) {
-        return {
-          'ok': false,
-          'erro': r.motivo ?? 'baixada recusada pelo motor canônico',
-        };
-      }
-      // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
-      return {'ok': false, 'erro': _falharFechado('baixar', r)};
+      return baixarAtomico(assento, jogosNovos: [ids], rotulo: 'baixar');
     }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
@@ -998,6 +1082,13 @@ class Jogo {
   }
 
   Map<String, dynamic> estender(int assento, int indiceJogo, List<String> ids) {
+    // C10 — AUTORIDADE ÚNICA: estender NÃO é uma rota paralela; é uma baixada
+    // canônica com `extensoes`. Até o C9-D este método furava a autoridade
+    // (validava e mutava direto), o que deixava um buraco no corte canônico.
+    if (motorConfig.canonicoAtivo) {
+      return baixarAtomico(assento,
+          extensoes: [Extensao(indiceJogo, ids)], rotulo: 'estender');
+    }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes'};
     final dupla = _duplaKey(assento);
@@ -1901,7 +1992,13 @@ class _MesaScreenState extends State<MesaScreen> {
       return;
     }
     _j.ordenar(0);
-    final sashDepois = _sashDeMeld(jogos[indiceJogo]);
+    // C10 — sob autoridade canônica o commit REATRIBUI `jogosDupla`; a lista
+    // capturada antes da jogada ficou obsoleta. Reler é obrigatório, senão a
+    // tarja/celebração leem o PRÉ-estado e nunca disparam.
+    final jogosPos = _j.jogosDupla['nos']!;
+    final sashDepois = indiceJogo < jogosPos.length
+        ? _sashDeMeld(jogosPos[indiceJogo])
+        : Sash.nenhuma;
     final novaCanastra =
         sashDepois != Sash.nenhuma && sashDepois != sashAntes;
     _somJogada(resultado, novaCanastra: novaCanastra);
@@ -1945,9 +2042,15 @@ class _MesaScreenState extends State<MesaScreen> {
   Sash _sashDeMeld(List<Carta> cartas) {
     if (cartas.length < 7) return Sash.nenhuma;
     // Validador por modalidade: no Fechado a trinca-canastra também ganha tarja.
-    final resultado = _j._validarJogoMesa(cartas);
-    if (resultado['valido'] != true) return Sash.nenhuma;
-    switch (resultado['tipo']) {
+    // C10 — sob autoridade canônica quem classifica é o motor canônico, o mesmo
+    // que pontua no fim da rodada: a tarja nunca discorda do placar.
+    final tipo = _j.motorConfig.canonicoAtivo
+        ? tipoCanonicoDeMeld(cartas, _j.specCanonica)
+        : (_j._validarJogoMesa(cartas)['valido'] == true
+            ? _j._validarJogoMesa(cartas)['tipo'] as String?
+            : null);
+    if (tipo == null) return Sash.nenhuma;
+    switch (tipo) {
       case 'limpa':
         return Sash.limpa;
       case 'suja':

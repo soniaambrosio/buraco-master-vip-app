@@ -31,6 +31,10 @@ List<List<Carta>> _mc(List<List<CartaSnapshot>> m) => [for (final l in m) _lc(l)
 
 // ---- modalidade (CANÔNICO com conversão de tipo String <-> enum) ----
 // Legado: 'ABERTO' | 'FECHADO' | 'SBTL'.  Canônico: aberto | fechado | stbl.
+// C10 — PÚBLICA: a costura da pontuação/classificação precisa da MESMA conversão
+// para derivar a RuleSpec da partida. Duplicá-la criaria uma segunda autoridade.
+Modalidade modalidadeCanonicaDe(String legado) => _modDe(legado);
+
 Modalidade _modDe(String legado) {
   switch (legado.toUpperCase()) {
     case 'FECHADO':
