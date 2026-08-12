@@ -1479,20 +1479,85 @@ class Jogo {
     return finais.any(_canastraLiberaBatida);
   }
 
+  // C10 — COMPRA do robô sob AUTORIDADE ÚNICA. A separação é explícita:
+  //   • a HEURÍSTICA escolhe a INTENÇÃO (vale a pena o lixo?) e, quando há mais
+  //     de um uso legal do topo, escolhe QUAL — decidir é papel do agente;
+  //   • a LEGALIDADE e a APLICAÇÃO são sempre do canônico: o robô só escolhe
+  //     DENTRO da lista que a autoridade derivou, e a compra é a mesma transação
+  //     atômica do humano.
+  // No Fechado/STBL a existência de candidato JÁ é a legalidade e a utilidade
+  // (todo candidato põe o topo na mesa); no Aberto a compra é livre, então a
+  // heurística decide sozinha se compensa.
+  void _botCompra(int assento) {
+    if (specCanonica.exigeUsoDoTopoNoLixo) {
+      final cands = candidatosCompraLixo(assento);
+      if (cands.isNotEmpty &&
+          comprarLixoAtomico(assento, _botEscolheCompraLixo(cands))['ok'] ==
+              true) {
+        return;
+      }
+    } else if (_botDeveComprarLixo(assento) &&
+        comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
+      return;
+    }
+    comprarMonte(assento);
+  }
+
+  /// Escolha do robô entre candidatos JÁ LEGAIS: prefere a transação que põe
+  /// mais cartas na mesa. Empate resolve pela ordem determinística da própria
+  /// derivação — mesa igual, escolha igual.
+  ComprarLixo _botEscolheCompraLixo(List<ComprarLixo> cands) {
+    int usadas(ComprarLixo c) =>
+        c.jogosNovos.fold<int>(0, (s, j) => s + j.length) +
+        c.extensoes.fold<int>(0, (s, e) => s + e.cartas.length);
+    var melhor = cands.first;
+    var melhorN = usadas(melhor);
+    for (final c in cands.skip(1)) {
+      final n = usadas(c);
+      if (n > melhorN) {
+        melhor = c;
+        melhorN = n;
+      }
+    }
+    return melhor;
+  }
+
+  /// C10 — INVARIANTE do robô sob autoridade única: mão vazia com a rodada
+  /// aberta e a vez ainda no assento é IMPOSSÍVEL (qualquer ação que zeraria a
+  /// mão é recusada ou estabilizada em morto/batida pela autoridade). Se
+  /// acontecer, é falha de costura: registra e PARA — jamais chama `_passarVez`,
+  /// que mutaria vez/morto/envelope por fora da autoridade.
+  bool _botMaoVaziaSemSaida(int assento) {
+    if (!motorConfig.canonicoAtivo) {
+      if (vez == assento) _passarVez();
+      return true;
+    }
+    ultimaFalhaTecnica = {
+      'metodo': 'botJoga',
+      'motivo': 'mão vazia com a rodada aberta sob autoridade canônica',
+      'evidencia': {'assento': assento, 'vez': vez},
+    };
+    return true;
+  }
+
   // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
   // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
   void botJoga(int assento) {
     if (integridadeErro != null) return; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento) return;
     if (!jaComprou) {
-      // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
-      // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
-      // o robô passa a modalidade e obedece à MESMA trava dos humanos.
-      if (_botDeveComprarLixo(assento) &&
-          comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
-        // pegou o lixo
+      if (motorConfig.canonicoAtivo) {
+        _botCompra(assento);
       } else {
-        comprarMonte(assento);
+        // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
+        // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
+        // o robô passa a modalidade e obedece à MESMA trava dos humanos.
+        if (_botDeveComprarLixo(assento) &&
+            comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
+          // pegou o lixo
+        } else {
+          comprarMonte(assento);
+        }
       }
     }
     if (rodadaEncerrada) return;
@@ -1548,15 +1613,20 @@ class Jogo {
     if (rodadaEncerrada) return;
     if (maos[assento].isEmpty) {
       // Rede de segurança: mão vazia sem bater não deveria ocorrer (as travas
-      // acima evitam). Se ocorrer, passa a vez pra NUNCA travar o loop dos robôs.
-      if (vez == assento) _passarVez();
+      // acima evitam). No legado, passa a vez pra não travar o loop dos robôs;
+      // sob autoridade canônica isso é impossível — ver `_botMaoVaziaSemSaida`.
+      _botMaoVaziaSemSaida(assento);
       return;
     }
 
-    // 2.7) OBRIGAÇÃO DO TOPO (§5.3 Fechado/SBTL): se o robô pegou o lixo e o
-    // topo ainda está na mão, ele PRECISA usá-lo (estender ou baixar) antes de
-    // descartar — mesma regra dos humanos.
-    if (lixoTopoObrigatorio != null &&
+    // 2.7) OBRIGAÇÃO DO TOPO (§5.3 Fechado/SBTL) — bloco LEGADO.
+    // Sob autoridade canônica (C10) esta pendência NÃO nasce: a compra do lixo
+    // no Fechado/STBL é ATÔMICA, o topo já foi usado no mesmo commit e
+    // `lixoTopoObrigatorio` permanece nulo a rodada inteira. O bloco fica
+    // reservado ao rollback legado — sob o canônico ele burlaria a autoridade
+    // (a rede de segurança abaixo LIMPA a obrigação mutando o envelope direto).
+    if (!motorConfig.canonicoAtivo &&
+        lixoTopoObrigatorio != null &&
         maos[assento].any((c) => c.id == lixoTopoObrigatorio)) {
       final topoId = lixoTopoObrigatorio!;
       var usou = false;
@@ -1583,7 +1653,7 @@ class Jogo {
     }
     if (rodadaEncerrada) return;
     if (maos[assento].isEmpty) {
-      if (vez == assento) _passarVez();
+      _botMaoVaziaSemSaida(assento);
       return;
     }
 
@@ -1848,6 +1918,8 @@ class _MesaScreenState extends State<MesaScreen> {
   // Jogada automática quando o cronômetro zera na vez do humano.
   void _autoJogarPorTempo() {
     if (_j.vez != 0 || _j.rodadaEncerrada || _botsRodando) return;
+    // C10 — não atropela a derivação/escolha da compra do lixo em andamento.
+    if (_derivandoLixo) return;
     if (!_j.jaComprou) {
       _j.comprarMonte(0);
       _j.ordenar(0);
@@ -2026,7 +2098,10 @@ class _MesaScreenState extends State<MesaScreen> {
         } else if (cands.length == 1) {
           resultado = _j.comprarLixoAtomico(0, cands.single);
         } else {
-          setState(() => _derivandoLixo = false);
+          // `_derivandoLixo` continua LIGADO enquanto o seletor está aberto: é
+          // o que impede a jogada automática do cronômetro de mexer no estado
+          // por baixo da escolha do jogador.
+          setState(() => _msg = null);
           final escolha = await _escolherCompraLixo(cands);
           if (!mounted) return;
           if (escolha == null) {
@@ -2183,15 +2258,30 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Future<void> _rodarBots() async {
     _botsRodando = true;
+    String? travou;
     while (_j.vez != 0 && !_j.rodadaEncerrada && _j.integridadeErro == null) {
       await Future.delayed(const Duration(milliseconds: 650));
+      final vezAntes = _j.vez;
       _j.botJoga(_j.vez);
+      // C10 — GUARDA DE PROGRESSO. Sob autoridade única o robô não pode mais
+      // "destravar" o turno mutando o estado por fora (`_passarVez` direto);
+      // então, se um turno terminar sem a vez avançar nem a rodada encerrar, o
+      // laço PARA aqui em vez de girar para sempre. Não é um caminho de regra:
+      // é a rede que substitui a mutação ilegal por uma parada visível.
+      if (_j.vez == vezAntes && !_j.rodadaEncerrada) {
+        travou = 'o robô do assento $vezAntes não conseguiu concluir o turno';
+        break;
+      }
       _somCarta();
       _syncTurnClock();
       _scrollDiscardToEnd();
       if (mounted) setState(() {});
     }
     _botsRodando = false;
+    if (travou != null && mounted) {
+      setState(() => _msg = 'PARTIDA PAUSADA · $travou');
+      return;
+    }
     if (_j.integridadeErro != null && mounted) {
       // Integridade violada: preserva o estado, bloqueia a partida e mostra
       // o código auditável (nunca tenta "consertar" inventando carta).
