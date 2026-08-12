@@ -122,6 +122,11 @@ estivesse na faixa de teste, não haveria caminho de interface para iniciar uma
 compra.** Os casos A, B, C, E, G, H, I e V da OS são inalcançáveis em aparelho por
 essa razão, e não por falta de acesso ao Google.
 
+> **Atualização — ver §14.** Este bloqueio foi resolvido por trabalho paralelo
+> (`6f39697`), que chegou à branch base **depois** do início desta sessão. A
+> auditoria acima vale para `962846e`, a base que a OS manda usar. O bloqueio B1
+> continua valendo mesmo no topo.
+
 Isto não é um defeito: foi decisão explícita e documentada da OS anterior
 (`docs/PLAY-BILLING-CLIENTE-FLUTTER.md` §6), pelo motivo correto — não há preço
 nem plano aprovado para montar uma vitrine, e a OS anterior proibia inferir preço
@@ -386,9 +391,10 @@ tocado e nenhuma migração foi disparada.
 6. Colar os IDs em `CatalogoBilling.oficial` e publicar `configuracao/billing` no
    formato `{ produtos: { "<id>": { assinatura: bool, fichas: int } } }`.
    Os dois **precisam** listar exatamente os mesmos IDs.
-7. **Ligar a vitrine**: substituir `LojaVM.mock()` por `ServicoBilling.painel`,
-   `assinaturas` e `PainelBilling.mostrarComoVip`, e chamar `encerrar()` no logout
-   (o contrato agora está fixado por HOMOLOG-H/I). — *destrava B2*
+7. ~~Ligar a vitrine~~ — **já feito** por `6f39697` em
+   `integracao/play-billing-flutter`. O que resta aqui é levar a correção de
+   `encerrar()` e os testes HOMOLOG-H/I desta branch para lá, antes da compra
+   real: o vazamento continua presente no topo. Ver §14.
 8. Confirmar a ativação da infraestrutura RTDN com evidência de console (§2).
 9. Só então: compra real de homologação, e reabertura desta OS para os casos
    A, C, N, V e para a linha do tempo de §45, que hoje não tem uma única linha
@@ -433,3 +439,60 @@ repositório está estreitado a duas branches:
 Nenhuma outra `origin/*` é materializada localmente. É a mesma condição já
 registrada em `docs/RTDN-VIP-PRODUCAO.md` §19, e por isso a conferência acima usa
 `git ls-remote` em vez de `rev-parse origin/…`.
+
+---
+
+## 14. A base andou durante esta sessão — o que isso muda, e o que não muda
+
+**Registrado por honestidade de auditoria.** No início desta sessão,
+`integracao/play-billing-flutter` estava em `962846e` no local e no remoto — foi o
+que `git ls-remote` devolveu, e é a base que §3 da OS manda usar. Ao final, a
+mesma branch está em `e38c773`, três commits à frente, local e remoto:
+
+```
+e38c773 docs(billing): a correspondencia dos identificadores e dois bloqueios
+6f39697 fix(loja): o selo VIP deixa de ser concedido pelo proprio app
+4dd37ce feat(billing): planos-base e precos vindos da Play, nao do codigo
+962846e  <- a base desta OS
+```
+
+São trabalho de outra sessão, feito em paralelo. Esta OS **não os incorporou**:
+§3 proíbe incorporar branches paralelas automaticamente, e a auditoria dos §§4–7
+deste relatório foi feita, corretamente, contra `962846e`.
+
+O que muda nas conclusões:
+
+- **B2 está resolvido no topo.** `e38c773` liga `ServicoBilling` e
+  `EntitlementRepositorio` em `app/lib/main.dart` (`_LojaPreviewHostState`), com
+  `_ehVip` vindo de `mostrarComoVip` e o preço vindo do `formattedPrice` da Play.
+  A afirmação "zero consumidores" vale para `962846e` e **não** vale para o topo.
+- **B1 continua de pé, inclusive no topo.** `CatalogoBilling.oficial` segue
+  `const CatalogoBilling()` em `e38c773` — conjuntos vazios. Sem IDs, a consulta à
+  Play é pulada, `planosVipDe(_billing.assinaturas)` devolve lista vazia e **não
+  há plano para assinar**. A vitrine existe; o que ela vende, não.
+- **B3 e B4 não são afetados.**
+
+O que **não** muda, e é o ponto que importa:
+
+> **O defeito de §4 continua presente em `e38c773`.** `encerrar()` no topo é
+> byte a byte o mesmo de `962846e` — cancela a escuta e deixa o `entitlement`
+> guardado — e não existe lá nenhum teste de troca de conta
+> (`app/test/billing/` no topo tem `dubles`, `billing_flutter`,
+> `entitlement_repositorio` e `plano_vip`, e mais nada).
+
+E agora ele está **mais perto de ser alcançável**, porque a interface passou a
+existir. Duas observações precisas sobre o topo, para não exagerar nem minimizar:
+
+1. `ServicoBilling` é instanciado por tela (`final ServicoBilling _billing = ServicoBilling()`
+   dentro do `State`), então hoje o painel não é compartilhado entre sessões — o
+   que reduz o alcance prático do vazamento nessa wiring específica.
+2. Mas `_LojaPreviewHostState.initState` lê `FirebaseAuth.instance.currentUser?.uid`
+   **uma única vez** e nunca reassina em troca de sessão, e nada no `main.dart`
+   chama `atualizarEntitlement(EntitlementVip.ausente(novoUid))`. Qualquer
+   evolução para um serviço compartilhado (provider, singleton, tela que
+   sobreviva ao logout) reabre o vazamento na hora.
+
+**Recomendação:** a correção de `encerrar()` e os seis testes HOMOLOG-H/I desta
+branch devem ser levados para `integracao/play-billing-flutter` antes de a compra
+real acontecer. São 5 linhas de produção e um arquivo de teste, sem conflito
+esperado com os três commits novos — eles não tocam `servico_billing.dart`.
