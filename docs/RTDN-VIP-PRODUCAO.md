@@ -408,14 +408,25 @@ conferido é `io.github.soniaambrosio.buracomastervip`.
 
 ## 18. Hash final
 
-- Base: `bcb55c7512bd64bb33aaae984f8c0c7647a5a820` (`correcao/p0-elegibilidade-vip-lifecycle`, local == remoto)
-- Branch desta OS: `integracao/rtdn-vip-producao`
-- Commit final: registrado no fecho da OS (ver a entrega final da sessão)
+- Base: `bcb55c7512bd64bb33aaae984f8c0c7647a5a820`
+  (`correcao/p0-elegibilidade-vip-lifecycle`, local == remoto)
+- Branch desta OS: `integracao/rtdn-vip-producao`, criada a partir de `bcb55c7`
+- Commit de implementação: `4ef296e` — código, testes e a primeira versão deste
+  relatório
+- Commit final: este commit de documentação, que só acrescenta §18 e §19
+
+Ancestralidade conferida antes de começar: `77eff2d` (P0-2) é ancestral de
+`bcb55c7`; a cadeia `f9814f9 → f2b06c1 → bcb55c7` confere com a homologação.
 
 ## 19. Estado de push
 
-Ver a entrega final da sessão. A branch é exclusiva desta OS e não tem upstream
-até que o push seja autorizado e executado.
+- Push executado: **sim**, `origin/integracao/rtdn-vip-producao`
+- Upstream: configurado
+- Local == remoto: sim
+- Árvore limpa: sim
+- Force push: **não**
+- A branch é exclusiva desta OS. Nenhuma branch alheia foi tocada, e nenhum
+  arquivo de outra sessão foi apagado ou restaurado.
 
 ## 20. Declaração de merge/deploy
 
