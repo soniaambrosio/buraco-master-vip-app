@@ -134,10 +134,14 @@ class Jogo {
   /// testes (null => a autoridade usa `paraCanonico`). Nunca setado em produção.
   Projetor? projetorAutoridadeTest;
 
-  /// Telemetria/diagnóstico do último FALLBACK técnico (falha de costura/
-  /// projeção/transporte). NÃO é game-state (fora da projeção/envelope); só
-  /// registra evidência quando o fallback técnico ocorre. Null caso contrário.
-  Map<String, dynamic>? ultimoFallbackTecnico;
+  /// Telemetria/diagnóstico da última FALHA TÉCNICA (costura/projeção/
+  /// transporte). NÃO é game-state (fora da projeção/envelope); só registra
+  /// evidência quando a falha técnica ocorre. Null caso contrário.
+  ///
+  /// C10 — o nome antigo era `ultimoFallbackTecnico`: sob autoridade única NÃO
+  /// existe mais fallback nenhum, nem semântico nem técnico. A evidência
+  /// continua sendo registrada; o que sumiu é a rota para o legado.
+  Map<String, dynamic>? ultimaFalhaTecnica;
 
   Jogo(this.apelidos, this.avatares, this.mascotes,
       {int? seed, this.motorConfig = const MotorConfig()})
@@ -153,14 +157,20 @@ class Jogo {
           : aplicarComAutoridade(this, assento, acoes,
               projetar: projetorAutoridadeTest!);
 
-  /// Registra a evidência do fallback TÉCNICO (única situação em que, sob
-  /// autoridade ON, o fluxo cai para o legado). Recusa de REGRA nunca passa aqui.
-  void _registrarFallbackTecnico(String metodo, ResultadoAutoridade r) {
-    ultimoFallbackTecnico = {
+  /// C10 — FAIL-CLOSED. Registra a evidência da falha TÉCNICA e devolve a
+  /// mensagem de recusa. Sob autoridade única, falha técnica NÃO roteia para o
+  /// legado: a jogada é RECUSADA com o `Jogo` intacto (a autoridade só falha
+  /// antes de qualquer efeito observável) e a evidência fica em
+  /// `ultimaFalhaTecnica` para telemetria/Replay. Recusa de REGRA nunca passa
+  /// por aqui — ela tem o seu próprio desfecho.
+  String _falharFechado(String metodo, ResultadoAutoridade r) {
+    ultimaFalhaTecnica = {
       'metodo': metodo,
       'motivo': r.motivo,
       'evidencia': r.evidencia,
     };
+    return 'falha técnica do motor em $metodo: a jogada foi recusada e nada '
+        'foi alterado (${r.motivo ?? 'sem motivo'}).';
   }
 
   // ===================================================================
@@ -674,12 +684,14 @@ class Jogo {
 
   // ---------- JOGADAS ----------
   bool comprarMonte(int assento) {
-    // C9-D — AUTORIDADE ON: o canônico decide/aplica (transação atômica).
+    // C10 — AUTORIDADE ÚNICA: o canônico decide/aplica (transação atômica) e é
+    // o ÚNICO caminho. Recusa de regra recusa; falha técnica FALHA FECHADO.
     if (motorConfig.canonicoAtivo) {
       final r = _rodarAutoridade(assento, const [ComprarMonte()]);
       if (r.aplicou) return true;
-      if (r.recusaCanonica) return false; // recusa de REGRA — SEM fallback legado
-      _registrarFallbackTecnico('comprarMonte', r); // falha técnica -> legado
+      if (r.recusaCanonica) return false; // recusa de REGRA — sem legado
+      _falharFechado('comprarMonte', r); // falha TÉCNICA — sem legado
+      return false;
     }
     if (integridadeErro != null) return false; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento || jaComprou) return false;
@@ -714,7 +726,8 @@ class Jogo {
           'erro': r.motivo ?? 'compra do lixo recusada pelo motor canônico',
         };
       }
-      _registrarFallbackTecnico('comprarLixo', r); // falha técnica -> legado
+      // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+      return {'ok': false, 'erro': _falharFechado('comprarLixo', r)};
     }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
@@ -932,7 +945,8 @@ class Jogo {
           'erro': r.motivo ?? 'baixada recusada pelo motor canônico',
         };
       }
-      _registrarFallbackTecnico('baixar', r); // falha técnica -> legado
+      // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+      return {'ok': false, 'erro': _falharFechado('baixar', r)};
     }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
@@ -1035,7 +1049,8 @@ class Jogo {
       if (r.recusaCanonica) {
         return r.motivo ?? 'descarte recusado pelo motor canônico';
       }
-      _registrarFallbackTecnico('descartar', r); // falha técnica -> legado
+      // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+      return _falharFechado('descartar', r);
     }
     if (integridadeErro != null) return integridadeErro;
     if (rodadaEncerrada || vez != assento || !jaComprou) return 'não é sua vez';

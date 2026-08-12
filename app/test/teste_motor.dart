@@ -4245,7 +4245,7 @@ void main() {
       expect(j.jaComprou, isTrue);
       expect(j.maos[0].length, maoAntes + 1);
       expect(j.monte.length, monteAntes - 1);
-      expect(j.ultimoFallbackTecnico, isNull); // autoridade nunca tocada
+      expect(j.ultimaFalhaTecnica, isNull); // autoridade nunca tocada
     });
 
     test('C9D-ON-CANONICO flag ON: o canônico assume e aplica', () {
@@ -4255,7 +4255,7 @@ void main() {
       expect(ok, isTrue); // canônico aplicou (transação atômica)
       expect(j.jaComprou, isTrue); // pós-estado COMMITADO
       expect(j.maos[0].length, maoAntes + 1);
-      expect(j.ultimoFallbackTecnico, isNull); // aplicou -> sem fallback
+      expect(j.ultimaFalhaTecnica, isNull); // aplicou -> sem fallback
     });
 
     test('C9D-COMMIT-INTEGRAL o pós-estado commitado É o pós-estado canônico',
@@ -4279,7 +4279,7 @@ void main() {
       final ok = j.comprarMonte(0);
       expect(ok, isTrue); // legado rodou
       expect(j.jaComprou, isTrue);
-      expect(j.ultimoFallbackTecnico, isNull); // autoridade jamais tocada
+      expect(j.ultimaFalhaTecnica, isNull); // autoridade jamais tocada
     });
 
     test('C9D-RECUSA-INTACTO recusa canônica deixa o estado INTACTO', () {
@@ -4298,7 +4298,7 @@ void main() {
       final antes = _assin(j);
       final ok = j.comprarMonte(0);
       expect(ok, isFalse); // recusa canônica
-      expect(j.ultimoFallbackTecnico, isNull); // legado NÃO foi chamado
+      expect(j.ultimaFalhaTecnica, isNull); // legado NÃO foi chamado
       expect(_assin(j), antes); // estado intacto
     });
 
@@ -4313,17 +4313,24 @@ void main() {
       expect(r.evidencia!['falhaTecnica'], 'projecao');
     });
 
-    test('C9D-FALLBACK-TECNICO-ROTEADO falha técnica permite o fallback legado',
+    // C10 — contrato REVISTO: sob autoridade única não existe fallback nenhum.
+    // A falha TÉCNICA é FAIL-CLOSED: recusa a jogada, deixa o `Jogo` intacto e
+    // registra a evidência. O legado NÃO roda (antes do C10 este teste provava
+    // exatamente o contrário; a OS C10 mandou ajustá-lo ao contrato novo).
+    test('C9D-FALLBACK-TECNICO-ROTEADO falha técnica é FAIL-CLOSED (sem legado)',
         () {
       final j = _jgComprarMonteC9D(cfg: const MotorConfig(canonicoAtivo: true));
       j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
       final maoAntes = j.maos[0].length;
+      final monteAntes = j.monte.length;
       final ok = j.comprarMonte(0);
-      expect(ok, isTrue); // legado rodou (fallback TÉCNICO)
-      expect(j.maos[0].length, maoAntes + 1);
-      expect(j.ultimoFallbackTecnico, isNotNull); // evidência do fallback
-      expect(j.ultimoFallbackTecnico!['metodo'], 'comprarMonte');
-      expect(j.ultimoFallbackTecnico!['evidencia'], isNotNull);
+      expect(ok, isFalse); // recusada — o legado NÃO rodou
+      expect(j.maos[0].length, maoAntes); // nada entrou na mão
+      expect(j.monte.length, monteAntes); // nada saiu do monte
+      expect(j.jaComprou, isFalse); // turno não avançou
+      expect(j.ultimaFalhaTecnica, isNotNull); // evidência preservada
+      expect(j.ultimaFalhaTecnica!['metodo'], 'comprarMonte');
+      expect(j.ultimaFalhaTecnica!['evidencia'], isNotNull);
     });
 
     test('C9D-ATOMICIDADE operação composta que recusa não deixa estado parcial',
@@ -4430,7 +4437,7 @@ void main() {
       expect(rOn['ok'], isFalse); // recusa canônica
       expect(jOn.lixo.length, lixoAntes); // lixo NÃO recolhido (legado não rodou)
       expect(jOn.maos[0].length, maoAntes);
-      expect(jOn.ultimoFallbackTecnico, isNull); // recusa de REGRA, não técnica
+      expect(jOn.ultimaFalhaTecnica, isNull); // recusa de REGRA, não técnica
     });
   });
 
