@@ -98,6 +98,45 @@ O custom claim é atribuído fora do aplicativo:
 firebase auth:import --help
 ```
 
+## Testes
+
+Dois portões, e eles provam coisas diferentes. Confundir um com o outro é o que
+deixou `claimPioneerKit` sem nenhuma execução real desde a entrega original.
+
+| Comando | O que prova |
+| --- | --- |
+| `npm run test:colecoes` | Só as **regras**. O bloco `claimPioneerKit` fica pulado de propósito. |
+| `npm run emulador:colecoes` | Regras **e** chamadas reais a `claimPioneerKit`, contra Firestore + Auth + Functions. |
+
+Ambos rodam de `firebase/testes` (depois de `npm install` lá).
+
+O segundo passa por `com-functions.js`, que existe porque `firebase
+emulators:exec` **não** exporta `FUNCTIONS_EMULATOR_HOST` — só `FIRESTORE_*`,
+`FIREBASE_AUTH_*` e `GCLOUD_PROJECT`. Sem ele, o `skip:
+!process.env.FUNCTIONS_EMULATOR_HOST` do bloco de Function nunca sai do lugar: a
+suíte fica verde sem ter chamado nada. O runner exporta a variável, recusa
+rodar se a porta 5001 não atender e **reprova se sobrar qualquer caso pulado**.
+
+Essa última checagem não é preciosismo. Um `describe` pulado inteiro não aparece
+em contador nenhum do `node --test`: o alvo de regras pula os seis casos de
+`claimPioneerKit` e ainda assim imprime `skipped 0`. Quem denuncia é a diretiva
+`# SKIP` na linha, e é ela que o runner lê.
+
+Duas armadilhas de ambiente, ambas já custaram diagnóstico:
+
+- **Java.** O emulador do Firestore precisa de `java` resolvível no `PATH`;
+  `JAVA_HOME` sozinho não basta. Com o Android Studio instalado:
+  `$env:PATH = "C:\Program Files\Android\Android Studio\jbr\bin;$env:PATH"`.
+- **Portas.** Não encavalar execuções. Antes da próxima suíte, esperar 8080,
+  5001, 9099, 4400 e 4500 ficarem livres. Subir por cima de um emulador que
+  ainda está morrendo produz falha em teste de **regra** — inclusive
+  `assertFails` que "passa" —, e o sintoma não aponta para a causa.
+
+O ruído de carga dos outros codebases (`functions-billing`, `functions`,
+`functions-moderacao`, `functions-social` reclamando de `lib/index.js` ausente)
+é esperado: o Firebase CLI inspeciona todos mesmo com `--only
+functions:colecoes`. Não impede `colecoes` de subir, e o comando sai com zero.
+
 ## Aviso sobre o escopo das regras
 
 No Firestore, **caminho não declarado é caminho negado**. `firestore.rules` cobre
