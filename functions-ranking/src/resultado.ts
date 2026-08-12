@@ -20,10 +20,26 @@
 // opiniao sobre o resultado, e duas opinioes sobre quem venceu e o pior defeito
 // que um ranking pode ter.
 //
-// A UNICA coisa que este arquivo decide e se o registro ENTRA no ranking, e o
-// criterio para isso ja existe no registro: o campo `alteraRanking`, que o
-// dominio Dart calcula como `identidade.alteraRanking && estado.valeu` e
-// denormaliza na gravacao.
+// A UNICA coisa que este arquivo decide e se o registro ENTRA no ranking. Ate a
+// OS anterior, o criterio era um campo so: `alteraRanking`, que o dominio Dart
+// calcula como `identidade.alteraRanking && estado.valeu` e denormaliza na
+// gravacao.
+//
+// A OS DA POLITICA COMPETITIVA V1 ACRESCENTOU UM SEGUNDO CRITERIO, e a razao e
+// que os dois nao perguntam a mesma coisa:
+//
+//   alteraRanking .......... "esta partida produz lancamento no ledger
+//                            competitivo?" — e ela e `publicaRanqueada ||
+//                            torneio`;
+//   ambiente competitivo ... "esta partida alimenta o RATING DE TEMPORADA?" — e
+//                            a secao 6 respondeu que torneio NAO.
+//
+// Continuar usando so o primeiro faria toda partida de torneio pontuar Elo. Os
+// dois sao aplicados em serie, e nenhum substitui o outro. `alteraRanking`
+// continua sendo a unica fonte de "isto vale ledger", como o Dart afirma; o
+// ambiente competitivo e um recorte MAIS ESTREITO dentro dela.
+
+import { AMBIENTE_COMPETITIVO, noAmbienteCompetitivo } from "./competicao";
 
 /// Um competidor, como o registro oficial o descreve.
 export interface CompetidorOficial {
@@ -136,11 +152,54 @@ export type RecusaDeProcessamento =
   | "sem_resultado"
   | "nao_terminal"
   | "nao_pontua"
+  | "fora_do_ambiente_competitivo"
+  | "natureza_alterada"
+  | "desfecho_indefinido"
+  | "lados_inconsistentes"
   | "sem_competidores"
   | "sem_temporada_vigente"
   | "temporada_encerrada"
   | "politica_nao_definida"
   | "ja_processado";
+
+// ---------------------------------------------------------------------------
+// A FORMA DA MESA (secao 9 da OS da Politica Competitiva v1)
+// ---------------------------------------------------------------------------
+
+/// Os lados da mesa, com quem esta em cada um.
+export interface LadosDaMesa {
+  readonly lados: ReadonlyArray<string>;
+  readonly porLado: ReadonlyMap<string, ReadonlyArray<string>>;
+}
+
+/// Agrupa os competidores por lado, ou devolve `null` quando a mesa nao tem a
+/// forma que um confronto de duas duplas exige.
+///
+/// AS TRES RECUSAS, e nenhuma delas e preciosismo:
+///
+///   competidor sem lado ..... nao da para saber contra quem ele jogou, entao
+///                             nao da para calcular expectativa nenhuma;
+///   menos de dois lados ..... nao houve confronto;
+///   mais de dois lados ...... o Elo desta politica compara DUAS forcas (secao
+///                             9). Uma mesa de tres lados exigiria uma regra de
+///                             pontuacao multipartidaria que a OS nao definiu, e
+///                             inventar uma seria decidir produto.
+///
+/// Devolver `null` em vez de adivinhar e o que impede uma partida malformada de
+/// virar pontuacao plausivel e errada.
+export function ladosDaMesa(
+  competidores: ReadonlyArray<CompetidorOficial>
+): LadosDaMesa | null {
+  const porLado = new Map<string, string[]>();
+  for (const c of competidores) {
+    if (c.lado === null || c.lado.length === 0) return null;
+    const lista = porLado.get(c.lado);
+    if (lista === undefined) porLado.set(c.lado, [c.userId]);
+    else lista.push(c.userId);
+  }
+  if (porLado.size !== 2) return null;
+  return { lados: [...porLado.keys()], porLado };
+}
 
 export interface DecisaoDeProcessamento {
   readonly processa: boolean;
@@ -161,24 +220,47 @@ export interface DecisaoDeProcessamento {
 ///   1. e um resultado? ................ nao -> ignora em silencio (gatilho comum)
 ///   2. terminou? ...................... nao -> ignora em silencio
 ///   3. pontua? ........................ nao -> recusa benigna definitiva
-///   4. tem quem pontuar? .............. nao -> recusa benigna definitiva
-///   5. ja foi processado? ............. sim -> RECUSA BENIGNA, sem efeito
-///   6. ha temporada para receber? ..... nao -> backlog
-///   7. a politica existe? ............. nao -> backlog
+///   4. e do ambiente competitivo? ..... nao -> recusa benigna definitiva
+///   5. a natureza mudou desde antes? .. sim -> recusa benigna definitiva
+///   6. tem quem pontuar? .............. nao -> recusa benigna definitiva
+///   7. a mesa tem dois lados? ......... nao -> recusa benigna definitiva
+///   8. o desfecho e definido? ......... nao -> recusa benigna definitiva
+///   9. ja foi processado? ............. sim -> RECUSA BENIGNA, sem efeito
+///  10. ha temporada para receber? ..... nao -> backlog
+///  11. a politica existe? ............. nao -> backlog
+///
+/// AS RECUSAS DEFINITIVAS PRODUZEM DELTA ZERO E NAO VAO PARA O BACKLOG, e a
+/// distincao e o ponto das secoes 13 e 26: backlog e para o que ainda PODE vir a
+/// pontuar quando faltar uma peca (temporada, politica). Uma Mesa Publica nunca
+/// vai pontuar, um torneio nunca vai alimentar este rating e uma partida sem
+/// desfecho nunca vai ganhar um — guardar esses casos criaria uma fila que so
+/// cresce e cuja unica saida seria a recusa que ja se conhece hoje.
 ///
 /// A IDEMPOTENCIA VEM ANTES DA POLITICA, e este e o detalhe que o Dart tambem
 /// registra: um reprocessamento de partida antiga tem que ser reportado como "ja
 /// lancado" em vez de estourar por causa de uma politica que mudou desde entao.
 /// Invertido, um retry apos troca de regra viraria erro permanente.
+///
+/// MAS A ELEGIBILIDADE VEM ANTES DA IDEMPOTENCIA, e isso e novo nesta OS. A
+/// secao 26 exige que uma Mesa Publica que porventura esteja no backlog antigo
+/// "termine em delta zero/recusa coerente — nunca passar a pontuar
+/// retroativamente". Como as guardas 3 a 8 sao reavaliadas a cada
+/// reprocessamento, contra o documento oficial atual, nao existe caminho pelo
+/// qual um item do backlog pontue por ter sido guardado numa epoca em que as
+/// regras eram outras.
 export function decidirProcessamento(params: {
   resultado: ResultadoOficial | null;
   jaProcessado: boolean;
   temporadaVigente: string | null;
   temporadaEncerrada: boolean;
   temCalculadora: boolean;
+  /// A natureza (`tipo`) com que esta partida foi observada da PRIMEIRA vez, se
+  /// ela ja foi observada. `null` quando e a primeira vez.
+  naturezaObservada?: string | null;
 }): DecisaoDeProcessamento {
   const { resultado, jaProcessado, temporadaVigente, temporadaEncerrada, temCalculadora } =
     params;
+  const naturezaObservada = params.naturezaObservada ?? null;
 
   if (resultado === null) {
     return recusa("sem_resultado", true, false, "documento sem forma de resultado.");
@@ -199,12 +281,72 @@ export function decidirProcessamento(params: {
       `a partida ${resultado.matchId} (${resultado.tipo}/${resultado.estado}) nao altera ranking.`
     );
   }
+  // SECOES 3.1 e 6. `alteraRanking` sozinho deixaria o TORNEIO passar, porque no
+  // dominio Dart ele e `publicaRanqueada || torneio`. Esta guarda e a que
+  // implementa "torneios nao alteram este rating" e, por construcao, tambem a
+  // que garante que Mesa Publica casual jamais entre.
+  if (!noAmbienteCompetitivo(resultado.tipo)) {
+    return recusa(
+      "fora_do_ambiente_competitivo",
+      true,
+      false,
+      `a partida ${resultado.matchId} e do tipo "${resultado.tipo}", que nao alimenta ` +
+        `o rating de temporada (ambiente competitivo: ${AMBIENTE_COMPETITIVO.join(", ")}).`
+    );
+  }
+  // SECAO 4: a natureza da partida e imutavel. Se esta partida ja tinha sido
+  // observada com outro tipo, alguem a reclassificou depois do fato — e uma
+  // reclassificacao tardia e exatamente o caminho por onde uma casual viraria
+  // ranqueada, ou por onde um resultado ruim seria apagado do ranking.
+  if (naturezaObservada !== null && naturezaObservada !== resultado.tipo) {
+    return recusa(
+      "natureza_alterada",
+      true,
+      false,
+      `a partida ${resultado.matchId} foi observada como "${naturezaObservada}" e agora ` +
+        `diz "${resultado.tipo}" — a natureza competitiva nao muda depois da criacao.`
+    );
+  }
   if (resultado.competidores.length === 0) {
     return recusa(
       "sem_competidores",
       true,
       false,
       `a partida ${resultado.matchId} nao tem competidor pontuavel.`
+    );
+  }
+  const mesa = ladosDaMesa(resultado.competidores);
+  if (mesa === null) {
+    return recusa(
+      "lados_inconsistentes",
+      true,
+      false,
+      `a partida ${resultado.matchId} nao descreve duas duplas: ` +
+        `${resultado.competidores.length} competidor(es) em lados ` +
+        `${resultado.competidores.map((c) => c.lado ?? "?").join("/")}.`
+    );
+  }
+  // SECOES 12, 13 e 14. `ladoVencedor == null` numa partida FINALIZADA e o
+  // empate oficial, e ele e legitimo (0.5 para os dois lados). Numa partida
+  // ABANDONADA, ele significa que ninguem decretou o WO — e a secao 14 e clara
+  // de que o Elo so age quando "o servidor decretar oficialmente derrota/WO".
+  // Sem decreto nao ha desfecho, e sem desfecho o delta e zero (secao 13).
+  if (resultado.ladoVencedor === null && resultado.estado !== "finalizada") {
+    return recusa(
+      "desfecho_indefinido",
+      true,
+      false,
+      `a partida ${resultado.matchId} esta "${resultado.estado}" e nenhum lado foi ` +
+        "declarado vencedor — nao ha desfecho oficial a pontuar."
+    );
+  }
+  if (resultado.ladoVencedor !== null && !mesa.lados.includes(resultado.ladoVencedor)) {
+    return recusa(
+      "desfecho_indefinido",
+      true,
+      false,
+      `a partida ${resultado.matchId} declara vencedor o lado ` +
+        `"${resultado.ladoVencedor}", que nao esta na mesa (${mesa.lados.join(", ")}).`
     );
   }
   if (jaProcessado) {

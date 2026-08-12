@@ -78,18 +78,36 @@ class PoliticaDeRanking {
 
   const PoliticaDeRanking({required this.id, required this.versao});
 
-  /// A política que valeria hoje — e que NÃO EXISTE.
+  /// "Ainda não decidido", como VALOR.
   ///
-  /// Esta constante é uma PENDÊNCIA DECLARADA, não um valor de trabalho. O
-  /// projeto ainda não definiu quantos pontos vale uma vitória, quanto custa um
-  /// abandono, se há proteção de série ou piso de divisão. A infraestrutura de
-  /// ledger está pronta e testada; a fórmula é decisão de produto.
+  /// Continua existindo e continua sendo legítima: uma temporada pode ser aberta
+  /// declaradamente sem regra, e nesse caso ela não pontua ninguém e acumula
+  /// resultados em `rankingBacklog` até que uma política exista. É o que se faz
+  /// para segurar partidas enquanto uma política nova é preparada.
   ///
-  /// Enquanto ela não chega, nada no sistema chama [aplicar] com deltas reais:
-  /// os testes exercitam a mecânica com valores explícitos, e o caminho de
-  /// produção fica documentado e desligado.
+  /// O QUE MUDOU COM A POLÍTICA COMPETITIVA V1: ela deixou de ser a resposta do
+  /// projeto. Até então não havia fórmula em lugar nenhum, e esta constante era
+  /// uma pendência declarada. Agora há — ver [competitivaV1].
   static const PoliticaDeRanking pendente =
       PoliticaDeRanking(id: 'nao_definida', versao: 0);
+
+  /// A Política Competitiva v1: Elo em dupla, sete Ligas, colocação e soft reset.
+  ///
+  /// O TEXTO DESTE ID PRECISA BATER COM O DO SERVIDOR, e é por isso que a
+  /// constante existe aqui: os dois lados gravam no MESMO documento
+  /// (`rankingLedger`), e uma divergência de `id` ou `versao` só apareceria
+  /// meses depois, como um lançamento que ninguém consegue explicar. O par
+  /// canônico está em `functions-ranking/src/competicao.ts`
+  /// (`POLITICA_COMPETITIVA_V1`).
+  ///
+  /// A FÓRMULA NÃO ESTÁ AQUI, E NÃO DEVE FICAR. Esta é uma constante de
+  /// IDENTIFICAÇÃO, não de cálculo. Quem calcula delta é a autoridade —
+  /// `functions-ranking` — e a §28 da OS é explícita: o cliente não decide se a
+  /// partida é ranqueada, nem resultado, nem delta, nem rating, nem Liga. O
+  /// `typedef CalculoDeDelta` abaixo continua sem implementação de produção
+  /// pelo mesmo motivo.
+  static const PoliticaDeRanking competitivaV1 =
+      PoliticaDeRanking(id: 'competitiva', versao: 1);
 
   bool get definida => this != pendente;
 

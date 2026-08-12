@@ -36,6 +36,8 @@ import {
   abrirTemporada,
   encerrarTemporada,
   apurarTemporada,
+  consolidarTemporada,
+  reprocessarBacklog,
   processarResultadoOficial,
   paginaDaTemporada,
   paginaGlobal,
@@ -50,11 +52,38 @@ import {
 import { politicaDeJson, politicasRegistradas } from "./politica";
 import { escadaParaExibicao, escadaDefinida } from "./ligas";
 import { faixaDeTempo, Temporada } from "./temporadas";
-import { decodificarCursor, CursorInvalido, fecharPagina, normalizarLimite } from "./ordenacao";
+import {
+  CriterioDeOrdem,
+  CursorInvalido,
+  ORDEM_GLOBAL,
+  ORDEM_TEMPORADA,
+  decodificarCursor,
+  fecharPagina,
+  normalizarLimite,
+} from "./ordenacao";
 import { projetarJogador, JogadorPublicado, StandingArmazenado } from "./projecao";
 import { idPublicoValido } from "./identidade";
+import {
+  LADDER_V1_ID,
+  POLITICA_COMPETITIVA_V1,
+  registrarPoliticaV1,
+} from "./competicao";
 
 initializeApp();
+
+/// LIGA A POLITICA COMPETITIVA V1 NA CARGA DO MODULO.
+///
+/// ESTA E A LINHA QUE ENCERRA A PENDENCIA. Ate ela existir, o registro de
+/// calculadoras saia vazio e todo resultado oficial virava `politica_nao_definida`
+/// no backlog — que era o comportamento correto enquanto a regra competitiva nao
+/// tinha sido decidida. Agora ela foi (secoes 7 a 21 da OS da Politica
+/// Competitiva v1), mora em `elo.ts` + `competicao.ts`, e e registrada aqui.
+///
+/// O MECANISMO DE PENDENCIA CONTINUA INTEIRO: uma temporada que declare qualquer
+/// outra politica sem calculadora registrada continua sem pontuar e continua
+/// acumulando backlog. O que mudou foi existir uma politica de verdade para
+/// escolher, nao a disciplina de recusar as que nao existem.
+registrarPoliticaV1();
 
 const opcoesCliente = { enforceAppCheck: true, region: "southamerica-east1" };
 const opcoesServidor = { region: "southamerica-east1" };
@@ -188,13 +217,21 @@ export const abrirTemporadaDeRanking = onCall(opcoesCliente, async (req) => {
     throw new HttpsError("invalid-argument", "fimEm deve ser ISO-8601 ou nulo.");
   }
 
+  // O PADRAO PASSOU A SER A POLITICA V1 (secao 35: "PoliticaDeRanking.pendente
+  // deixar de ser a politica ativa"). Uma temporada aberta sem argumentos agora
+  // pontua, em vez de acumular backlog em silencio.
+  //
+  // O parametro continua existindo, e continua aceitando qualquer politica —
+  // inclusive a pendente, de proposito: abrir uma temporada declaradamente sem
+  // regra continua sendo um estado legitimo e visivel, e e o que se faz para
+  // segurar resultados ate uma politica nova ficar pronta.
   const resposta = await abrirTemporada({
     seasonId,
     nome: typeof nome === "string" ? nome : seasonId,
     inicioEm,
     fimEm: typeof fimEm === "string" ? fimEm : null,
-    politica: politica === undefined ? undefined : politicaDeJson(politica),
-    ladderId: typeof ladderId === "string" ? ladderId : "",
+    politica: politica === undefined ? POLITICA_COMPETITIVA_V1 : politicaDeJson(politica),
+    ladderId: typeof ladderId === "string" && ladderId.length > 0 ? ladderId : LADDER_V1_ID,
     autor,
   });
 
@@ -219,7 +256,34 @@ export const encerrarTemporadaDeRanking = onCall(opcoesCliente, async (req) => {
   if (!resposta.encerrada) {
     throw new HttpsError("not-found", resposta.detalhe ?? "temporada desconhecida.");
   }
-  return resposta;
+
+  // A CONSOLIDACAO VEM DEPOIS DO FECHAMENTO, e a ordem importa: ela carimba o
+  // rating FINAL de cada classificado em `rankingPlayers`, e "final" so quer
+  // dizer alguma coisa quando a temporada ja nao aceita mais partidas. E daqui
+  // que o soft reset (secao 20) e a revalidacao (secao 21) tiram o que precisam
+  // na temporada seguinte.
+  const consolidacao = await consolidarTemporada({ seasonId, autor });
+
+  return { ...resposta, consolidacao };
+});
+
+/// Esvazia o `rankingBacklog` (secao 26), um lote por chamada.
+///
+/// UM LOTE POR CHAMADA, E NAO UM LACO ATE O FIM: uma fila acumulada desde antes
+/// da politica existir pode ter qualquer tamanho, e uma Function que tentasse
+/// resolve-la inteira seria morta por tempo no meio — deixando o operador sem
+/// saber onde parou. Devolvendo `cursor` e `fim`, a retomada e explicita e o
+/// progresso e visivel entre uma chamada e a seguinte.
+export const reprocessarBacklogDeRanking = onCall(opcoesCliente, async (req) => {
+  const autor = exigirAdmin(req);
+  const cursor = typeof req.data?.cursor === "string" ? req.data.cursor : null;
+  const seasonIdAlvo =
+    typeof req.data?.seasonId === "string" && req.data.seasonId.length > 0
+      ? req.data.seasonId
+      : undefined;
+  const limite = typeof req.data?.limite === "number" ? req.data.limite : undefined;
+
+  return reprocessarBacklog({ autor, cursor, seasonIdAlvo, limite });
 });
 
 export const apurarRanking = onCall(opcoesCliente, async (req) => {
@@ -243,7 +307,15 @@ export const diagnosticarRanking = onCall(opcoesCliente, async (req) => {
   exigirAdmin(req);
   const temporada = await temporadaVigente();
   const escada = temporada === null ? null : await lerEscada(temporada.ladderId);
-  const backlog = await db().collection(C_BACKLOG).count().get();
+
+  // AS TRES SITUACOES CONTADAS SEPARADAMENTE (secao 26). Um numero unico
+  // esconderia o que interessa: uma fila de 4.000 itens toda `recusado` esta
+  // saudavel, e uma de 40 toda `pendente` esta parada.
+  const [pendentes, recusados, processados] = await Promise.all(
+    ["pendente", "recusado", "processado"].map((s) =>
+      db().collection(C_BACKLOG).where("situacao", "==", s).count().get()
+    )
+  );
 
   return {
     temporadaVigente: temporada?.seasonId ?? null,
@@ -251,7 +323,12 @@ export const diagnosticarRanking = onCall(opcoesCliente, async (req) => {
     politicasComCalculadora: politicasRegistradas(),
     escadaDefinida: escada !== null && escadaDefinida(escada),
     ladderId: temporada?.ladderId ?? null,
-    partidasNoBacklog: backlog.data().count,
+    ligas: escada === null ? [] : escada.degraus.map((d) => d.ligaId),
+    backlog: {
+      pendentes: pendentes.data().count,
+      recusados: recusados.data().count,
+      processados: processados.data().count,
+    },
     ultimaApuracaoEm: temporada?.ultimaApuracaoEm ?? null,
     jogadoresClassificados: temporada?.jogadoresClassificados ?? 0,
   };
@@ -291,11 +368,18 @@ async function exigirTemporada(): Promise<Temporada> {
   return t;
 }
 
+/// A ordem oficial de cada escopo. A temporada tem os cinco criterios
+/// competitivos da secao 17; o global tem os seus, e o cabecalho de
+/// `ORDEM_GLOBAL` explica por que eles nao sao os mesmos.
+function ordemDoEscopo(escopo: Escopo): ReadonlyArray<CriterioDeOrdem> {
+  return escopo === "global" ? ORDEM_GLOBAL : ORDEM_TEMPORADA;
+}
+
 async function lerPagina(params: {
   escopo: Escopo;
   seasonId: string;
   limite: number;
-  depoisDe: { pontos: number; publicPlayerId: string } | null;
+  depoisDe: ReadonlyArray<number | string> | null;
 }): Promise<StandingArmazenado[]> {
   if (params.escopo === "global") {
     return paginaGlobal({ limite: params.limite, depoisDe: params.depoisDe });
@@ -344,7 +428,7 @@ export const abrirRanking = onCall(opcoesCliente, async (req) => {
     lerEscada(temporada.ladderId),
   ]);
 
-  const pagina = fecharPagina(lidos, limite, escopo, seasonIdDoCursor);
+  const pagina = fecharPagina(lidos, limite, escopo, seasonIdDoCursor, ordemDoEscopo(escopo));
 
   return {
     resumo: {
@@ -377,11 +461,13 @@ export const paginarRanking = onCall(opcoesCliente, async (req) => {
   const limite = normalizarLimite(req.data?.limite);
   const seasonIdDoCursor = escopo === "global" ? "" : temporada.seasonId;
 
+  const ordem = ordemDoEscopo(escopo);
   let cursor;
   try {
     cursor = decodificarCursor(req.data?.cursor, {
       escopo,
       seasonId: seasonIdDoCursor,
+      ordem,
     });
   } catch (erro) {
     if (erro instanceof CursorInvalido) {
@@ -394,10 +480,13 @@ export const paginarRanking = onCall(opcoesCliente, async (req) => {
     escopo,
     seasonId: temporada.seasonId,
     limite,
-    depoisDe: { pontos: cursor.pontos, publicPlayerId: cursor.publicPlayerId },
+    depoisDe: cursor.chaves,
   });
 
-  return paginaPublicada(fecharPagina(lidos, limite, escopo, seasonIdDoCursor), uid);
+  return paginaPublicada(
+    fecharPagina(lidos, limite, escopo, seasonIdDoCursor, ordem),
+    uid
+  );
 });
 
 function paginaPublicada(

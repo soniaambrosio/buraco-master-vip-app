@@ -32,11 +32,20 @@ const ESCADA = {
   ],
 };
 
-const linha = (uid, pontos, publicPlayerId, posicao = null) => ({
+/// `classificado` por default: a maioria dos testes desta suite mede POSICAO, e
+/// posicao existe para todo mundo. Os testes de Liga variam o estado de
+/// proposito, porque a secao 15 amarra as duas coisas.
+const linha = (uid, pontos, publicPlayerId, posicao = null, extra = {}) => ({
   uid,
   pontos,
   publicPlayerId,
   posicao,
+  vitorias: 0,
+  saldoPontos: 0,
+  abandonos: 0,
+  ratingAtingidoEm: "2026-01-01T00:00:00.000Z",
+  estadoCompetitivo: "classificado",
+  ...extra,
 });
 
 describe("apuracao: direcao do movimento", () => {
@@ -140,6 +149,23 @@ describe("apuracao: a liga sai junto", () => {
     assert.equal(r[0].ligaId, "alta");
     assert.equal(r[1].ligaId, "baixa");
     assert.equal(r[0].ligaNome, "ALTA");
+  });
+
+  test("quem esta EM COLOCACAO nao recebe liga, mesmo com rating de sobra", () => {
+    // SECAO 15: "Durante colocacao: `Em colocacao`, nao Bronze/Prata". A linha
+    // entra na classificacao, com posicao, e sem Liga. Gravar a Liga aqui e
+    // esconde-la na projecao seria escrever no banco uma afirmacao que nao vale.
+    const r = apurarLote({
+      linhas: [
+        linha("a", 500, "PA", null, { estadoCompetitivo: "em_colocacao" }),
+        linha("b", 400, "PB", null, { estadoCompetitivo: "em_revalidacao" }),
+        linha("c", 300, "PC"),
+      ],
+      primeiraPosicao: 1,
+      escada: ESCADA,
+    });
+    assert.deepEqual(r.map((x) => x.ligaId), [null, null, "alta"]);
+    assert.deepEqual(r.map((x) => x.posicao), [1, 2, 3], "posicao existe para todos");
   });
 
   test("sem escada, ninguem recebe liga — e isso nao interrompe a apuracao", () => {

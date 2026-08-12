@@ -57,7 +57,18 @@ import {
   decidirProcessamento,
   chaveDeContribuicao,
   DecisaoDeProcessamento,
+  ladosDaMesa,
 } from "./resultado";
+import {
+  HistoricoConsolidado,
+  SituacaoCompetitiva,
+  escadaEmCodigo,
+  estadoCompetitivoDeJson,
+  partidasExigidas,
+  resultadoElo,
+  situacaoApos,
+  situacaoInicial,
+} from "./competicao";
 import { aplicarLancamento, MotivoLancamento } from "./ledger";
 import {
   idPublicoDeBytes,
@@ -72,7 +83,14 @@ import {
   LinhaParaApurar,
 } from "./apuracao";
 import { StandingArmazenado } from "./projecao";
-import { compararOficial } from "./ordenacao";
+import {
+  ChaveDeOrdem,
+  CriterioDeOrdem,
+  ORDEM_GLOBAL,
+  ORDEM_TEMPORADA,
+  campoNoBanco,
+  compararOficial,
+} from "./ordenacao";
 
 export const C_SEASONS = "rankingSeasons";
 export const C_LADDERS = "rankingLadders";
@@ -125,8 +143,21 @@ export async function lerTemporada(seasonId: string): Promise<Temporada | null> 
   return doc.exists ? temporadaDeJson(doc.data()) : null;
 }
 
+/// A escada de uma temporada.
+///
+/// O CODIGO E CONSULTADO PRIMEIRO, e essa ordem e a regra (secao 16). A escada
+/// oficial da v1 mora em `competicao.ts`, versionada junto com a formula, e um
+/// documento em `rankingLadders` com o mesmo id NAO a sobrescreve. Se a
+/// precedencia fosse a inversa, um `update` no console mudaria a Liga de todo
+/// mundo entre duas leituras, sem revisao, sem teste e sem historico — que e
+/// exatamente o que a decisao "a regra competitiva e codigo" existe para
+/// impedir.
+///
+/// `rankingLadders` continua servindo escadas que NAO sejam a oficial.
 export async function lerEscada(ladderId: string): Promise<EscadaDeLigas> {
   if (ladderId.length === 0) return SEM_ESCADA;
+  const emCodigo = escadaEmCodigo(ladderId);
+  if (emCodigo !== null) return emCodigo;
   const doc = await db().collection(C_LADDERS).doc(ladderId).get();
   if (!doc.exists) return SEM_ESCADA;
   return escadaDeJson({ ladderId, ...doc.data() });
@@ -277,6 +308,80 @@ export async function garantirIdPublico(uid: string): Promise<string> {
 // PROCESSAMENTO DO RESULTADO OFICIAL (secoes 8, 9, 21)
 // ---------------------------------------------------------------------------
 
+/// Onde um jogador esta numa temporada no instante em que uma partida vai ser
+/// aplicada. Ou o que a linha dele diz, ou a semente, se ele ainda nao tem linha.
+///
+/// E a `SituacaoCompetitiva` de `competicao.ts` mais o rating de ENTRADA, que so
+/// interessa a persistencia: a regra nao o usa, e a auditoria do ledger sim.
+interface SituacaoNaTemporada extends SituacaoCompetitiva {
+  readonly ratingInicial: number;
+}
+
+/// O historico consolidado gravado em `rankingPlayers/{uid}`, ou `null`.
+///
+/// SO CONTA QUEM TERMINOU UMA TEMPORADA CLASSIFICADO. A consolidacao (ver
+/// `consolidarTemporada`) escreve estes campos apenas para quem cumpriu a
+/// colocacao ou a revalidacao — quem viu a temporada acabar no meio das 10
+/// partidas nao deixa historico, e volta as 10 na temporada seguinte.
+function historicoConsolidadoDe(
+  jogador: FirebaseFirestore.DocumentData | undefined
+): HistoricoConsolidado | null {
+  const seasonId = jogador?.ultimaTemporadaConsolidada;
+  const ratingFinal = jogador?.ratingFinalConsolidado;
+  if (typeof seasonId !== "string" || seasonId.length === 0) return null;
+  if (typeof ratingFinal !== "number" || !Number.isInteger(ratingFinal)) return null;
+  return { seasonId, ratingFinal };
+}
+
+/// A situacao do jogador: a linha que ele ja tem, ou a semente da temporada.
+///
+/// AS DUAS PORTAS ESTAO AQUI, E SO AQUI. Nenhum outro ponto do sistema decide
+/// "com quanto este jogador comeca" — o que importa porque um segundo lugar que
+/// dissesse 0 em vez de 1000 produziria um ledger que fecha e um rating errado.
+function situacaoNaTemporada(
+  linha: FirebaseFirestore.DocumentData | undefined,
+  jogador: FirebaseFirestore.DocumentData | undefined
+): SituacaoNaTemporada {
+  if (linha !== undefined && typeof linha.pontos === "number") {
+    const estado = estadoCompetitivoDeJson(linha.estadoCompetitivo);
+    const inteiro = (campo: string): number =>
+      typeof linha[campo] === "number" ? (linha[campo] as number) : 0;
+    return {
+      rating: linha.pontos,
+      ratingInicial: inteiro("ratingInicial"),
+      estado,
+      partidas: inteiro("partidasComputadas"),
+      partidasDeQualificacao: inteiro("partidasDeQualificacao"),
+      // Uma linha gravada antes desta OS nao tem a exigencia; ela e derivada do
+      // estado, que por sua vez cai em `em_colocacao` por default.
+      qualificacaoExigida:
+        typeof linha.qualificacaoExigida === "number"
+          ? linha.qualificacaoExigida
+          : partidasExigidas(estado),
+      vitorias: inteiro("vitorias"),
+      derrotas: inteiro("derrotas"),
+      empates: inteiro("empates"),
+      saldoPontos: inteiro("saldoPontos"),
+      abandonos: inteiro("abandonos"),
+      ratingAtingidoEm:
+        typeof linha.ratingAtingidoEm === "string" ? linha.ratingAtingidoEm : "",
+    };
+  }
+
+  const inicial = situacaoInicial(historicoConsolidadoDe(jogador));
+  return { ...inicial, ratingInicial: inicial.rating };
+}
+
+/// Os pontos de um lado da mesa, como o placar oficial os gravou. `0` quando o
+/// lado nao aparece no placar.
+function pontosDoLado(
+  placar: ReadonlyArray<{ lado: string; pontos: number }>,
+  lado: string
+): number {
+  for (const l of placar) if (l.lado === lado) return l.pontos;
+  return 0;
+}
+
 export interface ResultadoDoProcessamento {
   readonly processada: boolean;
   readonly recusa: string | null;
@@ -316,6 +421,16 @@ export async function processarResultadoOficial(params: {
   const matchDoc = await db().collection(C_MATCHES).doc(matchId).get();
   const resultado = resultadoDeJson(matchDoc.data());
 
+  // A OBSERVACAO ANTERIOR DESTA PARTIDA, se houver (secao 4). O backlog guarda o
+  // `tipo` com que a partida foi vista da primeira vez; compara-lo com o `tipo`
+  // de agora e o que detecta uma reclassificacao tardia de casual para ranqueada
+  // (ou o contrario) depois que o resultado ja existia.
+  const observacaoAnterior = await db().collection(C_BACKLOG).doc(matchId).get();
+  const naturezaObservada =
+    typeof observacaoAnterior.data()?.tipo === "string"
+      ? (observacaoAnterior.data()?.tipo as string)
+      : null;
+
   const temporada =
     params.seasonIdAlvo !== undefined
       ? await lerTemporada(params.seasonIdAlvo)
@@ -340,11 +455,18 @@ export async function processarResultadoOficial(params: {
     temporadaVigente: temporada?.seasonId ?? null,
     temporadaEncerrada: temporada?.status === "encerrada",
     temCalculadora: calculadora !== null,
+    naturezaObservada,
   });
 
   if (!decisao.processa) {
     if (decisao.guardarNoBacklog && resultado !== null) {
-      await guardarNoBacklog(resultado, decisao);
+      await guardarNoBacklog(resultado, decisao, "pendente");
+    } else if (observacaoAnterior.exists && resultado !== null) {
+      // SECAO 26: um item que ESTAVA no backlog e agora e recusado em definitivo
+      // termina como `recusado`, e nao some nem continua parecendo pendente. E o
+      // caminho de uma Mesa Publica antiga guardada numa epoca de regras
+      // diferentes: ela nao volta a pontuar e passa a dizer por que.
+      await guardarNoBacklog(resultado, decisao, "recusado");
     }
     return {
       processada: false,
@@ -388,32 +510,77 @@ export async function processarResultadoOficial(params: {
     const refs = oficial.competidores.map((c) =>
       db().collection(C_STANDINGS).doc(chaveDeStanding(season.seasonId, c.userId))
     );
-    const atuais = await Promise.all(refs.map((r) => tx.get(r)));
+    const jogadorRefs = oficial.competidores.map((c) =>
+      db().collection(C_PLAYERS).doc(c.userId)
+    );
+    // TODAS as leituras da transacao acontecem aqui, antes de qualquer escrita —
+    // exigencia do Firestore, e tambem a ordem que faz a semente ser decidida
+    // com o estado que realmente existia quando a transacao comecou.
+    const [atuais, jogadores] = await Promise.all([
+      Promise.all(refs.map((r) => tx.get(r))),
+      Promise.all(jogadorRefs.map((r) => tx.get(r))),
+    ]);
 
-    const saldos = new Map<string, number>();
-    atuais.forEach((doc, i) => {
-      const pontos = doc.data()?.pontos;
-      saldos.set(oficial.competidores[i].userId, typeof pontos === "number" ? pontos : 0);
+    // ---------------------------------------------------------------------
+    // A SEMENTE (secoes 7, 20 e 21)
+    // ---------------------------------------------------------------------
+    // Quem ja tem linha nesta temporada continua de onde parou. Quem NAO tem
+    // entra agora, e e aqui que se decide com que rating e em que estado — 1000
+    // e 10 partidas para quem nunca consolidou, soft reset e 5 partidas para o
+    // veterano.
+    //
+    // ISTO E O QUE IMPEDE O DEFEITO MAIS SILENCIOSO POSSIVEL: antes desta OS, um
+    // jogador sem linha valia ZERO, e o primeiro lancamento dele teria
+    // `rankingBefore: 0`. Com rating inicial 1000, zero nao e "sem historico" —
+    // e uma pontuacao de Bronze profundo que ninguem teve.
+    const situacoes = new Map<string, SituacaoNaTemporada>();
+    oficial.competidores.forEach((competidor, i) => {
+      situacoes.set(
+        competidor.userId,
+        situacaoNaTemporada(atuais[i].data(), jogadores[i].data())
+      );
     });
+
+    // ---------------------------------------------------------------------
+    // A FORCA DE CADA LADO (secao 9)
+    // ---------------------------------------------------------------------
+    // Montada com os ratings JA SEMEADOS, e nao com o que estava no banco: um
+    // estreante entra no calculo valendo 1000, como todo mundo.
+    const mesa = ladosDaMesa(oficial.competidores);
+    if (mesa === null) {
+      // `decidirProcessamento` ja recusou este caso. Se chegou aqui, a mesa mudou
+      // entre a decisao e a transacao — falhar alto e melhor que pontuar torto.
+      throw new Error(`a partida ${matchId} deixou de descrever duas duplas.`);
+    }
+    const ratingsPorLado = new Map<string, number[]>();
+    for (const [lado, uids] of mesa.porLado) {
+      ratingsPorLado.set(
+        lado,
+        uids.map((u) => (situacoes.get(u) as SituacaoNaTemporada).rating)
+      );
+    }
 
     const agora = agoraIso();
     const deltas: Record<string, number> = {};
 
     oficial.competidores.forEach((competidor, i) => {
-      const saldoAtual = saldos.get(competidor.userId) as number;
+      const situacao = situacoes.get(competidor.userId) as SituacaoNaTemporada;
+      const meuLado = competidor.lado as string;
+      const outroLado = mesa.lados.find((l) => l !== meuLado) as string;
+
       const entrada: EntradaDeCalculo = {
         matchId: oficial.matchId,
         userId: competidor.userId,
-        saldoAtual,
+        saldoAtual: situacao.rating,
+        estadoCompetitivo: situacao.estado,
         estado: oficial.estado,
         motivoEncerramento: oficial.motivoEncerramento,
         ladoVencedor: oficial.ladoVencedor,
         ladoDoJogador: competidor.lado,
         placar: oficial.placar,
         tipo: oficial.tipo,
-        saldosDosOponentes: oficial.competidores
-          .filter((o) => o.userId !== competidor.userId && o.lado !== competidor.lado)
-          .map((o) => saldos.get(o.userId) as number),
+        ratingsDaMinhaDupla: ratingsPorLado.get(meuLado) as number[],
+        ratingsDaDuplaAdversaria: ratingsPorLado.get(outroLado) as number[],
       };
 
       const delta = calcular(entrada);
@@ -434,7 +601,7 @@ export async function processarResultadoOficial(params: {
         userId: competidor.userId,
         motivo,
         seasonId: season.seasonId,
-        saldoAtual,
+        saldoAtual: situacao.rating,
         delta,
         registradoEm: agora,
         politica,
@@ -442,7 +609,38 @@ export async function processarResultadoOficial(params: {
       tx.set(db().collection(C_LEDGER).doc(lancamento.chaveIdempotencia), lancamento);
 
       const anterior = atuais[i].data();
-      const degrau = ligaDe(escada, lancamento.rankingAfter);
+
+      // A EVOLUCAO DO JOGADOR ACONTECE EM `situacaoApos`, que e PURA e mora em
+      // `competicao.ts`. Este arquivo nao repete a aritmetica de contadores,
+      // consumo de colocacao nem carimbo de desempate — se repetisse, haveria
+      // duas versoes da mesma regra e a que os testes exercitam seria a que nao
+      // roda em producao.
+      const depois = situacaoApos(situacao, {
+        resultado: resultadoElo(oficial.ladoVencedor, meuLado),
+        delta,
+        saldoDaPartida:
+          pontosDoLado(oficial.placar, meuLado) - pontosDoLado(oficial.placar, outroLado),
+        agora,
+      });
+
+      if (depois.rating !== lancamento.rankingAfter) {
+        // As duas contas do mesmo numero tem que fechar: a do ledger
+        // (`antes + delta`) e a da situacao. Divergirem significa defeito de
+        // programacao, e deixar passar gravaria um saldo que a cadeia do ledger
+        // nao explica.
+        throw new Error(
+          `incoerencia ao aplicar ${matchId} para ${competidor.userId}: ` +
+            `ledger diz ${lancamento.rankingAfter}, situacao diz ${depois.rating}.`
+        );
+      }
+
+      // SECAO 15: a Liga so e gravada quando o jogador esta consolidado. Quem
+      // consolida NESTA partida ja recebe a Liga do rating com que terminou —
+      // e o que a secao 8 pede ao dizer "ao completar a 10a partida valida ...
+      // recebe a Liga correspondente ao rating atual".
+      const degrau =
+        depois.estado === "classificado" ? ligaDe(escada, depois.rating) : null;
+
       const linha: Partial<StandingArmazenado> & Record<string, unknown> = {
         seasonId: season.seasonId,
         uid: competidor.userId,
@@ -452,11 +650,13 @@ export async function processarResultadoOficial(params: {
         // ja existir e nasce vazio se nao existir.
         apelido: typeof anterior?.apelido === "string" ? anterior.apelido : "",
         avatar: typeof anterior?.avatar === "string" ? anterior.avatar : "",
-        pontos: lancamento.rankingAfter,
-        partidasComputadas:
-          (typeof anterior?.partidasComputadas === "number"
-            ? anterior.partidasComputadas
-            : 0) + 1,
+        pontos: depois.rating,
+        /// O rating com que o jogador ENTROU na temporada. Guardado para que a
+        /// cadeia do ledger (`antes + delta == depois`, lancamento a lancamento)
+        /// possa ser conferida a partir de um ponto de partida conhecido, em vez
+        /// de assumir zero.
+        ratingInicial: situacao.ratingInicial,
+        partidasComputadas: depois.partidas,
         // A POSICAO NAO E TOCADA AQUI. Ela pertence a apuracao, e recalcula-la
         // agora exigiria saber quantos jogadores estao acima deste — a leitura
         // integral que a secao 19 proibe.
@@ -471,6 +671,16 @@ export async function processarResultadoOficial(params: {
         selo: typeof anterior?.selo === "string" ? anterior.selo : null,
         atualizadoEm: agora,
         criadoEm: typeof anterior?.criadoEm === "string" ? anterior.criadoEm : agora,
+
+        estadoCompetitivo: depois.estado,
+        partidasDeQualificacao: depois.partidasDeQualificacao,
+        qualificacaoExigida: depois.qualificacaoExigida,
+        vitorias: depois.vitorias,
+        derrotas: depois.derrotas,
+        empates: depois.empates,
+        saldoPontos: depois.saldoPontos,
+        abandonos: depois.abandonos,
+        ratingAtingidoEm: depois.ratingAtingidoEm,
       };
       tx.set(refs[i], linha);
 
@@ -495,7 +705,14 @@ export async function processarResultadoOficial(params: {
       contributionId: chave,
       matchId: oficial.matchId,
       seasonId: season.seasonId,
+      // SECAO 25: a versao da politica que produziu ESTES deltas. Sem ela, um
+      // delta de 13 pontos gravado hoje seria inexplicavel depois da primeira
+      // correcao de formula.
       politica,
+      // SECAO 4: a natureza com que a partida foi processada fica registrada.
+      // Uma reclassificacao posterior passa a ser detectavel comparando com o
+      // documento oficial, em vez de invisivel.
+      tipo: oficial.tipo,
       jogadores: oficial.competidores.map((c) => c.userId).sort(),
       deltas,
       estadoDaPartida: oficial.estado,
@@ -506,8 +723,25 @@ export async function processarResultadoOficial(params: {
       versaoFormato: 1,
     });
 
-    // A partida saiu do backlog, se estava nele.
-    tx.delete(db().collection(C_BACKLOG).doc(matchId));
+    // A PARTIDA SAI DA FILA, MAS NAO SOME (secao 26: "distinguir processado,
+    // recusado e ainda pendente"). Apagar o documento perderia justamente a
+    // informacao de que ela ESTEVE pendente e de com que `tipo` foi observada —
+    // que e o que sustenta a guarda de imutabilidade da secao 4.
+    tx.set(
+      db().collection(C_BACKLOG).doc(matchId),
+      {
+        matchId,
+        situacao: "processado",
+        motivo: null,
+        detalhe: null,
+        tipo: oficial.tipo,
+        estado: oficial.estado,
+        seasonId: season.seasonId,
+        politica,
+        processadoEm: agora,
+      },
+      { merge: true }
+    );
 
     logger.info("partida contribuiu para o ranking", {
       matchId,
@@ -534,23 +768,50 @@ export async function processarResultadoOficial(params: {
 /// que reprocessar (secao 22).
 ///
 /// O id do documento e o `matchId`, entao guardar duas vezes e a mesma escrita.
+///
+/// AS TRES SITUACOES (secao 26), e a diferenca entre elas e operacional:
+///   pendente ..... falta uma peca (temporada, politica). Vai ser reprocessada.
+///   recusado ..... nunca vai pontuar, e ja se sabe por que.
+///   processado ... virou pontuacao. Escrito na transacao, nao aqui.
+///
+/// `registradoEm` NAO e sobrescrito num item que ja existia: ele marca quando a
+/// partida entrou na fila, e reescreve-lo a cada tentativa apagaria a idade do
+/// backlog, que e o numero que diz se o reprocessamento esta dando conta.
 async function guardarNoBacklog(
   resultado: ResultadoOficial,
-  decisao: DecisaoDeProcessamento
+  decisao: DecisaoDeProcessamento,
+  situacao: "pendente" | "recusado"
 ): Promise<void> {
-  await db()
-    .collection(C_BACKLOG)
-    .doc(resultado.matchId)
-    .set({
-      matchId: resultado.matchId,
-      motivo: decisao.recusa,
-      detalhe: decisao.detalhe,
-      estado: resultado.estado,
-      tipo: resultado.tipo,
-      encerradaEm: resultado.encerradaEm,
-      jogadores: resultado.competidores.map((c) => c.userId).sort(),
-      registradoEm: agoraIso(),
-    });
+  const agora = agoraIso();
+  const ref = db().collection(C_BACKLOG).doc(resultado.matchId);
+  await db().runTransaction(async (tx) => {
+    const existente = await tx.get(ref);
+    tx.set(
+      ref,
+      {
+        matchId: resultado.matchId,
+        situacao,
+        motivo: decisao.recusa,
+        detalhe: decisao.detalhe,
+        estado: resultado.estado,
+        // A NATUREZA OBSERVADA (secao 4). Escrita na primeira observacao e
+        // preservada depois: sobrescreve-la a cada tentativa faria a guarda de
+        // imutabilidade comparar o tipo consigo mesmo e nunca detectar nada.
+        tipo:
+          typeof existente.data()?.tipo === "string"
+            ? existente.data()?.tipo
+            : resultado.tipo,
+        encerradaEm: resultado.encerradaEm,
+        jogadores: resultado.competidores.map((c) => c.userId).sort(),
+        registradoEm:
+          typeof existente.data()?.registradoEm === "string"
+            ? existente.data()?.registradoEm
+            : agora,
+        avaliadoEm: agora,
+      },
+      { merge: true }
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -619,24 +880,27 @@ export async function apurarTemporada(params: {
   let total = 0;
 
   for (;;) {
-    let consulta = db()
-      .collection(C_STANDINGS)
-      .where("seasonId", "==", params.seasonId)
-      .orderBy("pontos", "desc")
-      .orderBy("publicPlayerId", "asc")
-      .limit(LOTE_APURACAO);
+    let consulta = aplicarOrdem(
+      db().collection(C_STANDINGS).where("seasonId", "==", params.seasonId),
+      ORDEM_TEMPORADA
+    ).limit(LOTE_APURACAO);
     if (ultimo !== null) consulta = consulta.startAfter(ultimo);
 
     const pagina = await consulta.get();
     if (pagina.empty) break;
 
     const linhas: LinhaParaApurar[] = pagina.docs.map((d) => {
-      const v = d.data();
+      const linha = standingDeDoc(d.data());
       return {
-        uid: `${v.uid}`,
-        publicPlayerId: `${v.publicPlayerId}`,
-        pontos: typeof v.pontos === "number" ? v.pontos : 0,
-        posicao: typeof v.posicao === "number" ? v.posicao : null,
+        uid: linha.uid,
+        publicPlayerId: linha.publicPlayerId,
+        pontos: linha.pontos,
+        vitorias: linha.vitorias,
+        saldoPontos: linha.saldoPontos,
+        abandonos: linha.abandonos,
+        ratingAtingidoEm: linha.ratingAtingidoEm,
+        posicao: linha.posicao,
+        estadoCompetitivo: linha.estadoCompetitivo,
       };
     });
 
@@ -682,6 +946,259 @@ export async function apurarTemporada(params: {
 }
 
 // ---------------------------------------------------------------------------
+// CONSOLIDACAO DO ENCERRAMENTO (secoes 19, 20 e 21)
+// ---------------------------------------------------------------------------
+
+export interface RelatorioDeConsolidacao {
+  readonly seasonId: string;
+  readonly classificados: number;
+  readonly percorridos: number;
+  readonly jaConsolidada: boolean;
+}
+
+/// Carimba, em `rankingPlayers/{uid}`, o rating final de quem terminou a
+/// temporada CLASSIFICADO.
+///
+/// POR QUE ISTO EXISTE: e a unica ponte entre uma temporada e a seguinte. O soft
+/// reset (secao 20) precisa saber o rating final anterior, e a revalidacao
+/// (secao 21) precisa saber que houve "classificacao competitiva anterior". Sem
+/// este carimbo, todo mundo entraria na temporada nova como jogador novo — 1000
+/// e 10 partidas — e a secao 20 estaria implementada no papel e desligada na
+/// pratica.
+///
+/// SO OS CLASSIFICADOS SAO CARIMBADOS. Quem viu a temporada acabar no meio da
+/// colocacao nunca teve classificacao competitiva, e a secao 21 condiciona a
+/// revalidacao a ter tido uma. Ele volta as 10 partidas, do 1000.
+///
+/// O CARIMBO ANTERIOR NAO E APAGADO por uma temporada em que o jogador nao
+/// consolidou. Quem foi Diamante em 2026-A, jogou 3 das 5 partidas de
+/// revalidacao em 2026-B e sumiu, entra em 2026-C com o soft reset do rating de
+/// 2026-A — o ultimo rating que o sistema efetivamente mediu. E o que o `merge`
+/// abaixo garante, por nao escrever nada para quem nao consolidou.
+///
+/// NAO TOCA EM `rankingStandings` (secao 19: a classificacao final fica
+/// congelada). Le a temporada que fechou e escreve so no agregado do jogador.
+///
+/// IDEMPOTENTE por `rankingTasks/{seasonId|consolidacao}`, e PAGINADA pelos
+/// mesmos motivos da apuracao.
+export async function consolidarTemporada(params: {
+  seasonId: string;
+  autor: string;
+}): Promise<RelatorioDeConsolidacao> {
+  const id = `${params.seasonId}|consolidacao`;
+  const tarefaRef = db().collection(C_TASKS).doc(id);
+  const agora = agoraIso();
+
+  const reservou = await db().runTransaction(async (tx) => {
+    const doc = await tx.get(tarefaRef);
+    if (doc.exists) return false;
+    tx.create(tarefaRef, {
+      chave: id,
+      tarefa: "consolidacao",
+      seasonId: params.seasonId,
+      iniciadaEm: agora,
+      autor: params.autor,
+    });
+    return true;
+  });
+
+  if (!reservou) {
+    return {
+      seasonId: params.seasonId,
+      classificados: 0,
+      percorridos: 0,
+      jaConsolidada: true,
+    };
+  }
+
+  let ultimo: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let classificados = 0;
+  let percorridos = 0;
+
+  for (;;) {
+    let consulta = aplicarOrdem(
+      db().collection(C_STANDINGS).where("seasonId", "==", params.seasonId),
+      ORDEM_TEMPORADA
+    ).limit(LOTE_APURACAO);
+    if (ultimo !== null) consulta = consulta.startAfter(ultimo);
+
+    const pagina = await consulta.get();
+    if (pagina.empty) break;
+
+    const lote = db().batch();
+    for (const doc of pagina.docs) {
+      const linha = standingDeDoc(doc.data());
+      percorridos += 1;
+      if (linha.estadoCompetitivo !== "classificado") continue;
+      classificados += 1;
+      lote.set(
+        db().collection(C_PLAYERS).doc(linha.uid),
+        {
+          ultimaTemporadaConsolidada: params.seasonId,
+          ratingFinalConsolidado: linha.pontos,
+          ligaFinalConsolidada: linha.ligaId,
+          consolidadoEm: agora,
+        },
+        { merge: true }
+      );
+    }
+    await lote.commit();
+
+    ultimo = pagina.docs[pagina.docs.length - 1];
+    if (pagina.size < LOTE_APURACAO) break;
+  }
+
+  await db().collection(C_AUDIT).doc(id).set({
+    eventoId: id,
+    evento: "consolidacao",
+    seasonId: params.seasonId,
+    autor: params.autor,
+    antes: null,
+    depois: { classificados, percorridos },
+    registradoEm: agoraIso(),
+  });
+
+  return { seasonId: params.seasonId, classificados, percorridos, jaConsolidada: false };
+}
+
+// ---------------------------------------------------------------------------
+// REPROCESSAMENTO DO BACKLOG (secao 26)
+// ---------------------------------------------------------------------------
+
+export interface RelatorioDeReprocessamento {
+  readonly examinados: number;
+  readonly processados: number;
+  readonly recusados: number;
+  readonly aindaPendentes: number;
+  /// Onde parar e retomar. `null` quando a fila acabou.
+  readonly cursor: string | null;
+  readonly fim: boolean;
+  readonly porRecusa: Record<string, number>;
+}
+
+/// Tamanho do lote de reprocessamento.
+///
+/// MUITO MENOR QUE O DA APURACAO (400), e de proposito: cada item aqui custa uma
+/// TRANSACAO com varias leituras e escritas, e nao uma linha de `batch`. Trinta
+/// itens por chamada mantem a execucao dentro do tempo de uma Function sem
+/// depender de sorte, e a retomada por cursor faz o resto.
+const LOTE_BACKLOG = 30;
+
+/// Esvazia o `rankingBacklog`, um lote por chamada.
+///
+/// A SECAO 26 PEDE SETE PROPRIEDADES, e cada uma tem um dono concreto:
+///
+///   idempotente ............. `rankingContributions/{chave}` e o id do
+///                             documento; a segunda passagem recusa
+///                             `ja_processado` sem efeito.
+///   transacional ............ cada item passa por `processarResultadoOficial`,
+///                             que aplica contribuicao, ledger e classificacao
+///                             numa transacao so.
+///   nao duplicar ............ consequencia das duas acima.
+///   registrar a versao ...... `politica` entra no ledger e na contribuicao.
+///   preservar a ordem ....... a fila e percorrida por `registradoEm` crescente,
+///                             que e a ordem em que as partidas encerraram.
+///   paginado ................ `LOTE_BACKLOG` itens por chamada.
+///   permitir retomada ....... o `cursor` devolvido volta como parametro.
+///
+/// A ORDEM CRONOLOGICA NAO E COSMETICA: o Elo nao e comutativo. Aplicar a partida
+/// de marco depois da de abril daria ao jogador um rating diferente, porque a
+/// expectativa de cada uma depende do rating vigente na hora. Reprocessar na
+/// ordem em que as partidas encerraram e o que faz o resultado do backlog ser o
+/// mesmo que teria saido se a politica existisse desde o inicio.
+///
+/// SO ITENS `pendente` SAO EXAMINADOS. `processado` ja virou pontuacao e
+/// `recusado` ja foi decidido — reexamina-los a cada passada faria a fila nunca
+/// encurtar. Um `recusado` pode ser reexaminado sob demanda, chamando
+/// `processarResultadoOficial` diretamente para aquele `matchId`.
+export async function reprocessarBacklog(params: {
+  autor: string;
+  seasonIdAlvo?: string;
+  cursor?: string | null;
+  limite?: number;
+}): Promise<RelatorioDeReprocessamento> {
+  const limite = Math.min(Math.max(params.limite ?? LOTE_BACKLOG, 1), LOTE_BACKLOG);
+
+  let consulta = db()
+    .collection(C_BACKLOG)
+    .where("situacao", "==", "pendente")
+    .orderBy("registradoEm", "asc")
+    .orderBy("matchId", "asc")
+    .limit(limite + 1);
+
+  if (typeof params.cursor === "string" && params.cursor.length > 0) {
+    const partes = params.cursor.split("|");
+    if (partes.length !== 2) {
+      throw new Error(`cursor de reprocessamento ilegivel: "${params.cursor}"`);
+    }
+    consulta = consulta.startAfter(partes[0], partes[1]);
+  }
+
+  const pagina = await consulta.get();
+  const temMais = pagina.size > limite;
+  const docs = temMais ? pagina.docs.slice(0, limite) : pagina.docs;
+
+  let processados = 0;
+  let recusados = 0;
+  let aindaPendentes = 0;
+  const porRecusa: Record<string, number> = {};
+
+  // SEQUENCIAL, E NAO `Promise.all`. Duas partidas do mesmo jogador processadas
+  // em paralelo disputariam a mesma linha de standing; a transacao resolveria o
+  // conflito reexecutando uma delas, mas ao custo de retentativas e — o que
+  // importa mais — sem garantia de qual chegaria primeiro, o que quebraria a
+  // ordem cronologica que o paragrafo acima explica ser necessaria.
+  for (const doc of docs) {
+    const matchId = `${doc.data().matchId ?? doc.id}`;
+    const r = await processarResultadoOficial({
+      matchId,
+      origem: "reprocessamento",
+      autor: params.autor,
+      seasonIdAlvo: params.seasonIdAlvo,
+    });
+    if (r.processada) {
+      processados += 1;
+      continue;
+    }
+    const motivo = r.recusa ?? "desconhecida";
+    porRecusa[motivo] = (porRecusa[motivo] ?? 0) + 1;
+    // Continua `pendente` quando a recusa e "falta uma peca"; vira `recusado`
+    // quando e definitiva. Quem faz essa gravacao e `processarResultadoOficial`,
+    // que ja sabe a diferenca — aqui so se conta.
+    if (motivo === "sem_temporada_vigente" || motivo === "temporada_encerrada" ||
+        motivo === "politica_nao_definida") {
+      aindaPendentes += 1;
+    } else {
+      recusados += 1;
+    }
+  }
+
+  const ultimo = docs.length > 0 ? docs[docs.length - 1] : null;
+  const cursor =
+    temMais && ultimo !== null
+      ? `${ultimo.data().registradoEm}|${ultimo.data().matchId ?? ultimo.id}`
+      : null;
+
+  logger.info("lote de reprocessamento do backlog", {
+    examinados: docs.length,
+    processados,
+    recusados,
+    aindaPendentes,
+    fim: !temMais,
+  });
+
+  return {
+    examinados: docs.length,
+    processados,
+    recusados,
+    aindaPendentes,
+    cursor,
+    fim: !temMais,
+    porRecusa,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // AUDITORIA
 // ---------------------------------------------------------------------------
 
@@ -717,20 +1234,33 @@ function registrarAuditoria(
 ///
 /// Pede `limite + 1` documentos para saber se ha proxima pagina sem uma segunda
 /// consulta — ver `fecharPagina` em ordenacao.ts.
+/// Aplica uma ordem declarada a uma consulta.
+///
+/// A ORDEM VEM DE `ordenacao.ts`, e nao esta escrita aqui. E o que garante que a
+/// consulta, o cursor e a comparacao em memoria concordem: os tres derivam da
+/// mesma lista. Quando os `orderBy` eram digitados a mao em quatro lugares,
+/// acrescentar um criterio exigia lembrar dos quatro.
+function aplicarOrdem(
+  consulta: FirebaseFirestore.Query,
+  ordem: ReadonlyArray<CriterioDeOrdem>
+): FirebaseFirestore.Query {
+  let q = consulta;
+  for (const criterio of ordem) q = q.orderBy(campoNoBanco(criterio), criterio.sentido);
+  return q;
+}
+
 export async function paginaDaTemporada(params: {
   seasonId: string;
   limite: number;
-  depoisDe: { pontos: number; publicPlayerId: string } | null;
+  depoisDe: ReadonlyArray<number | string> | null;
 }): Promise<StandingArmazenado[]> {
-  let consulta = db()
-    .collection(C_STANDINGS)
-    .where("seasonId", "==", params.seasonId)
-    .orderBy("pontos", "desc")
-    .orderBy("publicPlayerId", "asc")
-    .limit(params.limite + 1);
+  let consulta = aplicarOrdem(
+    db().collection(C_STANDINGS).where("seasonId", "==", params.seasonId),
+    ORDEM_TEMPORADA
+  ).limit(params.limite + 1);
 
   if (params.depoisDe !== null) {
-    consulta = consulta.startAfter(params.depoisDe.pontos, params.depoisDe.publicPlayerId);
+    consulta = consulta.startAfter(...params.depoisDe);
   }
 
   const snap = await consulta.get();
@@ -740,16 +1270,14 @@ export async function paginaDaTemporada(params: {
 /// Le uma pagina do agregado de vida inteira (o escopo "global" do cliente).
 export async function paginaGlobal(params: {
   limite: number;
-  depoisDe: { pontos: number; publicPlayerId: string } | null;
+  depoisDe: ReadonlyArray<number | string> | null;
 }): Promise<StandingArmazenado[]> {
-  let consulta = db()
-    .collection(C_PLAYERS)
-    .orderBy("pontosTotais", "desc")
-    .orderBy("publicPlayerId", "asc")
-    .limit(params.limite + 1);
+  let consulta = aplicarOrdem(db().collection(C_PLAYERS), ORDEM_GLOBAL).limit(
+    params.limite + 1
+  );
 
   if (params.depoisDe !== null) {
-    consulta = consulta.startAfter(params.depoisDe.pontos, params.depoisDe.publicPlayerId);
+    consulta = consulta.startAfter(...params.depoisDe);
   }
 
   const snap = await consulta.get();
@@ -770,23 +1298,34 @@ export async function paginaGlobal(params: {
 
 function standingDeDoc(v: FirebaseFirestore.DocumentData | undefined): StandingArmazenado {
   const o = v ?? {};
+  const inteiro = (campo: string): number =>
+    typeof o[campo] === "number" ? (o[campo] as number) : 0;
   return {
     seasonId: typeof o.seasonId === "string" ? o.seasonId : "",
     uid: `${o.uid}`,
     publicPlayerId: `${o.publicPlayerId}`,
     apelido: typeof o.apelido === "string" ? o.apelido : "",
     avatar: typeof o.avatar === "string" ? o.avatar : "",
-    pontos: typeof o.pontos === "number" ? o.pontos : 0,
-    partidasComputadas:
-      typeof o.partidasComputadas === "number" ? o.partidasComputadas : 0,
+    pontos: inteiro("pontos"),
+    partidasComputadas: inteiro("partidasComputadas"),
     posicao: typeof o.posicao === "number" ? o.posicao : null,
     posicaoAnterior: typeof o.posicaoAnterior === "number" ? o.posicaoAnterior : null,
     direcao: direcaoDeJson(o.direcao),
-    deltaPosicao: typeof o.deltaPosicao === "number" ? o.deltaPosicao : 0,
+    deltaPosicao: inteiro("deltaPosicao"),
     ligaId: typeof o.ligaId === "string" ? o.ligaId : null,
     ligaNome: typeof o.ligaNome === "string" ? o.ligaNome : null,
     selo: typeof o.selo === "string" ? o.selo : null,
     atualizadoEm: typeof o.atualizadoEm === "string" ? o.atualizadoEm : "",
+    estadoCompetitivo: estadoCompetitivoDeJson(o.estadoCompetitivo),
+    partidasDeQualificacao: inteiro("partidasDeQualificacao"),
+    qualificacaoExigida: inteiro("qualificacaoExigida"),
+    vitorias: inteiro("vitorias"),
+    derrotas: inteiro("derrotas"),
+    empates: inteiro("empates"),
+    saldoPontos: inteiro("saldoPontos"),
+    abandonos: inteiro("abandonos"),
+    ratingAtingidoEm:
+      typeof o.ratingAtingidoEm === "string" ? o.ratingAtingidoEm : "",
   };
 }
 
@@ -796,11 +1335,10 @@ function standingDeDoc(v: FirebaseFirestore.DocumentData | undefined): StandingA
 /// coisas coincidem hoje, mas o cliente pode pedir a primeira pagina com cursor
 /// (num refresh a partir do meio) e ai o podio deixaria de ser o podio.
 export async function podioDaTemporada(seasonId: string): Promise<StandingArmazenado[]> {
-  const snap = await db()
-    .collection(C_STANDINGS)
-    .where("seasonId", "==", seasonId)
-    .orderBy("pontos", "desc")
-    .orderBy("publicPlayerId", "asc")
+  const snap = await aplicarOrdem(
+    db().collection(C_STANDINGS).where("seasonId", "==", seasonId),
+    ORDEM_TEMPORADA
+  )
     .limit(3)
     .get();
   return snap.docs.map((d) => standingDeDoc(d.data()));
@@ -834,8 +1372,6 @@ export async function porIdPublico(
 
 /// Ordena em memoria pela ordem oficial. Usado so onde o conjunto ja e pequeno e
 /// limitado (o podio, por exemplo), nunca sobre a base inteira.
-export function ordenarOficial<T extends { pontos: number; publicPlayerId: string }>(
-  linhas: T[]
-): T[] {
+export function ordenarOficial<T extends ChaveDeOrdem>(linhas: T[]): T[] {
   return [...linhas].sort(compararOficial);
 }

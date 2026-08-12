@@ -47,6 +47,15 @@ const STANDING = {
   ligaNome: "ALTA",
   selo: "assets/ranking/selos/top_3.webp",
   atualizadoEm: "2026-08-11T20:00:00.000Z",
+  estadoCompetitivo: "classificado",
+  partidasDeQualificacao: 10,
+  qualificacaoExigida: 10,
+  vitorias: 25,
+  derrotas: 15,
+  empates: 2,
+  saldoPontos: 3400,
+  abandonos: 0,
+  ratingAtingidoEm: "2026-08-10T12:00:00.000Z",
 };
 
 describe("projecao: o uid NAO atravessa", () => {
@@ -72,7 +81,21 @@ describe("projecao: o uid NAO atravessa", () => {
 
   test("campos internos do standing ficam de fora", () => {
     const publicada = projetarJogador(STANDING, null);
-    for (const interno of ["seasonId", "partidasComputadas", "posicaoAnterior", "ligaId", "atualizadoEm"]) {
+    // `ligaId` SAIU desta lista com a Politica Competitiva v1, e passou a ser
+    // publicado de proposito: o rotulo `liga` agora pode dizer "Em colocacao",
+    // que nao e uma Liga, e o cliente precisa de um campo estavel para escolher
+    // arte. Ele nao carrega dado de pessoa nenhuma.
+    for (const interno of [
+      "seasonId",
+      "uid",
+      "partidasComputadas",
+      "posicaoAnterior",
+      "ligaNome",
+      "atualizadoEm",
+      "saldoPontos",
+      "ratingAtingidoEm",
+      "partidasDeQualificacao",
+    ]) {
       assert.equal(interno in publicada, false, `"${interno}" vazou`);
     }
   });
@@ -104,6 +127,52 @@ describe("projecao: campos ausentes viram ausencia, e nao invencao", () => {
     // E nao "Bronze". O cliente exibe vazio.
     const semLiga = { ...STANDING, ligaId: null, ligaNome: null };
     assert.equal(projetarJogador(semLiga, null).liga, "");
+  });
+
+  test("em colocacao, o rotulo e o ESTADO e nao uma Liga", () => {
+    // SECAO 15. O caso perigoso e o de baixo: a linha JA TEM `ligaId` gravado
+    // (de uma temporada anterior, ou de um bug), e mesmo assim o jogador em
+    // colocacao nao pode aparecer como Bronze.
+    const colocando = { ...STANDING, estadoCompetitivo: "em_colocacao", partidasDeQualificacao: 3 };
+    const p = projetarJogador(colocando, null);
+    assert.equal(p.liga, "Em colocacao");
+    assert.equal(p.ligaId, null, "estado vence liga gravada");
+    assert.equal(p.qualificacaoRestante, 7);
+  });
+
+  test("em revalidacao, idem, com o rotulo proprio", () => {
+    const revalidando = {
+      ...STANDING,
+      estadoCompetitivo: "em_revalidacao",
+      qualificacaoExigida: 5,
+      partidasDeQualificacao: 2,
+    };
+    const p = projetarJogador(revalidando, null);
+    assert.equal(p.liga, "Em revalidacao");
+    assert.equal(p.ligaId, null);
+    assert.equal(p.qualificacaoRestante, 3);
+  });
+
+  test("classificado publica a Liga e nao tem qualificacao restante", () => {
+    const p = projetarJogador(STANDING, null);
+    assert.equal(p.liga, "ALTA");
+    assert.equal(p.ligaId, "alta");
+    assert.equal(p.qualificacaoRestante, 0);
+  });
+
+  test("os campos de apresentacao da secao 24 saem calculados", () => {
+    const p = projetarJogador(STANDING, null);
+    assert.equal(p.partidas, 42);
+    assert.equal(p.vitorias, 25);
+    assert.equal(p.derrotas, 15);
+    // 25/42 = 59.52...%, com uma casa. Empate nao conta como vitoria nem como
+    // derrota, entao vitorias + derrotas (40) < partidas (42).
+    assert.equal(p.aproveitamento, 59.5);
+  });
+
+  test("sem partida, o aproveitamento e 0 e nao NaN", () => {
+    const novo = { ...STANDING, partidasComputadas: 0, vitorias: 0 };
+    assert.equal(projetarJogador(novo, null).aproveitamento, 0);
   });
 
   test("sem apuracao, a posicao sai 0", () => {

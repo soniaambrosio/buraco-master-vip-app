@@ -457,7 +457,7 @@
       ]
     },
     {
-      "//": "A ORDEM OFICIAL DO RANKING DE UMA TEMPORADA. Serve as tres consultas que produzem classificacao: a pagina (`abrirRanking`/`paginarRanking`), o podio e a varredura da apuracao. Os tres campos existem por motivos distintos e nenhum e dispensavel: `seasonId` isola a temporada (sem ele, a classificacao de 2026-A misturaria com a de 2026-B); `pontos DESC` e a ordem competitiva; `publicPlayerId ASC` e o desempate TECNICO que torna a ordem TOTAL — sem ele o `startAfter` do cursor nao consegue apontar para um ponto unico da lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Ver o cabecalho de functions-ranking/src/ordenacao.ts. [origem: ranking]",
+      "//": "A ORDEM OFICIAL DO RANKING DE UMA TEMPORADA. Serve as quatro consultas que produzem classificacao: a pagina (`abrirRanking`/`paginarRanking`), o podio, a varredura da apuracao e a da consolidacao. ATUALIZADO PELA POLITICA COMPETITIVA V1: ate ela, a ordem era `seasonId, pontos DESC, publicPlayerId ASC`, porque nao havia decisao de produto sobre desempate. A secao 17 decidiu CINCO criterios competitivos, e todos os cinco precisam estar aqui — um `orderBy` sem indice correspondente e recusado pelo Firestore em producao, e a lista simplesmente nao abre. Campo a campo: `seasonId` isola a temporada (sem ele, 2026-A misturaria com 2026-B); `pontos DESC` e o rating; `vitorias DESC`, `saldoPontos DESC`, `abandonos ASC` (o unico ascendente) e `ratingAtingidoEm ASC` (quem chegou ao rating primeiro) sao os criterios 2 a 5; `publicPlayerId ASC` e o desempate TECNICO que torna a ordem TOTAL — sem ele o `startAfter` do cursor nao aponta para um ponto unico da lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Ver o cabecalho de functions-ranking/src/ordenacao.ts. [origem: ranking]",
       "collectionGroup": "rankingStandings",
       "queryScope": "COLLECTION",
       "fields": [
@@ -470,7 +470,42 @@
           "order": "DESCENDING"
         },
         {
+          "fieldPath": "vitorias",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "saldoPontos",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "abandonos",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ratingAtingidoEm",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "publicPlayerId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "A FILA DE REPROCESSAMENTO DO BACKLOG (secao 26). Le so os itens `pendente`, na ordem em que as partidas entraram na fila. A ordem cronologica NAO e cosmetica: o Elo nao e comutativo, e aplicar a partida de marco depois da de abril daria ao jogador um rating diferente — reprocessar na ordem de encerramento e o que faz o resultado do backlog ser o mesmo que teria saido se a politica existisse desde o inicio. `matchId ASC` fecha a ordem para que o cursor de retomada aponte para um ponto unico, pela mesma razao do `publicPlayerId` no indice acima. [origem: politica-competitiva-v1]",
+      "collectionGroup": "rankingBacklog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "situacao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "matchId",
           "order": "ASCENDING"
         }
       ]

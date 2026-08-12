@@ -25,8 +25,15 @@
 // exibir "Bronze" por default. Um default aqui seria uma faixa competitiva
 // inventada em silencio, que e o que a secao 28 proibe.
 
-/// Um degrau da escada. `pontosMinimos` inclusivo; `pontosMaximos` inclusivo e
-/// `null` no topo (o ultimo degrau nao tem teto).
+/// Um degrau da escada. `pontosMinimos` inclusivo; `pontosMaximos` inclusivo.
+///
+/// AS DUAS PONTAS SAO ABERTAS, e por simetria: `pontosMaximos: null` no ultimo
+/// degrau (nada acima de Lenda) e `pontosMinimos: null` no primeiro (nada abaixo
+/// de Bronze). O piso aberto entrou com a Politica Competitiva v1, cuja secao 15
+/// define Bronze como "abaixo de 950" sem indicar um fundo. Sem ele, seria
+/// preciso inventar um numero — e qualquer numero escolhido deixaria a faixa
+/// abaixo dele sem Liga nenhuma, que e o defeito `buraco_entre_faixas` que
+/// `conferirEscada` recusa.
 export interface DegrauDeLiga {
   readonly ligaId: string;
   readonly nome: string;
@@ -34,7 +41,9 @@ export interface DegrauDeLiga {
   /// deduzir `assets/ranking/liga_${nome.toLowerCase()}.webp` amarraria a
   /// autoridade a um nome de arquivo do cliente.
   readonly icone: string;
-  readonly pontosMinimos: number;
+  /// `null` = sem piso. So o PRIMEIRO degrau pode te-lo.
+  readonly pontosMinimos: number | null;
+  /// `null` = sem teto. So o ULTIMO degrau pode te-lo.
   readonly pontosMaximos: number | null;
 }
 
@@ -67,7 +76,8 @@ export type RecusaDeEscada =
   | "faixa_invertida"
   | "faixa_sobreposta"
   | "buraco_entre_faixas"
-  | "teto_no_meio";
+  | "teto_no_meio"
+  | "piso_no_meio";
 
 export interface ConferenciaDeEscada {
   readonly valida: boolean;
@@ -105,9 +115,15 @@ export function conferirEscada(degraus: ReadonlyArray<DegrauDeLiga>): Conferenci
     vistos.add(d.ligaId);
   }
 
+  // DUAS PASSAGENS, E A ORDEM ENTRE ELAS IMPORTA. A primeira confere a FORMA de
+  // cada degrau isoladamente; a segunda confere a relacao entre vizinhos. Feitas
+  // juntas, um piso aberto no meio da escada seria denunciado como
+  // "faixa_sobreposta" pelo vizinho anterior (em JavaScript, `null <= 100` e
+  // verdadeiro), e a mensagem apontaria para o degrau errado.
   for (let i = 0; i < degraus.length; i++) {
     const d = degraus[i];
     const ultimo = i === degraus.length - 1;
+    const primeiro = i === 0;
 
     if (d.pontosMaximos === null && !ultimo) {
       return recusar(
@@ -116,27 +132,46 @@ export function conferirEscada(degraus: ReadonlyArray<DegrauDeLiga>): Conferenci
           "tudo acima dela ficaria inalcancavel"
       );
     }
-    if (d.pontosMaximos !== null && d.pontosMaximos < d.pontosMinimos) {
+    // Simetrico ao anterior: um piso aberto no meio da escada engoliria todas as
+    // faixas abaixo dele, porque `ligaDe` percorre na ordem e o primeiro degrau
+    // que aceita a pontuacao vence.
+    if (d.pontosMinimos === null && !primeiro) {
+      return recusar(
+        "piso_no_meio",
+        `a liga "${d.ligaId}" nao tem piso mas nao e a primeira da escada — ` +
+          "tudo abaixo dela ficaria inalcancavel"
+      );
+    }
+    if (
+      d.pontosMaximos !== null &&
+      d.pontosMinimos !== null &&
+      d.pontosMaximos < d.pontosMinimos
+    ) {
       return recusar(
         "faixa_invertida",
         `a liga "${d.ligaId}" vai de ${d.pontosMinimos} a ${d.pontosMaximos}`
       );
     }
-    if (ultimo) continue;
+  }
 
+  for (let i = 0; i < degraus.length - 1; i++) {
+    const d = degraus[i];
     const proximo = degraus[i + 1];
     const teto = d.pontosMaximos as number;
-    if (proximo.pontosMinimos <= teto) {
+    // Nao e o primeiro degrau (i + 1 >= 1), entao o piso dele nao pode ser
+    // aberto — a guarda `piso_no_meio` acima ja recusou esse caso.
+    const pisoSeguinte = proximo.pontosMinimos as number;
+    if (pisoSeguinte <= teto) {
       return recusar(
         "faixa_sobreposta",
         `"${d.ligaId}" termina em ${teto} e "${proximo.ligaId}" comeca em ` +
-          `${proximo.pontosMinimos}`
+          `${pisoSeguinte}`
       );
     }
-    if (proximo.pontosMinimos !== teto + 1) {
+    if (pisoSeguinte !== teto + 1) {
       return recusar(
         "buraco_entre_faixas",
-        `entre ${teto} ("${d.ligaId}") e ${proximo.pontosMinimos} ` +
+        `entre ${teto} ("${d.ligaId}") e ${pisoSeguinte} ` +
           `("${proximo.ligaId}") ha pontuacao sem liga`
       );
     }
@@ -148,13 +183,18 @@ export function conferirEscada(degraus: ReadonlyArray<DegrauDeLiga>): Conferenci
 /// A liga de uma pontuacao, ou `null` quando a escada nao define.
 ///
 /// `null` e devolvido em dois casos, e nenhum dos dois e erro:
-///   * nao ha escada registrada — o produto ainda nao decidiu as faixas;
-///   * a pontuacao esta abaixo do primeiro degrau (por exemplo, negativa numa
-///     escada que comeca em zero). Inventar "cai no Bronze" seria decidir
+///   * nao ha escada registrada — nenhuma temporada aponta para uma escada;
+///   * a pontuacao esta abaixo do primeiro degrau, numa escada cujo primeiro
+///     degrau tem piso fechado. Inventar "cai no Bronze" seria decidir
 ///     rebaixamento, que e politica de produto.
+///
+/// Na escada oficial da v1 o segundo caso nao acontece: o Bronze tem piso aberto,
+/// entao toda pontuacao tem Liga. Quem ainda nao tem Liga na v1 nao e por falta
+/// de faixa — e por estar em colocacao/revalidacao, que e outra coisa e e
+/// decidida em `competicao.ts`, nao aqui.
 export function ligaDe(escada: EscadaDeLigas, pontos: number): DegrauDeLiga | null {
   for (const d of escada.degraus) {
-    const dentroDoPiso = pontos >= d.pontosMinimos;
+    const dentroDoPiso = d.pontosMinimos === null || pontos >= d.pontosMinimos;
     const dentroDoTeto = d.pontosMaximos === null || pontos <= d.pontosMaximos;
     if (dentroDoPiso && dentroDoTeto) return d;
   }
@@ -194,7 +234,8 @@ export function escadaDeJson(raw: unknown): EscadaDeLigas {
     if (typeof b !== "object" || b === null) return SEM_ESCADA;
     const d = b as Record<string, unknown>;
     if (typeof d.ligaId !== "string" || d.ligaId.length === 0) return SEM_ESCADA;
-    if (typeof d.pontosMinimos !== "number" || !Number.isInteger(d.pontosMinimos)) {
+    const piso = d.pontosMinimos;
+    if (piso !== null && piso !== undefined && !Number.isInteger(piso as number)) {
       return SEM_ESCADA;
     }
     const teto = d.pontosMaximos;
@@ -205,7 +246,7 @@ export function escadaDeJson(raw: unknown): EscadaDeLigas {
       ligaId: d.ligaId,
       nome: typeof d.nome === "string" ? d.nome : d.ligaId,
       icone: typeof d.icone === "string" ? d.icone : "",
-      pontosMinimos: d.pontosMinimos,
+      pontosMinimos: piso === null || piso === undefined ? null : (piso as number),
       pontosMaximos: teto === null || teto === undefined ? null : (teto as number),
     });
   }

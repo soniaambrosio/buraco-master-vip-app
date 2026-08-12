@@ -1,4 +1,13 @@
-// politica.ts — ONDE A FORMULA DE PONTUACAO ENTRARIA, E POR QUE ELA NAO ESTA AQUI.
+// politica.ts — O CONTRATO DA FORMULA DE PONTUACAO E O REGISTRO VERSIONADO DELA.
+//
+// ATUALIZADO PELA OS DA POLITICA COMPETITIVA V1. O texto abaixo descrevia um
+// projeto em que a formula NAO EXISTIA, e ele foi mantido porque explica por que
+// as pecas tem a forma que tem. O que mudou: a formula agora existe, mora em
+// `elo.ts` + `competicao.ts` e e registrada aqui como `competitiva@v1`. O
+// mecanismo de pendencia continua inteiro e continua valendo para qualquer
+// temporada que ainda nao tenha escolhido politica.
+//
+// --- registro historico, da OS anterior ------------------------------------
 //
 // Este e o arquivo mais importante desta codebase para quem estiver auditando a
 // OS, porque ele e a resposta a secao 7 ("nao inventar formula") e a secao 31
@@ -78,7 +87,19 @@ export interface EntradaDeCalculo {
   readonly userId: string;
 
   /// Saldo do jogador na temporada ANTES desta partida.
+  ///
+  /// Sob a Politica Competitiva v1 este numero E O RATING, ja resolvido: quando
+  /// o jogador entra na temporada, ele vale 1000 (jogador novo) ou o soft reset
+  /// do rating final anterior (veterano). A calculadora nunca ve um zero de
+  /// "jogador sem linha" — a semente e aplicada antes, em `firestore.ts`.
   readonly saldoAtual: number;
+
+  /// Em que ponto da temporada o jogador esta: `em_colocacao`, `em_revalidacao`
+  /// ou `classificado`.
+  ///
+  /// E daqui que sai o fator K, e ele e INDIVIDUAL: dois parceiros em estados
+  /// diferentes usam K diferentes na mesma partida.
+  readonly estadoCompetitivo: string;
 
   /// `finalizada`, `abandonada` ou `cancelada` — o estado terminal do registro.
   readonly estado: string;
@@ -103,9 +124,17 @@ export interface EntradaDeCalculo {
   /// Tipo da partida (`publica_ranqueada`, `torneio`).
   readonly tipo: string;
 
-  /// Saldos dos ADVERSARIOS na temporada, para politicas do tipo Elo que
-  /// dependem da forca do oponente. Vazio quando nao aplicavel.
-  readonly saldosDosOponentes: ReadonlyArray<number>;
+  /// Ratings de TODOS os integrantes do lado deste jogador, incluindo ele
+  /// proprio. Uma politica do tipo Elo em dupla precisa da forca do PARCEIRO, e
+  /// nao apenas da do adversario (secao 9 da OS da Politica Competitiva v1).
+  readonly ratingsDaMinhaDupla: ReadonlyArray<number>;
+
+  /// Ratings de todos os integrantes do lado adversario.
+  ///
+  /// Substituiu `saldosDosOponentes`, que dizia metade do necessario: sem o
+  /// rating do parceiro nao ha como calcular a media da propria dupla, e a
+  /// expectativa sairia comparando UM jogador contra DOIS.
+  readonly ratingsDaDuplaAdversaria: ReadonlyArray<number>;
 }
 
 /// Entra o contexto da partida, sai um inteiro. Nada mais.
@@ -118,9 +147,16 @@ export type CalculoDeDelta = (entrada: EntradaDeCalculo) => number;
 
 /// Registro de calculadoras, indexado por `id@vN`.
 ///
-/// SAI VAZIO. Esta e a linha que implementa a secao 7 da OS, e ela nao deve
-/// ganhar uma entrada "provisoria": uma formula de mentira registrada aqui
-/// viraria pontuacao de verdade no ledger, e o ledger e permanente.
+/// NASCE VAZIO E PERMANECE VAZIO ATE QUE ALGUEM REGISTRE. O que mudou com a OS
+/// da Politica Competitiva v1 nao foi esta estrutura, e sim o fato de existir
+/// agora uma politica real para colocar dentro dela: `registrarPoliticaV1()`, em
+/// `competicao.ts`, chamada uma vez por `index.ts`.
+///
+/// A DISCIPLINA CONTINUA VALENDO, e continua sendo o ponto do arquivo: uma
+/// temporada que nao declare uma politica registrada NAO pontua — ela acumula
+/// `politica_nao_definida` no backlog. Nenhuma entrada "provisoria" deve ser
+/// acrescentada aqui: uma formula de mentira registrada viraria pontuacao de
+/// verdade no ledger, e o ledger e permanente.
 const REGISTRO = new Map<string, CalculoDeDelta>();
 
 /// Registra a calculadora de uma politica.

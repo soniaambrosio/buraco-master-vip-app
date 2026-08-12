@@ -9,49 +9,169 @@
 // ---------------------------------------------------------------------------
 // O DESEMPATE, E POR QUE ELE E ESTE
 // ---------------------------------------------------------------------------
-// A ordem e: `pontos DESC, publicPlayerId ASC`.
+// A PENDENCIA DE PRODUTO QUE ESTAVA REGISTRADA AQUI FOI RESOLVIDA. Ate a OS
+// anterior, a ordem era `pontos DESC, publicPlayerId ASC` — um criterio
+// competitivo e um desempate tecnico neutro, porque nao havia decisao de produto
+// sobre o resto. A secao 17 da OS da Politica Competitiva v1 decidiu, e a ordem
+// oficial da temporada passou a ter CINCO criterios competitivos:
 //
-// O primeiro criterio e o unico competitivo, e ele nao foi inventado aqui —
-// "mais pontos vem antes" e o que a propria existencia de uma pontuacao
-// significa.
+//   1. rating DESC ............ mais rating vem antes;
+//   2. vitorias DESC .......... na temporada;
+//   3. saldoPontos DESC ....... saldo acumulado das partidas ranqueadas;
+//   4. abandonos ASC .......... MENOS abandonos vem antes (unico criterio
+//                               ascendente, e por isso o mais facil de inverter
+//                               por engano);
+//   5. ratingAtingidoEm ASC ... quem chegou ao rating atual PRIMEIRO vem antes.
 //
-// O SEGUNDO E DELIBERADAMENTE NEUTRO. A secao 10 permite exatamente isto quando
-// a politica nao existe: "usar somente regra tecnica neutra e claramente
-// documentada ou registrar como dependencia de produto". Este arquivo faz as
-// duas coisas.
+// O SEXTO CAMPO CONTINUA SENDO `publicPlayerId ASC`, E ELE NAO E REGRA
+// COMPETITIVA. A secao 17 o permite nominalmente ("se ainda for necessario um
+// desempate puramente tecnico posterior para estabilidade de banco/paginacao")
+// e impoe duas condicoes que este arquivo cumpre: ele nao e apresentado como
+// regra competitiva (esta escrito aqui que nao e) e nao substitui os cinco
+// acima (vem depois de todos). Ele existe para uma razao mecanica: sem ordem
+// TOTAL, o `startAfter` do cursor nao consegue apontar para um ponto unico da
+// lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Como o id
+// publico e opaco e atribuido sem relacao com desempenho, ninguem consegue
+// joga-lo a favor.
 //
-// O que `publicPlayerId ASC` garante: ordem TOTAL (dois jogadores nunca empatam,
-// porque o id publico e unico), ESTAVEL (o id nao muda entre duas apuracoes) e
-// INDEXAVEL (vira o segundo campo do indice composto, e o cursor do Firestore o
-// usa como `startAfter`).
+// O UID NAO E CRITERIO, e a secao 17 proibe explicitamente que seja. Ele nem
+// chega a esta camada.
 //
-// O que ele NAO e: uma regra competitiva. Ele nao premia quem jogou menos, quem
-// chegou antes, quem tem mais vitorias ou quem tem melhor saldo — qualquer um
-// desses seria uma decisao de produto tomada por conta propria, e a secao 10
-// proibe. Como o id publico e opaco e atribuido sem relacao com desempenho,
-// a ordem entre empatados e arbitraria de proposito: ninguem consegue joga-la
-// a favor.
-//
-// PENDENCIA DE PRODUTO REGISTRADA: qual e o desempate COMPETITIVO oficial
-// (confronto direto? mais vitorias? menos partidas? quem atingiu a pontuacao
-// primeiro?). Enquanto nao houver decisao, vale o desempate tecnico acima.
+// COMO O CARIMBO DO CRITERIO 5 E CAPTURADO (a secao 17 pede que isto esteja
+// documentado): `ratingAtingidoEm` e reescrito com o instante do servidor
+// SEMPRE QUE O VALOR DO RATING MUDA, e preservado quando o rating fica igual.
+// Entao ele responde literalmente "desde quando este jogador esta neste rating",
+// que e o que o criterio pede. Um delta zero (que a v1 nao produz em partida
+// valida, mas que uma correcao administrativa poderia) nao reinicia o relogio.
+// A consequencia desejada: entre dois jogadores com 1400, vem antes o que chegou
+// a 1400 ha mais tempo e se manteve.
+
+// ---------------------------------------------------------------------------
+// A ORDEM COMO DADO, E NAO COMO SEQUENCIA DE `if`
+// ---------------------------------------------------------------------------
+// Os criterios sao declarados UMA vez, nesta lista, e tudo o mais deriva dela: a
+// comparacao em memoria, os campos que o cursor carrega, a conferencia de que uma
+// pagina veio na ordem certa e a ordem dos `orderBy` da consulta. Quando os seis
+// campos estavam espalhados por quatro arquivos, acrescentar um criterio exigia
+// lembrar de quatro lugares — e esquecer um deles produz uma paginacao que pula
+// linhas em silencio.
+
+export type SentidoDeOrdem = "asc" | "desc";
+
+export interface CriterioDeOrdem {
+  /// O nome do campo no MODELO (`ChaveDeOrdem`).
+  readonly campo: string;
+  /// O nome do campo no DOCUMENTO, quando difere do modelo.
+  ///
+  /// Existe por causa de um caso so: `rankingPlayers` guarda a pontuacao de vida
+  /// inteira em `pontosTotais`, e a leitura a projeta como `pontos`. Sem esta
+  /// separacao, ou o `orderBy` apontaria para um campo que nao existe no
+  /// documento, ou o cursor leria um campo que nao existe no modelo — e as duas
+  /// falhas so aparecem na segunda pagina.
+  readonly campoNoBanco?: string;
+  readonly sentido: SentidoDeOrdem;
+  /// E um criterio COMPETITIVO (secao 17) ou um desempate tecnico?
+  readonly competitivo: boolean;
+}
+
+/// O nome com que um criterio e consultado no Firestore.
+export function campoNoBanco(criterio: CriterioDeOrdem): string {
+  return criterio.campoNoBanco ?? criterio.campo;
+}
+
+/// A ordem oficial da classificacao de temporada (secao 17).
+export const ORDEM_TEMPORADA: ReadonlyArray<CriterioDeOrdem> = [
+  { campo: "pontos", sentido: "desc", competitivo: true },
+  { campo: "vitorias", sentido: "desc", competitivo: true },
+  { campo: "saldoPontos", sentido: "desc", competitivo: true },
+  { campo: "abandonos", sentido: "asc", competitivo: true },
+  { campo: "ratingAtingidoEm", sentido: "asc", competitivo: true },
+  { campo: "publicPlayerId", sentido: "asc", competitivo: false },
+];
+
+/// A ordem do agregado de vida inteira (o escopo `global` das abas do cliente).
+///
+/// DELIBERADAMENTE DIFERENTE, e nao um esquecimento: os cinco criterios da secao
+/// 17 sao definidos para "a ordenacao oficial da TEMPORADA". `rankingPlayers`
+/// nao e uma classificacao de temporada — e um acumulado de vida inteira, sem
+/// vitorias por temporada, sem saldo por temporada e sem o carimbo de "atingiu
+/// este rating primeiro" (que so faz sentido dentro de uma temporada). Aplicar
+/// os cinco criterios aqui exigiria inventar o significado de cada um fora do
+/// recorte em que a OS os definiu.
+export const ORDEM_GLOBAL: ReadonlyArray<CriterioDeOrdem> = [
+  { campo: "pontos", campoNoBanco: "pontosTotais", sentido: "desc", competitivo: true },
+  { campo: "publicPlayerId", sentido: "asc", competitivo: false },
+];
 
 /// Uma linha de classificacao, no minimo que a ordenacao precisa conhecer.
+///
+/// Os campos do desempate tem default no leitor (`standingDeDoc`), entao uma
+/// linha gravada antes desta OS ordena como se tivesse zero vitorias, zero saldo
+/// e zero abandono — que e a leitura correta de "nao ha registro disso".
 export interface ChaveDeOrdem {
   readonly pontos: number;
+  readonly vitorias: number;
+  readonly saldoPontos: number;
+  readonly abandonos: number;
+  readonly ratingAtingidoEm: string;
   readonly publicPlayerId: string;
 }
 
-/// Compara duas linhas pela ordem oficial. Negativo = `a` vem antes.
+/// Le de uma linha o valor de um campo de ordenacao.
+///
+/// Centralizado para que a comparacao em memoria e a montagem do cursor leiam o
+/// MESMO campo — se as duas divergirem, o cursor aponta para um lugar que a
+/// ordem nao reconhece.
+export function valorDoCriterio(
+  linha: ChaveDeOrdem,
+  criterio: CriterioDeOrdem
+): number | string {
+  switch (criterio.campo) {
+    case "pontos":
+      return linha.pontos;
+    case "vitorias":
+      return linha.vitorias;
+    case "saldoPontos":
+      return linha.saldoPontos;
+    case "abandonos":
+      return linha.abandonos;
+    case "ratingAtingidoEm":
+      return linha.ratingAtingidoEm;
+    case "publicPlayerId":
+      return linha.publicPlayerId;
+    default:
+      throw new Error(`criterio de ordem desconhecido: ${criterio.campo}`);
+  }
+}
+
+/// Compara duas linhas por uma ordem qualquer. Negativo = `a` vem antes.
 ///
 /// Existe como funcao, e nao so como indice do Firestore, por duas razoes: a
-/// apuracao ordena em memoria dentro de cada lote, e o teste da secao 23
-/// ("ordenacao", "desempate") precisa exercitar a regra sem subir emulador.
-export function compararOficial(a: ChaveDeOrdem, b: ChaveDeOrdem): number {
-  if (a.pontos !== b.pontos) return b.pontos - a.pontos;
-  if (a.publicPlayerId < b.publicPlayerId) return -1;
-  if (a.publicPlayerId > b.publicPlayerId) return 1;
+/// apuracao confere a ordem de cada lote em memoria, e os testes de desempate
+/// precisam exercitar a regra sem subir emulador.
+///
+/// O CARIMBO E COMPARADO COMO TEXTO, e isso e correto e nao preguica: ISO-8601
+/// em UTC com casas fixas ordena lexicograficamente na mesma ordem em que ordena
+/// cronologicamente. E tambem como o Firestore o ordena, entao a comparacao em
+/// memoria e a do banco concordam — que e o requisito de verdade aqui.
+export function compararPor(
+  ordem: ReadonlyArray<CriterioDeOrdem>,
+  a: ChaveDeOrdem,
+  b: ChaveDeOrdem
+): number {
+  for (const criterio of ordem) {
+    const va = valorDoCriterio(a, criterio);
+    const vb = valorDoCriterio(b, criterio);
+    if (va === vb) continue;
+    const antes = va < vb ? -1 : 1;
+    return criterio.sentido === "asc" ? antes : -antes;
+  }
   return 0;
+}
+
+/// Compara duas linhas pela ordem oficial da temporada.
+export function compararOficial(a: ChaveDeOrdem, b: ChaveDeOrdem): number {
+  return compararPor(ORDEM_TEMPORADA, a, b);
 }
 
 /// Tamanho de pagina. O cliente pede, o servidor limita.
@@ -74,12 +194,22 @@ export interface Cursor {
   readonly escopo: string;
   /// A temporada que produziu o cursor. Vazio no escopo global, que nao tem uma.
   readonly seasonId: string;
-  /// Os valores de `startAfter`, na MESMA ordem dos campos do indice.
-  readonly pontos: number;
-  readonly publicPlayerId: string;
+  /// Os valores de `startAfter`, na MESMA ordem dos criterios do escopo.
+  ///
+  /// LISTA, E NAO CAMPOS NOMEADOS, porque os dois escopos ordenam por listas de
+  /// tamanhos diferentes (seis criterios na temporada, dois no global). Com
+  /// campos fixos, o cursor do global carregaria quatro valores sem sentido e a
+  /// forma nao diria mais qual e a ordem que ela representa.
+  readonly chaves: ReadonlyArray<number | string>;
 }
 
-export const VERSAO_CURSOR = 1;
+/// VERSAO 2: a v1 carregava `{p, i}` (pontos e id publico), que eram os dois
+/// unicos criterios da ordem antiga. Com os cinco criterios competitivos da
+/// secao 17, um cursor v1 aplicado a ordem nova apontaria para o lugar errado —
+/// entao ele e RECUSADO (`versao_desconhecida`), e nao reinterpretado. O cliente
+/// trata a recusa recomecando a lista, que e barato e correto; adivinhar o
+/// formato velho produziria uma pagina plausivel e errada.
+export const VERSAO_CURSOR = 2;
 
 /// Por que um cursor foi recusado.
 export type RecusaDeCursor =
@@ -109,8 +239,7 @@ export function codificarCursor(c: Cursor): string {
     v: c.versao,
     e: c.escopo,
     s: c.seasonId,
-    p: c.pontos,
-    i: c.publicPlayerId,
+    k: c.chaves,
   });
   return Buffer.from(json, "utf8").toString("base64url");
 }
@@ -124,7 +253,7 @@ export function codificarCursor(c: Cursor): string {
 /// jogador veria uma lista que pula gente sem nenhum sinal de erro.
 export function decodificarCursor(
   bruto: unknown,
-  esperado: { escopo: string; seasonId: string }
+  esperado: { escopo: string; seasonId: string; ordem: ReadonlyArray<CriterioDeOrdem> }
 ): Cursor {
   if (typeof bruto !== "string" || bruto.length === 0) {
     throw new CursorInvalido("formato_invalido", "cursor deve ser texto nao vazio.");
@@ -161,19 +290,40 @@ export function decodificarCursor(
       `cursor da temporada "${objeto.s}" usado numa consulta de "${esperado.seasonId}".`
     );
   }
-  if (typeof objeto.p !== "number" || !Number.isInteger(objeto.p)) {
-    throw new CursorInvalido("formato_invalido", "cursor sem pontuacao inteira.");
+  // A ARIDADE E CONFERIDA CONTRA A ORDEM DO ESCOPO. Um cursor com menos valores
+  // do que a consulta tem criterios faria o `startAfter` do Firestore posicionar
+  // por um prefixo — o que devolve uma pagina que COMECA no lugar plausivel e
+  // repete linhas. Com mais valores, o Firestore recusaria a consulta inteira.
+  const chaves = objeto.k;
+  if (!Array.isArray(chaves) || chaves.length !== esperado.ordem.length) {
+    throw new CursorInvalido(
+      "formato_invalido",
+      `cursor com ${Array.isArray(chaves) ? chaves.length : "nenhum"} valor(es) numa ` +
+        `ordem de ${esperado.ordem.length} criterio(s).`
+    );
   }
-  if (typeof objeto.i !== "string" || objeto.i.length === 0) {
-    throw new CursorInvalido("formato_invalido", "cursor sem identificador publico.");
+  for (let i = 0; i < chaves.length; i++) {
+    const valor = chaves[i];
+    const campo = esperado.ordem[i].campo;
+    if (typeof valor === "number") {
+      if (!Number.isInteger(valor)) {
+        throw new CursorInvalido("formato_invalido", `cursor: "${campo}" nao e inteiro.`);
+      }
+      continue;
+    }
+    if (typeof valor !== "string") {
+      throw new CursorInvalido(
+        "formato_invalido",
+        `cursor: "${campo}" nao e numero nem texto.`
+      );
+    }
   }
 
   return {
     versao: VERSAO_CURSOR,
     escopo: objeto.e,
     seasonId: objeto.s,
-    pontos: objeto.p,
-    publicPlayerId: objeto.i,
+    chaves: chaves as ReadonlyArray<number | string>,
   };
 }
 
@@ -188,7 +338,8 @@ export function fecharPagina<T extends ChaveDeOrdem>(
   lidos: ReadonlyArray<T>,
   limite: number,
   escopo: string,
-  seasonId: string
+  seasonId: string,
+  ordem: ReadonlyArray<CriterioDeOrdem>
 ): { itens: T[]; cursorProxima: string | null; fim: boolean } {
   const temMais = lidos.length > limite;
   const itens = temMais ? lidos.slice(0, limite) : [...lidos];
@@ -204,8 +355,10 @@ export function fecharPagina<T extends ChaveDeOrdem>(
       versao: VERSAO_CURSOR,
       escopo,
       seasonId,
-      pontos: ultimo.pontos,
-      publicPlayerId: ultimo.publicPlayerId,
+      // Os valores saem da MESMA funcao que a comparacao usa, na MESMA ordem dos
+      // criterios — e o que garante que o `startAfter` caia exatamente onde a
+      // pagina parou.
+      chaves: ordem.map((c) => valorDoCriterio(ultimo, c)),
     }),
     fim: false,
   };

@@ -24,6 +24,7 @@
 
 import { ChaveDeOrdem, compararOficial } from "./ordenacao";
 import { DegrauDeLiga, EscadaDeLigas, ligaDe } from "./ligas";
+import { EstadoCompetitivo } from "./competicao";
 
 /// Movimento da posicao desde a apuracao anterior. Espelha `RankingDirecao` de
 /// `app/lib/ranking/ranking_contract.dart`, wire a wire.
@@ -40,6 +41,8 @@ export function direcaoDeJson(bruto: unknown): Direcao {
 export interface LinhaParaApurar extends ChaveDeOrdem {
   readonly uid: string;
   readonly posicao: number | null;
+  /// Decide se esta linha recebe Liga nesta passagem (secao 15).
+  readonly estadoCompetitivo: EstadoCompetitivo;
 }
 
 /// O que a apuracao grava de volta.
@@ -110,7 +113,12 @@ export function apurarLote(params: {
 
   for (const linha of linhas) {
     const movimento = compararPosicao(posicao, linha.posicao);
-    const degrau: DegrauDeLiga | null = ligaDe(escada, linha.pontos);
+    // SECAO 15: Liga so para quem consolidou. Quem esta em colocacao ou
+    // revalidacao aparece na classificacao, com posicao e rating, mas sem Liga —
+    // e a tela mostra "Em colocacao" no lugar dela. Derivar a Liga aqui e deixar
+    // a projecao esconde-la seria gravar no banco uma afirmacao que nao vale.
+    const degrau: DegrauDeLiga | null =
+      linha.estadoCompetitivo === "classificado" ? ligaDe(escada, linha.pontos) : null;
     apuradas.push({
       uid: linha.uid,
       publicPlayerId: linha.publicPlayerId,
