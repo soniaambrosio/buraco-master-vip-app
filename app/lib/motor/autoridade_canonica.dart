@@ -82,39 +82,32 @@ class ResultadoAutoridade {
 /// produção usa `paraCanonico`). Tear-off de função top-level é constante.
 typedef Projetor = ProjecaoBMV Function(Jogo);
 
-// C10 — SEM caps semânticos artificiais: os ÚNICOS limites da geração são os
-// RECURSOS visíveis reais (topo + mão + jogos expostos) e as restrições da
-// própria regra canônica. Um meld pode ter qualquer tamanho até esgotar as
-// cartas visíveis; uma compra pode ter quantos jogos/extensões couberem nas
-// cartas (contagem limitada só por cartas/3). Nada de tabela de pontos ou
-// legalidade duplicada: geração ESTRUTURAL (subconjuntos das cartas visíveis)
-// + validação canônica final (`validarJogoMesa`/`avaliarComprarLixo`).
+// C10 — SEM caps semânticos artificiais E SEM materializar 2^n. Os ÚNICOS
+// limites são os RECURSOS visíveis reais (topo + mão + jogos expostos) e as
+// restrições da própria regra canônica. A geração é LAZY (DFS streaming):
+// produz-e-valida cada candidato durante a travessia, com PODA ESTRUTURAL
+// precoce (um meld só pode ser mesmo-naipe (sequência) OU mesmo-valor (trinca),
+// e no máx. 1 JOKER), e disjunção incremental por carta/índice. Nada é
+// enumerado numa lista completa antes de trabalhar. Nada de tabela de pontos ou
+// legalidade duplicada: a poda só descarta o que a regra NUNCA aceitaria; o
+// validador canônico (`validarJogoMesa`/`avaliarComprarLixo`) é a autoridade
+// final. Resultado idêntico (mesmo conjunto legal), determinístico, deduplicado.
 
-/// Subconjuntos de índices [0..n) com tamanho ≥ lo (até o tamanho TOTAL n — o
-/// limite é o próprio conjunto de cartas visíveis, não um teto arbitrário).
-/// Determinístico, crescente por índice.
-List<List<int>> _subconjuntos(int n, int lo) {
-  final out = <List<int>>[];
-  void rec(int start, List<int> cur) {
-    if (cur.length >= lo) out.add(List<int>.from(cur));
-    for (var i = start; i < n; i++) {
-      cur.add(i);
-      rec(i + 1, cur);
-      cur.removeLast();
-    }
-  }
-
-  rec(0, <int>[]);
-  return out;
+/// Diagnóstico estrutural da derivação (evidência de que NÃO houve enumeração
+/// materializada de 2^n): nós de DFS de meld/combinação visitados e nº de
+/// transações validadas. Sem tetos; só instrumentação.
+class DiagnosticoLixo {
+  int nosMeld = 0; // nós do DFS de geração de meld/extensão
+  int nosCombo = 0; // nós do DFS de combinação atômica
+  int transacoesValidadas = 0; // chamadas a avaliarComprarLixo
 }
 
-/// Uma UNIDADE de baixada dentro da compra: ou um jogo novo, ou uma extensão de
-/// um jogo já exposto (índice `indiceExt`). `ids` são as cartas visíveis que ela
-/// consome (para garantir disjunção entre unidades).
+/// Uma UNIDADE de baixada dentro da compra: um jogo novo OU uma extensão de um
+/// jogo já exposto (índice `indiceExt`). `ids` = cartas visíveis que ela consome.
 class _UnidadeCompra {
   final List<CartaId>? jogoNovo;
   final Extensao? extensao;
-  final int? indiceExt; // índice do jogo exposto estendido (null se jogo novo)
+  final int? indiceExt;
   final Set<CartaId> ids;
   const _UnidadeCompra.jogo(List<CartaId> j, this.ids)
       : jogoNovo = j,
@@ -126,35 +119,8 @@ class _UnidadeCompra {
         indiceExt = e.indiceJogo;
 }
 
-/// Todos os subconjuntos de unidades MUTUAMENTE disjuntas (por carta E por índice
-/// de jogo estendido), incluindo o conjunto vazio. Determinístico. É a
-/// combinação atômica completa — a contagem é limitada só pela disjunção real
-/// das cartas (nenhum cap numérico).
-List<List<_UnidadeCompra>> _combosDisjuntos(
-    List<_UnidadeCompra> us, Set<CartaId> cartasIniciais, Set<int> indicesIniciais) {
-  final res = <List<_UnidadeCompra>>[];
-  void rec(int i, List<_UnidadeCompra> cur, Set<CartaId> cartas, Set<int> indices) {
-    res.add(List<_UnidadeCompra>.from(cur));
-    for (var k = i; k < us.length; k++) {
-      final u = us[k];
-      if (u.ids.any(cartas.contains)) continue; // carta já usada
-      if (u.indiceExt != null && indices.contains(u.indiceExt)) continue; // jogo já estendido
-      cur.add(u);
-      cartas.addAll(u.ids);
-      if (u.indiceExt != null) indices.add(u.indiceExt!);
-      rec(k + 1, cur, cartas, indices);
-      if (u.indiceExt != null) indices.remove(u.indiceExt!);
-      cartas.removeAll(u.ids);
-      cur.removeLast();
-    }
-  }
-
-  rec(0, <_UnidadeCompra>[], {...cartasIniciais}, {...indicesIniciais});
-  return res;
-}
-
-/// Assinatura semântica de uma compra (jogos + extensões), independente da ordem
-/// das cartas e dos jogos — para DEDUPLICAR e ORDENAR de forma determinística.
+/// Assinatura semântica de uma compra — independente da ordem — p/ deduplicar e
+/// ordenar deterministicamente.
 String _sigCompra(List<List<CartaId>> jogos, List<Extensao> exts) {
   final js = [
     for (final j in jogos) (List<CartaId>.from(j)..sort()).join('-')
@@ -166,34 +132,103 @@ String _sigCompra(List<List<CartaId>> jogos, List<Extensao> exts) {
   return 'J[${js.join('|')}]X[${es.join('|')}]';
 }
 
+bool _ehCuringaGen(CartaSnapshot c) => c.valor == 'JOKER' || c.valor == '2';
+
+/// DFS STREAMING de melds/extensões: escolhe um subconjunto de `pool` (opcional-
+/// mente com `pool[0]` OBRIGATÓRIO — o topo), valida `[...base, ...escolhidos]`
+/// pelo validador canônico e chama `onOk` para cada combinação VÁLIDA de tamanho
+/// escolhido ≥ `minSel`. PODA precoce (nunca descarta um meld legal): um natural
+/// (não-JOKER, não-"2") só pode ser adicionado se os naturais não passarem a ter
+/// ≥2 naipes E ≥2 valores ao mesmo tempo (aí não é nem sequência nem trinca);
+/// JOKER nunca aparece 2×. Não materializa subconjuntos: produz durante a
+/// travessia (memória O(profundidade)). `base` (ex.: o jogo exposto na extensão)
+/// semeia a poda.
+void _dfsSelecao(
+  List<CartaSnapshot> base,
+  List<CartaSnapshot> pool,
+  bool fixarPrimeiro,
+  int minSel,
+  RuleSpec spec,
+  DiagnosticoLixo diag,
+  void Function(List<int> escolhidos) onOk,
+) {
+  final n = pool.length;
+  final esc = <int>[];
+  final naipes0 = <String>{};
+  final valores0 = <String>{};
+  var jokers0 = 0;
+  for (final c in base) {
+    if (c.valor == 'JOKER') {
+      jokers0++;
+    } else if (c.valor != '2' && c.naipe != null) {
+      naipes0.add(c.naipe!);
+      valores0.add(c.valor);
+    }
+  }
+
+  void rec(int start, Set<String> naipes, Set<String> valores, int jokers) {
+    diag.nosMeld++;
+    if (esc.length >= minSel) {
+      final cartas = <CartaSnapshot>[...base, for (final i in esc) pool[i]];
+      if (validarJogoMesa(cartas, spec).valido) onOk(List<int>.from(esc));
+    }
+    for (var i = start; i < n; i++) {
+      final c = pool[i];
+      final ehJoker = c.valor == 'JOKER';
+      // Poda de JOKER acoplada à SPEC congelada (não a um "1" mágico): um meld
+      // nunca tem mais JOKERs que `maxCuringasPorSequencia`. Se um dia a spec
+      // subir esse teto, esta poda acompanha — nenhuma sequência legal é perdida.
+      if (ehJoker && jokers >= spec.maxCuringasPorSequencia) continue;
+      var nn = naipes, nv = valores;
+      if (!_ehCuringaGen(c)) {
+        nn = {...naipes, c.naipe!};
+        nv = {...valores, c.valor};
+        if (nn.length >= 2 && nv.length >= 2) continue; // nem seq nem trinca
+      }
+      esc.add(i);
+      rec(i + 1, nn, nv, jokers + (ehJoker ? 1 : 0));
+      esc.removeLast();
+    }
+  }
+
+  if (fixarPrimeiro) {
+    if (n == 0) return;
+    esc.add(0);
+    final c0 = pool[0];
+    final nn = _ehCuringaGen(c0) ? {...naipes0} : {...naipes0, c0.naipe!};
+    final nv = _ehCuringaGen(c0) ? {...valores0} : {...valores0, c0.valor};
+    if (!(nn.length >= 2 && nv.length >= 2)) {
+      rec(1, nn, nv, jokers0 + (c0.valor == 'JOKER' ? 1 : 0));
+    }
+    esc.removeLast();
+  } else {
+    rec(0, {...naipes0}, {...valores0}, jokers0);
+  }
+}
+
 /// C10 — DERIVAÇÃO de TODOS os candidatos ATÔMICOS de compra do lixo Fechado/STBL
 /// construíveis EXCLUSIVAMENTE com o topo visível + a mão atual + os jogos já
-/// expostos da dupla. Cartas ENTERRADAS ficam completamente fora (nem geração
-/// nem autorização). Auto-derivar ≠ auto-decidir: o motor ENUMERA e VALIDA,
-/// mas NÃO escolhe estrategicamente pelo jogador. Contrato do consumidor:
-///   0 candidatos → recusa; 1 → executa; 2+ → o jogador escolhe.
-/// Suporta jogo novo de tamanho variável, extensão com topo (+ cartas da mão),
-/// múltiplos jogos/extensões numa compra atômica e a abertura vulnerável cujo
-/// primeiro meld isolado fica abaixo do mínimo mas o CONJUNTO alcança +75/+90.
-/// A legalidade da MESA vem do validador canônico congelado (`validarJogoMesa`)
-/// só para GERAR candidatos; a legalidade da TRANSAÇÃO (topo usado, mínimo de
-/// abertura, enterradas fora, sem reuso de carta) é decidida pela AUTORIDADE
-/// canônica (`avaliarComprarLixo`) — nada de regra/tabela de pontos duplicado
-/// aqui. Resultado determinístico, sem duplicatas semânticas e independente da
-/// ordem em que as combinações foram encontradas.
+/// expostos da dupla. Cartas ENTERRADAS ficam 100% fora. Auto-derivar ≠
+/// auto-decidir: enumera e valida, mas NÃO escolhe pelo jogador (0 → recusa;
+/// 1 → executa; 2+ → o jogador escolhe). Sem caps e SEM materialização de 2^n:
+/// DFS lazy com poda estrutural + disjunção incremental; `avaliarComprarLixo` é
+/// o verificador final. `diag` (opcional) registra a evidência estrutural.
 List<ComprarLixo> derivarCandidatosCompraLixoFechado(
-    EstadoJogo estado, int assento, RuleSpec spec) {
+    EstadoJogo estado, int assento, RuleSpec spec,
+    {DiagnosticoLixo? diag}) {
+  final d = diag ?? DiagnosticoLixo();
   if (estado.lixo.isEmpty) return const <ComprarLixo>[];
   final topo = estado.lixo.last;
   final topoId = topo.id;
   final dupla = assento % 2 == 0 ? 'nos' : 'eles';
   final melds = estado.jogosDupla[dupla] ?? const <List<CartaSnapshot>>[];
   final mao = estado.maos[assento];
+  final poolTopo = <CartaSnapshot>[topo, ...mao];
 
   final vistos = <String>{};
   final out = <ComprarLixo>[];
   void tentar(List<List<CartaId>> jogos, List<Extensao> exts) {
-    // VERIFICADOR FINAL: só entra quem a AUTORIDADE canônica aceita.
+    d.transacoesValidadas++;
     final r = avaliarComprarLixo(estado, assento, spec,
         topoDeclarado: topoId, jogosNovos: jogos, extensoes: exts);
     if (!r.valido) return;
@@ -203,68 +238,68 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
     }
   }
 
-  // ---- USOS DO TOPO (o topo precisa aparecer em exatamente uma unidade) ----
-  // (1a) MELDS NOVOS que CONTÊM o topo — tamanho variável até esgotar a mão.
+  // ---- USOS DO TOPO (o topo aparece em exatamente uma unidade) ----
   final usosTopo = <_UnidadeCompra>[];
-  for (final s in _subconjuntos(mao.length, 2)) {
-    final cartas = <CartaSnapshot>[topo, for (final i in s) mao[i]];
-    if (validarJogoMesa(cartas, spec).valido) {
-      final ids = <CartaId>[topoId, for (final i in s) mao[i].id];
-      usosTopo.add(_UnidadeCompra.jogo(ids, ids.toSet()));
-    }
-  }
-  // (1b) EXTENSÕES que CONTÊM o topo (topo + eventuais cartas da mão).
+  _dfsSelecao(const [], poolTopo, true, 3, spec, d, (esc) {
+    final ids = <CartaId>[for (final i in esc) poolTopo[i].id];
+    usosTopo.add(_UnidadeCompra.jogo(ids, ids.toSet()));
+  });
   for (var k = 0; k < melds.length; k++) {
-    final alvo = melds[k];
-    for (final s in _subconjuntos(mao.length, 0)) {
-      final add = <CartaSnapshot>[topo, for (final i in s) mao[i]];
-      if (validarJogoMesa([...alvo, ...add], spec).valido) {
-        final ids = <CartaId>[topoId, for (final i in s) mao[i].id];
-        usosTopo.add(_UnidadeCompra.ext(Extensao(k, ids), ids.toSet()));
-      }
-    }
+    _dfsSelecao(melds[k], poolTopo, true, 1, spec, d, (esc) {
+      final ids = <CartaId>[for (final i in esc) poolTopo[i].id];
+      usosTopo.add(_UnidadeCompra.ext(Extensao(k, ids), ids.toSet()));
+    });
   }
 
   // ---- UNIDADES EXTRA (SEM o topo): jogos novos e extensões da mão ----
   final extras = <_UnidadeCompra>[];
-  for (final s in _subconjuntos(mao.length, 3)) {
-    final cartas = <CartaSnapshot>[for (final i in s) mao[i]];
-    if (validarJogoMesa(cartas, spec).valido) {
-      final ids = <CartaId>[for (final i in s) mao[i].id];
-      extras.add(_UnidadeCompra.jogo(ids, ids.toSet()));
-    }
-  }
+  _dfsSelecao(const [], mao, false, 3, spec, d, (esc) {
+    final ids = <CartaId>[for (final i in esc) mao[i].id];
+    extras.add(_UnidadeCompra.jogo(ids, ids.toSet()));
+  });
   for (var k = 0; k < melds.length; k++) {
-    final alvo = melds[k];
-    for (final s in _subconjuntos(mao.length, 1)) {
-      final add = <CartaSnapshot>[for (final i in s) mao[i]];
-      if (validarJogoMesa([...alvo, ...add], spec).valido) {
-        final ids = <CartaId>[for (final i in s) mao[i].id];
-        extras.add(_UnidadeCompra.ext(Extensao(k, ids), ids.toSet()));
-      }
-    }
+    _dfsSelecao(melds[k], mao, false, 1, spec, d, (esc) {
+      final ids = <CartaId>[for (final i in esc) mao[i].id];
+      extras.add(_UnidadeCompra.ext(Extensao(k, ids), ids.toSet()));
+    });
   }
 
-  // ---- COMBINAÇÃO ATÔMICA: cada uso do topo + qualquer conjunto DISJUNTO de
-  //      unidades extra (contagem limitada só pela disjunção real das cartas).
-  //      avaliarComprarLixo é o VERIFICADOR final (topo usado, mínimo de
-  //      abertura, enterradas fora, sem reuso de carta).
+  // ---- COMBINAÇÃO ATÔMICA (DFS streaming): cada uso do topo + qualquer conjunto
+  //      DISJUNTO de unidades extra. Produz-e-VALIDA cada transação na travessia
+  //      (nada de lista completa de combinações). Descarte precoce por carta E
+  //      por índice de jogo estendido. avaliarComprarLixo é o verificador final.
   for (final tu in usosTopo) {
-    final combos = _combosDisjuntos(
-        extras, tu.ids, tu.indiceExt == null ? const {} : {tu.indiceExt!});
-    for (final combo in combos) {
+    final selec = <_UnidadeCompra>[];
+    final cartas = <CartaId>{...tu.ids};
+    final indices = <int>{if (tu.indiceExt != null) tu.indiceExt!};
+    void rec(int start) {
+      d.nosCombo++;
       final jogos = <List<CartaId>>[
         if (tu.jogoNovo != null) tu.jogoNovo!,
-        for (final u in combo)
+        for (final u in selec)
           if (u.jogoNovo != null) u.jogoNovo!
       ];
       final exts = <Extensao>[
         if (tu.extensao != null) tu.extensao!,
-        for (final u in combo)
+        for (final u in selec)
           if (u.extensao != null) u.extensao!
       ];
       tentar(jogos, exts);
+      for (var k = start; k < extras.length; k++) {
+        final u = extras[k];
+        if (u.ids.any(cartas.contains)) continue;
+        if (u.indiceExt != null && indices.contains(u.indiceExt)) continue;
+        selec.add(u);
+        cartas.addAll(u.ids);
+        if (u.indiceExt != null) indices.add(u.indiceExt!);
+        rec(k + 1);
+        if (u.indiceExt != null) indices.remove(u.indiceExt!);
+        cartas.removeAll(u.ids);
+        selec.removeLast();
+      }
     }
+
+    rec(0);
   }
 
   out.sort((a, b) => _sigCompra(a.jogosNovos, a.extensoes)

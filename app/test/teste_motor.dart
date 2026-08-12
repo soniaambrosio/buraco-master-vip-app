@@ -4682,6 +4682,44 @@ void main() {
       expect(aindaTem, isTrue);
       expect(b.length, greaterThan(a.length)); // só ACRESCENTA candidatos
     });
+
+    test('C10-LIXO-16 mão grande e ruidosa acha candidato SEM enumerar 2^n', () {
+      final estado = paraCanonico(_jgLixoGrandeRuidosoC10()).canonico;
+      final n = estado.maos[0].length;
+      expect(n, greaterThan(14)); // mão significativamente > 14
+      final diag = DiagnosticoLixo();
+      final cands =
+          derivarCandidatosCompraLixoFechado(estado, 0, specF, diag: diag);
+      // candidato legal CONHECIDO ([5c,3c,4c]) continua sendo encontrado.
+      expect(
+          cands.any((c) =>
+              c.extensoes.isEmpty &&
+              c.jogosNovos.length == 1 &&
+              (List<String>.from(c.jogosNovos.first)..sort()).join('-') ==
+                  '3c-4c-5c'),
+          isTrue);
+      // EVIDÊNCIA estrutural: nós de DFS visitados MUITO abaixo de 2^n — a poda
+      // por estrutura de meld (não um cap) evita a explosão. Escala com a mão.
+      expect(diag.nosMeld * 16 < (1 << n), isTrue);
+      expect(diag.nosMeld, greaterThan(0)); // realmente percorreu
+    });
+
+    test('C10-LIXO-17 espaço combinatório grande: determinístico e deduplicado',
+        () {
+      final estado = paraCanonico(_jgLixoQuatroMeldsC10()).canonico;
+      final d1 = DiagnosticoLixo();
+      final c1 =
+          derivarCandidatosCompraLixoFechado(estado, 0, specF, diag: d1);
+      final c2 = derivarCandidatosCompraLixoFechado(estado, 0, specF);
+      final s1 = [for (final c in c1) jsonEncode(c.toJson())];
+      final s2 = [for (final c in c2) jsonEncode(c.toJson())];
+      expect(s2, s1); // MESMA lista, MESMA ordem -> determinístico
+      expect(s1.toSet().length, s1.length); // sem duplicatas semânticas
+      expect(c1.length, greaterThan(1)); // espaço combinatório real (>1)
+      // travessia streaming: nº de nós é finito e sub-exponencial na mão.
+      final n = estado.maos[0].length;
+      expect(d1.nosMeld * 8 < (1 << n), isTrue);
+    });
   });
 }
 
@@ -5799,6 +5837,53 @@ Jogo _jgLixoMonoBC10() {
       Carta('5o', 'ouros', '5', false),
       Carta('6o', 'ouros', '6', false),
       Carta('7o', 'ouros', '7', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// ===== C10 — helper (parte 1-fix3: prova de estresse sem explosão) =====
+
+// Fechado, não vulnerável. Mão GRANDE (18) e RUIDOSA: o meld conhecido
+// [5c,3c,4c] (topo 5c + 3c,4c) mais 16 cartas de RUÍDO — em cada naipe, ranks
+// NÃO consecutivos; nenhum rank aparece 3x — de modo que NENHUM outro meld se
+// forma. A poda estrutural (naipe/valor) descarta o ruído cedo, então o DFS não
+// enumera 2^18.
+Jogo _jgLixoGrandeRuidosoC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      // meld conhecido (com o topo 5c): 3c,4c
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      // ruído copas (não consecutivo com 3,4 nem entre si)
+      Carta('7c', 'copas', '7', false),
+      Carta('9c', 'copas', '9', false),
+      Carta('Jc', 'copas', 'J', false),
+      Carta('Kc', 'copas', 'K', false),
+      // ruído ouros
+      Carta('7o', 'ouros', '7', false),
+      Carta('9o', 'ouros', '9', false),
+      Carta('Jo', 'ouros', 'J', false),
+      Carta('Ko', 'ouros', 'K', false),
+      // ruído espadas
+      Carta('8e', 'espadas', '8', false),
+      Carta('10e', 'espadas', '10', false),
+      Carta('Qe', 'espadas', 'Q', false),
+      Carta('Ae', 'espadas', 'A', false),
+      // ruído paus
+      Carta('8p', 'paus', '8', false),
+      Carta('10p', 'paus', '10', false),
+      Carta('Qp', 'paus', 'Q', false),
+      Carta('Ap', 'paus', 'A', false),
     ],
     <Carta>[],
     <Carta>[],
