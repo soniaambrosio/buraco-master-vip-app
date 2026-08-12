@@ -24,12 +24,7 @@ const {
   acharCampoProibido,
   POSICAO_NAO_APURADA,
 } = require("../lib/projecao");
-const {
-  idPublicoDeBytes,
-  idPublicoValido,
-  chaveDeStanding,
-  COMPRIMENTO_ID_PUBLICO,
-} = require("../lib/identidade");
+const { idPublicoValido, chaveDeStanding } = require("../lib/identidade");
 
 const STANDING = {
   seasonId: "2026-A",
@@ -226,33 +221,19 @@ describe("projecao: o varredor de campo proibido", () => {
 });
 
 describe("identidade publica (secao 16)", () => {
-  test("o id publico nao e o uid", () => {
-    const id = idPublicoDeBytes(Buffer.alloc(COMPRIMENTO_ID_PUBLICO, 0));
-    assert.equal(id.startsWith("P"), true);
-    assert.equal(id.length, COMPRIMENTO_ID_PUBLICO + 1);
-  });
-
-  test("bytes conhecidos produzem id conhecido", () => {
-    // Deterministico dado os bytes: e o que permite testar o formato sem depender
-    // de aleatoriedade.
-    assert.equal(idPublicoDeBytes(Buffer.alloc(12, 0)), "P000000000000");
-    assert.equal(idPublicoDeBytes(Buffer.alloc(12, 31)), "PZZZZZZZZZZZZ");
-  });
-
-  test("o alfabeto evita caracteres confundiveis", () => {
-    // I, L, O e U estao fora: os tres primeiros se confundem com 1 e 0 quando
-    // alguem le um id em voz alta ou digita de um print, o que acontece em
-    // suporte.
-    const todos = idPublicoDeBytes(Buffer.from(Array.from({ length: 32 }, (_, i) => i)));
-    for (const proibido of ["I", "L", "O", "U"]) {
-      assert.equal(todos.slice(1).includes(proibido), false, `alfabeto contem "${proibido}"`);
-    }
-  });
-
-  test("bytes insuficientes falham em vez de gerar id curto", () => {
-    assert.throws(() => idPublicoDeBytes(Buffer.alloc(4, 0)), /precisa de 12 bytes/);
-  });
-
+  // A GERACAO NAO E MAIS TESTADA AQUI PORQUE NAO ACONTECE MAIS AQUI. Ate a OS de
+  // integracao de identidade este bloco provava `idPublicoDeBytes` — o gerador
+  // que este codebase mantinha em paralelo com o do dominio social. O gerador foi
+  // removido (ver src/identidade.ts), e com ele os testes de geracao.
+  //
+  // A COBERTURA NAO ENCOLHEU, MUDOU DE DONO. O determinismo por bytes, o alfabeto
+  // sem I/L/O/U, o comprimento e a recusa de bytes insuficientes sao provados em
+  // app/test/social/teste_social.dart e functions-social/test/chaves.test.js, que
+  // testam a UNICA implementacao que ainda existe. Ver
+  // test/identidade.test.js deste codebase para a prova de que o gerador nao
+  // voltou.
+  //
+  // O que sobra aqui e o que o ranking continua fazendo: RECONHECER um id.
   test("validacao de formato recusa lixo antes de tocar o banco", () => {
     assert.equal(idPublicoValido("PABC123XYZ456"), true);
     assert.equal(idPublicoValido("P0000000000000"), false, "13 simbolos apos o P");

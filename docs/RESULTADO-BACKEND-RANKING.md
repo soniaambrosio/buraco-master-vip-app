@@ -91,13 +91,18 @@ recalculado: `TipoDePartida.alteraRanking` no domínio Dart é declarado como "a
 | `rankingSeasons/{seasonId}` | a temporada. Autoridade sobre "qual é a vigente" |
 | `rankingLadders/{ladderId}` | a escada de ligas. **Vazia** |
 | `rankingStandings/{seasonId\|uid}` | a classificação — uma linha por jogador **por temporada** |
-| `rankingPlayers/{uid}` | identidade pública + agregado de vida inteira (escopo `global`) |
-| `rankingPublicIds/{publicPlayerId}` | índice reverso. Nunca legível pelo cliente |
+| `rankingPlayers/{uid}` | agregado de vida inteira (escopo `global`); `publicPlayerId` é **projeção** da identidade canônica¹ |
+| ~~`rankingPublicIds/{publicPlayerId}`~~ | **removida**¹ — o índice reverso canônico é `publicIdIndex`, de `functions-social` |
 | `rankingContributions/{chave}` | a prova de que uma partida contribuiu, **e** a chave de idempotência |
 | `rankingBacklog/{matchId}` | resultado oficial que ainda não pontuou |
 | `rankingAudit/{eventoId}` | trilha das operações administrativas |
 | `rankingTasks/{chave}` | idempotência de apuração e virada |
 | `hallEntries/{seasonId\|categoria}` | o Hall. **Vazio** |
+
+¹ OS de integração Identidade Pública × Ranking v1. Este codebase deixou de
+emitir `publicId`: ele lê `playerIdentities/{uid}` e nunca escreve nas coleções
+canônicas de identidade. Ver
+[AUTORIDADE-DE-IDENTIDADE-PUBLICA.md](AUTORIDADE-DE-IDENTIDADE-PUBLICA.md).
 | `rankingLedger/{matchId\|userId\|motivo}` | **já existia** (rastreabilidade). Esta OS escreve nela sem redefini-la |
 
 **A temporada anterior nunca é sobrescrita** porque o `seasonId` está na chave do

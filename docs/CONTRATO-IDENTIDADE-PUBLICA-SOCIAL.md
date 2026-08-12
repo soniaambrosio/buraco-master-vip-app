@@ -459,7 +459,18 @@ a consolidação futura, não integração.
   `friendships where membros array-contains uid and estado == "amigos"`, e o
   `publicIds[outro]` do documento dá a identidade sem uma segunda leitura.
 
-### O que precisa ser decidido na consolidação
+### O que precisava ser decidido na consolidação — **RESOLVIDO**
+
+> **Atualização.** A consolidação aconteceu, na OS de integração Identidade
+> Pública × Ranking v1 (branch `integracao/identidade-publica-ranking-v1`). Os
+> três itens abaixo foram executados: `garantirIdPublico` e o gerador do ranking
+> foram **removidos**, `rankingPublicIds` deixou de existir, e
+> `rankingStandings.apelido`/`.avatar` passaram a ser projeção de
+> `publicProfiles`. A autoridade única é esta.
+>
+> O texto original fica abaixo, sem edição, porque ele é o registro de que o
+> conflito foi previsto e não descoberto tarde. Ver
+> [AUTORIDADE-DE-IDENTIDADE-PUBLICA.md](AUTORIDADE-DE-IDENTIDADE-PUBLICA.md).
 
 O `functions-ranking` da branch paralela mantém o **seu próprio** par de
 coleções: `rankingPlayers/{uid}.publicPlayerId` e `rankingPublicIds/{publicId}`.

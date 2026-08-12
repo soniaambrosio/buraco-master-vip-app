@@ -17,6 +17,7 @@ const {
   resultadoDeJson,
   estadoTerminal,
   decidirProcessamento,
+  decidirIdentidadePublica,
   chaveDeContribuicao,
 } = require("../lib/resultado");
 
@@ -196,6 +197,103 @@ describe("resultado: o caminho de HOJE — sem formula", () => {
     const d = decidir({ temporadaEncerrada: true });
     assert.equal(d.recusa, "temporada_encerrada");
     assert.equal(d.guardarNoBacklog, true);
+  });
+});
+
+describe("resultado: a guarda de identidade publica (OS de integracao, §8)", () => {
+  // O `REGISTRO` acima tem DOIS competidores humanos: u1 e u2. O robo e o
+  // espectador nao entram, e e por isso que nenhum teste daqui precisa de
+  // identidade para eles.
+  const OFICIAL = resultadoDeJson(REGISTRO);
+  const decidirId = (pares) =>
+    decidirIdentidadePublica({
+      resultado: OFICIAL,
+      identidades: new Map(pares),
+    });
+
+  test("todos com identidade canonica: processa", () => {
+    const d = decidirId([
+      ["u1", "P0123456789AB"],
+      ["u2", "PZZZZZZZZZZZZ"],
+    ]);
+    assert.equal(d.processa, true);
+    assert.equal(d.recusa, null);
+    assert.equal(d.guardarNoBacklog, false);
+  });
+
+  test("um competidor sem identidade: NAO processa e vai para o backlog", () => {
+    // O ponto inteiro da OS. A alternativa que o codigo antigo tomava era cunhar
+    // um id aqui — e era ela que criava a segunda autoridade.
+    const d = decidirId([["u1", "P0123456789AB"]]);
+    assert.equal(d.processa, false);
+    assert.equal(d.recusa, "identidade_publica_ausente");
+    assert.equal(d.guardarNoBacklog, true);
+    assert.equal(d.benigna, true, "nao e erro do chamador: e estado retomavel.");
+    assert.match(d.detalhe, /u2/);
+    assert.match(d.detalhe, /NAO cunha publicId/);
+  });
+
+  test("mapa vazio recusa em vez de assumir que ninguem precisa de id", () => {
+    const d = decidirId([]);
+    assert.equal(d.recusa, "identidade_publica_ausente");
+    assert.match(d.detalhe, /u1/);
+    assert.match(d.detalhe, /u2/);
+  });
+
+  test("string vazia NAO conta como identidade", () => {
+    // §8 proibe, textualmente, armazenar string vazia. Aceitar "" aqui produziria
+    // uma linha de ranking com `publicPlayerId: ""` — que e o mesmo defeito com
+    // outra roupa.
+    const d = decidirId([
+      ["u1", "P0123456789AB"],
+      ["u2", ""],
+    ]);
+    assert.equal(d.recusa, "identidade_publica_ausente");
+    assert.match(d.detalhe, /u2/);
+  });
+
+  test("null e undefined NAO contam como identidade", () => {
+    for (const ausente of [null, undefined]) {
+      const d = decidirId([
+        ["u1", "P0123456789AB"],
+        ["u2", ausente],
+      ]);
+      assert.equal(
+        d.recusa,
+        "identidade_publica_ausente",
+        `${ausente} passou como identidade.`
+      );
+    }
+  });
+
+  test("o uid NAO e aceito como substituto do id publico", () => {
+    // A guarda nao valida formato de proposito: quem escreve o mapa e
+    // `identidadesCanonicasDe`, que le `playerIdentities` e nao inventa. O que
+    // este teste fixa e o comportamento OBSERVAVEL — a decisao nunca produz um
+    // caminho em que o uid vire identidade publica, porque a decisao nao produz
+    // identidade nenhuma: ela so responde sim ou nao.
+    const d = decidirId([
+      ["u1", "P0123456789AB"],
+      ["u2", "P0000000000AB"],
+    ]);
+    assert.equal(d.processa, true);
+    // E a prova de que a funcao nao DEVOLVE id: nao ha campo de identidade na
+    // decisao. Se um dia houver, este assert falha e alguem tera que explicar.
+    assert.deepEqual(Object.keys(d).sort(), [
+      "benigna",
+      "detalhe",
+      "guardarNoBacklog",
+      "processa",
+      "recusa",
+    ]);
+  });
+
+  test("repetir a decisao com o mesmo mapa da o mesmo resultado", () => {
+    // Idempotencia da DECISAO. Nao ha sorteio, entao duas chamadas com o mesmo
+    // estado nao podem divergir — que e o oposto do gerador antigo, cuja segunda
+    // chamada so devolvia o mesmo id porque o banco tinha guardado o primeiro.
+    const pares = [["u1", "P0123456789AB"]];
+    assert.deepEqual(decidirId(pares), decidirId(pares));
   });
 });
 

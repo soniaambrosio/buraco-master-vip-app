@@ -23,10 +23,17 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 # §38, OS Política Competitiva, OS de integração de identidade). Os gates de
 # social são: `social` (domínio Dart), `socialdom` (o bundle do domínio compila),
 # `socialfn` (typecheck + testes puros do codebase) e `socialemu` (Functions
-# reais no emulador). Os de ranking são `rankingfn` e `rankingemu`. As Rules dos
+# reais no emulador). Os de ranking são `rankingfn` e `rankingint`. As Rules dos
 # dois blocos entram no gate `regras` que já existia, porque
 # `firebase/testes/npm run test:integrado` passou a incluir `social.test.js` e
 # `ranking.test.js` no MESMO arquivo de regras.
+#
+# A OS DE INTEGRAÇÃO DE IDENTIDADE acrescentou dois gates, e nenhum substitui os
+# de cima: `identint` roda as DUAS implementações juntas (emissão social +
+# consumo competitivo, e a concorrência de seis chamadas simultâneas para um
+# jogador sem identidade), e `auditident` exercita a auditoria de legado em
+# dry-run. Os gates existentes provam cada lado sozinho, com identidade de
+# fixture — que é uma afirmação sobre o que o vizinho produz, e não a coisa.
 #
 # REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
 # descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
@@ -208,6 +215,53 @@ jobs:
             "cd firebase/testes && npm run test:social:functions" 2>&1 | tee t_socialemu.log
           echo ${PIPESTATUS[0]} > exit_socialemu
 
+      - name: "3f2 — INTEGRACAO IDENTIDADE x RANKING contra o emulador"
+        run: |
+          set +e
+          # O GATE DA OS DE INTEGRACAO DE IDENTIDADE. Os passos 3c/3d provam o
+          # social sozinho e os 3e/3f provam o ranking sozinho — com identidade de
+          # FIXTURE dos dois lados. Este prova as DUAS IMPLEMENTACOES JUNTAS:
+          # `garantirIdentidade` de functions-social emitindo, e
+          # `processarResultadoOficial` de functions-ranking consumindo.
+          #
+          # E o unico lugar onde a concorrencia do §7 e testavel: seis chamadas
+          # simultaneas para um jogador sem identidade tem que convergir para UM
+          # publicId. Chamada sequencial nao cobre isso.
+          if [ ! -f functions-social/test/integracao.identidade.emulador.test.js ]; then
+            echo "suite de integracao de identidade ausente" > nao_identint; exit 0
+          fi
+          if [ ! -f functions-social/lib/index.js ]; then
+            echo "functions-social nao foi compilado no passo 3c" > nao_identint; exit 0
+          fi
+          if [ ! -f functions-ranking/lib/firestore.js ]; then
+            echo "functions-ranking nao foi compilado no passo 3e" > nao_identint; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-social && node --test test/integracao.identidade.emulador.test.js" \
+            2>&1 | tee t_identint.log
+          echo ${PIPESTATUS[0]} > exit_identint
+
+      - name: "3f3 — AUDITORIA de identidade em dry-run (read-only)"
+        run: |
+          set +e
+          # §15 da OS de integracao: a ferramenta de auditoria tem que RODAR, e a
+          # primeira execucao e obrigatoriamente dry-run. Aqui ela roda contra um
+          # emulador vazio — o que se prova nao e "achou algo", e sim que a
+          # ferramenta executa de ponta a ponta e que o portao a exercita.
+          #
+          # NAO usa --falhar-se-critico: banco vazio nao tem critico, e transformar
+          # este passo em portao de CONTEUDO faria um dado legado real derrubar o
+          # CI de uma branch que nao tem nada a ver com ele.
+          if [ ! -f functions-social/scripts/auditar-identidade.js ]; then
+            echo "runner da auditoria ausente" > nao_auditident; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-social && node scripts/auditar-identidade.js" \
+            2>&1 | tee t_auditident.log
+          echo ${PIPESTATUS[0]} > exit_auditident
+
       - name: "3g — codebase COLECOES: regras + Functions no Emulator Suite"
         run: |
           set +e
@@ -243,7 +297,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo

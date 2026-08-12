@@ -14,9 +14,11 @@
 //   rankingStandings/{seasonId|uid} ...... a classificacao. Uma linha por jogador
 //                                          POR TEMPORADA — e por isso a temporada
 //                                          anterior nunca e sobrescrita (secao 6).
-//   rankingPlayers/{uid} ................. identidade publica e agregado de vida
-//                                          inteira. O escopo "global" do cliente.
-//   rankingPublicIds/{publicPlayerId} .... o caminho de volta, id publico -> uid.
+//   rankingPlayers/{uid} ................. o agregado de vida inteira. O escopo
+//                                          "global" do cliente. Carrega
+//                                          `publicPlayerId` como PROJECAO da
+//                                          identidade canonica — nunca como
+//                                          fonte dela (ver identidade.ts).
 //   rankingContributions/{chave} ......... a prova de que uma partida contribuiu
 //                                          (secao 6) e a chave de idempotencia
 //                                          (secao 8).
@@ -30,9 +32,18 @@
 //   rankingLedger/{matchId|userId|motivo}  JA EXISTIA, da OS de Rastreabilidade.
 //                                          Este codebase ESCREVE nela e nao a
 //                                          redefine — ver ledger.ts.
+//
+// AS COLECOES QUE ESTE ARQUIVO LE E NUNCA ESCREVE (OS de integracao de
+// identidade):
+//
+//   playerIdentities/{uid} ............... `uid -> publicId`. A FONTE CANONICA.
+//   publicIdIndex/{publicId} ............. `publicId -> uid`. O caminho de volta.
+//
+// Ambas pertencem a functions-social. Nao ha, neste arquivo, um unico `tx.set`,
+// `set`, `update`, `create` ou `delete` sobre elas — e `test/identidade.test.js`
+// varre o codebase para que continue assim.
 
 import { getFirestore, Firestore, Transaction, FieldValue } from "firebase-admin/firestore";
-import { randomBytes } from "node:crypto";
 import { logger } from "firebase-functions";
 
 import {
@@ -55,6 +66,7 @@ import {
   ResultadoOficial,
   resultadoDeJson,
   decidirProcessamento,
+  decidirIdentidadePublica,
   chaveDeContribuicao,
   DecisaoDeProcessamento,
   ladosDaMesa,
@@ -71,8 +83,9 @@ import {
 } from "./competicao";
 import { aplicarLancamento, MotivoLancamento } from "./ledger";
 import {
-  idPublicoDeBytes,
-  COMPRIMENTO_ID_PUBLICO,
+  C_IDENTIDADES_CANONICAS,
+  C_INDICE_PUBLICO_CANONICO,
+  C_PERFIS_PUBLICOS_CANONICOS,
   chaveDeStanding,
 } from "./identidade";
 import {
@@ -96,7 +109,6 @@ export const C_SEASONS = "rankingSeasons";
 export const C_LADDERS = "rankingLadders";
 export const C_STANDINGS = "rankingStandings";
 export const C_PLAYERS = "rankingPlayers";
-export const C_PUBLIC_IDS = "rankingPublicIds";
 export const C_CONTRIBUTIONS = "rankingContributions";
 export const C_BACKLOG = "rankingBacklog";
 export const C_AUDIT = "rankingAudit";
@@ -251,57 +263,99 @@ export async function encerrarTemporada(params: {
 // IDENTIDADE PUBLICA
 // ---------------------------------------------------------------------------
 
-/// Devolve o id publico do jogador, criando-o na primeira vez.
+/// O id publico CANONICO de um jogador, ou `null` se ele ainda nao tem.
 ///
-/// A COLISAO E TRATADA, e nao apenas considerada improvavel: `create` no
-/// documento de `rankingPublicIds` falha se o id ja existir, e a funcao tenta
-/// outro. Com 60 bits, a segunda tentativa praticamente nunca acontece — mas
-/// "praticamente nunca" multiplicado por milhoes de jogadores e uma vez, e essa
-/// uma vez seria dois jogadores compartilhando identidade publica.
-export async function garantirIdPublico(uid: string): Promise<string> {
-  const jogadorRef = db().collection(C_PLAYERS).doc(uid);
-  const existente = await jogadorRef.get();
-  const gravado = existente.data()?.publicPlayerId;
-  if (typeof gravado === "string" && gravado.length > 0) return gravado;
+/// LEITURA PURA. Nao cria, nao repara, nao completa, nao devolve default. Essa
+/// e a diferenca inteira entre este arquivo e o que ele era antes da OS de
+/// integracao: `garantirIdPublico` sorteava e gravava; `identidadeCanonicaDe`
+/// so pergunta.
+///
+/// A FONTE E `playerIdentities/{uid}`, do dominio de Identidade Publica. Ler
+/// colecao de outro dominio pelo Admin SDK e normal e nao move autoridade
+/// nenhuma: autoridade e quem ESCREVE. Quem escreve ali e `garantirIdentidade`,
+/// em functions-social/src/repositorio.ts, e so ele.
+///
+/// `null` NAO E ERRO, e nao deve virar excecao aqui. Um jogador legitimamente
+/// ainda nao provisionado e um estado esperado do sistema — quem decide o que
+/// fazer com ele e `decidirIdentidadePublica`, em resultado.ts, que manda a
+/// partida para o backlog.
+export async function identidadeCanonicaDe(uid: string): Promise<string | null> {
+  const doc = await db().collection(C_IDENTIDADES_CANONICAS).doc(uid).get();
+  const id = doc.data()?.publicId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
 
-  for (let tentativa = 0; tentativa < 5; tentativa++) {
-    const candidato = idPublicoDeBytes(randomBytes(COMPRIMENTO_ID_PUBLICO));
-    try {
-      const atribuido = await db().runTransaction(async (tx) => {
-        const [jogador, reserva] = await Promise.all([
-          tx.get(jogadorRef),
-          tx.get(db().collection(C_PUBLIC_IDS).doc(candidato)),
-        ]);
-        const jaTem = jogador.data()?.publicPlayerId;
-        if (typeof jaTem === "string" && jaTem.length > 0) return jaTem;
-        if (reserva.exists) return null;
+/// Apelido e avatar de um jogador, lidos do perfil publico canonico.
+///
+/// PROJECAO, E O NOME DIZ ISSO. O ranking NAO e dono de apelido nem de avatar:
+/// quem e dono e `publicProfiles/{publicId}`, escrito por
+/// `atualizarPerfilPublico` no dominio social. Este tipo existe para que o
+/// caminho da copia seja nomeado, em vez de acontecer por um `??` perdido no
+/// meio da montagem da linha.
+export interface ApresentacaoProjetada {
+  readonly apelido: string;
+  readonly avatar: string;
+}
 
-        const agora = agoraIso();
-        tx.set(db().collection(C_PUBLIC_IDS).doc(candidato), {
-          publicPlayerId: candidato,
-          uid,
-          criadoEm: agora,
-        });
-        tx.set(
-          jogadorRef,
-          {
-            uid,
-            publicPlayerId: candidato,
-            pontosTotais: 0,
-            partidasTotais: 0,
-            criadoEm: agora,
-            atualizadoEm: agora,
-          },
-          { merge: true }
-        );
-        return candidato;
-      });
-      if (atribuido !== null) return atribuido;
-    } catch (erro) {
-      logger.warn("colisao ao reservar id publico, tentando outro", { tentativa });
-    }
+/// Le a apresentacao canonica de varios jogadores, numa ida so.
+///
+/// Recebe `uid -> publicId` porque o perfil publico e enderecado pelo ID
+/// PUBLICO, nao pelo uid — e nao ha, e nao deve haver, um `publicProfiles/{uid}`.
+///
+/// Perfil ausente simplesmente NAO ENTRA no mapa. Quem chama preserva o que ja
+/// tinha; ninguem cai para o uid, e ninguem grava `"unknown"`.
+export async function apresentacoesCanonicasDe(
+  identidades: ReadonlyMap<string, string | null>
+): Promise<Map<string, ApresentacaoProjetada>> {
+  const pares = [...identidades.entries()].filter(
+    (p): p is [string, string] => typeof p[1] === "string" && p[1].length > 0
+  );
+  const mapa = new Map<string, ApresentacaoProjetada>();
+  if (pares.length === 0) return mapa;
+
+  const docs = await db().getAll(
+    ...pares.map(([, publicId]) =>
+      db().collection(C_PERFIS_PUBLICOS_CANONICOS).doc(publicId)
+    )
+  );
+  docs.forEach((doc, i) => {
+    const dado = doc.data();
+    if (dado === undefined) return;
+    mapa.set(pares[i][0], {
+      apelido: typeof dado.apelido === "string" ? dado.apelido : "",
+      // `avatarRef` no perfil publico, `avatar` na linha do ranking: os dois
+      // nomes ja existiam nos dois contratos, e renomear um deles seria mexer
+      // em contrato de cliente por estetica. A traducao acontece aqui, uma vez.
+      avatar: typeof dado.avatarRef === "string" ? dado.avatarRef : "",
+    });
+  });
+  return mapa;
+}
+
+/// As identidades canonicas de varios jogadores, numa ida so.
+///
+/// `getAll` em vez de N leituras porque a mesa tem quatro jogadores e quatro
+/// viagens ao banco por partida processada e desperdicio mensuravel.
+///
+/// Devolve o mapa COMPLETO, com `null` para quem nao tem — e nao um mapa
+/// parcial. E o formato que `decidirIdentidadePublica` espera, e a diferenca
+/// importa: um mapa parcial faria "faltou ler" e "nao existe" parecerem a mesma
+/// coisa no chamador.
+export async function identidadesCanonicasDe(
+  uids: ReadonlyArray<string>
+): Promise<Map<string, string | null>> {
+  const unicos = [...new Set(uids)];
+  const mapa = new Map<string, string | null>(unicos.map((u) => [u, null]));
+  if (unicos.length === 0) return mapa;
+
+  const docs = await db().getAll(
+    ...unicos.map((u) => db().collection(C_IDENTIDADES_CANONICAS).doc(u))
+  );
+  for (const doc of docs) {
+    const id = doc.data()?.publicId;
+    if (typeof id === "string" && id.length > 0) mapa.set(doc.id, id);
   }
-  throw new Error(`nao foi possivel reservar um id publico para ${uid} em 5 tentativas.`);
+  return mapa;
 }
 
 // ---------------------------------------------------------------------------
@@ -483,14 +537,41 @@ export async function processarResultadoOficial(params: {
   const contribuicaoRef = db().collection(C_CONTRIBUTIONS).doc(chave as string);
   const escada = await lerEscada(season.ladderId);
 
-  // O id publico e garantido FORA da transacao, de proposito: ele tem transacao
-  // propria (com retry de colisao), e transacao aninhada nao existe. Como ele e
-  // idempotente e estavel, fazer isso antes nao muda nada se a transacao abaixo
-  // reexecutar.
-  const idsPublicos = new Map<string, string>();
-  for (const c of oficial.competidores) {
-    idsPublicos.set(c.userId, await garantirIdPublico(c.userId));
+  // A DECIMA SEGUNDA GUARDA. Ate a OS de integracao, esta era a linha que
+  // CUNHAVA identidade (`garantirIdPublico`, uma por competidor). Agora ela so
+  // LE a identidade canonica e, se faltar alguma, recusa a partida para o
+  // backlog em vez de inventar um id.
+  //
+  // Fora da transacao, como antes, mas por outra razao: agora e uma leitura, e
+  // uma leitura fora da transacao que reexecuta e relida. Se a identidade for
+  // provisionada entre esta leitura e a transacao, a partida cai no backlog e o
+  // reprocessamento a pega — o pior caso e um ciclo de atraso, nunca um id
+  // errado.
+  const idsPublicos = await identidadesCanonicasDe(
+    oficial.competidores.map((c) => c.userId)
+  );
+  const decisaoIdentidade = decidirIdentidadePublica({
+    resultado: oficial,
+    identidades: idsPublicos,
+  });
+  if (!decisaoIdentidade.processa) {
+    await guardarNoBacklog(oficial, decisaoIdentidade, "pendente");
+    logger.warn("partida sem identidade publica canonica foi para o backlog", {
+      matchId,
+      detalhe: decisaoIdentidade.detalhe,
+    });
+    return {
+      processada: false,
+      recusa: decisaoIdentidade.recusa,
+      detalhe: decisaoIdentidade.detalhe,
+      seasonId: season.seasonId,
+      deltas: {},
+    };
   }
+
+  // A APRESENTACAO, tambem fora da transacao e tambem so leitura. Depois da
+  // guarda, de proposito: perfil so e lido para partida que vai mesmo pontuar.
+  const apresentacoes = await apresentacoesCanonicasDe(idsPublicos);
 
   return db().runTransaction(async (tx) => {
     const jaGravada = await tx.get(contribuicaoRef);
@@ -644,12 +725,24 @@ export async function processarResultadoOficial(params: {
       const linha: Partial<StandingArmazenado> & Record<string, unknown> = {
         seasonId: season.seasonId,
         uid: competidor.userId,
+        // PROJECAO, nao fonte. O valor canonico e `playerIdentities/{uid}` — e a
+        // guarda acima ja provou que ele existe, por isso o `as string` nao e um
+        // desejo: sem identidade a execucao nao chega ate aqui.
         publicPlayerId: idsPublicos.get(competidor.userId) as string,
-        // Apelido e avatar NAO sao inventados aqui. Nao existe fonte de perfil no
-        // backend (ver o relatorio, dependencia aberta): o campo e preservado se
-        // ja existir e nasce vazio se nao existir.
-        apelido: typeof anterior?.apelido === "string" ? anterior.apelido : "",
-        avatar: typeof anterior?.avatar === "string" ? anterior.avatar : "",
+        // Apelido e avatar TAMBEM sao projecao, e a fonte deles e
+        // `publicProfiles/{publicId}` (ver `apresentacaoCanonicaDe`). Ate a OS de
+        // integracao nao havia fonte nenhuma e estes campos nasciam vazios; agora
+        // ha, e o valor e copiado a cada processamento.
+        //
+        // PROJECAO SIGNIFICA: quem quiser saber o apelido de verdade le o perfil
+        // publico. Isto aqui e uma copia para a lista nao precisar de N leituras,
+        // e uma copia velha nunca torna o perfil errado — so a lista atrasada.
+        // Perfil ausente preserva o que ja havia, e nunca cai para o uid (§31-F
+        // do contrato social: "Nao usar UID como fallback").
+        apelido: apresentacoes.get(competidor.userId)?.apelido
+          ?? (typeof anterior?.apelido === "string" ? anterior.apelido : ""),
+        avatar: apresentacoes.get(competidor.userId)?.avatar
+          ?? (typeof anterior?.avatar === "string" ? anterior.avatar : ""),
         pontos: depois.rating,
         /// O rating com que o jogador ENTROU na temporada. Guardado para que a
         /// cadeia do ledger (`antes + delta == depois`, lancamento a lancamento)
@@ -1359,11 +1452,21 @@ export async function meuStanding(
 /// cujo id E o id publico, entao a primeira leitura e um `get` direto. Uma
 /// consulta `where('publicPlayerId','==',...)` custaria o mesmo e exigiria um
 /// indice a mais.
+///
+/// O INDICE REVERSO E O CANONICO, `publicIdIndex`, e nao mais um proprio. Antes
+/// da OS de integracao este caminho lia `rankingPublicIds` — o mapa que o
+/// proprio ranking mantinha. Duas consequencias de ter trocado: um id emitido
+/// pelo dominio social passa a resolver aqui (antes nao resolvia, porque nunca
+/// tinha sido gravado no mapa do ranking), e nao existe mais um segundo mapa que
+/// possa discordar do primeiro.
 export async function porIdPublico(
   publicPlayerId: string,
   seasonId: string | null
 ): Promise<{ standing: StandingArmazenado | null; uid: string } | null> {
-  const reverso = await db().collection(C_PUBLIC_IDS).doc(publicPlayerId).get();
+  const reverso = await db()
+    .collection(C_INDICE_PUBLICO_CANONICO)
+    .doc(publicPlayerId)
+    .get();
   const uid = reverso.data()?.uid;
   if (typeof uid !== "string" || uid.length === 0) return null;
   if (seasonId === null) return { standing: null, uid };

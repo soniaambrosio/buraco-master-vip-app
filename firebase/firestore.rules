@@ -23,10 +23,14 @@ rules_version = '2';
 //     playerSocial, users/{uid}/friends, users/{uid}/friendRequests
 //   * RANKING / LIGAS / TEMPORADAS <- claude/ranking-ligas-backend-auth
 //     rankingSeasons, rankingLadders, rankingStandings, rankingPlayers,
-//     rankingPublicIds, rankingContributions, rankingBacklog, rankingAudit,
-//     rankingTasks, hallEntries
+//     rankingContributions, rankingBacklog, rankingAudit, rankingTasks,
+//     hallEntries
 //     (`rankingLedger` NAO entra nesta lista: ela e da RASTREABILIDADE, e o
 //      bloco de ranking escreve nela sem redefinir a regra dela.)
+//     (`rankingPublicIds` SAIU na OS de integracao de identidade: era o indice
+//      reverso PROPRIO do ranking, e existir dois indices reversos e o mesmo que
+//      existir duas identidades. O canonico e `publicIdIndex`, do bloco 6/7.
+//      Ver docs/AUTORIDADE-DE-IDENTIDADE-PUBLICA.md.)
 //
 // O BLOCO SOCIAL (6/7) e o unico que NAO veio de uma branch: ele nasceu direto
 // sobre esta uniao, e por isso e tambem o unico que ja pode ser lido como
@@ -907,26 +911,35 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Identidade publica e agregado de vida inteira
+    // Agregado de vida inteira
     // ---------------------------------------------------------------------
-    // `rankingPlayers` e indexado por uid e guarda o mapeamento uid -> id
-    // publico. Liberar a leitura para o dono seria inofensivo; liberar a LISTA
-    // permitiria varrer o mapeamento inteiro. Como regra do Firestore nao
-    // distingue "meu documento" de "consulta que filtra pelo meu documento" sem
-    // cuidado, e como a Function ja devolve o id publico do proprio jogador em
-    // `garantirIdentidadePublica`, a colecao fica fechada.
+    // `rankingPlayers` e indexado por uid e guarda o agregado global (pontos e
+    // partidas de vida inteira) mais o `publicPlayerId` como PROJECAO da
+    // identidade canonica. Liberar a leitura para o dono seria inofensivo;
+    // liberar a LISTA permitiria varrer o mapeamento uid -> id publico inteiro.
+    // Como regra do Firestore nao distingue "meu documento" de "consulta que
+    // filtra pelo meu documento" sem cuidado, a colecao fica fechada — e o
+    // jogador ja obtem o proprio id publico pelo dominio dono dele, em
+    // `obterMinhaIdentidade` (bloco 6/7).
     match /rankingPlayers/{uid} {
       allow read: if false;
       allow write: if false;
     }
 
-    // O indice reverso id publico -> uid e o unico documento do sistema que
-    // desfaz a separacao da secao 16. Ele NUNCA e legivel pelo cliente: entrega-
-    // lo seria o mesmo que nao ter separado nada.
-    match /rankingPublicIds/{publicPlayerId} {
-      allow read: if false;
-      allow write: if false;
-    }
+    // `rankingPublicIds` FOI REMOVIDA PELA OS DE INTEGRACAO DE IDENTIDADE, e a
+    // ausencia de bloco aqui e deliberada — nao e esquecimento.
+    //
+    // Ela era o indice reverso PROPRIO do ranking (`publicId -> uid`), gravado
+    // pelo gerador que este dominio mantinha. Com o gerador removido, a colecao
+    // deixou de ter quem a escrevesse; manter um `match` para uma colecao que
+    // ninguem cria seria descrever uma porta de uma parede que nao existe.
+    //
+    // O caminho de volta continua existindo, UMA VEZ, em `publicIdIndex` — bloco
+    // 6/7, com a mesma postura (negado a todo cliente, admin le para suporte).
+    // O fecho explicito no fim do arquivo nega `rankingPublicIds` como nega
+    // qualquer caminho nao declarado, entao a remocao do bloco APERTA a regra em
+    // um ponto (o admin perdeu um `read` que aqui tambem ja era `false`) e nao
+    // afrouxa nenhum.
 
     // ---------------------------------------------------------------------
     // Trilha: contribuicao, backlog e auditoria (secoes 6, 21 e 22)

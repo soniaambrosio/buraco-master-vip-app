@@ -516,6 +516,17 @@ declara como ausentes. Ela entrega o codebase `functions-social` com:
 | grafo social (amizades) | a fonte que falta ao escopo `amigos`, limitação 5 |
 | `playerIdentities/{uid}` + `publicIdIndex/{publicId}` | **uma segunda autoridade de identidade pública** |
 
+> **RESOLVIDO na OS de integração Identidade Pública × Ranking v1** (branch
+> `integracao/identidade-publica-ranking-v1`). Tudo o que este bloco previa foi
+> executado: `garantirIdPublico` e o gerador saíram de `functions-ranking`,
+> `rankingPublicIds` deixou de existir, e `rankingStandings.apelido`/`.avatar`
+> viraram projeção de `publicProfiles`. O contrato do cliente não mudou nesses
+> campos — eles apenas deixaram de vir vazios, como previsto abaixo. A única
+> mudança de contrato foi a remoção da callable `garantirIdentidadePublica`.
+> Ver [AUTORIDADE-DE-IDENTIDADE-PUBLICA.md](AUTORIDADE-DE-IDENTIDADE-PUBLICA.md).
+>
+> O texto abaixo fica sem edição: é o registro de que o conflito foi previsto.
+
 **O ponto que exige atenção na consolidação:** hoje existem **duas autoridades
 cunhando identidade pública** — `garantirIdPublico` em
 [`functions-ranking/src/firestore.ts`](../functions-ranking/src/firestore.ts)

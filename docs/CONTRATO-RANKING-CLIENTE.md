@@ -106,10 +106,33 @@ em vez de devolver uma página plausível do lugar errado.
 O outro lado da navegação `posição → id público → perfil` que a OS anterior
 preparou. Recebe id público, devolve dado competitivo. O UID não entra e não sai.
 
-### `garantirIdentidadePublica({})` → `{ publicPlayerId }`
+### ~~`garantirIdentidadePublica({})`~~ — **REMOVIDA**
 
-Chamada no primeiro acesso à tela. Sem ela, quem ainda não terminou partida
-ranqueada não tem id público e não pode ser alvo de "abrir perfil".
+**Mudança de contrato, na OS de integração Identidade Pública × Ranking.** Esta
+callable cunhava `publicId` dentro do codebase competitivo, e era a segunda
+autoridade de emissão do sistema. Ela foi removida, não substituída por um
+encaminhamento.
+
+**O que chamar no lugar:**
+
+```
+ranking:garantirIdentidadePublica   ->   social:obterMinhaIdentidade
+{} -> { publicPlayerId }                 {} -> { publicId, apelido, avatarRef }
+```
+
+Três diferenças que o adaptador precisa absorver:
+
+1. **outro codebase** — `functions-social`, e não `functions-ranking`;
+2. **outro nome de campo** — `publicId`, e não `publicPlayerId`. O
+   `JogadorPublicado` continua publicando `id`, então só a chamada direta muda;
+3. **devolve mais** — apelido e `avatarRef` vêm junto, porque quem emite a
+   identidade é quem também é dono da apresentação.
+
+**E ela deixa de ser uma chamada da tela de Ranking.** Identidade pública não é
+um conceito do ranking: o app a chama no primeiro acesso, antes de qualquer tela
+que precise referenciar outro jogador.
+
+Ver [AUTORIDADE-DE-IDENTIDADE-PUBLICA.md](AUTORIDADE-DE-IDENTIDADE-PUBLICA.md).
 
 ---
 
@@ -122,8 +145,8 @@ despercebido.
 | backend | `RankingJogador` | observação |
 |---|---|---|
 | `id` | `id` | é o `publicPlayerId`, **nunca** o UID do Firebase |
-| `apelido` | `apelido` | **vazio hoje** — não há fonte de perfil (§5) |
-| `avatar` | `avatar` | idem |
+| `apelido` | `apelido` | projeção de `publicProfiles/{publicId}.apelido`; vazio só quando o perfil não existe — **nunca** o UID |
+| `avatar` | `avatar` | projeção de `publicProfiles/{publicId}.avatarRef`; idem |
 | `liga` | `liga` | vazio quando não há escada registrada |
 | `pontos` | `pontos` | |
 | `posicao` | `posicao` | `0` quando ainda não apurado — `0` não é posição válida, então não se confunde com "primeiro" |

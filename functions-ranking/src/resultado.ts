@@ -160,7 +160,10 @@ export type RecusaDeProcessamento =
   | "sem_temporada_vigente"
   | "temporada_encerrada"
   | "politica_nao_definida"
-  | "ja_processado";
+  | "ja_processado"
+  /// Algum competidor ainda nao tem identidade publica canonica. Ver
+  /// `decidirIdentidadePublica`, logo abaixo de `decidirProcessamento`.
+  | "identidade_publica_ausente";
 
 // ---------------------------------------------------------------------------
 // A FORMA DA MESA (secao 9 da OS da Politica Competitiva v1)
@@ -398,6 +401,64 @@ function recusa(
   detalhe: string
 ): DecisaoDeProcessamento {
   return { processa: false, recusa: r, benigna, guardarNoBacklog, detalhe };
+}
+
+// ---------------------------------------------------------------------------
+// A DECIMA SEGUNDA GUARDA — IDENTIDADE PUBLICA (OS de integracao, secoes 4 e 8)
+// ---------------------------------------------------------------------------
+
+/// O competidor tem identidade publica canonica?
+///
+/// POR QUE E UMA GUARDA SEPARADA, e nao a linha 12 de `decidirProcessamento`:
+/// responde-la custa uma LEITURA POR COMPETIDOR em `playerIdentities`, e as onze
+/// guardas anteriores sao puras. Fundi-las obrigaria o chamador a pagar essas
+/// leituras em toda escrita de `matches` — inclusive nas Mesas Publicas, que a
+/// guarda 4 recusa sem tocar o banco. Separada, a leitura so acontece para a
+/// partida que ja passou por tudo o mais e realmente pontuaria.
+///
+/// POR QUE BACKLOG, E NAO CUNHAR AQUI (secao 8 da OS): o processamento
+/// competitivo nao pode inventar um `publicId`, usar o UID no lugar dele,
+/// gravar `"unknown"`, gravar vazio nem gerar um identificador temporario. A
+/// unica saida honesta e a que este codebase JA TINHA para "o resultado e real,
+/// falta uma peca": guardar em `rankingBacklog` como `pendente`.
+///
+/// E ISSO E RETOMAVEL POR CONSTRUCAO. O item volta a fila com as mesmas onze
+/// guardas sendo reavaliadas; quando a identidade tiver sido provisionada pelo
+/// dominio social, a mesma partida passa por aqui e pontua UMA vez — a chave de
+/// idempotencia de `rankingContributions` continua sendo a mesma, entao um
+/// reprocessamento tardio nao duplica contribuicao.
+///
+/// PURA DE PROPOSITO: recebe o mapa ja resolvido, e nao o Firestore. E o que
+/// permite provar a regra sem emulador.
+export function decidirIdentidadePublica(params: {
+  resultado: ResultadoOficial;
+  /// `uid -> publicId canonico`. Ausencia da chave, string vazia e `null`
+  /// significam a MESMA coisa: nao ha identidade. Tratados juntos porque um
+  /// documento de identidade meio gravado e indistinguivel, para o ranking, de
+  /// um que nao existe — e ambos precisam terminar em backlog, nunca em id
+  /// inventado.
+  identidades: ReadonlyMap<string, string | null | undefined>;
+}): DecisaoDeProcessamento {
+  const { resultado, identidades } = params;
+  const sem = resultado.competidores
+    .map((c) => c.userId)
+    .filter((uid) => {
+      const id = identidades.get(uid);
+      return typeof id !== "string" || id.length === 0;
+    });
+
+  if (sem.length === 0) {
+    return { processa: true, recusa: null, benigna: false, guardarNoBacklog: false, detalhe: null };
+  }
+
+  return recusa(
+    "identidade_publica_ausente",
+    true,
+    true,
+    `a partida ${resultado.matchId} tem ${sem.length} competidor(es) sem identidade ` +
+      `publica canonica (${sem.join(", ")}). O ranking NAO cunha publicId: a partida ` +
+      "fica no backlog ate o dominio de Identidade Publica provisionar."
+  );
 }
 
 /// A chave de idempotencia da CONTRIBUICAO de uma partida ao ranking.

@@ -1,5 +1,6 @@
-// ranking.test.js — prova o BLOCO 6/6 do firestore.rules contra o emulador
-// (OS Backend Autoritativo de Ranking, secoes 20 e 23).
+// ranking.test.js — prova o BLOCO 7/7 do firestore.rules contra o emulador
+// (OS Backend Autoritativo de Ranking, secoes 20 e 23; OS de integracao de
+// identidade, secao 19).
 //
 // A DIVISAO DE TRABALHO E A MESMA DE rastreabilidade.test.js:
 //
@@ -17,6 +18,10 @@
 //   - o cliente NAO se coloca no Hall;
 //   - o cliente NAO marca uma partida como processada, nem desmarca;
 //   - o cliente NAO le o mapeamento id publico -> uid;
+//   - a colecao propria de ids publicos do ranking NAO EXISTE MAIS, e o fecho
+//     padrao a nega (OS de integracao, secao 19);
+//   - o cliente NAO cunha identidade escrevendo nas colecoes canonicas do
+//     dominio social, provado a partir DESTE bloco e no MESMO arquivo de regras;
 //   - o cliente NAO le a classificacao crua (nem a propria linha);
 //   - o cliente NAO apaga trilha de auditoria;
 //   - o admin le a trilha, mas nao escreve por aqui;
@@ -127,10 +132,10 @@ before(async () => {
       partidasTotais: 3,
       temporadaAtual: TEMPORADA,
     });
-    await setDoc(doc(db, 'rankingPublicIds', ID_PUBLICO_DONO), {
-      publicPlayerId: ID_PUBLICO_DONO,
-      uid: DONO,
-    });
+    // O MAPA REVERSO NAO E MAIS SEMEADO AQUI. Ele era `rankingPublicIds`, que a
+    // OS de integracao de identidade removeu junto com o gerador do ranking. O
+    // caminho `publicId -> uid` agora e `publicIdIndex`, semeado e provado em
+    // social.test.js, que roda contra o MESMO firestore.rules.
 
     await setDoc(doc(db, 'rankingContributions', CHAVE_CONTRIBUICAO), {
       contributionId: CHAVE_CONTRIBUICAO,
@@ -245,11 +250,46 @@ describe('ranking: a classificacao crua nao e legivel', () => {
     await assertFails(getDocs(collection(comoDono(), 'rankingStandings')));
   });
 
-  test('o mapeamento id publico -> uid nunca e legivel', async () => {
-    // Entregar este documento seria o mesmo que nao ter separado identidade
-    // publica de UID (secao 16).
+  test('a colecao propria de ids publicos do ranking nao existe mais', async () => {
+    // OS DE INTEGRACAO DE IDENTIDADE. `rankingPublicIds` era o indice reverso do
+    // gerador que este dominio mantinha; o gerador saiu e o bloco de regra dela
+    // saiu junto. O que este teste prova nao e "esta fechada por regra propria",
+    // e sim "esta fechada pelo FECHO PADRAO" — que e mais forte, porque nenhuma
+    // regra futura pode afrouxa-la sem que alguem escreva um `match` novo e
+    // deliberado.
+    //
+    // O caminho `publicId -> uid` continua existindo uma vez so, em
+    // `publicIdIndex`, e social.test.js prova a regra dele contra este mesmo
+    // arquivo de regras.
     await assertFails(getDoc(doc(comoDono(), 'rankingPublicIds', ID_PUBLICO_DONO)));
     await assertFails(getDoc(doc(comoAdmin(), 'rankingPublicIds', ID_PUBLICO_DONO)));
+    await assertFails(
+      setDoc(doc(comoAdmin(), 'rankingPublicIds', ID_PUBLICO_DONO), { uid: DONO }),
+    );
+  });
+
+  test('o jogador nao cunha identidade publica escrevendo em playerIdentities', async () => {
+    // A MESMA PERGUNTA DA OS, feita do lado do cliente: "quem decide qual e o
+    // publicId deste jogador?". Pelo banco, ninguem que nao seja o backend — e
+    // isso vale inclusive para o dono do proprio documento.
+    //
+    // Aqui, e nao so em social.test.js, porque a regressao que a OS existe para
+    // impedir e justamente a de um bloco novo afrouxar o do vizinho no MESMO
+    // arquivo de regras. Este e o bloco vizinho.
+    await assertFails(
+      setDoc(doc(comoDono(), 'playerIdentities', DONO), {
+        uid: DONO,
+        publicId: 'PESCOLHIDO001',
+      }),
+    );
+    await assertFails(
+      setDoc(doc(comoDono(), 'publicIdIndex', 'PESCOLHIDO001'), { uid: DONO }),
+    );
+    await assertFails(
+      setDoc(doc(comoDono(), 'publicProfiles', ID_PUBLICO_ALHEIO), {
+        apelido: 'me apropriei',
+      }),
+    );
   });
 
   test('o agregado por uid nao e legivel nem pelo dono', async () => {

@@ -24,6 +24,11 @@
 //   se colocar no Hall ......... nenhuma funcao escreve `hallEntries`
 //   marcar partida processada .. `rankingContributions` so pela transacao
 //   alterar resultado oficial .. este codebase nunca escreve em `matches`
+//   escolher o proprio publicId  NENHUMA funcao aqui cunha identidade publica
+//
+// A ULTIMA LINHA E DA OS DE INTEGRACAO DE IDENTIDADE, e ela vale para o backend
+// tambem, nao so para o cliente: este codebase INTEIRO perdeu a capacidade de
+// emitir `publicId`. Quem emite e `functions-social`. Ver identidade.ts.
 
 import { initializeApp } from "firebase-admin/app";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
@@ -44,7 +49,6 @@ import {
   podioDaTemporada,
   meuStanding,
   porIdPublico,
-  garantirIdPublico,
   db,
   C_HALL,
   C_BACKLOG,
@@ -534,15 +538,31 @@ export const consultarJogadorPorIdPublico = onCall(opcoesCliente, async (req) =>
   };
 });
 
-/// Garante que o jogador autenticado tenha identidade publica.
-///
-/// Chamada pelo app no primeiro acesso a tela de Ranking. Sem ela, um jogador que
-/// ainda nao terminou nenhuma partida ranqueada nao teria id publico e nao
-/// poderia ser alvo de "abrir perfil" a partir de nenhuma lista.
-export const garantirIdentidadePublica = onCall(opcoesCliente, async (req) => {
-  const uid = exigirAutenticacao(req);
-  return { publicPlayerId: await garantirIdPublico(uid) };
-});
+// ---------------------------------------------------------------------------
+// A CALLABLE QUE FOI EMBORA: `garantirIdentidadePublica`
+// ---------------------------------------------------------------------------
+//
+// Ate a OS de integracao de identidade, este codebase publicava
+// `garantirIdentidadePublica`, que chamava `garantirIdPublico` e CUNHAVA um
+// `publicId` para quem ainda nao tinha. Era, literalmente, o endpoint de emissao
+// do dominio errado — e o motivo pelo qual a pergunta "quem decide qual e o
+// publicId deste jogador?" tinha duas respostas.
+//
+// ELA NAO FOI SUBSTITUIDA POR OUTRA AQUI. A substituta ja existia, no dominio
+// dono da identidade:
+//
+//     ranking:garantirIdentidadePublica  ->  social:obterMinhaIdentidade
+//
+// `obterMinhaIdentidade` (functions-social/src/index.ts) faz o que esta fazia e
+// mais: cria os TRES documentos canonicos na mesma transacao (identidade, indice
+// reverso e perfil publico), e devolve `{ publicId, apelido, avatarRef }` em vez
+// de so o id. O app passa a chama-la no primeiro acesso — inclusive antes da tela
+// de Ranking, porque a identidade publica nao e um conceito do ranking.
+//
+// Deixar aqui um encaminhamento ("chama a do vizinho") seria pior que remover: um
+// caminho de emissao dentro do codebase competitivo continua sendo um caminho de
+// emissao dentro do codebase competitivo, e o proximo refactor o transformaria
+// de novo num gerador local. Ver docs/AUTORIDADE-DE-IDENTIDADE-PUBLICA.md.
 
 // ---------------------------------------------------------------------------
 // HALL DOS IMORTAIS (secao 14)
