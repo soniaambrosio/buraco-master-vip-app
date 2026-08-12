@@ -380,6 +380,11 @@ class Jogo {
   // rodada = canastras + cartas baixadas da dupla. NÃO altera a contagem oficial
   // de fim de rodada (bônus de batida, cartas na mão e morto entram só no final).
   int pontosMesaAoVivo(String dupla) {
+    // C10 — mesma autoridade do fim de rodada: o número exibido durante a
+    // rodada não pode discordar do número que será contado no final.
+    if (motorConfig.canonicoAtivo) {
+      return pontosMesaCanonico(jogosDupla[dupla]!, specCanonica);
+    }
     int p = 0;
     for (final meld in jogosDupla[dupla]!) {
       if (meld.length >= 7) {
@@ -465,14 +470,34 @@ class Jogo {
     _rodadaContada = true;
     final algumPegouMorto = mortoPego['nos']! || mortoPego['eles']!;
     final res = <String, dynamic>{};
+    // C10 — sob AUTORIDADE ÚNICA quem pontua é o motor canônico
+    // (`pontuacao_canonica` + `meld_validator`). Isso fecha a EXC-04: a
+    // classificação do grupo de ases (e de qualquer meld) deixa de ter dois
+    // donos na hora de contar. A tabela de pontos é a mesma; o que acaba é a
+    // segunda autoridade.
+    final spec = motorConfig.canonicoAtivo ? specCanonica : null;
     for (final dupla in ['nos', 'eles']) {
       final assentos = dupla == 'nos' ? [0, 2] : [1, 3];
-      final cartasNaMao = assentos.fold<int>(0, (s, a) => s + maos[a].fold<int>(0, (t, c) => t + _pontos(c)));
-      final r = _pontuarDupla(dupla,
+      final Map<String, dynamic> r;
+      if (spec != null) {
+        r = pontuarDuplaCanonico(
+          melds: jogosDupla[dupla]!,
+          mao: [for (final a in assentos) ...maos[a]],
           bateu: duplaQueBateu == dupla,
-          mortoPegoDupla: mortoPego[dupla]!,
-          cartasNaMao: cartasNaMao,
-          algumPegouMorto: algumPegouMorto);
+          mortoPego: mortoPego[dupla]!,
+          algumPegouMorto: algumPegouMorto,
+          // §8.3: morto convertido em monte deixa de ser direito reclamável.
+          mortoConvertido: _mortosConvertidos > 0,
+          spec: spec,
+        );
+      } else {
+        final cartasNaMao = assentos.fold<int>(0, (s, a) => s + maos[a].fold<int>(0, (t, c) => t + _pontos(c)));
+        r = _pontuarDupla(dupla,
+            bateu: duplaQueBateu == dupla,
+            mortoPegoDupla: mortoPego[dupla]!,
+            cartasNaMao: cartasNaMao,
+            algumPegouMorto: algumPegouMorto);
+      }
       res[dupla] = r;
       placar[dupla] = placar[dupla]! + (r['total'] as int);
     }
