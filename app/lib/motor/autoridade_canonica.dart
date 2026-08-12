@@ -82,20 +82,21 @@ class ResultadoAutoridade {
 /// produção usa `paraCanonico`). Tear-off de função top-level é constante.
 typedef Projetor = ProjecaoBMV Function(Jogo);
 
-// C10 — limites EXPLÍCITOS da geração (sem "silent cap"): melds gerados têm até
-// _kMeldMax cartas (canastra) e a abertura vulnerável é aumentada com até
-// _kAugMax melds extra. Para as mãos reais (≤ ~14) isso cobre toda combinação
-// jogável; se um dia truncar, é aqui — documentado, não escondido.
-const int _kMeldMax = 7;
-const int _kAugMax = 2;
+// C10 — SEM caps semânticos artificiais: os ÚNICOS limites da geração são os
+// RECURSOS visíveis reais (topo + mão + jogos expostos) e as restrições da
+// própria regra canônica. Um meld pode ter qualquer tamanho até esgotar as
+// cartas visíveis; uma compra pode ter quantos jogos/extensões couberem nas
+// cartas (contagem limitada só por cartas/3). Nada de tabela de pontos ou
+// legalidade duplicada: geração ESTRUTURAL (subconjuntos das cartas visíveis)
+// + validação canônica final (`validarJogoMesa`/`avaliarComprarLixo`).
 
-/// Subconjuntos de índices [0..n) com tamanho em [lo, hi], em ordem canônica
-/// (determinística, crescente por índice). Base da GERAÇÃO de candidatos.
-List<List<int>> _subconjuntos(int n, int lo, int hi) {
+/// Subconjuntos de índices [0..n) com tamanho ≥ lo (até o tamanho TOTAL n — o
+/// limite é o próprio conjunto de cartas visíveis, não um teto arbitrário).
+/// Determinístico, crescente por índice.
+List<List<int>> _subconjuntos(int n, int lo) {
   final out = <List<int>>[];
   void rec(int start, List<int> cur) {
     if (cur.length >= lo) out.add(List<int>.from(cur));
-    if (cur.length >= hi) return;
     for (var i = start; i < n; i++) {
       cur.add(i);
       rec(i + 1, cur);
@@ -105,6 +106,51 @@ List<List<int>> _subconjuntos(int n, int lo, int hi) {
 
   rec(0, <int>[]);
   return out;
+}
+
+/// Uma UNIDADE de baixada dentro da compra: ou um jogo novo, ou uma extensão de
+/// um jogo já exposto (índice `indiceExt`). `ids` são as cartas visíveis que ela
+/// consome (para garantir disjunção entre unidades).
+class _UnidadeCompra {
+  final List<CartaId>? jogoNovo;
+  final Extensao? extensao;
+  final int? indiceExt; // índice do jogo exposto estendido (null se jogo novo)
+  final Set<CartaId> ids;
+  const _UnidadeCompra.jogo(List<CartaId> j, this.ids)
+      : jogoNovo = j,
+        extensao = null,
+        indiceExt = null;
+  _UnidadeCompra.ext(Extensao e, this.ids)
+      : jogoNovo = null,
+        extensao = e,
+        indiceExt = e.indiceJogo;
+}
+
+/// Todos os subconjuntos de unidades MUTUAMENTE disjuntas (por carta E por índice
+/// de jogo estendido), incluindo o conjunto vazio. Determinístico. É a
+/// combinação atômica completa — a contagem é limitada só pela disjunção real
+/// das cartas (nenhum cap numérico).
+List<List<_UnidadeCompra>> _combosDisjuntos(
+    List<_UnidadeCompra> us, Set<CartaId> cartasIniciais, Set<int> indicesIniciais) {
+  final res = <List<_UnidadeCompra>>[];
+  void rec(int i, List<_UnidadeCompra> cur, Set<CartaId> cartas, Set<int> indices) {
+    res.add(List<_UnidadeCompra>.from(cur));
+    for (var k = i; k < us.length; k++) {
+      final u = us[k];
+      if (u.ids.any(cartas.contains)) continue; // carta já usada
+      if (u.indiceExt != null && indices.contains(u.indiceExt)) continue; // jogo já estendido
+      cur.add(u);
+      cartas.addAll(u.ids);
+      if (u.indiceExt != null) indices.add(u.indiceExt!);
+      rec(k + 1, cur, cartas, indices);
+      if (u.indiceExt != null) indices.remove(u.indiceExt!);
+      cartas.removeAll(u.ids);
+      cur.removeLast();
+    }
+  }
+
+  rec(0, <_UnidadeCompra>[], {...cartasIniciais}, {...indicesIniciais});
+  return res;
 }
 
 /// Assinatura semântica de uma compra (jogos + extensões), independente da ordem
@@ -157,58 +203,67 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
     }
   }
 
-  // (1) MELDS NOVOS que CONTÊM o topo (só validade de meld; o mínimo é da
-  //     transação). Tamanho variável: topo + 2.._kMeldMax-1 cartas da mão.
-  final novosComTopo = <List<CartaId>>[];
-  for (final s in _subconjuntos(mao.length, 2, _kMeldMax - 1)) {
+  // ---- USOS DO TOPO (o topo precisa aparecer em exatamente uma unidade) ----
+  // (1a) MELDS NOVOS que CONTÊM o topo — tamanho variável até esgotar a mão.
+  final usosTopo = <_UnidadeCompra>[];
+  for (final s in _subconjuntos(mao.length, 2)) {
     final cartas = <CartaSnapshot>[topo, for (final i in s) mao[i]];
     if (validarJogoMesa(cartas, spec).valido) {
-      novosComTopo.add([topoId, for (final i in s) mao[i].id]);
+      final ids = <CartaId>[topoId, for (final i in s) mao[i].id];
+      usosTopo.add(_UnidadeCompra.jogo(ids, ids.toSet()));
     }
   }
-  // (2) EXTENSÕES que CONTÊM o topo (topo + eventuais cartas da mão), por meld
-  //     já exposto da dupla.
-  final extsComTopo = <Extensao>[];
+  // (1b) EXTENSÕES que CONTÊM o topo (topo + eventuais cartas da mão).
   for (var k = 0; k < melds.length; k++) {
     final alvo = melds[k];
-    for (final s in _subconjuntos(mao.length, 0, _kMeldMax)) {
+    for (final s in _subconjuntos(mao.length, 0)) {
       final add = <CartaSnapshot>[topo, for (final i in s) mao[i]];
       if (validarJogoMesa([...alvo, ...add], spec).valido) {
-        extsComTopo.add(Extensao(k, [topoId, for (final i in s) mao[i].id]));
+        final ids = <CartaId>[topoId, for (final i in s) mao[i].id];
+        usosTopo.add(_UnidadeCompra.ext(Extensao(k, ids), ids.toSet()));
       }
     }
   }
-  // (3) MELDS EXTRA (SEM o topo), da mão — para AUMENTAR a abertura vulnerável
-  //     até o conjunto atômico alcançar o mínimo.
-  final extras = <List<CartaId>>[];
-  for (final s in _subconjuntos(mao.length, 3, _kMeldMax)) {
+
+  // ---- UNIDADES EXTRA (SEM o topo): jogos novos e extensões da mão ----
+  final extras = <_UnidadeCompra>[];
+  for (final s in _subconjuntos(mao.length, 3)) {
     final cartas = <CartaSnapshot>[for (final i in s) mao[i]];
     if (validarJogoMesa(cartas, spec).valido) {
-      extras.add([for (final i in s) mao[i].id]);
+      final ids = <CartaId>[for (final i in s) mao[i].id];
+      extras.add(_UnidadeCompra.jogo(ids, ids.toSet()));
     }
   }
-  final combosExtra = <List<List<CartaId>>>[
-    for (final combo in _subconjuntos(extras.length, 1, _kAugMax))
-      [for (final i in combo) extras[i]]
-  ];
+  for (var k = 0; k < melds.length; k++) {
+    final alvo = melds[k];
+    for (final s in _subconjuntos(mao.length, 1)) {
+      final add = <CartaSnapshot>[for (final i in s) mao[i]];
+      if (validarJogoMesa([...alvo, ...add], spec).valido) {
+        final ids = <CartaId>[for (final i in s) mao[i].id];
+        extras.add(_UnidadeCompra.ext(Extensao(k, ids), ids.toSet()));
+      }
+    }
+  }
 
-  // BASE: cada uso do topo sozinho (o verificador rejeita se abaixo do mínimo).
-  for (final m in novosComTopo) {
-    tentar([m], const []);
-  }
-  for (final e in extsComTopo) {
-    tentar(const [], [e]);
-  }
-  // AUMENTO: uso do topo + 1.._kAugMax melds extra (o verificador rejeita reuso
-  // de carta e conjuntos abaixo do mínimo).
-  for (final m in novosComTopo) {
-    for (final ce in combosExtra) {
-      tentar([m, ...ce], const []);
-    }
-  }
-  for (final e in extsComTopo) {
-    for (final ce in combosExtra) {
-      tentar([...ce], [e]);
+  // ---- COMBINAÇÃO ATÔMICA: cada uso do topo + qualquer conjunto DISJUNTO de
+  //      unidades extra (contagem limitada só pela disjunção real das cartas).
+  //      avaliarComprarLixo é o VERIFICADOR final (topo usado, mínimo de
+  //      abertura, enterradas fora, sem reuso de carta).
+  for (final tu in usosTopo) {
+    final combos = _combosDisjuntos(
+        extras, tu.ids, tu.indiceExt == null ? const {} : {tu.indiceExt!});
+    for (final combo in combos) {
+      final jogos = <List<CartaId>>[
+        if (tu.jogoNovo != null) tu.jogoNovo!,
+        for (final u in combo)
+          if (u.jogoNovo != null) u.jogoNovo!
+      ];
+      final exts = <Extensao>[
+        if (tu.extensao != null) tu.extensao!,
+        for (final u in combo)
+          if (u.extensao != null) u.extensao!
+      ];
+      tentar(jogos, exts);
     }
   }
 

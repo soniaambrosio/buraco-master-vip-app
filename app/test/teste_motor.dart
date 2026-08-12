@@ -4634,6 +4634,54 @@ void main() {
       expect(volta.extensoes[1].indiceJogo, 2);
       expect(volta.extensoes[1].cartas, ['p']);
     });
+
+    test('C10-LIXO-13 jogo novo com 8+ cartas contendo o topo -> derivado/aceito',
+        () {
+      final j = _jgLixoRunLongoC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      // SEM cap de tamanho: existe candidato com um jogo de 8+ cartas (com o topo).
+      final grande =
+          cands.firstWhere((c) => c.jogosNovos.any((jn) => jn.length >= 8));
+      expect(grande.jogosNovos.expand((x) => x), contains('5c')); // topo dentro
+      final r = aplicarComAutoridade(j, 0, [grande]);
+      expect(r.aplicou, isTrue); // e é aceito pela autoridade
+    });
+
+    test('C10-LIXO-14 transação com >3 melds na abertura aparece nos candidatos',
+        () {
+      final j = _jgLixoQuatroMeldsC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      // SEM cap de contagem: há candidato com 4+ jogos numa única compra atômica.
+      final multi = cands.firstWhere((c) => c.jogosNovos.length > 3);
+      final r = aplicarComAutoridade(j, 0, [multi]);
+      expect(r.aplicou, isTrue);
+      expect(j.jogosDupla['nos']!.length, greaterThanOrEqualTo(4));
+    });
+
+    test('C10-LIXO-15 mais recursos visíveis não elimina candidato legal anterior',
+        () {
+      // A: mão mínima -> candidato standalone [5c,3c,4c].
+      final a = derivarCandidatosCompraLixoFechado(
+          paraCanonico(_jgLixoMonoAC10()).canonico, 0, specF);
+      final alvo = a.firstWhere((c) =>
+          c.extensoes.isEmpty &&
+          c.jogosNovos.length == 1 &&
+          (List<String>.from(c.jogosNovos.first)..sort()).join('-') ==
+              '3c-4c-5c');
+      final sigAlvo = (List<String>.from(alvo.jogosNovos.first)..sort()).join('-');
+      // B: mesma mão + cartas extras (mais melds possíveis). O candidato de A
+      // continua presente (nenhum cap interno o elimina).
+      final b = derivarCandidatosCompraLixoFechado(
+          paraCanonico(_jgLixoMonoBC10()).canonico, 0, specF);
+      final aindaTem = b.any((c) =>
+          c.extensoes.isEmpty &&
+          c.jogosNovos.length == 1 &&
+          (List<String>.from(c.jogosNovos.first)..sort()).join('-') == sigAlvo);
+      expect(aindaTem, isTrue);
+      expect(b.length, greaterThan(a.length)); // só ACRESCENTA candidatos
+    });
   });
 }
 
@@ -5656,5 +5704,106 @@ Jogo _jgLixoAberturaMultiplaC10() {
     Carta('entK', 'ouros', 'K', false),
     Carta('5c', 'copas', '5', false), // topo
   ];
+  return j;
+}
+
+// ===== C10 — helpers (parte 1-fix2: sem caps de tamanho/contagem) =====
+
+// Fechado, não vulnerável. topo 5c + corrida copas 3,4,6,7,8,9,10,J na mão ->
+// jogo novo de 8/9 cartas contendo o topo (sp9 evita esvaziar a mão).
+Jogo _jgLixoRunLongoC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('6c', 'copas', '6', false),
+      Carta('7c', 'copas', '7', false),
+      Carta('8c', 'copas', '8', false),
+      Carta('9c', 'copas', '9', false),
+      Carta('10c', 'copas', '10', false),
+      Carta('Jc', 'copas', 'J', false),
+      Carta('sp9', 'espadas', '9', false), // reserva (mão não esvazia)
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// Fechado, não vulnerável. topo 5c (meld [5c,3c,4c]) + três corridas disjuntas
+// (ouros/espadas/paus) -> compra atômica com 4 jogos. sp evita esvaziar a mão.
+Jogo _jgLixoQuatroMeldsC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5o', 'ouros', '5', false),
+      Carta('6o', 'ouros', '6', false),
+      Carta('7o', 'ouros', '7', false),
+      Carta('5e', 'espadas', '5', false),
+      Carta('6e', 'espadas', '6', false),
+      Carta('7e', 'espadas', '7', false),
+      Carta('5p', 'paus', '5', false),
+      Carta('6p', 'paus', '6', false),
+      Carta('7p', 'paus', '7', false),
+      Carta('spA', 'espadas', 'A', false), // reserva
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// Monotonicidade (15) — estado A: mão mínima (topo 5c + 3c,4c).
+Jogo _jgLixoMonoAC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [Carta('3c', 'copas', '3', false), Carta('4c', 'copas', '4', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// Monotonicidade (15) — estado B: mesma mão de A + uma corrida ouros extra.
+Jogo _jgLixoMonoBC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('5o', 'ouros', '5', false),
+      Carta('6o', 'ouros', '6', false),
+      Carta('7o', 'ouros', '7', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
   return j;
 }
