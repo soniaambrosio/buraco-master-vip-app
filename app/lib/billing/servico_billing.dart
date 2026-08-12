@@ -217,16 +217,38 @@ class ServicoBilling {
     );
   }
 
-  /// Desliga a escuta. Chamar no `dispose` de quem ligou.
+  /// Desliga a escuta. Chamar no `dispose` de quem ligou, e no LOGOUT.
   ///
   /// NAO fecha o canal de estado: o servico pode ser religado com [iniciar], e
   /// fechar o `StreamController` de um singleton o deixaria inutilizavel pelo
   /// resto da vida do processo.
+  ///
+  /// O PAINEL VOLTA AO ZERO, E ISSO E A PARTE QUE IMPORTA.
+  ///
+  /// `PainelBilling.entitlement` e o direito de UM jogador, e a interface le VIP
+  /// dali. Se ele sobrevivesse ao desligamento, o proximo jogador a entrar no
+  /// mesmo processo apareceria como VIP sem ter comprado nada — o direito dele so
+  /// seria corrigido quando o primeiro `snapshot` de `playerEntitlements/{uid}`
+  /// chegasse, o que depende de rede e NAO e sincrono. Essa janela e o vazamento
+  /// entre contas que a homologacao proibe.
+  ///
+  /// Zerar tambem PUBLICA o novo retrato: uma tela ja montada escuta [painel], e
+  /// sem evento ela continuaria exibindo o selo do jogador anterior mesmo com o
+  /// estado interno correto.
+  ///
+  /// O custo do zero e um piscar de "nao-VIP" quando quem religa e o MESMO
+  /// jogador (o app voltando do segundo plano, por exemplo), ate o documento ser
+  /// relido. E a direcao segura: errar para menos nao entrega acesso pago a
+  /// quem nao pagou. Ver HOMOLOG-H e HOMOLOG-I em
+  /// `test/billing/troca_de_conta_test.dart`.
   Future<void> encerrar() async {
     await _escuta?.cancel();
     _escuta = null;
     _iniciando = null;
     _emValidacao.clear();
+    _entregasNaRestauracao = null;
+    _produtos = const <ProductDetails>[];
+    _publicar(const PainelBilling());
   }
 
   /// Libera tudo, inclusive o canal. So para quem realmente vai descartar o
