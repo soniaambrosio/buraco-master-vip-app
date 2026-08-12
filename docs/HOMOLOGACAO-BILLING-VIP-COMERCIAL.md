@@ -407,5 +407,29 @@ tocado e nenhuma migração foi disparada.
 | arquivos alterados | `app/lib/billing/servico_billing.dart` |
 | arquivos removidos | nenhum |
 
-Hash final, hash remoto e a confirmação `local == remoto` estão em §13, escritos
-depois do push.
+---
+
+## 13. Estado de push
+
+| item | valor |
+|---|---|
+| hash final (local) | `db6ddef2b222d8cf52d30d62749cf89d29cbae3e` |
+| hash remoto (`git ls-remote`) | `db6ddef2b222d8cf52d30d62749cf89d29cbae3e` |
+| `local == remoto` | **sim** |
+| push executado | sim, `origin/homologacao/billing-vip-comercial` (branch nova) |
+| force push | **não** |
+| árvore limpa | sim — `git status --porcelain` vazio |
+| upstream gravado | sim: `branch.homologacao/billing-vip-comercial.remote = origin`, `.merge = refs/heads/homologacao/billing-vip-comercial` |
+
+`git rev-parse --abbrev-ref @{u}` falha com *"not stored as a remote-tracking
+branch"*, e **isso não é falha do push**. O `remote.origin.fetch` deste
+repositório está estreitado a duas branches:
+
+```
++refs/heads/consolidacao/apk-geral-bmv:refs/remotes/origin/consolidacao/apk-geral-bmv
++refs/heads/correcao/p0-elegibilidade-vip-lifecycle:refs/remotes/origin/correcao/p0-elegibilidade-vip-lifecycle
+```
+
+Nenhuma outra `origin/*` é materializada localmente. É a mesma condição já
+registrada em `docs/RTDN-VIP-PRODUCAO.md` §19, e por isso a conferência acima usa
+`git ls-remote` em vez de `rev-parse origin/…`.
