@@ -28,11 +28,20 @@ import { CallableRequest, HttpsError, onCall } from "firebase-functions/v2/https
 import {
   C_AMIZADES,
   C_PERFIS_PUBLICOS,
+  entradaDeBusca,
   entradaPublica,
   exigirRespostaSegura,
 } from "./chaves";
-import { LIMITES, VereditoAmizade, agoraUtc, dominio } from "./domain";
 import {
+  CandidatoDeBusca,
+  LIMITES,
+  VereditoAmizade,
+  agoraUtc,
+  dominio,
+} from "./domain";
+import {
+  bloqueiosParaBusca,
+  buscarPorApelido,
   desfazerPorBloqueio,
   db,
   estadoDeContato,
@@ -46,7 +55,9 @@ import {
   propagarApelidoParaAmigos,
   publicIdDe,
   reconciliarProjecoes,
+  relacoesParaBusca,
   resolverUid,
+  resolverUids,
 } from "./repositorio";
 
 initializeApp();
@@ -106,8 +117,21 @@ function recusar(recusa: string | null): never {
     recusa === "perfilPublicoNaoDisponivel" ||
     recusa === "perfilPublicoInvalido";
 
+  // Recusas de FORMA do pedido de busca. `invalid-argument`, e nao
+  // `failed-precondition`: o servidor nao esta num estado que impede a
+  // operacao — o pedido e que nao tem forma de pedido. A distincao importa para
+  // o cliente saber se vale a pena tentar de novo com o mesmo texto (nao vale).
+  const pedidoMalformado =
+    recusa === "consultaInvalida" ||
+    recusa === "consultaMuitoCurta" ||
+    recusa === "consultaMuitoLonga";
+
   throw new HttpsError(
-    naoEncontrado ? "not-found" : "failed-precondition",
+    naoEncontrado
+      ? "not-found"
+      : pedidoMalformado
+        ? "invalid-argument"
+        : "failed-precondition",
     recusa ?? "pedido recusado",
     { recusa }
   );
@@ -334,6 +358,116 @@ export const localizarJogadorPorIdentidade = onCall(
     });
   }
 );
+
+// ===========================================================================
+// BUSCA POR APELIDO (OS de Busca e Descoberta Social)
+// ===========================================================================
+
+/// Procura jogadores pelo apelido publico.
+///
+/// POR QUE A BUSCA E UMA FUNCTION, e nao uma consulta do cliente ao Firestore
+/// (§11): as Rules nao conseguem impor teto de resultados, nem exigir tamanho
+/// minimo de termo, nem esconder de mim quem me bloqueou. Uma regra libera ou
+/// nega a consulta inteira — e uma consulta liberada e o diretorio inteiro,
+/// paginavel. Por isso o `list` de `publicProfiles` foi fechado ao cliente na
+/// mesma OS que abriu esta porta: a leitura por ID continua publica (e o que
+/// sustenta `Ranking -> publicId -> Ver Perfil`), a VARREDURA nao.
+///
+/// A CADEIA, e o que cada elo protege:
+///
+///   1. dominio valida o termo ............ minimo, maximo, controle, modo (§9)
+///   2. faixa sobre `apelidoOrdenacao` .... campo derivado que ja existia (§4)
+///   3. teto + `truncado`, sem cursor ..... a busca nao percorre a base (§9)
+///   4. `publicId -> uid` em lote ......... so aqui, e so no servidor (§3)
+///   5. bloqueio nos dois sentidos ........ quem bloqueia some da busca (§8)
+///   6. dominio projeta relacao e acoes ... estado social sanitizado (§10)
+///   7. allowlist explicita na resposta ... defesa em profundidade (§7)
+///   8. `exigirRespostaSegura` ............ a trava, de novo, sobre o todo (§3)
+///
+/// NAO EXISTE ROTA "LISTAR TODOS". Nao ha parametro que devolva a base, nao ha
+/// termo vazio que case com tudo e nao ha curinga: `*` e `%` sao caracteres
+/// comuns num apelido, e a faixa os compara literalmente.
+export const buscarJogadoresPorApelido = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const { termo, modo, limite } = (req.data ?? {}) as Record<string, unknown>;
+
+  const consulta = dominio.avaliarConsultaDeBusca({ termo, modo, limite });
+  if (!consulta.aceita) recusar(consulta.recusa);
+
+  const pagina = await buscarPorApelido(
+    consulta.chaveInicio,
+    consulta.chaveFim,
+    consulta.modo === "exato",
+    consulta.limite
+  );
+
+  // Nenhuma correspondencia: encerra sem gastar as tres leituras seguintes. E
+  // tambem o caminho do "apelido inexistente", que responde LISTA VAZIA e nao
+  // erro — §14 pede o caso, e um `not-found` aqui contaria que o termo existe
+  // ou nao existe com um codigo, quando a lista ja conta com um comprimento.
+  if (pagina.candidatos.length === 0) {
+    return exigirRespostaSegura({
+      itens: [],
+      truncado: false,
+      modo: consulta.modo,
+    });
+  }
+
+  // `publicId -> uid` acontece AQUI DENTRO e em lugar nenhum mais. O uid nao
+  // volta ao cliente em nenhuma forma: ele existe entre esta linha e a projecao.
+  const uids = await resolverUids(pagina.candidatos.map((c) => c.publicId));
+  const alvos = [...uids.values()];
+
+  const [bloqueios, relacoes] = await Promise.all([
+    bloqueiosParaBusca(uid, alvos),
+    relacoesParaBusca(uid, alvos),
+  ]);
+
+  const candidatos: CandidatoDeBusca[] = [];
+  for (const c of pagina.candidatos) {
+    const alvoUid = uids.get(c.publicId);
+    // Perfil publico sem entrada no mapa reverso e dado inconsistente, nao
+    // resultado: sem uid nao ha como avaliar bloqueio, e mostrar um jogador
+    // cujo bloqueio nao foi conferido e exatamente o que §8 proibe.
+    if (!alvoUid) {
+      logger.warn("perfil publico sem mapa reverso, omitido da busca", {
+        publicId: c.publicId,
+      });
+      continue;
+    }
+    const rel = relacoes.get(alvoUid);
+    const bloqueio = bloqueios.porUid.get(alvoUid);
+    candidatos.push({
+      publicId: c.publicId,
+      uidAlvo: alvoUid,
+      estado: rel?.estado ?? "nenhuma",
+      solicitanteUid: rel?.solicitanteUid ?? null,
+      euBloqueeiOAlvo: bloqueio?.euBloqueeiOAlvo === true,
+      alvoMeBloqueou: bloqueio?.alvoMeBloqueou === true,
+    });
+  }
+
+  const projetados = dominio.projetarResultadosDeBusca({
+    uidObservador: uid,
+    candidatos,
+    observadorComChatSilenciado: bloqueios.sancao.chatSilenciado,
+    observadorComRestricaoSocial: bloqueios.sancao.restricaoSocial,
+  });
+
+  const perfis = new Map(
+    pagina.candidatos.map((c) => [c.publicId, c.perfil] as const)
+  );
+
+  return exigirRespostaSegura({
+    itens: projetados.itens.map((r) =>
+      entradaDeBusca(perfis.get(r.publicId), r.publicId, r.relacao, r.acoes)
+    ),
+    /// Houve mais correspondencias do que o teto. O cliente refina o termo — nao
+    /// ha cursor, e a ausencia dele e a decisao antienumeracao de §9.
+    truncado: pagina.truncado,
+    modo: consulta.modo,
+  });
+});
 
 // ===========================================================================
 // GRAFO SOCIAL (§13 a §17)

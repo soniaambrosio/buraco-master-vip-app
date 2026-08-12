@@ -11,8 +11,8 @@
     "build:domain": "cd .. && dart compile js -O2 -o functions-social/lib/domain_bundle.js app/lib/social/js_bridge.dart",
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "//test": "Compila primeiro porque o alvo do teste e a barreira JA compilada (lib/chaves.js). Nao precisa do domain_bundle: o teste nao carrega index.js, so o modulo puro de chaves e projecao.",
-    "test": "tsc && node --test test/chaves.test.js",
+    "//test": "Compila primeiro porque o alvo do teste e a barreira JA compilada (lib/chaves.js). Nao precisa do domain_bundle: o teste nao carrega index.js, so o modulo puro de chaves e projecao. Alvos EXPLICITOS, e nao `node --test test/`: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
+    "test": "tsc && node --test test/chaves.test.js test/busca.test.js",
     "serve": "npm run build && firebase emulators:start --only functions:social",
     "deploy": "firebase deploy --only functions:social"
   },

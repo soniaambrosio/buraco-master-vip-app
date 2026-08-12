@@ -280,6 +280,197 @@ export async function estadoDeContato(
 }
 
 // ===========================================================================
+// BUSCA POR APELIDO (OS de Busca §4, §6, §8, §9)
+// ===========================================================================
+
+/// Um candidato cru: o que a consulta ao indice devolveu, antes de qualquer
+/// decisao sobre bloqueio ou relacao.
+export interface CandidatoCru {
+  publicId: string;
+  perfil: Record<string, unknown>;
+}
+
+export interface PaginaDeBusca {
+  candidatos: CandidatoCru[];
+  /// Havia mais correspondencias do que o teto. NAO acompanha cursor: ver
+  /// `kSemCursor` em app/lib/social/busca_apelido.dart. O cliente refina o
+  /// termo; ele nao avanca.
+  truncado: boolean;
+}
+
+/// Consulta `publicProfiles` pela faixa de chaves que o dominio montou.
+///
+/// A CONSULTA E SOBRE O DOCUMENTO PUBLICO, e nao sobre uma colecao de indice
+/// paralela (§4). `apelidoOrdenacao` ja existe la, ja e derivado do apelido a
+/// cada escrita e ja e recalculado pelo servidor — criar `nicknameIndex` seria
+/// manter uma segunda copia do mesmo campo, e uma copia e uma divergencia
+/// esperando o dia em que alguem escrever so num dos dois.
+///
+/// `estado == 'ativo'` VAI NA CONSULTA, e nao num filtro depois: uma pagina de
+/// vinte que virasse tres depois de descartar contas indisponiveis faria o teto
+/// de resultados depender de quem esta desativado. E o par igualdade+faixa e
+/// exatamente o que o indice composto declarado em firestore.indexes.json serve.
+///
+/// A ORDEM E TOTAL: `apelidoOrdenacao` desempatado por `publicId`, que e unico.
+/// Sem o desempate, duas pessoas com o mesmo apelido teriam ordem indefinida
+/// entre chamadas — e §14 exige resultado deterministico.
+export async function buscarPorApelido(
+  chaveInicio: string,
+  chaveFim: string,
+  exato: boolean,
+  limite: number
+): Promise<PaginaDeBusca> {
+  const colecao = db().collection(C_PERFIS_PUBLICOS);
+
+  let consulta = exato
+    ? colecao
+        .where("estado", "==", "ativo")
+        .where("apelidoOrdenacao", "==", chaveInicio)
+    : colecao
+        .where("estado", "==", "ativo")
+        .where("apelidoOrdenacao", ">=", chaveInicio)
+        .where("apelidoOrdenacao", "<=", chaveFim);
+
+  consulta = consulta
+    .orderBy("apelidoOrdenacao", "asc")
+    .orderBy("publicId", "asc")
+    // +1 so para saber se havia mais. O item extra e descartado e nunca vira
+    // cursor: ele existe para poder dizer "refine", nao para poder avancar.
+    .limit(limite + 1);
+
+  const snap = await consulta.get();
+  const docs = snap.docs.slice(0, limite);
+
+  return {
+    candidatos: docs.map((d) => ({
+      publicId: d.id,
+      perfil: d.data() as Record<string, unknown>,
+    })),
+    truncado: snap.docs.length > limite,
+  };
+}
+
+/// `publicId -> uid` para varios ids, numa ida so.
+///
+/// N leituras por ID (`getAll`), e nao uma consulta: o mapa reverso e uma
+/// colecao chaveada pelo proprio publicId, entao nao ha indice a construir nem
+/// varredura a fazer. Um `where('publicId','in',[...])` custaria o mesmo e
+/// esbarraria no teto de 30 valores da clausula.
+export async function resolverUids(
+  publicIds: string[]
+): Promise<Map<string, string>> {
+  const unicos = [...new Set(publicIds.filter((p) => p.length > 0))];
+  if (unicos.length === 0) return new Map();
+  const docs = await db().getAll(
+    ...unicos.map((p) => db().collection(C_INDICE_PUBLICO).doc(p))
+  );
+  const mapa = new Map<string, string>();
+  for (const d of docs) {
+    const uid = dados(d)?.uid;
+    if (typeof uid === "string") mapa.set(d.id, uid);
+  }
+  return mapa;
+}
+
+/// O bloqueio nos DOIS sentidos entre um observador e varios alvos.
+export interface BloqueioDeBusca {
+  euBloqueeiOAlvo: boolean;
+  alvoMeBloqueou: boolean;
+}
+
+/// Estado de moderacao do OBSERVADOR, lido uma vez para a busca inteira.
+export interface SancaoDoObservador {
+  chatSilenciado: boolean;
+  restricaoSocial: boolean;
+}
+
+export interface ContextoDeBloqueio {
+  sancao: SancaoDoObservador;
+  porUid: Map<string, BloqueioDeBusca>;
+}
+
+/// Le, de uma vez, o bloqueio nos dois sentidos contra cada alvo e a sancao de
+/// quem pesquisa.
+///
+/// POR QUE NAO CHAMAR `estadoDeContato` N VEZES: cada chamada faria tres
+/// leituras, e uma delas — `playerModeration/{observador}` — seria a MESMA em
+/// todas. Vinte resultados custariam sessenta leituras, um terco delas
+/// repetidas. Aqui sao `2N + 1` refs num unico `getAll`.
+///
+/// NAO DECIDE NADA. Devolve fatos (existe o documento de bloqueio? a sancao esta
+/// vigente?) e quem decide e o dominio, em `projetarResultadosDeBusca` — que
+/// chama a MESMA `avaliarContato` da moderacao que o resto do codebase usa.
+export async function bloqueiosParaBusca(
+  observadorUid: string,
+  alvosUids: string[]
+): Promise<ContextoDeBloqueio> {
+  const usuarios = db().collection(C_USUARIOS);
+  const alvos = [...new Set(alvosUids.filter((u) => u.length > 0))];
+
+  const refEstado = db().collection(C_MODERACAO_JOGADOR).doc(observadorUid);
+  const refsIda = alvos.map((a) =>
+    usuarios.doc(observadorUid).collection(SUB_BLOQUEIOS).doc(a)
+  );
+  const refsVolta = alvos.map((a) =>
+    usuarios.doc(a).collection(SUB_BLOQUEIOS).doc(observadorUid)
+  );
+
+  const docs = await db().getAll(refEstado, ...refsIda, ...refsVolta);
+
+  const agora = agoraUtc();
+  const e = dados(docs[0]) ?? {};
+  const vigente = (campo: string): boolean =>
+    typeof e[campo] === "string" && agora < (e[campo] as string);
+
+  const porUid = new Map<string, BloqueioDeBusca>();
+  alvos.forEach((alvo, i) => {
+    porUid.set(alvo, {
+      euBloqueeiOAlvo: docs[1 + i].exists,
+      alvoMeBloqueou: docs[1 + alvos.length + i].exists,
+    });
+  });
+
+  return {
+    sancao: {
+      chatSilenciado: vigente("chatSilenciadoAte"),
+      restricaoSocial:
+        vigente("socialRestritoAte") || e.suspensaoPermanente === true,
+    },
+    porUid,
+  };
+}
+
+/// O estado canonico da relacao entre um jogador e varios outros.
+///
+/// Le `friendships/{pairKey}` por ID — a chave do par e funcao dos dois uids, e
+/// por isso nao ha consulta a fazer.
+export async function relacoesParaBusca(
+  observadorUid: string,
+  alvosUids: string[]
+): Promise<Map<string, RelacaoLida>> {
+  const alvos = [...new Set(alvosUids.filter((u) => u.length > 0))];
+  const pares = alvos.map((a) =>
+    a === observadorUid ? null : dominio.chaveDoPar(observadorUid, a).pairKey
+  );
+  const comDocumento = pares.filter((p): p is string => p !== null);
+  if (comDocumento.length === 0) return new Map();
+
+  const docs = await db().getAll(
+    ...comDocumento.map((p) => db().collection(C_AMIZADES).doc(p))
+  );
+  const porPar = new Map<string, RelacaoLida>();
+  for (const d of docs) porPar.set(d.id, lerRelacao(dados(d)));
+
+  const porUid = new Map<string, RelacaoLida>();
+  alvos.forEach((alvo, i) => {
+    const par = pares[i];
+    const rel = par ? porPar.get(par) : undefined;
+    if (rel) porUid.set(alvo, rel);
+  });
+  return porUid;
+}
+
+// ===========================================================================
 // A TRANSACAO DA RELACAO
 // ===========================================================================
 
