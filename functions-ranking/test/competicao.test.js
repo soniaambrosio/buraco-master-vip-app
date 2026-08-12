@@ -31,7 +31,7 @@ const {
 } = require("../lib/competicao");
 const { conferirEscada, ligaDe } = require("../lib/ligas");
 const { calculadoraDe, politicaDefinida, politicasRegistradas } = require("../lib/politica");
-const { K_EM_QUALIFICACAO, K_CLASSIFICADO, softReset } = require("../lib/elo");
+const { K_COLOCACAO, K_CLASSIFICADO, softReset } = require("../lib/elo");
 
 describe("politica: versionamento (secao 25)", () => {
   test("a v1 tem id e versao explicitos", () => {
@@ -107,10 +107,25 @@ describe("estado competitivo (secoes 8 e 21)", () => {
     assert.equal(partidasExigidas("classificado"), 0);
   });
 
-  test("os dois estados provisorios usam K=40; o consolidado usa K=24", () => {
-    assert.equal(kDoEstado("em_colocacao"), K_EM_QUALIFICACAO);
-    assert.equal(kDoEstado("em_revalidacao"), K_EM_QUALIFICACAO);
+  test("K=40 e EXCLUSIVO da colocacao inicial; revalidacao usa 24", () => {
+    // DECISAO DE PRODUTO, tomada na aprovacao desta OS. A revalidacao NAO faz o
+    // veterano voltar ao estado de colocacao: ele continua sendo jogador
+    // previamente classificado, e as 5 partidas so revalidam a posicao dele
+    // depois do soft reset. K=40 fica reservado a quem o sistema ainda nao mediu.
+    assert.equal(kDoEstado("em_colocacao"), K_COLOCACAO);
+    assert.equal(kDoEstado("em_colocacao"), 40);
+    assert.equal(kDoEstado("em_revalidacao"), K_CLASSIFICADO);
+    assert.equal(kDoEstado("em_revalidacao"), 24);
     assert.equal(kDoEstado("classificado"), K_CLASSIFICADO);
+  });
+
+  test("estar em qualificacao NAO implica K alto", () => {
+    // As duas perguntas se separaram: `emQualificacao` diz quem ainda conta
+    // partidas para uma exigencia (10 ou 5), e `kDoEstado` diz quem tem K alto.
+    // A revalidacao responde SIM para a primeira e NAO para a segunda — e juntar
+    // as duas numa condicao so foi exatamente o erro que a decisao corrigiu.
+    assert.equal(emQualificacao("em_revalidacao"), true, "ainda conta partidas");
+    assert.equal(kDoEstado("em_revalidacao"), K_CLASSIFICADO, "mas com K de classificado");
   });
 
   test("consolida EXATAMENTE na partida que completa a exigencia", () => {
@@ -375,6 +390,17 @@ describe("calculadora v1: o desfecho vira resultado (secoes 10, 12 e 14)", () =>
     const classificado = calcularDeltaV1(entrada({ estadoCompetitivo: "classificado" }));
     assert.equal(emColocacao, 20);
     assert.equal(classificado, 12);
+  });
+
+  test("o veterano em revalidacao pontua como CLASSIFICADO, e nao como colocacao", () => {
+    // A decisao de produto atravessando ate o numero final: mesma partida, mesma
+    // dupla, mesma expectativa — o revalidando move 12, e nao 20.
+    const revalidando = calcularDeltaV1(entrada({ estadoCompetitivo: "em_revalidacao" }));
+    const classificado = calcularDeltaV1(entrada({ estadoCompetitivo: "classificado" }));
+    const emColocacao = calcularDeltaV1(entrada({ estadoCompetitivo: "em_colocacao" }));
+    assert.equal(revalidando, 12);
+    assert.equal(revalidando, classificado, "revalidacao pontua como classificado");
+    assert.notEqual(revalidando, emColocacao, "revalidacao NAO pontua como colocacao");
   });
 
   test("a forca do PARCEIRO entra na conta (secao 9)", () => {

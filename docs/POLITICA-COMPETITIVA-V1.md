@@ -94,20 +94,27 @@ delta           = arredondar( K × (resultadoReal − E) )
 
 | estado | K |
 |---|---|
-| `em_colocacao` | 40 |
-| `em_revalidacao` | 40 — **interpretação, ver abaixo** |
+| `em_colocacao` | **40** |
+| `em_revalidacao` | 24 |
 | `classificado` | 24 |
 
 Cada jogador usa o **próprio** K, mesmo que o parceiro esteja em outro estado.
 
-> **A OS não atribuiu K à revalidação.** A §10 nomeia dois fatores ("em colocação"
-> e "já classificado") e a §21 criou um terceiro estado sem lhe dar um. A leitura
-> adotada é que a divisão real é entre **provisório** e **consolidado**: os dois
-> estados provisórios são períodos em que o sistema ainda não sabe onde o jogador
-> está, que é para o que um K alto serve. A alternativa (revalidação com K=24)
-> faria o veterano sair do soft reset preso a um rating que levaria o dobro de
-> partidas para corrigir. A decisão está isolada em `K_EM_QUALIFICACAO` e em
-> `kDoEstado` — invertê-la é uma linha. **Pendente de confirmação de produto.**
+> **K=40 é exclusivo da colocação inicial.** A OS deixou a revalidação sem K
+> atribuído — a §10 nomeia fatores para "em colocação" e "já classificado", e a
+> §21 criou um terceiro estado sem lhe dar um. **Decisão de produto, tomada na
+> aprovação desta OS:** as 5 partidas de revalidação **não** fazem o veterano
+> voltar ao estado de colocação. Ele continua sendo jogador previamente
+> classificado, apenas revalidando sua posição após o soft reset — então mantém
+> K=24. O K alto existe para localizar quem o sistema ainda **não conhece**, e do
+> veterano ele já sabe inclusive o rating com que terminou a temporada anterior,
+> que é de onde o soft reset partiu.
+
+**A linha de corte do K é "já foi classificado alguma vez?", e não "está em
+qualificação?".** A distinção importa porque `emQualificacao` continua valendo
+para outra coisa — contar partidas para a exigência (10 ou 5). Os dois estados
+provisórios contam partidas; só um deles tem K alto. Em código, `kDoEstado`
+compara contra `em_colocacao` diretamente, e não reaproveita `emQualificacao`.
 
 ### Arredondamento
 
@@ -460,8 +467,7 @@ colocação, soft reset, posição ou elegibilidade. Nenhuma função chamável 
 
 ## 19. Limitações ainda existentes
 
-1. **K da revalidação é interpretação**, não texto da OS. Ver §4. Pendente de
-   confirmação de produto.
+1. ~~K da revalidação~~ — **resolvido**: K=24, decidido na aprovação da OS. Ver §4.
 2. **`abandonos` fica em zero** — não há atribuição de abandono por jogador no
    registro oficial. O critério 4 do desempate é um no-op até que exista fonte.
 3. **Ícones das Ligas vazios** — o asset da 6ª liga se chama `liga_imperial` e a

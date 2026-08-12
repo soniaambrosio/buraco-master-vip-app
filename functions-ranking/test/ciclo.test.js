@@ -183,26 +183,54 @@ describe("virada de temporada: soft reset e revalidacao (secoes 19, 20 e 21)", (
   });
 
   test("a QUINTA partida consolida o veterano", () => {
+    // Os deltas usados aqui sao os de K=24 entre duplas iguais (+12), porque o
+    // veterano em revalidacao pontua como CLASSIFICADO — a revalidacao nao o faz
+    // voltar ao K da colocacao.
     const s0 = situacaoInicial({ seasonId: "2026-A", ratingFinal: 1400 });
     assert.equal(s0.rating, 1240);
     for (let i = 1; i <= 4; i++) {
-      const parcial = aplicarVarias(s0, i, partida(1, 20));
+      const parcial = aplicarVarias(s0, i, partida(1, 12));
       assert.equal(parcial.estado, "em_revalidacao", `apos ${i} partidas`);
       assert.equal(ligaVisivel(parcial), null, `Liga vazou na partida ${i}`);
     }
-    const s5 = aplicarVarias(s0, 5, partida(1, 20));
+    const s5 = aplicarVarias(s0, 5, partida(1, 12));
     assert.equal(s5.estado, "classificado");
-    assert.equal(s5.rating, 1340);
-    assert.equal(ligaVisivel(s5), "platina", "1340 esta na faixa 1250-1399");
+    assert.equal(s5.rating, 1300);
+    assert.equal(ligaVisivel(s5), "platina", "1300 esta na faixa 1250-1399");
   });
 
   test("veterano faz 5 e jogador novo faz 10, na MESMA temporada", () => {
-    // A afirmacao literal da secao 21, lado a lado.
-    const veterano = aplicarVarias(situacaoInicial({ seasonId: "x", ratingFinal: 1200 }), 5, partida(1, 20));
+    // A afirmacao literal da secao 21, lado a lado. Repare nos deltas: o veterano
+    // move 12 por partida e o novato 20, no mesmo confronto — sao K diferentes.
+    const veterano = aplicarVarias(situacaoInicial({ seasonId: "x", ratingFinal: 1200 }), 5, partida(1, 12));
     const novato = aplicarVarias(situacaoInicial(null), 5, partida(1, 20));
     assert.equal(veterano.estado, "classificado");
     assert.equal(novato.estado, "em_colocacao");
     assert.equal(aplicarVarias(novato, 5, partida(1, 20)).estado, "classificado");
+  });
+
+  test("o veterano se move MENOS que o novato no mesmo confronto", () => {
+    // A consequencia visivel da decisao de produto, medida com a calculadora de
+    // verdade em vez de deltas escritos a mao: cinco vitorias identicas movem o
+    // veterano 60 pontos e o novato 100.
+    const confronto = (estadoCompetitivo) =>
+      calcularDeltaV1({
+        matchId: "m",
+        userId: "u",
+        saldoAtual: 1000,
+        estadoCompetitivo,
+        estado: "finalizada",
+        motivoEncerramento: null,
+        ladoVencedor: "A",
+        ladoDoJogador: "A",
+        placar: [],
+        tipo: "publica_ranqueada",
+        ratingsDaMinhaDupla: [1000, 1000],
+        ratingsDaDuplaAdversaria: [1000, 1000],
+      });
+    assert.equal(confronto("em_colocacao"), 20);
+    assert.equal(confronto("em_revalidacao"), 12);
+    assert.equal(confronto("classificado"), 12);
   });
 
   test("a temporada nova comeca do zero em contadores, e nao em rating", () => {

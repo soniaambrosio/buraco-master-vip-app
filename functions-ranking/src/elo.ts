@@ -31,24 +31,24 @@
 /// Rating de partida do jogador que nunca competiu (secao 7).
 export const RATING_INICIAL = 1000;
 
-/// Fator K de quem ainda esta sendo localizado pelo sistema — colocacao (secao
-/// 8) e revalidacao (secao 21).
+/// Fator K da COLOCACAO INICIAL, e so dela (secao 8).
 ///
-/// POR QUE O MESMO K PARA OS DOIS ESTADOS, que e uma interpretacao e precisa
-/// estar declarada como tal: a secao 10 nomeia dois fatores, "em colocacao" (40)
-/// e "ja classificado" (24), e a secao 21 criou um terceiro estado — revalidacao
-/// — sem lhe atribuir um K. A leitura adotada e que a divisao real da secao 10 e
-/// entre PROVISORIO e CONSOLIDADO: os dois estados provisorios sao periodos em
-/// que o sistema ainda nao sabe onde o jogador esta, que e exatamente para o que
-/// um K alto serve. A alternativa (revalidacao com K=24) faria o veterano sair
-/// do soft reset preso a um rating que ele levaria o dobro de partidas para
-/// corrigir, esvaziando o proposito da revalidacao.
+/// EXCLUSIVO DE QUEM NUNCA FOI CLASSIFICADO. A entrega desta OS perguntou qual K
+/// valeria na revalidacao — a OS nomeava fatores para "em colocacao" e "ja
+/// classificado", e a secao 21 criou um terceiro estado sem lhe atribuir um. A
+/// resposta do produto foi que **revalidacao NAO e colocacao**: o veterano
+/// continua sendo jogador previamente classificado, e as 5 partidas apenas
+/// revalidam a posicao dele depois do soft reset. Ele nao volta ao estado de
+/// quem o sistema nunca mediu, entao nao volta ao K de quem o sistema nunca
+/// mediu.
 ///
-/// A decisao esta isolada nesta constante de proposito: se o produto decidir o
-/// contrario, muda-se uma linha em `kDoEstado` e nada mais.
-export const K_EM_QUALIFICACAO = 40;
+/// O K alto existe para localizar quem o sistema ainda NAO CONHECE. Do veterano
+/// o sistema ja sabe bastante — sabe inclusive o rating com que ele terminou a
+/// temporada anterior, que e de onde o soft reset partiu.
+export const K_COLOCACAO = 40;
 
-/// Fator K de quem ja consolidou a Liga (secao 10).
+/// Fator K de quem ja foi classificado alguma vez: classificados e veteranos em
+/// revalidacao (secoes 10 e 21).
 export const K_CLASSIFICADO = 24;
 
 /// Partidas ranqueadas validas para consolidar a Liga pela primeira vez (secao 8).

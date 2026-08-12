@@ -15,7 +15,7 @@ const assert = require("node:assert/strict");
 
 const {
   RATING_INICIAL,
-  K_EM_QUALIFICACAO,
+  K_COLOCACAO,
   K_CLASSIFICADO,
   PARTIDAS_DE_COLOCACAO,
   PARTIDAS_DE_REVALIDACAO,
@@ -34,7 +34,7 @@ const delta = (meu, dele, k, resultado) =>
 describe("elo: as constantes da OS", () => {
   test("os numeros sao os que a OS mandou, e nao aproximacoes", () => {
     assert.equal(RATING_INICIAL, 1000, "secao 7");
-    assert.equal(K_EM_QUALIFICACAO, 40, "secao 8");
+    assert.equal(K_COLOCACAO, 40, "secao 8");
     assert.equal(K_CLASSIFICADO, 24, "secao 10");
     assert.equal(PARTIDAS_DE_COLOCACAO, 10, "secao 8");
     assert.equal(PARTIDAS_DE_REVALIDACAO, 5, "secao 21");
@@ -147,7 +147,7 @@ describe("elo: as quatro assimetrias que a secao 33 exige", () => {
 describe("elo: empate (secao 12)", () => {
   test("entre iguais, o empate nao move ninguem", () => {
     assert.equal(delta(1000, 1000, K_CLASSIFICADO, 0.5), 0);
-    assert.equal(delta(1000, 1000, K_EM_QUALIFICACAO, 0.5), 0);
+    assert.equal(delta(1000, 1000, K_COLOCACAO, 0.5), 0);
   });
 
   test("o empate PUNE o favorito e PREMIA o azarao", () => {
@@ -165,18 +165,18 @@ describe("elo: empate (secao 12)", () => {
 });
 
 describe("elo: o fator K (secao 10)", () => {
-  test("K=40 em qualificacao move o dobro de K=24 no mesmo confronto", () => {
-    assert.equal(delta(1000, 1000, K_EM_QUALIFICACAO, 1), 20);
+  test("K=40 na colocacao move o dobro de K=24 no mesmo confronto", () => {
+    assert.equal(delta(1000, 1000, K_COLOCACAO, 1), 20);
     assert.equal(delta(1000, 1000, K_CLASSIFICADO, 1), 12);
   });
 
   test("K maior move mais, em qualquer confronto e nos dois sentidos", () => {
     for (const [a, b] of [[1000, 1000], [1400, 1000], [900, 1500]]) {
       assert.ok(
-        Math.abs(delta(a, b, K_EM_QUALIFICACAO, 1)) >= Math.abs(delta(a, b, K_CLASSIFICADO, 1))
+        Math.abs(delta(a, b, K_COLOCACAO, 1)) >= Math.abs(delta(a, b, K_CLASSIFICADO, 1))
       );
       assert.ok(
-        Math.abs(delta(a, b, K_EM_QUALIFICACAO, 0)) >= Math.abs(delta(a, b, K_CLASSIFICADO, 0))
+        Math.abs(delta(a, b, K_COLOCACAO, 0)) >= Math.abs(delta(a, b, K_CLASSIFICADO, 0))
       );
     }
   });
@@ -219,7 +219,7 @@ describe("elo: determinismo (secao 26 — reprocessamento)", () => {
     for (const a of [800, 1000, 1234, 1700]) {
       for (const b of [800, 999, 1301, 1699]) {
         for (const s of [0, 0.5, 1]) {
-          for (const k of [K_CLASSIFICADO, K_EM_QUALIFICACAO]) {
+          for (const k of [K_CLASSIFICADO, K_COLOCACAO]) {
             assert.ok(Number.isInteger(delta(a, b, k, s)), `${a}x${b} s=${s} k=${k}`);
           }
         }

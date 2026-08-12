@@ -34,7 +34,7 @@ import {
 } from "./politica";
 import {
   K_CLASSIFICADO,
-  K_EM_QUALIFICACAO,
+  K_COLOCACAO,
   PARTIDAS_DE_COLOCACAO,
   PARTIDAS_DE_REVALIDACAO,
   RATING_INICIAL,
@@ -173,14 +173,25 @@ export function partidasExigidas(estado: EstadoCompetitivo): number {
   return 0;
 }
 
-/// O fator K do jogador (secao 10).
+/// O fator K do jogador (secoes 10 e 21).
+///
+/// A LINHA DE CORTE E "JA FOI CLASSIFICADO ALGUMA VEZ?", e nao "esta em
+/// qualificacao?". Só a COLOCACAO INICIAL usa 40; revalidacao e classificado
+/// usam 24.
+///
+/// A distincao importa porque `emQualificacao` continua valendo para OUTRA
+/// coisa: contar partidas para a exigencia (10 ou 5). Os dois estados
+/// provisorios contam partidas; so um deles tem K alto. Reaproveitar
+/// `emQualificacao` aqui — que era o que esta funcao fazia antes da decisao de
+/// produto — juntava as duas perguntas numa condicao so, e a resposta certa
+/// para uma virava a resposta errada para a outra.
 ///
 /// Cada jogador usa o PROPRIO K, mesmo que o parceiro esteja em outro estado —
 /// a secao 10 pede isso com todas as letras, e e o que faz sentido: o K mede a
 /// confianca do sistema NAQUELE jogador, e a confianca nao e compartilhada por
 /// estar sentado do mesmo lado da mesa.
 export function kDoEstado(estado: EstadoCompetitivo): number {
-  return emQualificacao(estado) ? K_EM_QUALIFICACAO : K_CLASSIFICADO;
+  return estado === "em_colocacao" ? K_COLOCACAO : K_CLASSIFICADO;
 }
 
 /// O estado do jogador DEPOIS de mais uma partida ranqueada valida.
