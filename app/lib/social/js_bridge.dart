@@ -356,7 +356,6 @@ String constantesJson(String _) => jsonEncode({
       'consultaMaxima': kConsultaMaxima,
       'resultadosPadrao': kResultadosPadrao,
       'resultadosMaximo': kResultadosMaximo,
-      'rodadasMaximasDaBusca': kRodadasMaximasDaBusca,
       'buscaComCursor': !kSemCursor,
       'esquema': kEsquemaSocial,
       'camposPublicos': camposPublicos.toList(growable: false),

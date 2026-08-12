@@ -102,9 +102,6 @@ export interface ConstantesSociais {
   consultaMaxima: number;
   resultadosPadrao: number;
   resultadosMaximo: number;
-  /// Teto de rodadas da varredura que garante que um candidato escondido pelo
-  /// bloqueio nao altere NENHUM campo observavel — nem a lista, nem `truncado`.
-  rodadasMaximasDaBusca: number;
   /// Sempre `false` na v1. Declarado — em vez de simplesmente ausente — para que
   /// a decisao antienumeracao de §9 apareca no contrato e num teste, e nao so na
   /// falta de um campo `cursor` na resposta.

@@ -93,25 +93,22 @@ const int kResultadosMaximo = 20;
 /// escolha.
 const bool kSemCursor = true;
 
-/// Quantas rodadas de leitura a varredura faz antes de desistir.
+/// A VARREDURA NÃO TEM TETO DE RODADAS, e a ausência é a decisão.
 ///
-/// A varredura avança na faixa enquanto o bloqueio for descartando candidatos —
-/// é o que impede que um bloqueado roube a vaga de um jogador legítimo (ver
-/// [visivelNaBusca]). Sem teto, uma pessoa que bloqueou muita gente com apelido
-/// parecido faria uma consulta varrer a faixa inteira.
+/// Esta constante não existe de propósito. Uma versão anterior tinha um teto de
+/// cinco rodadas, e ele reintroduzia exatamente a classe de vazamento que a
+/// varredura existe para fechar: parar por teto sem ter esgotado a faixa fazia
+/// `truncado: true` depender de QUANTOS estavam ocultos, e deixava candidatos
+/// legítimos posteriores aos ocultos fora da resposta.
 ///
-/// O QUE O TETO CUSTA, dito sem eufemismo: enquanto a varredura termina por
-/// esgotar a faixa ou por juntar visíveis suficientes, o candidato escondido não
-/// influencia nada — nem a lista, nem `truncado`. Se ela esgotar as rodadas, o
-/// `truncado: true` resultante passa a depender também de quantos foram
-/// escondidos. Os lotes dobram a cada rodada justamente para empurrar esse
-/// desfecho para longe: chegar lá exige que a faixa esconda deste pesquisador
-/// centenas de correspondências, e nesse regime o termo casa com centenas de
-/// apelidos e "refine" é a resposta útil de qualquer maneira.
+/// Raridade e custo de exploração não tornam uma propriedade verdadeira. Ou o
+/// oculto é observacionalmente indistinguível do inexistente, ou não é — e a
+/// única forma de ser é ter apenas duas saídas: juntar `limite + 1` visíveis, ou
+/// esgotar a faixa. Ver `varrerVisiveis`, em
+/// functions-social/src/repositorio.ts.
 ///
 /// Na prática a primeira rodada resolve: para haver uma segunda, é preciso que
-/// um bloqueado esteja entre os primeiros resultados do termo procurado.
-const int kRodadasMaximasDaBusca = 5;
+/// um oculto esteja entre os primeiros resultados do termo procurado.
 
 /// Sentinela que fecha a faixa do prefixo.
 ///

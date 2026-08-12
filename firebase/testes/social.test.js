@@ -1559,6 +1559,165 @@ describe('Functions sociais', comFunctions, () => {
       });
     });
 
+    // ==========================================================================
+    // ESTRESSE — a garantia nao pode ter teto
+    //
+    // Uma versao anterior parava a varredura em cinco rodadas. O teto
+    // reintroduzia a mesma classe de vazamento que a varredura fecha: parar sem
+    // ter esgotado a faixa fazia `truncado` depender de QUANTOS estavam ocultos,
+    // e deixava os candidatos legitimos que vinham DEPOIS dos ocultos fora da
+    // resposta — "roubo de vaga" em escala maior.
+    //
+    // Este bloco poe 300 ocultos na frente de tres legitimos. Com os limites
+    // usados aqui, cinco rodadas alcançavam 93 documentos; com o limite padrao,
+    // 265. Os 300 passam dos dois de folga, entao a suite falha se o teto voltar
+    // em qualquer forma.
+    //
+    // OS PERFIS SAO SEMEADOS DIRETO, e nao criados por conta anonima: a busca le
+    // `publicProfiles`, `publicIdIndex` e `users/{uid}/blocks`, e trezentas
+    // contas de verdade custariam novecentas chamadas de Function para provar
+    // uma propriedade que nao depende de nenhuma delas.
+    // ==========================================================================
+
+    describe('estresse: centenas de ocultos nao mudam a resposta', () => {
+      const { writeBatch } = require('firebase/firestore');
+
+      const TERMO = 'Enxame';
+      const OCULTOS = 300;
+      const estresse = {};
+
+      /// publicId valido: 'P' + 12 simbolos do alfabeto de Crockford. O corpo e
+      /// 'V' seguido de 11 digitos, todos dentro do alfabeto.
+      const pidOculto = (i) => `PV${String(i).padStart(11, '0')}`;
+      const uidOculto = (i) => `uidEnxameOculto${String(i).padStart(4, '0')}`;
+
+      /// Semeia N perfis ocultos, todos bloqueando quem procura.
+      ///
+      /// Os apelidos comecam com "A" para caírem ANTES dos visiveis na ordem —
+      /// que e a posicao em que eles atrapalham.
+      async function semearOcultos(de, ate, euUid) {
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          const db = ctx.firestore();
+          let lote = writeBatch(db);
+          let n = 0;
+          for (let i = de; i < ate; i++) {
+            const pid = pidOculto(i);
+            const uid = uidOculto(i);
+            const rotulo = String(i).padStart(4, '0');
+            lote.set(doc(db, `publicProfiles/${pid}`), {
+              publicId: pid,
+              apelido: `${TERMO} A${rotulo}`,
+              apelidoOrdenacao: `${TERMO.toLowerCase()} a${rotulo}`,
+              avatarRef: null,
+              estado: 'ativo',
+              criadoEm: '2026-01-01T00:00:00.000Z',
+              atualizadoEm: '2026-01-01T00:00:00.000Z',
+              esquema: 1,
+            });
+            lote.set(doc(db, `publicIdIndex/${pid}`), { publicId: pid, uid });
+            lote.set(doc(db, `users/${uid}/blocks/${euUid}`), {
+              bloqueadorUid: uid, bloqueadoUid: euUid, esquema: 1,
+            });
+            n += 3;
+            if (n >= 400) { await lote.commit(); lote = writeBatch(db); n = 0; }
+          }
+          if (n > 0) await lote.commit();
+        });
+      }
+
+      async function apagarOcultos(de, ate) {
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          const db = ctx.firestore();
+          let lote = writeBatch(db);
+          let n = 0;
+          for (let i = de; i < ate; i++) {
+            lote.delete(doc(db, `publicProfiles/${pidOculto(i)}`));
+            lote.delete(doc(db, `publicIdIndex/${pidOculto(i)}`));
+            n += 2;
+            if (n >= 400) { await lote.commit(); lote = writeBatch(db); n = 0; }
+          }
+          if (n > 0) await lote.commit();
+        });
+      }
+
+      before(async () => {
+        estresse.quem = await cliente('estresse-buscador');
+        await estresse.quem.identidade({});
+
+        // Os tres legitimos, DEPOIS dos ocultos na ordem ("z" > "a").
+        estresse.visiveis = [];
+        for (const sufixo of ['Z1', 'Z2', 'Z3']) {
+          const c = await cliente(`estresse-visivel-${sufixo}`);
+          const publicId = (await c.identidade({})).data.publicId;
+          await c.atualizar({ apelido: `${TERMO} ${sufixo}` });
+          estresse.visiveis.push(publicId);
+        }
+
+        await semearOcultos(0, OCULTOS, estresse.quem.uid);
+      });
+
+      test('os legitimos preenchem as vagas, atras de 300 ocultos', async () => {
+        // Cinco rodadas alcançavam 93 documentos com este limite. Se o teto
+        // voltar, esta chamada devolve lista vazia ou incompleta.
+        const r = await estresse.quem.buscar({ termo: TERMO, limite: 2 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [estresse.visiveis[0], estresse.visiveis[1]]);
+        assert.equal(r.data.truncado, true, 'o terceiro visivel ainda esta la');
+      });
+
+      test('`truncado` depende SO dos visiveis, com 300 ocultos na frente', async () => {
+        // Tres visiveis, limite tres: a resposta esta completa. Qualquer termo
+        // sobre "como a varredura terminou" — teto, rodadas, lote bruto —
+        // colocaria `true` aqui, e esse `true` seria a existencia dos 300.
+        const r = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId), estresse.visiveis);
+        assert.equal(r.data.truncado, false);
+      });
+
+      test('APAGAR ocultos nao altera nenhum campo observavel', async () => {
+        const antes = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        await apagarOcultos(0, 150);
+        const depois = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(depois.data, antes.data,
+          'metade dos ocultos sumiu e a resposta tem que ser identica');
+      });
+
+      test('ACRESCENTAR ocultos nao altera nenhum campo observavel', async () => {
+        const antes = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        await semearOcultos(OCULTOS, OCULTOS + 120, estresse.quem.uid);
+        const depois = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(depois.data, antes.data,
+          'mais 120 ocultos e a resposta tem que ser identica');
+
+        // E de volta ao inicio: a resposta e a mesma dos tres estados.
+        await apagarOcultos(OCULTOS, OCULTOS + 120);
+        const restaurado = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(restaurado.data, antes.data);
+      });
+
+      test('a mesma faixa, para quem NAO foi bloqueado, mostra os ocultos', async () => {
+        // A contraprova: os 150 perfis restantes existem e sao encontraveis.
+        // Sem ela, os testes acima passariam com uma busca simplesmente vazia.
+        const terceiro = await cliente('estresse-terceiro');
+        await terceiro.identidade({});
+        const r = await terceiro.buscar({ termo: TERMO, limite: 3 });
+        assert.equal(r.data.itens.length, 3);
+        assert.equal(r.data.truncado, true, 'para ele ha centenas de Enxame');
+        // E os que ele ve sao os "A", que vem antes dos visiveis na ordem.
+        assert.equal(
+          r.data.itens.every((i) => i.apelido.startsWith(`${TERMO} A`)), true,
+        );
+      });
+
+      test('e nada disso vaza UID ou expoe cursor', async () => {
+        const r = await estresse.quem.buscar({ termo: TERMO, limite: 2 });
+        assert.deepEqual(Object.keys(r.data).sort(), ['itens', 'modo', 'truncado']);
+        const bruto = JSON.stringify(r.data);
+        assert.equal(bruto.includes(estresse.quem.uid), false);
+        assert.equal(bruto.includes('uidEnxameOculto'), false);
+      });
+    });
+
     // ---------------------------------------------------------- autenticacao
 
     test('sem autenticacao, a busca e recusada', async () => {

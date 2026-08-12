@@ -290,6 +290,14 @@ export interface CandidatoCru {
   perfil: Record<string, unknown>;
 }
 
+/// Quantos documentos cabem numa ida ao banco durante a varredura.
+///
+/// DECISAO DE LOTE, NAO DE VARREDURA. Ele nao encerra busca nenhuma: quando o
+/// lote enche, a varredura simplesmente faz outra rodada. Existe porque
+/// `bloqueiosParaBusca` monta `2N + 1` referencias num unico `getAll`, e uma ida
+/// com milhares de referencias e pior que algumas idas grandes.
+const TAMANHO_MAXIMO_DO_LOTE = 200;
+
 /// Um lote cru da faixa, e por onde continuar.
 interface LoteDaFaixa {
   candidatos: CandidatoCru[];
@@ -388,10 +396,24 @@ export interface PaginaDeBusca {
 /// bloqueado NAO EXISTE — e um inexistente nao altera contagem, ordem nem
 /// metadado.
 ///
-/// A varredura reproduz isso: continua avançando enquanto o bloqueio for
-/// descartando candidatos, ate ter `limite + 1` visiveis (ha mais) ou a faixa
-/// acabar (nao ha). O teto de rodadas vem do dominio; ver
-/// `kRodadasMaximasDaBusca`.
+/// DUAS SAIDAS, E SO DUAS. A varredura termina quando junta `limite + 1`
+/// candidatos VISIVEIS (ha mais) ou quando a faixa acaba (nao ha). Nao existe
+/// uma terceira — "parei por teto interno e presumo que truncou" —, e a ausencia
+/// dela e o ponto deste desenho.
+///
+/// Uma versao anterior tinha teto de cinco rodadas, e ele reintroduzia a MESMA
+/// classe de vazamento que a varredura existe para fechar: esgotar o teto sem
+/// esgotar a faixa fazia `truncado: true` depender de QUANTOS estavam ocultos, e
+/// deixava candidatos legitimos posteriores aos ocultos fora da resposta — o
+/// "roubo de vaga", em escala maior. Raridade nao torna a propriedade verdadeira;
+/// ou o oculto e observacionalmente indistinguivel do inexistente, ou nao e.
+///
+/// A TERMINACAO E GARANTIDA pela faixa ser finita e pela ordem ser TOTAL: cada
+/// rodada comeca depois do ultimo documento da anterior, entao consome ao menos
+/// um documento e nunca reve o mesmo. O custo e limitado pelo tamanho da faixa,
+/// e o unico jeito de a varredura continuar e TODO candidato visto ate ali
+/// estar oculto para quem procura — o que exige uma relacao de bloqueio com cada
+/// um deles.
 ///
 /// A RELACAO DE AMIZADE NAO E LIDA AQUI. Ela so interessa a quem vai aparecer, e
 /// ler `friendships` de um candidato que sera escondido seria trabalho jogado
@@ -413,20 +435,24 @@ export async function varrerVisiveis(
     restricaoSocial: false,
   };
   let depoisDe: FirebaseFirestore.QueryDocumentSnapshot | null = null;
-  let faixaEsgotada = false;
+  let rodada = 0;
 
-  for (
-    let rodada = 0;
-    rodada < LIMITES.rodadasMaximasDaBusca && visiveis.length <= limite;
-    rodada++
-  ) {
-    // O LOTE DOBRA A CADA RODADA, ate um teto por rodada. A primeira le o
-    // minimo necessario (`limite + 1`) porque e a rodada que quase sempre
-    // resolve; as seguintes so acontecem quando ha bloqueado no caminho, e ai
-    // vale ler mais de uma vez do que voltar ao banco varias vezes. Cinco
-    // rodadas cobrem centenas de correspondencias em vez de dezenas, o que
-    // empurra o teto para longe do alcance de quem tentasse usa-lo como sinal.
-    const tamanho = Math.min((limite + 1) * 2 ** rodada, 100);
+  // AS DUAS SAIDAS ESTAO AQUI, e nao ha outra: `visiveis.length > limite` (ha
+  // mais do que cabe) e o `break` de faixa esgotada, mais abaixo.
+  while (visiveis.length <= limite) {
+    // O LOTE DOBRA A CADA RODADA. A primeira le o minimo necessario
+    // (`limite + 1`) porque e a rodada que quase sempre resolve; as seguintes so
+    // acontecem quando ha oculto no caminho, e ai dobrar faz o numero de idas ao
+    // banco crescer com o LOGARITMO da quantidade de ocultos em vez de
+    // linearmente — mil ocultos custam dez rodadas, nao cem.
+    //
+    // O teto por rodada e de LOTE, nao de varredura: ele so decide quantos
+    // documentos cabem numa ida (`bloqueiosParaBusca` monta `2N + 1` referencias
+    // num `getAll`, e uma ida gigante seria pior que duas medias). Ele nao
+    // encerra a busca, e por isso nao pode influenciar `truncado`.
+    const tamanho = Math.min((limite + 1) * 2 ** rodada, TAMANHO_MAXIMO_DO_LOTE);
+    rodada++;
+
     const lote = await loteDaFaixa(
       chaveInicio,
       chaveFim,
@@ -434,10 +460,7 @@ export async function varrerVisiveis(
       tamanho,
       depoisDe
     );
-    if (lote.candidatos.length === 0) {
-      faixaEsgotada = true;
-      break;
-    }
+    if (lote.candidatos.length === 0) break; // faixa esgotada
 
     const uids = await resolverUids(lote.candidatos.map((c) => c.publicId));
     const ctx = await bloqueiosParaBusca(observadorUid, [...uids.values()]);
@@ -476,26 +499,25 @@ export async function varrerVisiveis(
     visiveis.push(...dominio.filtrarVisiveisDaBusca(paraFiltrar).publicIds);
 
     depoisDe = lote.ultimo;
-    if (!lote.podeHaverMais) {
-      faixaEsgotada = true;
-      break;
-    }
+    if (!lote.podeHaverMais) break; // faixa esgotada
   }
 
-  // `truncado` sobre os VISIVEIS, nunca sobre o lote bruto. Se a faixa acabou,
-  // o que sobrou e tudo o que existe — e ai `truncado` e falso mesmo que muitos
-  // candidatos tenham sido escondidos, que e exatamente a propriedade que se
-  // quer: o escondido nao mexe no metadado.
-  //
-  // O LIMITE HONESTO DESTA GARANTIA. Ela e exata sempre que a varredura termina
-  // por esgotar a faixa ou por juntar visiveis suficientes — que e todo caso
-  // realista. O unico desfecho em que um bloqueado ainda influencia `truncado` e
-  // esgotar as CINCO rodadas, e para isso a faixa precisa esconder deste
-  // pesquisador algo como 265 a 347 correspondencias (os lotes dobram). Nesse
-  // regime o termo casa com centenas de apelidos e "refine" e a resposta util de
-  // qualquer forma. Esta residual esta registrada no contrato, e nao escondida
-  // atras de um numero.
-  const truncado = visiveis.length > limite || !faixaEsgotada;
+  // Uma varredura longa nao muda a RESPOSTA, mas diz alguma coisa sobre a conta:
+  // so se chega aqui se todo candidato visto ate certo ponto estivesse oculto.
+  // Log, e nao mudanca de comportamento — o desfecho continua sendo um dos dois.
+  if (rodada > 4) {
+    logger.warn("varredura de busca precisou de muitas rodadas", {
+      rodadas: rodada,
+      visiveis: visiveis.length,
+    });
+  }
+
+  // `truncado` SO SOBRE OS VISIVEIS. Uma linha, e ela e o contrato inteiro da
+  // §8 no metadado: como as unicas saidas do laco sao "juntei mais do que cabe"
+  // e "a faixa acabou", esta comparacao nao tem por onde saber que existiu
+  // alguem oculto. Acrescentar aqui qualquer termo sobre COMO a varredura
+  // terminou reabriria o vazamento.
+  const truncado = visiveis.length > limite;
   const pagina = visiveis.slice(0, limite);
 
   return {

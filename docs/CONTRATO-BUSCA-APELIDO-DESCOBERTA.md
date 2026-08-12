@@ -320,24 +320,53 @@ O avanço usa um `startAfter` que **nasce e morre dentro de uma chamada**. Não 
 paginação: o contrato de §9 é que o *cliente* não pode avançar, e ele continua
 sem cursor, sem campo de cursor na resposta e sem efeito ao mandar um no payload.
 
-**O teto da varredura, e o que ele custa.** Cinco rodadas, com o lote dobrando a
-cada uma (`limite+1`, ×2, ×4, ×8, teto de 100 por rodada). A garantia é **exata**
-sempre que a varredura termina por esgotar a faixa ou por juntar visíveis
-suficientes — que é todo caso realista; na prática a primeira rodada resolve, e
-para haver uma segunda é preciso que um bloqueado esteja entre os primeiros
-resultados do termo. O único desfecho em que um bloqueado ainda influencia
-`truncado` é esgotar as cinco rodadas, e para isso a faixa precisa esconder deste
-pesquisador ~265 a ~347 correspondências. Nesse regime o termo casa com centenas
-de apelidos e `truncado: true` — que é o que sai — é a resposta útil de qualquer
-maneira. Registrado na seção 14 como residual, não escondido atrás do número.
+**Duas saídas, e só duas.** A varredura termina quando junta `limite + 1`
+candidatos **visíveis** (há mais) ou quando a faixa **acaba** (não há). Não
+existe uma terceira — *"parei por limite interno e presumo que truncou"* — e a
+ausência dela é o desenho.
 
-Provas contra o emulador, no describe `o candidato oculto nao existe, nem no
+Uma versão intermediária desta OS tinha teto de cinco rodadas. Ele reintroduzia a
+mesma classe de vazamento que a varredura existe para fechar: parar sem ter
+esgotado a faixa fazia `truncado: true` depender de **quantos** estavam ocultos,
+e deixava candidatos legítimos posteriores aos ocultos fora da resposta — o
+"roubo de vaga", em escala maior. Raridade e custo de exploração não tornam a
+propriedade verdadeira. **Ou o oculto é observacionalmente indistinguível do
+inexistente, ou não é.**
+
+`truncado = visíveis > limite`. Uma linha, sem nenhum termo sobre *como* a
+varredura terminou — acrescentar um reabriria o vazamento.
+
+**Terminação e custo.** A varredura termina porque a faixa é finita e a ordem é
+**total**: cada rodada começa depois do último documento da anterior, consome ao
+menos um documento e nunca revê o mesmo. O lote **dobra** a cada rodada
+(`limite+1`, ×2, ×4, ×8, …, com teto de 200 documentos por ida), então o número
+de idas ao banco cresce com o **logaritmo** da quantidade de ocultos: mil ocultos
+custam cerca de dez rodadas, não cem. O teto de 200 é de **lote**, não de
+varredura — quando o lote enche, a varredura faz outra rodada; ele nunca encerra
+a busca e por isso não pode influenciar `truncado`.
+
+Para a varredura continuar, **todo** candidato visto até ali precisa estar oculto
+para quem procura — o que exige uma relação de bloqueio com cada um. Na prática a
+primeira rodada resolve; para haver uma segunda é preciso que um oculto esteja
+entre os primeiros resultados do termo. Uma varredura longa emite `logger.warn`
+(observabilidade para a operação), sem mudar a resposta.
+
+**Provas contra o emulador.** No describe `o candidato oculto nao existe, nem no
 "truncado"`: um bloqueado responde igual a inexistente; vários bloqueados
 respondem igual a inexistente; o bloqueado não rouba vaga; `truncado` conta os
 visíveis; bloqueio nos dois sentidos dá a mesma resposta; a ausência de cursor
-continua valendo inclusive quando `truncado: true`. Há também a contraprova de
-que os perfis escondidos **existem** e são achados por um terceiro — sem ela, os
-testes de equivalência passariam com uma busca simplesmente quebrada.
+continua valendo inclusive quando `truncado: true`.
+
+No describe `estresse: centenas de ocultos nao mudam a resposta`: **300 ocultos**
+à frente de três legítimos — mais que os 93 (limite 2–3) e os 265 (limite padrão)
+que cinco rodadas alcançavam. Prova simultaneamente que os legítimos continuam
+preenchendo as vagas, que `truncado` depende só dos visíveis, e que **apagar 150
+ocultos ou acrescentar 120 não altera nenhum campo** da resposta (`deepEqual` da
+resposta inteira nos três estados).
+
+Os dois describes trazem a contraprova de que os perfis escondidos **existem** e
+são achados por um terceiro — sem ela, os testes de equivalência passariam com
+uma busca simplesmente quebrada.
 
 ### O mecanismo é o canônico
 
@@ -479,8 +508,10 @@ vai ser escondido seria trabalho jogado fora — e faria a visibilidade parecer
 depender dela.
 
 Cada rodada extra custa uma consulta e dois `getAll`, e só acontece quando o
-bloqueio descartou candidatos. Pior caso absoluto (cinco rodadas, lotes
-dobrando): ~347 documentos de perfil e os `getAll` correspondentes.
+bloqueio descartou candidatos. Como o lote dobra, o número de rodadas cresce com
+o **logaritmo** da quantidade de ocultos à frente dos visíveis; o limite superior
+do custo é o tamanho da faixa consultada, e chegar perto dele exige uma relação
+de bloqueio com cada candidato do caminho.
 
 Uma busca que não devolve nada custa **uma** consulta: o caminho vazio encerra
 antes da leitura das relações.
@@ -504,6 +535,7 @@ antes da leitura das relações.
 | o oculto não altera **nenhum** campo observável | `BLQ-07` a `BLQ-09` (domínio) e os sete testes do describe `o candidato oculto nao existe, nem no "truncado"` (emulador) |
 | `truncado` conta visíveis, não brutos | `truncado conta os VISIVEIS, e nao o lote bruto` — provado por mutação: forçar uma rodada só derruba exatamente este teste |
 | o oculto não rouba vaga de quem é visível | `o bloqueado NAO ROUBA A VAGA` — provado por mutação: cortar o lote bruto antes do filtro derruba este e mais três |
+| a garantia **não tem teto** | os seis testes de `estresse: centenas de ocultos nao mudam a resposta`, com 300 ocultos — provado por mutação: reintroduzir o teto de cinco rodadas derruba `os legitimos preenchem as vagas` e `truncado depende SO dos visiveis` |
 | amizade só pelo mecanismo canônico | `§10 — a busca nao e fonte de amizade` |
 | resultado determinístico | `RES-04`; `o resultado e DETERMINISTICO entre chamadas` |
 
@@ -514,7 +546,6 @@ antes da leitura das relações.
 | lacuna | consequência hoje | quem resolve |
 |---|---|---|
 | **Sem limite de taxa por chamador** | varredura sistemática é cara, não impossível — ver seção 6 | infraestrutura genérica de quota (App Check/Cloud Armor), não esta OS |
-| **`truncado` no teto da varredura** | se a varredura esgotar as cinco rodadas, `truncado: true` passa a depender também de quantos foram escondidos. Exige ~265–347 correspondências ocultas para o mesmo pesquisador; fora desse regime a garantia é exata — ver seção 7 | varredura sem teto, se algum dia o custo justificar |
 | **Sem normalização Unicode NFC/NFD** | apelidos visualmente idênticos com composições diferentes não casam entre si | versão futura, se aparecer o caso real |
 | **Sem busca por infixo** | "Solitaria" não encontra "Zarabatana Solitaria" | decisão de produto; exigiria estrutura nova |
 | **Sem UI** | esta OS entrega backend e contrato | OS de UI social |
