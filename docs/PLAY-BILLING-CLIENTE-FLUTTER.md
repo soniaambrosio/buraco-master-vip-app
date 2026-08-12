@@ -48,6 +48,8 @@ jogador é VIP porque a Play respondeu `purchased`".
 | `app/lib/billing/estado_ui.dart` | os estados que a interface distingue | nada |
 | `app/lib/billing/servico_billing.dart` | o orquestrador | as portas acima |
 | `app/lib/billing/entitlement_repositorio.dart` | lê `playerEntitlements/{uid}` | `cloud_firestore` |
+| `app/lib/billing/plano_vip.dart` | planos-base e preços, como a Play os descreve | `in_app_purchase_android` |
+| `app/lib/screens/loja_vip_adaptador.dart` | traduz os planos para a vitrine | os dois acima |
 
 As três portas (`LojaPlay`, `ValidadorDeCompra`, `SessaoJogador`) existem para
 que a parte que decide o destino de uma compra paga rode em `flutter test` sem
@@ -165,18 +167,30 @@ false` — o repositório só lê, e uma escrita seria recusada pelo servidor.
 `aguardandoRevalidacao` é o estado que merece atenção de texto: significa
 "pagamos, o servidor ainda não confirmou, **a compra não foi perdida**".
 
-### O ponto de encaixe na interface — ainda não ligado
+### A Loja, ligada à fonte real
 
-`app/lib/screens/loja_screen.dart` é hoje uma tela de **maquete**: `LojaVM.mock()`
-com planos e preços fixos no código (`R$ 19,90` / `R$ 49,90` / `R$ 149,90`). Esses
-valores **não são definição comercial** — são texto de protótipo, e esta OS proíbe
-inferir preço a partir deles.
+`app/lib/screens/loja_screen.dart` era uma maquete: `LojaVM.mock()` com planos e
+preços fixos no código, e `onAssinar` fazendo `setState(() => _ehVip = true)`
+depois de 550 ms — VIP concedido por decisão local, que é o primeiro critério de
+reprovação da OS.
 
-A tela **não foi religada** nesta OS, por dois motivos: não há produto para
-vender (catálogo vazio, por construção), e trocar a maquete por uma vitrine real
-exige os preços e planos aprovados, que não existem. Quando existirem, o encaixe
-é: `ServicoBilling.painel` alimenta a tela, `assinaturas` dá os produtos, e
-`PainelBilling.mostrarComoVip` substitui `LojaVM.ehVip`.
+Agora:
+
+- **VIP** vem de `playerEntitlements/{uid}`, observado por `snapshots()`. Não
+  existe caminho em `main.dart` que ligue o selo sem o servidor ter ligado antes.
+- **Planos** vêm do que a Play devolveu, extraídos por
+  `lib/billing/plano_vip.dart`. Enquanto o catálogo estiver vazio, a lista sai
+  vazia e a grade não aparece.
+- **Preço** é o `formattedPrice` da Play, já localizado. Não há preço em código.
+  `porMes` e o selo de desconto são **derivados por aritmética** desses valores —
+  os `-16%` e `-37%` que hoje aparecem são calculados, e casam com os preços
+  aprovados por coincidência aritmética, não por estarem escritos.
+- **Cosméticos, pacotes de moedas e amigos** continuam sendo `LojaVM.mock()`: não
+  têm fonte real ainda, e `LojaVM.copiarCom` troca só o que tem.
+
+O `basePlanId` é o identificador que a vitrine usa e que `onAssinar` recebe, e o
+`offerToken` do plano escolhido é passado à Play — sem ele, quem escolhesse
+"Anual" poderia acabar assinando o mensal.
 
 ---
 
@@ -186,14 +200,14 @@ Comandos e resultados, na máquina local (Flutter 3.41.4 / Dart 3.11.1):
 
 | comando | baseline | depois |
 |---|---|---|
-| `flutter test` (app) | 536 | **582** |
+| `flutter test` (app) | 536 | **596** |
 | `flutter test test/teste_motor.dart` | 132 | 132 |
 | `flutter test test/teste_motor_resiliencia.dart` | 196 | 196 |
 | `flutter test test/teste_encerramento.dart` | 10 | 10 |
 | `flutter analyze --no-fatal-infos --no-fatal-warnings` | 42 issues, 0 erros | 42 issues, 0 erros |
 | `node --test` (functions-billing) | 80/80 | **80/80** |
 
-Os 46 testes novos são `app/test/billing/`. Nenhuma regressão; o analyze não
+Os 60 testes novos sao `app/test/billing/`. Nenhuma regressão; o analyze não
 ganhou nenhum item.
 
 `flutter test` continua **não vendo** as três suítes com prefixo `teste_` (o glob
@@ -291,6 +305,13 @@ tem acesso. Nenhum deles é trabalho de código:
 
 Se a Play continuar bloqueando produtos, **registrar a mensagem literal** antes
 de qualquer improviso.
+
+> **Atualização.** Os preços e planos foram definidos, e a análise dos
+> identificadores e do que ainda impede a criação dos produtos está em
+> [PLAY-BILLING-PRODUTOS-E-BLOQUEIOS.md](PLAY-BILLING-PRODUTOS-E-BLOQUEIOS.md).
+> Em resumo: `monthly_auto`/`quarterly_auto`/`yearly_auto` são **planos-base** de
+> um produto de assinatura, o AAB não é disparável da branch atual, e o benefício
+> de fichas aprovado **não tem produtor no backend**.
 
 ### Bloqueado por definição comercial
 
