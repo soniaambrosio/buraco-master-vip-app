@@ -265,6 +265,25 @@ String chaveDeBuscaJson(String json) {
   });
 }
 
+/// Quais candidatos desta rodada de varredura sobrevivem ao bloqueio.
+///
+/// Chamada UMA VEZ POR RODADA, antes de a relação de amizade ser lida: quem vai
+/// ser escondido não custa uma leitura de `friendships`, e a visibilidade não
+/// pode depender dela.
+String filtrarVisiveisDaBuscaJson(String json) {
+  final e = _entrada(json);
+  final candidatos = ((e['candidatos'] as List?) ?? const []).map((bruto) {
+    final m = (bruto as Map).cast<String, Object?>();
+    return VisibilidadeDeCandidato(
+      publicId: (m['publicId'] as String?) ?? '',
+      euBloqueeiOAlvo: m['euBloqueeiOAlvo'] == true,
+      alvoMeBloqueou: m['alvoMeBloqueou'] == true,
+    );
+  }).toList(growable: false);
+
+  return jsonEncode({'publicIds': filtrarVisiveisDaBusca(candidatos)});
+}
+
 /// Filtra os candidatos pelo bloqueio e rotula cada um com relação e ações.
 ///
 /// ENTRA UID, NÃO SAI UID. Os uids dos candidatos são necessários para compor a
@@ -337,6 +356,7 @@ String constantesJson(String _) => jsonEncode({
       'consultaMaxima': kConsultaMaxima,
       'resultadosPadrao': kResultadosPadrao,
       'resultadosMaximo': kResultadosMaximo,
+      'rodadasMaximasDaBusca': kRodadasMaximasDaBusca,
       'buscaComCursor': !kSemCursor,
       'esquema': kEsquemaSocial,
       'camposPublicos': camposPublicos.toList(growable: false),
@@ -362,6 +382,7 @@ void main() {
     'vistaDaRelacao': vistaDaRelacaoJson,
     'avaliarConsultaDeBusca': avaliarConsultaDeBuscaJson,
     'chaveDeBusca': chaveDeBuscaJson,
+    'filtrarVisiveisDaBusca': filtrarVisiveisDaBuscaJson,
     'projetarResultadosDeBusca': projetarResultadosDeBuscaJson,
     'paginarAmigos': paginarAmigosJson,
     'constantes': constantesJson,

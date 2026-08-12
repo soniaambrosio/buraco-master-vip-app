@@ -93,6 +93,26 @@ const int kResultadosMaximo = 20;
 /// escolha.
 const bool kSemCursor = true;
 
+/// Quantas rodadas de leitura a varredura faz antes de desistir.
+///
+/// A varredura avança na faixa enquanto o bloqueio for descartando candidatos —
+/// é o que impede que um bloqueado roube a vaga de um jogador legítimo (ver
+/// [visivelNaBusca]). Sem teto, uma pessoa que bloqueou muita gente com apelido
+/// parecido faria uma consulta varrer a faixa inteira.
+///
+/// O QUE O TETO CUSTA, dito sem eufemismo: enquanto a varredura termina por
+/// esgotar a faixa ou por juntar visíveis suficientes, o candidato escondido não
+/// influencia nada — nem a lista, nem `truncado`. Se ela esgotar as rodadas, o
+/// `truncado: true` resultante passa a depender também de quantos foram
+/// escondidos. Os lotes dobram a cada rodada justamente para empurrar esse
+/// desfecho para longe: chegar lá exige que a faixa esconda deste pesquisador
+/// centenas de correspondências, e nesse regime o termo casa com centenas de
+/// apelidos e "refine" é a resposta útil de qualquer maneira.
+///
+/// Na prática a primeira rodada resolve: para haver uma segunda, é preciso que
+/// um bloqueado esteja entre os primeiros resultados do termo procurado.
+const int kRodadasMaximasDaBusca = 5;
+
 /// Sentinela que fecha a faixa do prefixo.
 ///
 /// NÃO é U+F8FF, o valor do idiom mais citado para prefixo no Firestore. U+F8FF
@@ -339,8 +359,66 @@ class ResultadoDeBusca {
 /// restrita — e a restrição é sobre AGIR, não sobre enxergar. Quem impede a ação
 /// de verdade é `enviarSolicitacaoAmizade`, que relê o contato dentro da própria
 /// transação.
-bool visivelNaBusca(CandidatoDeBusca c) =>
-    !c.euBloqueeiOAlvo && !c.alvoMeBloqueou;
+/// ---------------------------------------------------------------------------
+/// O CANDIDATO OCULTO NÃO EXISTE, e isso vale para TODO campo da resposta
+/// ---------------------------------------------------------------------------
+///
+/// Não basta tirá-lo da lista. Se ele puder alterar qualquer coisa observável —
+/// a quantidade de itens, a ordem, ou o [truncado] — a ausência deixa de ser
+/// ausência e vira sinal. Dois defeitos concretos que essa exigência fecha, e
+/// que uma implementação de uma consulta só teria:
+///
+///   1. `truncado` calculado sobre o lote BRUTO. Com limite 2 e a faixa contendo
+///      [A, B, visíveis; C, bloqueado], o lote de três diria "havia mais" —
+///      quando, para quem procura, há exatamente dois. O mundo sem C responderia
+///      `truncado: false`, e a diferença conta que existe alguém escondido.
+///
+///   2. O bloqueado ROUBANDO VAGA. Com limite 10 e a faixa contendo dois
+///      bloqueados entre os onze primeiros, um décimo jogador legítimo ficaria
+///      fora da janela lida — e sumiria da resposta por causa de um bloqueio que
+///      não é dele.
+///
+/// A correção dos dois é a mesma: quem varre o banco (`varrerVisiveis`, em
+/// functions-social/src/repositorio.ts) continua avançando na faixa até juntar
+/// `limite + 1` candidatos VISÍVEIS, e só então decide. O avanço é um cursor
+/// INTERNO, dentro de uma chamada; o contrato com o cliente continua sem cursor.
+bool visivelNaBusca({
+  required bool euBloqueeiOAlvo,
+  required bool alvoMeBloqueou,
+}) =>
+    !euBloqueeiOAlvo && !alvoMeBloqueou;
+
+/// O mínimo que a varredura precisa saber sobre um candidato para escondê-lo.
+///
+/// Deliberadamente MENOR que [CandidatoDeBusca]: a visibilidade é decidida antes
+/// de a relação de amizade ser lida, porque ler a relação de alguém que vai ser
+/// escondido é trabalho jogado fora — e porque a visibilidade não pode depender
+/// dela.
+class VisibilidadeDeCandidato {
+  final String publicId;
+  final bool euBloqueeiOAlvo;
+  final bool alvoMeBloqueou;
+
+  const VisibilidadeDeCandidato({
+    required this.publicId,
+    required this.euBloqueeiOAlvo,
+    required this.alvoMeBloqueou,
+  });
+}
+
+/// Os publicIds que sobrevivem ao bloqueio, na ordem recebida.
+///
+/// A varredura chama isto a cada rodada. Devolve IDs, e não os candidatos, para
+/// que a rodada não carregue nada além do necessário — e para que o UID, que
+/// nem entra aqui, não tenha por onde sair.
+List<String> filtrarVisiveisDaBusca(List<VisibilidadeDeCandidato> candidatos) => [
+      for (final c in candidatos)
+        if (visivelNaBusca(
+          euBloqueeiOAlvo: c.euBloqueeiOAlvo,
+          alvoMeBloqueou: c.alvoMeBloqueou,
+        ))
+          c.publicId,
+    ];
 
 /// Projeta os candidatos em resultados públicos, na ordem recebida (§7, §8, §10).
 ///
@@ -360,7 +438,15 @@ List<ResultadoDeBusca> projetarResultadosDeBusca({
 }) {
   final saida = <ResultadoDeBusca>[];
   for (final c in candidatos) {
-    if (!visivelNaBusca(c)) continue;
+    // Redundante depois da varredura, que já filtrou — e mantida assim de
+    // propósito: a projeção é a última fronteira antes do fio, e ela não pode
+    // depender de quem a chamou ter feito a coisa certa.
+    if (!visivelNaBusca(
+      euBloqueeiOAlvo: c.euBloqueeiOAlvo,
+      alvoMeBloqueou: c.alvoMeBloqueou,
+    )) {
+      continue;
+    }
 
     // O veredito de contato vem da MODERAÇÃO, e não de um `if` daqui — §18 da OS
     // anterior continua valendo: consumir, nunca duplicar.

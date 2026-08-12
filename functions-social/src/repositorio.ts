@@ -290,15 +290,22 @@ export interface CandidatoCru {
   perfil: Record<string, unknown>;
 }
 
-export interface PaginaDeBusca {
+/// Um lote cru da faixa, e por onde continuar.
+interface LoteDaFaixa {
   candidatos: CandidatoCru[];
-  /// Havia mais correspondencias do que o teto. NAO acompanha cursor: ver
-  /// `kSemCursor` em app/lib/social/busca_apelido.dart. O cliente refina o
-  /// termo; ele nao avanca.
-  truncado: boolean;
+  /// O ULTIMO documento lido, para a rodada seguinte comecar depois dele.
+  ///
+  /// E um cursor, e ele e INTERNO: nasce e morre dentro de UMA chamada de
+  /// `buscarJogadoresPorApelido`, nunca e serializado e nunca chega ao cliente.
+  /// O contrato de §9 — "a busca nao pagina" — e sobre o cliente nao poder
+  /// avancar; ele nao proibe o servidor de ler o que precisa para responder uma
+  /// pergunta so.
+  ultimo: FirebaseFirestore.QueryDocumentSnapshot | null;
+  /// O lote veio cheio, entao pode haver mais adiante na faixa.
+  podeHaverMais: boolean;
 }
 
-/// Consulta `publicProfiles` pela faixa de chaves que o dominio montou.
+/// Le um lote da faixa de chaves que o dominio montou.
 ///
 /// A CONSULTA E SOBRE O DOCUMENTO PUBLICO, e nao sobre uma colecao de indice
 /// paralela (§4). `apelidoOrdenacao` ja existe la, ja e derivado do apelido a
@@ -313,13 +320,16 @@ export interface PaginaDeBusca {
 ///
 /// A ORDEM E TOTAL: `apelidoOrdenacao` desempatado por `publicId`, que e unico.
 /// Sem o desempate, duas pessoas com o mesmo apelido teriam ordem indefinida
-/// entre chamadas — e §14 exige resultado deterministico.
-export async function buscarPorApelido(
+/// entre chamadas — e §14 exige resultado deterministico. E e a ordem total que
+/// torna o `startAfter` da rodada seguinte exato: nao ha empate que faca um
+/// documento ser pulado nem lido duas vezes.
+async function loteDaFaixa(
   chaveInicio: string,
   chaveFim: string,
   exato: boolean,
-  limite: number
-): Promise<PaginaDeBusca> {
+  tamanho: number,
+  depoisDe: FirebaseFirestore.QueryDocumentSnapshot | null
+): Promise<LoteDaFaixa> {
   const colecao = db().collection(C_PERFIS_PUBLICOS);
 
   let consulta = exato
@@ -334,19 +344,166 @@ export async function buscarPorApelido(
   consulta = consulta
     .orderBy("apelidoOrdenacao", "asc")
     .orderBy("publicId", "asc")
-    // +1 so para saber se havia mais. O item extra e descartado e nunca vira
-    // cursor: ele existe para poder dizer "refine", nao para poder avancar.
-    .limit(limite + 1);
+    .limit(tamanho);
+
+  if (depoisDe) consulta = consulta.startAfter(depoisDe);
 
   const snap = await consulta.get();
-  const docs = snap.docs.slice(0, limite);
-
   return {
-    candidatos: docs.map((d) => ({
+    candidatos: snap.docs.map((d) => ({
       publicId: d.id,
       perfil: d.data() as Record<string, unknown>,
     })),
-    truncado: snap.docs.length > limite,
+    ultimo: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+    podeHaverMais: snap.docs.length === tamanho,
+  };
+}
+
+export interface PaginaDeBusca {
+  /// Ja filtrados pelo bloqueio, ja cortados no limite, na ordem do banco.
+  candidatos: CandidatoCru[];
+  /// Os UIDs dos candidatos acima. Ficam nesta camada; a resposta nao os tem.
+  uidPorPublicId: Map<string, string>;
+  /// Havia mais candidatos VISIVEIS do que o teto. NAO acompanha cursor: ver
+  /// `kSemCursor` em app/lib/social/busca_apelido.dart. O cliente refina o
+  /// termo; ele nao avanca.
+  truncado: boolean;
+  sancao: SancaoDoObservador;
+  bloqueios: Map<string, BloqueioDeBusca>;
+}
+
+/// Varre a faixa ate juntar os candidatos VISIVEIS que a pagina precisa.
+///
+/// POR QUE UMA VARREDURA, E NAO UMA CONSULTA SO — e o defeito que isto conserta:
+///
+/// Uma consulta de `limite + 1` documentos, filtrada depois, tem dois vazamentos
+/// pelo mesmo buraco. `truncado` sairia calculado sobre o lote BRUTO, entao um
+/// bloqueado na posicao `limite + 1` diria "havia mais" num resultado que, para
+/// quem procura, esta completo — e o mundo sem aquela pessoa responderia
+/// `truncado: false`. Pior: um bloqueado entre os primeiros ROUBARIA A VAGA de
+/// um jogador legitimo, que sumiria da resposta por causa de um bloqueio alheio.
+///
+/// Nos dois casos, alguem que deveria ser invisivel mexe no que se ve. A regra
+/// da §8 e mais forte que "nao aparece na lista": para quem procura, o
+/// bloqueado NAO EXISTE — e um inexistente nao altera contagem, ordem nem
+/// metadado.
+///
+/// A varredura reproduz isso: continua avançando enquanto o bloqueio for
+/// descartando candidatos, ate ter `limite + 1` visiveis (ha mais) ou a faixa
+/// acabar (nao ha). O teto de rodadas vem do dominio; ver
+/// `kRodadasMaximasDaBusca`.
+///
+/// A RELACAO DE AMIZADE NAO E LIDA AQUI. Ela so interessa a quem vai aparecer, e
+/// ler `friendships` de um candidato que sera escondido seria trabalho jogado
+/// fora — alem de fazer a visibilidade parecer depender dela.
+export async function varrerVisiveis(
+  observadorUid: string,
+  chaveInicio: string,
+  chaveFim: string,
+  exato: boolean,
+  limite: number
+): Promise<PaginaDeBusca> {
+  const porPublicId = new Map<string, CandidatoCru>();
+  const uidPorPublicId = new Map<string, string>();
+  const bloqueios = new Map<string, BloqueioDeBusca>();
+  const visiveis: string[] = [];
+
+  let sancao: SancaoDoObservador = {
+    chatSilenciado: false,
+    restricaoSocial: false,
+  };
+  let depoisDe: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let faixaEsgotada = false;
+
+  for (
+    let rodada = 0;
+    rodada < LIMITES.rodadasMaximasDaBusca && visiveis.length <= limite;
+    rodada++
+  ) {
+    // O LOTE DOBRA A CADA RODADA, ate um teto por rodada. A primeira le o
+    // minimo necessario (`limite + 1`) porque e a rodada que quase sempre
+    // resolve; as seguintes so acontecem quando ha bloqueado no caminho, e ai
+    // vale ler mais de uma vez do que voltar ao banco varias vezes. Cinco
+    // rodadas cobrem centenas de correspondencias em vez de dezenas, o que
+    // empurra o teto para longe do alcance de quem tentasse usa-lo como sinal.
+    const tamanho = Math.min((limite + 1) * 2 ** rodada, 100);
+    const lote = await loteDaFaixa(
+      chaveInicio,
+      chaveFim,
+      exato,
+      tamanho,
+      depoisDe
+    );
+    if (lote.candidatos.length === 0) {
+      faixaEsgotada = true;
+      break;
+    }
+
+    const uids = await resolverUids(lote.candidatos.map((c) => c.publicId));
+    const ctx = await bloqueiosParaBusca(observadorUid, [...uids.values()]);
+    sancao = ctx.sancao;
+
+    const paraFiltrar: {
+      publicId: string;
+      euBloqueeiOAlvo: boolean;
+      alvoMeBloqueou: boolean;
+    }[] = [];
+
+    for (const c of lote.candidatos) {
+      const alvoUid = uids.get(c.publicId);
+      // Perfil publico sem entrada no mapa reverso e dado inconsistente, nao
+      // resultado: sem uid nao ha como conferir bloqueio, e exibir alguem cujo
+      // bloqueio nao foi conferido e exatamente o que §8 proibe. Descartado
+      // ANTES do filtro, e por isso ele tambem nao ocupa vaga.
+      if (!alvoUid) {
+        logger.warn("perfil publico sem mapa reverso, omitido da busca", {
+          publicId: c.publicId,
+        });
+        continue;
+      }
+      const b = ctx.porUid.get(alvoUid) ?? {
+        euBloqueeiOAlvo: false,
+        alvoMeBloqueou: false,
+      };
+      porPublicId.set(c.publicId, c);
+      uidPorPublicId.set(c.publicId, alvoUid);
+      bloqueios.set(c.publicId, b);
+      paraFiltrar.push({ publicId: c.publicId, ...b });
+    }
+
+    // QUEM DECIDE E O DOMINIO, tambem aqui. A varredura sabe ler e paginar; ela
+    // nao sabe o que torna alguem invisivel.
+    visiveis.push(...dominio.filtrarVisiveisDaBusca(paraFiltrar).publicIds);
+
+    depoisDe = lote.ultimo;
+    if (!lote.podeHaverMais) {
+      faixaEsgotada = true;
+      break;
+    }
+  }
+
+  // `truncado` sobre os VISIVEIS, nunca sobre o lote bruto. Se a faixa acabou,
+  // o que sobrou e tudo o que existe — e ai `truncado` e falso mesmo que muitos
+  // candidatos tenham sido escondidos, que e exatamente a propriedade que se
+  // quer: o escondido nao mexe no metadado.
+  //
+  // O LIMITE HONESTO DESTA GARANTIA. Ela e exata sempre que a varredura termina
+  // por esgotar a faixa ou por juntar visiveis suficientes — que e todo caso
+  // realista. O unico desfecho em que um bloqueado ainda influencia `truncado` e
+  // esgotar as CINCO rodadas, e para isso a faixa precisa esconder deste
+  // pesquisador algo como 265 a 347 correspondencias (os lotes dobram). Nesse
+  // regime o termo casa com centenas de apelidos e "refine" e a resposta util de
+  // qualquer forma. Esta residual esta registrada no contrato, e nao escondida
+  // atras de um numero.
+  const truncado = visiveis.length > limite || !faixaEsgotada;
+  const pagina = visiveis.slice(0, limite);
+
+  return {
+    candidatos: pagina.map((p) => porPublicId.get(p) as CandidatoCru),
+    uidPorPublicId: new Map(pagina.map((p) => [p, uidPorPublicId.get(p) as string])),
+    truncado,
+    sancao,
+    bloqueios: new Map(pagina.map((p) => [p, bloqueios.get(p) as BloqueioDeBusca])),
   };
 }
 

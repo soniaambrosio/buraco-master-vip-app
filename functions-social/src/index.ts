@@ -40,8 +40,6 @@ import {
   dominio,
 } from "./domain";
 import {
-  bloqueiosParaBusca,
-  buscarPorApelido,
   desfazerPorBloqueio,
   db,
   estadoDeContato,
@@ -57,7 +55,7 @@ import {
   reconciliarProjecoes,
   relacoesParaBusca,
   resolverUid,
-  resolverUids,
+  varrerVisiveis,
 } from "./repositorio";
 
 initializeApp();
@@ -377,12 +375,19 @@ export const localizarJogadorPorIdentidade = onCall(
 ///
 ///   1. dominio valida o termo ............ minimo, maximo, controle, modo (§9)
 ///   2. faixa sobre `apelidoOrdenacao` .... campo derivado que ja existia (§4)
-///   3. teto + `truncado`, sem cursor ..... a busca nao percorre a base (§9)
+///   3. varredura ate `limite + 1` VISIVEIS. o bloqueado nao mexe em nada (§8)
 ///   4. `publicId -> uid` em lote ......... so aqui, e so no servidor (§3)
-///   5. bloqueio nos dois sentidos ........ quem bloqueia some da busca (§8)
+///   5. teto + `truncado`, sem cursor ..... a busca nao percorre a base (§9)
 ///   6. dominio projeta relacao e acoes ... estado social sanitizado (§10)
 ///   7. allowlist explicita na resposta ... defesa em profundidade (§7)
 ///   8. `exigirRespostaSegura` ............ a trava, de novo, sobre o todo (§3)
+///
+/// O ELO 3 E O QUE FAZ A §8 VALER ATE NO METADADO. Calcular `truncado` sobre o
+/// lote bruto — que e o que uma consulta unica faria — deixaria um candidato
+/// bloqueado dizer "havia mais" num resultado completo, e um bloqueado entre os
+/// primeiros roubaria a vaga de um jogador legitimo. Para quem procura, o
+/// bloqueado nao existe; e um inexistente nao altera contagem, ordem nem
+/// metadado. Ver `varrerVisiveis`.
 ///
 /// NAO EXISTE ROTA "LISTAR TODOS". Nao ha parametro que devolva a base, nao ha
 /// termo vazio que case com tudo e nao ha curinga: `*` e `%` sao caracteres
@@ -394,64 +399,58 @@ export const buscarJogadoresPorApelido = onCall(opcoesCliente, async (req) => {
   const consulta = dominio.avaliarConsultaDeBusca({ termo, modo, limite });
   if (!consulta.aceita) recusar(consulta.recusa);
 
-  const pagina = await buscarPorApelido(
+  // A varredura ja resolve `publicId -> uid` e o bloqueio: os dois decidem QUEM
+  // aparece, e por isso acontecem antes de qualquer decisao sobre a pagina.
+  const pagina = await varrerVisiveis(
+    uid,
     consulta.chaveInicio,
     consulta.chaveFim,
     consulta.modo === "exato",
     consulta.limite
   );
 
-  // Nenhuma correspondencia: encerra sem gastar as tres leituras seguintes. E
-  // tambem o caminho do "apelido inexistente", que responde LISTA VAZIA e nao
-  // erro — §14 pede o caso, e um `not-found` aqui contaria que o termo existe
-  // ou nao existe com um codigo, quando a lista ja conta com um comprimento.
+  // Nenhum candidato visivel: encerra sem gastar a leitura das relacoes.
+  //
+  // ESTE E O MESMO CAMINHO de tres situacoes diferentes — apelido inexistente,
+  // todos os candidatos bloqueados, e candidatos com dado inconsistente — e a
+  // resposta e identica nos tres. §8: a ausencia por bloqueio nao pode ser
+  // distinguivel da ausencia por nao existir.
+  //
+  // E responde LISTA VAZIA, nao erro: §14 pede o caso, e um `not-found` aqui
+  // contaria com um codigo o que a lista ja conta com um comprimento.
   if (pagina.candidatos.length === 0) {
     return exigirRespostaSegura({
       itens: [],
-      truncado: false,
+      truncado: pagina.truncado,
       modo: consulta.modo,
     });
   }
 
-  // `publicId -> uid` acontece AQUI DENTRO e em lugar nenhum mais. O uid nao
-  // volta ao cliente em nenhuma forma: ele existe entre esta linha e a projecao.
-  const uids = await resolverUids(pagina.candidatos.map((c) => c.publicId));
-  const alvos = [...uids.values()];
-
-  const [bloqueios, relacoes] = await Promise.all([
-    bloqueiosParaBusca(uid, alvos),
-    relacoesParaBusca(uid, alvos),
+  // A relacao de amizade e lida SO PARA QUEM VAI APARECER. Ela decora o
+  // resultado; ela nunca decide se ele existe.
+  const relacoes = await relacoesParaBusca(uid, [
+    ...pagina.uidPorPublicId.values(),
   ]);
 
-  const candidatos: CandidatoDeBusca[] = [];
-  for (const c of pagina.candidatos) {
-    const alvoUid = uids.get(c.publicId);
-    // Perfil publico sem entrada no mapa reverso e dado inconsistente, nao
-    // resultado: sem uid nao ha como avaliar bloqueio, e mostrar um jogador
-    // cujo bloqueio nao foi conferido e exatamente o que §8 proibe.
-    if (!alvoUid) {
-      logger.warn("perfil publico sem mapa reverso, omitido da busca", {
-        publicId: c.publicId,
-      });
-      continue;
-    }
+  const candidatos: CandidatoDeBusca[] = pagina.candidatos.map((c) => {
+    const alvoUid = pagina.uidPorPublicId.get(c.publicId) as string;
     const rel = relacoes.get(alvoUid);
-    const bloqueio = bloqueios.porUid.get(alvoUid);
-    candidatos.push({
+    const bloqueio = pagina.bloqueios.get(c.publicId);
+    return {
       publicId: c.publicId,
       uidAlvo: alvoUid,
       estado: rel?.estado ?? "nenhuma",
       solicitanteUid: rel?.solicitanteUid ?? null,
       euBloqueeiOAlvo: bloqueio?.euBloqueeiOAlvo === true,
       alvoMeBloqueou: bloqueio?.alvoMeBloqueou === true,
-    });
-  }
+    };
+  });
 
   const projetados = dominio.projetarResultadosDeBusca({
     uidObservador: uid,
     candidatos,
-    observadorComChatSilenciado: bloqueios.sancao.chatSilenciado,
-    observadorComRestricaoSocial: bloqueios.sancao.restricaoSocial,
+    observadorComChatSilenciado: pagina.sancao.chatSilenciado,
+    observadorComRestricaoSocial: pagina.sancao.restricaoSocial,
   });
 
   const perfis = new Map(
@@ -462,8 +461,8 @@ export const buscarJogadoresPorApelido = onCall(opcoesCliente, async (req) => {
     itens: projetados.itens.map((r) =>
       entradaDeBusca(perfis.get(r.publicId), r.publicId, r.relacao, r.acoes)
     ),
-    /// Houve mais correspondencias do que o teto. O cliente refina o termo — nao
-    /// ha cursor, e a ausencia dele e a decisao antienumeracao de §9.
+    /// Havia mais VISIVEIS do que o teto. O cliente refina o termo — nao ha
+    /// cursor, e a ausencia dele e a decisao antienumeracao de §9.
     truncado: pagina.truncado,
     modo: consulta.modo,
   });

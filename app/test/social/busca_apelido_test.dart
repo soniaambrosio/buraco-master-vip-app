@@ -520,6 +520,64 @@ void main() {
           reason: 'quem não bloqueou continua alcançável');
     });
 
+    test('BLQ-07 o filtro da varredura devolve só os visíveis, na ordem', () {
+      // É o que a varredura chama a cada rodada, antes de ler qualquer relação.
+      final saida = filtrarVisiveisDaBusca(const [
+        VisibilidadeDeCandidato(
+            publicId: 'P1', euBloqueeiOAlvo: false, alvoMeBloqueou: true),
+        VisibilidadeDeCandidato(
+            publicId: 'P2', euBloqueeiOAlvo: false, alvoMeBloqueou: false),
+        VisibilidadeDeCandidato(
+            publicId: 'P3', euBloqueeiOAlvo: true, alvoMeBloqueou: false),
+        VisibilidadeDeCandidato(
+            publicId: 'P4', euBloqueeiOAlvo: false, alvoMeBloqueou: false),
+      ]);
+      expect(saida, ['P2', 'P4']);
+    });
+
+    test('BLQ-08 o filtro da varredura concorda com a projeção', () {
+      // Os dois aplicam a MESMA regra em momentos diferentes — a varredura para
+      // decidir quantos ler, a projeção como última fronteira. Se divergirem, a
+      // contagem que decidiu `truncado` não seria a contagem entregue.
+      final casos = [
+        (euBloqueei: false, meBloqueou: false),
+        (euBloqueei: true, meBloqueou: false),
+        (euBloqueei: false, meBloqueou: true),
+        (euBloqueei: true, meBloqueou: true),
+      ];
+      for (final c in casos) {
+        final pelaVarredura = filtrarVisiveisDaBusca([
+          VisibilidadeDeCandidato(
+            publicId: pidOutro,
+            euBloqueeiOAlvo: c.euBloqueei,
+            alvoMeBloqueou: c.meBloqueou,
+          ),
+        ]);
+        final pelaProjecao = projetar([
+          candidato(
+            euBloqueeiOAlvo: c.euBloqueei,
+            alvoMeBloqueou: c.meBloqueou,
+          ),
+        ]).map((r) => r.publicId).toList();
+        expect(pelaVarredura, pelaProjecao, reason: '$c');
+      }
+    });
+
+    test('BLQ-09 N candidatos ocultos projetam o MESMO que zero candidatos', () {
+      // A propriedade em uma linha: para quem procura, o bloqueado não existe.
+      // Não é "aparece diferente" nem "aparece vazio" — é indistinguível de
+      // nunca ter havido ninguém ali. Quem estende isso ao `truncado` é a
+      // varredura, provada contra o emulador.
+      final semNinguem = projetar(const []).map((r) => r.toJson()).toList();
+      for (final quantos in [1, 2, 5]) {
+        final soOcultos = projetar([
+          for (var i = 0; i < quantos; i++)
+            candidato(publicId: 'P$i', uidAlvo: 'uid$i', alvoMeBloqueou: true),
+        ]).map((r) => r.toJson()).toList();
+        expect(soOcultos, semNinguem, reason: '$quantos ocultos');
+      }
+    });
+
     test('BLQ-06 bloqueio não apaga os OUTROS resultados', () {
       final saida = projetar([
         candidato(publicId: pidOutro, uidAlvo: uidOutro, alvoMeBloqueou: true),

@@ -176,8 +176,9 @@ um `{...perfil}` traria `apelidoOrdenacao`, `estado`, `criadoEm`,
 `desde` **não** existe aqui, embora exista nas listas de amigos: "amigos desde"
 não é informação de descoberta.
 
-`truncado: true` significa "havia mais correspondências do que coube". **Não é
-cursor** — ver seção 6.
+`truncado: true` significa "havia mais correspondências **visíveis para quem
+procura** do que coube". **Não é cursor** — ver seção 6 — e **não conta
+bloqueados**: ver seção 7, "O oculto não existe nem no metadado".
 
 Toda a resposta passa por `exigirRespostaSegura`, que varre em profundidade e
 **lança** se encontrar chave privada, inclusive aninhada e dentro de lista.
@@ -296,6 +297,47 @@ Um jogador com restrição social **vê** os resultados e não recebe ação nen
 sobre eles. Ocultar tudo faria a busca parecer quebrada em vez de restrita, e a
 restrição é sobre **agir**, não sobre enxergar. Quem impede a ação de verdade é
 `enviarSolicitacaoAmizade`, que relê o contato dentro da própria transação.
+
+### O oculto não existe nem no metadado
+
+Tirar o bloqueado da lista **não basta**. Se ele puder alterar qualquer coisa
+observável — a contagem, a ordem ou o `truncado` — a ausência deixa de ser
+ausência e vira sinal.
+
+Uma consulta única de `limite + 1` documentos, filtrada depois, tem dois
+vazamentos pelo mesmo buraco:
+
+| defeito | como aparece |
+|---|---|
+| `truncado` calculado sobre o lote **bruto** | faixa `[A, B visíveis; C bloqueado]`, limite 2 → o lote de três diz "havia mais", quando para quem procura há exatamente dois. O mundo sem C responderia `truncado: false`. |
+| o bloqueado **roubando vaga** | faixa `[A bloqueado; B, C, D visíveis]`, limite 2 → lê-se `[A, B]`, filtra-se A, devolve-se **um** item. C ficou de fora por um bloqueio que não é dele. |
+
+A correção dos dois é a mesma: **`varrerVisiveis`** continua avançando na faixa
+até juntar `limite + 1` candidatos **visíveis**, e só então decide.
+`truncado = visíveis > limite`, nunca `brutos > limite`.
+
+O avanço usa um `startAfter` que **nasce e morre dentro de uma chamada**. Não é
+paginação: o contrato de §9 é que o *cliente* não pode avançar, e ele continua
+sem cursor, sem campo de cursor na resposta e sem efeito ao mandar um no payload.
+
+**O teto da varredura, e o que ele custa.** Cinco rodadas, com o lote dobrando a
+cada uma (`limite+1`, ×2, ×4, ×8, teto de 100 por rodada). A garantia é **exata**
+sempre que a varredura termina por esgotar a faixa ou por juntar visíveis
+suficientes — que é todo caso realista; na prática a primeira rodada resolve, e
+para haver uma segunda é preciso que um bloqueado esteja entre os primeiros
+resultados do termo. O único desfecho em que um bloqueado ainda influencia
+`truncado` é esgotar as cinco rodadas, e para isso a faixa precisa esconder deste
+pesquisador ~265 a ~347 correspondências. Nesse regime o termo casa com centenas
+de apelidos e `truncado: true` — que é o que sai — é a resposta útil de qualquer
+maneira. Registrado na seção 14 como residual, não escondido atrás do número.
+
+Provas contra o emulador, no describe `o candidato oculto nao existe, nem no
+"truncado"`: um bloqueado responde igual a inexistente; vários bloqueados
+respondem igual a inexistente; o bloqueado não rouba vaga; `truncado` conta os
+visíveis; bloqueio nos dois sentidos dá a mesma resposta; a ausência de cursor
+continua valendo inclusive quando `truncado: true`. Há também a contraprova de
+que os perfis escondidos **existem** e são achados por um terceiro — sem ela, os
+testes de equivalência passariam com uma busca simplesmente quebrada.
 
 ### O mecanismo é o canônico
 
@@ -418,21 +460,30 @@ contaria com um código o que a lista já conta com um comprimento.
 
 ## 12. O que a busca custa
 
-Por chamada, no pior caso (20 resultados):
+Caso comum — uma rodada de varredura resolve, 20 resultados:
 
 | passo | leituras |
 |---|---|
-| consulta indexada | 21 documentos (o +1 só decide `truncado`) |
-| `publicId → uid` | 20, em um `getAll` |
-| `friendships/{pairKey}` | 20, em um `getAll` |
-| bloqueio nos dois sentidos + sanção do pesquisador | 41, em um `getAll` |
+| consulta indexada (rodada 1) | 21 documentos (o +1 só decide `truncado`) |
+| `publicId → uid` | 21, em um `getAll` |
+| bloqueio nos dois sentidos + sanção do pesquisador | 43, em um `getAll` |
+| `friendships/{pairKey}` — **só de quem vai aparecer** | 20, em um `getAll` |
 
-Quatro idas ao banco, ~102 leituras. A alternativa ingênua — chamar
+Quatro idas ao banco, ~105 leituras. A alternativa ingênua — chamar
 `estadoDeContato` por resultado — faria 60 leituras só de bloqueio, um terço
 delas relendo o **mesmo** `playerModeration/{observador}`.
 
+A relação de amizade é lida **depois** da varredura, e só dos visíveis: ela
+decora o resultado, nunca decide se ele existe. Ler `friendships` de alguém que
+vai ser escondido seria trabalho jogado fora — e faria a visibilidade parecer
+depender dela.
+
+Cada rodada extra custa uma consulta e dois `getAll`, e só acontece quando o
+bloqueio descartou candidatos. Pior caso absoluto (cinco rodadas, lotes
+dobrando): ~347 documentos de perfil e os `getAll` correspondentes.
+
 Uma busca que não devolve nada custa **uma** consulta: o caminho vazio encerra
-antes das três leituras seguintes.
+antes da leitura das relações.
 
 ---
 
@@ -450,6 +501,9 @@ antes das três leituras seguintes.
 | cliente não escreve o índice derivado | `BUSCA §12 — o cliente nao escreve a chave de busca` |
 | bloqueio não é contornável | `BLQ-01` a `BLQ-06`; `§8 —` (três testes de emulador) |
 | a ausência não revela quem bloqueou | `BLQ-04`; `§8 — a ausencia e IGUAL nos dois casos` |
+| o oculto não altera **nenhum** campo observável | `BLQ-07` a `BLQ-09` (domínio) e os sete testes do describe `o candidato oculto nao existe, nem no "truncado"` (emulador) |
+| `truncado` conta visíveis, não brutos | `truncado conta os VISIVEIS, e nao o lote bruto` — provado por mutação: forçar uma rodada só derruba exatamente este teste |
+| o oculto não rouba vaga de quem é visível | `o bloqueado NAO ROUBA A VAGA` — provado por mutação: cortar o lote bruto antes do filtro derruba este e mais três |
 | amizade só pelo mecanismo canônico | `§10 — a busca nao e fonte de amizade` |
 | resultado determinístico | `RES-04`; `o resultado e DETERMINISTICO entre chamadas` |
 
@@ -460,6 +514,7 @@ antes das três leituras seguintes.
 | lacuna | consequência hoje | quem resolve |
 |---|---|---|
 | **Sem limite de taxa por chamador** | varredura sistemática é cara, não impossível — ver seção 6 | infraestrutura genérica de quota (App Check/Cloud Armor), não esta OS |
+| **`truncado` no teto da varredura** | se a varredura esgotar as cinco rodadas, `truncado: true` passa a depender também de quantos foram escondidos. Exige ~265–347 correspondências ocultas para o mesmo pesquisador; fora desse regime a garantia é exata — ver seção 7 | varredura sem teto, se algum dia o custo justificar |
 | **Sem normalização Unicode NFC/NFD** | apelidos visualmente idênticos com composições diferentes não casam entre si | versão futura, se aparecer o caso real |
 | **Sem busca por infixo** | "Solitaria" não encontra "Zarabatana Solitaria" | decisão de produto; exigiria estrutura nova |
 | **Sem UI** | esta OS entrega backend e contrato | OS de UI social |

@@ -1374,6 +1374,191 @@ describe('Functions sociais', comFunctions, () => {
       assert.ok(r.data.itens.length >= 2, 'os outros continuam la');
     });
 
+    // ==========================================================================
+    // O CANDIDATO OCULTO NAO EXISTE — nem no metadado (§8)
+    //
+    // A §8 nao para na lista de itens. Se um candidato escondido pelo bloqueio
+    // puder mexer em QUALQUER campo observavel, a ausencia dele deixa de ser
+    // ausencia e vira sinal. Sao dois defeitos, pelo mesmo buraco, e uma
+    // consulta unica de `limite + 1` tem os dois:
+    //
+    //   `truncado` sobre o lote BRUTO ... um bloqueado na posicao limite+1
+    //                                     diria "havia mais" num resultado que,
+    //                                     para quem procura, esta completo.
+    //   vaga roubada .................... um bloqueado entre os primeiros
+    //                                     empurraria um jogador legitimo para
+    //                                     fora da janela lida.
+    //
+    // Estes testes provam os dois contra o emulador, que e o unico lugar onde a
+    // varredura de verdade acontece.
+    // ==========================================================================
+
+    describe('o candidato oculto nao existe, nem no `truncado`', () => {
+      const oculto = {};
+
+      /// Cria um jogador com apelido, e devolve `{cliente, publicId}`.
+      async function jogador(nome, apelido) {
+        const c = await cliente(nome);
+        const publicId = (await c.identidade({})).data.publicId;
+        await c.atualizar({ apelido });
+        return { c, publicId };
+      }
+
+      /// Semeia o bloqueio canonico. Escrito direto porque a suite pode rodar
+      /// sem o codebase de moderacao implantado — o social so LE este documento.
+      async function bloquear(bloqueadorUid, bloqueadoUid) {
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          await setDoc(
+            doc(ctx.firestore(), `users/${bloqueadorUid}/blocks/${bloqueadoUid}`),
+            {
+              bloqueadorUid, bloqueadoUid, criadoEm: new Date(), esquema: 1,
+            },
+          );
+        });
+      }
+
+      before(async () => {
+        oculto.quem = await cliente('oculto-buscador');
+        await oculto.quem.identidade({});
+        const eu = oculto.quem.uid;
+
+        // TROMBONE — a ordem por apelido normalizado e Aa < Bb < Cc < Dd, e o
+        // BLOQUEADO E O PRIMEIRO de proposito: e a posicao em que ele roubaria
+        // a vaga de outra pessoa.
+        oculto.aa = await jogador('oculto-trombone-aa', 'Trombone Aa');
+        oculto.bb = await jogador('oculto-trombone-bb', 'Trombone Bb');
+        oculto.cc = await jogador('oculto-trombone-cc', 'Trombone Cc');
+        oculto.dd = await jogador('oculto-trombone-dd', 'Trombone Dd');
+        await bloquear(oculto.aa.c.uid, eu);
+
+        // SANFONA — um unico candidato, e ele esta bloqueado.
+        oculto.sanfona = await jogador('oculto-sanfona', 'Sanfona Unica');
+        await bloquear(oculto.sanfona.c.uid, eu);
+
+        // RABECA — tres candidatos, todos bloqueados.
+        oculto.rabecas = [];
+        for (const sufixo of ['Um', 'Dois', 'Tres']) {
+          const j = await jogador(`oculto-rabeca-${sufixo}`, `Rabeca ${sufixo}`);
+          await bloquear(j.c.uid, eu);
+          oculto.rabecas.push(j);
+        }
+
+        // ZABUMBA — um bloqueou o buscador, o outro foi bloqueado por ele.
+        oculto.dele = await jogador('oculto-zabumba-dele', 'Zabumba Dele');
+        await bloquear(oculto.dele.c.uid, eu);
+        oculto.meu = await jogador('oculto-zabumba-meu', 'Zabumba Meu');
+        await bloquear(eu, oculto.meu.c.uid);
+      });
+
+      test('UM candidato bloqueado responde IGUAL a apelido inexistente', async () => {
+        const comBloqueado = await oculto.quem.buscar({ termo: 'Sanfona Unica', modo: 'exato' });
+        const inexistente = await oculto.quem.buscar({ termo: 'Sanfona Nenhuma', modo: 'exato' });
+        assert.deepEqual(comBloqueado.data, inexistente.data);
+        assert.deepEqual(comBloqueado.data,
+          { itens: [], truncado: false, modo: 'exato' });
+      });
+
+      test('VARIOS candidatos bloqueados respondem IGUAL a inexistente', async () => {
+        // Tres bloqueados. Se `truncado` ou a contagem reagissem ao numero de
+        // escondidos, "tres" e "nenhum" seriam distinguiveis.
+        const trinta = await oculto.quem.buscar({ termo: 'Rabeca' });
+        const inexistente = await oculto.quem.buscar({ termo: 'Rabequinha' });
+        assert.deepEqual(trinta.data, inexistente.data);
+        assert.deepEqual(trinta.data,
+          { itens: [], truncado: false, modo: 'prefixo' });
+      });
+
+      test('os OUTROS jogadores continuam achando quem bloqueou o buscador', async () => {
+        // A contraprova: os perfis existem e sao encontraveis. Sem ela, os dois
+        // testes acima passariam com uma busca simplesmente quebrada.
+        const terceiro = await cliente('oculto-terceiro');
+        await terceiro.identidade({});
+        const r = await terceiro.buscar({ termo: 'Sanfona Unica', modo: 'exato' });
+        assert.equal(r.data.itens.length, 1);
+        assert.equal(r.data.itens[0].publicId, oculto.sanfona.publicId);
+
+        const rabecas = await terceiro.buscar({ termo: 'Rabeca' });
+        assert.equal(rabecas.data.itens.length, 3);
+      });
+
+      test('o bloqueado NAO ROUBA A VAGA de um jogador legitimo', async () => {
+        // Faixa: [Aa bloqueado, Bb, Cc, Dd]. Com limite 2, uma consulta unica de
+        // tres documentos leria [Aa, Bb], filtraria Aa e devolveria UM item — o
+        // Cc ficaria de fora por causa de um bloqueio que nao e dele.
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 2 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [oculto.bb.publicId, oculto.cc.publicId]);
+        assert.equal(r.data.truncado, true, 'o Dd ainda esta la fora');
+      });
+
+      test('`truncado` conta os VISIVEIS, e nao o lote bruto', async () => {
+        // Tres visiveis (Bb, Cc, Dd) e um escondido (Aa). Com limite 3, a
+        // resposta esta COMPLETA e `truncado` tem que ser falso — calculado
+        // sobre o lote bruto de quatro, ele diria "havia mais", e essa diferenca
+        // e a existencia do Aa vazando por um metadado.
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 3 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [oculto.bb.publicId, oculto.cc.publicId, oculto.dd.publicId]);
+        assert.equal(r.data.truncado, false,
+          'nao ha mais nenhum Trombone visivel para este jogador');
+      });
+
+      test('e quem NAO foi bloqueado ve o quarto, e o `truncado` dele', async () => {
+        // O mesmo termo, o mesmo limite, outro observador: quatro candidatos,
+        // limite tres, `truncado` verdadeiro. Os dois `truncado` sao diferentes
+        // porque os dois MUNDOS sao diferentes — e nao porque um deles esta
+        // contando o lote bruto.
+        const terceiro = await cliente('oculto-terceiro-b');
+        await terceiro.identidade({});
+        const r = await terceiro.buscar({ termo: 'Trombone', limite: 3 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [oculto.aa.publicId, oculto.bb.publicId, oculto.cc.publicId]);
+        assert.equal(r.data.truncado, true);
+      });
+
+      test('bloqueio nos DOIS sentidos produz a mesma resposta', async () => {
+        const eleMeBloqueou = await oculto.quem.buscar({ termo: 'Zabumba Dele', modo: 'exato' });
+        const euOBloqueei = await oculto.quem.buscar({ termo: 'Zabumba Meu', modo: 'exato' });
+        const inexistente = await oculto.quem.buscar({ termo: 'Zabumba Nada', modo: 'exato' });
+
+        assert.deepEqual(eleMeBloqueou.data, euOBloqueei.data);
+        assert.deepEqual(eleMeBloqueou.data, inexistente.data);
+
+        // E o prefixo que casa com os dois tambem some por inteiro.
+        const prefixo = await oculto.quem.buscar({ termo: 'Zabumba' });
+        assert.deepEqual(prefixo.data,
+          { itens: [], truncado: false, modo: 'prefixo' });
+      });
+
+      test('a ausencia de cursor continua valendo, inclusive com truncado', async () => {
+        // A varredura avanca por um cursor INTERNO, que nasce e morre dentro da
+        // chamada. Nada dele aparece na resposta, e mandar um cursor no payload
+        // continua sem efeito.
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 2 });
+        assert.equal(r.data.truncado, true);
+        assert.deepEqual(Object.keys(r.data).sort(), ['itens', 'modo', 'truncado']);
+        for (const item of r.data.itens) {
+          assert.deepEqual(Object.keys(item).sort(),
+            ['acoes', 'apelido', 'avatarRef', 'publicId', 'relacao']);
+        }
+        const comCursor = await oculto.quem.buscar({
+          termo: 'Trombone', limite: 2, cursor: 'x', proximoCursor: 'x', depoisDe: 'x',
+        });
+        assert.deepEqual(comCursor.data, r.data);
+      });
+
+      test('a varredura nao vaza UID nem na resposta truncada', async () => {
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 2 });
+        const bruto = JSON.stringify(r.data);
+        for (const uidReal of [
+          oculto.quem.uid, oculto.aa.c.uid, oculto.bb.c.uid,
+          oculto.cc.c.uid, oculto.dd.c.uid,
+        ]) {
+          assert.equal(bruto.includes(uidReal), false, 'UID vazou na varredura');
+        }
+      });
+    });
+
     // ---------------------------------------------------------- autenticacao
 
     test('sem autenticacao, a busca e recusada', async () => {
