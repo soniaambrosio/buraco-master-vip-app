@@ -23,6 +23,10 @@ import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
+import 'sessao/escopo_sessao.dart';
+import 'sessao/identidade_publica_sessao.dart';
+import 'sessao/sessao_do_jogador.dart';
+import 'sessao/sessao_firebase.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
@@ -67,16 +71,43 @@ void main() async {
   runApp(const BuracoApp());
 }
 
-class BuracoApp extends StatelessWidget {
+/// Raiz do app — e a dona da [SessaoDoJogador].
+///
+/// A SESSÃO NASCE AQUI, e não numa tela, porque é aqui que ela vive tanto
+/// quanto o app. O controller assina o fluxo de autenticação sozinho: quando um
+/// login acontece, a identidade pública é resolvida sem que ninguém tenha
+/// aberto Ranking, Perfil ou Social. Ver `lib/sessao/sessao_do_jogador.dart`.
+///
+/// Isto NÃO é "jogar a chamada no widget raiz" (o antipadrão de §16): a raiz não
+/// chama nada e não tem `initState` de identidade. Ela só constrói o objeto que
+/// modela a responsabilidade e o pendura na árvore.
+class BuracoApp extends StatefulWidget {
   const BuracoApp({super.key});
+
+  @override
+  State<BuracoApp> createState() => _BuracoAppState();
+}
+
+class _BuracoAppState extends State<BuracoApp> {
+  late final SessaoDoJogador _sessao = criarSessaoDoJogador();
+
+  @override
+  void dispose() {
+    _sessao.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Buraco Master VIP',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-      home: const SplashOficialScreen(
-        proximaTela: _InicioPreviewHost(),
+    return EscopoSessao(
+      sessao: _sessao,
+      child: MaterialApp(
+        title: 'Buraco Master VIP',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
+        home: const SplashOficialScreen(
+          proximaTela: _InicioPreviewHost(),
+        ),
       ),
     );
   }
@@ -515,10 +546,16 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
       setState(() => _vm = _vm.semBusca());
       return;
     }
+    // O código é lido AGORA, e não dentro do timer: `context` depois de o
+    // widget sair da árvore é uso inválido, e a busca não precisa do valor
+    // fresco — 350ms não trocam a identidade da sessão.
+    final meuCodigo = EscopoSessao.identidadeDe(context).publicId;
     _debounce = Timer(const Duration(milliseconds: 350), () {
       final low = t.toLowerCase();
       final achados = _diretorio
-          .where((r) => r.apelido.toLowerCase().contains(low) || vm_codigoBate(r, low))
+          .where((r) =>
+              r.apelido.toLowerCase().contains(low) ||
+              vm_codigoBate(r, low, meuCodigo))
           .toList();
       if (!mounted) return;
       setState(() => _vm = _vm.copyWith(termoBusca: t, resultados: achados));
@@ -526,8 +563,14 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
   }
 
   // Busca também pelo "código" (na Fase A só o próprio código bate; Fase B: código real por jogador).
-  bool vm_codigoBate(ResultadoBusca r, String low) =>
-      r.id == 'sonia' && _vm.meuCodigo.toLowerCase().contains(low);
+  //
+  // `meuCodigo` nulo = identidade ainda não resolvida, e aí NADA bate por
+  // código. Casar com o uid ou com um placeholder faria a busca encontrar o
+  // jogador por um identificador que não é o dele.
+  bool vm_codigoBate(ResultadoBusca r, String low, String? meuCodigo) =>
+      r.id == 'sonia' &&
+      meuCodigo != null &&
+      meuCodigo.toLowerCase().contains(low);
 
   void _enviarPedido(String id) {
     setState(() {
@@ -569,14 +612,38 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
     }
   }
 
+  /// O "meu código" da tela de Amigos É o `publicId` canônico.
+  ///
+  /// Vem da sessão, e nunca do `uid`: §5 proíbe a queda silenciosa, e o uid é
+  /// identidade INTERNA — exibi-lo aqui vazaria a chave de `users/{uid}` numa
+  /// tela feita para ser mostrada a estranhos.
+  ///
+  /// Sem identidade resolvida, o texto vira um travessão. Isso é FALLBACK DE
+  /// APRESENTAÇÃO, não de identidade: '—' não é um identificador, ninguém
+  /// consegue buscar por ele, e ele não é persistido em lugar nenhum. A
+  /// distinção importa — o proibido é fabricar um valor que PASSE por publicId.
+  String get _meuCodigo =>
+      EscopoSessao.identidadeDe(context).publicId ?? '—';
+
+  bool get _temCodigo => EscopoSessao.identidadeDe(context).publicId != null;
+
   @override
   Widget build(BuildContext context) {
+    // Descoberta e busca por apelido NÃO dependem de o Ranking ter sido aberto:
+    // a identidade já está resolvida pela sessão quando esta tela monta, venha
+    // o jogador de onde vier.
+    final vm = _vm.copyWith(meuCodigo: _meuCodigo);
     return AmigosScreen(
-      vm: _vm,
+      vm: vm,
       onVoltar: () => Navigator.of(context).pop(),
       onCopiarCodigo: () async {
-        await Clipboard.setData(ClipboardData(text: _vm.meuCodigo));
-        if (mounted) _aviso('Código ${_vm.meuCodigo} copiado');
+        if (!_temCodigo) {
+          _aviso('Seu código ainda está carregando — só um instante 🙂');
+          return;
+        }
+        final codigo = _meuCodigo;
+        await Clipboard.setData(ClipboardData(text: codigo));
+        if (mounted) _aviso('Código $codigo copiado');
       },
       onConvidarLink: () => _aviso('Compartilhar convite — integração fica com o Claude (Fase B)'),
       onBuscar: _buscar,
@@ -1968,6 +2035,12 @@ class _RankingPreviewHost extends StatefulWidget {
   State<_RankingPreviewHost> createState() => _RankingPreviewHostState();
 }
 
+/// Ranking é CONSUMIDOR da identidade pública, e só isso.
+///
+/// Não cria, não garante, não escolhe e não deriva `publicId`: lê o estado
+/// canônico da sessão e obedece à fase em que ele está. Abrir esta tela dez
+/// vezes não produz nenhuma chamada de identidade — o estado já foi resolvido
+/// no login, e `EscopoSessao.identidadeDe` é leitura pura.
 class _RankingPreviewHostState extends State<_RankingPreviewHost> {
   RankingAba _aba = RankingAba.temporada;
 
@@ -1986,16 +2059,36 @@ class _RankingPreviewHostState extends State<_RankingPreviewHost> {
   @override
   Widget build(BuildContext context) {
     final vm = RankingVM.mock(aba: _aba);
+    final identidade = EscopoSessao.identidadeDe(context);
 
     return RankingScreen(
       vm: vm,
+      // A fase da identidade MANDA na tela (§11). Enquanto ela carrega, o
+      // Ranking espera; se falhou, o Ranking mostra erro e oferece retry. O que
+      // ele não faz em nenhuma das duas é seguir em frente com um identificador
+      // inventado para "não travar a tela".
+      estado: switch (identidade.fase) {
+        FaseIdentidade.carregando ||
+        FaseIdentidade.naoCarregada =>
+          RankingEstado.carregando,
+        FaseIdentidade.falha => RankingEstado.erro,
+        FaseIdentidade.naoAutenticado ||
+        FaseIdentidade.disponivel =>
+          RankingEstado.normal,
+      },
+      mensagemErro: identidade.fase == FaseIdentidade.falha
+          ? 'Não consegui carregar seu perfil de jogador agora. Tenta de novo?'
+          : null,
       onVoltar: () => Navigator.of(context).maybePop(),
       onTrocarAba: (aba) => setState(() => _aba = aba),
       onAbrirHall: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const _HallPreviewHost()),
       ),
       onVerJogador: (posicao) => _aviso('Perfil da posição #$posicao'),
-      onRecarregar: () => setState(() {}),
+      // RETRY EXPLÍCITO, nascido do gesto do jogador — nunca do `build`.
+      // `recarregar` é deduplicada, então apertar duas vezes não abre duas
+      // chamadas.
+      onRecarregar: () => EscopoSessao.talvezDe(context)?.recarregar(),
       onCarregarMais: null,
       onNavTap: (destino) {
         switch (destino) {
