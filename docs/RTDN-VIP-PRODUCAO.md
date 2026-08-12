@@ -421,8 +421,14 @@ Ancestralidade conferida antes de começar: `77eff2d` (P0-2) é ancestral de
 ## 19. Estado de push
 
 - Push executado: **sim**, `origin/integracao/rtdn-vip-producao`
-- Upstream: configurado
-- Local == remoto: sim
+- Local == remoto: **sim**, conferido por `git ls-remote` —
+  `c52ae01a32293a45af4ce287ca6e8a8a3f0ff26d` dos dois lados
+- Upstream: `git push -u` gravou a configuração, mas a **ref de rastreamento não
+  existe localmente**. Não é falha do push: o `remote.origin.fetch` deste
+  repositório está estreitado a duas branches
+  (`consolidacao/apk-geral-bmv` e `correcao/p0-elegibilidade-vip-lifecycle`),
+  então `origin/integracao/rtdn-vip-producao` nunca é materializado. Por isso a
+  conferência acima usa `ls-remote`, e não `rev-parse origin/...`
 - Árvore limpa: sim
 - Force push: **não**
 - A branch é exclusiva desta OS. Nenhuma branch alheia foi tocada, e nenhum
