@@ -4452,13 +4452,27 @@ void main() {
       expect(MotorConfig.legadoRollback().canonicoAtivo, isFalse);
     });
 
+    // Ids referenciados por TODOS os candidatos (para provar exclusão de enterradas).
+    Set<String> _idsDosCandidatos(List<ComprarLixo> cs) {
+      final s = <String>{};
+      for (final c in cs) {
+        for (final j in c.jogosNovos) {
+          s.addAll(j);
+        }
+        for (final e in c.extensoes) {
+          s.addAll(e.cartas);
+        }
+      }
+      return s;
+    }
+
     test('C10-LIXO-01 Fechado: topo usado em JOGO NOVO -> compra ATÔMICA aceita',
         () {
       final j = _jgLixoFechadoNovoMeldC10();
-      final acao =
-          derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF);
-      expect(acao, isNotNull); // auto-derivou [5c,3c,4c]
-      final r = aplicarComAutoridade(j, 0, [acao!]);
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      expect(cands.length, 1); // 1 candidato -> executável direto ([5c,3c,4c])
+      final r = aplicarComAutoridade(j, 0, [cands.single]);
       expect(r.aplicou, isTrue);
       expect(j.jogosDupla['nos']!.length, 1); // meld baixado atomicamente
       expect(j.lixo, isEmpty); // lixo recolhido
@@ -4469,19 +4483,22 @@ void main() {
 
     test('C10-LIXO-02 Fechado: topo usado em EXTENSÃO -> aceita', () {
       final j = _jgLixoFechadoExtensaoC10();
-      final acao =
-          derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF);
-      expect(acao, isNotNull);
-      final r = aplicarComAutoridade(j, 0, [acao!]);
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      // topo estende 3-4-5 -> 3-4-5-6 (só há esse uso do topo).
+      final ext = cands.firstWhere((c) => c.extensoes.isNotEmpty);
+      final r = aplicarComAutoridade(j, 0, [ext]);
       expect(r.aplicou, isTrue);
       expect(j.jogosDupla['nos']![0].length, 4); // 3-4-5 + 6 (topo)
       expect(j.lixo, isEmpty);
     });
 
-    test('C10-LIXO-03 Fechado: topo SEM uso -> recusa, estado intacto', () {
+    test('C10-LIXO-03 Fechado: topo SEM uso -> 0 candidatos -> recusa, intacto',
+        () {
       final j = _jgLixoFechadoSemUsoC10();
-      expect(derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF),
-          isNull);
+      expect(
+          derivarCandidatosCompraLixoFechado(paraCanonico(j).canonico, 0, specF),
+          isEmpty);
       final antes = _snap(j);
       final r = aplicarComAutoridade(j, 0, const [ComprarLixo()]);
       expect(r.recusaCanonica, isTrue);
@@ -4503,9 +4520,11 @@ void main() {
 
     test('C10-LIXO-05 enterrada não completa o mínimo antes da autorização', () {
       final j = _jgLixoFechadoVulneravelC10();
-      // Vulnerável (mínimo 75): topo+2 da mão somam 30 (<75); auto-derive NÃO abre.
-      expect(derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF),
-          isNull);
+      // Vulnerável (mínimo 75): topo+mão somam 30 (<75) e não há meld extra na
+      // mão -> 0 candidatos (a abertura não fecha só com o que é visível).
+      expect(
+          derivarCandidatosCompraLixoFechado(paraCanonico(j).canonico, 0, specF),
+          isEmpty);
       final antes = _snap(j);
       // tentar completar o mínimo com cartas ENTERRADAS -> ocultas -> recusa.
       final r = aplicarComAutoridade(j, 0, [
@@ -4521,16 +4540,99 @@ void main() {
         () {
       final j = _jgLixoFechadoNovoMeldC10();
       final idsAntes = j.lixo.map((c) => c.id).toList(); // [ent, 5c]
-      final acao =
-          derivarCompraLixoFechado(paraCanonico(j).canonico, 0, specF)!;
-      aplicarComAutoridade(j, 0, [acao]);
-      // topo 5c (id preservado) foi para a MESA no meld; enterrada 'ent' foi para
-      // a mão (revelada só após a autorização); IDs físicos conservados.
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      aplicarComAutoridade(j, 0, [cands.single]);
       final meld = j.jogosDupla['nos']![0].map((c) => c.id).toSet();
-      expect(meld.contains('5c'), isTrue);
+      expect(meld.contains('5c'), isTrue); // topo (id preservado) foi à mesa
       expect(meld.contains('ent'), isFalse); // enterrada NÃO entrou no meld
-      expect(j.maos[0].any((c) => c.id == 'ent'), isTrue);
+      expect(j.maos[0].any((c) => c.id == 'ent'), isTrue); // revelada só após
       expect(idsAntes.contains('5c') && idsAntes.contains('ent'), isTrue);
+    });
+
+    test('C10-LIXO-07 duas alternativas válidas -> 2+ candidatos, sem escolher',
+        () {
+      final j = _jgLixoDuasAlternativasC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      expect(cands.length, greaterThanOrEqualTo(2)); // não colapsa numa só
+      // enumera AMBOS os tipos de uso do topo (jogo novo E extensão).
+      expect(cands.any((c) => c.jogosNovos.isNotEmpty), isTrue);
+      expect(cands.any((c) => c.extensoes.isNotEmpty), isTrue);
+      // determinístico e sem duplicatas semânticas: 2ª chamada = mesma lista.
+      final cands2 = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      expect(cands2.length, cands.length);
+    });
+
+    test('C10-LIXO-08 topo + mão formam meld com >3 cartas -> candidato', () {
+      final j = _jgLixoMeldGrandeC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      expect(cands.any((c) => c.jogosNovos.any((jn) => jn.length > 3)), isTrue);
+    });
+
+    test('C10-LIXO-09 extensão exige topo + outra carta da mão -> candidato', () {
+      final j = _jgLixoExtTopoMaisMaoC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      // o topo (t7) sozinho não estende (falta o 6c); precisa de topo + 6c.
+      expect(
+          cands.any((c) => c.extensoes
+              .any((e) => e.cartas.length > 1 && e.cartas.contains('t7'))),
+          isTrue);
+      // e o topo sozinho NÃO forma extensão válida.
+      expect(
+          cands.any((c) =>
+              c.extensoes.any((e) => e.cartas.length == 1 && e.cartas.first == 't7')),
+          isFalse);
+    });
+
+    test('C10-LIXO-10 abertura vulnerável: 1º meld < mínimo, conjunto >= mínimo',
+        () {
+      final j = _jgLixoAberturaMultiplaC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      // existe candidato ATÔMICO com >=2 jogos (o 1º isolado é <75; a soma >=75).
+      final multi = cands.firstWhere((c) => c.jogosNovos.length >= 2);
+      final r = aplicarComAutoridade(j, 0, [multi]);
+      expect(r.aplicou, isTrue); // compra atômica aceita
+      expect(j.jogosDupla['nos']!.length, greaterThanOrEqualTo(2));
+      expect(j.lixo, isEmpty);
+    });
+
+    test('C10-LIXO-11 nenhuma carta ENTERRADA participa dos candidatos', () {
+      final j = _jgLixoAberturaMultiplaC10();
+      final cands = derivarCandidatosCompraLixoFechado(
+          paraCanonico(j).canonico, 0, specF);
+      final ids = _idsDosCandidatos(cands);
+      // as enterradas do estado (tudo do lixo menos o topo) não aparecem.
+      final topoId = j.lixo.last.id;
+      final enterradas =
+          j.lixo.where((c) => c.id != topoId).map((c) => c.id).toSet();
+      expect(ids.intersection(enterradas), isEmpty);
+    });
+
+    test('C10-LIXO-12 round-trip do contrato rico (toJson -> acaoDeJson)', () {
+      final rica = ComprarLixo(
+        topoDeclarado: 'T',
+        jogosNovos: const [
+          ['T', 'a', 'b'],
+          ['x', 'y', 'z']
+        ],
+        extensoes: const [
+          Extensao(0, ['m', 'n']),
+          Extensao(2, ['p'])
+        ],
+      );
+      final volta = acaoDeJson(rica.toJson()) as ComprarLixo;
+      expect(volta.topoDeclarado, 'T');
+      expect(volta.jogosNovos, rica.jogosNovos);
+      expect(volta.extensoes.length, 2);
+      expect(volta.extensoes[0].indiceJogo, 0);
+      expect(volta.extensoes[0].cartas, ['m', 'n']);
+      expect(volta.extensoes[1].indiceJogo, 2);
+      expect(volta.extensoes[1].cartas, ['p']);
     });
   });
 }
@@ -5430,6 +5532,129 @@ Jogo _jgLixoFechadoVulneravelC10() {
     Carta('entA', 'copas', 'A', false),
     Carta('entK', 'copas', 'K', false),
     Carta('topo10', 'copas', '10', false),
+  ];
+  return j;
+}
+
+// ===== C10 — helpers (parte 1-fix: geração de TODOS os candidatos) =====
+
+// Fechado, dupla nos já abriu ([3c,4c,5c]); topo 6c pode virar JOGO NOVO
+// [6c,7c,8c] OU ESTENDER 3-4-5 -> duas (ou mais) alternativas.
+Jogo _jgLixoDuasAlternativasC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.jogosDupla = {
+    'nos': [
+      [
+        Carta('3c', 'copas', '3', false),
+        Carta('4c', 'copas', '4', false),
+        Carta('5c', 'copas', '5', false),
+      ]
+    ],
+    'eles': <List<Carta>>[],
+  };
+  j.maos = [
+    [
+      Carta('7c', 'copas', '7', false),
+      Carta('8c', 'copas', '8', false),
+      Carta('9s', 'espadas', '9', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('6c', 'copas', '6', false)];
+  return j;
+}
+
+// Fechado, abrindo (não vulnerável). topo 5c + mão 3c,4c,6c,7c formam meld
+// GRANDE (>3 cartas): [3c,4c,5c,6c] / [3c,4c,5c,6c,7c].
+Jogo _jgLixoMeldGrandeC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('6c', 'copas', '6', false),
+      Carta('7c', 'copas', '7', false),
+      Carta('9s', 'espadas', '9', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  return j;
+}
+
+// Fechado, dupla nos já abriu ([3c,4c,5c]); topo t7 (7c) NÃO estende sozinho
+// (falta o 6c); precisa de topo + 6c (carta da mão) -> [3,4,5,6,7].
+Jogo _jgLixoExtTopoMaisMaoC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.jogosDupla = {
+    'nos': [
+      [
+        Carta('3c', 'copas', '3', false),
+        Carta('4c', 'copas', '4', false),
+        Carta('5c', 'copas', '5', false),
+      ]
+    ],
+    'eles': <List<Carta>>[],
+  };
+  j.maos = [
+    [Carta('6c', 'copas', '6', false), Carta('9s', 'espadas', '9', false)],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [Carta('ent', 'ouros', '2', false), Carta('t7', 'copas', '7', false)];
+  return j;
+}
+
+// Fechado, dupla nos VULNERÁVEL (mínimo 75) ABRINDO. topo 5c forma [5c,3c,4c]=15
+// (<75 isolado); a corrida de ouros 6..Q=60 completa o mínimo NO CONJUNTO (75).
+// Enterradas (entA/entK) NUNCA entram na geração.
+Jogo _jgLixoAberturaMultiplaC10() {
+  final j = Jogo.paraCostura();
+  j.vez = 0;
+  j.jaComprou = false;
+  j.modalidade = 'FECHADO';
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.monte = [Carta('mo1', 'copas', '2', false)];
+  j.maos = [
+    [
+      Carta('3c', 'copas', '3', false),
+      Carta('4c', 'copas', '4', false),
+      Carta('6d', 'ouros', '6', false),
+      Carta('7d', 'ouros', '7', false),
+      Carta('8d', 'ouros', '8', false),
+      Carta('9d', 'ouros', '9', false),
+      Carta('10d', 'ouros', '10', false),
+      Carta('Jd', 'ouros', 'J', false),
+      Carta('Qd', 'ouros', 'Q', false),
+    ],
+    <Carta>[],
+    <Carta>[],
+    <Carta>[],
+  ];
+  j.lixo = [
+    Carta('entA', 'ouros', 'A', false),
+    Carta('entK', 'ouros', 'K', false),
+    Carta('5c', 'copas', '5', false), // topo
   ];
   return j;
 }
