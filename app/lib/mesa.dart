@@ -1508,6 +1508,13 @@ class MesaScreen extends StatefulWidget {
   final int? vulnerabilidadeNos;
   final int? vulnerabilidadeEles;
 
+  /// C10 — ROLLBACK explícito e PRÉ-TRANSAÇÃO do motor da partida LOCAL.
+  /// `null` (padrão) = a partida NASCE em `MotorConfig.producao()` (autoridade
+  /// canônica ON). O único caminho para o legado é passar aqui, ANTES da
+  /// partida, `MotorConfig.legadoRollback()` — nunca por jogada, nunca por
+  /// recusa de regra, nunca por falha técnica.
+  final MotorConfig? motorConfig;
+
   const MesaScreen({
     super.key,
     this.variant = MesaVariant.vip,
@@ -1516,6 +1523,7 @@ class MesaScreen extends StatefulWidget {
     this.tempoSegundos = 45,
     this.vulnerabilidadeNos,
     this.vulnerabilidadeEles,
+    this.motorConfig,
   });
 
   @override
@@ -1570,11 +1578,16 @@ class _MesaScreenState extends State<MesaScreen> {
   bool get _minhaVezAtiva =>
       _j.suaVez && !_j.rodadaEncerrada && !_botsRodando;
 
+  /// C10 — ROOT da partida LOCAL. A partida NASCE canônica: a autoridade é do
+  /// `RulesEngine` desde a primeira jogada. O rollback é CONFIGURAÇÃO, escolhida
+  /// aqui (`widget.motorConfig = MotorConfig.legadoRollback()`) antes de existir
+  /// qualquer transação — jamais um fallback disparado no meio da partida.
   Jogo _novoJogo() {
     final jogo = Jogo(
       const ['você', 'Cláudia', 'Mateus', 'Sofia'],
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
+      motorConfig: widget.motorConfig ?? MotorConfig.producao(),
     );
     jogo.metaPontos = widget.metaPontos;
     jogo.modalidade = widget.modalidade;
