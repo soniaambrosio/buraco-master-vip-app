@@ -1,188 +1,205 @@
-# Produtos VIP na Play Console — correspondência de identificadores e dois bloqueios
+# Produtos VIP na Play Console — decisões tomadas e o que continua bloqueado
 
-Documento exigido pela autorização de continuação: *"Não tratar `monthly_auto`,
-`quarterly_auto` ou `yearly_auto` automaticamente como product ID se a
-arquitetura implementada os utiliza como base plan ID ou outro identificador
-interno. Conferir o contrato real e documentar a correspondência antes da criação
-definitiva."*
+Este documento nasceu perguntando três coisas. As três foram respondidas, e o
+que era bloqueio de CÓDIGO deixou de existir. O que sobrou é gate externo:
+Play Console, e nada mais.
 
-Conferi. A correspondência está na seção 2. E ao conferir, apareceu uma segunda
-coisa que precisa de decisão antes de qualquer produto existir: **o benefício de
-fichas aprovado não tem produtor no backend.** Seção 3.
-
----
-
-## 1. As definições recebidas
-
-| plano | identificador | preço BR | fichas na ativação | fichas nos meses seguintes |
-|---|---|---|---|---|
-| Mensal | `monthly_auto` | R$ 19,90 | 1.500 | 1.000/mês |
-| Trimestral | `quarterly_auto` | R$ 49,90 | 2.700 | 1.200 no 2º, 1.200 no 3º |
-| Anual | `yearly_auto` | R$ 149,90 | 6.500 | 1.500/mês por 11 meses |
-
-Brasil somente. Sem trial, sem preço introdutório, sem oferta promocional. Sem
-pacotes de fichas avulsos nesta leva.
+| decisão | resposta |
+|---|---|
+| 1. Estrutura dos produtos | **Um** produto de assinatura, **três** planos-base |
+| 2. Fichas | **Completo** — ativação *e* entrega mensal. Implementado |
+| 3. Workflow para `main` | A Sônia leva `release-aab.yml` para a branch padrão |
 
 ---
 
-## 2. Correspondência: `monthly_auto` é **base plan ID**, não product ID
+## 1. A correspondência dos identificadores
 
-### O que o contrato real diz
+`monthly_auto` / `quarterly_auto` / `yearly_auto` são **base plan IDs**, não
+product IDs. Conferido no contrato real, não presumido:
 
-`validarCompraPlay` (`functions-billing/index.js`, passo 3) recebe `produtoId` e
-procura em `configuracao/billing`:
+- `validarCompraPlay` recebe `produtoId` e procura em `configuracao/billing`.
+  Esse `produtoId` vem de `PurchaseDetails.productID`, que no Android é o ID do
+  **produto de assinatura** — nunca o do plano-base.
+- O plano-base chega por outro caminho:
+  `item.offerDetails.basePlanId`, na resposta da Play Developer API.
+- `queryProductDetails` devolve **uma entrada por plano-base**, todas com o
+  **mesmo `ProductDetails.id`**. Quem distingue mensal de anual é o `basePlanId`.
+  Coberto por `app/test/billing/plano_vip_test.dart`.
+- O sufixo `_auto` é a convenção do próprio Google para plano-base de renovação
+  automática.
 
-```js
-const catalogo = await lerCatalogo();        // configuracao/billing .produtos
-const definicao = catalogo[produtoId];
-if (!definicao) throw new HttpsError('failed-precondition', ...);
-```
-
-O `produtoId` que chega vem do cliente, e o cliente o tira de
-`PurchaseDetails.productID` — que no Android é o **ID do produto de assinatura**,
-nunca o do plano-base.
-
-O plano-base aparece em outro lugar, e só como registro histórico:
-
-```js
-concessao.planoBase = item.offerDetails.basePlanId;   // gravado em compras/{hash}
-```
-
-**Nenhuma regra econômica do servidor decide por `basePlanId` hoje.**
-
-### O que o plugin entrega
-
-Confirmado lendo `in_app_purchase_android` 0.5.0 e coberto por teste
-(`app/test/billing/plano_vip_test.dart`): `queryProductDetails` devolve **uma
-entrada por plano-base**, e todas carregam o **mesmo `ProductDetails.id`**. Quem
-distingue mensal de anual é `subscriptionOfferDetails[subscriptionIndex].basePlanId`.
-
-O sufixo `_auto` é a convenção do próprio Google para plano-base de renovação
-automática. Os três nomes que você passou são, portanto, **base plan IDs**.
-
-### A correspondência a adotar
+### A estrutura a criar
 
 ```
 produto de assinatura (product ID)   ->  master_vip          [1 produto]
-   plano-base (base plan ID)         ->  monthly_auto        R$ 19,90   P1M
-   plano-base (base plan ID)         ->  quarterly_auto      R$ 49,90   P3M
-   plano-base (base plan ID)         ->  yearly_auto         R$ 149,90  P1Y
-
-configuracao/billing                 ->  { produtos: { "master_vip": { assinatura: true } } }
-CatalogoBilling.oficial.assinaturas  ->  { 'master_vip' }
+   plano-base (base plan ID)         ->  monthly_auto        R$  19,90   P1M
+   plano-base (base plan ID)         ->  quarterly_auto      R$  49,90   P3M
+   plano-base (base plan ID)         ->  yearly_auto         R$ 149,90   P1Y
 ```
 
-Um produto, três planos-base. É a modelagem que o Google Play recomenda, é a que
-seus identificadores já pressupõem, e **funciona com o backend como ele está
-hoje**: os três planos concedem o mesmo direito (VIP), e o prazo de cada um vem
-da resposta da Google, não do catálogo. O servidor não precisa distinguir plano
-para conceder VIP corretamente.
+Um produto, três planos-base: é o modelo canônico do Google para periodicidades
+da mesma assinatura, é o que os identificadores `_auto` já pressupõem, e é o
+único que suporta upgrade/downgrade limpo entre mensal e anual.
 
-`master_vip` é sugestão — o product ID é imutável depois de criado, então vale
-confirmar o nome antes. O que **não** é sugestão é a estrutura: os três não podem
-ser três produtos se os identificadores forem `*_auto`, e não podem ser
-plano-base sem existir um produto acima deles.
-
-### A consequência que precisa ficar registrada
-
-Com um produto só, `validarCompraPlay` recebe `produtoId: "master_vip"` nas três
-compras. **O servidor não consegue saber qual plano foi comprado a partir do
-catálogo** — só sabe pelo `basePlanId` que a Google devolve, e que hoje ele
-apenas grava.
-
-Para VIP isso não é problema. Para fichas por plano, é — e é exatamente o
-bloqueio da seção seguinte.
+**`master_vip` ainda não existe.** Product ID do Google Play é IMUTÁVEL depois de
+criado e não pode ser apagado — só desativado. Confirmar o nome antes de clicar.
 
 ---
 
-## 3. Bloqueio: o benefício de fichas não tem produtor
+## 2. A tabela de conferência (exigida antes de escrever `configuracao/billing`)
 
-Procurei o crédito de fichas em `functions-billing` inteiro. Ele existe **num
-lugar só**, e é o ramo de produto avulso:
+| plano | product ID | base plan ID | período | preço BR | tipo no backend | ativação | mensal |
+|---|---|---|---|---|---|---|---|
+| Mensal | `master_vip` | `monthly_auto` | P1M | R$ 19,90 | `assinatura: true` | 1.500 | 1.000 |
+| Trimestral | `master_vip` | `quarterly_auto` | P3M | R$ 49,90 | `assinatura: true` | 2.700 | 1.200 |
+| Anual | `master_vip` | `yearly_auto` | P1Y | R$ 149,90 | `assinatura: true` | 6.500 | 1.500 |
+
+Brasil somente. Sem trial, sem preço introdutório, sem oferta promocional, sem
+pacotes de fichas avulsos nesta leva.
+
+### O documento a escrever, no schema que o backend realmente lê
 
 ```js
-if (ehAssinatura) {
-  concessao.vip = true;
-  concessao.vipExpiraEm = item ? item.expiryTime : null;
-  concessao.planoBase = ...;
-} else {
-  const fichas = Number(definicao.fichas || 0);      // <- só aqui
-  tx.set(refJogador, { fichas: FieldValue.increment(fichas), ... }, { merge: true });
+// configuracao/billing
+{
+  produtos: {
+    master_vip: {
+      assinatura: true,
+      planos: {
+        monthly_auto:   { mesesDoCiclo:  1, ativacao: 1500, mensal: 1000 },
+        quarterly_auto: { mesesDoCiclo:  3, ativacao: 2700, mensal: 1200 },
+        yearly_auto:    { mesesDoCiclo: 12, ativacao: 6500, mensal: 1500 },
+      },
+    },
+  },
 }
 ```
 
-Ou seja:
+`assinatura: true` é conferido contra o campo `assinatura` da chamada e recusa
+com `invalid-argument` se divergir. `planos` é lido por plano-base pela entrega
+de fichas. Nenhum campo a mais — `fichas` (raiz) continua existindo, mas só para
+produto avulso, e não há nenhum nesta leva.
 
-1. **Assinatura não credita ficha nenhuma hoje** — nem na ativação. O ramo
-   `ehAssinatura` grava `vip`, prazo e plano-base, e nada de econômico.
-2. `definicao.fichas` em `configuracao/billing` **só é lido para consumível**.
-   Escrever `fichas: 1500` no documento de uma assinatura seria um campo
-   silenciosamente ignorado.
-3. A RTDN não credita fichas. `rtdn.js` chama `aplicarProposta`, que escreve
-   `playerEntitlements/{uid}` e `billingEvents` — e só.
-4. A varredura `reconciliarEntitlements` também não: ela fecha direito vencido.
+### O único valor comercial ainda em aberto
 
-E há um problema estrutural além da ausência de código: **a Play não emite evento
-mensal para planos trimestral e anual.** A RTDN de renovação chega a cada ciclo
-de cobrança — de 3 em 3 meses, de 12 em 12. Não existe notificação para "mês 2 do
-plano anual". As entregas mensais de 1.200 e 1.500 fichas exigiriam um
-**concessor agendado**, com idempotência por (uid, plano, índice do mês), para
-não creditar duas vezes quando o job rodar de novo.
+A definição diz *"2.700 na ativação, 1.200 no 2º mês, 1.200 no 3º"* — que
+descreve **um** ciclo trimestral e não diz o que acontece no **mês 4**, quando a
+assinatura renova. Duas leituras cabem, e a diferença vale dinheiro.
 
-Isso é subsistema novo, não configuração. E a OS em vigor proíbe alterar a
-política econômica.
+O padrão implementado é: **o bônus de ativação acontece uma vez só.** Não é
+palpite — é a única leitura coerente com o plano mensal, que na mesma definição
+recebe 1.500 na ativação e 1.000 nos meses seguintes. Se renovar fosse ativar, o
+mensal receberia 1.500 todo mês e a frase "1.000 nos meses seguintes" não teria a
+quem se aplicar.
 
-### Por que isso trava a criação dos produtos
-
-Se os três produtos forem criados e `configuracao/billing` for preenchido agora,
-o resultado observável é: o jogador paga R$ 19,90, **recebe VIP e zero fichas** —
-nem as 1.500 da ativação. A Play Console, o `configuracao/billing` e o backend
-estariam em desacordo, que é a condição que a OS manda parar e reportar em vez de
-ajustar em silêncio.
+A outra leitura é uma linha de configuração, não um deploy:
+`ativacaoPorCiclo: true` no plano. Coberto por `FICHAS-10`.
 
 ---
 
-## 4. Bloqueio: o AAB não é disparável de onde está
+## 3. Fichas: era bloqueio, virou subsistema
 
-O workflow existe e está pronto (`.github/workflows/release-aab.yml`), mas:
+**O defeito:** assinatura creditava ZERO fichas — nem as da ativação. O ramo
+`ehAssinatura` de `validarCompraPlay` gravava `vip`, prazo e plano-base, e nada
+de econômico; o único crédito de fichas que existia era o de produto avulso. Um
+jogador que pagasse R$ 19,90 receberia acesso e nenhuma ficha.
 
-- o GitHub só oferece `workflow_dispatch` para workflows presentes na **branch
+**Por que não era um `increment` a mais:** a Play **não emite evento mensal** para
+os planos trimestral e anual. A RTDN de renovação chega a cada ciclo de cobrança
+— de 3 em 3 meses, de 12 em 12. Não existe notificação para "mês 2 do plano
+anual". A entrega mensal não pode ser reativa a evento.
+
+### O desenho
+
+| arquivo | papel |
+|---|---|
+| `functions-billing/fichas.js` | calendário e valor da parcela. Puro, sem Firestore |
+| `functions-billing/fichasStore.js` | a transação que paga a parcela, com o `db` injetado |
+| `concederFichasMensais` (`index.js`) | agendador diário que liquida o que venceu |
+
+**O índice do mês é a unidade de tudo.** Índice 0 é a ativação; índice N é o
+N-ésimo mês decorrido desde o início da assinatura, em meses de **calendário**
+(quem assinou em 31 de janeiro completa o mês 1 em 28 de fevereiro).
+
+Com isso a ativação deixa de ser caso especial: ela é o índice 0, passa pelo
+mesmo livro-razão, e o agendador vira — **sem existir código de reparo** — a rede
+de segurança da ativação. A validação credita o índice 0 na hora para o jogador
+não esperar; se falhar, o próximo tick paga. Nenhum dos dois credita duas vezes.
+
+**A idempotência:** uma linha por parcela, com chave determinística
+`fichasConcessoes/{purchaseTokenHash}_{indice}`. Criar a linha e creditar o saldo
+são a MESMA transação — a disciplina que `idempotencia.js` já impunha à concessão
+da compra. O `uid` não entra na chave de propósito: o titular de um token é único
+e já conferido, e se o uid entrasse, dois usuários disputando o mesmo token
+produziriam duas linhas e o crédito sairia dobrado.
+
+**`planoBase` passou a ser público em `playerEntitlements/{uid}`.** Com um produto
+só, é o único campo que diz se o jogador é mensal, trimestral ou anual — e é o
+que o agendador lê para saber quanto deve. Adição compatível: `EntitlementVip
+.fromMap` lê chaves nomeadas e ignora as demais, então nenhum consumidor Dart
+muda.
+
+### Portões
+
+`functions-billing`: **103/103** (`npm test`), partindo de 79 reais.
+
+> A baseline registrada como "80/80" vinha de `node --test` sem alvos, que
+> executa `test/apoio/firestore_falso.js` como se fosse arquivo de teste e conta
+> +1 fantasma. Os alvos explícitos de `package.json` são o número honesto.
+
+22 casos novos em `test/fichas.test.js`, mais `DOC-07`/`DOC-08`. Os que carregam
+o peso:
+
+- `FICHAS-15` amarra a política comercial mês a mês — falha se alguém trocar
+  1.500 por outro número sem decidir;
+- `FICHAS-18` prova dois ticks **concorrentes** na mesma parcela creditando uma
+  vez só, com interleaving real contra a contenção otimista do Firestore falso;
+- `FICHAS-21` prova validação e agendador convergindo na parcela de ativação;
+- `FICHAS-04` o mês curto (31/01 → 28/02), que sem o grude no último dia atrasaria
+  a parcela em três dias;
+- `DOC-07` o `planoBase` sobrevivendo à varredura por relógio — perdê-lo
+  suspenderia em silêncio as parcelas de um jogador adimplente.
+
+Nenhum arquivo Dart foi tocado: as baselines do Flutter (602/602, `analyze` com
+42 issues / 0 erros) seguem válidas por construção.
+
+---
+
+## 4. O que continua bloqueado — e é só a Play
+
+### 4.1 O AAB não é disparável de onde está
+
+- `workflow_dispatch` só é oferecido para workflows presentes na **branch
   padrão**;
-- a branch padrão deste repositório é `main`, e `main` tem apenas `build.yml`;
-- esta OS proíbe merge em `main`;
-- não há `gh` CLI nem credencial do GitHub nesta máquina — não consigo disparar
-  nem pela API.
+- a branch padrão é `main`, e `main` tem apenas `build.yml`;
+- não há `gh` CLI nem credencial do GitHub nesta máquina.
 
-Então gerar o primeiro AAB depende de uma decisão sua: levar **apenas o arquivo
-de workflow** para `main` (um commit de um arquivo, sem tocar em código de app),
-ou disparar o build por outro caminho.
+**Decidido:** a Sônia leva `.github/workflows/release-aab.yml` para `main` — um
+commit de um arquivo, sem tocar em código de app. Depois disso o workflow aparece
+em Actions e roda com `versionCode = 3` (o último aceito pela Play foi 2).
 
-Não fiz isso por conta própria porque mexer em `main` está explicitamente
-proibido — inclusive para um arquivo só.
+### 4.2 Nada abaixo disto é executável por um agente
 
----
+Criar produto na Play Console, instalar pela trilha interna, comprar com conta de
+teste e observar a RTDN real exigem a conta Google da Sônia, um aparelho físico e
+um instrumento de pagamento. Não são coisas que eu contorne — e a OS manda parar
+no gate em vez de improvisar.
 
-## 5. O que decidir
+### A sequência, na ordem
 
-**Decisão 1 — estrutura dos produtos.** Confirmar `master_vip` (ou outro nome)
-como product ID, com `monthly_auto` / `quarterly_auto` / `yearly_auto` como
-planos-base. O product ID é imutável depois de criado.
+1. `release-aab.yml` para `main`.
+2. Rodar o workflow: `versionCode 3`, `versionName 1.0.1`.
+3. Baixar `bmv-aab-teste-interno` → enviar em **Teste interno**. Nunca produção.
+4. Processado, conferir *Monetizar → Assinaturas*: o bloqueio deve ter sumido.
+5. Criar `master_vip` com os três planos-base da tabela da seção 2. Brasil.
+   Sem trial, sem oferta.
+6. Escrever `configuracao/billing` exatamente como a seção 2.
+7. **Só então** colar `master_vip` em `CatalogoBilling.oficial.assinaturas`
+   (`app/lib/billing/catalogo.dart`) e gerar o AAB seguinte, com
+   `versionCode = 4`.
+8. Compra real de teste — mensal, o de menor impacto.
 
-**Decisão 2 — fichas.** Três caminhos, em ordem de esforço:
-
-- **(a) Adiar as fichas.** Criar os produtos, homologar a compra real com VIP
-  apenas, e tratar o crédito de fichas como OS seguinte. É o caminho que destrava
-  a homologação comercial agora, e não exige mudar a política econômica — só
-  reconhecer que ela ainda não foi implementada.
-- **(b) Só a ativação.** Implementar o crédito de ativação (1.500 / 2.700 /
-  6.500), que é keyed por `basePlanId` e cabe dentro de `validarCompraPlay`.
-  Exige mudar o backend e o formato de `configuracao/billing`.
-- **(c) Completo.** (b) mais o concessor mensal agendado com idempotência por
-  mês. É o maior dos três e o único que entrega o benefício como está aprovado.
-
-**Decisão 3 — o workflow em `main`.** Autorizar (ou não) levar
-`release-aab.yml` para a branch padrão, que é o que torna o AAB disparável.
-
-Sem a 1 e a 3, nenhum produto pode ser criado. Sem a 2, os produtos podem ser
-criados, mas a compra real entregará menos do que a definição comercial promete —
-e isso precisa ser uma escolha registrada, não uma surpresa na homologação.
+O passo 7 é o motivo de o catálogo do cliente continuar **vazio** nesta branch:
+um ID que ainda não existe na Play faria o app consultar produto inexistente, e o
+vazio é comportamento testado (`configurado == false` → "nenhum produto
+disponível"). O primeiro AAB precisa exibir exatamente isso.
