@@ -24,7 +24,9 @@ const {
   MOTIVO,
   POLITICA,
   PISO,
+  TIPOS_QUE_PAGAM,
   RECUSA,
+  tipoMoveCarteira,
   chaveBoasVindas,
   chaveResultado,
   saldoLegivel,
@@ -102,7 +104,10 @@ const chaves = (r) => r.movimentos.map((m) => `${m.uid}:${m.motivo}:${m.deltaNom
 // POLITICA — os numeros aprovados
 // ===========================================================================
 
-test('ECO-01 boas-vindas valem exatamente 100', () => {
+test('ECO-01 boas-vindas valem exatamente 100 fichas — valor normativo da OS', () => {
+  // O NUMERO APROVADO, amarrado em teste. Ele aparece tambem, por extenso, no
+  // documento de fechamento (docs/OS-ECONOMIA-BOAS-VINDAS-E-RESULTADO.md): 100
+  // fichas na primeira concessao, uma vez por conta, para sempre.
   assert.strictEqual(POLITICA.boasVindas, 100);
 });
 
@@ -308,18 +313,80 @@ test('ECO-26 robo, convidado e espectador nao entram na carteira de ninguem', ()
   assert.deepStrictEqual(chaves(r), ['uidA:vitoria_partida:15', 'uidD:derrota_partida:-10']);
 });
 
-test('ECO-27 mesa so de robos contra um humano ainda paga o humano', () => {
+test('ECO-27 mesa CONTRA ROBOS nao paga nada: farm fechado', () => {
+  // A decisao comercial: bot nao reclama de perder e a mesa reinicia sozinha, o
+  // que faria disto o caminho mais barato de fabricar fichas no produto.
   const r = movimentosDoResultado(
     partida({
       tipo: 'contra_robos',
       participantes: [humano('uidA', 0), robo('b1', 1), robo('b2', 2), robo('b3', 3)],
     })
   );
-  // LEITURA LITERAL DA OS, e ela e o ponto comercial em aberto: a secao 7 lista
-  // as partidas que NAO pagam e `contra_robos` nao esta la. Se a decisao mudar,
-  // ela cabe em `tipoMoveCarteira` e este teste e quem avisa.
-  assert.strictEqual(r.recusa, null);
-  assert.deepStrictEqual(chaves(r), ['uidA:vitoria_partida:15']);
+  assert.deepStrictEqual(r.movimentos, []);
+  assert.strictEqual(r.recusa, RECUSA.TIPO_NAO_PAGA);
+});
+
+test('ECO-27b TREINAMENTO nao gera economia', () => {
+  const r = movimentosDoResultado(partida({ tipo: 'treinamento' }));
+  assert.deepStrictEqual(r.movimentos, []);
+  assert.strictEqual(r.recusa, RECUSA.TIPO_NAO_PAGA);
+});
+
+test('ECO-27c MESA PRIVADA nao movimenta: resultado combinavel entre dois', () => {
+  // O dono da sala escolhe os adversarios. Dois jogadores combinariam quem perde
+  // e quem ganha e fabricariam saldo em par, sem nenhum deles precisar mentir
+  // sobre o resultado — bastaria jogar de verdade e alternar.
+  const r = movimentosDoResultado(partida({ tipo: 'privada' }));
+  assert.deepStrictEqual(r.movimentos, []);
+  assert.strictEqual(r.recusa, RECUSA.TIPO_NAO_PAGA);
+});
+
+test('ECO-27d A TABELA INTEIRA, tipo a tipo — protecao contra regressao', () => {
+  // Os seis tipos que `TipoDePartida` declara, todos escritos aqui. Este teste
+  // cai se alguem acrescentar uma modalidade a `TIPOS_QUE_PAGAM` sem decidir, e
+  // cai se alguem tirar uma que paga.
+  const politica = {
+    publica_casual: true,
+    publica_ranqueada: true,
+    torneio: true,
+    treinamento: false,
+    contra_robos: false,
+    privada: false,
+  };
+
+  for (const [tipo, paga] of Object.entries(politica)) {
+    const r = movimentosDoResultado(partida({ tipo }));
+    assert.strictEqual(tipoMoveCarteira(tipo), paga, `tipoMoveCarteira(${tipo})`);
+    if (paga) {
+      assert.strictEqual(r.recusa, null, `${tipo} deveria pagar`);
+      assert.deepStrictEqual(chaves(r), [
+        'uidA:vitoria_partida:15',
+        'uidB:derrota_partida:-10',
+        'uidC:vitoria_partida:15',
+        'uidD:derrota_partida:-10',
+      ]);
+    } else {
+      assert.deepStrictEqual(r.movimentos, [], `${tipo} nao deveria pagar`);
+      assert.strictEqual(r.recusa, RECUSA.TIPO_NAO_PAGA, `${tipo}`);
+    }
+  }
+
+  // E a constante nao pode ter ganhado membro que a tabela acima nao conhece.
+  assert.deepStrictEqual(
+    [...TIPOS_QUE_PAGAM].sort(),
+    Object.keys(politica).filter((t) => politica[t]).sort()
+  );
+});
+
+test('ECO-27e tipo ausente, nulo ou desconhecido NAO paga — a duvida recusa', () => {
+  // Lista de permissao, e nao de exclusao: uma modalidade nova nao passa a pagar
+  // sozinha, e um documento sem `tipo` nao vira dinheiro por omissao.
+  for (const tipo of [undefined, null, '', 'publica', 'PUBLICA_CASUAL', 42, {}]) {
+    assert.strictEqual(tipoMoveCarteira(tipo), false, `${String(tipo)}`);
+    const r = movimentosDoResultado(partida({ tipo }));
+    assert.deepStrictEqual(r.movimentos, [], `${String(tipo)} movimentou`);
+    assert.strictEqual(r.recusa, RECUSA.TIPO_NAO_PAGA);
+  }
 });
 
 test('ECO-28 `lado` denormalizado adulterado invalida o registro inteiro', () => {

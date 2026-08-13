@@ -2,15 +2,41 @@
 
 Base: `0ea96c292f5c9f21ae0a884507c79a4bed3b3d20` (`homologacao/play-billing-comercial`).
 
-A regra comercial aprovada, implementada como está escrita:
+## A economia aprovada — texto normativo
+
+> ### Bônus de boas-vindas: **100 fichas**
+>
+> Todo jogador elegível recebe **exatamente 100 (cem) fichas** na **primeira e
+> única** concessão de boas-vindas.
+>
+> - concessão **única e idempotente**, uma vez por conta, **para sempre**;
+> - **contas antigas são elegíveis sem migração** — a primeira chamada credita as
+>   100 delas, e o saldo que já tinham é **somado**, não substituído;
+> - **autoridade exclusivamente server-side**: o cliente não informa valor, saldo
+>   nem "ainda não recebi";
+> - creditadas na **mesma carteira canônica** `usuarios/{uid}.fichas`.
+>
+> O número vive em `POLITICA.boasVindas` (`functions-economia/economia.js`) e está
+> amarrado pelo teste `ECO-01`.
 
 | Movimento | Valor | Quando |
 |---|---|---|
-| `boas_vindas` | **+100** | uma vez por conta, para sempre |
-| `vitoria_partida` | **+15** | por competidor humano do lado vencedor |
-| `derrota_partida` | **−10** | por competidor humano do lado perdedor, com piso zero |
+| `boas_vindas` | **+100 fichas** | uma vez por conta, para sempre |
+| `vitoria_partida` | **+15 fichas** | por competidor humano do lado vencedor, em partida elegível |
+| `derrota_partida` | **−10 fichas** | por competidor humano do lado perdedor, em partida elegível, com piso zero |
 
-Nenhum dos três depende de assinatura VIP, pacote Fundador/Pioneiro ou promoção.
+**Elegibilidade da partida** (decisão comercial fechada — ver §5):
+
+| Modalidade | Movimenta |
+|---|---|
+| `publica_casual` · `publica_ranqueada` · `torneio` | **+15 / −10** |
+| `treinamento` · `contra_robos` · `privada` | **0** |
+| anulada · cancelada · inconsistente · não concluída · sem resultado oficial | **0** |
+
+O saldo **nunca** fica negativo: piso absoluto em `0`.
+
+Nenhum destes valores depende de assinatura VIP, pacote Fundador/Pioneiro ou
+promoção.
 
 ---
 
@@ -123,7 +149,7 @@ functions-economia/
   economia.js        política, elegibilidade, piso e chaves — puro, sem Firestore
   economiaStore.js   a transação: recibo + saldo são a mesma escrita
   index.js           os gatilhos
-  test/              57 testes, `node --test`, sem emulador e sem node_modules
+  test/              63 testes, `node --test`, sem emulador e sem node_modules
 ```
 
 ### Autoridade
@@ -217,28 +243,61 @@ duplicado que a via idempotente não tem.
 
 ---
 
-## 5. Ponto comercial em aberto — decisão da Sônia
+## 5. Elegibilidade por modalidade — DECISÃO FECHADA
 
-**Quais modalidades de partida pagam.**
+A ambiguidade levantada na entrega anterior foi resolvida na revisão da OS. A
+política aprovada, implementada em `tipoMoveCarteira()`:
 
-A OS fechou "vitória válida = +15" e "derrota válida = −10" sem distinguir
-modalidade, e a seção 7 lista como não-pagantes apenas: anulada, cancelada,
-inconsistente, não concluída, inválida e interrompida sem resultado oficial.
-`treinamento`, `contra_robos` e `privada` **não estão nessa lista** — então, pela
-leitura literal, elas pagam, e é isso que está implementado.
+| Modalidade | Vitória | Derrota | Por quê |
+|---|---|---|---|
+| `publica_casual` | **+15** | **−10** | disputa humana real |
+| `publica_ranqueada` | **+15** | **−10** | disputa humana real |
+| `torneio` | **+15** | **−10** | disputa humana real |
+| `treinamento` | **0** | **0** | treino não gera economia |
+| `contra_robos` | **0** | **0** | seria o farm mais barato do produto: o bot não reclama de perder e a mesa reinicia sozinha |
+| `privada` | **0** | **0** | o dono da sala escolhe os adversários — dois jogadores combinariam quem perde e quem ganha e fabricariam saldo em par |
 
-**O que isso custa:** uma mesa contra robôs e uma mesa privada são os dois
-caminhos mais baratos de farmar +15 por partida que existem no produto.
+### Lista de permissão, e não de exclusão
 
-O domínio já tem o predicado que separaria isso — `TipoDePartida.alteraRanking`,
-verdadeiro só para `publica_ranqueada` e `torneio`. Usá-lo aqui seria inventar
-uma restrição comercial que a OS não pediu, e contrariaria o próprio
-`ledger_competitivo.dart`, que declara em texto que fichas e economia **não**
-passam pelo critério de ranking.
+`TIPOS_QUE_PAGAM` enumera as três modalidades que pagam. A diferença só aparece
+no dia em que alguém acrescentar uma modalidade: com lista de exclusão, ela
+passaria a pagar sozinha, sem ninguém decidir. Aqui ela **não paga** até ser
+escrita na constante — e "não paga" é o erro barato dos dois.
 
-A decisão, quando existir, cabe numa função só —
-`tipoMoveCarteira(tipo)` em `economia.js` — e o teste `ECO-27` é quem avisa se
-alguém a mudar sem decidir.
+Pelo mesmo critério, `tipo` **ausente, nulo ou desconhecido não paga** (`ECO-27e`).
+
+### Por que não é `TipoDePartida.alteraRanking`
+
+Apesar de o resultado quase coincidir, aquele predicado vale só para
+`publica_ranqueada` e `torneio`, e deixaria a **`publica_casual` de fora** — que é
+disputa humana de verdade. "Vale ranking" e "movimenta fichas" são duas decisões
+independentes, e `ledger_competitivo.dart` já declara em texto que economia e
+fichas **não** passam pelo critério de ranking. Amarrar as duas faria uma mudança
+de política de ranking mexer em dinheiro sem querer.
+
+### Proteção contra regressão
+
+| Teste | O que trava |
+|---|---|
+| `ECO-27` | `contra_robos` → 0 |
+| `ECO-27b` | `treinamento` → 0 |
+| `ECO-27c` | `privada` → 0 |
+| `ECO-27d` | a tabela inteira, tipo a tipo, e cai se `TIPOS_QUE_PAGAM` ganhar ou perder membro |
+| `ECO-27e` | tipo ausente/desconhecido → 0 |
+| `CAR-23b` | ponta a ponta: nenhuma escrita chega ao banco, `db.commits == 0` |
+| `CAR-23c` | 100 mesas contra robôs vencidas seguidas rendem **exatamente 0** |
+
+### Observação residual, para uma decisão futura — não implementada
+
+A regra é por **modalidade**, então uma mesa `publica_casual` ou
+`publica_ranqueada` **com robô sentado** paga normalmente. O domínio permite isso
+(`TipoDePartida.roboEsperado` é falso para elas, mas nada no registro proíbe um
+robô no assento), e o registro já carrega `temRobo` — o dado para fechar essa
+porta existe.
+
+Não foi implementado porque a decisão aprovada é explicitamente por modalidade, e
+estender por conta própria seria inventar regra. Fica registrado aqui como
+observação, junto do item de §8.
 
 ---
 
@@ -280,7 +339,43 @@ plantar `partida|{matchId}|{uid}|derrota_partida` vazio e o gatilho encontraria 
 recibo e não debitaria. Fraude sem precisar mentir sobre o resultado. `ECON-06`
 prova que está fechado.
 
-## 8. Como rodar
+## 8. Pendências REGISTRADAS — fora do escopo desta OS
+
+Nenhuma das duas foi corrigida aqui, por decisão expressa da revisão: evitar
+expansão de escopo.
+
+### 8.1 `rankingLedger` provavelmente é varrível pelo admin
+
+O mesmo defeito que §7 descreve e que corrigi em `economiaLedger` existe, pelo
+formato, na coleção vizinha:
+
+```
+match /rankingLedger/{chaveIdempotencia} {
+  allow read: if autenticado()
+              && (resource.data.userId == request.auth.uid || ehAdmin());
+  allow write: if false;
+}
+```
+
+`allow read` cobre `get` **e** `list`. Num `list`, o predicado é avaliado
+documento a documento, e `ehAdmin()` — que não depende de documento nenhum —
+autoriza um `getDocs('rankingLedger')` sobre a coleção inteira. A escrita
+continua fechada; o que vaza é leitura em massa do histórico competitivo.
+
+**Correção provável:** separar os verbos, como em `economiaLedger`
+(`allow get: …` + `allow list: if false`), e servir o extrato paginado por
+`consultarExtratoCompetitivo`, que já existe e já faz exatamente isso.
+
+**Encaminhamento:** OS específica de segurança/regras. Vale conferir, no mesmo
+passe, todas as coleções que usam `allow read` com `|| ehAdmin()`.
+
+### 8.2 Robô em mesa pública
+
+Ver §5, "Observação residual". A modalidade paga; o participante robô não recebe
+nada (não tem conta), mas o humano da mesa recebe. Fechar essa porta exigiria
+decisão comercial nova.
+
+## 9. Como rodar
 
 ```bash
 cd functions-economia && npm test

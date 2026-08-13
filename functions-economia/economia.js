@@ -11,6 +11,11 @@
  *    +15  por vitoria em partida valida
  *    -10  por derrota em partida valida, com piso absoluto em zero
  *
+ * "PARTIDA VALIDA" tem definicao fechada e ela mora em dois lugares, os dois
+ * neste arquivo: [ESTADOS_QUE_VALEM] (o desfecho contou) e [TIPOS_QUE_PAGAM] (a
+ * modalidade movimenta economia). Treinamento, mesa contra robos e mesa privada
+ * valem ZERO — ver [tipoMoveCarteira].
+ *
  * Nenhum desses valores depende de nada que o jogador tenha comprado. Por isso
  * eles vivem AQUI, e nao em `functions-billing/`: um deploy de economia basica
  * nao pode derrubar a validacao de compra, e uma mudanca de catalogo pago nao
@@ -114,28 +119,48 @@ const PISO = 0;
 const ESTADOS_QUE_VALEM = Object.freeze(['finalizada', 'abandonada']);
 
 /**
+ * Os tipos de partida que movimentam a carteira. DECISAO COMERCIAL FECHADA.
+ *
+ * Lista de PERMISSAO explicita, e nao lista de exclusao, por uma diferenca que
+ * so aparece no dia em que alguem acrescentar uma modalidade: com lista de
+ * exclusao, a modalidade nova passaria a pagar sozinha, sem ninguem decidir.
+ * Aqui ela nao paga ate ser escrita nesta constante — e "nao paga" e o erro
+ * barato dos dois.
+ *
+ * Pelo mesmo motivo, `tipo` ausente, nulo ou desconhecido nao paga: a duvida
+ * recusa, que e a regra do codebase inteiro.
+ */
+const TIPOS_QUE_PAGAM = Object.freeze([
+  'publica_casual',
+  'publica_ranqueada',
+  'torneio',
+]);
+
+/**
  * Este TIPO de partida movimenta a carteira?
  *
- * PONTO DE DECISAO COMERCIAL EM ABERTO, e ele esta isolado nesta funcao de
- * proposito. A OS fechou "vitoria valida = +15" e "derrota valida = -10" sem
- * distinguir modalidade, e listou como nao-pagantes apenas as partidas anuladas,
- * canceladas, inconsistentes, nao concluidas, invalidas ou interrompidas sem
- * resultado oficial. `treinamento`, `contra_robos` e `privada` nao estao nessa
- * lista — logo, pela leitura literal da OS, elas pagam, e e isso que esta
- * implementado.
+ * POLITICA APROVADA — mesa humana oficial paga, o resto vale zero:
  *
- * O QUE ISSO CUSTA, e quem decidir precisa saber: uma mesa contra robos e uma
- * mesa privada sao os dois caminhos mais baratos de farmar +15 por partida. O
- * dominio ja tem o predicado que separaria isso — `TipoDePartida.alteraRanking`,
- * que vale so para `publica_ranqueada` e `torneio` — mas usa-lo aqui seria
- * inventar uma restricao comercial que a OS nao pediu, e contrariaria o proprio
- * `ledger_competitivo.dart`, que declara que economia e fichas NAO passam pelo
- * criterio de ranking.
+ *   publica_casual      +15 / -10
+ *   publica_ranqueada   +15 / -10
+ *   torneio             +15 / -10
+ *   treinamento           0     treino nao gera economia
+ *   contra_robos          0     seria o farm mais barato do produto: bot nao
+ *                               reclama de perder, e a mesa reinicia sozinha
+ *   privada               0     o dono da sala escolhe os adversarios, entao
+ *                               dois jogadores combinariam quem perde e quem
+ *                               ganha e fabricariam saldo em par
  *
- * Quando a decisao existir, ela cabe nesta funcao e em nenhum outro lugar.
+ * POR QUE ISTO NAO E `TipoDePartida.alteraRanking`, apesar de o resultado quase
+ * coincidir: aquele predicado vale so para `publica_ranqueada` e `torneio`, e
+ * deixaria a `publica_casual` de fora. Uma mesa publica casual e disputa humana
+ * de verdade — ela nao pontua no ranking, e isso e outra pergunta. Sao duas
+ * decisoes independentes, e `ledger_competitivo.dart` ja declara em texto que
+ * economia e fichas NAO passam pelo criterio de ranking; amarrar as duas aqui
+ * faria uma mudanca de politica de ranking mexer em dinheiro sem querer.
  */
-function tipoMoveCarteira(_tipo) {
-  return true;
+function tipoMoveCarteira(tipo) {
+  return typeof tipo === 'string' && TIPOS_QUE_PAGAM.includes(tipo);
 }
 
 /**
@@ -334,6 +359,7 @@ module.exports = {
   POLITICA,
   PISO,
   ESTADOS_QUE_VALEM,
+  TIPOS_QUE_PAGAM,
   RECUSA,
   tipoMoveCarteira,
   chaveBoasVindas,

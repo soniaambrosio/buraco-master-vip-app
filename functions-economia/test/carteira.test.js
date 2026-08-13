@@ -455,6 +455,45 @@ test('CAR-23 partida NAO CONCLUIDA nao movimenta carteira nenhuma', async () => 
   assert.deepStrictEqual(recibos(db), []);
 });
 
+test('CAR-23b TREINAMENTO, CONTRA ROBOS e PRIVADA nao encostam na carteira', async () => {
+  // A ponta a ponta da decisao comercial: nao basta `movimentosDoResultado`
+  // devolver lista vazia — nenhuma escrita pode chegar ao banco.
+  for (const tipo of ['treinamento', 'contra_robos', 'privada']) {
+    const { db, carteira } = montar();
+    comSaldo(db, 'uidA', 50);
+    comSaldo(db, 'uidB', 50);
+
+    const r = await liquidar(carteira, MATCH, partidaFinalizada({ tipo }));
+
+    assert.strictEqual(r.recusa, 'tipo_nao_move_carteira', tipo);
+    assert.strictEqual(saldoDe(db, 'uidA'), 50, `${tipo} mexeu no vencedor`);
+    assert.strictEqual(saldoDe(db, 'uidB'), 50, `${tipo} mexeu no perdedor`);
+    assert.deepStrictEqual(recibos(db), [], `${tipo} deixou recibo`);
+    assert.strictEqual(db.commits, 0, `${tipo} abriu transacao`);
+  }
+});
+
+test('CAR-23c farm por repeticao contra robos rende exatamente zero', async () => {
+  // O ataque que a decisao fecha: cem mesas contra bots, todas vencidas.
+  const { db, carteira } = montar();
+  comSaldo(db, 'uidA', 0);
+
+  for (let i = 0; i < 100; i += 1) {
+    await liquidar(
+      carteira,
+      `match-farm-${i}`,
+      partidaFinalizada({
+        matchId: `match-farm-${i}`,
+        tipo: 'contra_robos',
+        participantes: [humano('uidA', 0), humano('uidB', 1)],
+      })
+    );
+  }
+
+  assert.strictEqual(saldoDe(db, 'uidA'), 0);
+  assert.deepStrictEqual(recibos(db), []);
+});
+
 test('CAR-24 dois gatilhos CONCORRENTES sobre a mesma mesa pagam uma vez so', async () => {
   const { db, carteira } = montar();
   comSaldo(db, 'uidA', 50);
