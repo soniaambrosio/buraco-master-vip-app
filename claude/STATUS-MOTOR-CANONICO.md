@@ -18,7 +18,7 @@
 - **EXC-01 (trinca c/ curinga): RECONCILIADA** — o legado atual já recusa Joker em trinca; canônico também → ambos recusam / CONVERGE. Não dirigível por transação.
 - **EXC-02 (abertura múltipla atômica): DIVERGÊNCIA VIVA** — única dirigível por sombra. Legado baixa 1 jogo/chamada (1º < mínimo → RECUSA); canônico soma numa abertura atômica (≥ mínimo → ACEITA). Verificada por `_ehEXC02` pela **ECONOMIA REAL** (C9-C2c-fix): via `avaliarBaixar` (autoridade canônica), exige 1º jogo isolado ABAIXO do mínimo **e** conjunto atômico ATINGINDO o mínimo — não só o formato. Detector negativo `C9-EXC02-FORMATO-SEM-ECONOMIA` garante que formato sem economia → INESPERADA.
 - **EXC-03 (lixo fechado desacoplado): NÍVEL-FUNÇÃO** — o `Acao ComprarLixo` não carrega `jogosNovos`, então não é dirigível por transação de sombra; coberta chamando `avaliarComprarLixo` direto.
-- **EXC-04 (grupo de ases): RECONCILIADA em nível de ESTADO** — Fechado ambos aceitam (mesmo meld), Aberto ambos recusam. Resta só diferença de classificação/pontuação (de_as × trinca), fora da assinatura de estado.
+- **EXC-04 (grupo de ases): RECONCILIADA em nível de ESTADO** — Fechado ambos aceitam (mesmo meld), Aberto ambos recusam. Restava só diferença de classificação/pontuação (de_as × trinca), fora da assinatura de estado. **FECHADA no C10 Parte 2** — a pontuação passou a ter um classificador só.
 - **Classificador:** `excConhecida` → `excVerificada` (verificada por condição concreta) nas duas saídas; EXC declarada sem condição real → INESPERADA; condição real sem id correto → INESPERADA. Quatro quadrantes de legalidade mantidos.
 - **Exaustão:** canônico `ComprarMonte` com monte+mortos vazios agora ENCERRA a rodada (`rodadaEncerrada=true`) — mesmo efeito do legado; assinaturas coincidem → CONVERGE.
 - **Meta final:** ZERO inesperadas em todos os cenários convergentes (as INESPERADAS restantes são injeções propositais e negativos do verificador, todas com Replay).
@@ -38,6 +38,21 @@
 Vulnerabilidade +75/+90 (limiar meta/2 = 750, uniforme bot=humano); trinca só natural no Fechado; Joker e "2" fora da trinca; abertura múltipla atômica; topo do lixo com uso em ≥1 jogo; jogador e bot mesma legalidade; **fase do turno é regra**; **esvaziar a mão é regra**; UI não decide regra. Conversão §8.1: monte vazio → morto de menor índice vira monte (agora no canônico também). Exaustão: monte+mortos vazios encerra a rodada (canônico == legado).
 Pontuação: A=15, JOKER=50, 2=10, 8..K=10, 3..7=5; canastra as_a_as=1000/de_500=500/limpa=200/suja=100; batida +100; mão desconta; morto não pego −100 (isento se convertido).
 
+## C10 — corte canônico (promoção à autoridade padrão da partida LOCAL)
+- **Parte 1 — `14b8d03` (= `fa1902f` + `ff89f79` + `ab7f46d` + `14b8d03`) — APROVADA pela Sônia.** Contrato ATÔMICO da compra do lixo Fechado/STBL (EXC-03): `ComprarLixo(topoDeclarado, jogosNovos, extensoes)`, `derivarCandidatosCompraLixoFechado` (lazy/streaming, sem caps e sem materializar 2^n), `MotorConfig.producao()`/`legadoRollback()`. `mesa.dart` intocado, flag OFF. Suíte 325 `test()`.
+- **Parte 2 — PROMOÇÃO DO CONSUMIDOR REAL — entregue para revisão + CI.** Ver `RELATORIO-C10-PARTE2-PROMOCAO.md`. Base `14b8d03`.
+  - **ROOT flipado:** a partida local nasce em `MotorConfig.producao()`; rollback só por `MesaScreen(motorConfig: MotorConfig.legadoRollback())`, pré-transação e imutável depois.
+  - **Autoridade ÚNICA:** acabou o fallback técnico. Falha técnica é **fail-closed** (recusa + estado intacto + evidência em `ultimaFalhaTecnica`). `_falharFechado` substituiu `_registrarFallbackTecnico`.
+  - **`estender` roteado:** era o último furo; virou `Baixar(extensoes:)` via o novo `Jogo.baixarAtomico` — que é também como a **abertura múltipla (EXC-02)** existe no modelo.
+  - **EXC-04 FECHADA:** `contarPontos()` e `pontosMesaAoVivo` contam por `pontuacao_canonica` + `meld_validator`. A diferença que sobrava era de classificação na hora de pontuar (`de_as` × `trinca`); com um só classificador no caminho, não há duas respostas. Costura nova: `motor/pontuacao_costura.dart`.
+  - **Lixo no consumidor real:** 0 → recusa, 1 → executa, 2+ → seletor mínimo (a autoridade enumera, o jogador escolhe). Derivação **agendada fora do frame**, sem nenhum cap semântico.
+  - **Robô auditado:** heurística escolhe a intenção e qual candidato; a legalidade é sempre canônica. As redes que chamavam `_passarVez()` direto viraram parada com evidência; `_rodarBots` ganhou guarda de progresso.
+  - **`lixoTopoObrigatorio` morreu sob o canônico:** com a compra atômica a obrigação diferida não nasce. É a prova de que o §5 foi respeitado.
+  - **Verificação local (overlay do CI reproduzido):** 358 `test()` verdes; `flutter analyze` com 0 erros e diff de avisos **idêntico** ao de `14b8d03`. Não substitui o portão §16.
+  - **Sombra:** exclusivamente diagnóstica — `producao()` nasce com sombra OFF e `mesa.dart` nunca consulta `sombraAtiva`.
+
 ## Próximo
-1. **Direção/Sônia:** versionar esta documentação na branch oficial (base `d0664c2`) e informar o novo hash como **base do C9-D**.
-2. **C9-D — só após autorização explícita da direção.** Ativação atrás da flag, autoridade ON na fronteira atômica; padrão OFF; RuleSpec inalterada. **Não iniciado.**
+1. **Sônia:** aplicar o bundle/diff da Parte 2 na `auditoria/regras-bmv` e rodar o **Build APK**. Nada é concluído sem CI verde + revisão (§16).
+2. **Decisão de produto pendente (§18, reportada e não contornada):** abertura múltipla no **gesto** da mesa. O motor faz, a compra do lixo usa, mas o toque no feltro baixa um jogo por vez. Três opções no relatório da Parte 2 — nenhuma implementada.
+3. **Opcional de CI:** mover "Declare assets in pubspec" para antes do portão de qualidade, para viabilizar teste de widget da mesa.
+4. **Online/Railway:** fora do C10 (§15). Sem merge, deploy ou publicação sem autorização explícita.
