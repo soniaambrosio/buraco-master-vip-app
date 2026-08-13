@@ -35,6 +35,13 @@
       "ignore": ["node_modules", ".git", "*.log"]
     },
     {
+      "//": "ECONOMIA BASICA — garantirBonusDeBoasVindas, aoRegistrarPartida, reprocessarResultadoDaPartida. Codebase PROPRIO pelo mesmo criterio dos outros quatro: e unidade de implantacao independente. A carteira que ele move (`usuarios/{uid}.fichas`) e a MESMA que billing credita — nao existe carteira paralela —, mas o codigo que a move por vencer uma partida nao precisa subir junto com o que valida compra na Play. Sem `predeploy`: nao depende do dominio Dart compilado.",
+      "source": "functions-economia",
+      "codebase": "economia",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
       "//": "MODERACAO — registrarDenuncia, bloquearJogador, desbloquearJogador, consultarContato, aplicarSancao, revogarSancao. Codebase PROPRIO, e nao um acrescimo a torneios, pelo mesmo motivo que separa os outros tres: sao unidades de implantacao independentes, e um deploy de moderacao nao pode derrubar a inscricao em torneio nem a validacao de compra.",
       "source": "functions-moderacao",
       "codebase": "moderacao",

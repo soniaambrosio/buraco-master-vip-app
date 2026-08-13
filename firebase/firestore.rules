@@ -715,6 +715,49 @@ service cloud.firestore {
       }
     }
 
+    // =====================================================================
+    // ECONOMIA BASICA DO JOGADOR
+    // origem: OS Economia inicial e recompensa por resultado de partida v1
+    //
+    // NAO recebe numero de bloco: a numeracao "n/5" acima descreve a UNIAO das
+    // branches consolidadas em 2026, e esta colecao nao veio de nenhuma delas.
+    //
+    // A CARTEIRA em si NAO esta aqui — ela e `usuarios/{uid}.fichas`, ja
+    // declarada como campo de servidor no bloco 2/3 acima, e esta OS nao mudou
+    // uma linha daquele bloco. O que entra aqui e so o LIVRO-RAZAO dos
+    // movimentos de boas-vindas, vitoria e derrota.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Livro-razao da economia basica (secoes 5 e 9 da OS)
+    // ---------------------------------------------------------------------
+    // O jogador LE o proprio recibo — e direito dele saber por que o saldo
+    // mudou, e esconder isso so gera chamado de suporte.
+    //
+    // `get` e `list` SEPARADOS, e aqui esta a diferenca deliberada em relacao a
+    // `rankingLedger` logo acima: `allow read` cobre os dois verbos, e num
+    // `list` o predicado e avaliado documento a documento — o que faz
+    // `ehAdmin()`, que nao depende de documento nenhum, autorizar a varredura da
+    // colecao INTEIRA. Um `getDocs('economiaLedger')` traria a economia do jogo
+    // toda: quem joga, quanto ganha, com que frequencia e contra quem. O extrato
+    // paginado, quando existir, sai por Function — e o mesmo desenho de
+    // `consultarExtratoCompetitivo`, que serve o ledger competitivo sem abrir
+    // consulta de cliente.
+    //
+    // ESCRITA NEGADA A TODO MUNDO, inclusive ao admin pelo cliente. A colecao e
+    // escrita so por `functions-economia` (Admin SDK, que ignora estas regras),
+    // e o motivo e direto: o id do documento E a chave de idempotencia, entao
+    // quem conseguisse criar um documento aqui a mao conseguiria CANCELAR o
+    // proprio debito de derrota antes que ele acontecesse — bastaria plantar
+    // `partida|{matchId}|{uid}|derrota_partida` vazio e o gatilho encontraria o
+    // recibo e nao debitaria. Negar a escrita e o que impede isso.
+    match /economiaLedger/{chaveIdempotencia} {
+      allow get: if autenticado()
+                 && (resource.data.uid == request.auth.uid || ehAdmin());
+      allow list: if false;
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
     // ---------------------------------------------------------------------
