@@ -1,5 +1,13 @@
 # Relatório — C10 Parte 2: promoção do consumidor real
 
+> **REPROVADO na revisão.** As correções estão em
+> `RELATORIO-C10-PARTE2-REVISAO-1.md`. Três afirmações deste documento ficaram
+> obsoletas: (a) a §8.3 aqui descrita — conversão isentando o -100 — foi
+> **rejeitada** como regra; (b) o §5.1 (abertura múltipla pendente de decisão)
+> foi **resolvido**: o consumidor humano existe, pelo gesto aprovado; (c) o §1.6
+> alegava execução fora do frame com `Future`, o que **não** procede — hoje é
+> `compute`, em outro isolate. O resto deste relatório continua válido.
+
 **Base:** `14b8d032732866631715504707fb32aad2c82f51` (Parte 1 aprovada, no `origin/auditoria/regras-bmv`).
 **Escopo:** partida **LOCAL**. Online/Railway continua fora do C10 (§15).
 **RuleSpec:** `bmv-regras-2026.08` — **inalterada**.

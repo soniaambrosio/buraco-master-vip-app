@@ -51,8 +51,17 @@ Pontuação: A=15, JOKER=50, 2=10, 8..K=10, 3..7=5; canastra as_a_as=1000/de_500
   - **Verificação local (overlay do CI reproduzido):** 358 `test()` verdes; `flutter analyze` com 0 erros e diff de avisos **idêntico** ao de `14b8d03`. Não substitui o portão §16.
   - **Sombra:** exclusivamente diagnóstica — `producao()` nasce com sombra OFF e `mesa.dart` nunca consulta `sombraAtiva`.
 
+- **Parte 2 / REVISÃO 1 — entrega `1dfa572` REPROVADA; correções cirúrgicas entregues.** Ver `RELATORIO-C10-PARTE2-REVISAO-1.md`. Base `1dfa572`.
+  - **CORREÇÃO DE REGRA — a conversão §8.1 NÃO isenta o -100.** `!mortoConvertido` (canônico) e `_mortosConvertidos == 0` (legado) removidos; `EntradaRodada.mortoConvertido` deixou de existir. A conversão segue registrada no envelope, sem efeito de pontuação. Três asserções que afirmavam a isenção foram viradas (`PONT-09`, `FLUX-21`, C3, C9-C2a-fix). O commit do ramo legado é isolado e revertível sozinho.
+  - **FAIL-CLOSED do robô:** `falhasTecnicas` (contador monotônico) + checagem depois de CADA tentativa canônica. Falha técnica encerra o turno sem segunda transação — não compra monte depois de falhar no lixo, não tenta outro grupo, outra extensão nem outro descarte.
+  - **Abertura múltipla no CONSUMIDOR REAL:** `derivarParticoesAbertura` reparte a seleção do jogador (0 recusa / 1 executa / 2+ seletor). O gesto aprovado não mudou; um meld continua dando uma partição. `_botAbrir` faz a abertura composta do robô quando o mínimo depende da soma.
+  - **Derivação FORA do isolate de UI:** a alegação de `Future(() => ...)` estava errada e foi removida; agora é `compute`. Sem teto de espécie alguma. `C10-ISOLATE-01` prova que os payloads atravessam a fronteira e voltam idênticos. Segunda derivação no caso 0 candidatos eliminada.
+  - **Cabeçalhos:** os onze arquivos de `rules/` que entraram em runtime deixaram de afirmar "SEM comportamento de produção"; `rules_engine.dart` e `sombra.dart` ficaram explicitamente fora.
+  - **Verificação local:** 371 `test()` verdes; `flutter analyze` com 0 erros e diff de avisos idêntico ao de `14b8d03`.
+
 ## Próximo
-1. **Sônia:** aplicar o bundle/diff da Parte 2 na `auditoria/regras-bmv` e rodar o **Build APK**. Nada é concluído sem CI verde + revisão (§16).
-2. **Decisão de produto pendente (§18, reportada e não contornada):** abertura múltipla no **gesto** da mesa. O motor faz, a compra do lixo usa, mas o toque no feltro baixa um jogo por vez. Três opções no relatório da Parte 2 — nenhuma implementada.
+1. **Sônia:** aplicar o bundle/diff da revisão 1 e rodar o **Build APK**. Nada é concluído sem CI verde + nova revisão (§16). **C10 NÃO está encerrada.**
+2. **Aval necessário:** a correção do -100 no ramo LEGADO (`72345e6`). A OS pedia para não alterar o rollback; a correção de regra pedia para remover "qualquer equivalente". Resolvido pelo lado da regra, em commit isolado para poder ser revertido sozinho.
 3. **Opcional de CI:** mover "Declare assets in pubspec" para antes do portão de qualidade, para viabilizar teste de widget da mesa.
-4. **Online/Railway:** fora do C10 (§15). Sem merge, deploy ou publicação sem autorização explícita.
+4. **Fora desta entrega, por instrução:** a OS ampla de Inteligência Estratégica do Bot, que roda depois do C10 homologado.
+5. **Online/Railway:** fora do C10 (§15). Sem merge, deploy ou publicação sem autorização explícita.
