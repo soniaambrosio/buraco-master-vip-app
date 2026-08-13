@@ -135,6 +135,7 @@ const CLASSE = {
   FUNCIONAL: 'FALHA-FUNCIONAL',
   INFRA: 'INFRAESTRUTURA',
   INCOMPLETA: 'SUITE-INCOMPLETA',
+  CLEANUP: 'CLEANUP-INCOMPLETO',
   INDETERMINADA: 'INDETERMINADA',
 };
 
@@ -156,7 +157,10 @@ const CLASSE = {
 /// e o que §11 exige: a camada de robustez nao ESCONDE a falha funcional, ela so
 /// se recusa a chamar de "suite executada" uma suite que foi interrompida.
 function classificar(entrada) {
-  const { relatorio, esperado, alvo = null, codigo = 0, temRecibo = true } = entrada;
+  const {
+    relatorio, esperado, alvo = null, codigo = 0, temRecibo = true,
+    dreno = { ok: true, ocupadas: [] },
+  } = entrada;
 
   if (!temRecibo) {
     return codigo !== 0
@@ -214,6 +218,39 @@ function classificar(entrada) {
       exit: codigo,
       problemas: ['O relatorio esta integro e mesmo assim o processo saiu com codigo '
         + `${codigo}. Algo fora da suite quebrou — o proprio exec, o npm ou o shell.`],
+    };
+  }
+
+  // DRENO POR ULTIMO, e so sobre o caminho que ja seria verde.
+  //
+  // Uma execucao que termina deixando porta presa NAO e um portao verde: ela
+  // acabou de sabotar a proxima. Avisar e sair 0 — como este runner fazia — e a
+  // mesma classe de defeito que a OS veio consertar, so que do lado do cleanup:
+  // o relatorio diz "pode seguir" sobre um ambiente que nao pode receber
+  // ninguem.
+  //
+  // Vem por ULTIMO de proposito. Se a suite falhou, pulou ou cancelou, a classe
+  // dela ja venceu e o exit ja e diferente de zero — o dreno nao tem por que
+  // reescrever esse diagnostico. Este ramo so consegue transformar VERDE em
+  // vermelho, nunca esconder um vermelho que ja existia.
+  if (!dreno.ok) {
+    const lista = (dreno.ocupadas || [])
+      .map((o) => `    ${String(o.nome).padEnd(10)} ${o.porta}`).join('\n');
+    return {
+      classe: CLASSE.CLEANUP,
+      exit: 6,
+      problemas: [
+        'OS TESTES PASSARAM: a suite subiu, rodou inteira e nao teve falha, pulo\n'
+        + `  nem cancelamento (${resumir(relatorio)}).\n\n`
+        + '  O que falhou foi o ENCERRAMENTO. Estas portas continuaram ocupadas\n'
+        + '  depois do limite de dreno:\n\n' + lista + '\n\n'
+        + '  Quem herda a maquina encontra o ambiente preso, e a proxima execucao\n'
+        + '  vai esbarrar nelas. Uma execucao que termina prendendo recurso nao e\n'
+        + '  portao verde — o resultado da suite acima continua valendo, mas ESTA\n'
+        + '  EXECUCAO nao pode ser apresentada como sucesso.\n\n'
+        + '  Confira o dono das portas (`netstat -ano`, so o estado LISTENING conta)\n'
+        + '  e derrube o processo antes da proxima execucao.',
+      ],
     };
   }
 

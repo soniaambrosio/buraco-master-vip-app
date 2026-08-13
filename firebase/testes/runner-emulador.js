@@ -44,6 +44,9 @@
 //                                 cancelou, encolheu ou nao deixou recibo.
 //                                 Nao e defeito de codigo nem de maquina — e
 //                                 ausencia de prova, o falso verde desta OS.
+//    class=CLEANUP-INCOMPLETO  6  a suite passou, mas a execucao terminou com
+//                                 porta presa. Nao e verde: ela acabou de
+//                                 sabotar a proxima execucao.
 //    class=INDETERMINADA ..... n  relatorio integro e mesmo assim exit != 0.
 //                                 Repassa o codigo: inventar classe seria chute.
 
@@ -73,6 +76,16 @@ const PROJETO = 'demo-bmv';
 const ESPERA_MS = process.env.BMV_EMULADOR_ESPERA_MS !== undefined
   ? Number(process.env.BMV_EMULADOR_ESPERA_MS)
   : 90_000;
+
+/// Quanto se espera, DEPOIS da suite, as portas voltarem. Estourar isto reprova
+/// a execucao: ver o ramo de dreno em `classificar`. 30s e folgado para o rabo de
+/// alguns segundos que o `emulators:exec` costuma deixar nesta maquina — se
+/// passar disso, nao e mais rabo de encerramento, e recurso preso.
+/// `BMV_EMULADOR_DRENO_MS` existe para os testes conseguirem provocar o estouro
+/// sem esperar meio minuto.
+const DRENO_MS = process.env.BMV_EMULADOR_DRENO_MS !== undefined
+  ? Number(process.env.BMV_EMULADOR_DRENO_MS)
+  : 30_000;
 
 /// As portas que o Emulator Suite reserva. As quatro primeiras estao declaradas
 /// em `firebase.json`; hub, logging, eventarc e tasks o CLI sobe sozinho, com
@@ -278,12 +291,23 @@ async function principal() {
   // A partir daqui a trava e nossa: TODO caminho de saida passa pelo cleanup.
   let filho = null;
   let encerrando = false;
+  let portasPresas = [];
 
   const limpar = () => {
     if (filho && filho.exitCode === null && filho.signalCode === null) {
       matarArvore(filho.pid);
     }
     apagarRecibo();
+
+    // A trava CAI mesmo com porta presa, e de proposito: uma trava sem dono vivo
+    // so bloquearia o projeto sem proteger nada — o que ainda protege e o teste de
+    // bind, que a proxima execucao faz nas oito portas e que enxerga o ocupante
+    // independentemente de quem seja. O que nao pode acontecer e a liberacao ser
+    // LIDA como "ambiente saudavel": por isso ela e anunciada com o estrago junto.
+    if (portasPresas.length > 0) {
+      erro(`cleanup=FAIL lock=liberado ports_presas=${portasPresas.map((o) => `${o.nome}:${o.porta}`).join(',')}`
+        + ' — a trava saiu, mas o ambiente NAO esta livre; a proxima execucao vai esbarrar nestas portas.');
+    }
     trava.liberar();
   };
 
@@ -416,18 +440,21 @@ async function principal() {
   // que e exatamente a colisao que este runner existe para eliminar — so que
   // provocada por ele mesmo.
   //
-  // Nao falha se o dreno estourar: a suite JA rodou e o resultado dela e o que
-  // vale (§11). O que se deve a quem vem depois e o aviso, e nao um vermelho.
+  // Estourar o dreno REPROVA a execucao (classe CLEANUP-INCOMPLETO, exit 6).
+  // Avisar e sair 0 seria dizer "pode seguir" sobre um ambiente que nao pode
+  // receber ninguem — e quem paga e a execucao seguinte, que encontra as portas
+  // presas. Quem decide e `classificar`, no fim: aqui so se mede.
   const dreno = await esperarPortasLivres(PORTAS, {
-    timeoutMs: 30_000,
+    timeoutMs: DRENO_MS,
     aoTentar: (ocupadas) => log(
       `cleanup=aguardando dreno das portas ${ocupadas.map((o) => o.porta).join(',')}`,
     ),
   });
+  portasPresas = dreno.livre ? [] : dreno.ocupadas;
   log(dreno.livre
     ? 'cleanup=ok ports=released'
-    : `cleanup=parcial ports=${dreno.ocupadas.map((o) => `${o.nome}:${o.porta}`).join(',')} `
-      + '(ainda escutando apos 30s — a proxima execucao vai esperar por elas)');
+    : `cleanup=FAIL ports=${dreno.ocupadas.map((o) => `${o.nome}:${o.porta}`).join(',')} `
+      + `(ainda escutando apos ${Math.round(DRENO_MS / 1000)}s)`);
 
   // ---- 7. o recibo ---------------------------------------------------------
   //
@@ -456,6 +483,7 @@ async function principal() {
     alvo: nome,
     codigo,
     temRecibo,
+    dreno: { ok: dreno.livre, ocupadas: dreno.ocupadas },
   });
 
   if (veredito.classe === CLASSE.OK) {
@@ -472,7 +500,14 @@ async function principal() {
     process.exit(veredito.exit);
   }
 
-  sair(veredito.exit, `target=${nome} class=${veredito.classe} tests=unverified`,
+  // `tests=unverified` seria mentira no caso do dreno: ali a suite RODOU e
+  // PASSOU, e o que falhou foi o encerramento. Rotular os dois iguais mandaria
+  // procurar defeito de teste onde o teste esta verde.
+  const rotulo = veredito.classe === CLASSE.CLEANUP
+    ? 'tests=pass cleanup=fail'
+    : 'tests=unverified';
+
+  sair(veredito.exit, `target=${nome} class=${veredito.classe} ${rotulo}`,
     veredito.problemas.join('\n\n'));
 }
 

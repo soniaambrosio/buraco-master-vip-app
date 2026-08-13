@@ -170,14 +170,35 @@ e uma execução iniciada nesse intervalo encontra `Port 8080 is not open` mesmo
 tendo checado as portas um instante antes.
 
 Portanto, **checar as portas apenas antes da execução não basta**. O runner
-mantém a trava até as portas terem realmente drenado, com espera limitada a 30 s:
+mantém a trava até as portas terem realmente drenado, com espera limitada a 30 s
+(`BMV_EMULADOR_DRENO_MS` ajusta):
 
 ```text
 [emulator-runner] cleanup=ok ports=released
 ```
 
-Se o dreno estourar o limite, o runner **avisa e não falha** — a suíte já rodou, e
-o resultado dela é o que vale; quem vem depois é que precisa saber que vai esperar.
+**Se o dreno estourar o limite, a execução é reprovada** — `class=CLEANUP-INCOMPLETO`,
+`exit 6`, com as portas presas nomeadas. Uma execução que termina prendendo
+recurso não é portão verde: ela acabou de sabotar a próxima. O resultado da suíte
+continua no relatório, e o rótulo diz exatamente o que aconteceu:
+
+```text
+[emulator-runner] cleanup=FAIL ports=ui:4000 (ainda escutando apos 3s)
+[emulator-runner] target=colecoes class=CLEANUP-INCOMPLETO tests=pass cleanup=fail
+OS TESTES PASSARAM: a suite subiu, rodou inteira e nao teve falha, pulo
+  nem cancelamento (tests=20 pass=20 fail=0 ...).
+  O que falhou foi o ENCERRAMENTO.
+```
+
+A trava **cai** mesmo assim, e de propósito: uma trava sem dono vivo bloquearia o
+projeto sem proteger nada — quem protege é o teste de bind que a próxima execução
+faz. O que não pode acontecer é a liberação ser lida como "ambiente saudável", e
+por isso ela é anunciada junto com o estrago.
+
+Esse ramo é o **último** da classificação e só age sobre o que já seria verde:
+uma asserção quebrada continua sendo `FALHA-FUNCIONAL`, e uma suíte encurtada
+continua sendo `SUITE-INCOMPLETA`. O dreno só transforma verde em vermelho, nunca
+esconde um vermelho que já existia.
 
 ### O portão distingue três desfechos
 
@@ -191,6 +212,7 @@ rótulo e faixa de saída próprios:
 | `FALHA-FUNCIONAL` | 1 | Subiu, rodou inteira, e uma asserção falhou. Único caso em que o vermelho fala do código. |
 | `INFRAESTRUTURA` | 3, 4 | Ambiente ocupado, build falhou, Java ausente, ou a suíte **não chegou a rodar**. Nenhum teste executou. |
 | `SUITE-INCOMPLETA` | 5 | Subiu e rodou, mas **não inteira**: pulou, cancelou, encolheu ou não deixou recibo. |
+| `CLEANUP-INCOMPLETO` | 6 | A suíte passou, mas a execução terminou com porta presa. Não é verde. |
 | `INDETERMINADA` | *n* | Relatório íntegro e mesmo assim exit ≠ 0. Repassa o código. |
 
 **Cancelamento vence falha.** Um caso cancelado não produziu veredito nenhum, e

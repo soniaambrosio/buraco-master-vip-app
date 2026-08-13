@@ -251,6 +251,71 @@ describe('classificar — falha funcional x infraestrutura x suite incompleta', 
     assert.equal(v.classe, CLASSE.INDETERMINADA);
     assert.equal(v.exit, 7);
   });
+
+  // ---- dreno ----------------------------------------------------------------
+
+  test('OK: suite passou E as portas drenaram', () => {
+    const v = classificar({
+      relatorio: rodape(), esperado: 67, alvo: 'social', codigo: 0, temRecibo: true,
+      dreno: { ok: true, ocupadas: [] },
+    });
+    assert.equal(v.classe, CLASSE.OK);
+    assert.equal(v.exit, 0);
+  });
+
+  test('CLEANUP-INCOMPLETO: suite passou e as portas NAO drenaram', () => {
+    // O caso que esta correcao existe para pegar: tudo verde na suite, e a
+    // execucao termina prendendo porta. Avisar e sair 0 seria dizer "pode
+    // seguir" sobre um ambiente que nao pode receber ninguem.
+    const v = classificar({
+      relatorio: rodape(), esperado: 67, alvo: 'social', codigo: 0, temRecibo: true,
+      dreno: { ok: false, ocupadas: [{ nome: 'firestore', porta: 8080 }] },
+    });
+    assert.equal(v.classe, CLASSE.CLEANUP);
+    assert.notEqual(v.exit, 0);
+    assert.equal(v.exit, 6);
+
+    const texto = v.problemas.join('\n');
+    // o resultado da suite tem que continuar legivel...
+    assert.match(texto, /OS TESTES PASSARAM/);
+    assert.match(texto, /tests=67 pass=67 fail=0/);
+    // ...e a porta presa tem que estar NOMEADA
+    assert.match(texto, /firestore\s+8080/);
+    assert.match(texto, /nao pode ser apresentada como sucesso/i);
+  });
+
+  test('o dreno nomeia TODAS as portas que ficaram presas', () => {
+    const v = classificar({
+      relatorio: rodape(), esperado: 67, codigo: 0, temRecibo: true,
+      dreno: {
+        ok: false,
+        ocupadas: [{ nome: 'firestore', porta: 8080 }, { nome: 'hub', porta: 4400 }],
+      },
+    });
+    const texto = v.problemas.join('\n');
+    assert.match(texto, /firestore\s+8080/);
+    assert.match(texto, /hub\s+4400/);
+  });
+
+  test('dreno estourado NAO reescreve um vermelho que ja existia', () => {
+    // O dreno vem por ultimo e so age sobre o que ja seria verde: uma asercao
+    // quebrada continua sendo FALHA-FUNCIONAL, e nao vira problema de cleanup.
+    const v = classificar({
+      relatorio: rodape({ pass: 66, fail: 1 }), esperado: 67, codigo: 1, temRecibo: true,
+      dreno: { ok: false, ocupadas: [{ nome: 'firestore', porta: 8080 }] },
+    });
+    assert.equal(v.classe, CLASSE.FUNCIONAL);
+    assert.equal(v.exit, 1);
+  });
+
+  test('dreno estourado NAO encobre suite incompleta', () => {
+    const v = classificar({
+      relatorio: rodape({ tests: 34, pass: 34 }), esperado: 67, codigo: 0, temRecibo: true,
+      dreno: { ok: false, ocupadas: [{ nome: 'firestore', porta: 8080 }] },
+    });
+    assert.equal(v.classe, CLASSE.INCOMPLETA);
+    assert.equal(v.exit, 5);
+  });
 });
 
 // ---------------------------------------------------------------------------
