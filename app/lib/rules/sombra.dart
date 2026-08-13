@@ -1,4 +1,5 @@
-// C1 — andaime do RulesEngine canônico. SEM comportamento de produção.
+// C1 — andaime do RulesEngine canônico. NÃO participa do runtime: o modo sombra
+// é exclusivamente DIAGNÓSTICO e `MotorConfig.producao()` nasce com sombra OFF.
 //
 // Ajuste obrigatório 5 — cada divergência INTENCIONAL entre o motor antigo e o
 // RulesEngine é versionada: ID, caso específico, teste que a cobre e a etapa

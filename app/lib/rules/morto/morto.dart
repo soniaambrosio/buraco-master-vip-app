@@ -1,6 +1,9 @@
 // C6 — MORTO e BATIDA no motor canônico, sobre o EstadoJogo imutável. SEM
-// comportamento de produção: só a suíte de testes usa isto; o motor antigo
-// (class Jogo) continua ativo em runtime.
+// comportamento de produção — REVISTO NO C10.
+//
+// C10 (parte 2): PARTICIPA DO RUNTIME LOCAL (via `gerador/gerador.dart`). Morto
+// direto, morto indireto e batida da partida real são decididos aqui sob
+// `MotorConfig.producao()`.
 //
 // Regras canônicas (fiéis ao motor antigo):
 //  - Morto: 11 cartas; pega-se o de MENOR índice disponível quando a dupla

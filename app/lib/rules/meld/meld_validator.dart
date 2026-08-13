@@ -1,6 +1,11 @@
 // C2 — validador de MELD canônico (a partir da spec, não cópia do motor antigo).
-// SEM comportamento de produção: nada no app importa este arquivo; o motor
-// antigo (class Jogo) continua padrão. Só a suíte de testes usa isto.
+//
+// C10 (parte 2) — ESTE ARQUIVO PARTICIPA DO RUNTIME LOCAL. O cabeçalho antigo
+// dizia que nada no app o importava e que só a suíte o usava; isso deixou de ser
+// verdade. Sob `MotorConfig.producao()` ele é a autoridade que valida cada meld
+// aplicado, classifica a tarja da mesa e pontua o fim de rodada — via
+// `motor/autoridade_canonica.dart` e `motor/pontuacao_costura.dart`. O motor
+// antigo só valida sob `MotorConfig.legadoRollback()`.
 //
 // Regras canônicas cobertas:
 //  - Sequência: cartas naturais de UM único naipe, ranks contíguos, no máximo

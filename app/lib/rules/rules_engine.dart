@@ -1,4 +1,6 @@
-// C1 — andaime do RulesEngine canônico. SEM comportamento de produção.
+// C1 — andaime do RulesEngine canônico. Interface/andaime SEM comportamento de
+// produção: nada em `motor/` importa este arquivo (a autoridade usa
+// `gerador/gerador.dart` diretamente).
 //
 // Fachada canônica. Em C1 é APENAS o contrato: as implementações chegam em
 // C2..C6. O motor antigo (class Jogo em mesa.dart) continua PADRÃO e

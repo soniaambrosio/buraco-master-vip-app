@@ -15,7 +15,7 @@ class EnvelopeRuntime {
   // ---- RUNTIME ENVELOPE: operacionais privados no legado (via seam) ----
   final int cont; // _cont: gerador de ids de carta (unicidade)
   final String? lixoUnicoCompradoId; // _lixoUnicoCompradoId: anti "turno nulo"
-  final int mortosConvertidos; // _mortosConvertidos: §8.1/§8.3 (afeta −100)
+  final int mortosConvertidos; // _mortosConvertidos: §8.1 (NÃO afeta o −100)
   final int iniciadorRodada; // _iniciadorRodada: rotação de início
   final bool rodadaContada; // _rodadaContada: contagem já aplicada
 

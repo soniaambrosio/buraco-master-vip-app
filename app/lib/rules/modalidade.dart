@@ -1,4 +1,6 @@
-// C1 — andaime do RulesEngine canônico. SEM comportamento de produção.
+// C1 — andaime do RulesEngine canônico.
+// C10 (parte 2): PARTICIPA DO RUNTIME LOCAL. Sob `MotorConfig.producao()` a
+// partida real passa por aqui; o cabeçalho antigo dizia o contrário.
 // O motor antigo (class Jogo em mesa.dart) continua PADRÃO e autoritativo.
 //
 // Modalidades canônicas do Buraco Master VIP.

@@ -84,8 +84,9 @@ class Jogo {
   // §5.2 ABERTO: quem compra um lixo de UMA carta só não pode devolver essa
   // mesma carta como descarte no mesmo turno (anti "turno nulo").
   String? _lixoUnicoCompradoId;
-  // §8.1/§8.3: mortos convertidos em monte nesta rodada (isenta o -100 de
-  // "morto não pego" — o direito deixou de existir).
+  // §8.1: mortos convertidos em monte nesta rodada. É EVENTO DE BARALHO, e
+  // NÃO afeta a pontuação: a dupla que ficou sem morto paga o -100 assim mesmo
+  // (correção de regra da revisão do C10 parte 2 — antes isentava).
   int _mortosConvertidos = 0;
   // §3.2: quem inicia a rodada — sorteado na 1ª, rotaciona nas seguintes.
   int _iniciadorRodada = -1;

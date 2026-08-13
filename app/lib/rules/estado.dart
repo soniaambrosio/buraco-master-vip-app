@@ -1,4 +1,6 @@
-// C1 — andaime do RulesEngine canônico. SEM comportamento de produção.
+// C1 — andaime do RulesEngine canônico.
+// C10 (parte 2): PARTICIPA DO RUNTIME LOCAL. Sob `MotorConfig.producao()` a
+// partida real passa por aqui; o cabeçalho antigo dizia o contrário.
 //
 // Ajuste obrigatório 4 — clone profundo e normalização de estado para o modo
 // sombra. O EstadoJogo é um SNAPSHOT imutável, desacoplado da UI/mesa.dart.

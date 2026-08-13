@@ -1,6 +1,9 @@
 // C7 — GERADOR ÚNICO de ações legais, sobre o EstadoJogo imutável. SEM
-// comportamento de produção: só a suíte de testes usa isto; o motor antigo
-// (class Jogo) continua ativo em runtime.
+// comportamento de produção — REVISTO NO C10.
+//
+// C10 (parte 2): PARTICIPA DO RUNTIME LOCAL. `aplicarLegal` é a autoridade que
+// aplica TODA jogada da partida real sob `MotorConfig.producao()`, para o
+// jogador e para o robô. O motor antigo só decide sob rollback legado.
 //
 // Ajuste 3 (C1): a LEGALIDADE é SEMPRE decidida aqui — mesma autoridade para
 // jogador e bot. A ENUMERAÇÃO completa de candidatos pode ser do bot, mas cada

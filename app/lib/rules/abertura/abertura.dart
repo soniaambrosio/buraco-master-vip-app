@@ -1,6 +1,10 @@
 // C5 (corrigido) — jogada atômica: abertura múltipla, extensões e COMPRA DO
-// LIXO, sobre o EstadoJogo imutável. SEM comportamento de produção: só a suíte
-// de testes usa isto; o motor antigo (class Jogo) continua ativo em runtime.
+// LIXO, sobre o EstadoJogo imutável.
+//
+// C10 (parte 2): PARTICIPA DO RUNTIME LOCAL. `avaliarComprarLixo` e
+// `avaliarBaixar` decidem a compra do lixo, a baixada, a extensão e a abertura
+// múltipla da partida real sob `MotorConfig.producao()`. O cabeçalho antigo
+// dizia que só a suíte usava isto — deixou de ser verdade.
 //
 // INFORMAÇÃO OCULTA (Fechado/STBL): a legalidade da compra do lixo é avaliada
 // vendo APENAS a mão, o TOPO real/visível do lixo (lixo.last) e os jogos já
