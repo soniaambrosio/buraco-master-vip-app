@@ -476,6 +476,10 @@ class Jogo {
     // classificação do grupo de ases (e de qualquer meld) deixa de ter dois
     // donos na hora de contar. A tabela de pontos é a mesma; o que acaba é a
     // segunda autoridade.
+    //
+    // A conversão §8.1 NÃO isenta o -100 de quem ficou sem morto (correção de
+    // regra da revisão do C10 parte 2). Ela segue registrada no envelope
+    // (`_mortosConvertidos`) como evento de baralho, sem efeito de pontuação.
     final spec = motorConfig.canonicoAtivo ? specCanonica : null;
     for (final dupla in ['nos', 'eles']) {
       final assentos = dupla == 'nos' ? [0, 2] : [1, 3];
@@ -487,8 +491,6 @@ class Jogo {
           bateu: duplaQueBateu == dupla,
           mortoPego: mortoPego[dupla]!,
           algumPegouMorto: algumPegouMorto,
-          // §8.3: morto convertido em monte deixa de ser direito reclamável.
-          mortoConvertido: _mortosConvertidos > 0,
           spec: spec,
         );
       } else {

@@ -1,5 +1,10 @@
-// C3 — pontuação canônica. SEM comportamento de produção: só a suíte de testes
-// usa isto; o motor antigo (class Jogo) continua ativo em runtime.
+// C3 — pontuação canônica.
+//
+// C10 (parte 2) — ESTE ARQUIVO PARTICIPA DO RUNTIME LOCAL. Deixou de ser
+// exclusivo da suíte: `Jogo.contarPontos()` e `Jogo.pontosMesaAoVivo()` contam
+// por aqui quando a partida nasce em `MotorConfig.producao()` (a ponte é
+// `motor/pontuacao_costura.dart`). O motor antigo só pontua sob
+// `MotorConfig.legadoRollback()`.
 //
 // Valores/bônus fiéis à regra canônica (mesma tabela dos testes PONT do motor
 // antigo):
@@ -7,8 +12,12 @@
 //   Canastra (só o MAIOR bônus por canastra; cartas contadas à parte):
 //     as_a_as=1000, de_500=500, limpa (7+ sem curinga)=200, suja (7+ com curinga)=100.
 //     Trinca NUNCA é canastra (sem bônus), mas suas cartas pontuam normalmente.
-//   Batida=+100; cartas na mão descontam pelo valor; morto NÃO pego (alguém
-//     pegou e sem conversão)=-100.
+//   Batida=+100; cartas na mão descontam pelo valor.
+//   MORTO NÃO PEGO = -100 sempre que ALGUÉM pegou um morto na rodada.
+//     A conversão §8.1 (morto vira monte) NÃO isenta ninguém: ela é um evento de
+//     baralho, registrado no envelope (`mortosConvertidos`), e não um perdão de
+//     pontuação. Correção de regra da revisão do C10 parte 2 — antes daqui a
+//     conversão suprimia a penalidade, o que estava errado.
 // Pontos das cartas e bônus de canastra são somados SEPARADAMENTE — sem dupla contagem.
 import 'estado.dart' show CartaSnapshot;
 import 'rule_spec.dart';
@@ -75,14 +84,15 @@ class EntradaRodada {
   final bool bateu;
   final bool mortoPego;
   final bool algumPegouMorto;
-  final bool mortoConvertido;
+  // C10 (parte 2, revisão): NÃO existe mais `mortoConvertido` aqui. A conversão
+  // §8.1 não entra na decisão de pontuação — deixar o campo, ainda que ignorado,
+  // convidaria a religá-lo por engano.
   const EntradaRodada({
     this.melds = const [],
     this.mao = const [],
     this.bateu = false,
     this.mortoPego = false,
     this.algumPegouMorto = false,
-    this.mortoConvertido = false,
   });
 }
 
@@ -123,8 +133,9 @@ ResultadoRodada pontuarRodada(EntradaRodada e, RuleSpec spec) {
     canastras += bonusCanastra(r);
   }
   final batida = e.bateu ? 100 : 0;
-  final penalidadeMorto =
-      (!e.mortoPego && e.algumPegouMorto && !e.mortoConvertido) ? 100 : 0;
+  // A dupla que não pegou morto paga -100 sempre que ALGUÉM pegou. Conversão
+  // §8.1 não isenta (ver cabeçalho).
+  final penalidadeMorto = (!e.mortoPego && e.algumPegouMorto) ? 100 : 0;
   return ResultadoRodada(
     cartas: cartas,
     canastras: canastras,

@@ -60,7 +60,6 @@ Map<String, dynamic> pontuarDuplaCanonico({
   required bool bateu,
   required bool mortoPego,
   required bool algumPegouMorto,
-  required bool mortoConvertido,
   required RuleSpec spec,
 }) {
   final meldsCanonicos = [for (final m in melds) cartasCanonicas(m)];
@@ -71,7 +70,6 @@ Map<String, dynamic> pontuarDuplaCanonico({
       bateu: bateu,
       mortoPego: mortoPego,
       algumPegouMorto: algumPegouMorto,
-      mortoConvertido: mortoConvertido,
     ),
     spec,
   );

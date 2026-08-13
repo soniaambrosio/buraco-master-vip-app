@@ -1771,11 +1771,12 @@ void main() {
       final pego = pontuarRodada(
           const EntradaRodada(mortoPego: true, algumPegouMorto: true), aberto);
       expect(pego.penalidadeMorto, 0);
+      // C10 (parte 2, revisão de regra): a conversão §8.1 NÃO isenta o -100.
+      // Antes daqui `mortoConvertido: true` zerava a penalidade — errado. O
+      // campo deixou de existir; a mesma entrada continua pagando.
       final conv = pontuarRodada(
-          const EntradaRodada(
-              mortoPego: false, algumPegouMorto: true, mortoConvertido: true),
-          aberto);
-      expect(conv.penalidadeMorto, 0);
+          const EntradaRodada(mortoPego: false, algumPegouMorto: true), aberto);
+      expect(conv.penalidadeMorto, 100);
       final ninguem = pontuarRodada(
           const EntradaRodada(mortoPego: false, algumPegouMorto: false),
           aberto);
@@ -3863,27 +3864,27 @@ void main() {
     test('C9-C2a-fix-SCORE consequência: morto convertido mantém a isenção do -100',
         () {
       final spec = RuleSpec.canonica(Modalidade.aberto);
-      // dupla NÃO pegou o morto e alguém pegou -> -100, EXCETO se houve conversão.
-      final semConv = pontuarRodada(
+      // C10 (parte 2, revisão de regra): dupla que NÃO pegou o morto paga -100
+      // sempre que alguém pegou. A conversão §8.1 NÃO isenta — ela é evento de
+      // baralho (contado no envelope), não perdão de pontuação.
+      final semMorto = pontuarRodada(
           const EntradaRodada(
               melds: [],
               mao: [],
               bateu: false,
               mortoPego: false,
-              algumPegouMorto: true,
-              mortoConvertido: false),
+              algumPegouMorto: true),
           spec);
-      final comConv = pontuarRodada(
+      final comMorto = pontuarRodada(
           const EntradaRodada(
               melds: [],
               mao: [],
               bateu: false,
-              mortoPego: false,
-              algumPegouMorto: true,
-              mortoConvertido: true),
+              mortoPego: true,
+              algumPegouMorto: true),
           spec);
-      expect(semConv.total, -100); // penalidade aplicada
-      expect(comConv.total, 0); // conversão isenta o -100
+      expect(semMorto.total, -100); // penalidade aplicada
+      expect(comMorto.total, 0); // quem pegou o seu morto não paga
     });
 
     test('C9-C2a-fix-NEG ComprarMonte ilegal (fase jogo): ambos recusam -> CONVERGE, 0 conversões',
@@ -4925,6 +4926,23 @@ void main() {
       expect(det['baixadas'], 7 * 15); // as cartas pontuam normalmente
       // e o placar ao vivo concorda com o fim de rodada (mesma autoridade).
       expect(j.pontosMesaAoVivo('nos'), 7 * 15);
+    });
+
+    test('C10-SCORE-03 conversão §8.1 NÃO isenta o -100 de quem ficou sem morto',
+        () {
+      // Regressão da correção de regra da revisão. ELES pegou o seu morto; o
+      // morto de NÓS virou monte pela conversão §8.1. NÓS paga -100 assim mesmo.
+      final j = _jgPenalidadeAposConversaoC10(cfg: MotorConfig.producao());
+      expect(j.costuraMortosConvertidos, greaterThan(0)); // houve conversão
+      j.rodadaEncerrada = true;
+      j.duplaQueBateu = 'eles';
+      j.contarPontos();
+      final nos = (j.pontosRodada!['nos'] as Map).cast<String, dynamic>();
+      final eles = (j.pontosRodada!['eles'] as Map).cast<String, dynamic>();
+      expect(nos['penalidadeMorto'], -100); // NÃO isento pela conversão
+      expect(eles['penalidadeMorto'], 0); // pegou o seu morto
+      // e a conversão continua REGISTRADA (só não vale como perdão).
+      expect(j.costuraMortosConvertidos, 1);
     });
 
     // ---------- morto, batida, conversão §8.1, exaustão ----------
@@ -6536,5 +6554,24 @@ Jogo _jgSemUsoC10() {
     Carta('ent', 'copas', '9', false),
     Carta('topoK', 'paus', 'K', false), // topo
   ];
+  return j;
+}
+
+// ELES pegou o seu morto; o morto de NÓS foi CONVERTIDO em monte (§8.1).
+// NÓS não pegou morto nenhum — e paga o -100 mesmo assim.
+Jogo _jgPenalidadeAposConversaoC10({required MotorConfig cfg}) {
+  final j = _c10Base(cfg: cfg);
+  j.jaComprou = true;
+  j.mortos = <List<Carta>>[]; // um foi pego, o outro virou monte
+  j.mortoPego = {'nos': false, 'eles': true};
+  j.costuraMortosConvertidos = 1; // a conversão aconteceu e está registrada
+  j.jogosDupla['eles'] = [
+    [
+      Carta('e1', 'ouros', '3', false),
+      Carta('e2', 'ouros', '4', false),
+      Carta('e3', 'ouros', '5', false),
+    ]
+  ];
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': true};
   return j;
 }
