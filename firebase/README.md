@@ -107,30 +107,129 @@ deixou `claimPioneerKit` sem nenhuma execução real desde a entrega original.
 | --- | --- |
 | `npm run test:colecoes` | Só as **regras**. O bloco `claimPioneerKit` fica pulado de propósito. |
 | `npm run emulador:colecoes` | Regras **e** chamadas reais a `claimPioneerKit`, contra Firestore + Auth + Functions. |
+| `npm run emulador:moderacao` | Regras **e** chamadas reais às Functions de moderação. |
+| `npm run emulador:social` | Regras **e** chamadas reais às Functions sociais. |
+| `npm run test:runner` | A lógica do próprio portão. Não sobe emulador e não precisa de Java. |
 
-Ambos rodam de `firebase/testes` (depois de `npm install` lá).
+Todos rodam de `firebase/testes` (depois de `npm install` lá).
 
-O segundo passa por `com-functions.js`, que existe porque `firebase
-emulators:exec` **não** exporta `FUNCTIONS_EMULATOR_HOST` — só `FIRESTORE_*`,
-`FIREBASE_AUTH_*` e `GCLOUD_PROJECT`. Sem ele, o `skip:
-!process.env.FUNCTIONS_EMULATOR_HOST` do bloco de Function nunca sai do lugar: a
-suíte fica verde sem ter chamado nada. O runner exporta a variável, recusa
-rodar se a porta 5001 não atender e **reprova se sobrar qualquer caso pulado**.
+### Os três alvos de emulador são autocontidos
 
-Essa última checagem não é preciosismo. Um `describe` pulado inteiro não aparece
-em contador nenhum do `node --test`: o alvo de regras pula os seis casos de
-`claimPioneerKit` e ainda assim imprime `skipped 0`. Quem denuncia é a diretiva
-`# SKIP` na linha, e é ela que o runner lê.
+`npm run emulador:social` **faz o próprio build**. Não é mais necessário rodar
+`npm run build:domain && npm run build` em `functions-social/` antes — o alvo
+instala as dependências, compila o domínio Dart, compila o TypeScript e só então
+sobe o emulador. O mesmo vale para `moderacao`; `colecoes` só instala, porque seu
+`package.json` declara `main: index.js` e o emulador carrega o arquivo da árvore,
+sem bundle que possa envelhecer.
 
-Duas armadilhas de ambiente, ambas já custaram diagnóstico:
+Isso conserta um defeito concreto: com `functions-social/lib/` ausente, o alvo
+subia assim mesmo, a Function respondia `functions/not-found` e **60+ casos eram
+cancelados** — com o build manual escondido num pré-requisito de documentação que
+ninguém era obrigado a ler.
+
+Os três passam por `runner-emulador.js`, que faz, nesta ordem:
+
+```text
+java? → preparo/build → artefatos existem? → TRAVA → portas livres?
+      → emulators:exec → confere o recibo → cleanup (sempre)
+```
+
+### Exclusividade: um Emulator Suite por vez
+
+Os três alvos compartilham **as mesmas portas** (8080, 5001, 9099, 4000, 4400,
+4500, 9299, 9499), o **mesmo `projectId` `demo-bmv`** e a **mesma trava**. Não
+são alternativas independentes: são usuários de um recurso exclusivo. Duas
+execuções sobrepostas não se revezam — sobem pela metade, e o estrago aparece
+como *resultado de teste* (`assertFails` passando pelo motivo errado, dezenas de
+casos cancelados), e não como erro de ambiente.
+
+Quando outro runner já está ativo, o segundo **espera até 90 s** e depois falha
+com `exit 3`, dizendo qual alvo e qual PID está segurando:
+
+```text
+[emulator-runner] target=moderacao class=INFRAESTRUTURA environment=busy reason=execucao concorrente
+  alvo   social
+  pid    2316
+  desde  2026-08-12T18:05:00.244Z
+```
+
+`BMV_EMULADOR_ESPERA_MS=0` troca a espera por fail-fast; qualquer outro valor
+ajusta o limite. **Não existe espera infinita** — estourado o limite, o runner
+sai diferente de zero sem ter executado teste nenhum.
+
+A trava guarda o PID e é validada a cada tentativa: uma execução encerrada a
+Ctrl+C **não bloqueia o projeto**, porque uma trava cujo dono não responde é
+tratada como obsoleta e substituída.
+
+### A janela de drain (descoberta nesta OS)
+
+No Windows, **`firebase emulators:exec` devolve o terminal antes de os processos
+Java/Firebase soltarem as portas**. Medido nesta árvore: com o exec já retornado
+e o exit code na mão, as sete portas continuaram escutando por alguns segundos —
+e uma execução iniciada nesse intervalo encontra `Port 8080 is not open` mesmo
+tendo checado as portas um instante antes.
+
+Portanto, **checar as portas apenas antes da execução não basta**. O runner
+mantém a trava até as portas terem realmente drenado, com espera limitada a 30 s:
+
+```text
+[emulator-runner] cleanup=ok ports=released
+```
+
+Se o dreno estourar o limite, o runner **avisa e não falha** — a suíte já rodou, e
+o resultado dela é o que vale; quem vem depois é que precisa saber que vai esperar.
+
+### O portão distingue três desfechos
+
+Quem lê um vermelho pergunta antes de tudo "é defeito meu ou da máquina?". Um
+rótulo único obriga a ler o log inteiro para descobrir, então cada classe tem
+rótulo e faixa de saída próprios:
+
+| `class=` | exit | Significa |
+| --- | ---: | --- |
+| `OK` | 0 | Subiu, rodou **inteira** e passou. |
+| `FALHA-FUNCIONAL` | 1 | Subiu, rodou inteira, e uma asserção falhou. Único caso em que o vermelho fala do código. |
+| `INFRAESTRUTURA` | 3, 4 | Ambiente ocupado, build falhou, Java ausente, ou a suíte **não chegou a rodar**. Nenhum teste executou. |
+| `SUITE-INCOMPLETA` | 5 | Subiu e rodou, mas **não inteira**: pulou, cancelou, encolheu ou não deixou recibo. |
+| `INDETERMINADA` | *n* | Relatório íntegro e mesmo assim exit ≠ 0. Repassa o código. |
+
+**Cancelamento vence falha.** Um caso cancelado não produziu veredito nenhum, e
+uma execução com casos cancelados não é um veredito funcional — é uma execução
+que não terminou. A falha real continua impressa e o exit continua diferente de
+zero; o que o runner se recusa a fazer é chamar de "suíte executada" uma suíte
+interrompida. Sem essa precedência, a linha de base desta OS (bundle ausente →
+`not-found` no pai → 60+ filhos cancelados) sairia rotulada como defeito de
+código.
+
+### Nenhum teste parcial é considerado válido
+
+Exit code 0 do `node --test` responde "nada falhou", e **não** "tudo rodou". Três
+desfechos medidos aqui saem com código 0 sem ter provado nada, e o portão barra
+os três:
+
+1. **`describe` pulado inteiro.** Não soma em contador nenhum — nem em `tests`,
+   nem em `skipped`. Falsificado nesta OS: `node --test` saiu **0**, com rodapé
+   `fail 0, cancelled 0, skipped 0`, e ainda assim 33 casos tinham sumido
+   (`tests 34`, e o piso é 67). Quem denuncia é a diretiva `# SKIP` na linha e o
+   **piso** `--esperado=N`.
+2. **Suíte encurtada.** Um arquivo que sai do alvo derruba o total sem derrubar
+   o exit code. O piso é a rede.
+3. **Cancelamento.** Marcado na linha (`was cancelled`) e no rodapé; as duas
+   frentes são lidas, porque quando o processo morre no meio só a primeira chega
+   a existir.
+
+E há o **recibo**: `com-functions.js` escreve o relatório interpretado num
+arquivo, sempre — inclusive quando a suíte falha. É como o resultado atravessa a
+fronteira do `emulators:exec`, onde só passaria um exit code. Um `exec` que saia
+0 sem recibo é um verde que ninguém provou, e o runner não o entrega.
+
+### Armadilha de ambiente que sobrou
 
 - **Java.** O emulador do Firestore precisa de `java` resolvível no `PATH`;
-  `JAVA_HOME` sozinho não basta. Com o Android Studio instalado:
+  `JAVA_HOME` sozinho não basta. O runner **confere antes de compilar** e diz
+  onde achar o JDK, em vez de deixar o `emulators:exec` morrer depois do build
+  com uma mensagem que não ajuda. Com o Android Studio instalado:
   `$env:PATH = "C:\Program Files\Android\Android Studio\jbr\bin;$env:PATH"`.
-- **Portas.** Não encavalar execuções. Antes da próxima suíte, esperar 8080,
-  5001, 9099, 4400 e 4500 ficarem livres. Subir por cima de um emulador que
-  ainda está morrendo produz falha em teste de **regra** — inclusive
-  `assertFails` que "passa" —, e o sintoma não aponta para a causa.
 
 O ruído de carga dos outros codebases (`functions-billing`, `functions`,
 `functions-moderacao`, `functions-social` reclamando de `lib/index.js` ausente)

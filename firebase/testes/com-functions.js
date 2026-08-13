@@ -29,15 +29,23 @@
 // E ele CONFERE O RELATORIO depois de rodar. O portao de porta aberta prova que
 // o emulador atende; nao prova que a suite chamou alguma coisa. Um `describe`
 // inteiro sob `skip` sai do `node --test` com codigo 0 — e, dependendo de onde o
-// skip esta, sem sequer somar no contador `# skipped`. Por isso a leitura e
-// feita nas duas frentes: qualquer linha `# SKIP` e qualquer `# skipped` maior
-// que zero derrubam a execucao. Neste runner, pular e falhar: quem quer pular
-// roda o alvo de Regras, que nao alega provar Function nenhuma.
+// skip esta, sem sequer somar no contador `# skipped`. A leitura completa mora
+// em `relatorio-testes.js`, que confere pulo, CANCELAMENTO e piso de casos.
+// Neste runner, pular e falhar: quem quer pular roda o alvo de Regras, que nao
+// alega provar Function nenhuma.
+//
+// E ele deixa RECIBO. Este processo roda DENTRO do `firebase emulators:exec`, e
+// dali para fora so atravessa um exit code. `runner-emulador.js` precisa saber a
+// diferenca entre "a suite rodou inteira e passou" e "o comando interno nem
+// comecou, e o exec saiu 0 assim mesmo" — as duas coisas chegam la como zero. O
+// recibo em `BMV_RELATORIO_SAIDA` e o que separa as duas.
 
 'use strict';
 
+const fs = require('node:fs');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
+const { lerRelatorio, conferirRelatorio, resumir } = require('./relatorio-testes');
 
 const HOST = process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001';
 const [host, porta] = HOST.split(':');
@@ -45,6 +53,9 @@ const [host, porta] = HOST.split(':');
 const argumentos = process.argv.slice(2);
 const codebase = (argumentos.find((a) => a.startsWith('--codebase=')) || '')
   .split('=')[1] || null;
+const esperadoBruto = (argumentos.find((a) => a.startsWith('--esperado=')) || '')
+  .split('=')[1];
+const esperado = esperadoBruto === undefined ? null : Number(esperadoBruto);
 const alvos = argumentos.filter((a) => !a.startsWith('--'));
 
 if (alvos.length === 0) {
@@ -121,43 +132,42 @@ function portaAberta() {
   // instante seria conferir um relatorio truncado — e o pedaco que falta e
   // justamente o rodape.
   filho.on('close', (codigo) => {
+    const lido = lerRelatorio(relatorio);
+    const conferencia = conferirRelatorio(lido, { esperado, alvo: codebase });
+
+    // O recibo sai SEMPRE, inclusive na falha: quem le do lado de fora do
+    // `emulators:exec` so recebe um exit code, e um recibo que so existisse no
+    // caminho feliz nao distinguiria "falhou" de "nao rodou".
+    if (process.env.BMV_RELATORIO_SAIDA) {
+      try {
+        fs.writeFileSync(process.env.BMV_RELATORIO_SAIDA, JSON.stringify({
+          codebase,
+          esperado,
+          exitFilho: codigo,
+          relatorio: lido,
+          ok: conferencia.ok && codigo === 0,
+        }, null, 2));
+      } catch (e) {
+        console.error(`\nNao consegui escrever o recibo do relatorio: ${e.message}`);
+        process.exit(1);
+      }
+    }
+
+    // Falha real de asercao passa direto, com o codigo que o `node --test` deu.
+    // §11 da OS: a camada de robustez nao pode transformar falha funcional em
+    // erro generico de infraestrutura.
     if (codigo !== 0) process.exit(codigo ?? 1);
 
-    // Duas leituras porque o rodape SOZINHO nao serve. Medido no node 24, com um
-    // `describe({skip:true})` de dois casos e um `test({skip:true})` solto:
-    //
-    //   ﹣ bloco pulado inteiro (1.1ms) # SKIP     <- describe com DOIS casos
-    //   ﹣ caso pulado solto (0.5ms) # SKIP
-    //   ✔ caso que roda (0.1ms)
-    //   ℹ tests 2
-    //   ℹ skipped 1
-    //
-    // `tests 2` e `skipped 1` contam o caso solto e o que rodou. Os DOIS casos
-    // de dentro do describe pulado nao entram em contador nenhum: o bloco inteiro
-    // sai de cena sem deixar numero. Foi o que aconteceu com `claimPioneerKit` no
-    // alvo de Regras — seis casos pulados, rodape dizendo `skipped 0`.
-    //
-    // Por isso a leitura principal e a diretiva `# SKIP`, que marca cada linha
-    // pulada; o rodape entra so como segunda rede.
-    //
-    // O prefixo do rodape muda com o reporter — `#` no TAP, `ℹ` no spec, que e o
-    // padrao desde o node 22 mesmo com a saida redirecionada. Aceitar so o `#`
-    // era, ele proprio, um portao que nunca fecharia.
-    const pulados = relatorio.split('\n').filter((l) => /#\s*SKIP\b/i.test(l));
-    const rodape = relatorio.match(/^\s*(?:#|ℹ)\s*skipped\s+(\d+)\s*$/m);
-    const contados = rodape ? Number(rodape[1]) : 0;
-
-    if (pulados.length > 0 || contados > 0) {
+    if (!conferencia.ok) {
       console.error(
-        `\nA suite terminou verde, mas com teste PULADO — ${contados} no rodape,` +
-        ` ${pulados.length} com diretiva SKIP.\n` +
-        'Este alvo alega provar chamada real as Cloud Functions' +
-        (codebase ? ` do codebase \`${codebase}\`` : '') + '; um caso pulado aqui\n' +
-        'e exatamente o falso verde que ele existe para impedir. Primeiras linhas:\n\n' +
-        pulados.slice(0, 10).map((l) => `  ${l.trim()}`).join('\n') + '\n',
+        `\nA suite terminou com codigo 0, mas o relatorio nao prova execucao\n` +
+        `integral. ${resumir(lido)}\n\n` +
+        conferencia.problemas.join('\n\n') + '\n',
       );
       process.exit(1);
     }
+
+    console.log(`\n[com-functions] ${resumir(lido)} — suite integra.`);
     process.exit(0);
   });
 })();
