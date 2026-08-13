@@ -5015,6 +5015,80 @@ void main() {
       expect(j.ultimaFalhaTecnica, isNull); // nenhuma rede ilegal acionada
     });
 
+    // C10 (rev.1) — FAIL-CLOSED do robô. Em cada etapa, a falha técnica tem de
+    // ENCERRAR o turno: nada de "tenta o monte", "tenta outro grupo", "tenta
+    // outra extensão", "varre os outros descartes". A prova é que NENHUMA
+    // transação acontece depois da falha — estado idêntico ao de antes.
+    test('C10-BOT-FC-01 falha técnica na COMPRA não vira compra do monte', () {
+      final j = _jgBotLixoFechadoC10();
+      final antes = snap(j);
+      final monteAntes = j.monte.length;
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      j.botJoga(0);
+      j.projetorAutoridadeTest = null;
+      expect(j.ultimaFalhaTecnica, isNotNull);
+      expect(j.falhasTecnicas, 1); // UMA falha, não uma cascata
+      expect(j.monte.length, monteAntes); // NÃO comprou o monte
+      expect(j.jaComprou, isFalse);
+      expect(snap(j), antes); // nenhuma transação aconteceu
+    });
+
+    test('C10-BOT-FC-02 falha técnica ao BAIXAR não tenta outro grupo', () {
+      final j = _jgBotBaixarMuitosGruposC10();
+      final antes = snap(j);
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      j.botJoga(0);
+      j.projetorAutoridadeTest = null;
+      expect(j.ultimaFalhaTecnica, isNotNull);
+      expect(j.falhasTecnicas, 1); // parou na PRIMEIRA
+      expect(j.jogosDupla['nos'], isEmpty);
+      expect(snap(j), antes);
+    });
+
+    test('C10-BOT-FC-03 falha técnica ao ESTENDER não tenta outra extensão', () {
+      final j = _jgBotEstenderC10();
+      final antes = snap(j);
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      j.botJoga(0);
+      j.projetorAutoridadeTest = null;
+      expect(j.ultimaFalhaTecnica, isNotNull);
+      expect(j.falhasTecnicas, 1);
+      expect(snap(j), antes);
+    });
+
+    test('C10-BOT-FC-04 falha técnica ao DESCARTAR não varre as outras cartas',
+        () {
+      // A falha é injetada SÓ na hora do descarte: a compra e as baixadas já
+      // aconteceram normalmente, então o turno tem estado real antes da falha.
+      final j = _jgBotDescarteC10();
+      j.botJoga(0); // turno inteiro, sem falha -> descartou e passou a vez
+      expect(j.vez, 1);
+
+      final j2 = _jgBotDescarteC10();
+      j2.jaComprou = true; // já na fase de jogo: a próxima ação é o descarte
+      final maoAntes = j2.maos[0].length;
+      j2.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      j2.botJoga(0);
+      j2.projetorAutoridadeTest = null;
+      expect(j2.ultimaFalhaTecnica, isNotNull);
+      expect(j2.falhasTecnicas, 1); // uma tentativa só, não uma por carta
+      expect(j2.maos[0].length, maoAntes); // nenhuma carta saiu da mão
+      expect(j2.vez, 0); // a vez NÃO passou
+    });
+
+    test('C10-BOT-03 robô abre com ABERTURA COMPOSTA quando o mínimo exige', () {
+      // Vulnerável (mínimo 75): nenhum jogo isolado atinge; a soma sim.
+      final j = _jgBotAberturaCompostaC10();
+      expect(j.minimoParaDescer('nos'), 75);
+      j.botJoga(0);
+      expect(j.primeiraBaixadaFeita['nos'], isTrue); // ABRIU
+      expect(j.jogosDupla['nos']!.length, greaterThanOrEqualTo(2));
+      final pontos = j.jogosDupla['nos']!.fold<int>(
+          0, (s, m) => s + m.fold<int>(0, (t, c) => t + pts(c)));
+      expect(pontos, greaterThanOrEqualTo(75)); // o mínimo foi atingido na soma
+      expect(j.ultimaFalhaTecnica, isNull);
+    });
+
     test('C10-BOT-02 robô só escolhe DENTRO dos candidatos da autoridade', () {
       final j = _jgBotLixoFechadoC10();
       final cands = j.candidatosCompraLixo(0);
@@ -6580,5 +6654,95 @@ Jogo _jgPenalidadeAposConversaoC10({required MotorConfig cfg}) {
     ]
   ];
   j.primeiraBaixadaFeita = {'nos': false, 'eles': true};
+  return j;
+}
+
+// Fase JOGO com VÁRIOS grupos baixáveis: se o robô não parasse na primeira
+// falha técnica, tentaria o segundo e o terceiro grupo.
+Jogo _jgBotBaixarMuitosGruposC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'paus', '2', false)];
+  j.maos[0] = [
+    Carta('3c', 'copas', '3', false),
+    Carta('4c', 'copas', '4', false),
+    Carta('5c', 'copas', '5', false),
+    Carta('9o', 'ouros', '9', false),
+    Carta('10o', 'ouros', '10', false),
+    Carta('Jo', 'ouros', 'J', false),
+    Carta('5e', 'espadas', '5', false),
+    Carta('6e', 'espadas', '6', false),
+    Carta('7e', 'espadas', '7', false),
+    Carta('sobra', 'paus', 'K', false),
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase JOGO com DOIS jogos na mesa e cartas que estendem os dois: se o robô não
+// parasse na primeira falha técnica, tentaria a segunda extensão.
+Jogo _jgBotEstenderC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'paus', '2', false)];
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.jogosDupla['nos'] = [
+    [
+      Carta('a1', 'copas', '3', false),
+      Carta('a2', 'copas', '4', false),
+      Carta('a3', 'copas', '5', false),
+    ],
+    [
+      Carta('b1', 'ouros', '9', false),
+      Carta('b2', 'ouros', '10', false),
+      Carta('b3', 'ouros', 'J', false),
+    ],
+  ];
+  j.maos[0] = [
+    Carta('6c', 'copas', '6', false), // estende o 1º
+    Carta('Qo', 'ouros', 'Q', false), // estende o 2º
+    Carta('sobra', 'paus', 'K', false),
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Turno simples que termina em DESCARTE: nada para baixar nem estender.
+Jogo _jgBotDescarteC10() {
+  final j = _c10Base();
+  j.jaComprou = false;
+  j.monte = [
+    Carta('mo1', 'paus', '8', false),
+    Carta('mo2', 'ouros', '2', false),
+  ];
+  j.maos[0] = [
+    Carta('d1', 'copas', '4', false),
+    Carta('d2', 'espadas', '9', false),
+    Carta('d3', 'paus', 'Q', false),
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Dupla VULNERÁVEL (mínimo 75) e ainda sem abrir. Três sequências de 3 cartas:
+// 15 + 30 + 35 = 80. Nenhuma isolada atinge 75 — só a abertura COMPOSTA abre.
+Jogo _jgBotAberturaCompostaC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.monte = [Carta('mo1', 'paus', '2', false)];
+  j.maos[0] = [
+    Carta('3c', 'copas', '3', false),
+    Carta('4c', 'copas', '4', false),
+    Carta('5c', 'copas', '5', false),
+    Carta('Jo', 'ouros', 'J', false),
+    Carta('Qo', 'ouros', 'Q', false),
+    Carta('Ko', 'ouros', 'K', false),
+    Carta('Qe', 'espadas', 'Q', false),
+    Carta('Ke', 'espadas', 'K', false),
+    Carta('Ae', 'espadas', 'A', false),
+    Carta('guard', 'paus', '8', false), // sobra: a abertura não zera a mão
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
   return j;
 }

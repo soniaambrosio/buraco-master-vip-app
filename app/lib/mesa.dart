@@ -147,6 +147,12 @@ class Jogo {
   /// continua sendo registrada; o que sumiu é a rota para o legado.
   Map<String, dynamic>? ultimaFalhaTecnica;
 
+  /// C10 (rev.1) — CONTADOR monotônico de falhas técnicas. `ultimaFalhaTecnica`
+  /// sozinha não distingue "falhou agora" de "falhou há três jogadas": quem
+  /// precisa reagir a uma falha NOVA compara este contador antes e depois. É o
+  /// que torna o fail-closed do robô verificável em vez de heurístico.
+  int falhasTecnicas = 0;
+
   Jogo(this.apelidos, this.avatares, this.mascotes,
       {int? seed, this.motorConfig = const MotorConfig()})
       : _rnd = seed == null ? Random() : Random(seed) {
@@ -168,6 +174,7 @@ class Jogo {
   /// `ultimaFalhaTecnica` para telemetria/Replay. Recusa de REGRA nunca passa
   /// por aqui — ela tem o seu próprio desfecho.
   String _falharFechado(String metodo, ResultadoAutoridade r) {
+    falhasTecnicas++;
     ultimaFalhaTecnica = {
       'metodo': metodo,
       'motivo': r.motivo,
@@ -1492,19 +1499,49 @@ class Jogo {
   // No Fechado/STBL a existência de candidato JÁ é a legalidade e a utilidade
   // (todo candidato põe o topo na mesa); no Aberto a compra é livre, então a
   // heurística decide sozinha se compensa.
-  void _botCompra(int assento) {
+  void _botCompra(int assento, int marca) {
     if (specCanonica.exigeUsoDoTopoNoLixo) {
       final cands = candidatosCompraLixo(assento);
-      if (cands.isNotEmpty &&
-          comprarLixoAtomico(assento, _botEscolheCompraLixo(cands))['ok'] ==
-              true) {
-        return;
+      if (cands.isNotEmpty) {
+        final r = comprarLixoAtomico(assento, _botEscolheCompraLixo(cands));
+        // C10 (rev.1) FAIL-CLOSED: falha técnica no lixo NÃO vira compra do
+        // monte. O motor quebrou; a segunda transação está proibida.
+        if (_botFalhouTecnicamente(marca)) return;
+        if (r['ok'] == true) return;
       }
-    } else if (_botDeveComprarLixo(assento) &&
-        comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
-      return;
+    } else if (_botDeveComprarLixo(assento)) {
+      final r = comprarLixo(assento, modalidade: modalidade);
+      if (_botFalhouTecnicamente(marca)) return;
+      if (r['ok'] == true) return;
     }
     comprarMonte(assento);
+  }
+
+  /// C10 (rev.1) — ABERTURA COMPOSTA do robô. Quando a dupla está vulnerável e
+  /// ainda não abriu, o mínimo pode depender da SOMA dos jogos: baixar um por
+  /// vez seria recusado em cada tentativa isolada, e o robô nunca abriria.
+  ///
+  /// A heurística propõe os grupos (`_agruparMao`); a transação é UMA só
+  /// (`baixarAtomico`), e a legalidade continua sendo do canônico — inclusive o
+  /// mínimo. Tenta do conjunto MAIOR para o menor e para no primeiro aceito:
+  /// abrir com o mínimo satisfeito é o objetivo, não baixar tudo.
+  void _botAbrir(int assento, int marca) {
+    final dupla = _duplaKey(assento);
+    if (primeiraBaixadaFeita[dupla] ?? false) return;
+    if (minimoParaDescer(dupla) <= 0) return; // sem mínimo: o fluxo normal basta
+    final grupos = _agruparMao(maos[assento], false)['jogos'] as List<List<Carta>>;
+    if (grupos.length < 2) return; // 1 grupo não é abertura composta
+    for (var n = grupos.length; n >= 2; n--) {
+      final jogos = [
+        for (final g in grupos.take(n)) [for (final c in g) c.id]
+      ];
+      final restante =
+          maos[assento].length - jogos.fold<int>(0, (s, j) => s + j.length);
+      if (restante < 1) continue; // não zerar a mão pela abertura
+      final r = baixarAtomico(assento, jogosNovos: jogos, rotulo: 'baixar');
+      if (_botFalhouTecnicamente(marca)) return;
+      if (r['ok'] == true) return;
+    }
   }
 
   /// Escolha do robô entre candidatos JÁ LEGAIS: prefere a transação que põe
@@ -1536,6 +1573,7 @@ class Jogo {
       if (vez == assento) _passarVez();
       return true;
     }
+    falhasTecnicas++;
     ultimaFalhaTecnica = {
       'metodo': 'botJoga',
       'motivo': 'mão vazia com a rodada aberta sob autoridade canônica',
@@ -1544,14 +1582,28 @@ class Jogo {
     return true;
   }
 
+  /// C10 (rev.1) — FAIL-CLOSED do robô. Uma falha TÉCNICA significa que a
+  /// costura/projeção/transporte quebrou; insistir com outra transação em cima
+  /// de um motor que acabou de falhar é justamente o que o fail-closed proíbe.
+  /// A partir da primeira falha técnica do turno, o robô PARA — não compra o
+  /// monte depois de falhar no lixo, não tenta outro grupo depois de falhar ao
+  /// baixar, não tenta outra extensão, não varre outros descartes.
+  ///
+  /// Recusa de REGRA não passa por aqui: essa o agente pode contornar com outra
+  /// jogada, que é decisão estratégica dele.
+  bool _botFalhouTecnicamente(int marca) => falhasTecnicas != marca;
+
   // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
   // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
   void botJoga(int assento) {
     if (integridadeErro != null) return; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento) return;
+    // C10 (rev.1) — marca de FAIL-CLOSED: qualquer falha técnica daqui em diante
+    // encerra o turno do robô na hora, sem segunda transação.
+    final marca = falhasTecnicas;
     if (!jaComprou) {
       if (motorConfig.canonicoAtivo) {
-        _botCompra(assento);
+        _botCompra(assento, marca);
       } else {
         // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
         // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
@@ -1564,16 +1616,25 @@ class Jogo {
         }
       }
     }
+    if (_botFalhouTecnicamente(marca)) return; // fail-closed: nem tenta o resto
     if (rodadaEncerrada) return;
     final dupla = _duplaKey(assento);
 
-    // 1) baixa os jogos que dá (baixar() já respeita a trava/validade)
+    // 1) ABERTURA. Vulnerável e ainda sem abrir, o mínimo pode depender da SOMA
+    // dos jogos — aí a abertura precisa ser COMPOSTA, numa transação só.
+    if (motorConfig.canonicoAtivo) {
+      _botAbrir(assento, marca);
+      if (_botFalhouTecnicamente(marca)) return;
+    }
+
+    // 1b) baixa os jogos que dá (baixar() já respeita a trava/validade)
     final grupos = _agruparMao(maos[assento], false)['jogos'] as List<List<Carta>>;
     for (final g in grupos) {
       if (rodadaEncerrada) break;
       if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue; // mão mudou (pegou morto)
       if (!_baixadaSeguraParaZerar(assento, g)) continue; // nunca zerar ilegal (mão vazia travada)
       baixar(assento, g.map((c) => c.id).toList());
+      if (_botFalhouTecnicamente(marca)) return; // não tenta outro grupo
     }
 
     // 2) estende cartas soltas nos jogos da dupla
@@ -1594,7 +1655,13 @@ class Jogo {
           achou = c;
           break;
         }
-        if (achou != null && estender(assento, i, [achou.id])['ok'] == true) { progrediu = true; break; }
+        if (achou == null) continue;
+        final r = estender(assento, i, [achou.id]);
+        if (_botFalhouTecnicamente(marca)) return; // não tenta outra extensão
+        if (r['ok'] == true) {
+          progrediu = true;
+          break;
+        }
       }
     }
 
@@ -1609,7 +1676,12 @@ class Jogo {
         for (final g in fecha) {
           if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue;
           if (!_baixadaSeguraParaZerar(assento, g)) continue;
-          if (baixar(assento, g.map((c) => c.id).toList())['ok'] == true) { fechando = true; break; }
+          final r = baixar(assento, g.map((c) => c.id).toList());
+          if (_botFalhouTecnicamente(marca)) return; // não tenta outro grupo
+          if (r['ok'] == true) {
+            fechando = true;
+            break;
+          }
         }
       }
     }
@@ -1665,8 +1737,13 @@ class Jogo {
     final adv = jogosDupla[dupla == 'nos' ? 'eles' : 'nos']!;
     final alvo = _decidirDescarte(maos[assento], adv);
     if (descartar(assento, alvo.id) != null) {
+      // Falha TÉCNICA no descarte: não varre as outras cartas — o motor acabou
+      // de quebrar, e insistir é exatamente o que o fail-closed proíbe. Recusa
+      // de REGRA, sim, pode ser contornada com outra carta.
+      if (_botFalhouTecnicamente(marca)) return;
       for (final c in maos[assento].toList()) {
         if (descartar(assento, c.id) == null) return;
+        if (_botFalhouTecnicamente(marca)) return;
       }
     }
   }
