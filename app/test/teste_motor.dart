@@ -40,6 +40,8 @@ import 'package:buraco_master_vip/motor/composicao.dart';
 // C9-C — modo sombra + comparador.
 import 'package:buraco_master_vip/motor/modo_sombra.dart';
 import 'package:buraco_master_vip/motor/autoridade_canonica.dart';
+// C10 (rev.1) — derivação fora do isolate de UI.
+import 'package:buraco_master_vip/motor/derivacao_fora_do_frame.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -4896,6 +4898,31 @@ void main() {
       expect(j.lixo, isEmpty);
       expect(j.jogosDupla['nos'], isEmpty); // foi para a MÃO, sem baixar
       expect(j.maos[0].any((c) => c.id == 'topoA'), isTrue);
+    });
+
+    // C10 (rev.1) — a derivação combinatória sai do isolate de UI. A entrega
+    // anterior alegava isso com `Future(() => ...)`, que só adia a execução no
+    // MESMO isolate e não livra frame nenhum. Este teste prova o que a alegação
+    // exige: os payloads ATRAVESSAM a fronteira de isolate (`compute`) e voltam
+    // com o MESMO resultado da chamada síncrona — sem teto, sem amostragem.
+    test('C10-ISOLATE-01 derivações cruzam a fronteira de isolate intactas',
+        () async {
+      final j = _jgAtomicoUmC10();
+      final estado = paraCanonico(j).canonico;
+      final sinc = j.candidatosCompraLixo(0);
+      final foraDoFrame = await candidatosLixoForaDoFrame(
+          ArgsCandidatosLixo(estado, 0, j.specCanonica));
+      expect([for (final c in foraDoFrame) jsonEncode(c.toJson())],
+          [for (final c in sinc) jsonEncode(c.toJson())]);
+
+      final j2 = _jgSelecaoAmbiguaC10();
+      const sel = ['a3', 'a4', 'a5', 'a6', 'a7', 'a8'];
+      final pSinc = j2.particoesDaSelecao(0, sel);
+      final pFora = await particoesForaDoFrame(
+          ArgsParticoes(paraCanonico(j2).canonico, 0, j2.specCanonica, sel));
+      expect([for (final p in pFora) jsonEncode(p.toJson())],
+          [for (final p in pSinc) jsonEncode(p.toJson())]);
+      expect(pFora.length, greaterThanOrEqualTo(2)); // não é um caso trivial
     });
 
     // ---------- estender e abertura múltipla ----------
