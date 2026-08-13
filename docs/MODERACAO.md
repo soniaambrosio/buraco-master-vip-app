@@ -347,6 +347,39 @@ Quem fecha o buraco é `firebase/testes/com-functions.js`: ele confere que a por
 5001 atende, **falha** se não atender — em vez de pular — e só então exporta a
 variável. O mesmo runner serve a suíte social, via `--codebase=<nome>`.
 
+### No CI, Moderação é gate bloqueante
+
+O portão `.github/workflows/ci-os-integracao.yml` protege **três** suítes Firebase
+com Emulator Suite, cada uma em passo próprio, sequenciais e bloqueantes:
+
+| Passo | Suíte | Gate | Comando | Piso |
+|---|---|---|---|---|
+| 3d | **Social** | `socialemu` | `emulators:exec … npm run test:social:functions` | 67 |
+| 3e | **Moderação** | `moderacaoemu` | `cd firebase/testes && npm run emulador:moderacao` | 45 |
+| 3f | **Coleções** | `regras` | `emulators:exec … npm test` | — |
+
+Até a OS *Gate de Moderação no CI*, o passo de Moderação não existia. A suíte
+`moderacao.test.js` já rodava dentro do gate `regras` do passo de Coleções, mas
+**sem** o emulador de Functions: lá os dois `describe` de callable saem `# SKIP`
+de propósito, porque aquele alvo prova regras. Na prática, `registrarDenuncia` e
+`bloquearJogador` nunca tinham sido *chamados* no CI, e a única rede contra uma
+regressão era alguém lembrar de rodar a suíte na própria máquina.
+
+O passo 3e chama o **wrapper** `emulador:moderacao`, e não o alvo interno como faz
+o passo social, porque o wrapper é autocontido — instala, compila `build:domain` e
+`build`, confere os artefatos, o Java, as portas e o dreno — e classifica o
+desfecho em exit codes distintos (`0` OK, `1` falha funcional, `3`/`4`
+infraestrutura, `5` suíte incompleta, `6` cleanup incompleto). Qualquer valor
+diferente de zero reprova o job; o que a classe muda é para onde quem lê o log vai
+olhar. Repetir o build no YAML criaria uma segunda receita do mesmo bundle.
+
+Sequenciais, e não paralelos: as três disputam as mesmas portas e o mesmo
+`projectId demo-bmv`.
+
+Os três gates não usam `continue-on-error`. O que **não** reprova é um passo que
+nem chegou a rodar (`NÃO EXECUTADO`) — política pré-existente do workflow, comum
+aos três, registrada como P1-2 em `docs/HOMOLOGACAO-P0-INTEGRADA.md`.
+
 Duas coisas que a primeira execução de verdade revelou, já corrigidas:
 
 1. **`CONCORRENCIA` não provava nada.** A asserção filtrava `reports` por id de

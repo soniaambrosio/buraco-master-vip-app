@@ -7,12 +7,21 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 #   2. flutter test — Motor de Partidas, encerramento, torneios, integração,
 #      coleções/Kit Pioneiros e domínio social
 #   3. as codebases Firebase, cada uma descoberta pelo próprio caminho:
-#        colecoes -> firebase/functions   + regras em firebase/testes (emulador)
-#        billing  -> functions-billing    (node --test, sem emulador)
-#        torneios -> functions            (tsc --noEmit)
-#        social   -> functions-social     (dart compile js + tsc + node --test,
-#                                          e um passo PRÓPRIO de Emulator Suite
-#                                          com chamadas reais às callables)
+#        colecoes  -> firebase/functions   + regras em firebase/testes (emulador)
+#        billing   -> functions-billing    (node --test, sem emulador)
+#        torneios  -> functions            (tsc --noEmit)
+#        social    -> functions-social     (dart compile js + tsc + node --test,
+#                                           e um passo PRÓPRIO de Emulator Suite
+#                                           com chamadas reais às callables)
+#        moderacao -> functions-moderacao  (passo PRÓPRIO de Emulator Suite, pelo
+#                                           wrapper `emulador:moderacao`, que faz
+#                                           o próprio build)
+#
+# TRÊS SUÍTES FIREBASE SÃO PROTEGIDAS PELO CI, cada uma com passo próprio e
+# bloqueante: SOCIAL (`socialemu`, passo 3d), MODERAÇÃO (`moderacaoemu`, passo 3e)
+# e COLEÇÕES (`regras`, passo 3f). Sequenciais de propósito — as três disputam as
+# MESMAS portas e o MESMO projectId `demo-bmv` do Emulator Suite, e duas execuções
+# sobrepostas não se revezam: sobem pela metade.
 #
 # NENHUM GATE FOI REMOVIDO NEM AFROUXADO por esta adição (OS Identidade Pública
 # §38). Os gates novos são: `social` (domínio Dart), `socialdom` (o bundle do
@@ -20,6 +29,14 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 # `socialemu` (Functions reais no emulador). As Rules do bloco social entram no
 # gate `regras` que já existia, porque `firebase/testes/npm test` passou a
 # incluir `social.test.js`.
+#
+# A OS "Gate de Moderação no CI" acrescentou `moderacaoemu` pelo mesmo critério, e
+# também sem afrouxar nada. O buraco que ele fecha era este: `moderacao.test.js`
+# já rodava dentro do gate `regras`, mas SEM o emulador de Functions — os dois
+# describes de callable saem `# SKIP` ali de propósito, porque aquele passo não
+# alega provar Function nenhuma. Resultado: `registrarDenuncia` e
+# `bloquearJogador` nunca tinham sido CHAMADOS no CI, e uma regressão neles
+# dependia de alguém lembrar de rodar a suíte na própria máquina.
 #
 # REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
 # descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
@@ -169,7 +186,71 @@ jobs:
             "cd firebase/testes && npm run test:social:functions" 2>&1 | tee t_socialemu.log
           echo ${PIPESTATUS[0]} > exit_socialemu
 
-      - name: "3e — codebase COLECOES: regras + Functions no Emulator Suite"
+      - name: "3e — codebase MODERACAO: Moderação com Firebase Emulator (chamadas reais)"
+        run: |
+          set +e
+          # POR QUE ESTE PASSO EXISTE, e o que ele NÃO é: até esta OS, Moderação
+          # só era exercida no CI de raspão, dentro do gate `regras` do passo
+          # seguinte. Lá `moderacao.test.js` roda por `node --test` puro, sem
+          # `FUNCTIONS_EMULATOR_HOST`, e os dois describes de callable saem
+          # `# SKIP` — de propósito, porque aquele alvo prova REGRAS. A conclusão
+          # incômoda é a que motivou esta OS: nenhuma chamada real às Functions de
+          # moderação jamais aconteceu neste workflow, e a única rede contra uma
+          # regressão em `registrarDenuncia`/`bloquearJogador` era a memória de
+          # quem rodasse a suíte à mão.
+          #
+          # NOME PRÓPRIO, e não um comando genérico: quando este passo fica
+          # vermelho, o gate `moderacaoemu` diz QUAL suíte caiu. Diluir Moderação
+          # dentro do gate `regras` — que hoje carrega três arquivos de teste —
+          # devolveria o diagnóstico ao ponto de partida.
+          #
+          # AQUI SE CHAMA O WRAPPER `emulador:moderacao`, e não o alvo interno
+          # `test:moderacao:functions` como faz o passo 3d do social. A troca é
+          # deliberada, e o motivo é que o wrapper é AUTOCONTIDO e CLASSIFICA:
+          #
+          #   ﹣ preparo dentro do próprio alvo: `npm install` + `build:domain`
+          #     (dart compile js) + `build` (tsc) em functions-moderacao, mais a
+          #     conferência de que os artefatos que o emulador vai carregar
+          #     existem. Repetir esse build no YAML criaria uma segunda receita do
+          #     mesmo bundle, que diverge na primeira mudança — e um `lib/` velho
+          #     faria a suíte provar a Function de ontem sem avisar ninguém;
+          #   ﹣ confere `java`, a trava do ambiente e as oito portas ANTES de
+          #     subir, e o dreno DEPOIS;
+          #   ﹣ separa os desfechos em classes com exit codes próprios:
+          #       0 OK · 1 FALHA-FUNCIONAL · 3/4 INFRAESTRUTURA
+          #       5 SUITE-INCOMPLETA · 6 CLEANUP-INCOMPLETO
+          #     Qualquer um diferente de 0 reprova este passo; o que a classe muda
+          #     é para onde quem lê o log vai olhar.
+          #
+          # O piso de casos (`--esperado=45`) continua morando no alvo interno, em
+          # firebase/testes/package.json, e é o wrapper que o aciona. Suíte que
+          # encolher, pular ou cancelar sai como SUITE-INCOMPLETA, não como verde.
+          #
+          # `build:domain` de moderação NÃO precisa de `flutter pub get` em app/
+          # (diferente do social, no passo 3c): `app/lib/moderacao/js_bridge.dart`
+          # e o domínio que ele importa só usam `dart:` e imports relativos, sem
+          # uma única URI `package:`. O `dart` do PATH, que o setup do Flutter já
+          # deixou, basta.
+          if [ ! -f firebase/testes/package.json ]; then
+            echo "firebase/testes/package.json ausente" > nao_moderacaoemu; exit 0
+          fi
+          if [ ! -f functions-moderacao/package.json ]; then
+            echo "functions-moderacao/package.json ausente" > nao_moderacaoemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          # Dependências do HARNESS (`@firebase/rules-unit-testing`). O preparo do
+          # alvo cobre `functions-moderacao`, e não esta pasta. Repetido aqui, e
+          # não herdado do passo 3d, porque aquele passo pode sair cedo quando o
+          # bundle social não existe — e Moderação não pode ficar refém disso.
+          ( cd firebase/testes && npm install 2>&1 | tail -3 )
+          # `--project demo-bmv` e o `--only firestore,auth,functions:moderacao`
+          # estão dentro do runner, na tabela ALVOS: nenhum projeto real é tocado
+          # e os outros codebases não sobem — provar denúncia e bloqueio não
+          # depende de compilar torneios nem o social.
+          ( cd firebase/testes && npm run emulador:moderacao ) 2>&1 | tee t_moderacaoemu.log
+          echo ${PIPESTATUS[0]} > exit_moderacaoemu
+
+      - name: "3f — codebase COLECOES: regras + Functions no Emulator Suite"
         run: |
           set +e
           # Caminho FIXO do harness de segurança. Ele não fica em
@@ -197,7 +278,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu moderacaoemu regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -248,7 +329,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu moderacaoemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

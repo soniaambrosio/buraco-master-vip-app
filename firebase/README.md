@@ -113,6 +113,25 @@ deixou `claimPioneerKit` sem nenhuma execução real desde a entrega original.
 
 Todos rodam de `firebase/testes` (depois de `npm install` lá).
 
+### Quais deles o CI executa
+
+`.github/workflows/ci-os-integracao.yml` protege as **três** suítes Firebase com
+Emulator Suite, em passos próprios, sequenciais e bloqueantes:
+
+| Passo | Suíte | Gate | O que o CI chama |
+| --- | --- | --- | --- |
+| 3d | **Social** | `socialemu` | `emulators:exec … npm run test:social:functions` |
+| 3e | **Moderação** | `moderacaoemu` | `npm run emulador:moderacao` (o wrapper) |
+| 3f | **Coleções** | `regras` | `emulators:exec … npm test` |
+
+Moderação passa pelo wrapper porque ele é autocontido e classifica o desfecho:
+qualquer exit diferente de zero — falha funcional (1), infraestrutura (3/4),
+suíte incompleta (5), cleanup incompleto (6) — reprova o job. Nenhum dos três usa
+`continue-on-error`.
+
+Sequenciais de propósito: paralelizá-los no mesmo host colocaria três execuções
+disputando as mesmas portas e o mesmo `projectId`.
+
 ### Os três alvos de emulador são autocontidos
 
 `npm run emulador:social` **faz o próprio build**. Não é mais necessário rodar

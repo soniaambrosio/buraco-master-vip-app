@@ -317,6 +317,17 @@ executa**:
 - o codebase `functions-moderacao` (a palavra "moderacao" não aparece uma vez no
   workflow — `grep -c` devolve 0)
 
+> **Parcialmente fechado pela OS *Gate de Moderação no CI*.** O último item saiu:
+> o workflow ganhou o passo `3e — codebase MODERACAO`, gate `moderacaoemu`,
+> bloqueante, que roda `npm run emulador:moderacao` — regras **e** chamadas reais
+> às Cloud Functions de moderação, com piso de 45 casos. Com ele, o CI protege as
+> três suítes Firebase: **Social** (`socialemu`), **Moderação** (`moderacaoemu`) e
+> **Coleções** (`regras`).
+>
+> Continuam abertos os três primeiros itens (suítes Flutter de moderação,
+> espectador e rastreabilidade), o agravante do `NÃO EXECUTADO` que não reprova, e
+> o disparo apenas por `workflow_dispatch`.
+
 Agravante de integridade: `NÃO EXECUTADO` **não reprova** o portão (*"só falha em
 gate que REALMENTE rodou e falhou"*). Um teste renomeado ou removido deixa o
 portão verde. O cabeçalho do próprio arquivo promete o contrário — *"REGRA DURA
