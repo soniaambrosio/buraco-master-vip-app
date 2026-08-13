@@ -14,6 +14,8 @@ import 'motor/autoridade_canonica.dart';
 // C10 — costura da classificação/pontuação canônicas no consumidor real.
 import 'motor/pontuacao_costura.dart';
 import 'motor/projecao_estado.dart' show paraCanonico;
+// C10 (rev.1) — derivação combinatória FORA do isolate de UI.
+import 'motor/derivacao_fora_do_frame.dart';
 import 'rules/acoes.dart';
 import 'rules/rule_spec.dart';
 
@@ -822,6 +824,15 @@ class Jogo {
         diag: diag);
   }
 
+  /// C10 (rev.1) — mensagem de recusa da compra do lixo sem uso do topo.
+  /// Exposta para que o consumidor possa recusar SEM mandar derivar tudo de
+  /// novo só para descobrir que a lista está vazia.
+  String get erroLixoSemUsoDoTopo => lixo.isEmpty
+      ? 'o lixo está vazio'
+      : 'No fechado, só dá pra pegar o lixo se o topo '
+          '(${_cartaRotulo(lixo.last)}) tiver uso imediato: formar um '
+          'jogo novo com cartas da mão ou estender um jogo já baixado.';
+
   /// C10 — executa UMA compra do lixo já escolhida, como transação ATÔMICA
   /// (recolhe o lixo E baixa/estende o uso do topo no mesmo commit).
   Map<String, dynamic> comprarLixoAtomico(int assento, ComprarLixo escolha) {
@@ -866,16 +877,7 @@ class Jogo {
         return comprarLixoAtomico(assento, const ComprarLixo());
       }
       final cands = candidatosCompraLixo(assento);
-      if (cands.isEmpty) {
-        return {
-          'ok': false,
-          'erro': lixo.isEmpty
-              ? 'o lixo está vazio'
-              : 'No fechado, só dá pra pegar o lixo se o topo '
-                  '(${_cartaRotulo(lixo.last)}) tiver uso imediato: formar um '
-                  'jogo novo com cartas da mão ou estender um jogo já baixado.',
-        };
-      }
+      if (cands.isEmpty) return {'ok': false, 'erro': erroLixoSemUsoDoTopo};
       if (cands.length == 1) return comprarLixoAtomico(assento, cands.single);
       return {
         'ok': false,
@@ -1121,6 +1123,17 @@ class Jogo {
     }
     // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
     return {'ok': false, 'erro': _falharFechado(rotulo, r)};
+  }
+
+  /// C10 (rev.1) — PARTIÇÕES legais da seleção do jogador em jogos novos.
+  /// Enumera; não escolhe. Uma seleção que forma um único meld devolve
+  /// exatamente uma partição — o gesto de sempre segue igual.
+  List<Baixar> particoesDaSelecao(int assento, List<String> ids,
+      {DiagnosticoLixo? diag}) {
+    if (!motorConfig.canonicoAtivo) return const <Baixar>[];
+    return derivarParticoesAbertura(
+        paraCanonico(this).canonico, assento, specCanonica, ids,
+        diag: diag);
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
@@ -2171,18 +2184,19 @@ class _MesaScreenState extends State<MesaScreen> {
     if (!_j.specCanonica.exigeUsoDoTopoNoLixo) {
       resultado = _j.comprarLixo(0, modalidade: _modalidade);
     } else {
-      setState(() {
-        _derivandoLixo = true;
-        // Usa o canal de mensagem que já existe — nenhum elemento novo entra no
-        // layout aprovado só por causa da espera.
-        _msg = 'Conferindo os usos do topo…';
-      });
       try {
-        final cands =
-            await Future<List<ComprarLixo>>(() => _j.candidatosCompraLixo(0));
+        final cands = await _derivarForaDoFrame(
+          () => candidatosLixoForaDoFrame(ArgsCandidatosLixo(
+              paraCanonico(_j).canonico, 0, _j.specCanonica)),
+          aviso: 'Conferindo os usos do topo…',
+          manterOcupado: true,
+        );
         if (!mounted) return;
         if (cands.isEmpty) {
-          resultado = _j.comprarLixo(0, modalidade: _modalidade); // recusa
+          // C10 (rev.1): NÃO chama `comprarLixo`, que derivaria tudo de novo só
+          // para descobrir que não há candidato. A recusa é montada a partir do
+          // resultado que já temos.
+          resultado = {'ok': false, 'erro': _j.erroLixoSemUsoDoTopo};
         } else if (cands.length == 1) {
           resultado = _j.comprarLixoAtomico(0, cands.single);
         } else {
@@ -2235,6 +2249,35 @@ class _MesaScreenState extends State<MesaScreen> {
     });
   }
 
+  /// C10 (rev.1) — roda uma derivação combinatória FORA do isolate de UI e
+  /// sinaliza a espera pelo canal de mensagem que já existe (nenhum elemento
+  /// novo entra no layout aprovado). Enquanto roda, a mesa fica ocupada: é o
+  /// que impede um segundo toque e a jogada automática do cronômetro.
+  ///
+  /// `manterOcupado` deixa a mesa ocupada depois do retorno — usado quando um
+  /// seletor vai abrir em seguida e o estado não pode mudar por baixo dele;
+  /// nesse caso quem chama é responsável por liberar.
+  Future<T> _derivarForaDoFrame<T>(
+    Future<T> Function() tarefa, {
+    required String aviso,
+    bool manterOcupado = false,
+  }) async {
+    setState(() {
+      _derivandoLixo = true;
+      _msg = aviso;
+    });
+    try {
+      return await tarefa();
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (!manterOcupado) _derivandoLixo = false;
+          if (_msg == aviso) _msg = null;
+        });
+      }
+    }
+  }
+
   Future<void> _tapLixo() async {
     if (!_minhaVezAtiva || _derivandoLixo) return;
     if (!_j.jaComprou) {
@@ -2274,8 +2317,18 @@ class _MesaScreenState extends State<MesaScreen> {
     await _rodarBots();
   }
 
-  void _baixar() {
-    if (!_minhaVezAtiva || !_j.jaComprou) return;
+  /// C10 (rev.1) — BAIXAR pelo gesto aprovado, agora com abertura MÚLTIPLA.
+  ///
+  /// O gesto é o mesmo de sempre: seleciona as cartas, toca no feltro. O que
+  /// mudou é a interpretação — a autoridade deriva todas as maneiras legais de
+  /// repartir EXATAMENTE aquela seleção em jogos. 0 → recusa; 1 → executa;
+  /// 2+ → o jogador escolhe. Seleção de um meld só continua dando uma partição,
+  /// então o comportamento do gesto de sempre não mudou.
+  ///
+  /// É assim que a dupla vulnerável abre quando o mínimo depende da SOMA dos
+  /// jogos: ela seleciona as cartas dos dois (ou três) jogos de uma vez.
+  Future<void> _baixar() async {
+    if (!_minhaVezAtiva || !_j.jaComprou || _derivandoLixo) return;
     if (_sel.length < 3) {
       setState(() => _msg =
           'Selecione três ou mais cartas e toque no feltro para baixar.');
@@ -2283,7 +2336,34 @@ class _MesaScreenState extends State<MesaScreen> {
     }
     final novoIndice = _j.jogosDupla['nos']!.length;
     final ids = _sel.map((i) => _j.maos[0][i].id).toList();
-    final resultado = _j.baixar(0, ids);
+
+    final Map<String, dynamic> resultado;
+    try {
+      final particoes = await _derivarForaDoFrame(
+        () => particoesForaDoFrame(ArgsParticoes(
+            paraCanonico(_j).canonico, 0, _j.specCanonica, ids)),
+        aviso: 'Conferindo as formas de baixar…',
+        manterOcupado: true,
+      );
+      if (!mounted) return;
+      if (particoes.isEmpty) {
+        // Nenhuma partição legal. A MENSAGEM vem da autoridade, pela baixada
+        // simples — é ela que sabe dizer se o problema é o meld, o mínimo de
+        // vulnerabilidade ou a trava de esvaziar a mão. Isso NÃO regenera
+        // partições: `baixar` faz uma transação canônica direta.
+        resultado = _j.baixar(0, ids);
+      } else if (particoes.length == 1) {
+        resultado = _j.baixarAtomico(0, jogosNovos: particoes.single.jogosNovos);
+      } else {
+        final escolha = await _escolherParticao(particoes);
+        if (!mounted) return;
+        if (escolha == null) return; // desistiu: nada acontece
+        resultado = _j.baixarAtomico(0, jogosNovos: escolha.jogosNovos);
+      }
+    } finally {
+      if (mounted && _derivandoLixo) setState(() => _derivandoLixo = false);
+    }
+
     if (resultado['ok'] != true) {
       setState(() => _msg = resultado['erro'] as String?);
       _somErro();
@@ -2297,11 +2377,12 @@ class _MesaScreenState extends State<MesaScreen> {
     if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() {
       _sel.clear();
+      final n = (resultado['tipos'] as List?)?.length ?? 1;
       _msg = resultado['bateu'] == true
           ? 'Você bateu!'
           : (resultado['pegouMorto'] == true
               ? 'Você pegou o morto.'
-              : 'Jogo baixado.');
+              : (n > 1 ? '$n jogos baixados.' : 'Jogo baixado.'));
     });
   }
 
@@ -3854,12 +3935,45 @@ class _MesaScreenState extends State<MesaScreen> {
     ];
   }
 
+  /// C10 (rev.1) — SELETOR MÍNIMO das PARTIÇÕES da seleção. Mesma regra do
+  /// seletor do lixo: a autoridade enumera tudo, a folha só apresenta, e
+  /// cancelar não baixa nada.
+  Future<Baixar?> _escolherParticao(List<Baixar> particoes) {
+    String rotulo(Baixar b) => b.jogosNovos
+        .map((g) => _cartasPorIds(g).map(_cartaRotulo).join(' '))
+        .join('  +  ');
+    return _escolherNaFolha<Baixar>(
+      titulo: 'Como baixar estas ${_sel.length} cartas?',
+      subtitulo: 'Há mais de uma forma legal de repartir a seleção.',
+      itens: particoes,
+      rotulo: rotulo,
+    );
+  }
+
   /// C10 — SELETOR MÍNIMO: quando há 2+ usos legais do topo, quem escolhe é o
   /// jogador. A lista vem inteira da autoridade canônica (nenhum candidato é
   /// omitido); a folha só apresenta. Cancelar não compra nada.
   Future<ComprarLixo?> _escolherCompraLixo(List<ComprarLixo> cands) {
     final topo = _j.lixo.isEmpty ? '' : _cartaRotulo(_j.lixo.last);
-    return showModalBottomSheet<ComprarLixo>(
+    return _escolherNaFolha<ComprarLixo>(
+      titulo: 'Como usar o topo ($topo)?',
+      subtitulo: 'O lixo só vem junto com um destes usos.',
+      itens: cands,
+      rotulo: _rotuloCandidatoLixo,
+    );
+  }
+
+  /// Folha de escolha ÚNICA para os dois seletores mínimos (uso do topo e
+  /// partição da seleção). Só apresenta a lista que a autoridade produziu —
+  /// nada é omitido, ordenado por preferência nem pré-selecionado. Cancelar
+  /// devolve null e não executa nada.
+  Future<T?> _escolherNaFolha<T>({
+    required String titulo,
+    required String subtitulo,
+    required List<T> itens,
+    required String Function(T) rotulo,
+  }) {
+    return showModalBottomSheet<T>(
       context: context,
       backgroundColor: const Color(0xF4120D14),
       isScrollControlled: true,
@@ -3875,7 +3989,7 @@ class _MesaScreenState extends State<MesaScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Como usar o topo ($topo)?',
+                titulo,
                 style: const TextStyle(
                   color: _mGoldHi,
                   fontSize: 13.5,
@@ -3883,18 +3997,18 @@ class _MesaScreenState extends State<MesaScreen> {
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
-                'O lixo só vem junto com um destes usos.',
-                style: TextStyle(color: Color(0xFFB6A8BE), fontSize: 10.5),
+              Text(
+                subtitulo,
+                style: const TextStyle(color: Color(0xFFB6A8BE), fontSize: 10.5),
               ),
               const SizedBox(height: 10),
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: cands.length,
+                  itemCount: itens.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 6),
                   itemBuilder: (_, i) => InkWell(
-                    onTap: () => Navigator.of(ctx).pop(cands[i]),
+                    onTap: () => Navigator.of(ctx).pop(itens[i]),
                     borderRadius: BorderRadius.circular(11),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -3905,7 +4019,7 @@ class _MesaScreenState extends State<MesaScreen> {
                         border: Border.all(color: _mPurple, width: 1),
                       ),
                       child: Text(
-                        _rotuloCandidatoLixo(cands[i]),
+                        rotulo(itens[i]),
                         style: const TextStyle(
                             color: Colors.white, fontSize: 12.2),
                       ),

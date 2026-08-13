@@ -4798,6 +4798,37 @@ void main() {
       expect(j.ultimaFalhaTecnica, isNull); // regra, não técnica
     });
 
+    test('C10-NO-FALLBACK-03 falha TÉCNICA na compra do MONTE é fail-closed',
+        () {
+      final j = _jgMonteVazioMortoC10();
+      final antes = snap(j);
+      final falhasAntes = j.falhasTecnicas;
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      final ok = j.comprarMonte(0);
+      j.projetorAutoridadeTest = null;
+      expect(ok, isFalse);
+      expect(snap(j), antes); // nada convertido, nada comprado
+      expect(j.jaComprou, isFalse);
+      expect(j.falhasTecnicas, falhasAntes + 1);
+      expect(j.ultimaFalhaTecnica!['metodo'], 'comprarMonte');
+    });
+
+    test('C10-NO-FALLBACK-04 falha TÉCNICA na compra ATÔMICA do lixo é fail-closed',
+        () {
+      final j = _jgAtomicoUmC10();
+      final cands = j.candidatosCompraLixo(0); // deriva ANTES de injetar a falha
+      expect(cands.length, 1);
+      final antes = snap(j);
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      final r = j.comprarLixoAtomico(0, cands.single);
+      j.projetorAutoridadeTest = null;
+      expect(r['ok'], isFalse);
+      expect(snap(j), antes); // lixo NÃO recolhido, nada baixado
+      expect(j.lixo.length, 2);
+      expect(j.jogosDupla['nos'], isEmpty);
+      expect(j.ultimaFalhaTecnica!['metodo'], 'comprarLixo');
+    });
+
     test('C10-NO-FALLBACK-02 falha TÉCNICA é fail-closed em TODOS os métodos',
         () {
       for (final caso in <String>['baixar', 'estender', 'descartar']) {
@@ -4879,6 +4910,69 @@ void main() {
       final antes = snap(j);
       expect(j.estender(0, 0, ['kx'])['ok'], isFalse);
       expect(snap(j), antes);
+    });
+
+    // C10 (rev.1) — o CONSUMIDOR HUMANO da abertura múltipla. A chamada direta
+    // a `baixarAtomico` (ABERTURA-01) provava o motor, não o gesto. Estes
+    // provam o caminho que o jogador percorre: seleciona cartas -> a autoridade
+    // deriva as partições -> 0 recusa / 1 executa / 2+ escolhe.
+    test('C10-ABERTURA-02 seleção de UM meld dá exatamente UMA partição', () {
+      // Garante que o gesto de sempre não mudou de comportamento.
+      final j = _jgEstenderC10();
+      final ps = j.particoesDaSelecao(0, ['9o', '10o', 'Jo']);
+      expect(ps.length, 1);
+      expect(ps.single.jogosNovos.length, 1);
+      final r = j.baixarAtomico(0, jogosNovos: ps.single.jogosNovos);
+      expect(r['ok'], isTrue);
+      expect(j.jogosDupla['nos']!.length, 2);
+    });
+
+    test('C10-ABERTURA-03 consumidor HUMANO abre com vários jogos numa seleção',
+        () {
+      // Vulnerável (mínimo 75): o jogador seleciona as cartas dos TRÊS jogos e
+      // toca no feltro. A autoridade reparte; a abertura sai numa transação só.
+      final j = _jgAberturaMultiplaC10();
+      final sel = ['3c', '4c', '5c', 'Jo', 'Qo', 'Ko', 'Qe', 'Ke', 'Ae'];
+      final ps = j.particoesDaSelecao(0, sel);
+      expect(ps, isNotEmpty); // há partição legal
+      expect(ps.first.jogosNovos.length, 3); // repartida em três jogos
+      final r = j.baixarAtomico(0, jogosNovos: ps.first.jogosNovos);
+      expect(r['ok'], isTrue, reason: r['erro']?.toString());
+      expect(j.jogosDupla['nos']!.length, 3);
+      expect(j.primeiraBaixadaFeita['nos'], isTrue);
+      // toda carta selecionada foi usada, e nenhuma outra.
+      final naMesa =
+          j.jogosDupla['nos']!.expand((m) => m.map((c) => c.id)).toSet();
+      expect(naMesa, sel.toSet());
+    });
+
+    test('C10-ABERTURA-04 seleção sem partição legal -> 0 -> recusa intacta',
+        () {
+      final j = _jgAberturaMultiplaC10();
+      final antes = snap(j);
+      // 3c,4c,Jo não se reparte em jogo nenhum.
+      expect(j.particoesDaSelecao(0, ['3c', '4c', 'Jo']), isEmpty);
+      expect(j.baixar(0, ['3c', '4c', 'Jo'])['ok'], isFalse);
+      expect(snap(j), antes);
+    });
+
+    test('C10-ABERTURA-05 seleção ambígua -> 2+ partições, sem autoescolha', () {
+      final j = _jgSelecaoAmbiguaC10();
+      final ps = j.particoesDaSelecao(0, ['a3', 'a4', 'a5', 'a6', 'a7', 'a8']);
+      // 6 cartas em sequência: pode virar UM jogo de 6 ou DOIS de 3.
+      expect(ps.length, greaterThanOrEqualTo(2));
+      expect(ps.any((p) => p.jogosNovos.length == 1), isTrue);
+      expect(ps.any((p) => p.jogosNovos.length == 2), isTrue);
+      // determinístico: a mesma seleção devolve a mesma lista, na mesma ordem.
+      final s1 = [for (final p in ps) jsonEncode(p.toJson())];
+      final s2 = [
+        for (final p in j.particoesDaSelecao(0, ['a3', 'a4', 'a5', 'a6', 'a7', 'a8']))
+          jsonEncode(p.toJson())
+      ];
+      expect(s2, s1);
+      expect(s1.toSet().length, s1.length); // sem duplicatas (âncora evita permutação)
+      // nada foi aplicado só por derivar.
+      expect(j.jogosDupla['nos'], isEmpty);
     });
 
     test('C10-ABERTURA-01 abertura MÚLTIPLA atômica no consumidor real', () {
@@ -6742,6 +6836,26 @@ Jogo _jgBotAberturaCompostaC10() {
     Carta('Ke', 'espadas', 'K', false),
     Carta('Ae', 'espadas', 'A', false),
     Carta('guard', 'paus', '8', false), // sobra: a abertura não zera a mão
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// Fase jogo, dupla já abriu (sem mínimo). Seleção 3..8 de copas: pode virar UM
+// jogo de 6 cartas OU dois jogos de 3 — partição ambígua de verdade.
+Jogo _jgSelecaoAmbiguaC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.monte = [Carta('mo1', 'paus', '2', false)];
+  j.maos[0] = [
+    Carta('a3', 'copas', '3', false),
+    Carta('a4', 'copas', '4', false),
+    Carta('a5', 'copas', '5', false),
+    Carta('a6', 'copas', '6', false),
+    Carta('a7', 'copas', '7', false),
+    Carta('a8', 'copas', '8', false),
+    Carta('guard', 'paus', 'K', false), // sobra: a baixada não zera a mão
   ];
   j.lixo = [Carta('lx', 'espadas', '3', false)];
   return j;

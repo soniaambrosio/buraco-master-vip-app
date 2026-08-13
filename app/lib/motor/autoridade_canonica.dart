@@ -307,6 +307,117 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
   return out;
 }
 
+/// C10 (rev.1) — PARTIÇÕES ATÔMICAS de uma seleção de cartas em jogos NOVOS.
+///
+/// O gesto aprovado da mesa é um só: o jogador seleciona as cartas e toca no
+/// feltro. Para a abertura MÚLTIPLA existir sem redesenhar a tela, é a seleção
+/// que precisa ser interpretada — todas as maneiras legais de repartir
+/// EXATAMENTE aquelas cartas em jogos válidos.
+///
+/// Auto-derivar ≠ auto-decidir, igual ao lixo: 0 partições → recusa;
+/// 1 → executa; 2+ → o jogador escolhe. A seleção de UM meld continua dando
+/// exatamente uma partição, então o gesto de sempre não muda de comportamento.
+///
+/// Travessia lazy com poda estrutural (mesma do derivador do lixo) e âncora na
+/// carta ainda não usada de menor índice — isso elimina permutações da mesma
+/// partição por construção, em vez de deduplicar depois. `avaliarBaixar` é o
+/// verificador final: mínimo de vulnerabilidade, trava de esvaziar e tudo mais
+/// continuam sendo decididos pela autoridade, nunca aqui.
+List<Baixar> derivarParticoesAbertura(
+    EstadoJogo estado, int assento, RuleSpec spec, List<CartaId> selecao,
+    {DiagnosticoLixo? diag}) {
+  final d = diag ?? DiagnosticoLixo();
+  if (selecao.length < 3) return const <Baixar>[];
+  final mao = estado.maos[assento];
+  final porId = <CartaId, CartaSnapshot>{for (final c in mao) c.id: c};
+  // Toda carta selecionada precisa estar na mão, sem repetição.
+  final vistos = <CartaId>{};
+  final cartas = <CartaSnapshot>[];
+  for (final id in selecao) {
+    if (!vistos.add(id)) return const <Baixar>[];
+    final c = porId[id];
+    if (c == null) return const <Baixar>[];
+    cartas.add(c);
+  }
+
+  final n = cartas.length;
+  final usada = List<bool>.filled(n, false);
+  final atual = <List<CartaId>>[];
+  final saida = <Baixar>[];
+
+  void emitir() {
+    d.transacoesValidadas++;
+    final jogos = [for (final g in atual) List<CartaId>.from(g)];
+    final r = avaliarBaixar(estado, assento, Baixar(jogosNovos: jogos), spec);
+    if (r.valido) saida.add(Baixar(jogosNovos: jogos));
+  }
+
+  void rec(int usadas) {
+    d.nosCombo++;
+    if (usadas == n) {
+      emitir();
+      return;
+    }
+    // ÂNCORA: a menor carta ainda livre entra obrigatoriamente no próximo jogo.
+    var ancora = 0;
+    while (ancora < n && usada[ancora]) {
+      ancora++;
+    }
+    final pool = <int>[
+      for (var i = ancora + 1; i < n; i++)
+        if (!usada[i]) i
+    ];
+    final grupo = <int>[ancora];
+    usada[ancora] = true;
+
+    void escolher(int k, Set<String> naipes, Set<String> valores, int jokers) {
+      d.nosMeld++;
+      if (grupo.length >= 3) {
+        final meld = <CartaSnapshot>[for (final i in grupo) cartas[i]];
+        if (validarJogoMesa(meld, spec).valido) {
+          atual.add([for (final i in grupo) cartas[i].id]);
+          rec(usadas + grupo.length);
+          atual.removeLast();
+        }
+      }
+      for (var p = k; p < pool.length; p++) {
+        final i = pool[p];
+        if (usada[i]) continue;
+        final c = cartas[i];
+        final ehJoker = c.valor == 'JOKER';
+        if (ehJoker && jokers >= spec.maxCuringasPorSequencia) continue;
+        var nn = naipes, nv = valores;
+        if (!_ehCuringaGen(c)) {
+          nn = {...naipes, c.naipe!};
+          nv = {...valores, c.valor};
+          // Nem sequência (2+ naipes) nem trinca (2+ valores): poda estrutural
+          // que nunca descarta um meld legal.
+          if (nn.length >= 2 && nv.length >= 2) continue;
+        }
+        grupo.add(i);
+        usada[i] = true;
+        escolher(p + 1, nn, nv, jokers + (ehJoker ? 1 : 0));
+        usada[i] = false;
+        grupo.removeLast();
+      }
+    }
+
+    final c0 = cartas[ancora];
+    escolher(
+      0,
+      _ehCuringaGen(c0) ? <String>{} : {c0.naipe!},
+      _ehCuringaGen(c0) ? <String>{} : {c0.valor},
+      c0.valor == 'JOKER' ? 1 : 0,
+    );
+    usada[ancora] = false;
+  }
+
+  rec(0);
+  saida.sort((a, b) =>
+      _sigCompra(a.jogosNovos, a.extensoes).compareTo(_sigCompra(b.jogosNovos, b.extensoes)));
+  return saida;
+}
+
 class _RunCanonico {
   final bool recusou;
   final String? motivo;
