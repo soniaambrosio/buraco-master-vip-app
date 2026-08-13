@@ -710,15 +710,19 @@ void main() {
     j.mortoPego = {'nos': false, 'eles': true};
     expect(fechaEconta(j)['penalidadeMorto'], -100);
   });
-  test('PONT-09 morto CONVERTIDO em monte isenta o -100', () {
+  // C10 (rev.1): antes este teste afirmava que a conversão ISENTAVA o -100.
+  // A revisão da direção rejeitou a regra: conversão é evento de baralho, não
+  // perdão de pontuação. Mesmo cenário, expectativa corrigida.
+  test('PONT-09 morto CONVERTIDO em monte NÃO isenta o -100', () {
     final j = novo();
     montar(j, mao0: const [('5', 'copas'), ('K', 'paus')], vez: 0, jaComprou: true);
     j.mortos[0].addAll(j.monte);
     j.monte = [];
     j.auditarIntegridade();
     j.descartar(0, j.maos[0][0].id); // _passarVez converte o morto em monte
+    expect(j.costuraMortosConvertidos, greaterThan(0)); // conversão registrada
     j.mortoPego = {'nos': false, 'eles': true};
-    expect(fechaEconta(j)['penalidadeMorto'], 0);
+    expect(fechaEconta(j)['penalidadeMorto'], -100);
   });
   test('PONT-10 morto pego (mesmo sem usar) não leva -100', () {
     final j = novo();
@@ -1016,7 +1020,10 @@ void main() {
   });
 
   // ============ ADENDOS exigidos antes do APK candidato (31/07) ============
-  test('FLUX-21 conversão do morto da dupla correspondente isenta o -100 (fluxo real)', () {
+  // C10 (rev.1): este teste afirmava que a conversão ISENTAVA o -100. A revisão
+  // da direção rejeitou essa regra, no canônico e no legado. O cenário é o
+  // mesmo; o que mudou é a expectativa.
+  test('FLUX-21 conversão do morto NÃO isenta o -100 (fluxo real)', () {
     final j = novo();
     montar(j,
         mao0: const [('K', 'paus'), ('Q', 'ouros')],
@@ -1037,8 +1044,8 @@ void main() {
     expect(j.mortos, isEmpty);
     j.rodadaEncerrada = true;
     j.contarPontos();
-    expect((j.pontosRodada!['nos'] as Map)['penalidadeMorto'], 0,
-        reason: 'NÓS sem morto por CONVERSÃO → sem -100');
+    expect((j.pontosRodada!['nos'] as Map)['penalidadeMorto'], -100,
+        reason: 'NÓS ficou sem morto — a conversão NÃO perdoa a penalidade');
     expect((j.pontosRodada!['eles'] as Map)['penalidadeMorto'], 0,
         reason: 'ELES pegou o seu morto → sem -100');
   });

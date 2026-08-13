@@ -367,10 +367,12 @@ class Jogo {
     }
     det['baixadas'] = pontosCartas;
     final bonusBatida = bateu ? 100 : 0;
-    // §8.3: morto convertido em monte deixa de ser direito reclamável —
-    // NÃO aplica o -100 pra dupla que ficou sem morto por causa da conversão.
+    // C10 (rev.1): a conversão §8.1 NÃO isenta ninguém. Antes havia aqui um
+    // `_mortosConvertidos == 0` que suprimia a penalidade — mesmo defeito
+    // corrigido no canônico. O ramo legado passa a cobrar igual, para o
+    // rollback não aplicar uma regra que a direção já rejeitou.
     final penalidadeMorto =
-        (!mortoPegoDupla && algumPegouMorto && _mortosConvertidos == 0) ? -100 : 0;
+        (!mortoPegoDupla && algumPegouMorto) ? -100 : 0;
     final descontoMao = -cartasNaMao;
     final total = pontosCanastras + pontosCartas + bonusBatida + descontoMao + penalidadeMorto;
     return {'total': total, 'canastras': pontosCanastras, 'bonusBatida': bonusBatida,
