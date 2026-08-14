@@ -150,6 +150,30 @@ class Jogo {
   /// continua sendo registrada; o que sumiu é a rota para o legado.
   Map<String, dynamic>? ultimaFalhaTecnica;
 
+  /// C10 (rev.2) — a mesa está OCUPADA por uma derivação combinatória em curso
+  /// ou por uma escolha humana pendente (o seletor de uso do topo / de partição
+  /// da seleção). Enquanto estiver ligada, NENHUMA jogada é aceita: o estado que
+  /// o jogador está vendo — e sobre o qual os candidatos foram derivados — não
+  /// pode mudar por baixo dele.
+  ///
+  /// A trava mora AQUI, e não só na tela, de propósito: uma guarda de UI depende
+  /// de todo ponto de entrada lembrar de checá-la (foi assim que `_estender`
+  /// ficou de fora na rev.1). No modelo, é invariante — vale para qualquer
+  /// consumidor, atual ou futuro.
+  ///
+  /// Quem deriva é responsável por LIBERAR antes de aplicar a jogada escolhida:
+  /// terminada a escolha, a janela de risco acabou e a transação é síncrona.
+  bool mesaOcupadaPorDerivacao = false;
+
+  /// Recusa padrão enquanto a mesa está ocupada (null = livre).
+  Map<String, dynamic>? get _recusaSeOcupada => mesaOcupadaPorDerivacao
+      ? const {
+          'ok': false,
+          'erro': 'aguarde: a mesa está conferindo as jogadas possíveis.',
+          'ocupada': true,
+        }
+      : null;
+
   /// C10 (rev.1) — CONTADOR monotônico de falhas técnicas. `ultimaFalhaTecnica`
   /// sozinha não distingue "falhou agora" de "falhou há três jogadas": quem
   /// precisa reagir a uma falha NOVA compara este contador antes e depois. É o
@@ -783,6 +807,7 @@ class Jogo {
 
   // ---------- JOGADAS ----------
   bool comprarMonte(int assento) {
+    if (mesaOcupadaPorDerivacao) return false; // C10 (rev.2) — mesa ocupada
     // C10 — AUTORIDADE ÚNICA: o canônico decide/aplica (transação atômica) e é
     // o ÚNICO caminho. Recusa de regra recusa; falha técnica FALHA FECHADO.
     if (motorConfig.canonicoAtivo) {
@@ -837,6 +862,8 @@ class Jogo {
   /// C10 — executa UMA compra do lixo já escolhida, como transação ATÔMICA
   /// (recolhe o lixo E baixa/estende o uso do topo no mesmo commit).
   Map<String, dynamic> comprarLixoAtomico(int assento, ComprarLixo escolha) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
     if (!motorConfig.canonicoAtivo) {
       return {
         'ok': false,
@@ -872,6 +899,8 @@ class Jogo {
   /// PROIBIDO resolver a ambiguidade voltando ao comportamento diferido legado
   /// (comprar agora e cobrar o uso do topo depois).
   Map<String, dynamic> comprarLixo(int assento, {String modalidade = 'ABERTO'}) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
     if (motorConfig.canonicoAtivo) {
       if (!specCanonica.exigeUsoDoTopoNoLixo) {
         // Aberto: compra LIVRE, para a mão — sem uso obrigatório do topo.
@@ -1101,6 +1130,8 @@ class Jogo {
     List<Extensao> extensoes = const [],
     String rotulo = 'baixar',
   }) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
     if (!motorConfig.canonicoAtivo) {
       return {
         'ok': false,
@@ -1138,6 +1169,8 @@ class Jogo {
   }
 
   Map<String, dynamic> baixar(int assento, List<String> ids) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
     // C10 — AUTORIDADE ÚNICA: baixada é transação canônica atômica (com
     // estabilização de morto direto/batida quando a baixada zera a mão).
     if (motorConfig.canonicoAtivo) {
@@ -1193,6 +1226,11 @@ class Jogo {
   }
 
   Map<String, dynamic> estender(int assento, int indiceJogo, List<String> ids) {
+    // C10 (rev.2) — a rev.1 travou monte, lixo e baixada durante a derivação e
+    // ESQUECEU a extensão: dava para alterar a mesa por baixo de um seletor
+    // aberto. É esse buraco que a trava no MODELO fecha de uma vez.
+    final ocupada = _recusaSeOcupada;
+    if (ocupada != null) return ocupada;
     // C10 — AUTORIDADE ÚNICA: estender NÃO é uma rota paralela; é uma baixada
     // canônica com `extensoes`. Até o C9-D este método furava a autoridade
     // (validava e mutava direto), o que deixava um buraco no corte canônico.
@@ -1243,6 +1281,9 @@ class Jogo {
 
   // retorna null se ok; senão string de erro
   String? descartar(int assento, String idCarta) {
+    if (mesaOcupadaPorDerivacao) {
+      return 'aguarde: a mesa está conferindo as jogadas possíveis.';
+    }
     // C9-D — AUTORIDADE ON: descarte como transação canônica ATÔMICA (com
     // estabilização de morto INDIRETO/batida quando o descarte zera a mão).
     if (motorConfig.canonicoAtivo) {
@@ -1607,6 +1648,38 @@ class Jogo {
   /// jogada, que é decisão estratégica dele.
   bool _botFalhouTecnicamente(int marca) => falhasTecnicas != marca;
 
+  /// C10 (rev.2) — JOGADA AUTOMÁTICA por tempo esgotado, com o MESMO
+  /// fail-closed do robô. Vive aqui, e não na tela, por duas razões: é lógica de
+  /// jogo (compra + descarte), e na tela ela era intestável — o portão de
+  /// qualidade não monta widget.
+  ///
+  /// Devolve `true` se o turno foi concluído. Falha TÉCNICA para na hora: não
+  /// tenta a próxima carta, não conclui o turno. Recusa de REGRA, sim, segue
+  /// para a carta seguinte (é o comportamento antigo, e é legítimo — a mão pode
+  /// ter cartas que não se pode descartar).
+  ///
+  /// Quem chama compara `falhasTecnicas` antes e depois para saber se a parada
+  /// foi por falha técnica ou por fim normal.
+  bool jogadaAutomatica(int assento) {
+    if (mesaOcupadaPorDerivacao) return false;
+    if (integridadeErro != null) return false;
+    if (rodadaEncerrada || vez != assento) return false;
+    final marca = falhasTecnicas;
+    if (!jaComprou) {
+      comprarMonte(assento);
+      if (falhasTecnicas != marca) return false;
+      ordenar(assento);
+    }
+    if (jaComprou && !rodadaEncerrada) {
+      for (final c in List<Carta>.from(maos[assento])) {
+        final erro = descartar(assento, c.id);
+        if (falhasTecnicas != marca) return false; // sem segundo descarte
+        if (erro == null) break;
+      }
+    }
+    return true;
+  }
+
   // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
   // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
   void botJoga(int assento) {
@@ -1901,9 +1974,16 @@ class _MesaScreenState extends State<MesaScreen> {
   final ScrollController _discardScroll = ScrollController();
 
   bool _botsRodando = false;
-  /// C10 — a derivação dos candidatos do lixo está agendada/rodando. Serve só
-  /// para não aceitar um segundo toque no meio e para o feltro sinalizar espera.
-  bool _derivandoLixo = false;
+
+  /// C10 (rev.2) — a mesa está ocupada por uma derivação combinatória (uso do
+  /// topo do lixo OU partição da seleção) ou por uma escolha humana pendente.
+  /// O nome antigo (`_derivandoLixo`) descrevia só metade dos casos desde que a
+  /// abertura múltipla passou a derivar também.
+  ///
+  /// Espelha `Jogo.mesaOcupadaPorDerivacao`, que é a trava de verdade: esta aqui
+  /// serve para a tela reagir (desabilitar o toque, sinalizar espera). A recusa
+  /// não depende dela — depende do modelo.
+  bool _mesaOcupadaPorDerivacao = false;
   bool _soundEnabled = true;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
@@ -1942,8 +2022,15 @@ class _MesaScreenState extends State<MesaScreen> {
     return dupla == 'nos' ? widget.vulnerabilidadeNos : widget.vulnerabilidadeEles;
   }
 
+  /// C10 (rev.2) — GUARDA ÚNICA das entradas humanas mutantes da mesa (monte,
+  /// lixo, baixar, estender) e da jogada automática. A rev.1 espalhava
+  /// `_derivandoLixo` por alguns pontos e esquecia outros; agora a condição de
+  /// "posso agir" mora num lugar só.
   bool get _minhaVezAtiva =>
-      _j.suaVez && !_j.rodadaEncerrada && !_botsRodando;
+      _j.suaVez &&
+      !_j.rodadaEncerrada &&
+      !_botsRodando &&
+      !_mesaOcupadaPorDerivacao;
 
   /// C10 — ROOT da partida LOCAL. A partida NASCE canônica: a autoridade é do
   /// `RulesEngine` desde a primeira jogada. O rollback é CONFIGURAÇÃO, escolhida
@@ -2017,26 +2104,42 @@ class _MesaScreenState extends State<MesaScreen> {
     });
   }
 
-  // Jogada automática quando o cronômetro zera na vez do humano.
+  /// Jogada automática quando o cronômetro zera na vez do humano.
+  ///
+  /// C10 (rev.2) — FAIL-CLOSED, pela MESMA noção monotônica que o robô usa. A
+  /// rev.1 corrigiu o robô e esqueceu deste caminho: ele comprava o monte,
+  /// falhava tecnicamente e mesmo assim varria a mão inteira tentando descartar,
+  /// e no fim chamava `_rodarBots` como se o turno tivesse terminado normalmente.
+  ///
+  /// Agora, na primeira falha técnica: para na hora, NÃO tenta outra carta, NÃO
+  /// passa a vez para os robôs e diz o que aconteceu. A evidência
+  /// (`ultimaFalhaTecnica`) fica preservada para diagnóstico.
   void _autoJogarPorTempo() {
     if (_j.vez != 0 || _j.rodadaEncerrada || _botsRodando) return;
-    // C10 — não atropela a derivação/escolha da compra do lixo em andamento.
-    if (_derivandoLixo) return;
-    if (!_j.jaComprou) {
-      _j.comprarMonte(0);
-      _j.ordenar(0);
-    }
-    if (_j.jaComprou && !_j.rodadaEncerrada) {
-      for (final c in List<Carta>.from(_j.maos[0])) {
-        if (_j.descartar(0, c.id) == null) break;
-      }
-    }
+    // Não atropela derivação nem escolha humana em andamento.
+    if (_mesaOcupadaPorDerivacao) return;
+
+    final marca = _j.falhasTecnicas;
+    final concluiu = _j.jogadaAutomatica(0);
+    // Falha técnica: para aqui. Não passa a vez para os robôs e não finge que o
+    // turno automático terminou. A evidência está em `_j.ultimaFalhaTecnica`.
+    if (_j.falhasTecnicas != marca) return _pararPorFalhaTecnica();
+    if (!concluiu) return;
     _sel.clear();
     _msg = 'Tempo esgotado — jogada automática.';
     if (_j.rodadaEncerrada) _j.contarPontos();
     if (mounted) setState(() {});
     _scrollDiscardToEnd();
     _rodarBots();
+  }
+
+  /// C10 (rev.2) — parada visível da jogada automática por falha técnica. Não
+  /// finge que o turno terminou: a vez continua onde está e os robôs NÃO são
+  /// acionados. A evidência já está em `_j.ultimaFalhaTecnica`.
+  void _pararPorFalhaTecnica() {
+    if (!mounted) return;
+    setState(() => _msg = 'PARTIDA PAUSADA · falha técnica do motor na jogada '
+        'automática; nada foi alterado.');
   }
 
   void _syncTurnClock({bool force = false}) {
@@ -2142,7 +2245,7 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   void _tapMonte() {
-    if (!_minhaVezAtiva || _j.jaComprou || _derivandoLixo) return;
+    if (!_minhaVezAtiva || _j.jaComprou) return; // guarda única
     final antes = _j.maos[0].map((c) => c.id).toSet();
     final ok = _j.comprarMonte(0);
     // C10 — EXAUSTÃO (monte E mortos vazios): sob a autoridade canônica a
@@ -2173,15 +2276,15 @@ class _MesaScreenState extends State<MesaScreen> {
   /// JOGADOR escolhe. Nunca compra "para a mão" com a obrigação do topo
   /// pendente — esse era o comportamento diferido do legado.
   ///
-  /// RESPONSIVIDADE: a derivação é AGENDADA fora do frame do toque (`Future`),
-  /// com a mesa marcada como ocupada. O conjunto de candidatos LEGAIS não é
-  /// tocado — nada de teto, amostragem ou corte semântico para "ficar rápido".
-  /// O que muda é quando a travessia roda, não o que ela produz.
+  /// RESPONSIVIDADE (rev.2): a derivação roda em OUTRO ISOLATE (`compute`) nas
+  /// plataformas nativas; na web cai no mesmo event loop, porque lá não existem
+  /// isolates. Nos dois casos o conjunto de candidatos LEGAIS é idêntico — não
+  /// há teto, amostragem nem corte semântico para "ficar rápido".
   Future<void> _comprarLixoNoToque() async {
-    if (_derivandoLixo) return; // reentrância: um toque por vez
+    if (_mesaOcupadaPorDerivacao) return; // reentrância: um toque por vez
     final antes = _j.maos[0].map((c) => c.id).toSet();
 
-    Map<String, dynamic> resultado;
+    final Map<String, dynamic> resultado;
     if (!_j.specCanonica.exigeUsoDoTopoNoLixo) {
       resultado = _j.comprarLixo(0, modalidade: _modalidade);
     } else {
@@ -2199,22 +2302,20 @@ class _MesaScreenState extends State<MesaScreen> {
           // resultado que já temos.
           resultado = {'ok': false, 'erro': _j.erroLixoSemUsoDoTopo};
         } else if (cands.length == 1) {
+          _liberarMesa(); // libera ANTES de aplicar: a trava recusaria a jogada
           resultado = _j.comprarLixoAtomico(0, cands.single);
         } else {
-          // `_derivandoLixo` continua LIGADO enquanto o seletor está aberto: é
-          // o que impede a jogada automática do cronômetro de mexer no estado
-          // por baixo da escolha do jogador.
-          setState(() => _msg = null);
+          // A mesa continua OCUPADA enquanto o seletor está aberto — é o que
+          // impede qualquer jogada (inclusive a automática do cronômetro) de
+          // mexer no estado por baixo da escolha do jogador.
           final escolha = await _escolherCompraLixo(cands);
           if (!mounted) return;
-          if (escolha == null) {
-            setState(() => _msg = null); // jogador desistiu: nada acontece
-            return;
-          }
+          if (escolha == null) return; // desistiu: nada acontece
+          _liberarMesa();
           resultado = _j.comprarLixoAtomico(0, escolha);
         }
       } finally {
-        if (mounted && _derivandoLixo) setState(() => _derivandoLixo = false);
+        _liberarMesa();
       }
     }
 
@@ -2250,37 +2351,59 @@ class _MesaScreenState extends State<MesaScreen> {
     });
   }
 
-  /// C10 (rev.1) — roda uma derivação combinatória FORA do isolate de UI e
-  /// sinaliza a espera pelo canal de mensagem que já existe (nenhum elemento
-  /// novo entra no layout aprovado). Enquanto roda, a mesa fica ocupada: é o
-  /// que impede um segundo toque e a jogada automática do cronômetro.
+  /// C10 (rev.2) — OCUPA a mesa (modelo + tela) e sinaliza a espera pelo canal
+  /// de mensagem que já existe — nenhum elemento novo entra no layout aprovado.
+  void _ocuparMesa(String aviso) {
+    _j.mesaOcupadaPorDerivacao = true; // trava de verdade: recusa no modelo
+    setState(() {
+      _mesaOcupadaPorDerivacao = true; // espelho: a tela reage
+      _msg = aviso;
+    });
+  }
+
+  /// LIBERA a mesa. Chamado no fim da derivação e, obrigatoriamente, ANTES de
+  /// aplicar a jogada escolhida — terminada a escolha, a janela de risco acabou
+  /// e a transação é síncrona.
+  void _liberarMesa({String? avisoAtual}) {
+    _j.mesaOcupadaPorDerivacao = false;
+    if (!mounted) return;
+    setState(() {
+      _mesaOcupadaPorDerivacao = false;
+      if (avisoAtual != null && _msg == avisoAtual) _msg = null;
+    });
+  }
+
+  /// C10 (rev.2) — roda uma derivação combinatória em OUTRO ISOLATE (`compute`,
+  /// ver `motor/derivacao_fora_do_frame.dart`) com a mesa ocupada.
+  ///
+  /// Em plataformas nativas a travessia roda mesmo fora do isolate de UI, e o
+  /// frame corre solto. Na WEB não há isolates: `compute` cai no mesmo event
+  /// loop e a espera aparece — degradação honesta, não contorno. Em nenhum dos
+  /// dois casos o conjunto de resultados muda: não há teto de cartas,
+  /// candidatos, melds nem tempo.
   ///
   /// `manterOcupado` deixa a mesa ocupada depois do retorno — usado quando um
   /// seletor vai abrir em seguida e o estado não pode mudar por baixo dele;
-  /// nesse caso quem chama é responsável por liberar.
+  /// nesse caso quem chama é responsável por chamar `_liberarMesa`.
   Future<T> _derivarForaDoFrame<T>(
     Future<T> Function() tarefa, {
     required String aviso,
     bool manterOcupado = false,
   }) async {
-    setState(() {
-      _derivandoLixo = true;
-      _msg = aviso;
-    });
+    _ocuparMesa(aviso);
     try {
       return await tarefa();
     } finally {
-      if (mounted) {
-        setState(() {
-          if (!manterOcupado) _derivandoLixo = false;
-          if (_msg == aviso) _msg = null;
-        });
+      if (!manterOcupado) {
+        _liberarMesa(avisoAtual: aviso);
+      } else if (mounted && _msg == aviso) {
+        setState(() => _msg = null);
       }
     }
   }
 
   Future<void> _tapLixo() async {
-    if (!_minhaVezAtiva || _derivandoLixo) return;
+    if (!_minhaVezAtiva) return; // guarda única
     if (!_j.jaComprou) {
       await _comprarLixoNoToque();
       return;
@@ -2329,7 +2452,7 @@ class _MesaScreenState extends State<MesaScreen> {
   /// É assim que a dupla vulnerável abre quando o mínimo depende da SOMA dos
   /// jogos: ela seleciona as cartas dos dois (ou três) jogos de uma vez.
   Future<void> _baixar() async {
-    if (!_minhaVezAtiva || !_j.jaComprou || _derivandoLixo) return;
+    if (!_minhaVezAtiva || !_j.jaComprou) return; // guarda única
     if (_sel.length < 3) {
       setState(() => _msg =
           'Selecione três ou mais cartas e toque no feltro para baixar.');
@@ -2352,17 +2475,21 @@ class _MesaScreenState extends State<MesaScreen> {
         // simples — é ela que sabe dizer se o problema é o meld, o mínimo de
         // vulnerabilidade ou a trava de esvaziar a mão. Isso NÃO regenera
         // partições: `baixar` faz uma transação canônica direta.
+        _liberarMesa(); // libera ANTES de aplicar: a trava recusaria a jogada
         resultado = _j.baixar(0, ids);
       } else if (particoes.length == 1) {
+        _liberarMesa();
         resultado = _j.baixarAtomico(0, jogosNovos: particoes.single.jogosNovos);
       } else {
+        // Mesa OCUPADA enquanto o seletor está aberto.
         final escolha = await _escolherParticao(particoes);
         if (!mounted) return;
         if (escolha == null) return; // desistiu: nada acontece
+        _liberarMesa();
         resultado = _j.baixarAtomico(0, jogosNovos: escolha.jogosNovos);
       }
     } finally {
-      if (mounted && _derivandoLixo) setState(() => _derivandoLixo = false);
+      _liberarMesa();
     }
 
     if (resultado['ok'] != true) {

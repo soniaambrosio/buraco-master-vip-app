@@ -5197,6 +5197,58 @@ void main() {
       expect(j2.vez, 0); // a vez NÃO passou
     });
 
+    // C10 (rev.2) — FAIL-CLOSED da jogada AUTOMÁTICA por tempo esgotado. A
+    // rev.1 corrigiu o robô e esqueceu este caminho: ele varria a mão inteira
+    // depois de uma falha técnica e ainda passava a vez como se nada fosse.
+    test('C10-AUTO-FC-01 falha técnica no 1º descarte não faz um 2º descarte',
+        () {
+      final j = _jgBotDescarteC10();
+      j.jaComprou = true; // fase de jogo: a próxima ação é o descarte
+      final antes = snap(j);
+      final maoAntes = j.maos[0].length;
+      expect(maoAntes, greaterThan(1)); // há cartas para um 2º descarte existir
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      final concluiu = j.jogadaAutomatica(0);
+      j.projetorAutoridadeTest = null;
+      expect(concluiu, isFalse); // NÃO fingiu turno concluído
+      expect(j.falhasTecnicas, 1); // UMA tentativa, não uma por carta
+      expect(j.maos[0].length, maoAntes); // nenhuma carta saiu
+      expect(j.vez, 0); // a vez NÃO passou -> os robôs não são acionados
+      expect(j.ultimaFalhaTecnica, isNotNull); // evidência preservada
+      expect(j.ultimaFalhaTecnica!['metodo'], 'descartar');
+      expect(snap(j), antes);
+    });
+
+    test('C10-AUTO-FC-02 falha técnica na COMPRA automática não vai ao descarte',
+        () {
+      final j = _jgBotDescarteC10(); // fase de compra
+      final antes = snap(j);
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      final concluiu = j.jogadaAutomatica(0);
+      j.projetorAutoridadeTest = null;
+      expect(concluiu, isFalse);
+      expect(j.falhasTecnicas, 1); // parou na compra
+      expect(j.ultimaFalhaTecnica!['metodo'], 'comprarMonte');
+      expect(j.jaComprou, isFalse);
+      expect(snap(j), antes);
+    });
+
+    test('C10-AUTO-01 sem falha, a jogada automática conclui o turno', () {
+      final j = _jgBotDescarteC10();
+      expect(j.jogadaAutomatica(0), isTrue);
+      expect(j.falhasTecnicas, 0);
+      expect(j.vez, 1); // comprou e descartou: turno encerrado
+    });
+
+    test('C10-AUTO-02 mesa OCUPADA não deixa a jogada automática rodar', () {
+      final j = _jgBotDescarteC10();
+      j.mesaOcupadaPorDerivacao = true;
+      final antes = snap(j);
+      expect(j.jogadaAutomatica(0), isFalse);
+      expect(j.falhasTecnicas, 0); // não é falha técnica: é a trava
+      expect(snap(j), antes);
+    });
+
     test('C10-BOT-03 robô abre com ABERTURA COMPOSTA quando o mínimo exige', () {
       // Vulnerável (mínimo 75): nenhum jogo isolado atinge; a soma sim.
       final j = _jgBotAberturaCompostaC10();
@@ -5234,6 +5286,65 @@ void main() {
         return ids.every(naMesa.contains) && ids.isNotEmpty;
       });
       expect(algumCandidatoExplica, isTrue);
+    });
+
+    // C10 (rev.2) — CONCORRÊNCIA: enquanto a mesa está ocupada por uma
+    // derivação ou por uma escolha humana pendente, NENHUMA jogada é aceita. A
+    // trava mora no MODELO justamente porque a guarda de UI da rev.1 esquecia
+    // pontos de entrada — foi assim que `estender` ficou de fora.
+    test('C10-OCUPADA-01 extensão NÃO altera mão nem mesa com a mesa ocupada',
+        () {
+      final j = _jgEstenderC10();
+      j.mesaOcupadaPorDerivacao = true; // derivação/seletor em curso
+      final antes = snap(j);
+      final maoAntes = j.maos[0].length;
+      final r = j.estender(0, 0, ['6c']); // seria LEGAL se a mesa estivesse livre
+      expect(r['ok'], isFalse);
+      expect(r['ocupada'], isTrue);
+      expect(j.maos[0].length, maoAntes); // mão intacta
+      expect(j.jogosDupla['nos']![0].length, 3); // mesa intacta
+      expect(snap(j), antes);
+      // liberada, a MESMA extensão passa — a recusa era da trava, não da regra.
+      j.mesaOcupadaPorDerivacao = false;
+      expect(j.estender(0, 0, ['6c'])['ok'], isTrue);
+      expect(j.jogosDupla['nos']![0].length, 4);
+    });
+
+    test('C10-OCUPADA-02 TODA entrada mutante respeita a trava', () {
+      // Uma por uma, cada porta de entrada da mesa: com a trava ligada, nenhuma
+      // muda nada. Se um caminho novo aparecer sem a guarda, este teste cai.
+      final j = _jgEstenderC10();
+      j.mesaOcupadaPorDerivacao = true;
+      final antes = snap(j);
+      expect(j.comprarMonte(0), isFalse);
+      expect(j.baixar(0, ['9o', '10o', 'Jo'])['ok'], isFalse);
+      expect(
+          j.baixarAtomico(0, jogosNovos: [
+            ['9o', '10o', 'Jo']
+          ])['ok'],
+          isFalse);
+      expect(j.estender(0, 0, ['6c'])['ok'], isFalse);
+      expect(j.descartar(0, 'kx'), isNotNull);
+      expect(snap(j), antes); // nada mudou em nenhuma das tentativas
+
+      final jl = _jgAtomicoUmC10();
+      final cands = jl.candidatosCompraLixo(0);
+      jl.mesaOcupadaPorDerivacao = true;
+      final antesL = snap(jl);
+      expect(jl.comprarLixo(0, modalidade: 'FECHADO')['ok'], isFalse);
+      expect(jl.comprarLixoAtomico(0, cands.single)['ok'], isFalse);
+      expect(snap(jl), antesL);
+    });
+
+    test('C10-OCUPADA-03 derivar NÃO tranca a mesa por si só', () {
+      // A trava é de quem CONSOME (o fluxo da tela), não da derivação. Derivar
+      // é leitura pura e não pode deixar a mesa presa.
+      final j = _jgAtomicoUmC10();
+      expect(j.mesaOcupadaPorDerivacao, isFalse);
+      j.candidatosCompraLixo(0);
+      j.particoesDaSelecao(0, ['3c', '4c', 'rp']);
+      expect(j.mesaOcupadaPorDerivacao, isFalse);
+      expect(j.comprarLixo(0, modalidade: 'FECHADO')['ok'], isTrue);
     });
 
     // ---------- contrato que a UI aprovada consome ----------
