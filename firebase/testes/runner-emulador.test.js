@@ -45,15 +45,31 @@ function ocupar() {
   });
 }
 
-function pastaTemp(nome) {
+/// Pasta descartavel do CASO que a pediu. O `t.after` e o cleanup em si, e nao
+/// um lembrete: o node roda o hook quando o caso termina de qualquer jeito —
+/// asercao quebrada, comando testado devolvendo erro, excecao no meio, timeout.
+/// Era exatamente isso que faltava: `mkdtemp` criava e ninguem removia, entao
+/// cada `npm run test:runner` deixava uma duzia de `bmv-trava-*` e `bmv-comfn-*`
+/// em `os.tmpdir()` para sempre.
+///
+/// A pasta e removida pelo CAMINHO que este processo criou, e nunca por padrao:
+/// varrer `bmv-*` apagaria o sandbox de uma execucao paralela no meio do uso.
+///
+/// `force` cobre a pasta que ja sumiu — o cleanup roda mesmo quando o caso
+/// falhou antes de terminar de montar o sandbox. Erro de remocao de verdade
+/// (arquivo preso, permissao) continua estourando: nao vale trocar lixo real por
+/// silencio. Como e hook, e nao corpo do teste, a falha do caso original
+/// continua no relatorio ao lado — uma nao apaga a outra.
+function pastaTemp(t, nome) {
   const p = fs.mkdtempSync(path.join(os.tmpdir(), `bmv-${nome}-`));
+  t.after(() => { fs.rmSync(p, { recursive: true, force: true }); });
   return p;
 }
 
 /// Roda `com-functions.js` como processo filho, com um servidor TCP de mentira
 /// no lugar do emulador de Functions, e devolve exit code, saida e recibo.
-function rodarComFunctions({ conteudoDoTeste, esperado, hostFalso }) {
-  const dir = pastaTemp('comfn');
+function rodarComFunctions({ t, conteudoDoTeste, esperado, hostFalso }) {
+  const dir = pastaTemp(t, 'comfn');
   const arquivo = path.join(dir, 'sintetico.test.js');
   fs.writeFileSync(arquivo, conteudoDoTeste);
   const recibo = path.join(dir, 'recibo.json');
@@ -378,10 +394,13 @@ describe('ambiente-emulador — portas', () => {
 // ---------------------------------------------------------------------------
 
 describe('ambiente-emulador — trava', () => {
-  const novoCaminho = () => path.join(pastaTemp('trava'), 'emulador.lock');
+  // Pasta nova a cada chamada, e o dono e o caso que chamou: dois casos deste
+  // bloco nunca compartilham arquivo de trava, e nenhum limpa o do outro.
+  // `ctx`, e nao `t`: neste bloco `t` ja e a trava devolvida por `adquirirTrava`.
+  const novoCaminho = (ctx) => path.join(pastaTemp(ctx, 'trava'), 'emulador.lock');
 
-  test('pega a trava quando ninguem esta segurando', () => {
-    const c = novoCaminho();
+  test('pega a trava quando ninguem esta segurando', (ctx) => {
+    const c = novoCaminho(ctx);
     const t = adquirirTrava(c, { alvo: 'social' });
     assert.equal(t.ok, true);
     assert.equal(fs.existsSync(c), true);
@@ -389,8 +408,8 @@ describe('ambiente-emulador — trava', () => {
     assert.equal(fs.existsSync(c), false);
   });
 
-  test('NAO pega quando o dono ainda esta vivo, e diz quem e', () => {
-    const c = novoCaminho();
+  test('NAO pega quando o dono ainda esta vivo, e diz quem e', (ctx) => {
+    const c = novoCaminho(ctx);
     // Dono vivo de verdade: o proprio processo de teste, com outro PID seria
     // chute. `process.pid` esta vivo por definicao enquanto isto roda.
     fs.writeFileSync(c, JSON.stringify({ pid: process.pid, alvo: 'moderacao' }));
@@ -399,8 +418,8 @@ describe('ambiente-emulador — trava', () => {
     assert.equal(t.dono.alvo, 'moderacao');
   });
 
-  test('trava OBSOLETA nao bloqueia para sempre: PID morto e roubado', () => {
-    const c = novoCaminho();
+  test('trava OBSOLETA nao bloqueia para sempre: PID morto e roubado', (ctx) => {
+    const c = novoCaminho(ctx);
     // PID que com certeza nao existe. `processoVivo` confirma antes de a gente
     // afirmar qualquer coisa sobre ele.
     let pidMorto = 999_999;
@@ -413,23 +432,23 @@ describe('ambiente-emulador — trava', () => {
     t.liberar();
   });
 
-  test('trava CORROMPIDA e tratada como obsoleta', () => {
-    const c = novoCaminho();
+  test('trava CORROMPIDA e tratada como obsoleta', (ctx) => {
+    const c = novoCaminho(ctx);
     fs.writeFileSync(c, 'isto nao e json');
     const t = adquirirTrava(c, { alvo: 'social' });
     assert.equal(t.ok, true);
     t.liberar();
   });
 
-  test('cleanup nao rouba a trava do vizinho', () => {
-    const c = novoCaminho();
+  test('cleanup nao rouba a trava do vizinho', (ctx) => {
+    const c = novoCaminho(ctx);
     fs.writeFileSync(c, JSON.stringify({ pid: process.pid + 1, alvo: 'vizinha' }));
     assert.equal(liberarTrava(c), false, 'so o dono pode liberar');
     assert.equal(fs.existsSync(c), true);
   });
 
-  test('liberar uma trava que ja sumiu nao explode', () => {
-    assert.equal(liberarTrava(novoCaminho()), false);
+  test('liberar uma trava que ja sumiu nao explode', (ctx) => {
+    assert.equal(liberarTrava(novoCaminho(ctx)), false);
   });
 });
 
@@ -438,11 +457,12 @@ describe('ambiente-emulador — trava', () => {
 // ---------------------------------------------------------------------------
 
 describe('com-functions — portao e recibo', () => {
-  test('emulador AUSENTE: falha, e nao pula em silencio', async () => {
+  test('emulador AUSENTE: falha, e nao pula em silencio', async (t) => {
     // Porta que acabou de vagar: ninguem atende.
     const { porta, fechar } = await ocupar();
     await fechar();
     const r = await rodarComFunctions({
+      t,
       conteudoDoTeste: "require('node:test').test('x', () => {});",
       esperado: 1,
       hostFalso: `127.0.0.1:${porta}`,
@@ -451,10 +471,11 @@ describe('com-functions — portao e recibo', () => {
     assert.match(r.saida, /nao esta atendendo/);
   });
 
-  test('filho retorna 0 e a suite esta integra: verde COM recibo', async () => {
+  test('filho retorna 0 e a suite esta integra: verde COM recibo', async (t) => {
     const { porta, fechar } = await ocupar();
     try {
       const r = await rodarComFunctions({
+        t,
         conteudoDoTeste: "const {test}=require('node:test');test('a',()=>{});test('b',()=>{});",
         esperado: 2,
         hostFalso: `127.0.0.1:${porta}`,
@@ -468,10 +489,11 @@ describe('com-functions — portao e recibo', () => {
     }
   });
 
-  test('filho retorna ERRO: exit repassado, e o recibo registra a falha', async () => {
+  test('filho retorna ERRO: exit repassado, e o recibo registra a falha', async (t) => {
     const { porta, fechar } = await ocupar();
     try {
       const r = await rodarComFunctions({
+        t,
         conteudoDoTeste:
           "const {test}=require('node:test');test('a',()=>{});"
           + "test('quebra',()=>{throw new Error('asercao de negocio')});",
@@ -488,10 +510,11 @@ describe('com-functions — portao e recibo', () => {
     }
   });
 
-  test('suite PULADA: exit 0 do node vira vermelho aqui', async () => {
+  test('suite PULADA: exit 0 do node vira vermelho aqui', async (t) => {
     const { porta, fechar } = await ocupar();
     try {
       const r = await rodarComFunctions({
+        t,
         conteudoDoTeste:
           "const {test,describe}=require('node:test');"
           + "describe('bloco',{skip:true},()=>{test('um',()=>{});test('dois',()=>{})});"
@@ -506,10 +529,11 @@ describe('com-functions — portao e recibo', () => {
     }
   });
 
-  test('suite ENCURTADA abaixo do piso: vermelho', async () => {
+  test('suite ENCURTADA abaixo do piso: vermelho', async (t) => {
     const { porta, fechar } = await ocupar();
     try {
       const r = await rodarComFunctions({
+        t,
         conteudoDoTeste: "require('node:test').test('so um',()=>{});",
         esperado: 67,
         hostFalso: `127.0.0.1:${porta}`,
@@ -521,12 +545,13 @@ describe('com-functions — portao e recibo', () => {
     }
   });
 
-  test('CANCELAMENTO real derruba o portao', async () => {
+  test('CANCELAMENTO real derruba o portao', async (t) => {
     const { porta, fechar } = await ocupar();
     try {
       // Reproduz o mecanismo da linha de base: o pai estoura e os filhos sao
       // cancelados. Nao e um marcador simulado — e o node cancelando de verdade.
       const r = await rodarComFunctions({
+        t,
         conteudoDoTeste:
           "const {test}=require('node:test');"
           + "test('pai',async (t)=>{"
