@@ -45,7 +45,7 @@ Pontuação: A=15, JOKER=50, 2=10, 8..K=10, 3..7=5; canastra as_a_as=1000/de_500
   - **Autoridade ÚNICA:** acabou o fallback técnico. Falha técnica é **fail-closed** (recusa + estado intacto + evidência em `ultimaFalhaTecnica`). `_falharFechado` substituiu `_registrarFallbackTecnico`.
   - **`estender` roteado:** era o último furo; virou `Baixar(extensoes:)` via o novo `Jogo.baixarAtomico` — que é também como a **abertura múltipla (EXC-02)** existe no modelo.
   - **EXC-04 FECHADA:** `contarPontos()` e `pontosMesaAoVivo` contam por `pontuacao_canonica` + `meld_validator`. A diferença que sobrava era de classificação na hora de pontuar (`de_as` × `trinca`); com um só classificador no caminho, não há duas respostas. Costura nova: `motor/pontuacao_costura.dart`.
-  - **Lixo no consumidor real:** 0 → recusa, 1 → executa, 2+ → seletor mínimo (a autoridade enumera, o jogador escolhe). Derivação **agendada fora do frame**, sem nenhum cap semântico.
+  - **Lixo no consumidor real:** 0 → recusa, 1 → executa, 2+ → seletor mínimo (a autoridade enumera, o jogador escolhe). *(A alegação original de "derivação agendada fora do frame" via `Future` estava ERRADA — corrigida na rev.1 para `compute`.)*
   - **Robô auditado:** heurística escolhe a intenção e qual candidato; a legalidade é sempre canônica. As redes que chamavam `_passarVez()` direto viraram parada com evidência; `_rodarBots` ganhou guarda de progresso.
   - **`lixoTopoObrigatorio` morreu sob o canônico:** com a compra atômica a obrigação diferida não nasce. É a prova de que o §5 foi respeitado.
   - **Verificação local (overlay do CI reproduzido):** 358 `test()` verdes; `flutter analyze` com 0 erros e diff de avisos **idêntico** ao de `14b8d03`. Não substitui o portão §16.
@@ -59,8 +59,14 @@ Pontuação: A=15, JOKER=50, 2=10, 8..K=10, 3..7=5; canastra as_a_as=1000/de_500
   - **Cabeçalhos:** os onze arquivos de `rules/` que entraram em runtime deixaram de afirmar "SEM comportamento de produção"; `rules_engine.dart` e `sombra.dart` ficaram explicitamente fora.
   - **Verificação local:** 371 `test()` verdes; `flutter analyze` com 0 erros e diff de avisos idêntico ao de `14b8d03`.
 
+- **Parte 2 / REVISÃO 2 — rev.1 aprovada nos seis itens; dois blockers corrigidos.** Ver `RELATORIO-C10-PARTE2-REVISAO-2.md`. Base `dd48ee3`.
+  - **FAIL-CLOSED da jogada AUTOMÁTICA por timeout:** a rev.1 corrigiu o robô e esqueceu este caminho — ele varria a mão inteira depois de falhar tecnicamente e ainda passava a vez. Virou `Jogo.jogadaAutomatica(assento)` (no modelo, ao lado de `botJoga`, porque na tela era intestável), com a mesma marca monotônica de `falhasTecnicas`.
+  - **TRAVA ÚNICA de concorrência:** `_estender` não respeitava a flag de derivação. Em vez de mais uma checagem de UI, a trava desceu para o MODELO — `Jogo.mesaOcupadaPorDerivacao` recusa as SETE entradas mutantes. Na tela, `_minhaVezAtiva` virou a guarda única. Quem deriva libera antes de aplicar.
+  - **`_derivandoLixo` → `_mesaOcupadaPorDerivacao`**; comentários de responsividade corrigidos (`compute` = isolate separado no nativo, mesmo event loop na web).
+  - **Verificação local:** 378 `test()` verdes; analyzer 0 erros, avisos idênticos ao de `14b8d03`. Não-vacuidade conferida removendo cada proteção.
+
 ## Próximo
-1. **Sônia:** aplicar o bundle/diff da revisão 1 e rodar o **Build APK**. Nada é concluído sem CI verde + nova revisão (§16). **C10 NÃO está encerrada.**
+1. **Sônia:** aplicar o bundle/diff da revisão 2 e rodar o **Build APK**. Nada é concluído sem CI verde + nova revisão (§16). **C10 NÃO está encerrada.**
 2. **Aval necessário:** a correção do -100 no ramo LEGADO (`72345e6`). A OS pedia para não alterar o rollback; a correção de regra pedia para remover "qualquer equivalente". Resolvido pelo lado da regra, em commit isolado para poder ser revertido sozinho.
 3. **Opcional de CI:** mover "Declare assets in pubspec" para antes do portão de qualidade, para viabilizar teste de widget da mesa.
 4. **Fora desta entrega, por instrução:** a OS ampla de Inteligência Estratégica do Bot, que roda depois do C10 homologado.

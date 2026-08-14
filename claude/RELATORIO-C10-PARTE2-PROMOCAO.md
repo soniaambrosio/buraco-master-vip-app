@@ -109,6 +109,13 @@ mortos vazios é uma transição legal que encerra a rodada sem comprar carta, e
 rodada morreria sem placar.
 
 ### 1.6 Responsividade (ponto de atenção da OS)
+> **OBSOLETO (rev.1).** O parágrafo abaixo descrevia `Future` como responsável
+> pela responsividade. Não é: `Future` só adia a execução no MESMO isolate. Hoje
+> a derivação roda em `compute` — isolate separado nas plataformas nativas; na
+> web, que não tem isolates, degrada para o mesmo event loop. Ver
+> `RELATORIO-C10-PARTE2-REVISAO-1.md` §4. A flag `_derivandoLixo` também não
+> existe mais: virou `_mesaOcupadaPorDerivacao`, espelhando a trava do modelo.
+
 A derivação é **agendada fora do frame do toque** (`Future`), com a mesa marcada
 como ocupada (`_derivandoLixo`) e reentrância bloqueada. A flag continua ligada
 enquanto o seletor está aberto, o que impede a jogada automática do cronômetro
