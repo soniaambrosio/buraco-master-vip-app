@@ -356,10 +356,11 @@ com Emulator Suite, cada uma em passo próprio, sequenciais e bloqueantes:
 |---|---|---|---|---|
 | 3d | **Social** | `socialemu` | `emulators:exec … npm run test:social:functions` | 67 |
 | 3e | **Moderação** | `moderacaoemu` | `cd firebase/testes && npm run emulador:moderacao` | 45 |
-| 3f | **Coleções** | `regras` | `emulators:exec … npm test` | — |
+| 3f | **Coleções** | `colecoesemu` | `emulators:exec … npm test` | — |
 
 Até a OS *Gate de Moderação no CI*, o passo de Moderação não existia. A suíte
-`moderacao.test.js` já rodava dentro do gate `regras` do passo de Coleções, mas
+`moderacao.test.js` já rodava dentro do gate de Coleções (então chamado `regras`,
+hoje `colecoesemu`), mas
 **sem** o emulador de Functions: lá os dois `describe` de callable saem `# SKIP`
 de propósito, porque aquele alvo prova regras. Na prática, `registrarDenuncia` e
 `bloquearJogador` nunca tinham sido *chamados* no CI, e a única rede contra uma
@@ -376,9 +377,25 @@ olhar. Repetir o build no YAML criaria uma segunda receita do mesmo bundle.
 Sequenciais, e não paralelos: as três disputam as mesmas portas e o mesmo
 `projectId demo-bmv`.
 
-Os três gates não usam `continue-on-error`. O que **não** reprova é um passo que
-nem chegou a rodar (`NÃO EXECUTADO`) — política pré-existente do workflow, comum
-aos três, registrada como P1-2 em `docs/HOMOLOGACAO-P0-INTEGRADA.md`.
+Os três gates não usam `continue-on-error`. E, desde a OS *CI fail-closed dos
+gates de emulador*, eles são **fail-closed**: o portão só fica verde se cada um
+dos três tiver deixado recibo válido de sucesso.
+
+| Situação do gate obrigatório | Portão |
+|---|---|
+| recibo com `0` | verde |
+| recibo com `1`, `3`, `4`, `5` ou `6` | vermelho — `FALHOU (exit N)` |
+| recibo vazio, ou com algo que não é exit code | vermelho — `RESULTADO INVÁLIDO` |
+| passo pulado por condição, ou que nem começou | vermelho — `NÃO EXECUTADO` |
+| passo que começou e morreu antes de registrar | vermelho — `NÃO EXECUTADO`, com a distinção impressa |
+| job **cancelado** | o portão é pulado (`if: !cancelled()`); o job sai CANCELADO, não vermelho |
+
+A distinção entre "nem começou" e "começou e morreu" vem da marca `inicio_<gate>`,
+que cada passo obrigatório escreve antes de qualquer coisa que possa falhar. As
+duas reprovam; o que muda é o diagnóstico.
+
+A política antiga — `NÃO EXECUTADO` reporta e não reprova — continua valendo para
+os demais gates (analyze, suítes Flutter, typechecks), de propósito.
 
 Duas coisas que a primeira execução de verdade revelou, já corrigidas:
 

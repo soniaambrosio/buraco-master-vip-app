@@ -122,12 +122,19 @@ Emulator Suite, em passos próprios, sequenciais e bloqueantes:
 | --- | --- | --- | --- |
 | 3d | **Social** | `socialemu` | `emulators:exec … npm run test:social:functions` |
 | 3e | **Moderação** | `moderacaoemu` | `npm run emulador:moderacao` (o wrapper) |
-| 3f | **Coleções** | `regras` | `emulators:exec … npm test` |
+| 3f | **Coleções** | `colecoesemu` | `emulators:exec … npm test` |
 
 Moderação passa pelo wrapper porque ele é autocontido e classifica o desfecho:
 qualquer exit diferente de zero — falha funcional (1), infraestrutura (3/4),
 suíte incompleta (5), cleanup incompleto (6) — reprova o job. Nenhum dos três usa
 `continue-on-error`.
+
+Os três são **fail-closed**: para o portão ficar verde, cada um precisa ter
+deixado um recibo que exista, não esteja vazio, contenha um exit code e esse
+código seja `0`. Gate pulado, recibo ausente, vazio ou com conteúdo que não é um
+exit code reprovam do mesmo jeito que um teste quebrado — ausência de evidência de
+sucesso não é sucesso. Num job **cancelado** o portão é pulado, e o job sai
+cancelado em vez de vermelho.
 
 Sequenciais de propósito: paralelizá-los no mesmo host colocaria três execuções
 disputando as mesmas portas e o mesmo `projectId`.
