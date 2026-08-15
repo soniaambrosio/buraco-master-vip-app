@@ -25,6 +25,7 @@ import 'package:buraco_master_vip/rules/morto/morto.dart';
 import 'package:buraco_master_vip/rules/gerador/gerador.dart';
 // C8 — conformidade Dart × Node (fixture do lado Node; comparação cross-engine).
 import 'dart:convert';
+import 'dart:math'; // OS ENCERRAMENTO: passeio determinístico da varredura
 import 'conformidade_fixture.dart';
 // C9-A — costura: flags + contrato da porta + fábrica/seletor (aditivo; NÃO é
 // regra, NÃO é runtime; sem projeção Jogo<->EstadoJogo, sem adaptador concreto).
@@ -6358,6 +6359,96 @@ void main() {
       // O turno do robô terminou de forma canônica: a vez passou ou a mão
       // encerrou.
       expect(robo.vez != 0 || robo.rodadaEncerrada, isTrue);
+    });
+
+    test('ENC-15 varredura de BARALHOS REAIS no regime em que o beco nasce',
+        () {
+      // §12 — caça a estados mortos ADICIONAIS, fora dos fixtures desta OS.
+      //
+      // Parte de baralhos REAIS e caminha por ações legais sorteadas. O regime
+      // importa: com morto ainda por pegar, esvaziar é sempre legal e o beco
+      // não nasce — uma varredura "do início" passa longe da região de
+      // interesse e não prova nada. Aqui os DOIS mortos já foram consumidos,
+      // que é exatamente quando a última carta pode ficar sem descarte legal.
+      //
+      // Não-vacuidade medida: com a guarda desligada, esta mesma varredura
+      // (em escala maior) acusa estados mortos — inclusive por EXTENSÃO, não
+      // só por jogo novo. Com a guarda ligada, zero.
+      final achados = <String>[];
+      var aceitas = 0;
+      for (final modalidade in ['ABERTO', 'FECHADO', 'STBL']) {
+        for (var seed = 1; seed <= 3; seed++) {
+          final jogo = Jogo(const ['A', 'B', 'C', 'D'], const ['', '', '', ''],
+              const ['', '', '', ''],
+              seed: seed, motorConfig: MotorConfig.producao());
+          jogo.modalidade = modalidade;
+          var e = paraCanonico(jogo).canonico.cloneProfundo();
+          e.mortos.clear(); // os dois mortos já foram pegos
+          e.mortoPego['nos'] = true;
+          e.mortoPego['eles'] = true;
+          final spec =
+              RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+          final rnd = Random(seed * 7919);
+
+          for (var passo = 0; passo < 18 && !e.rodadaEncerrada; passo++) {
+            final assento = e.vez;
+            final mao = e.maos[assento];
+            // candidatos: subconjuntos da mão (jogo novo) + extensões de até 3
+            // cartas em qualquer jogo exposto das duas duplas.
+            final cands = <Acao>[];
+            final n = mao.length;
+            for (var mask = 1; mask < (1 << n); mask++) {
+              final ids = <String>[
+                for (var i = 0; i < n; i++)
+                  if (mask & (1 << i) != 0) mao[i].id
+              ];
+              if (ids.length >= 3) cands.add(Baixar(jogosNovos: [ids]));
+              if (ids.length <= 3) {
+                for (final d in const ['nos', 'eles']) {
+                  final melds =
+                      e.jogosDupla[d] ?? const <List<CartaSnapshot>>[];
+                  for (var k = 0; k < melds.length; k++) {
+                    cands.add(Baixar(extensoes: [Extensao(k, ids)]));
+                  }
+                }
+              }
+            }
+            final legais = <Acao>[];
+            for (final a in [
+              ...cands,
+              const ComprarMonte(),
+              const ComprarLixo(),
+              const PegarMorto(),
+              const PegarMorto(viaDescarte: true),
+              const Bater(),
+              for (final c in mao) Descartar(c.id),
+            ]) {
+              final r = aplicarLegal(e, assento, a, spec);
+              if (!r.legal) {
+                expect(r.proximoEstado, isNull); // recusa não devolve estado
+                continue;
+              }
+              aceitas++;
+              legais.add(a);
+              final pos = r.proximoEstado!;
+              if (!pos.rodadaEncerrada &&
+                  pos.vez == assento &&
+                  gerarAcoesLegais(pos, assento, spec).isEmpty) {
+                achados.add('$modalidade/$seed/$passo -> ${a.toJson()}');
+              }
+            }
+            if (legais.isEmpty) {
+              achados.add('$modalidade/$seed/$passo estado SEM ação legal');
+              break;
+            }
+            e = aplicarLegal(e, assento, legais[rnd.nextInt(legais.length)],
+                    spec)
+                .proximoEstado!;
+          }
+        }
+      }
+      expect(achados, isEmpty, reason: achados.take(5).join(' | '));
+      expect(aceitas, greaterThan(500)); // não-vacuidade da varredura
     });
 
     test('ENC-14 o gerador único NUNCA oferece uma ação que leve a beco', () {
