@@ -1040,6 +1040,40 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // =====================================================================
+    // BLOCO 8/8 — EXCLUSAO DE CONTA
+    // origem: OS de Exclusao de Conta e Dados do Jogador v1
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // O diario da exclusao — a LAPIDE de uma conta que foi embora
+    // ---------------------------------------------------------------------
+    // ESTE BLOCO NAO MUDA NADA no comportamento: sem ele, a colecao ja cairia
+    // no fecho `if false` logo abaixo. Ele existe pela razao que o proprio
+    // fecho pede — "cada colecao precisara do proprio bloco `match`" — e para
+    // que a decisao fique escrita em vez de herdada por omissao.
+    //
+    // LEITURA SO ADMINISTRATIVA, e a pergunta que ela responde e concreta: "esta
+    // conta foi excluida a pedido, ou sumiu por outro motivo?". E o que o
+    // suporte precisa quando chega um pedido de estorno meses depois — o
+    // documento guarda o saldo de fichas e o estado do VIP no encerramento,
+    // justamente para que a carteira e o entitlement possam ser apagados.
+    //
+    // O DONO NAO LE, e nao e descuido: depois da exclusao nao existe mais dono.
+    // A conta do Authentication foi apagada, entao `ehDono(uid)` nunca mais e
+    // verdadeiro para este uid — uma regra que o liberasse seria uma regra
+    // morta, e regra morta engana quem a le.
+    //
+    // ESCRITA NEGADA A TODOS, inclusive ao admin. Quem grava e a Cloud Function
+    // com o Admin SDK. Deixar o cliente escrever aqui daria a alguem a chance de
+    // forjar `estado: "concluida"` para uma conta que nunca foi excluida — e a
+    // Function trata esse documento como AUTORIDADE sobre o que ja foi feito:
+    // um diario forjado faria a exclusao seguinte convergir sem apagar nada.
+    match /accountDeletions/{uid} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
     // ---------------------------------------------------------------------
