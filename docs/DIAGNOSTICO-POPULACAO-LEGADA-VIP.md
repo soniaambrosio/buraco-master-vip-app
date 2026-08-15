@@ -3,10 +3,20 @@
 Relatório técnico da OS **DIAGNÓSTICO DA POPULAÇÃO LEGADA VIP + IMPACTO DE
 `purchaseTokenHash`**.
 
-**Veredito: INSTRUMENTO ENTREGUE E PROVADO — CENSO NÃO EXECUTADO, POR FALTA DE
-ACESSO AUTORIZADO AOS DADOS DE PRODUÇÃO.**
+**Veredito: INSTRUMENTO ENTREGUE E PROVADO — E O CENSO FOI EXECUTADO CONTRA
+PRODUÇÃO. Ver §14, que é o resultado real e substitui o "não respondida" do
+quadro abaixo.**
 
-**E um achado que muda a pergunta da OS: `purchaseTokenHash` NÃO é irrecuperável.**
+**O censo mediu uma população legada de ZERO.** As três coleções do universo —
+`usuarios/`, `playerEntitlements/` e `compras/` — não existem no Firestore de
+produção. Nenhuma compra jamais foi processada: o único registro de billing na
+base é a *notificação de teste* do Play Console. Não há ninguém para migrar,
+ninguém perde ficha mensal, e o backfill de hash discutido em §4 não tem
+destinatário. §14 traz a execução, a prova de que o zero é medição e não cano
+entupido, e o que isso muda na recomendação de §11.
+
+**O achado que mudou a pergunta da OS continua valendo para o futuro:
+`purchaseTokenHash` NÃO é irrecuperável.**
 Para todo jogador que virou legado por este codebase, o hash está gravado — como
 *chave de documento* — em `compras/{hash}`, e alcançável por uma consulta
 `where('uid','==',uid)`. Não é reconstrução nem aproximação: é o mesmo valor que
@@ -26,7 +36,7 @@ seriam prejudicados pela ausência de `purchaseTokenHash`?*
 | **Como** classificar cada jogador, com critério reproduzível | **Respondida** — §2, §3, em código e em teste |
 | **Por que** o migrado perde a ficha mensal, na cadeia inteira | **Respondida** — §5 |
 | **Se** o hash é recuperável, e para quem | **Respondida** — §4 |
-| **Quantos** jogadores há em cada categoria | **NÃO RESPONDIDA** — ver abaixo |
+| **Quantos** jogadores há em cada categoria | **RESPONDIDA em §14** — zero, medido em produção. O texto abaixo é o estado desta OS *antes* da execução, e fica como registro de por que o número faltava |
 
 O que impede o número é acesso, não código. O diagnóstico é uma callable de
 admin: ela precisa estar implantada e ser executada contra o Firestore de
@@ -583,3 +593,356 @@ Flutter — nenhum arquivo Dart foi tocado.
 | `functions-billing/index.js` | a callable `diagnosticarPopulacaoVip`, admin-only |
 | `functions-billing/test/apoio/firestore_falso.js` | `retrato()` — caminho + versão, para provar ausência de escrita |
 | `functions-billing/package.json` | novo alvo de teste |
+
+---
+
+# 14. O CENSO REAL — execução contra produção
+
+Esta seção é a entrega da OS **EXECUÇÃO CONTROLADA DO CENSO REAL**. As seções
+1–13 acima descrevem o instrumento; esta descreve **o que ele mediu**.
+
+## 14.A Execução
+
+| Item | Valor |
+| --- | --- |
+| Projeto | `buraco-master-vip` (número `203886484007`) |
+| Banco | `(default)` — **o único do projeto**, `FIRESTORE_NATIVE`, `southamerica-east1`, criado em `2026-02-24T03:53:35Z`, free tier |
+| Região das Functions | `us-central1` |
+| Lógica executada | `functions-billing/diagnosticoPopulacao.js` @ `e9c2aa1e40278b501f56be1b9d58f407385c7622` — carregada por `require` do próprio arquivo da árvore, sem cópia |
+| Callable | `diagnosticarPopulacaoVip` — **não implantada e não invocada** (ver 14.A.2) |
+| Transporte das leituras | REST do Firestore via servidor MCP do `firebase-tools` 15.26.0 |
+| Credencial | a já guardada por `firebase login` (`soniia.ambrosio@gmail.com`, proprietário). Nenhum segredo foi lido, criado, exportado ou impresso |
+| Data/hora | `2026-08-15T17:42:21.370Z` (campo `varridoEm` do relatório) |
+| Deploy realizado | **NENHUM** |
+| Escritas | **NENHUMA** |
+
+### 14.A.1 Páginas, cursores e esgotamento
+
+| Fase | Páginas | Lidos | Cursor final |
+| --- | ---: | ---: | --- |
+| `usuarios` | 1 | 0 | — |
+| `entitlements` | 1 | 0 | — |
+| **Total** | **2** | **0** | `null` |
+
+`esgotou: true`, `cursor: null`. Não houve teto operacional, não houve retomada,
+não houve segunda chamada — e portanto não há risco de perda ou duplicidade
+entre páginas. Universo deduplicado: **0**. `tamanhoPagina` 200, `maxPaginas`
+500 (os padrões de `varredura.js`); a primeira página de cada fase já voltou
+vazia, que é a evidência de fim que o módulo exige (página menor que o tamanho
+pedido).
+
+### 14.A.2 Por que NÃO houve deploy — e por que isso não é um atalho
+
+A OS autoriza "o mínimo necessário" e prefere implantar somente a função
+diagnóstica. O mínimo necessário acabou sendo **zero**, por duas razões que se
+somam:
+
+1. **A callable não poderia ser invocada mesmo se implantada.**
+   `diagnosticarPopulacaoVip` é `onCall` com portão
+   `request.auth.token.admin === true`. Produzir um ID token com esse claim exige
+   ou a senha de uma conta administradora, ou uma chave de conta de serviço para
+   emitir custom token. Não existe chave de conta de serviço nesta máquina (nem
+   no repositório, nem em ADC — verificado), e manusear senha é vedado. Implantar
+   teria criado uma função de produção que eu não conseguiria chamar: risco sem
+   contrapartida.
+
+2. **O escopo do deploy seria muito maior que a função diagnóstica — e escreveria.**
+   Este é o achado incidental mais relevante da execução. O que está implantado
+   hoje no projeto é uma versão **anterior** do codebase `billing`:
+
+   | Função | Em produção hoje |
+   | --- | --- |
+   | `validarCompraPlay` | sim |
+   | `notificacoesPlay` | sim |
+   | `reconciliarEntitlements` | sim |
+   | `reconciliarEntitlementDoJogador` | sim |
+   | `migrarEntitlementsLegado` | sim |
+   | **`concederFichasMensais`** | **NÃO** |
+
+   `concederFichasMensais` é `onSchedule` e **credita fichas**. Publicar o
+   codebase `billing` a partir desta branch criaria essa função e a poria a rodar
+   por agendamento — exatamente o que a OS proíbe ("NÃO conceder fichas"). Um
+   `--only functions:billing:diagnosticarPopulacaoVip` evitaria isso, mas esbarra
+   na razão 1.
+
+   Registro-o aqui porque é fato de produção que ninguém tinha medido: **a
+   entrega mensal de fichas nunca rodou em produção.** Hoje isso é inócuo (não há
+   assinante), mas vira P0 no dia da primeira venda.
+
+### 14.A.3 O código executado é o aprovado — e o que não é
+
+Honestidade sobre a fronteira, porque ela importa para a validade do número:
+
+- **É o aprovado, sem cópia:** `classificarJogador`, `acumular`, `resumoZerado`,
+  `criarDiagnosticoPopulacao` e `varrerPorPagina` foram carregados por `require`
+  do arquivo da árvore em `e9c2aa1`. Nenhuma regra foi reescrita, reimplementada
+  ou parafraseada.
+- **Não é o aprovado:** as cinco portas de leitura. Em vez de
+  `criarPortasFirestore` (Admin SDK), foram ligadas à REST do Firestore pelo
+  transporte descrito acima, documento a documento com a mesma semântica
+  (`orderBy(documentId())` ≡ ordem padrão `__name__ ASC` da REST).
+- **Transporte unário de propósito:** `runQuery` e `runAggregationQuery` são
+  *streaming*, e o proxy MCP devolveu para elas o primeiro pedaço seguido de um
+  `500 INTERNAL` — com contagem `1` idêntica para sete coleções diferentes, que é
+  assinatura de artefato de transporte, não de dado. Num censo isso truncaria em
+  silêncio e chamaria de total. `listDocuments` é unário, pagina por `pageToken`,
+  e foi o único caminho usado para contar.
+
+## 14.B População — os números reais
+
+**Universo total analisado: 0.** Todas as dezesseis cardinalidades pedidas pela
+OS são **zero**, e todas pela mesma causa raiz: as coleções não existem.
+
+| # | Categoria pedida pela OS | Quantidade |
+| ---: | --- | ---: |
+| 1 | Universo total analisado | **0** |
+| 2 | Legado ativo com prazo válido (`migravel_vigente`) | 0 |
+| 3 | Legado sem prazo (`bloqueado_sem_prazo`) | 0 |
+| 4 | Legado vencido (`migravel_vencido`) | 0 |
+| 5 | Com `playerEntitlements` | 0 |
+| 6 | Entitlement comercial normal (`so_entitlement`) | 0 |
+| 7 | Legado + entitlement (interseção) | 0 |
+| 8 | Potencialmente migráveis (`gravar_ativo` + `gravar_expirado`) | 0 |
+| 9 | Migráveis que hoje ficariam sem ficha mensal | 0 |
+| 10 | Legados com `purchaseTokenHash` presente | 0 |
+| 11 | Sem hash no entitlement, mas recuperável via `compras/{hash}` | 0 |
+| 12 | Sem hash recuperável por nenhuma fonte | 0 |
+| 13 | Com múltiplos `compras/{hash}` correlacionáveis | 0 |
+| 14 | Registros contraditórios (`inclassificavel` + inconsistências) | 0 |
+| 15 | Registros incompletos (entitlement sem estado/origem) | 0 |
+| 16 | Não classificáveis automaticamente | 0 |
+
+Interseções: todas as nove de `INTERSECAO` retornaram 0. Alertas: todos os nove
+de `ALERTA` retornaram 0. Inconsistências: todas as dez retornaram 0. O relatório
+bruto está em 14.F.
+
+### 14.B.1 O estado real da base
+
+Coleções existentes na raiz do banco `(default)`, com contagem por paginação:
+
+| Coleção | Documentos | Observação |
+| --- | ---: | --- |
+| `usuarios` | **0** | não existe — coleção do **legado VIP**, o universo do censo |
+| `playerEntitlements` | **0** | não existe — direitos comerciais |
+| `compras` | **0** | não existe — **nenhuma compra jamais registrada** |
+| `fichasConcessoes` | 0 | não existe — livro-razão das fichas |
+| `publicProfiles` | 0 | não existe |
+| `rankingLedger` | 0 | não existe |
+| `users` | 1 | identidade canônica; a única conta tem só `displayName` |
+| `billingEvents` | 1 | ver abaixo |
+| `store_products` | 1 | `pack_starter` — catálogo semente |
+| `tables` | 1 | uma mesa |
+| `seasons` | 1 | `2026_S1` |
+| `leaderboards` | 1 | `2026_S1` |
+| `global_chat` | 1 | uma mensagem |
+
+Um documento por coleção, com ids de semente reconhecíveis (`pack_starter`,
+`2026_S1`): **esta é uma base de demonstração, não uma base com histórico.**
+
+O único `billingEvents` fecha a questão:
+
+```
+decisao:     "notificacao_de_teste"
+aplicado:    false
+estado:      "concluido"
+processadoEm: 2026-08-12T16:52:13.405Z
+```
+
+É a *notificação de teste* do Play Console — o botão "enviar notificação de
+teste". Foi a única mensagem que o RTDN já recebeu, e ela não aplicou nada.
+**Nenhuma compra real jamais atravessou este backend.** Isso é coerente com o
+app nunca ter sido publicado na Play.
+
+### 14.B.2 A prova de que o zero é medição, e não cano entupido
+
+Um censo que examina 0 documentos produz um relatório **idêntico** ao de um censo
+com o nome da coleção errado, o `parent` errado ou o decodificador quebrado.
+Então o zero só vale acompanhado de controle negativo. Foram quatro provas, todas
+com **o mesmo paginador, o mesmo decodificador e o mesmo transporte** do censo:
+
+| Controle | Resultado |
+| --- | --- |
+| Paginador sobre `store_products` (povoada) | devolveu 1 doc, id `pack_starter` |
+| Decodificação de tipos | `active` → booleano `true`; `coinsAmount` → número `500` |
+| Paginador sobre `users` (povoada) | devolveu 1 doc, campos lidos |
+| `get_document` por caminho direto | achou `store_products/pack_starter` |
+| `get_document` em caminho inexistente | erro tratável, convertido em `null` — não falso positivo |
+| Paginador sobre as três coleções do censo | 0, 0, 0 |
+
+O transporte enxerga documento quando ele existe. Logo, o zero é o dado.
+
+Foram fechadas também as duas saídas que "a coleção não aparece" deixaria aberta:
+
+- **Outro banco?** Não. `listDatabases` retorna exatamente um: `(default)`.
+- **Documento "faltante"** (id sem campos, existindo só como pai de subcoleção —
+  seria o caso de `playerEntitlements/{uid}` com `interno/billing` embaixo)?
+  Não. As três coleções foram relistadas com `showMissing: true` e voltaram
+  vazias.
+
+## 14.C Hash histórico
+
+| Medida | Quantidade |
+| --- | ---: |
+| Legados com `purchaseTokenHash` já presente | 0 |
+| Com exatamente um hash correlacionável | 0 |
+| Com mais de um (ambíguos) | 0 |
+| Sem nenhum (irrecuperáveis) | 0 |
+| Com hash igual ao histórico de `compras/` | 0 |
+| Com valor diferente | 0 |
+| Com conflito de identidade/uid | 0 |
+
+`compras/` está vazia, então não há hash histórico a recuperar — e também não há
+nada a recuperar *de*. A correlação rodou zero vezes (`correlacaoDeCompras: 0`)
+porque não houve jogador para correlacionar, e não porque tenha sido desligada:
+a porta `lerComprasDoJogador` estava ligada, como no padrão da callable.
+
+**O achado de §4 não é invalidado — ele fica sem destinatário hoje e continua
+valendo para amanhã.** A propriedade que o sustenta (o id do documento de
+`compras/` *é* o `sha256(token)`) é da mesma transação que grava a compra, e vale
+para toda compra futura. Se o app for publicado e vender antes de a migração
+rodar, é este mecanismo que evita a perda da ficha mensal.
+
+## 14.D Impacto comercial
+
+| Medida | Quantidade |
+| --- | ---: |
+| Ativos com benefício mensal a receber | 0 |
+| Excluídos hoje apenas pela ausência do hash | 0 |
+| Desses, com hash histórico recuperável | 0 |
+| Continuariam sem solução após backfill | 0 |
+| Vencidos (não devem inflar a perda) | 0 |
+
+**Perda financeira real hoje: zero. Decisão comercial pendente por causa da
+população legada: nenhuma.** Não há assinante, não há ex-assinante, não há
+receita em risco.
+
+O risco que sobra não é de população: é de **sequenciamento**. Ver 14.E.
+
+## 14.E Recomendação
+
+Classificação da população nos cinco grupos pedidos:
+
+| Grupo | Quantidade |
+| --- | ---: |
+| Pronta para migração | 0 |
+| Exige backfill antes | 0 |
+| Exige decisão comercial | 0 |
+| Exige investigação manual | 0 |
+| Não deve migrar | 0 |
+
+**Recomendação sobre a migração: não executar `migrarEntitlementsLegado` — não
+por risco, mas por vacuidade.** Ela varreria uma coleção inexistente e gravaria
+nada. Rodar não faz mal e não faz bem; o que faria mal é *tomar a decisão de
+migração como resolvida* e esquecer que ela nunca foi exercitada contra dado
+real.
+
+O que a ausência de população muda, e que é a entrega prática desta OS:
+
+1. **A migração legada deixou de ser um bloqueio de lançamento.** Ela estava na
+   frente do VIP porque se supunha uma base a converter. Não há base. O caminho
+   crítico para vender VIP é o de sempre: Play Console, preço, RTDN ativado.
+2. **`concederFichasMensais` precisa ser implantada antes da primeira venda.**
+   Hoje ela não existe em produção (14.A.2). Um assinante que compre antes disso
+   não recebe parcela mensal nenhuma — e esse seria um defeito com dinheiro real
+   atrás, ao contrário do que o censo acabou de medir.
+3. **O backfill de hash de §4 vira prevenção, não reparo.** Não há o que
+   consertar; há o que não deixar quebrar.
+4. **Rodar o censo de novo é barato e deve ser refeito depois da primeira venda**,
+   quando os números deixarem de ser zero. O procedimento está em §9 e em 14.A.
+
+## 14.F Relatório bruto do instrumento
+
+Retorno íntegro de `diagnosticar()`, sem edição:
+
+```json
+{
+  "resumo": {
+    "examinados": 0,
+    "porFase": { "usuarios": 0, "entitlements": 0 },
+    "porCategoria": {
+      "fora_da_populacao": 0, "so_entitlement": 0, "ja_coberto_pela_play": 0,
+      "ja_migrado": 0, "migravel_vigente": 0, "migravel_vencido": 0,
+      "bloqueado_sem_prazo": 0, "entitlement_orfao": 0, "inclassificavel": 0
+    },
+    "porAcao": {
+      "nada_fora_da_populacao": 0, "nada_legado_nao_sobrescreve": 0,
+      "pular_sem_prazo": 0, "gravar_ativo": 0, "gravar_expirado": 0
+    },
+    "porAlerta": {
+      "sem_ficha_mensal": 0, "sem_reconsulta_possivel": 0,
+      "possivel_pagante_rebaixado": 0, "sumico_silencioso": 0,
+      "divergencia_de_prazo": 0, "hash_recuperavel_de_compras": 0,
+      "hash_ambiguo": 0, "hash_irrecuperavel": 0, "evidencia_comercial": 0
+    },
+    "porInconsistencia": {
+      "vip_nao_booleano": 0, "prazo_ilegivel": 0, "entitlement_sem_estado": 0,
+      "entitlement_sem_origem": 0, "entitlement_ativo_sem_prazo": 0,
+      "entitlement_ativo_vencido": 0, "migrado_com_hash": 0, "play_sem_hash": 0,
+      "multiplos_hashes_candidatos": 0, "compra_de_outro_titular": 0
+    },
+    "porInterseccao": {
+      "legado_e_entitlement": 0, "legado_e_entitlement_sem_hash": 0,
+      "legado_ativo_e_evidencia_comercial": 0, "migravel_com_hash_recuperavel": 0,
+      "migravel_sem_hash_recuperavel": 0, "sem_prazo_com_evidencia_comercial": 0,
+      "entitlement_vigente_sem_hash": 0, "entitlement_vigente_sem_token": 0,
+      "legado_vip_e_entitlement_sem_acesso": 0
+    },
+    "correlacaoDeCompras": 0
+  },
+  "amostras": {},
+  "esgotou": true,
+  "cursor": null,
+  "varridoEm": "2026-08-15T17:42:21.370Z"
+}
+```
+
+## 14.G A tabela obrigatória da OS
+
+| Categoria | Quantidade | % do universo | Hash recuperável? | Pode migrar hoje? | Impacto mensal | Risco |
+| --- | ---: | ---: | --- | --- | --- | --- |
+| Legado vigente (`migravel_vigente`) | 0 | — | n/a | n/a | 0 | nenhum |
+| Legado vencido (`migravel_vencido`) | 0 | — | n/a | n/a | 0 | nenhum |
+| Legado sem prazo (`bloqueado_sem_prazo`) | 0 | — | n/a | n/a | 0 | nenhum |
+| Já migrado (`ja_migrado`) | 0 | — | n/a | n/a | 0 | nenhum |
+| Já coberto pela Play | 0 | — | n/a | n/a | 0 | nenhum |
+| Só entitlement (comercial normal) | 0 | — | n/a | n/a | 0 | nenhum |
+| Entitlement órfão | 0 | — | n/a | n/a | 0 | nenhum |
+| Inclassificável | 0 | — | n/a | n/a | 0 | nenhum |
+| **Universo** | **0** | **—** | — | — | **0** | — |
+
+A coluna de porcentagem fica vazia por impossibilidade aritmética: o
+denominador é zero. Preenchê-la com `0%` afirmaria uma proporção que não existe.
+
+## 14.H Segurança — confirmação explícita
+
+| Garantia | Como foi assegurada |
+| --- | --- |
+| Nenhum documento alterado | o cliente MCP recusa, por lista branca, toda ferramenta fora de `list_collections`, `list_documents`, `get_document`, `query_collection`, `run_aggregation_query`, `list_databases`, `get_database`. As de escrita (`firestore_add_document`, `firestore_update_document`, `firestore_delete_document`) existem no servidor e **nunca foram chamadas** |
+| Nenhum trigger de migração chamado | `migrarEntitlementsLegado` não foi invocada |
+| Nenhum benefício concedido, nenhuma ficha creditada | `concederFichasMensais` sequer existe em produção |
+| Nenhum token exposto | não há token na base; nenhum campo com nome sugestivo de segredo foi impresso (filtro explícito no script de contexto) |
+| Nenhum hash individual publicado | não há hash na base; ids de `users`/`tables`/`global_chat` só apareceram como rótulo `sha256` de 12 caracteres |
+| Nenhuma credencial no relatório | a credencial usada é a do `firebase login`; ela não foi lida, exportada nem impressa |
+| Nenhum deploy | `firebase deploy` não foi executado em momento algum |
+
+Verificação independente do estado pós-execução: as contagens de 14.B.1 foram
+obtidas **depois** do censo, e continuam em 0/1 — nada nasceu durante a execução.
+
+## 14.I Pós-execução
+
+`diagnosticarPopulacaoVip` **não foi implantada**, então não há o que remover,
+desativar ou limpar. Nenhuma recomendação de OS de remoção é necessária: o
+projeto ficou exatamente como estava antes desta execução.
+
+A função permanece no código, não em produção — que é onde ela deve ficar até
+existir população para medir.
+
+## 14.J Portões desta execução
+
+| Suíte | Resultado |
+| --- | ---: |
+| `functions-billing` — `npm test` (alvos explícitos) | **179/179** |
+| `functions-billing` — `node --test` sem alvos (caminho do CI de release) | **180/180** |
+
+Nenhum arquivo de produção foi alterado por esta OS: a única mudança na árvore é
+este documento.
