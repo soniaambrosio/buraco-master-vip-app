@@ -1,0 +1,86 @@
+{
+  "//": "PENDENCIAS-EXTERNAS.json — TODO VALOR QUE ESTA OS SE RECUSOU A INVENTAR.",
+
+  "//porque-existe": "A OS proibe inventar dominio, e-mail, CNPJ, razao social, nome de desenvolvedor, productId e prazo de retencao. O jeito facil de obedecer seria escrever 'a definir' no HTML e seguir a vida — e ai um deles seria publicado assim. Este arquivo e o oposto: cada marcador {{PENDENTE:X}} que aparece em web/ TEM de estar declarado aqui, e cada entrada daqui TEM de aparecer em web/. `app/test/conta/conformidade_web_test.dart` confere as duas direcoes e FALHA se divergirem. Um marcador esquecido no HTML quebra a suite; uma entrada obsoleta aqui tambem.",
+
+  "//como-preencher": "Substituir o marcador {{PENDENTE:X}} pelo valor real nos arquivos listados em `ondeAparece`, e remover a entrada daqui. A suite volta a fechar sozinha quando os dois lados forem mexidos juntos.",
+
+  "//o-que-NAO-esta-aqui": "O que foi DERIVADO do repositorio, e por isso nao e pendencia: o nome do aplicativo (Buraco Master VIP), o applicationId oficial (io.github.soniaambrosio.buracomastervip, de .github/workflows/release-aab.yml) e o projeto Firebase (buraco-master-vip, de .firebaserc). Nada disso foi chutado.",
+
+  "pendencias": [
+    {
+      "marcador": "NOME_DO_DESENVOLVEDOR",
+      "oQueE": "O nome do desenvolvedor exatamente como aparece na ficha da Play Console. A Google exige que o recurso web se identifique com o mesmo nome da listagem.",
+      "quemDecide": "proprietaria do aplicativo",
+      "bloqueia": "publicacao da pagina",
+      "ondeAparece": [
+        "web/exclusao-de-conta/index.html",
+        "web/politica-de-privacidade/index.html"
+      ]
+    },
+    {
+      "marcador": "EMAIL_DE_SUPORTE",
+      "oQueE": "Endereco de contato publicado. Precisa ser o mesmo declarado na ficha da Play Console. NAO foi deduzido do e-mail que assina os commits: e-mail de commit e de autoria de codigo, nao canal de atendimento.",
+      "quemDecide": "proprietaria do aplicativo",
+      "bloqueia": "publicacao da pagina",
+      "ondeAparece": [
+        "web/exclusao-de-conta/index.html",
+        "web/politica-de-privacidade/index.html"
+      ]
+    },
+    {
+      "marcador": "IDENTIFICACAO_DO_CONTROLADOR",
+      "oQueE": "Quem responde juridicamente pelo tratamento dos dados — pessoa fisica ou juridica, com o identificador aplicavel. Nao existe razao social nem CNPJ em lugar nenhum deste repositorio.",
+      "quemDecide": "decisao juridica/administrativa",
+      "bloqueia": "publicacao da pagina",
+      "ondeAparece": ["web/politica-de-privacidade/index.html"]
+    },
+    {
+      "marcador": "DATA_DE_VIGENCIA",
+      "oQueE": "A data em que esta versao da politica passa a valer. So existe quando a publicacao acontecer — datar hoje uma politica que esta OS esta proibida de publicar produziria uma vigencia falsa.",
+      "quemDecide": "no momento da publicacao",
+      "bloqueia": "publicacao da pagina",
+      "ondeAparece": ["web/politica-de-privacidade/index.html"]
+    },
+    {
+      "marcador": "PRAZOS_DE_RETENCAO",
+      "oQueE": "Por quanto tempo os registros da classe RETER sao conservados. NAO EXISTE PRAZO DECIDIDO neste projeto, e a OS proibe inventar um. Ate que exista, a politica declara a finalidade sem declarar duracao — que e verdadeiro e verificavel, enquanto '5 anos' seria uma obrigacao que ninguem assumiu.",
+      "quemDecide": "decisao juridica/administrativa",
+      "bloqueia": "nada tecnico; a politica e publicavel sem isto, com a finalidade declarada",
+      "ondeAparece": ["web/politica-de-privacidade/index.html"]
+    },
+    {
+      "marcador": "IDADE_MINIMA",
+      "oQueE": "A idade minima declarada para uso, que precisa concordar com a faixa etaria escolhida no questionario de classificacao da Play Console. O aplicativo tem uma preferencia de 'chat publico so para maiores', mas nenhuma idade esta fixada em codigo.",
+      "quemDecide": "proprietaria do aplicativo, junto com o questionario da Play Console",
+      "bloqueia": "coerencia com a Play Console",
+      "ondeAparece": ["web/politica-de-privacidade/index.html"]
+    },
+    {
+      "marcador": "RECAPTCHA_SITE_KEY_WEB",
+      "oQueE": "Chave de site do reCAPTCHA v3 para o App Check da versao web. As duas callables de conta rodam com `enforceAppCheck: true` em producao, entao sem esta chave a pagina publicada recebe recusa do servidor. E um valor PUBLICO por natureza (fica no HTML de qualquer site que use App Check); ele nao existe porque depende de registrar este site no console do Firebase, o que esta OS nao pode fazer.",
+      "quemDecide": "console do Firebase, antes do deploy",
+      "bloqueia": "funcionamento da pagina em producao",
+      "ondeAparece": ["web/exclusao-de-conta/index.html"]
+    }
+  ],
+
+  "verificacoesDeDeploy": [
+    {
+      "//": "NAO E UM MARCADOR, e por isso nao entra na lista acima — o valor esta escrito no HTML e funciona. E uma conferencia a fazer antes de publicar.",
+      "o-que": "Versao do SDK do Firebase nos caminhos /__/firebase/<versao>/*-compat.js em web/exclusao-de-conta/index.html (hoje 10.14.1).",
+      "porque": "O Hosting serve o SDK a partir desse caminho reservado. Uma versao que ele nao sirva devolve 404 nos quatro scripts, e a pagina abre sem nenhum servico — o codigo trata isso com uma mensagem, mas a pagina fica inutil.",
+      "como-conferir": "Abrir a URL publicada e confirmar que os quatro scripts respondem 200."
+    },
+    {
+      "o-que": "Dominio autorizado no Firebase Authentication.",
+      "porque": "`signInWithPopup` recusa origem nao autorizada. O dominio do Hosting precisa constar em Authentication > Settings > Authorized domains.",
+      "como-conferir": "Console do Firebase, antes do primeiro acesso publico."
+    },
+    {
+      "o-que": "Cliente OAuth de tipo Web para o provedor Google.",
+      "porque": "O login por popup na web usa um cliente OAuth diferente do cliente Android que o aplicativo usa.",
+      "como-conferir": "Console do Firebase > Authentication > Sign-in method > Google."
+    }
+  ]
+}

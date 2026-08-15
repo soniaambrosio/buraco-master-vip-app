@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excluir conta — Buraco Master VIP</title>
+<meta name="description" content="Solicite a exclusão da sua conta do Buraco Master VIP e dos dados associados, sem precisar instalar ou abrir o aplicativo.">
+<meta name="robots" content="index, follow">
+
+<!--
+  ===========================================================================
+  index.html — O RECURSO WEB DE EXCLUSAO DE CONTA.
+  ===========================================================================
+
+  A Google Play exige, de todo aplicativo que permite criar conta, DOIS
+  caminhos de exclusao: um dentro do aplicativo e um recurso web, acessivel
+  sem instalar nem abrir o aplicativo. Esta pagina e o segundo.
+
+  ---------------------------------------------------------------------------
+  A DECISAO QUE ORGANIZA ESTA PAGINA: NAO EXISTE UMA SEGUNDA EXCLUSAO
+  ---------------------------------------------------------------------------
+
+  O caminho barato seria um formulario que manda um e-mail para o suporte, e o
+  suporte apaga a conta a mao. Ele criaria uma SEGUNDA AUTORIDADE de exclusao —
+  outra decisao sobre o que apagar, outro executor, outra chance de divergir da
+  matriz — e, pior, criaria um caminho em que alguem DIGITA a conta que quer
+  apagar.
+
+  Esta pagina faz o contrario: ela autentica a pessoa e chama exatamente as
+  mesmas duas Cloud Functions que o aplicativo chama.
+
+      resumirExclusaoDeConta  -> o aviso, derivado da matriz de retencao
+      excluirMinhaConta       -> a execucao, idempotente e retomavel
+
+  Nao ha aqui matriz, nem ordem de etapas, nem regra de retencao. Tudo isso
+  continua morando em `functions-conta/`, e esta pagina so desenha o que o
+  servidor responde. Uma colecao acrescentada ao backend aparece neste aviso
+  sem ninguem editar este arquivo.
+
+  ---------------------------------------------------------------------------
+  A FRASE QUE GOVERNA O CODIGO ABAIXO
+  ---------------------------------------------------------------------------
+
+      O NAVEGADOR NAO ESCOLHE DE QUEM E A CONTA.
+
+  Nao existe, em lugar nenhum deste arquivo, um campo de UID, de e-mail-alvo ou
+  de codigo de jogador. As duas chamadas vao com payload sem alvo, e o backend
+  RECUSA (`permission-denied`) qualquer payload que traga `uid`, `userId` ou
+  `publicId` — ver `recusarAlvoExterno` em functions-conta/src/index.ts. Quem
+  identifica a conta e o ID token do Firebase Authentication, assinado, que a
+  Cloud Function verifica antes de qualquer codigo nosso rodar.
+
+  ---------------------------------------------------------------------------
+  DE ONDE VEM A CONFIGURACAO DO FIREBASE
+  ---------------------------------------------------------------------------
+
+  De `/__/firebase/init.js`, que o proprio Firebase Hosting serve. NAO ha
+  `apiKey`, `appId` nem `projectId` escritos neste repositorio, e essa ausencia
+  e deliberada: valores de configuracao colados a mao envelhecem em silencio e
+  apontam para o projeto errado depois de qualquer migracao. Em contrapartida,
+  esta pagina SO funciona servida pelo Firebase Hosting do projeto — que e
+  exatamente onde ela deve ser publicada.
+
+  ---------------------------------------------------------------------------
+  O QUE FALTA PARA ESTA PAGINA FUNCIONAR EM PRODUCAO
+  ---------------------------------------------------------------------------
+
+  Esta OS proibe deploy e proibe mexer no console. O que depende de acao
+  externa esta marcado no texto com {{PENDENTE:...}} e declarado em
+  `web/PENDENCIAS-EXTERNAS.json`, que a suite de conformidade confere.
+  Ver `docs/GOOGLE-PLAY-EXCLUSAO-CONTA-DATA-SAFETY.md`.
+-->
+
+<style>
+  :root {
+    --ouro: #efb94a;
+    --ouro-claro: #f6e2a6;
+    --fundo: #080503;
+    --card: #1c130c;
+    --card-2: #130d08;
+    --texto: #efe3cc;
+    --texto-sec: #b6a884;
+    --borda: #4a3a22;
+    --perigo: #8e2f2b;
+    --perigo-claro: #ffc2c2;
+    --perigo-fundo: #2a0e0e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--fundo);
+    color: var(--texto);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+    font-size: 16px;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 18px 64px; }
+  header { border-bottom: 1px solid var(--borda); padding-bottom: 18px; margin-bottom: 22px; }
+  h1 { color: var(--ouro-claro); font-size: 1.6rem; margin: 0 0 6px; }
+  h2 { color: var(--ouro); font-size: 1.15rem; margin: 30px 0 10px; }
+  h3 { color: var(--ouro-claro); font-size: .98rem; margin: 18px 0 6px; }
+  p, li { color: var(--texto); }
+  a { color: var(--ouro); }
+  .sub { color: var(--texto-sec); font-size: .92rem; margin: 0; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--borda);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 14px 0;
+  }
+  .alerta {
+    background: var(--perigo-fundo);
+    border: 1px solid var(--perigo);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin: 18px 0;
+  }
+  .alerta h2 { color: var(--perigo-claro); margin-top: 0; font-size: 1.05rem; }
+  .alerta li { color: #e8c9c9; }
+  button {
+    font: inherit;
+    font-weight: 800;
+    border-radius: 11px;
+    padding: 12px 18px;
+    cursor: pointer;
+    border: 1px solid var(--borda);
+    background: var(--card-2);
+    color: var(--ouro-claro);
+  }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.perigo { background: var(--perigo); border-color: var(--perigo); color: #fff; }
+  button.link { background: transparent; border-color: var(--perigo-claro); color: var(--perigo-claro); }
+  input[type="text"] {
+    font: inherit;
+    width: 100%;
+    padding: 11px 12px;
+    border-radius: 11px;
+    border: 1px solid var(--borda);
+    background: var(--card-2);
+    color: var(--texto);
+    text-transform: uppercase;
+  }
+  code, .caminho {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .86rem;
+    color: var(--ouro-claro);
+  }
+  details { border-top: 1px solid var(--borda); padding: 10px 0; }
+  details summary { cursor: pointer; font-weight: 700; color: var(--texto); }
+  details .porque { color: var(--texto-sec); font-size: .86rem; margin: 2px 0 12px; }
+  .oculto { display: none !important; }
+  .aviso-status { color: var(--texto-sec); font-size: .9rem; }
+  .erro { color: var(--perigo-claro); }
+  footer { margin-top: 40px; border-top: 1px solid var(--borda); padding-top: 16px; color: var(--texto-sec); font-size: .85rem; }
+  .pendente { color: var(--perigo-claro); font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Excluir sua conta do Buraco Master VIP</h1>
+  <p class="sub">
+    Aplicativo <strong>Buraco Master VIP</strong> (pacote
+    <code>io.github.soniaambrosio.buracomastervip</code>), publicado na Google
+    Play por <span class="pendente">{{PENDENTE:NOME_DO_DESENVOLVEDOR}}</span>.
+  </p>
+  <p class="sub">
+    Esta página existe para que você possa pedir a exclusão da sua conta
+    <strong>sem instalar e sem abrir o aplicativo</strong>.
+  </p>
+</header>
+
+<!-- ===================================================================== -->
+<!-- COMO SOLICITAR                                                        -->
+<!-- ===================================================================== -->
+
+<h2>Como solicitar a exclusão</h2>
+
+<p>
+  Entre com a mesma conta Google que você usa no aplicativo. A exclusão age
+  sobre a conta autenticada e sobre nenhuma outra: não existe, nesta página,
+  campo em que você digite qual conta apagar. Ninguém consegue pedir a exclusão
+  da conta de outra pessoa por aqui.
+</p>
+
+<div class="card" id="painel-entrar">
+  <p id="estado-sessao" class="aviso-status">Você ainda não entrou.</p>
+  <button id="botao-entrar" type="button">Entrar com o Google</button>
+  <button id="botao-sair" type="button" class="oculto">Sair</button>
+</div>
+
+<p id="erro-geral" class="erro oculto" role="alert"></p>
+
+<!-- ===================================================================== -->
+<!-- AVISO DA ASSINATURA                                                   -->
+<!-- ===================================================================== -->
+
+<div class="alerta">
+  <h2>Antes de continuar</h2>
+  <ul>
+    <li>
+      <strong>A assinatura VIP na Google Play NÃO é cancelada pela exclusão da
+      conta.</strong> A cobrança recorrente é um contrato entre você e o Google
+      e continua valendo até que você a cancele. Se você tem uma assinatura
+      ativa, cancele-a antes — senão a cobrança continua depois de a conta
+      deixar de existir.
+      <p>
+        <a href="https://play.google.com/store/account/subscriptions"
+           target="_blank" rel="noopener noreferrer">
+          Gerenciar minhas assinaturas na Google Play
+        </a>
+      </p>
+    </li>
+    <li>
+      <strong>Não há como desfazer.</strong> Uma conta nova é uma conta nova:
+      outro código de jogador, classificação zerada, fichas zeradas e sem as
+      amizades.
+    </li>
+    <li>
+      Cancelar a assinatura <strong>não é obrigatório</strong> para excluir a
+      conta. Você decide se cancela antes, depois, ou não cancela.
+    </li>
+  </ul>
+</div>
+
+<!-- ===================================================================== -->
+<!-- O AVISO VINDO DO SERVIDOR                                             -->
+<!-- ===================================================================== -->
+
+<section id="painel-resumo" class="oculto">
+  <h2>O que acontece com os seus dados</h2>
+  <p class="sub">
+    As quatro listas abaixo vêm do servidor, da mesma matriz de retenção que a
+    exclusão obedece. Elas não são um texto escrito nesta página.
+  </p>
+  <div id="listas"></div>
+</section>
+
+<section id="painel-bloqueado" class="oculto">
+  <h2>Ainda não é possível excluir</h2>
+  <p id="texto-bloqueio"></p>
+</section>
+
+<!-- ===================================================================== -->
+<!-- CONFIRMACAO                                                           -->
+<!-- ===================================================================== -->
+
+<section id="painel-confirmar" class="oculto">
+  <h2>Confirmar a exclusão</h2>
+  <div class="alerta">
+    <p>
+      Para confirmar, digite <strong><span id="palavra-esperada">EXCLUIR</span></strong>
+      no campo abaixo.
+    </p>
+    <p><input type="text" id="campo-confirmacao" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Palavra de confirmação"></p>
+    <p>
+      <button id="botao-excluir" type="button" class="perigo" disabled>
+        Excluir minha conta
+      </button>
+    </p>
+    <p id="estado-execucao" class="aviso-status"></p>
+  </div>
+</section>
+
+<section id="painel-concluido" class="oculto">
+  <h2>Sua conta foi excluída</h2>
+  <p>
+    A conta e os dados listados como apagados deixaram de existir. Se você tinha
+    uma assinatura VIP ativa na Google Play,
+    <strong>ela continua ativa e continua sendo cobrada</strong> até você
+    cancelá-la —
+    <a href="https://play.google.com/store/account/subscriptions"
+       target="_blank" rel="noopener noreferrer">cancele por aqui</a>.
+  </p>
+</section>
+
+<!-- ===================================================================== -->
+<!-- CAMINHOS ALTERNATIVOS                                                 -->
+<!-- ===================================================================== -->
+
+<h2>Outras formas de pedir a exclusão</h2>
+
+<p>
+  <strong>Pelo aplicativo.</strong> Se você já tem o Buraco Master VIP
+  instalado, o mesmo caminho existe em
+  <em>Configurações → Excluir minha conta</em>. Instalar o aplicativo
+  <strong>não é necessário</strong> para excluir a conta: a página em que você
+  está agora faz a mesma coisa.
+</p>
+
+<p>
+  <strong>Se você não consegue mais entrar com a sua conta Google.</strong>
+  Sem conseguir provar que a conta é sua, nós não podemos apagá-la — apagar uma
+  conta a partir de um nome, de um apelido ou de um código de jogador informado
+  por quem escreve seria entregar a qualquer pessoa o poder de apagar a conta de
+  outra. Escreva para
+  <span class="pendente">{{PENDENTE:EMAIL_DE_SUPORTE}}</span> a partir do
+  endereço de e-mail da conta Google que você usava, e nós indicaremos como
+  recuperar o acesso para então concluir a exclusão você mesmo.
+</p>
+
+<h2>Prazo</h2>
+<p>
+  Quando você conclui a exclusão nesta página, ela é executada
+  <strong>na hora</strong> — não há fila nem período de espera. O que permanece,
+  e por quê, está listado acima e detalhado na
+  <a href="/politica-de-privacidade/">Política de Privacidade</a>.
+</p>
+
+<footer>
+  <p>
+    <a href="/politica-de-privacidade/">Política de Privacidade</a> ·
+    Buraco Master VIP ·
+    <code>io.github.soniaambrosio.buracomastervip</code>
+  </p>
+</footer>
+
+</main>
+
+<!--
+  O SDK vem do proprio Firebase Hosting (`/__/firebase/...`), e nao de um CDN
+  externo: e o mesmo caminho que serve `init.js` com a configuracao do projeto,
+  entao a pagina nao carrega script de terceiro e nao guarda configuracao
+  colada a mao. A VERSAO no caminho precisa ser uma que o Hosting sirva —
+  conferir no momento da publicacao (ver PENDENCIAS-EXTERNAS.json).
+-->
+<script src="/__/firebase/10.14.1/firebase-app-compat.js"></script>
+<script src="/__/firebase/10.14.1/firebase-auth-compat.js"></script>
+<script src="/__/firebase/10.14.1/firebase-functions-compat.js"></script>
+<script src="/__/firebase/10.14.1/firebase-app-check-compat.js"></script>
+<script src="/__/firebase/init.js"></script>
+
+<script>
+"use strict";
+
+// ===========================================================================
+// CONSTANTES QUE PRECISAM CASAR COM O BACKEND
+// ===========================================================================
+
+// A REGIAO PRECISA CASAR com `opcoesCliente` em functions-conta/src/index.ts.
+// Chamar a regiao errada devolve `not-found`, que num fluxo de exclusao e facil
+// de confundir com "conta ja removida" — e confundir os dois seria desastroso.
+var REGIAO = "southamerica-east1";
+
+// O App Check e EXIGIDO pelas duas callables em producao
+// (`enforceAppCheck: true`). A chave de site do reCAPTCHA v3 e um valor
+// PUBLICO por natureza — nao e segredo, e por isso pode viver no HTML — mas ela
+// ainda nao existe: depende de registrar este site no console do Firebase.
+var CHAVE_RECAPTCHA = "{{PENDENTE:RECAPTCHA_SITE_KEY_WEB}}";
+
+// ===========================================================================
+// ESTADO
+// ===========================================================================
+
+var elementos = {
+  estadoSessao: document.getElementById("estado-sessao"),
+  botaoEntrar: document.getElementById("botao-entrar"),
+  botaoSair: document.getElementById("botao-sair"),
+  erroGeral: document.getElementById("erro-geral"),
+  painelResumo: document.getElementById("painel-resumo"),
+  painelBloqueado: document.getElementById("painel-bloqueado"),
+  textoBloqueio: document.getElementById("texto-bloqueio"),
+  painelConfirmar: document.getElementById("painel-confirmar"),
+  painelConcluido: document.getElementById("painel-concluido"),
+  listas: document.getElementById("listas"),
+  palavraEsperada: document.getElementById("palavra-esperada"),
+  campo: document.getElementById("campo-confirmacao"),
+  botaoExcluir: document.getElementById("botao-excluir"),
+  estadoExecucao: document.getElementById("estado-execucao")
+};
+
+var palavraDeConfirmacao = "";
+var emVoo = false;
+
+function mostrar(el, visivel) {
+  if (!el) return;
+  el.classList.toggle("oculto", !visivel);
+}
+
+function erro(texto) {
+  elementos.erroGeral.textContent = texto;
+  mostrar(elementos.erroGeral, Boolean(texto));
+}
+
+// ===========================================================================
+// INICIALIZACAO
+// ===========================================================================
+
+// `firebase.apps.length` protege contra o init.js ter falhado: sem ele, cada
+// chamada abaixo estouraria com um erro de SDK que nao diz nada ao visitante.
+if (typeof firebase === "undefined" || !firebase.apps || !firebase.apps.length) {
+  erro(
+    "Não foi possível carregar os serviços desta página. Recarregue; se " +
+    "continuar, use o caminho alternativo descrito acima."
+  );
+} else {
+  iniciar();
+}
+
+function iniciar() {
+  // App Check e ATIVADO SE — E SOMENTE SE — a chave real ja tiver sido colocada.
+  // Enquanto o marcador {{PENDENTE:...}} estiver aqui, ativar produziria um
+  // token invalido e TODA chamada seria recusada, o que e pior do que nao
+  // ativar: em producao a recusa vem do servidor, com mensagem propria.
+  if (CHAVE_RECAPTCHA.indexOf("PENDENTE") === -1) {
+    try {
+      firebase.appCheck().activate(CHAVE_RECAPTCHA, true);
+    } catch (e) {
+      // Nao derruba a pagina: quem decide se a chamada passa e o servidor.
+    }
+  }
+
+  firebase.auth().onAuthStateChanged(function (usuario) {
+    if (usuario) {
+      elementos.estadoSessao.textContent =
+        "Você entrou como " + (usuario.email || usuario.uid) + ".";
+      mostrar(elementos.botaoEntrar, false);
+      mostrar(elementos.botaoSair, true);
+      carregarResumo();
+    } else {
+      elementos.estadoSessao.textContent = "Você ainda não entrou.";
+      mostrar(elementos.botaoEntrar, true);
+      mostrar(elementos.botaoSair, false);
+      mostrar(elementos.painelResumo, false);
+      mostrar(elementos.painelBloqueado, false);
+      mostrar(elementos.painelConfirmar, false);
+    }
+  });
+
+  elementos.botaoEntrar.addEventListener("click", entrar);
+  elementos.botaoSair.addEventListener("click", function () {
+    firebase.auth().signOut();
+  });
+  elementos.campo.addEventListener("input", avaliarCampo);
+  elementos.botaoExcluir.addEventListener("click", executar);
+}
+
+// ===========================================================================
+// ENTRAR
+// ===========================================================================
+
+// ENTRAR AQUI JA E A REAUTENTICACAO. O backend confere o claim `auth_time` do
+// token e recusa credencial apresentada ha muito tempo; um login recem-feito
+// nesta pagina tem `auth_time` de agora. Nao ha um segundo pedido de senha, e
+// nao ha como pular este: sem entrar, nao ha token, e sem token a callable
+// responde `unauthenticated`.
+function entrar() {
+  erro("");
+  var provedor = new firebase.auth.GoogleAuthProvider();
+  // `prompt: select_account` evita o pior engano possivel desta pagina: entrar
+  // silenciosamente com a conta Google errada, ja logada no navegador, e
+  // excluir a conta de outro perfil da mesma pessoa.
+  provedor.setCustomParameters({ prompt: "select_account" });
+  firebase.auth().signInWithPopup(provedor).catch(function (e) {
+    if (e && e.code === "auth/popup-closed-by-user") return; // desistiu, não é erro
+    erro("Não foi possível entrar. Tente novamente.");
+  });
+}
+
+// ===========================================================================
+// O AVISO
+// ===========================================================================
+
+function chamar(nome, dados) {
+  // PAYLOAD SEM ALVO. `dados` nunca carrega `uid`, `userId` nem `publicId`; o
+  // backend recusa com `permission-denied` se carregasse. A conta e a do token.
+  return firebase.app().functions(REGIAO).httpsCallable(nome)(dados || {});
+}
+
+function carregarResumo() {
+  erro("");
+  chamar("resumirExclusaoDeConta").then(function (resposta) {
+    var r = (resposta && resposta.data) || {};
+    palavraDeConfirmacao = typeof r.palavraDeConfirmacao === "string"
+      ? r.palavraDeConfirmacao
+      : "";
+    elementos.palavraEsperada.textContent = palavraDeConfirmacao || "EXCLUIR";
+
+    desenharListas(r);
+    mostrar(elementos.painelResumo, true);
+
+    if (r.podeExcluir === true) {
+      mostrar(elementos.painelBloqueado, false);
+      mostrar(elementos.painelConfirmar, true);
+    } else {
+      elementos.textoBloqueio.textContent = textoDoBloqueio(r);
+      mostrar(elementos.painelBloqueado, true);
+      mostrar(elementos.painelConfirmar, false);
+    }
+    avaliarCampo();
+  }).catch(function () {
+    erro(
+      "Não foi possível carregar o resumo agora. Recarregue a página e tente " +
+      "novamente. Nada foi excluído."
+    );
+  });
+}
+
+function textoDoBloqueio(r) {
+  var bloqueios = Array.isArray(r.bloqueios) ? r.bloqueios : [];
+  if (bloqueios.length > 0) {
+    var nomes = bloqueios.map(function (b) {
+      return (b.tournamentId || "?") + " (edição " + (b.editionId || "?") + ")";
+    }).join(", ");
+    return "Você ainda tem inscrição ativa em torneio: " + nomes +
+      ". Uma conta que some no meio de um torneio deixa a mesa sem fechar e " +
+      "prende os outros jogadores. Cancele as inscrições pelo aplicativo e " +
+      "volte aqui.";
+  }
+  return "A exclusão não está disponível agora. Tente novamente mais tarde.";
+}
+
+var GRUPOS = [
+  ["apagado", "O que é apagado", "Some do sistema e não volta."],
+  ["anonimizado", "O que fica sem o seu nome",
+   "A linha continua existindo, sem apelido e sem foto — para não reescrever a colocação de quem jogou com você."],
+  ["desvinculado", "O que fica sem ligação com você",
+   "O registro permanece, e o vínculo com a sua identidade é cortado."],
+  ["retido", "O que é guardado, e por quê",
+   "Registros que não são só seus: partidas com outras pessoas, denúncias em aberto e comprovantes de compra."]
+];
+
+function desenharListas(r) {
+  elementos.listas.textContent = "";
+  GRUPOS.forEach(function (grupo) {
+    var chave = grupo[0];
+    var linhas = Array.isArray(r[chave]) ? r[chave] : [];
+    if (linhas.length === 0) return;
+
+    var bloco = document.createElement("section");
+    bloco.className = "card";
+    bloco.setAttribute("data-grupo", chave);
+
+    var titulo = document.createElement("h3");
+    titulo.textContent = grupo[1] + " (" + linhas.length + ")";
+    bloco.appendChild(titulo);
+
+    var sub = document.createElement("p");
+    sub.className = "sub";
+    sub.textContent = grupo[2];
+    bloco.appendChild(sub);
+
+    linhas.forEach(function (linha) {
+      var item = document.createElement("details");
+      var resumo = document.createElement("summary");
+      // `textContent`, nunca `innerHTML`: o texto vem do servidor e não há
+      // razão nenhuma para interpretá-lo como marcação.
+      resumo.textContent = String(linha.caminho || "");
+      resumo.className = "caminho";
+      item.appendChild(resumo);
+
+      var porque = document.createElement("p");
+      porque.className = "porque";
+      porque.textContent = String(linha.porque || "");
+      item.appendChild(porque);
+
+      bloco.appendChild(item);
+    });
+
+    elementos.listas.appendChild(bloco);
+  });
+}
+
+// ===========================================================================
+// EXECUCAO
+// ===========================================================================
+
+// CONFERENCIA LOCAL DE CONVENIENCIA, e nao de seguranca — a mesma decisao de
+// `ControladorDeExclusao.confirmacaoConfere`. Serve para o botao so acender
+// quando faz sentido; quem decide de verdade e o servidor, que confere de novo.
+function avaliarCampo() {
+  var digitado = (elementos.campo.value || "").trim().toUpperCase();
+  var esperada = (palavraDeConfirmacao || "").toUpperCase();
+  elementos.botaoExcluir.disabled =
+    emVoo || esperada.length === 0 || digitado !== esperada;
+}
+
+function executar() {
+  // A TRAVA CONTRA O DUPLO CLIQUE, pelo mesmo motivo de `_emVoo` no cliente
+  // Flutter: o backend aguenta a chamada repetida (o diário converge), mas
+  // aguentar não é motivo para provocar.
+  if (emVoo) return;
+  emVoo = true;
+  erro("");
+  elementos.botaoExcluir.disabled = true;
+  elementos.estadoExecucao.textContent =
+    "Excluindo sua conta. Não feche esta página.";
+
+  chamar("excluirMinhaConta", { confirmacao: elementos.campo.value.trim().toUpperCase() })
+    .then(function (resposta) {
+      var d = (resposta && resposta.data) || {};
+      // `repeticao: true` É SUCESSO: o backend já tinha concluído numa chamada
+      // anterior e a segunda convergiu. Tratar como erro deixaria a pessoa
+      // olhando uma falha de uma conta que já não existe.
+      if (d.concluida === true || d.repeticao === true) return concluir();
+      throw new Error("sem conclusão");
+    })
+    .catch(function (e) {
+      emVoo = false;
+      elementos.estadoExecucao.textContent = "";
+      erro(mensagemDeFalha(e));
+      avaliarCampo();
+    });
+}
+
+function concluir() {
+  mostrar(elementos.painelResumo, false);
+  mostrar(elementos.painelConfirmar, false);
+  mostrar(elementos.painelConcluido, true);
+  elementos.estadoExecucao.textContent = "";
+  // A sessão local é encerrada DEPOIS de o servidor confirmar, na mesma ordem
+  // do aplicativo. O token que sobrou já está morto de qualquer forma.
+  firebase.auth().signOut().catch(function () {});
+}
+
+// A MENSAGEM SAI DO CÓDIGO DA RECUSA, e nunca do texto que veio do servidor —
+// mesma disciplina de `_mensagem` em excluir_conta_screen.dart.
+function mensagemDeFalha(e) {
+  var recusa = e && e.details && e.details.recusa;
+  if (recusa === "alvoNoPayloadRecusado") {
+    return "Pedido inválido. Nada foi excluído.";
+  }
+  if (recusa === "exclusaoParcial") {
+    return "A exclusão começou e não terminou. Clique de novo para concluir " +
+      "de onde parou.";
+  }
+  if (e && e.code === "functions/unauthenticated") {
+    return "Sua sessão expirou. Entre de novo para continuar.";
+  }
+  if (e && e.code === "functions/failed-precondition") {
+    return "Não foi possível concluir agora. Confira a palavra digitada e as " +
+      "pendências indicadas acima. Nada foi excluído.";
+  }
+  return "Algo deu errado. Nada foi excluído.";
+}
+</script>
+</body>
+</html>

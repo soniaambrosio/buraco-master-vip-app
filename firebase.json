@@ -7,6 +7,28 @@
     "indexes": "firebase/firestore.indexes.json"
   },
 
+  "hosting": {
+    "//": "O RECURSO WEB DE EXCLUSAO DE CONTA que a Google Play exige, mais a Politica de Privacidade. Origem: OS de Conformidade de Exclusao de Conta (Google Play / Privacidade / Assinatura v1).",
+
+    "//porque-hosting-neste-projeto": "Porque a pagina de exclusao NAO reimplementa a exclusao: ela chama `resumirExclusaoDeConta` e `excluirMinhaConta`, as mesmas duas callables do aplicativo, com o UID vindo do ID token e nunca do navegador. Para isso ela precisa da configuracao do projeto, e o Hosting a entrega em /__/firebase/init.js — sem apiKey, appId nem projectId colados no repositorio. Hospedar em outro lugar exigiria colar essa configuracao a mao, que e exatamente o que se quer evitar.",
+
+    "//nao-implantado": "DECLARADO, NAO PUBLICADO. A OS que criou este bloco proibe deploy. O que falta antes do primeiro `firebase deploy --only hosting` esta em web/PENDENCIAS-EXTERNAS.json — nome do desenvolvedor, e-mail de suporte, chave do App Check web, dominio autorizado no Authentication e cliente OAuth web.",
+
+    "public": "web",
+
+    "//ignore": "PENDENCIAS-EXTERNAS.json e documento de trabalho, e nao pagina: publicar o inventario do que ainda falta seria expor a lista de lacunas no proprio site que existe para preenche-las.",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "PENDENCIAS-EXTERNAS.json"
+    ],
+
+    "//cleanUrls": "`/exclusao-de-conta` e `/exclusao-de-conta/` levam ao mesmo lugar. A URL vai para um campo do Play Console e para dentro do aplicativo; uma barra a mais ou a menos nao pode virar 404.",
+    "cleanUrls": true,
+    "trailingSlash": false
+  },
+
   "functions": [
     {
       "//": "COLECOES / KIT PIONEIROS — claimPioneerKit, grantPioneerEligibility, revokePioneerKit. Origem: claude/kit-pioneiros-2026-1b56ed (firebase/functions).",
