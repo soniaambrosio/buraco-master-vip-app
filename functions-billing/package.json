@@ -8,7 +8,7 @@
   },
   "scripts": {
     "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio. Mesma disciplina de firebase/testes/package.json.",
-    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/fichas.test.js",
+    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/fichas.test.js test/varredura.test.js test/migracao.test.js test/reconciliacao.test.js",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"

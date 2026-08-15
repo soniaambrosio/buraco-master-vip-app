@@ -98,11 +98,113 @@ class Referencia {
   }
 }
 
-class Colecao {
-  constructor(banco, caminho) {
+/**
+ * Sentinel devolvido por `FieldPathFalso.documentId()`. Comparavel por
+ * identidade, como o do Admin SDK.
+ */
+const ID_DO_DOCUMENTO = Object.freeze({ __idDoDocumento: true });
+
+/** O `FieldPath` do Admin SDK, na parte que este codebase usa. */
+const FieldPathFalso = { documentId: () => ID_DO_DOCUMENTO };
+
+/**
+ * Consulta com `where`/`orderBy`/`limit`/`startAfter`.
+ *
+ * IMUTAVEL E ENCADEAVEL, como a do Firestore: cada metodo devolve uma consulta
+ * NOVA. Se ela mutasse em vez de copiar, uma varredura que reaproveitasse o
+ * objeto base acumularia `startAfter` a cada pagina — e o teste de paginacao
+ * passaria a provar o contrario do que pretende.
+ *
+ * SO ORDENA POR ID. E a unica ordenacao que a varredura deste codebase usa, e
+ * implementar as outras aqui seria escrever um Firestore de mentira mais
+ * completo do que o necessario para provar o que esta em jogo.
+ */
+class Consulta {
+  constructor(banco, caminho, estado = {}) {
     this._banco = banco;
     this.path = caminho;
+    this._filtros = estado.filtros || [];
+    this._ordenado = estado.ordenado || false;
+    this._limite = estado.limite || null;
+    this._depoisDe = estado.depoisDe || null;
   }
+
+  _derivar(mudanca) {
+    return new Consulta(this._banco, this.path, {
+      filtros: this._filtros,
+      ordenado: this._ordenado,
+      limite: this._limite,
+      depoisDe: this._depoisDe,
+      ...mudanca,
+    });
+  }
+
+  where(campo, operador, valor) {
+    if (operador !== '==' && operador !== '<=') {
+      throw new Error(`operador nao suportado pelo Firestore falso: ${operador}`);
+    }
+    return this._derivar({
+      filtros: [...this._filtros, { campo, operador, valor }],
+    });
+  }
+
+  orderBy(campo) {
+    if (campo !== ID_DO_DOCUMENTO) {
+      throw new Error('o Firestore falso so ordena por documentId()');
+    }
+    return this._derivar({ ordenado: true });
+  }
+
+  limit(n) {
+    return this._derivar({ limite: n });
+  }
+
+  startAfter(cursor) {
+    return this._derivar({ depoisDe: cursor });
+  }
+
+  async get() {
+    const prefixo = `${this.path}/`;
+    let ids = [...this._banco._docs.keys()]
+      .filter((c) => c.startsWith(prefixo))
+      // Filhos DIRETOS apenas: `playerEntitlements/{uid}/interno/billing` nao e
+      // documento da colecao `playerEntitlements`.
+      .filter((c) => !c.slice(prefixo.length).includes('/'))
+      .map((c) => c.slice(prefixo.length));
+
+    ids = ids.filter((id) => {
+      const dados = this._banco._ler(`${prefixo}${id}`) || {};
+      return this._filtros.every(({ campo, operador, valor }) => {
+        const v = dados[campo];
+        if (operador === '==') return v === valor;
+        return v != null && v <= valor;
+      });
+    });
+
+    // A ordenacao por id e SEMPRE aplicada quando pedida; sem `orderBy` a ordem
+    // e a de insercao, que e o pior caso realista e serve para mostrar que uma
+    // paginacao sem criterio estavel nao funciona.
+    if (this._ordenado) ids.sort();
+
+    if (this._depoisDe != null) {
+      ids = ids.filter((id) => id > this._depoisDe);
+    }
+
+    this._banco.paginasLidas += 1;
+
+    const escolhidos =
+      this._limite == null ? ids : ids.slice(0, this._limite);
+
+    const docs = escolhidos.map((id) => {
+      const ref = new Referencia(this._banco, `${prefixo}${id}`);
+      return new Instantaneo(ref, this._banco._ler(ref.path));
+    });
+
+    return { docs, size: docs.length, empty: docs.length === 0 };
+  }
+}
+
+class Colecao extends Consulta {
   doc(id) {
     return new Referencia(this._banco, `${this.path}/${id}`);
   }
@@ -135,6 +237,8 @@ class FirestoreFalso {
     this.commits = 0;
     this.conflitos = 0;
     this.leiturasSoltas = 0;
+    /** Quantas paginas de consulta foram lidas. O contador da paginacao. */
+    this.paginasLidas = 0;
     /**
      * Gancho de interleaving. Chamado depois do corpo da transacao e ANTES da
      * checagem de versoes, com o numero da tentativa. Devolver uma Promise
@@ -226,4 +330,4 @@ class FirestoreFalso {
   }
 }
 
-module.exports = { FirestoreFalso, CARIMBO };
+module.exports = { FirestoreFalso, CARIMBO, FieldPathFalso, ID_DO_DOCUMENTO };

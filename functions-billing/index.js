@@ -62,7 +62,8 @@ const {
 const {
   ESTADO: ESTADO_VIP,
   consolidarAssinatura,
-  instante,
+  // `instante` saiu junto com o corpo da migracao de legado: quem interpreta
+  // `vipExpiraEm` agora e `migracaoLegado.js`.
   anteriorA,
   rotuloToken,
 } = require('./entitlement');
@@ -75,8 +76,15 @@ const {
 const { criarReconciliador } = require('./reconciliacao');
 const { criarProcessadorRtdn } = require('./rtdn');
 
-const { planoDoCatalogo, fichasDoIndice, indicesDevidos } = require('./fichas');
+// `indicesDevidos` saiu daqui junto com o corpo da varredura mensal: quem conta
+// parcelas vencidas agora e `fichasVarredura.js`. O que sobrou nesta fiacao usa
+// so o indice 0, que e a ativacao creditada na hora da compra.
+const { planoDoCatalogo, fichasDoIndice } = require('./fichas');
 const { criarLivroDeFichas } = require('./fichasStore');
+const {
+  concederFichasDeTodosOsAssinantes,
+} = require('./fichasVarredura');
+const { migrarPaginaDeLegado } = require('./migracaoLegado');
 
 initializeApp();
 
@@ -691,6 +699,18 @@ exports.reconciliarEntitlements = onSchedule(
  * por 24. Nenhuma parcela se perde por causa do intervalo — ela so e liquidada no
  * tick seguinte, com o valor certo, porque o que manda e o indice do mes e nao o
  * momento em que o job passou.
+ *
+ * POR QUE A SELECAO DOS ASSINANTES E PAGINADA
+ *
+ * Ate aqui esta funcao lia `.where('vipAtivo','==',true).limit(500)`. Um limite
+ * sem cursor nao e uma pagina, e um TETO: a consulta e ordenada de forma estavel,
+ * entao ela devolvia os MESMOS 500 documentos todo dia, e como esta rotina nao
+ * escreve em `playerEntitlements`, nada tirava esses 500 da frente da fila. O
+ * 501o assinante nunca era visitado — nao hoje, nao amanha, nunca — e o log
+ * dizia "candidatos: 500", que se le como saude.
+ *
+ * A decisao inteira mora agora em `fichasVarredura.js`, testavel sem
+ * `firebase-functions`. Aqui ficou so a fiacao.
  */
 exports.concederFichasMensais = onSchedule(
   { schedule: 'every day 09:00', timeZone: 'America/Sao_Paulo', region: 'us-central1' },
@@ -703,87 +723,36 @@ exports.concederFichasMensais = onSchedule(
     // custo sem mudar nenhuma decisao.
     const catalogo = await lerCatalogo();
 
-    const ativos = await db
-      .collection(COL_ENTITLEMENT)
-      .where('vipAtivo', '==', true)
-      .limit(500)
-      .get();
-
-    let jogadores = 0;
-    let parcelas = 0;
-    let fichas = 0;
-    let truncados = 0;
-    let semPlano = 0;
-
-    for (const doc of ativos.docs) {
-      const uid = doc.id;
-      const dados = doc.data();
-      try {
-        // Prazo vencido nao gera parcela, mesmo com `vipAtivo: true` gravado. A
-        // varredura de vencimento roda a cada 30 minutos e fecha esses
-        // documentos, mas ela pode nao ter passado ainda — e pagar um mes que o
-        // jogador nao pagou e exatamente o erro que nao da para desfazer.
-        if (!dados.expiraEm || !anteriorA(agora, dados.expiraEm)) continue;
-
-        const definicao = catalogo[dados.produtoId];
-        const plano = planoDoCatalogo(definicao, dados.planoBase);
-        if (!plano) {
-          semPlano += 1;
-          continue;
-        }
-
-        const interno = await dependencias().store.refsEntitlement(uid).interno.get();
-        const hash = interno.exists ? interno.data().purchaseTokenHash : null;
-        if (!hash) {
-          // Sem token nao ha livro-razao estavel para este direito — e sem ele
-          // nao existe idempotencia. Direito migrado do legado cai aqui, de
-          // proposito: ele nunca teve compra registrada por este codebase.
-          semPlano += 1;
-          continue;
-        }
-
-        const { indices, truncado } = indicesDevidos({
-          inicioEm: dados.inicioEm,
-          agora,
-        });
-        if (truncado) truncados += 1;
-
-        let creditouAlgo = false;
-        for (const indice of indices) {
-          const r = await dependencias().livroFichas.liquidarParcela({
-            uid,
-            purchaseTokenHash: hash,
-            indice,
-            fichas: fichasDoIndice(plano, indice),
-            produtoId: dados.produtoId || null,
-            planoBase: dados.planoBase || null,
-            origem: 'agendador',
-          });
-          if (r.creditado > 0) {
-            parcelas += 1;
-            fichas += r.creditado;
-            creditouAlgo = true;
-          }
-        }
-        if (creditouAlgo) jogadores += 1;
-      } catch (e) {
-        // Um jogador problematico nao trava a varredura: o tick seguinte tenta de
-        // novo, e cada parcela e idempotente.
-        console.error('[billing] falha ao conceder fichas', e.message, { uid });
-      }
-    }
-
-    // Nada aqui e silencioso de proposito: `truncados` e `semPlano` sao os dois
-    // jeitos de a varredura entregar MENOS do que a politica promete, e uma
-    // varredura que corta sem dizer se le como "estava tudo em dia".
-    console.info('[billing] entrega mensal de fichas', {
-      candidatos: ativos.size,
-      jogadores,
-      parcelas,
-      fichas,
-      truncados,
-      semPlano,
+    const relatorio = await concederFichasDeTodosOsAssinantes({
+      db,
+      FieldPath,
+      colecaoEntitlement: COL_ENTITLEMENT,
+      catalogo,
+      agora,
+      anteriorA,
+      lerInterno: async (uid) => {
+        const snap = await dependencias().store.refsEntitlement(uid).interno.get();
+        return snap.exists ? snap.data() : null;
+      },
+      liquidarParcela: (parcela) =>
+        dependencias().livroFichas.liquidarParcela(parcela),
+      registrarErro: (mensagem, contexto) =>
+        console.error('[billing] falha ao conceder fichas', mensagem, contexto),
     });
+
+    // Nada aqui e silencioso de proposito: `truncados`, `semPlano` e `comFalha`
+    // sao os jeitos de a varredura entregar MENOS do que a politica promete, e
+    // uma varredura que corta sem dizer se le como "estava tudo em dia".
+    console.info('[billing] entrega mensal de fichas', relatorio);
+
+    // O unico corte possivel e o teto de paginas, e ele grita. `cursor` e o
+    // ponto exato de retomada.
+    if (!relatorio.esgotou) {
+      console.error(
+        '[billing] a entrega mensal NAO esgotou a base neste tick',
+        { paginas: relatorio.paginas, retomarApos: relatorio.cursor }
+      );
+    }
   }
 );
 
@@ -871,73 +840,20 @@ exports.migrarEntitlementsLegado = onCall(
       throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
     }
 
-    const db = getFirestore();
-    const cursor = (request.data && request.data.cursor) || null;
-    const lote = Math.min(Number((request.data && request.data.lote) || 100), 400);
-    const agora = new Date().toISOString();
-
-    let consulta = db
-      .collection('usuarios')
-      .where('vip', '==', true)
-      .orderBy(FieldPath.documentId())
-      .limit(lote);
-    if (cursor) consulta = consulta.startAfter(cursor);
-
-    const pagina = await consulta.get();
-
-    let migrados = 0;
-    let jaTinham = 0;
-    let semPrazo = 0;
-    let ultimo = cursor;
-
-    for (const doc of pagina.docs) {
-      const uid = doc.id;
-      ultimo = uid;
-      const dados = doc.data();
-
-      const expiraEm = instante(dados.vipExpiraEm);
-      if (!expiraEm) {
-        // Sem prazo nao da para afirmar que o direito ainda vale, e afirmar o
-        // que nao se sabe e o defeito que esta OS veio consertar.
-        semPrazo += 1;
-        continue;
-      }
-
-      const vigente = anteriorA(agora, expiraEm);
-      const resultado = await dependencias().store.aplicarProposta({
-        uid,
-        estado: vigente ? ESTADO_VIP.ATIVO : ESTADO_VIP.EXPIRADO,
-        vipAtivo: vigente,
-        produtoId: dados.vipProdutoId || null,
-        inicioEm: null,
-        expiraEm,
-        // O legado nao registra se a renovacao estava ligada. `false` e o valor
-        // que nao promete nada.
-        renovacaoAutomatica: false,
-        origem: 'legado_usuarios',
-        purchaseTokenHash: null,
-        verificadoEm: agora,
-        fonte: 'migracao',
-      });
-
-      if (resultado.aplicado) migrados += 1;
-      else jaTinham += 1;
-    }
-
-    console.info('[billing] migracao de entitlement legado', {
-      examinados: pagina.size,
-      migrados,
-      jaTinham,
-      semPrazo,
+    // A decisao por documento mora em `migracaoLegado.js`, testavel sem
+    // `firebase-functions`. Aqui ficou o portao de admin e a fiacao.
+    const relatorio = await migrarPaginaDeLegado({
+      db: getFirestore(),
+      FieldPath,
+      aplicarProposta: (proposta) =>
+        dependencias().store.aplicarProposta(proposta),
+      ESTADO_VIP,
+      agora: new Date().toISOString(),
+      cursor: (request.data && request.data.cursor) || null,
+      lote: (request.data && request.data.lote) || undefined,
     });
 
-    return {
-      examinados: pagina.size,
-      migrados,
-      jaTinham,
-      semPrazo,
-      // `null` quando a pagina veio incompleta: acabou.
-      cursor: pagina.size === lote ? ultimo : null,
-    };
+    console.info('[billing] migracao de entitlement legado', relatorio);
+    return relatorio;
   }
 );
