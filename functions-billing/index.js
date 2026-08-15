@@ -35,6 +35,7 @@
  *   reconciliarEntitlements     varredura agendada de vencimento
  *   reconciliarEntitlementDoJogador   reconsulta autoritativa, so admin
  *   migrarEntitlementsLegado    transicao de `usuarios/{uid}` (so admin)
+ *   diagnosticarEntitlementsLegado  raio-x da migracao, SO LEITURA (so admin)
  *
  * A fonte canonica do direito passou a ser `playerEntitlements/{uid}`, escrita
  * so por este codebase e lida pelos consumidores (torneios, hoje). As decisoes
@@ -74,6 +75,7 @@ const {
 } = require('./entitlementStore');
 const { criarReconciliador } = require('./reconciliacao');
 const { criarProcessadorRtdn } = require('./rtdn');
+const { criarDiagnosticoLegado } = require('./diagnosticoLegado');
 
 const { planoDoCatalogo, fichasDoIndice, indicesDevidos } = require('./fichas');
 const { criarLivroDeFichas } = require('./fichasStore');
@@ -939,5 +941,71 @@ exports.migrarEntitlementsLegado = onCall(
       // `null` quando a pagina veio incompleta: acabou.
       cursor: pagina.size === lote ? ultimo : null,
     };
+  }
+);
+
+/**
+ * DIAGNOSTICO da populacao legada. So admin, e SO LEITURA.
+ *
+ * A pergunta que `migrarEntitlementsLegado` nao responde: quantos jogadores ela
+ * atinge, e quantos terminam pior do que estao hoje. Rodar a migracao para
+ * descobrir isso e uma decisao sem volta — o que ela grava vira o `atual` que
+ * `decidirAtualizacao` passa a proteger com `legado_nao_sobrescreve`.
+ *
+ * VARRE `usuarios/` INTEIRA, e nao so `where('vip','==',true)` como a migracao.
+ * De proposito: o filtro da migracao e uma HIPOTESE sobre como o legado marcou
+ * assinante, e um diagnostico que herda a hipotese do que audita nao consegue
+ * desmenti-la. Varrendo tudo, `fora_da_populacao` da a base total e o operador ve
+ * a seletividade do filtro em vez de supo-la.
+ *
+ * A ausencia de escrita e estrutural: `criarDiagnosticoLegado` so recebe as duas
+ * portas de leitura abaixo, e nao existe caminho de escrita dentro do modulo.
+ * Ver `diagnosticoLegado.js` e o teste `DL-13`.
+ */
+exports.diagnosticarEntitlementsLegado = onCall(
+  { region: 'us-central1' },
+  async (request) => {
+    if (!request.auth || request.auth.token.admin !== true) {
+      throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
+    }
+
+    const db = getFirestore();
+    const store = dependencias().store;
+
+    const diagnostico = criarDiagnosticoLegado({
+      lerPaginaLegado: async ({ cursor, lote }) => {
+        let consulta = db
+          .collection('usuarios')
+          .orderBy(FieldPath.documentId())
+          .limit(lote);
+        if (cursor) consulta = consulta.startAfter(cursor);
+        const pagina = await consulta.get();
+        return {
+          docs: pagina.docs.map((d) => ({ uid: d.id, dados: d.data() })),
+          fim: pagina.size < lote,
+        };
+      },
+      lerEntitlement: async (uid) => {
+        const refs = store.refsEntitlement(uid);
+        const [pub, int] = await Promise.all([refs.publico.get(), refs.interno.get()]);
+        return {
+          publico: pub.exists ? pub.data() : null,
+          interno: int.exists ? int.data() : null,
+        };
+      },
+    });
+
+    const relatorio = await diagnostico.varrer({
+      cursor: (request.data && request.data.cursor) || null,
+      lote: Math.min(Number((request.data && request.data.lote) || 100), 400),
+    });
+
+    console.info('[billing] diagnostico do legado (somente leitura)', {
+      examinados: relatorio.examinados,
+      porCategoria: relatorio.porCategoria,
+      porAlerta: relatorio.porAlerta,
+    });
+
+    return relatorio;
   }
 );
