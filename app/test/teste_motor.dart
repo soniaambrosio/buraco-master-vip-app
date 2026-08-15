@@ -42,6 +42,16 @@ import 'package:buraco_master_vip/motor/modo_sombra.dart';
 import 'package:buraco_master_vip/motor/autoridade_canonica.dart';
 // C10 (rev.1) — derivação fora do isolate de UI.
 import 'package:buraco_master_vip/motor/derivacao_fora_do_frame.dart';
+// C10 — classificação canônica de meld (usada para auditar a mesa do robô).
+import 'package:buraco_master_vip/motor/pontuacao_costura.dart'
+    show tipoCanonicoDeMeld;
+// OS BOT-IA V1 — camada estratégica do robô (observa -> gera -> pontua ->
+// escolhe -> devolve para a autoridade validar/aplicar).
+import 'package:buraco_master_vip/bot/executor_bot.dart';
+import 'package:buraco_master_vip/bot/gerador_candidatos.dart';
+import 'package:buraco_master_vip/bot/pesos.dart';
+import 'package:buraco_master_vip/bot/razoes.dart';
+import 'package:buraco_master_vip/bot/visao_informacao.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -5480,6 +5490,474 @@ void main() {
       expect((p.pontosRodada!['nos'] as Map)['canastras'], 200);
     });
   });
+
+  // ===================================================================
+  // OS BOT-IA V1 — INTELIGÊNCIA ESTRATÉGICA DO ROBÔ
+  //
+  // Todos os cenários são DETERMINÍSTICOS (mesa montada à mão, sem sorteio) e
+  // rodam sob a autoridade canônica, que é onde o robô estratégico vive. O
+  // rollback legado continua com o robô guloso de sempre, de propósito.
+  // ===================================================================
+  group('OS BOT-IA V1 — inteligência estratégica', () {
+    // ---------- §2 política aprovada: curinga não vai ao lixo ----------
+
+    test('BOTIA-01 o bot NÃO descarta 2', () {
+      final j = _botBase();
+      j.maos[0] = [
+        _bc('c2d', '2', 'ouros'),
+        _bc('cKc', 'K', 'paus'),
+        _bc('c9s', '9', 'espadas'),
+        _bc('c4h', '4', 'copas'),
+      ];
+      final d = _decisaoJogo(j);
+      expect(_descarteDe(d), isNot('c2d'));
+
+      j.botJoga(0);
+      expect(j.lixo.last.valor, isNot('2'));
+      expect(j.maos[0].any((c) => c.id == 'c2d'), isTrue); // o 2 ficou na mão
+    });
+
+    test('BOTIA-02 o bot NÃO descarta Joker', () {
+      final j = _botBase();
+      j.maos[0] = [
+        _bc('cjk', 'JOKER', null),
+        _bc('cKc', 'K', 'paus'),
+        _bc('c9s', '9', 'espadas'),
+        _bc('c4h', '4', 'copas'),
+      ];
+      final d = _decisaoJogo(j);
+      expect(_descarteDe(d), isNot('cjk'));
+
+      j.botJoga(0);
+      expect(j.lixo.last.valor, isNot('JOKER'));
+      expect(j.maos[0].any((c) => c.id == 'cjk'), isTrue);
+    });
+
+    // ---------- §2 descarte por dano estrutural ----------
+
+    test('BOTIA-03 entre cartas legais, descarta a de MENOR dano estrutural',
+        () {
+      // 5h-6h encostam (e o 8h fica a duas casas do 6h); o Kc é peça solta.
+      final j = _botBase();
+      j.maos[0] = [
+        _bc('c5h', '5', 'copas'),
+        _bc('c6h', '6', 'copas'),
+        _bc('c8h', '8', 'copas'),
+        _bc('cKc', 'K', 'paus'),
+      ];
+      final d = _decisaoJogo(j);
+      expect(_descarteDe(d), 'cKc');
+      expect(d.features['danoDescarte'], 0.0); // dano ZERO: nada foi quebrado
+    });
+
+    // ---------- §1 parceiro ----------
+
+    test('BOTIA-04 preserva carta útil à sequência PÚBLICA do parceiro', () {
+      // A dupla tem 4-5-6 de copas na mesa. O 8h ainda não estende (falta o 7),
+      // mas é a extensão natural seguinte — e as quatro cartas da mão são, em
+      // tudo o mais, indistinguíveis (todas soltas, todas de 10 pontos).
+      final d = _decisaoJogo(_fixParceiroAdjacente());
+      expect(_descarteDe(d), isNot('c8h'));
+      expect(d.features['descarteAdjacenteAoParceiro'], isNull);
+    });
+
+    // ---------- §2 adversário ----------
+
+    test('BOTIA-05 evita o descarte que alimenta sequência pública adversária',
+        () {
+      // Eles têm 10-J-Q de copas. O Kh completa; as outras três são inertes.
+      final d = _decisaoJogo(_fixAlimentaAdversario());
+      expect(_descarteDe(d), isNot('cKh'));
+      expect(d.razoesSecundarias, contains(Razao.descarteSeguro));
+    });
+
+    // ---------- §3 curinga ----------
+
+    test('BOTIA-06 NÃO suja canastra limpa por conveniência', () {
+      final j = _fixCanastraLimpa();
+      final antes = j.jogosDupla['nos']![0].length;
+      final d = _decisaoJogo(j);
+      expect(d.plano!.baixada, isNull); // nem tenta estender com o curinga
+
+      // A alternativa nem chega a existir: o filtro do §3 a remove da geração.
+      final planos = _planosDe(j);
+      expect(planos.any((p) => p.sujaJogoLimpo), isFalse);
+
+      j.botJoga(0);
+      expect(j.jogosDupla['nos']![0].length, antes); // a limpa ficou intacta
+      expect(j.maos[0].any((c) => c.id == 'c2s'), isTrue); // o curinga ficou
+    });
+
+    test('BOTIA-07 NÃO gasta curinga quando há caminho natural equivalente',
+        () {
+      // Vulnerável (mínimo 75). Dois caminhos legais para abrir: um natural de
+      // 7 cartas (80 pts) e um de 3 cartas que queima o Joker (75 pts).
+      final j = _fixDoisCaminhosDeAbertura();
+      expect(j.minimoParaDescer('nos'), 75);
+      final d = _decisaoJogo(j);
+      expect(d.plano!.baixada, isNotNull);
+      expect(_idsDaBaixada(d.plano!.baixada!), isNot(contains('cjk')));
+      expect(d.plano!.curingasComprometidos, 0);
+      expect(d.razao, Razao.baixaAberturaMinima);
+    });
+
+    test('BOTIA-08 USA o curinga quando ele é decisivo para o morto', () {
+      final j = _fixCuringaDecisivoMorto();
+      final d = _decisaoJogo(j);
+      expect(d.plano!.baixada, isNotNull);
+      expect(_idsDaBaixada(d.plano!.baixada!), contains('cjk'));
+      expect(d.plano!.pegouMorto, isTrue);
+      expect(d.razao, Razao.baixaMorto);
+
+      j.botJoga(0);
+      expect(j.mortoPego['nos'], isTrue);
+    });
+
+    // ---------- §4 não baixar tudo que é legal ----------
+
+    test('BOTIA-09 NÃO baixa automaticamente todo meld legal', () {
+      final j = _fixCorridaPromissora();
+      // A baixada existe e é legal — o bot é que prefere não fazê-la.
+      expect(_planosDe(j).any((p) => p.baixada != null), isTrue);
+      final d = _decisaoJogo(j);
+      expect(d.plano!.baixada, isNull);
+      expect(d.razao, Razao.preservaEstrutura);
+
+      j.botJoga(0);
+      expect(j.jogosDupla['nos']!.length, 1); // só o jogo que já estava lá
+    });
+
+    test('BOTIA-10 prefere manter estrutura quando baixar gera descarte ruim',
+        () {
+      // Estender com o 6 de paus consumiria a única carta que dava para largar
+      // em segurança; sobrariam só cartas que completam o jogo deles.
+      final j = _fixBaixarForcaDescartePerigoso();
+      expect(_planosDe(j).any((p) => p.baixada != null), isTrue);
+      final d = _decisaoJogo(j);
+      expect(d.plano!.baixada, isNull);
+    });
+
+    // ---------- §6 parceiro e morto ----------
+
+    test('BOTIA-11 REAVALIA o turno depois de pegar o morto', () {
+      final j = _fixMortoDireto();
+      j.botJoga(0);
+      expect(j.mortoPego['nos'], isTrue); // pegou o morto baixando
+      expect(j.maos[0].length, 10); // 11 do morto - 1 descartada
+      expect(j.vez, 1); // o turno FECHOU: houve uma segunda decisão
+      expect(j.lixo.length, 2);
+    });
+
+    test('BOTIA-12 NÃO bate prematuramente prejudicando o parceiro', () {
+      final j = _fixBatidaPrematura();
+      expect(j.duplaPodeBater('nos'), isTrue); // bater É legal aqui
+      j.botJoga(0);
+      expect(j.rodadaEncerrada, isFalse); // e mesmo assim não bateu
+      expect(j.vez, 1); // encerrou o turno descartando
+    });
+
+    // ---------- §4/§13 abertura vulnerável ----------
+
+    test('BOTIA-13 abertura vulnerável escolhe a opção de MENOR dano', () {
+      // Duas aberturas legais de 80 pts: espadas+ouros (peças soltas) ou
+      // espadas+copas (que quebraria a corrida de seis).
+      final j = _fixAberturaComEscolha();
+      expect(j.minimoParaDescer('nos'), 75);
+      j.botJoga(0);
+      expect(j.primeiraBaixadaFeita['nos'], isTrue);
+      final naMesa = {
+        for (final m in j.jogosDupla['nos']!)
+          for (final c in m) c.id
+      };
+      expect(naMesa.contains('cAd'), isTrue); // abriu com os ouros soltos
+      for (final id in const ['c3h', 'c4h', 'c5h', 'c6h', 'c7h', 'c8h']) {
+        expect(naMesa.contains(id), isFalse, reason: '$id foi para a mesa');
+        expect(j.maos[0].any((c) => c.id == id), isTrue);
+      }
+    });
+
+    // ---------- princípio arquitetural: subordinação à autoridade ----------
+
+    test('BOTIA-14 nenhuma ação escolhida pelo bot passa fora do RulesEngine',
+        () {
+      // (a) toda ação que o bot escolhe já é legal para a MESMA autoridade.
+      for (final j in <Jogo>[
+        _fixParceiroAdjacente(),
+        _fixAlimentaAdversario(),
+        _fixCanastraLimpa(),
+        _fixDoisCaminhosDeAbertura(),
+        _fixCuringaDecisivoMorto(),
+        _fixCorridaPromissora(),
+        _fixBaixarForcaDescartePerigoso(),
+        _fixBatidaPrematura(),
+      ]) {
+        final estado = paraCanonico(j).canonico;
+        final d = _decisaoJogo(j);
+        var cur = estado;
+        for (final a in d.acoes) {
+          final r = aplicarLegal(cur, 0, a, j.specCanonica);
+          expect(r.legal, isTrue,
+              reason: 'ação recusada pela autoridade: ${a.toJson()}');
+          cur = r.proximoEstado!;
+        }
+      }
+
+      // (b) uma INTENÇÃO forjada (meld ilegal) submetida pela mesma porta do
+      // bot é recusada, e o estado fica intacto. Querer não basta.
+      final j = _fixCorridaPromissora();
+      final antes = _snapJogo(j);
+      final forjada = j.baixarAtomico(0, jogosNovos: [
+        ['c5h', 'c6h', 'c8h'] // buraco no 7: não é sequência
+      ]);
+      expect(forjada['ok'], isFalse);
+      expect(j.falhasTecnicas, 0); // recusa de REGRA, não falha técnica
+      expect(_snapJogo(j), antes);
+    });
+
+    // ---------- §7 informação justa ----------
+
+    test('BOTIA-15 informação OCULTA não entra na visão nem muda a decisão',
+        () {
+      final a = _fixInformacaoJusta(variante: 0);
+      final b = _fixInformacaoJusta(variante: 1);
+
+      // (a) estrutural: a visão não carrega NADA das zonas ocultas.
+      final visao = VisaoInformacao.doEstado(paraCanonico(a).canonico, 0);
+      final proibidos = <String>{
+        for (var s = 1; s < 4; s++) ...[for (final c in a.maos[s]) c.id],
+        for (final c in a.monte) c.id,
+        for (final m in a.mortos) ...[for (final c in m) c.id],
+        // cartas ENTERRADAS do lixo (tudo menos o topo visível)
+        ...[for (final c in a.lixo.sublist(0, a.lixo.length - 1)) c.id],
+      };
+      final naVisao = <String>{
+        for (final c in visao.mao) c.id,
+        for (final m in visao.meldsProprios) ...[for (final c in m) c.id],
+        for (final m in visao.meldsAdversarios) ...[for (final c in m) c.id],
+        if (visao.lixoTopo != null) visao.lixoTopo!.id,
+      };
+      expect(naVisao.intersection(proibidos), isEmpty);
+
+      // (b) comportamental: mudar TODO o oculto não move a decisão.
+      final da = _decisaoJogo(a);
+      final db = _decisaoJogo(b);
+      expect(jsonEncode([for (final x in db.acoes) x.toJson()]),
+          jsonEncode([for (final x in da.acoes) x.toJson()]));
+      expect(db.razao, da.razao);
+      expect(db.score, da.score);
+    });
+
+    // ---------- §8 determinismo e auditabilidade ----------
+
+    test('BOTIA-16 mesmo estado público + config + seed = mesma decisão', () {
+      final d1 = _decisaoJogo(_fixInformacaoJusta(variante: 0));
+      final d2 = _decisaoJogo(_fixInformacaoJusta(variante: 0));
+      expect(d2.assinaturaDecisao, d1.assinaturaDecisao);
+      expect(jsonEncode(d2.toJson()), jsonEncode(d1.toJson()));
+
+      // Decidir DUAS vezes sobre a mesma mesa também não pode variar.
+      final j = _fixCorridaPromissora();
+      expect(jsonEncode(_decisaoJogo(j).toJson()),
+          jsonEncode(_decisaoJogo(j).toJson()));
+    });
+
+    test('BOTIA-17 a decisão carrega o rastro que a explica', () {
+      final j = _fixCorridaPromissora();
+      j.botJoga(0);
+      final rastro = j.ultimaDecisaoBot!;
+      expect(rastro['razao'], isNotNull);
+      expect(rastro['candidatos'], greaterThan(1));
+      expect((rastro['features'] as Map), isNotEmpty);
+      expect(rastro['truncado'], isFalse);
+      expect((rastro['acoes'] as List), isNotEmpty);
+    });
+
+    // ---------- §2 impasse DOCUMENTADO (nunca silencioso) ----------
+
+    test('BOTIA-18 mão só de curinga vira IMPASSE registrado, não exceção muda',
+        () {
+      final j = _botBase();
+      j.maos[0] = [
+        _bc('c2d', '2', 'ouros'),
+        _bc('c2s', '2', 'espadas'),
+        _bc('cjk', 'JOKER', null),
+      ];
+      j.botJoga(0);
+      expect(j.impassesEstrategicos, isNotEmpty);
+      expect(j.impassesEstrategicos.first['razao'],
+          Razao.impasseDescarteSoCuringa);
+      expect(j.lixo.last.valor, '2'); // menor perda: o 2 antes do Joker
+      expect(j.vez, 1); // e o turno não ficou pendurado
+    });
+
+    // ---------- §9 fail-safe: nada disso afrouxa o C10 ----------
+
+    test('BOTIA-20 partida canônica de 60 turnos: 108 cartas, integridade e '
+        'progresso', () {
+      final j = Jogo(const ['você', 'B1', 'B2', 'B3'], const ['', '', '', ''],
+          const ['', '', '', ''],
+          seed: 4242, motorConfig: MotorConfig.producao());
+      for (var i = 0; i < 60 && !j.rodadaEncerrada; i++) {
+        final vezAntes = j.vez;
+        j.botJoga(j.vez);
+        expect(j.ultimaFalhaTecnica, isNull, reason: 'turno $i');
+        expect(totalCartas(j), 108, reason: 'turno $i');
+        j.auditarIntegridade();
+        expect(j.integridadeErro, isNull, reason: 'turno $i');
+        // PROGRESSO: sob a autoridade única o robô não pode "destravar" o turno
+        // por fora. Ou a vez anda, ou a rodada encerra — nunca gira parado.
+        expect(j.rodadaEncerrada || j.vez != vezAntes, isTrue,
+            reason: 'turno $i não concluiu');
+        // E todo jogo que foi para a mesa continua legal para a autoridade.
+        for (final d in const ['nos', 'eles']) {
+          for (final m in j.jogosDupla[d]!) {
+            expect(tipoCanonicoDeMeld(m, j.specCanonica), isNotNull,
+                reason: 'meld ilegal na mesa no turno $i');
+          }
+        }
+      }
+    });
+
+    test('BOTIA-19 falha técnica encerra o turno estratégico sem 2ª transação',
+        () {
+      final j = _fixCorridaPromissora();
+      final antes = _snapJogo(j);
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      j.botJoga(0);
+      j.projetorAutoridadeTest = null;
+      expect(j.falhasTecnicas, 1); // UMA tentativa, não uma varredura
+      expect(_snapJogo(j), antes);
+      expect(j.vez, 0);
+    });
+  });
+
+  // ===================================================================
+  // OS BOT-IA V1 — NÃO-VACUIDADE
+  //
+  // Cada regra estratégica crítica é desligada uma por vez, e o cenário
+  // correspondente muda de resultado. Uma regra que não pode ser desligada é
+  // uma regra que não pode ser provada — e um teste que passa com a regra
+  // desligada não estava testando a regra.
+  // ===================================================================
+  group('OS BOT-IA V1 — não-vacuidade', () {
+    test('NV-01/02 sem `proibeDescartarCuringa`, descartar curinga volta a ser '
+        'alternativa', () {
+      List<Carta> mao() => [
+            _bc('cjk', 'JOKER', null),
+            _bc('c2d', '2', 'ouros'),
+            _bc('cKc', 'K', 'paus'),
+            _bc('c9s', '9', 'espadas'),
+          ];
+      // A política é um FILTRO sobre as alternativas: com ela ligada, nenhum
+      // plano sequer contempla mandar 2 ou Joker ao lixo.
+      final com = _botBase()..maos[0] = mao();
+      expect(
+          _planosDe(com).any((p) =>
+              p.cartaDescartada != null &&
+              (p.cartaDescartada!.valor == '2' ||
+                  p.cartaDescartada!.valor == 'JOKER')),
+          isFalse);
+
+      final sem = _botBase(
+          regras: const RegrasEstrategicas(proibeDescartarCuringa: false))
+        ..maos[0] = mao();
+      expect(
+          _planosDe(sem).any((p) =>
+              p.cartaDescartada != null &&
+              (p.cartaDescartada!.valor == '2' ||
+                  p.cartaDescartada!.valor == 'JOKER')),
+          isTrue);
+    });
+
+    test('NV-03 sem `avaliaDanoEstrutural`, o descarte deixa de escolher', () {
+      final base = _botBase();
+      base.maos[0] = _maoDanoEstrutural();
+      final sem = _botBase(
+          cfg: ConfiguracaoBot.v1.comRegras(
+              const RegrasEstrategicas(avaliaDanoEstrutural: false)));
+      sem.maos[0] = _maoDanoEstrutural();
+      expect(_decisaoJogo(base).features.containsKey('danoDescarte'), isTrue);
+      expect(_decisaoJogo(sem).features.containsKey('danoDescarte'), isFalse);
+    });
+
+    test('NV-04 sem `preservaCartaDoParceiro`, o bot larga a carta do parceiro',
+        () {
+      // Com a regra, NENHUMA semente escolhe o 8h; sem ela, alguma escolhe —
+      // porque as quatro cartas passam a ser rigorosamente equivalentes.
+      var comRegraLargou = false, semRegraLargou = false;
+      for (var seed = 0; seed <= 20; seed++) {
+        comRegraLargou = comRegraLargou ||
+            _descarteDe(_decisaoJogo(_fixParceiroAdjacente(seed: seed))) ==
+                'c8h';
+        semRegraLargou = semRegraLargou ||
+            _descarteDe(_decisaoJogo(_fixParceiroAdjacente(
+                    seed: seed,
+                    regras: const RegrasEstrategicas(
+                        preservaCartaDoParceiro: false)))) ==
+                'c8h';
+      }
+      expect(comRegraLargou, isFalse);
+      expect(semRegraLargou, isTrue);
+    });
+
+    test('NV-05 sem `evitaAlimentarAdversario`, o bot entrega a extensão', () {
+      var comRegra = false, semRegra = false;
+      for (var seed = 0; seed <= 20; seed++) {
+        comRegra = comRegra ||
+            _descarteDe(_decisaoJogo(_fixAlimentaAdversario(seed: seed))) ==
+                'cKh';
+        semRegra = semRegra ||
+            _descarteDe(_decisaoJogo(_fixAlimentaAdversario(
+                    seed: seed,
+                    regras: const RegrasEstrategicas(
+                        evitaAlimentarAdversario: false)))) ==
+                'cKh';
+      }
+      expect(comRegra, isFalse);
+      expect(semRegra, isTrue);
+    });
+
+    test('NV-06 sem `protegeCanastraLimpa`, sujar a limpa volta a ser opção',
+        () {
+      final com = _fixCanastraLimpa();
+      final sem = _fixCanastraLimpa(
+          regras: const RegrasEstrategicas(protegeCanastraLimpa: false));
+      expect(_planosDe(com).any((p) => p.sujaJogoLimpo), isFalse);
+      expect(_planosDe(sem).any((p) => p.sujaJogoLimpo), isTrue);
+    });
+
+    test('NV-07 sem `preservaCuringa`, o bot queima o Joker para abrir', () {
+      final sem = _fixDoisCaminhosDeAbertura(
+          regras: const RegrasEstrategicas(preservaCuringa: false));
+      final d = _decisaoJogo(sem);
+      expect(_idsDaBaixada(d.plano!.baixada!), contains('cjk'));
+    });
+
+    test('NV-08 sem o valor da mão no peso, o bot baixa tudo que é legal', () {
+      // Zerar `potencialMao`/`ligacoesMao` apaga o único termo que faz segurar
+      // valer a pena. Sem ele o bot volta a ser o guloso que baixa por baixar.
+      final sem = _fixCorridaPromissora(
+          pesos: const PesosHeuristicos(
+              potencialMao: 0, ligacoesMao: 0, exposicaoSemGanho: 0));
+      expect(_decisaoJogo(sem).plano!.baixada, isNotNull);
+    });
+
+    test('NV-09 sem `planoIncluiDescarte`, o bot baixa e entrega o descarte',
+        () {
+      final sem = _fixBaixarForcaDescartePerigoso(
+          regras: const RegrasEstrategicas(planoIncluiDescarte: false));
+      expect(_decisaoJogo(sem).plano!.baixada, isNotNull);
+    });
+
+    test('NV-10 sem `prudenciaBatida`, o bot bate e deixa o parceiro na mão',
+        () {
+      final sem = _fixBatidaPrematura(
+          regras: const RegrasEstrategicas(prudenciaBatida: false));
+      sem.botJoga(0);
+      expect(sem.rodadaEncerrada, isTrue);
+      expect(sem.duplaQueBateu, 'nos');
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -7115,3 +7593,376 @@ Jogo _jgAutoSemDescarteLegalC10() {
   j.lixo = [Carta('lx', 'espadas', '3', false)];
   return j;
 }
+
+// ===================================================================
+// OS BOT-IA V1 — helpers e mesas determinísticas
+//
+// Nenhum cenário sorteia carta: todas as mesas são montadas à mão, sob a
+// autoridade canônica (é lá que o robô estratégico vive). As mãos dos outros
+// assentos existem só para dar CONTAGEM pública realista — o conteúdo delas é
+// irrelevante por construção, e o BOTIA-15 prova isso.
+// ===================================================================
+
+/// Carta de teste com a flag de curinga coerente com o valor.
+Carta _bc(String id, String valor, String? naipe) =>
+    Carta(id, naipe, valor, valor == '2' || valor == 'JOKER');
+
+/// Enchimento das mãos alheias: só o TAMANHO importa (informação pública).
+List<Carta> _enchimento(int assento, int n) =>
+    [for (var i = 0; i < n; i++) _bc('f${assento}_$i', '7', 'paus')];
+
+/// Mesa canônica base: fase de JOGO, dupla NOS já aberta (sem mínimo em jogo),
+/// sem morto disponível e sem ameaça adversária. Cada cenário muda só o que
+/// quer testar.
+Jogo _botBase({
+  String modalidade = 'ABERTO',
+  ConfiguracaoBot? cfg,
+  RegrasEstrategicas? regras,
+  PesosHeuristicos? pesos,
+  int seed = 0,
+}) {
+  final j = Jogo.paraCostura(motorConfig: MotorConfig.producao());
+  j.vez = 0;
+  j.jaComprou = true; // fase de jogo
+  j.modalidade = modalidade;
+  j.mortoPego = {'nos': false, 'eles': false};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.rodadasVulneravel = {'nos': 0, 'eles': 0};
+  j.maos = [
+    <Carta>[],
+    _enchimento(1, 8),
+    _enchimento(2, 8),
+    _enchimento(3, 8),
+  ];
+  j.jogosDupla = {'nos': <List<Carta>>[], 'eles': <List<Carta>>[]};
+  j.monte = [_bc('bm1', '7', 'paus')];
+  j.mortos = <List<Carta>>[];
+  j.lixo = [_bc('blx', '3', 'espadas')];
+  j.configuracaoBot = cfg ??
+      ConfiguracaoBot(
+        pesos: pesos ?? const PesosHeuristicos(),
+        regras: regras ?? const RegrasEstrategicas(),
+        seed: seed,
+      );
+  return j;
+}
+
+/// Decisão da camada estratégica para a fase de jogo do assento.
+DecisaoBot _decisaoJogo(Jogo j, {int assento = 0}) =>
+    ExecutorBot(j.specCanonica, cfg: j.configuracaoBot)
+        .decidirJogo(paraCanonico(j).canonico, assento);
+
+/// Todos os planos gerados (antes da escolha) — usado para provar que uma
+/// alternativa existe ou que o filtro a removeu.
+List<PlanoTurno> _planosDe(Jogo j, {int assento = 0}) =>
+    GeradorPlanos(j.specCanonica, j.configuracaoBot)
+        .planosDeJogo(paraCanonico(j).canonico, assento)
+        .planos;
+
+/// Id da carta descartada pela decisão (null se o plano não descarta).
+String? _descarteDe(DecisaoBot d) {
+  for (final a in d.acoes) {
+    if (a is Descartar) return a.carta;
+  }
+  return null;
+}
+
+/// Ids consumidos por uma baixada (jogos novos + extensões).
+Set<String> _idsDaBaixada(Baixar b) => {
+      for (final g in b.jogosNovos) ...g,
+      for (final e in b.extensoes) ...e.cartas,
+    };
+
+/// Mão do cenário de dano estrutural (5h-6h encostados, 8h a duas casas do 6h,
+/// Kc totalmente solto).
+List<Carta> _maoDanoEstrutural() => [
+      _bc('c5h', '5', 'copas'),
+      _bc('c6h', '6', 'copas'),
+      _bc('c8h', '8', 'copas'),
+      _bc('cKc', 'K', 'paus'),
+    ];
+
+/// §1 — a dupla abriu 4-5-6 de copas. Na mão, o 8h ainda NÃO estende (falta o
+/// 7), mas é a extensão natural seguinte. As outras três cartas são soltas e
+/// valem os mesmos 10 pontos: sem a regra do parceiro, as quatro empatam.
+Jogo _fixParceiroAdjacente({int seed = 0, RegrasEstrategicas? regras}) {
+  final j = _botBase(seed: seed, regras: regras);
+  j.jogosDupla['nos'] = [
+    [
+      _bc('m4h', '4', 'copas'),
+      _bc('m5h', '5', 'copas'),
+      _bc('m6h', '6', 'copas'),
+    ]
+  ];
+  j.maos[0] = [
+    _bc('c8h', '8', 'copas'),
+    _bc('cKc', 'K', 'paus'),
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cQd', 'Q', 'ouros'),
+  ];
+  return j;
+}
+
+/// §2 — ELES têm 10-J-Q de copas na mesa; o Kh completa. As outras três cartas
+/// da mão são inertes e valem os mesmos 10 pontos.
+Jogo _fixAlimentaAdversario({int seed = 0, RegrasEstrategicas? regras}) {
+  final j = _botBase(seed: seed, regras: regras);
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': true};
+  j.jogosDupla['eles'] = [
+    [
+      _bc('e10h', '10', 'copas'),
+      _bc('eJh', 'J', 'copas'),
+      _bc('eQh', 'Q', 'copas'),
+    ]
+  ];
+  j.maos[0] = [
+    _bc('cKh', 'K', 'copas'),
+    _bc('cKc', 'K', 'paus'),
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cQd', 'Q', 'ouros'),
+  ];
+  return j;
+}
+
+/// §3 — canastra LIMPA de 7 (3..9 de copas) na mesa da dupla. O 2 de espadas
+/// estende como curinga e SUJARIA a limpa; é a "conveniência" que a OS proíbe.
+Jogo _fixCanastraLimpa({RegrasEstrategicas? regras}) {
+  final j = _botBase(regras: regras);
+  j.jogosDupla['nos'] = [
+    [
+      _bc('l3h', '3', 'copas'),
+      _bc('l4h', '4', 'copas'),
+      _bc('l5h', '5', 'copas'),
+      _bc('l6h', '6', 'copas'),
+      _bc('l7h', '7', 'copas'),
+      _bc('l8h', '8', 'copas'),
+      _bc('l9h', '9', 'copas'),
+    ]
+  ];
+  j.maos[0] = [
+    _bc('c2s', '2', 'espadas'), // curinga: entra como o 10 e suja a limpa
+    _bc('cKc', 'K', 'paus'),
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cQd', 'Q', 'ouros'),
+  ];
+  return j;
+}
+
+/// §3 — dupla VULNERÁVEL (mínimo 75) e ainda sem abrir, com dois caminhos:
+///   natural: J-Q-K-A de ouros (45) + Q-K-A de espadas (35) = 80;
+///   curinga: Joker + K-A de copas = 75 num jogo só.
+/// Os dois abrem legalmente; só um preserva o Joker.
+Jogo _fixDoisCaminhosDeAbertura({RegrasEstrategicas? regras}) {
+  final j = _botBase(regras: regras);
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.maos[0] = [
+    _bc('cJd', 'J', 'ouros'),
+    _bc('cQd', 'Q', 'ouros'),
+    _bc('cKd', 'K', 'ouros'),
+    _bc('cAd', 'A', 'ouros'),
+    _bc('cQs', 'Q', 'espadas'),
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cAs', 'A', 'espadas'),
+    _bc('cKh', 'K', 'copas'),
+    _bc('cAh', 'A', 'copas'),
+    _bc('cjk', 'JOKER', null),
+    _bc('cSobra', '9', 'paus'),
+  ];
+  return j;
+}
+
+/// §3 — aqui o curinga É decisivo: com ele a mão zera e a dupla PEGA O MORTO.
+Jogo _fixCuringaDecisivoMorto({RegrasEstrategicas? regras}) {
+  final j = _botBase(regras: regras);
+  j.mortos = [
+    [
+      for (var i = 0; i < 11; i++)
+        _bc('mk$i', i.isEven ? '3' : '4', i.isEven ? 'ouros' : 'paus')
+    ]
+  ];
+  j.maos[0] = [
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cAs', 'A', 'espadas'),
+    _bc('cjk', 'JOKER', null), // entra como a dama de espadas
+  ];
+  return j;
+}
+
+/// §4 — corrida promissora de cinco cartas na mão. Baixá-la é LEGAL e o bot
+/// pode; a questão é se ele deve.
+Jogo _fixCorridaPromissora(
+    {RegrasEstrategicas? regras, PesosHeuristicos? pesos}) {
+  final j = _botBase(regras: regras, pesos: pesos);
+  j.jogosDupla['nos'] = [
+    [_bc('m3c', '3', 'paus'), _bc('m4c', '4', 'paus'), _bc('m5c', '5', 'paus')]
+  ];
+  j.maos[0] = [
+    _bc('c5h', '5', 'copas'),
+    _bc('c6h', '6', 'copas'),
+    _bc('c7h', '7', 'copas'),
+    _bc('c8h', '8', 'copas'),
+    _bc('c9h', '9', 'copas'),
+    _bc('cKc', 'K', 'paus'),
+    _bc('cQd', 'Q', 'ouros'),
+  ];
+  return j;
+}
+
+/// §4 — a extensão é legal e rende progresso, mas consome a ÚNICA carta que o
+/// bot poderia largar em segurança: o turno terminaria entregando ao adversário
+/// exatamente o que ele precisa. Só quem simula o DESCARTE junto com a baixada
+/// enxerga isso — olhando só para a baixada, estender parece bom negócio.
+Jogo _fixBaixarForcaDescartePerigoso({RegrasEstrategicas? regras}) {
+  final j = _botBase(regras: regras);
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': true};
+  j.jogosDupla['nos'] = [
+    [_bc('m3c', '3', 'paus'), _bc('m4c', '4', 'paus'), _bc('m5c', '5', 'paus')]
+  ];
+  j.jogosDupla['eles'] = [
+    [
+      _bc('e10h', '10', 'copas'),
+      _bc('eJh', 'J', 'copas'),
+      _bc('eQh', 'Q', 'copas'),
+    ]
+  ];
+  j.maos[0] = [
+    _bc('c6c', '6', 'paus'), // estende o jogo da dupla — e é o descarte seguro
+    _bc('cKh', 'K', 'copas'), // completa o jogo deles por cima
+    _bc('c9h', '9', 'copas'), // e este completa por baixo
+  ];
+  return j;
+}
+
+/// §6/§11 — a baixada zera a mão e a dupla PEGA O MORTO no meio do turno: o
+/// plano antigo deixa de valer e o robô precisa decidir de novo.
+Jogo _fixMortoDireto() {
+  final j = _botBase();
+  j.mortos = [
+    [
+      _bc('mk0', '3', 'ouros'),
+      _bc('mk1', '5', 'ouros'),
+      _bc('mk2', '7', 'ouros'),
+      _bc('mk3', '9', 'ouros'),
+      _bc('mk4', 'J', 'ouros'),
+      _bc('mk5', 'K', 'ouros'),
+      _bc('mk6', '3', 'paus'),
+      _bc('mk7', '5', 'paus'),
+      _bc('mk8', '7', 'paus'),
+      _bc('mk9', '9', 'paus'),
+      _bc('mk10', 'J', 'paus'),
+    ]
+  ];
+  j.maos[0] = [
+    _bc('cQs', 'Q', 'espadas'),
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cAs', 'A', 'espadas'),
+  ];
+  return j;
+}
+
+/// §6 — bater É legal (canastra limpa na mesa, morto já cumprido), mas o
+/// parceiro está com a mão cheia e NENHUM adversário ameaça fechar.
+Jogo _fixBatidaPrematura({RegrasEstrategicas? regras}) {
+  final j = _botBase(regras: regras);
+  j.mortoPego = {'nos': true, 'eles': false};
+  j.mortos = <List<Carta>>[];
+  j.jogosDupla['nos'] = [
+    [
+      _bc('l3h', '3', 'copas'),
+      _bc('l4h', '4', 'copas'),
+      _bc('l5h', '5', 'copas'),
+      _bc('l6h', '6', 'copas'),
+      _bc('l7h', '7', 'copas'),
+      _bc('l8h', '8', 'copas'),
+      _bc('l9h', '9', 'copas'),
+    ]
+  ];
+  j.maos = [
+    [
+      _bc('cQs', 'Q', 'espadas'),
+      _bc('cKs', 'K', 'espadas'),
+      _bc('cAs', 'A', 'espadas'),
+    ],
+    _enchimento(1, 9), // sem ameaça: mão longa
+    _enchimento(2, 11), // parceiro CARREGADO
+    _enchimento(3, 9),
+  ];
+  return j;
+}
+
+/// §13 — vulnerável (mínimo 75) com DUAS aberturas de 80 pontos: espadas (45)
+/// + ouros (35), que consome peças soltas, ou espadas + copas, que quebraria a
+/// corrida de seis. Mesmos pontos, danos estruturais muito diferentes.
+Jogo _fixAberturaComEscolha() {
+  final j = _botBase();
+  j.primeiraBaixadaFeita = {'nos': false, 'eles': false};
+  j.rodadasVulneravel = {'nos': 1, 'eles': 0};
+  j.maos[0] = [
+    _bc('cJs', 'J', 'espadas'),
+    _bc('cQs', 'Q', 'espadas'),
+    _bc('cKs', 'K', 'espadas'),
+    _bc('cAs', 'A', 'espadas'),
+    _bc('cQd', 'Q', 'ouros'),
+    _bc('cKd', 'K', 'ouros'),
+    _bc('cAd', 'A', 'ouros'),
+    _bc('c3h', '3', 'copas'),
+    _bc('c4h', '4', 'copas'),
+    _bc('c5h', '5', 'copas'),
+    _bc('c6h', '6', 'copas'),
+    _bc('c7h', '7', 'copas'),
+    _bc('c8h', '8', 'copas'),
+    _bc('cSobra', '9', 'paus'),
+  ];
+  return j;
+}
+
+/// §7 — duas mesas com o MESMO estado público (mesma mão própria, mesmos jogos
+/// expostos, mesmo topo do lixo, mesmas contagens) e TODO o oculto diferente:
+/// mãos alheias, monte, morto e a carta ENTERRADA do lixo.
+Jogo _fixInformacaoJusta({required int variante}) {
+  final j = _botBase();
+  final v = variante;
+  j.jogosDupla['nos'] = [
+    [_bc('m3c', '3', 'paus'), _bc('m4c', '4', 'paus'), _bc('m5c', '5', 'paus')]
+  ];
+  j.maos[0] = [
+    _bc('c5h', '5', 'copas'),
+    _bc('c6h', '6', 'copas'),
+    _bc('c8h', '8', 'copas'),
+    _bc('cKc', 'K', 'paus'),
+  ];
+  // ---- oculto: muda tudo entre as variantes, mantendo as CONTAGENS ----
+  j.maos[1] = [
+    for (var i = 0; i < 8; i++)
+      _bc('h1_${v}_$i', v == 0 ? '7' : 'A', v == 0 ? 'paus' : 'copas')
+  ];
+  j.maos[2] = [
+    for (var i = 0; i < 8; i++)
+      _bc('h2_${v}_$i', v == 0 ? '9' : 'K', v == 0 ? 'ouros' : 'espadas')
+  ];
+  j.maos[3] = [
+    for (var i = 0; i < 8; i++)
+      _bc('h3_${v}_$i', v == 0 ? '4' : 'JOKER', v == 0 ? 'espadas' : null)
+  ];
+  j.monte = [
+    for (var i = 0; i < 5; i++)
+      _bc('mo_${v}_$i', v == 0 ? '3' : '2', v == 0 ? 'copas' : 'ouros')
+  ];
+  j.mortos = [
+    [
+      for (var i = 0; i < 11; i++)
+        _bc('mk_${v}_$i', v == 0 ? '6' : 'Q', v == 0 ? 'paus' : 'copas')
+    ]
+  ];
+  // O TOPO do lixo é idêntico; a carta ENTERRADA é que muda.
+  j.lixo = [
+    _bc('ent_$v', v == 0 ? '10' : '2', v == 0 ? 'paus' : 'copas'),
+    _bc('blx', '3', 'espadas'), // topo visível, igual nas duas
+  ];
+  return j;
+}
+
+/// Snapshot serializado do `Jogo` (mesmo instrumento dos testes do C10, aqui em
+/// nível de arquivo porque os cenários do bot vivem noutro grupo).
+String _snapJogo(Jogo j) => jsonEncode(serializarProjecao(paraCanonico(j)));
