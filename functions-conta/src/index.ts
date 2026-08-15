@@ -44,7 +44,7 @@ import { logger } from "firebase-functions";
 import { CallableRequest, HttpsError, onCall } from "firebase-functions/v2/https";
 
 import { CLASSE, INVENTARIO } from "./inventario";
-import { ETAPAS, RECUSA, decidirElegibilidade } from "./plano";
+import { ETAPAS, RECUSA, camposDeAlvoNoPayload, decidirElegibilidade } from "./plano";
 import { descreverEtapa, executar, lerInscricoes, lerPublicId } from "./executor";
 import {
   JANELA_REAUTENTICACAO_SEGUNDOS,
@@ -87,9 +87,7 @@ function exigirAutenticacao(req: CallableRequest): string {
 /// Cobre `uid`, `userId` e `publicId`: os tres nomes pelos quais alguem tentaria
 /// dizer "apague ESTA conta". Nenhum deles tem uso legitimo nestas rotas.
 function recusarAlvoExterno(req: CallableRequest, uid: string): void {
-  const dados = (req.data ?? {}) as Record<string, unknown>;
-  const proibidos = ["uid", "userId", "publicId", "alvo", "alvoUid"];
-  const presentes = proibidos.filter((c) => dados[c] !== undefined);
+  const presentes = camposDeAlvoNoPayload(req.data);
 
   if (presentes.length > 0) {
     logger.warn("tentativa de exclusao com alvo no payload", {

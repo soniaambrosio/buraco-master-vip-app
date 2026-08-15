@@ -113,6 +113,44 @@ export const RECUSA = {
 
 export type Recusa = (typeof RECUSA)[keyof typeof RECUSA];
 
+// ---------------------------------------------------------------------------
+// RECUSA 2 — O PEDIDO NOMEIA UMA CONTA
+// ---------------------------------------------------------------------------
+//
+// O UID vem de `req.auth.uid`, sempre. Um payload que TRAZ um alvo nao esta
+// pedindo nada que possa ser atendido — no melhor caso e um cliente confuso, no
+// pior e uma tentativa de excluir a conta de outra pessoa.
+//
+// A escolha aqui e entre IGNORAR e RECUSAR, e ela nao e obvia: ignorar produz o
+// mesmo efeito (a conta certa e excluida) e e mais tolerante. Recusar ganha uma
+// coisa que ignorar nao tem — a tentativa vira um registro. Numa operacao que
+// apaga conta, saber que alguem tentou nomear outra e informacao operacional, e
+// nao ruido.
+//
+// Mora aqui, e nao em index.ts, para ser puro e testavel: `test/plano.test.js`
+// prova a lista inteira sem forjar um `CallableRequest`.
+
+/// Os nomes pelos quais alguem diria "apague ESTA conta". Nenhum tem uso
+/// legitimo nas rotas de exclusao.
+export const CAMPOS_DE_ALVO_PROIBIDOS: readonly string[] = [
+  "uid",
+  "userId",
+  "publicId",
+  "alvo",
+  "alvoUid",
+];
+
+/// Os campos de alvo presentes no payload. Vazio quando o pedido esta limpo.
+///
+/// `undefined` nao conta como presenca — um cliente que serializa o campo como
+/// ausente esta, para todos os efeitos, nao mandando o campo. `null` CONTA:
+/// mandar `uid: null` e mandar o campo.
+export function camposDeAlvoNoPayload(dados: unknown): readonly string[] {
+  if (dados === null || typeof dados !== "object") return [];
+  const registro = dados as Record<string, unknown>;
+  return CAMPOS_DE_ALVO_PROIBIDOS.filter((c) => registro[c] !== undefined);
+}
+
 export interface InscricaoPendente {
   readonly tournamentId: string;
   readonly editionId: string;

@@ -25,9 +25,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  CAMPOS_DE_ALVO_PROIBIDOS,
   ETAPAS,
   RECUSA,
   STATUS_INSCRICAO_ATIVA,
+  camposDeAlvoNoPayload,
   decidirElegibilidade,
   etapasPendentes,
   itensAcionaveisForaDoPlano,
@@ -207,6 +209,92 @@ describe("recusa por torneio em andamento", () => {
     ]);
     assert.equal(v.pode, false);
     assert.equal(v.bloqueios.length, 1);
+  });
+});
+
+describe("tentativa contra UID de terceiro", () => {
+  test("payload limpo passa", () => {
+    for (const limpo of [undefined, null, {}, { confirmacao: "EXCLUIR" }]) {
+      assert.deepEqual(camposDeAlvoNoPayload(limpo), [], JSON.stringify(limpo));
+    }
+  });
+
+  test("qualquer nome de alvo e detectado", () => {
+    // Nao basta cobrir `uid`: quem tenta apagar a conta de outra pessoa tenta os
+    // nomes que o resto do sistema usa.
+    for (const campo of CAMPOS_DE_ALVO_PROIBIDOS) {
+      const achados = camposDeAlvoNoPayload({ [campo]: "uid-da-vitima" });
+      assert.deepEqual(achados, [campo]);
+    }
+  });
+
+  test("alvo nulo tambem conta como tentativa", () => {
+    // Mandar `uid: null` e mandar o campo. So a AUSENCIA e ausencia.
+    assert.deepEqual(camposDeAlvoNoPayload({ uid: null }), ["uid"]);
+  });
+
+  test("varios alvos de uma vez sao todos reportados", () => {
+    const achados = camposDeAlvoNoPayload({ uid: "a", publicId: "P0", confirmacao: "EXCLUIR" });
+    assert.deepEqual([...achados].sort(), ["publicId", "uid"]);
+  });
+
+  test("payload que nao e objeto nao derruba a conferencia", () => {
+    for (const lixo of ["texto", 7, true, []]) {
+      assert.deepEqual(camposDeAlvoNoPayload(lixo), [], JSON.stringify(lixo));
+    }
+  });
+
+  test("a lista cobre publicId — o alvo que NAO e um UID", () => {
+    // O cliente so fala em publicId (§13/§21 do contrato social). Se alguem
+    // fosse tentar nomear outra conta, tentaria com o identificador que ele
+    // conhece — e nao com o UID, que ele nunca ve.
+    assert.ok(CAMPOS_DE_ALVO_PROIBIDOS.includes("publicId"));
+  });
+});
+
+describe("o codebase nao le identidade do payload", () => {
+  test("nenhuma rota tira uid de req.data", () => {
+    // Prova de AUSENCIA, entao le codigo-fonte — mesma tecnica de
+    // functions-ranking/test/identidade.test.js. Um teste de comportamento nao
+    // pegaria isto: a rota que passasse a aceitar `req.data.uid` teria nome novo
+    // e nenhum teste existente a chamaria.
+    const raiz = path.join(__dirname, "..", "src");
+    const fontes = fs
+      .readdirSync(raiz)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => ({ arquivo: f, texto: fs.readFileSync(path.join(raiz, f), "utf8") }));
+
+    // Sem comentarios: este codebase documenta densamente, e os comentarios
+    // falam justamente sobre `req.data.uid` para explicar que ele e recusado.
+    const semComentarios = (t) =>
+      t
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n")
+        .map((l) => l.replace(/\/\/.*$/, ""))
+        .join("\n");
+
+    const proibido = /req\.data\??\.\s*(uid|userId|publicId)/;
+    for (const { arquivo, texto } of fontes) {
+      assert.ok(
+        !proibido.test(semComentarios(texto)),
+        `${arquivo} le identidade do payload — o UID vem de req.auth.uid, sempre`
+      );
+    }
+  });
+
+  test("o executor recebe o uid por parametro, e nao o descobre", () => {
+    const executor = fs.readFileSync(
+      path.join(__dirname, "..", "src", "executor.ts"),
+      "utf8"
+    );
+    assert.ok(
+      /export async function executar\(uid: string\)/.test(executor),
+      "a assinatura de `executar` mudou; confira que o uid continua vindo de fora"
+    );
+    assert.ok(
+      !/req\.|CallableRequest/.test(executor),
+      "o executor nao pode conhecer o pedido — quem atende e index.ts"
+    );
   });
 });
 

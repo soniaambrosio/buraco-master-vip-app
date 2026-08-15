@@ -12,8 +12,8 @@
     "lint": "tsc --noEmit",
     "//test": "Compila primeiro porque o alvo do teste e o modulo JA compilado em lib/, como em ranking e moderacao. Alvos explicitos, nunca glob: um arquivo novo passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
     "test": "tsc && node --test test/inventario.test.js test/plano.test.js test/reautenticacao.test.js test/diario.test.js",
-    "//test:emulador": "INTEGRACAO CONTRA O FIRESTORE REAL. E onde os casos da OS que dependem de dado gravado sao provados: comum, VIP, ranqueado, com amizades, bloqueado, com denuncias, chamada duplicada, UID de terceiro, falha parcial e idempotencia. Fora do `npm test` porque exige emulador.",
-    "test:emulador": "tsc && cd ../firebase && firebase emulators:exec --only firestore,auth \"cd ../functions-conta && node --test test/integracao.emulador.test.js\"",
+    "//test:emulador": "INTEGRACAO CONTRA O FIRESTORE E O AUTH REAIS. E onde os casos da OS que dependem de dado gravado sao provados: comum, VIP, ranqueado, com amizades, bloqueado, com denuncias, chamada duplicada, alvo de terceiro, falha parcial e idempotencia. AUTH E OBRIGATORIO no `--only`, e nao conveniencia: as etapas `trancar` e `encerrar` chamam `updateUser`, `revokeRefreshTokens` e `deleteUser` — sem o emulador de Auth a suite tentaria falar com o Google de verdade. Roda a partir da RAIZ, que e onde firebase.json mora. Fora do `npm test` porque exige emulador.",
+    "test:emulador": "tsc && cd .. && firebase emulators:exec --only firestore,auth --project demo-bmv \"cd functions-conta && node --test test/integracao.emulador.test.js\"",
     "serve": "npm run build && firebase emulators:start --only functions:conta",
     "//deploy": "PROIBIDO PELA OS DE EXCLUSAO enquanto a homologacao nao fechar. O alvo existe para que o comando seja UM, revisavel, e nao improvisado na hora.",
     "deploy": "firebase deploy --only functions:conta"
