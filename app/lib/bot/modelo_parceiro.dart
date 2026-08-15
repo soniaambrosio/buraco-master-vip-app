@@ -1,0 +1,168 @@
+// OS — INTELIGÊNCIA ESTRATÉGICA DO BOT V1 — §1 PartnerModel.
+//
+// A função de utilidade é DA DUPLA. Este modelo responde, só com informação
+// pública, o que a dupla precisa do bot neste momento:
+//   • o que os jogos públicos da dupla pedem (extensão legal e adjacência);
+//   • quantas cartas o parceiro tem (contagem é pública);
+//   • se o parceiro acabou de pegar o morto e precisa de tempo para organizar;
+//   • se a dupla já tem canastra que libera batida.
+//
+// É PROIBIDO inferir a mão oculta do parceiro. Nada aqui lê carta que não esteja
+// na mesa: a `VisaoInformacao` nem sequer carrega as mãos alheias.
+//
+// SINAL DE DESCARTE DO PARCEIRO: quando o consumidor souber informar a autoria
+// dos descartes (`VisaoInformacao.descartesPublicos`), o modelo usa. Hoje a
+// projeção canônica não carrega autoria — a pilha do lixo não diz quem pôs cada
+// carta lá — então o sinal chega vazio e o modelo simplesmente não o usa.
+// Deduzir autoria pela ordem da pilha seria fabricar informação (§7).
+import '../rules/estado.dart';
+import '../rules/morto/morto.dart' show duplaPodeBater;
+import '../rules/rule_spec.dart';
+import 'leitura_meld.dart';
+import 'visao_informacao.dart';
+
+class ModeloParceiro {
+  final VisaoInformacao visao;
+  final RuleSpec spec;
+
+  /// Cartas na mão do parceiro (contagem pública).
+  final int cartasDoParceiro;
+
+  /// O parceiro está CARREGADO — muitas cartas, virariam desconto numa batida.
+  final bool parceiroCarregado;
+
+  /// O parceiro acabou de pegar o morto (mão cheia, ainda desorganizada).
+  final bool parceiroReorganizandoMorto;
+
+  /// A dupla já tem canastra que LIBERA a batida.
+  final bool duplaPodeBaterAgora;
+
+  /// A dupla ainda tem morto a pegar.
+  final bool mortoPendenteDaDupla;
+
+  ModeloParceiro._({
+    required this.visao,
+    required this.spec,
+    required this.cartasDoParceiro,
+    required this.parceiroCarregado,
+    required this.parceiroReorganizandoMorto,
+    required this.duplaPodeBaterAgora,
+    required this.mortoPendenteDaDupla,
+  });
+
+  /// A partir de quantas cartas o parceiro é considerado CARREGADO. Espelha o
+  /// limiar de prudência já usado pelo robô legado (seção 24 da diretriz).
+  static const int limiarCarregado = 8;
+
+  factory ModeloParceiro.observar(VisaoInformacao v, RuleSpec spec) {
+    final cartas = v.cartasDoParceiro;
+    // "Acabou de pegar o morto" é observável sem ler carta nenhuma: a dupla
+    // marcou o morto como pego E o parceiro está com a mão de 11+.
+    final reorganizando = v.mortoPegoPropria && cartas >= 11;
+    return ModeloParceiro._(
+      visao: v,
+      spec: spec,
+      cartasDoParceiro: cartas,
+      parceiroCarregado: cartas > limiarCarregado,
+      parceiroReorganizandoMorto: reorganizando,
+      duplaPodeBaterAgora: duplaPodeBater(
+        EstadoJogoParcial.paraConsultaDeBatida(v),
+        v.dupla,
+        spec,
+      ),
+      mortoPendenteDaDupla: v.mortoDisponivelParaDupla,
+    );
+  }
+
+  // MEMÓRIA por carta: os jogos públicos não mudam durante uma decisão, e cada
+  // consulta roda o validador canônico uma vez por jogo exposto.
+  final Map<String, bool> _cacheUtil = {};
+  final Map<String, bool> _cacheAdjacente = {};
+
+  /// A carta ESTENDE um jogo público da dupla? (utilidade imediata)
+  bool utilAosJogosDaDupla(CartaSnapshot c) => _cacheUtil.putIfAbsent(c.id, () {
+        for (final m in visao.meldsProprios) {
+          if (estendeMeld(m, c, spec)) return true;
+        }
+        return false;
+      });
+
+  /// A carta ENCOSTA num jogo público da dupla? (extensão natural futura — o
+  /// que a §1 manda preservar quando o parceiro abriu uma sequência)
+  bool adjacenteAosJogosDaDupla(CartaSnapshot c) =>
+      _cacheAdjacente.putIfAbsent(c.id, () {
+        for (final m in visao.meldsProprios) {
+          if (adjacenteAoMeld(m, c, spec)) return true;
+        }
+        return false;
+      });
+
+  /// O parceiro descartou esta carta publicamente? Sinal de que ele não a quer —
+  /// só disponível quando o consumidor informa a autoria dos descartes.
+  bool parceiroDescartou(CartaSnapshot c) {
+    for (final d in visao.descartesPublicos) {
+      if (d.assento == visao.parceiro &&
+          d.carta.valor == c.valor &&
+          d.carta.naipe == c.naipe) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Bater AGORA prejudica a dupla sem necessidade? (§6 — prudência de batida)
+  /// Verdadeiro quando o parceiro está carregado E nenhum adversário ameaça
+  /// fechar. Contagem de cartas dos adversários é informação pública.
+  bool batidaPrematura() {
+    if (!parceiroCarregado) return false;
+    return !ameacaAdversariaImediata();
+  }
+
+  /// Algum adversário está prestes a fechar? Proxy PÚBLICO: mão curta, ou a
+  /// dupla adversária já pegou o morto e tem canastra que libera a batida.
+  bool ameacaAdversariaImediata() {
+    if (visao.menorMaoAdversaria <= 3) return true;
+    if (!visao.mortoPegoAdversaria) return false;
+    for (final m in visao.meldsAdversarios) {
+      if (ehCanastra(m, spec)) return true;
+    }
+    return false;
+  }
+}
+
+/// Adaptador MÍNIMO para consultar `duplaPodeBater` — a autoridade canônica de
+/// "esta canastra libera a batida" — usando SÓ os jogos públicos da visão.
+///
+/// Existe para não duplicar a regra de batida dentro do bot. Constrói um
+/// `EstadoJogo` de consulta cujas zonas ocultas estão VAZIAS: nenhuma mão,
+/// nenhum monte, nenhum morto. Se algum dia alguém tentar tirar daqui
+/// informação oculta, não vai encontrar nada — não há nada para encontrar.
+class EstadoJogoParcial {
+  EstadoJogoParcial._();
+
+  static EstadoJogo paraConsultaDeBatida(VisaoInformacao v) => EstadoJogo(
+        modalidade: v.modalidade,
+        metaPontos: v.metaPontos,
+        monte: const [],
+        lixo: const [],
+        mortos: const [],
+        maos: const [[], [], [], []],
+        jogosDupla: {
+          v.dupla: v.meldsProprios,
+          v.duplaAdversaria: v.meldsAdversarios,
+        },
+        rodadasVulneravel: {
+          v.dupla: v.rodadasVulneravelPropria,
+          v.duplaAdversaria: v.rodadasVulneravelAdversaria,
+        },
+        primeiraBaixadaFeita: {
+          v.dupla: v.abriuPropria,
+          v.duplaAdversaria: v.abriuAdversaria,
+        },
+        vez: v.vez,
+        mortoPego: {
+          v.dupla: v.mortoPegoPropria,
+          v.duplaAdversaria: v.mortoPegoAdversaria,
+        },
+      );
+}
