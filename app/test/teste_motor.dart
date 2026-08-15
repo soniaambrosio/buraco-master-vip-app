@@ -5958,6 +5958,376 @@ void main() {
       expect(sem.duplaQueBateu, 'nos');
     });
   });
+
+  // ===================================================================
+  // OS — GARANTIA DE ENCERRAMENTO LEGAL DE TURNO V1
+  //
+  // INVARIANTE: se a autoridade ACEITA uma ação durante o turno, o estado
+  // resultante precisa admitir ao menos UMA transição legal até um desfecho
+  // canônico (descarte, batida, tomada do morto, encerramento da mão/partida
+  // ou passagem da vez). O motor não pode produzir estado operacionalmente
+  // morto — nem para o humano, nem para o robô.
+  //
+  // A definição OPERACIONAL de "morto" usada aqui não é opinião do teste: é o
+  // PRÓPRIO gerador canônico (`gerarAcoesLegais`) devolvendo lista VAZIA com a
+  // rodada ainda aberta e a vez ainda no mesmo assento.
+  // ===================================================================
+  group('OS ENCERRAMENTO DE TURNO V1 — conclusão legal garantida', () {
+    // O estado está MORTO? (rodada aberta, vez parada no assento e ZERO ações
+    // legais). É a negação exata do invariante.
+    bool morto(Jogo j, int assento) {
+      if (j.rodadaEncerrada) return false; // desfecho canônico: mão encerrada
+      if (j.vez != assento) return false; // desfecho canônico: a vez passou
+      final proj = paraCanonico(j);
+      final spec = RuleSpec.canonica(proj.canonico.modalidade,
+          metaPontos: proj.canonico.metaPontos);
+      return gerarAcoesLegais(proj.canonico, assento, spec).isEmpty;
+    }
+
+    String snapEnc(Jogo j) => jsonEncode(serializarProjecao(paraCanonico(j)));
+
+    // ---------- CENÁRIO 1 — reprodução exata do C10-BOT-03 ----------
+    test(
+        'ENC-01 baixada que deixaria 1 carta SEM descarte legal é RECUSADA '
+        '(reprodução do C10-BOT-03)', () {
+      final j = _jgEncBecoSemSaida();
+      final antes = snapEnc(j);
+      final maoAntes = idsMao(j, 0);
+      final mesaAntes = j.jogosDupla['nos']!.map((m) => m.length).toList();
+
+      // A baixada é estruturalmente LEGAL (7-8-9 de copas é sequência válida) e
+      // era ACEITA pela base: deixava a mão em [orfa], sem morto a pegar e sem
+      // canastra para bater — logo, sem NENHUM descarte legal.
+      final r = j.baixar(0, ['7c', '8c', '9c']);
+
+      expect(r['ok'], isFalse); // agora a AUTORIDADE recusa
+      expect(r['erro'], isNotNull);
+
+      // Atomicidade: nada mudou.
+      expect(idsMao(j, 0), maoAntes);
+      expect(j.jogosDupla['nos']!.map((m) => m.length).toList(), mesaAntes);
+      expect(j.vez, 0);
+      expect(j.rodadaEncerrada, isFalse);
+      expect(snapEnc(j), antes);
+
+      // E o turno continua tendo saída legal: o descarte normal passa a vez.
+      expect(morto(j, 0), isFalse);
+      expect(j.descartar(0, 'orfa'), isNull);
+      expect(j.vez, 1);
+    });
+
+    test('ENC-01b a base produzia estado MORTO — o invariante é o que mudou',
+        () {
+      // Prova dirigida do invariante sobre o MESMO cenário: qualquer que seja o
+      // caminho aceito, o pós-estado nunca é morto.
+      final j = _jgEncBecoSemSaida();
+      final proj = paraCanonico(j);
+      final spec = RuleSpec.canonica(proj.canonico.modalidade,
+          metaPontos: proj.canonico.metaPontos);
+
+      // A baixada em questão é REPROVADA pelo gerador único (mesma autoridade
+      // que o humano e o robô consultam).
+      final baixada = Baixar(jogosNovos: [
+        ['7c', '8c', '9c']
+      ]);
+      final res = aplicarLegal(proj.canonico, 0, baixada, spec);
+      expect(res.legal, isFalse);
+      expect(res.proximoEstado, isNull); // sem mutação parcial
+      // RED-PROBE: reasonCode entra junto com a correção.
+
+      // O estado ORIGINAL segue vivo (o descarte é a saída).
+      expect(gerarAcoesLegais(proj.canonico, 0, spec), isNotEmpty);
+    });
+
+    // ---------- CENÁRIO 2 — uma carta restante, descarte legal existente ----
+    test('ENC-02 1 carta restante COM descarte legal (morto a pegar) continua '
+        'PERMITIDA', () {
+      final j = _jgEncUmaCartaComMorto();
+      final r = j.baixar(0, ['7c', '8c', '9c']);
+      expect(r['ok'], isTrue); // nada de bloqueio falso
+      expect(idsMao(j, 0), ['orfa']);
+      expect(morto(j, 0), isFalse);
+    });
+
+    // ---------- CENÁRIO 3 — uma carta restante e batida válida -------------
+    test('ENC-03 1 carta restante com CANASTRA na mesa: baixada permitida e a '
+        'batida acontece', () {
+      final j = _jgEncUmaCartaComCanastra();
+      expect(j.baixar(0, ['7c', '8c', '9c'])['ok'], isTrue);
+      expect(idsMao(j, 0), ['orfa']);
+      expect(morto(j, 0), isFalse);
+      // O descarte da última carta é BATIDA legal (canastra limpa na mesa).
+      expect(j.descartar(0, 'orfa'), isNull);
+      expect(j.rodadaEncerrada, isTrue);
+      expect(j.duplaQueBateu, 'nos');
+    });
+
+    // ---------- CENÁRIO 4 — uma carta restante e morto aplicável -----------
+    test('ENC-04 fluxo do MORTO indireto permanece intacto ponta a ponta', () {
+      final j = _jgEncUmaCartaComMorto();
+      expect(j.baixar(0, ['7c', '8c', '9c'])['ok'], isTrue);
+      expect(j.descartar(0, 'orfa'), isNull);
+      // Zerou a mão com morto disponível -> a autoridade estabiliza o morto
+      // INDIRETO e a vez passa.
+      expect(j.mortoPego['nos'], isTrue);
+      expect(j.maos[0].length, 11);
+      expect(j.vez, 1);
+      expect(j.rodadaEncerrada, isFalse);
+    });
+
+    // ---------- CENÁRIO 5 — duas ou mais cartas restantes ------------------
+    test('ENC-05 baixada que deixa 2+ cartas NÃO é bloqueada', () {
+      final j = _jgEncDuasSobrando();
+      expect(j.baixar(0, ['7c', '8c', '9c'])['ok'], isTrue);
+      expect(idsMao(j, 0).length, 2);
+      expect(morto(j, 0), isFalse);
+      expect(j.descartar(0, 'orfa1'), isNull); // descarte normal
+      expect(j.vez, 1);
+    });
+
+    // ---------- CENÁRIO 6 — curinga ---------------------------------------
+    test('ENC-06 a regra vale para baixada COM curinga (JOKER e "2")', () {
+      for (final curinga in ['jk', 'd2']) {
+        final j = _jgEncBecoComCuringa(curinga);
+        final antes = snapEnc(j);
+        final r = j.baixar(0, ['7c', '8c', curinga]);
+        expect(r['ok'], isFalse, reason: 'curinga $curinga');
+        expect(snapEnc(j), antes, reason: 'curinga $curinga');
+        expect(morto(j, 0), isFalse);
+      }
+    });
+
+    // ---------- CENÁRIO 7 — vulnerável / não vulnerável --------------------
+    test('ENC-07 abertura que atinge o mínimo mas deixaria beco é recusada '
+        '(vulnerável E não vulnerável)', () {
+      for (final vuln in [0, 1]) {
+        final j = _jgEncAberturaBeco(rodadasVulneravel: vuln);
+        expect(j.minimoParaDescer('nos'), vuln == 1 ? 75 : 0);
+        final antes = snapEnc(j);
+        // 10-J-Q-K de copas (40) + 10-J-Q-K de ouros (40) = 80 >= 75: o mínimo
+        // NÃO é o que barra. O que barra é a carta órfã sem descarte legal.
+        final r = j.baixarAtomico(0, jogosNovos: [
+          ['10c', 'Jc', 'Qc', 'Kc'],
+          ['10o', 'Jo', 'Qo', 'Ko'],
+        ]);
+        expect(r['ok'], isFalse, reason: 'vulneravel=$vuln');
+        expect(j.primeiraBaixadaFeita['nos'], isFalse); // não abriu
+        expect(snapEnc(j), antes, reason: 'vulneravel=$vuln');
+        expect(morto(j, 0), isFalse);
+      }
+    });
+
+    // ---------- CENÁRIO 8 — aberto / fechado / STBL ------------------------
+    test('ENC-08 mesma garantia nas três modalidades', () {
+      for (final m in ['ABERTO', 'FECHADO', 'STBL']) {
+        final j = _jgEncBecoSemSaida(modalidade: m);
+        final antes = snapEnc(j);
+        expect(j.baixar(0, ['7c', '8c', '9c'])['ok'], isFalse, reason: m);
+        expect(snapEnc(j), antes, reason: m);
+        expect(morto(j, 0), isFalse, reason: m);
+        // e o descarte normal segue disponível em todas elas
+        expect(j.descartar(0, 'orfa'), isNull, reason: m);
+        expect(j.vez, 1, reason: m);
+      }
+    });
+
+    // ---------- CENÁRIO 9 — rollback transacional --------------------------
+    test('ENC-09 a recusa é ATÔMICA: nenhuma mutação parcial em lugar nenhum',
+        () {
+      final j = _jgEncBecoSemSaida();
+      final antes = snapEnc(j);
+      final lixoAntes = [for (final c in j.lixo) c.id];
+      final monteAntes = j.monte.length;
+      final mortosAntes = j.mortos.length;
+      final mortoPegoAntes = Map<String, bool>.from(j.mortoPego);
+      final abriuAntes = Map<String, bool>.from(j.primeiraBaixadaFeita);
+      final falhasAntes = j.falhasTecnicas;
+
+      expect(j.baixar(0, ['7c', '8c', '9c'])['ok'], isFalse);
+
+      expect(idsMao(j, 0), ['7c', '8c', '9c', 'orfa']); // mão intacta
+      expect(j.jogosDupla['nos']!.length, 1); // mesa intacta
+      expect(j.jogosDupla['nos']![0].length, 3);
+      expect([for (final c in j.lixo) c.id], lixoAntes);
+      expect(j.monte.length, monteAntes);
+      expect(j.mortos.length, mortosAntes);
+      expect(j.mortoPego, mortoPegoAntes);
+      expect(j.primeiraBaixadaFeita, abriuAntes);
+      expect(j.vez, 0);
+      expect(j.rodadaEncerrada, isFalse);
+      // Recusa de REGRA não é falha técnica e não pausa a partida.
+      expect(j.falhasTecnicas, falhasAntes);
+      expect(j.pausadaPorFalhaTecnica, isFalse);
+      expect(snapEnc(j), antes); // projeção idêntica, campo a campo
+    });
+
+    // ---------- CENÁRIO 10 — avanço de turno -------------------------------
+    test('ENC-10 turno concluído de forma válida SEMPRE transfere a vez', () {
+      // (a) descarte normal -> próximo assento
+      final a = _jgEncDuasSobrando();
+      expect(a.baixar(0, ['7c', '8c', '9c'])['ok'], isTrue);
+      expect(a.descartar(0, 'orfa1'), isNull);
+      expect(a.vez, 1);
+      expect(a.rodadaEncerrada, isFalse);
+
+      // (b) morto indireto -> próximo assento
+      final b = _jgEncUmaCartaComMorto();
+      expect(b.baixar(0, ['7c', '8c', '9c'])['ok'], isTrue);
+      expect(b.descartar(0, 'orfa'), isNull);
+      expect(b.vez, 1);
+
+      // (c) batida -> rodada encerrada (desfecho canônico, não há "próxima vez")
+      final c = _jgEncUmaCartaComCanastra();
+      expect(c.baixar(0, ['7c', '8c', '9c'])['ok'], isTrue);
+      expect(c.descartar(0, 'orfa'), isNull);
+      expect(c.rodadaEncerrada, isTrue);
+
+      // (d) recusa -> a vez NÃO se move (não se inventa avanço)
+      final d = _jgEncBecoSemSaida();
+      expect(d.baixar(0, ['7c', '8c', '9c'])['ok'], isFalse);
+      expect(d.vez, 0);
+    });
+
+    // ---------- §12 — outros estados mortos --------------------------------
+    test('ENC-11 COMPRAR O LIXO com uso do topo também respeita o invariante',
+        () {
+      // Mesma família de beco por outro portão: a compra atômica do lixo
+      // (Fechado/STBL) consome a mão no uso do topo e pode deixar 1 carta órfã.
+      final j = _jgEncLixoBeco();
+      final antes = snapEnc(j);
+      final cands = j.candidatosCompraLixo(0);
+      // A derivação continua enumerando o que a REGRA de compra aceita; o que
+      // muda é que a transação que deixaria beco não é mais aplicável.
+      var algumaAplicou = false;
+      for (final c in cands) {
+        final k = _jgEncLixoBeco();
+        if (k.comprarLixoAtomico(0, c)['ok'] == true) {
+          algumaAplicou = true;
+          expect(morto(k, 0), isFalse); // nenhuma compra aceita deixa beco
+        }
+      }
+      // A compra que deixaria a mão em [orfa] sem saída é recusada.
+      final becoDireto = j.comprarLixoAtomico(
+          0,
+          const ComprarLixo(topoDeclarado: 'lxTopo', jogosNovos: [
+            ['lxTopo', '8c', '9c']
+          ]));
+      expect(becoDireto['ok'], isFalse);
+      expect(snapEnc(j), antes);
+      expect(algumaAplicou || cands.isEmpty, isTrue);
+    });
+
+    test('ENC-12 INVARIANTE varrido: nenhuma ação aceita deixa estado morto',
+        () {
+      // Varredura dirigida (property-like) sobre as mesas desta OS: para cada
+      // cenário, TODA baixada candidata + todas as ações de base são aplicadas
+      // sobre o estado canônico; se a autoridade ACEITA, o pós-estado tem de
+      // admitir continuação legal.
+      final fabricas = <String, Jogo Function()>{
+        'beco': () => _jgEncBecoSemSaida(),
+        'beco-fechado': () => _jgEncBecoSemSaida(modalidade: 'FECHADO'),
+        'beco-stbl': () => _jgEncBecoSemSaida(modalidade: 'STBL'),
+        'com-morto': () => _jgEncUmaCartaComMorto(),
+        'com-canastra': () => _jgEncUmaCartaComCanastra(),
+        'duas-sobrando': () => _jgEncDuasSobrando(),
+        'curinga-joker': () => _jgEncBecoComCuringa('jk'),
+        'curinga-dois': () => _jgEncBecoComCuringa('d2'),
+        'abertura': () => _jgEncAberturaBeco(rodadasVulneravel: 1),
+      };
+
+      var aceitas = 0;
+      for (final entry in fabricas.entries) {
+        final proj = paraCanonico(entry.value());
+        final estado = proj.canonico;
+        final spec = RuleSpec.canonica(estado.modalidade,
+            metaPontos: estado.metaPontos);
+        final mao = estado.maos[0];
+
+        // Candidatos: todo subconjunto da mão com 3..mão cartas como jogo novo,
+        // mais toda extensão de 1 carta em cada jogo exposto, mais as ações de
+        // base do gerador.
+        final candidatos = <Acao>[];
+        final n = mao.length;
+        for (var mask = 1; mask < (1 << n); mask++) {
+          final ids = <String>[
+            for (var i = 0; i < n; i++)
+              if (mask & (1 << i) != 0) mao[i].id
+          ];
+          if (ids.length >= 3) candidatos.add(Baixar(jogosNovos: [ids]));
+          if (ids.length == 1) {
+            final melds = estado.jogosDupla['nos'] ?? const [];
+            for (var k = 0; k < melds.length; k++) {
+              candidatos.add(Baixar(extensoes: [Extensao(k, ids)]));
+            }
+          }
+        }
+
+        for (final acao in [
+          ...candidatos,
+          const ComprarMonte(),
+          const PegarMorto(),
+          const PegarMorto(viaDescarte: true),
+          const Bater(),
+          for (final c in mao) Descartar(c.id),
+        ]) {
+          final r = aplicarLegal(estado, 0, acao, spec);
+          if (!r.legal) {
+            expect(r.proximoEstado, isNull,
+                reason: '${entry.key}: recusa não pode devolver estado');
+            continue;
+          }
+          aceitas++;
+          final pos = r.proximoEstado!;
+          if (pos.rodadaEncerrada) continue; // desfecho canônico
+          if (pos.vez != 0) continue; // a vez passou: desfecho canônico
+          // Mesmo assento, rodada aberta: TEM de haver continuação legal.
+          expect(gerarAcoesLegais(pos, 0, spec), isNotEmpty,
+              reason: '${entry.key}: ${acao.toJson()} deixou estado MORTO');
+        }
+      }
+      expect(aceitas, greaterThan(0)); // não-vacuidade da varredura
+    });
+
+    // ---------- §10 — humano e robô sob a MESMA autoridade -----------------
+    test('ENC-13 humano e robô recebem a MESMA regra (sem exceção para bot)',
+        () {
+      // Humano: recusa explícita.
+      final humano = _jgEncBecoSemSaida();
+      expect(humano.baixar(0, ['7c', '8c', '9c'])['ok'], isFalse);
+
+      // Robô: a mesma mesa, jogada pelo robô canônico. O plano que deixaria
+      // beco não é mais aplicável — o robô conclui o turno de outra forma.
+      final robo = _jgEncBecoSemSaida();
+      final marcaFalhas = robo.falhasTecnicas;
+      robo.botJoga(0);
+      expect(robo.falhasTecnicas, marcaFalhas); // nenhuma falha técnica
+      expect(morto(robo, 0), isFalse); // e nunca em estado morto
+      // O turno do robô terminou de forma canônica: a vez passou ou a mão
+      // encerrou.
+      expect(robo.vez != 0 || robo.rodadaEncerrada, isTrue);
+    });
+
+    test('ENC-14 o gerador único NUNCA oferece uma ação que leve a beco', () {
+      // Paridade estrutural: o que o gerador oferece é exatamente o que a
+      // autoridade aceita — e nada do que ele oferece leva a estado morto.
+      final proj = paraCanonico(_jgEncBecoSemSaida());
+      final estado = proj.canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final baixada = Baixar(jogosNovos: [
+        ['7c', '8c', '9c']
+      ]);
+      final oferecidas =
+          gerarAcoesLegais(estado, 0, spec, candidatos: [baixada]);
+      // a baixada de beco não aparece entre as ações legais
+      expect(oferecidas.whereType<Baixar>(), isEmpty);
+      // e o que sobra é saída de verdade
+      expect(oferecidas, isNotEmpty);
+      for (final a in oferecidas) {
+        expect(acaoEhLegal(estado, 0, a, spec), isTrue);
+      }
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -7966,3 +8336,159 @@ Jogo _fixInformacaoJusta({required int variante}) {
 /// Snapshot serializado do `Jogo` (mesmo instrumento dos testes do C10, aqui em
 /// nível de arquivo porque os cenários do bot vivem noutro grupo).
 String _snapJogo(Jogo j) => jsonEncode(serializarProjecao(paraCanonico(j)));
+
+// ===================================================================
+// OS ENCERRAMENTO DE TURNO V1 — mesas determinísticas
+//
+// Todas partem do mesmo terreno: fase de JOGO (já comprou), dupla NOS já
+// aberta, e o que varia é só a EXISTÊNCIA de saída legal depois da baixada
+// (morto disponível, canastra na mesa, ou nenhuma das duas = beco).
+// ===================================================================
+
+/// Terreno base: assento 0 na fase de jogo, dupla NOS aberta, sem canastra.
+/// `mortosRestantes = 0` + `mortoPego` nos dois lados = não há morto a pegar.
+Jogo _encBase({
+  String modalidade = 'ABERTO',
+  int mortosRestantes = 0,
+  bool mortoPegoNos = true,
+  bool abertaNos = true,
+  int rodadasVulneravel = 0,
+}) {
+  final j = Jogo.paraCostura(motorConfig: MotorConfig.producao());
+  j.vez = 0;
+  j.modalidade = modalidade;
+  j.jaComprou = true;
+  j.mortoPego = {'nos': mortoPegoNos, 'eles': true};
+  j.primeiraBaixadaFeita = {'nos': abertaNos, 'eles': false};
+  j.rodadasVulneravel = {'nos': rodadasVulneravel, 'eles': 0};
+  j.maos = [<Carta>[], <Carta>[], <Carta>[], <Carta>[]];
+  j.jogosDupla = {'nos': <List<Carta>>[], 'eles': <List<Carta>>[]};
+  j.monte = [Carta('mo1', 'paus', '8', false)];
+  j.mortos = [
+    for (var k = 0; k < mortosRestantes; k++)
+      [for (var i = 0; i < 11; i++) Carta('mk${k}_$i', 'ouros', '3', false)]
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+/// Meld de 3 cartas na mesa da dupla: existe jogo exposto, mas NÃO é canastra —
+/// portanto não libera a batida.
+List<Carta> _encMeldCurto() => [
+      Carta('n1', 'ouros', '3', false),
+      Carta('n2', 'ouros', '4', false),
+      Carta('n3', 'ouros', '5', false),
+    ];
+
+/// Canastra LIMPA de 7 cartas (libera batida no ABERTO e no FECHADO).
+List<Carta> _encCanastra() => [
+      for (final v in ['3', '4', '5', '6', '7', '8', '9'])
+        Carta('cn$v', 'paus', v, false),
+    ];
+
+/// C10-BOT-03 — BECO: baixar 7-8-9 de copas deixa [orfa] na mão, sem morto a
+/// pegar e sem canastra para bater. Nenhum descarte é legal depois disso.
+Jogo _jgEncBecoSemSaida({String modalidade = 'ABERTO'}) {
+  final j = _encBase(modalidade: modalidade);
+  j.maos[0] = [
+    Carta('7c', 'copas', '7', false),
+    Carta('8c', 'copas', '8', false),
+    Carta('9c', 'copas', '9', false),
+    Carta('orfa', 'paus', 'K', false),
+  ];
+  j.jogosDupla['nos'] = [_encMeldCurto()];
+  return j;
+}
+
+/// Mesma baixada, mas COM morto disponível: sobra 1 carta e o descarte dela é
+/// legal (zera a mão -> morto indireto). Tem de continuar permitida.
+Jogo _jgEncUmaCartaComMorto() {
+  final j = _encBase(mortosRestantes: 1, mortoPegoNos: false);
+  j.maos[0] = [
+    Carta('7c', 'copas', '7', false),
+    Carta('8c', 'copas', '8', false),
+    Carta('9c', 'copas', '9', false),
+    Carta('orfa', 'paus', 'K', false),
+  ];
+  j.jogosDupla['nos'] = [_encMeldCurto()];
+  return j;
+}
+
+/// Mesma baixada, mas COM canastra limpa na mesa: sobra 1 carta e descartá-la é
+/// BATIDA legal. Tem de continuar permitida.
+Jogo _jgEncUmaCartaComCanastra() {
+  final j = _encBase();
+  j.maos[0] = [
+    Carta('7c', 'copas', '7', false),
+    Carta('8c', 'copas', '8', false),
+    Carta('9c', 'copas', '9', false),
+    Carta('orfa', 'paus', 'K', false),
+  ];
+  j.jogosDupla['nos'] = [_encCanastra()];
+  return j;
+}
+
+/// A baixada deixa DUAS cartas: o descarte normal existe, nada a bloquear.
+Jogo _jgEncDuasSobrando() {
+  final j = _encBase();
+  j.maos[0] = [
+    Carta('7c', 'copas', '7', false),
+    Carta('8c', 'copas', '8', false),
+    Carta('9c', 'copas', '9', false),
+    Carta('orfa1', 'paus', 'K', false),
+    Carta('orfa2', 'espadas', 'Q', false),
+  ];
+  j.jogosDupla['nos'] = [_encMeldCurto()];
+  return j;
+}
+
+/// Beco cujo meld usa CURINGA: `jk` (JOKER) ou `d2` (o "2" curinga).
+Jogo _jgEncBecoComCuringa(String curinga) {
+  final j = _encBase();
+  j.maos[0] = [
+    Carta('7c', 'copas', '7', false),
+    Carta('8c', 'copas', '8', false),
+    curinga == 'jk'
+        ? Carta('jk', null, 'JOKER', true)
+        : Carta('d2', 'ouros', '2', true),
+    Carta('orfa', 'paus', 'K', false),
+  ];
+  j.jogosDupla['nos'] = [_encMeldCurto()];
+  return j;
+}
+
+/// ABERTURA que ATINGE o mínimo de vulnerabilidade (40+40 = 80 >= 75) e ainda
+/// assim deixaria a mão em [orfa] sem saída. Prova que a recusa é do beco, não
+/// do mínimo.
+Jogo _jgEncAberturaBeco({required int rodadasVulneravel}) {
+  final j = _encBase(
+    abertaNos: false,
+    rodadasVulneravel: rodadasVulneravel,
+  );
+  j.maos[0] = [
+    for (final v in ['10', 'J', 'Q', 'K']) Carta('${v}c', 'copas', v, false),
+    for (final v in ['10', 'J', 'Q', 'K']) Carta('${v}o', 'ouros', v, false),
+    Carta('orfa', 'paus', '4', false),
+  ];
+  j.jogosDupla['nos'] = <List<Carta>>[];
+  return j;
+}
+
+/// FECHADO — compra do lixo com uso ATÔMICO do topo que consumiria a mão e
+/// deixaria uma carta órfã sem descarte legal.
+Jogo _jgEncLixoBeco() {
+  final j = _encBase(modalidade: 'FECHADO');
+  j.jaComprou = false; // fase de COMPRA
+  j.maos[0] = [
+    Carta('8c', 'copas', '8', false),
+    Carta('9c', 'copas', '9', false),
+    Carta('orfa', 'paus', 'K', false),
+  ];
+  j.jogosDupla['nos'] = [_encMeldCurto()];
+  // topo = 7 de copas: fecha 7-8-9 com a mão e deixa [orfa].
+  j.lixo = [
+    Carta('lxFundo', 'espadas', '5', false),
+    Carta('lxTopo', 'copas', '7', false),
+  ];
+  return j;
+}
