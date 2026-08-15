@@ -431,6 +431,26 @@ jobs:
           s = re.sub(r'versionCode\s*=\s*flutter\.versionCode', f'versionCode = {vc}', s)
           s = re.sub(r'versionName\s*=\s*flutter\.versionName', f'versionName = "{vn}"', s)
 
+          # 7) targetSdk FIXO em 36 (Android 16), em vez de herdado do SDK.
+          #    O scaffold gera `targetSdk = flutter.targetSdkVersion`, e o Flutter
+          #    documenta esse campo como "should always be the latest available
+          #    stable version": ele ANDA sozinho a cada bump do canal stable. Isso
+          #    e exatamente o que nao pode acontecer com um valor que a Play cobra
+          #    e que decide comportamento de runtime (edge-to-edge obrigatorio,
+          #    restricao de orientacao ignorada em tela grande, permissoes).
+          #    Sem esta linha, subir a versao pinada do Flutter mudaria em silencio
+          #    o targetSdk do AAB enviado a loja, sem revisao nenhuma.
+          #    compileSdk continua herdado DE PROPOSITO: ele precisa acompanhar o
+          #    SDK e os plugins, e compileSdk >= targetSdk e a configuracao correta.
+          s, n_target = re.subn(r'targetSdk\s*=\s*flutter\.targetSdkVersion',
+                                'targetSdk = 36', s, count=1)
+          if n_target != 1:
+              raise AssertionError(
+                  'nao encontrei `targetSdk = flutter.targetSdkVersion` no scaffold. '
+                  'O template do Flutter mudou de forma — descubra qual targetSdk o '
+                  'build passou a usar ANTES de gerar qualquer AAB.'
+              )
+
           open(p, 'w', encoding='utf-8').write(s)
 
           print('---- conferencia do patch ----')
@@ -442,6 +462,8 @@ jobs:
               'signingConfig = signingConfigs.getByName("upload")': True,
               f'versionCode = {vc}': True,
               f'versionName = "{vn}"': True,
+              'targetSdk = 36': True,
+              'targetSdk = flutter.targetSdkVersion': False,
               'applicationId = "com.buracomastervip.poc.buraco_master_vip"': False,
               'signingConfigs.getByName("debug")': False,
           }
@@ -605,6 +627,45 @@ jobs:
             echo "FALHA versionName nao confere"; erro=1
           fi
           [ "$erro" = "0" ] || { echo "VERIFICACAO REPROVADA — nao envie este AAB."; exit 1; }
+
+      - name: "VERIFICACAO FINAL — targetSdk 36 no manifesto do AAB"
+        # Le o valor do manifesto REAL dentro do bundle, depois do merge com os
+        # manifestos de todos os plugins. E o unico ponto onde da para afirmar o
+        # targetSdk do artefato que vai para a Play: o `build.gradle.kts` diz a
+        # intencao, o manifesto do AAB diz o resultado.
+        #
+        # Um plugin com <uses-sdk> proprio pode, em tese, rebaixar o valor no
+        # merge. Sem esta conferencia, o sintoma so apareceria como recusa da
+        # Play Console — ou, pior, como um app aceito rodando sob as regras de
+        # comportamento erradas.
+        run: |
+          python3 - <<'PY'
+          import re
+          s = open('manifesto-final.xml', encoding='utf-8').read()
+
+          # bundletool imprime o XML decodificado; o inteiro pode sair em decimal
+          # ou em hexadecimal, com ou sem aspas. Aceita as duas formas.
+          m = re.search(r'targetSdkVersion\s*=\s*"?(0x[0-9a-fA-F]+|\d+)"?', s)
+          if not m:
+              raise SystemExit(
+                  'FALHA: nao encontrei targetSdkVersion no manifesto do AAB. '
+                  'O manifesto completo foi impresso no passo anterior — confira '
+                  'o bloco <uses-sdk> antes de enviar qualquer coisa a Play.'
+              )
+          bruto = m.group(1)
+          valor = int(bruto, 16) if bruto.lower().startswith('0x') else int(bruto)
+          if valor != 36:
+              raise SystemExit(
+                  f'FALHA: targetSdkVersion do AAB e {valor}, esperado 36 (Android 16).'
+              )
+          print('OK    targetSdkVersion = 36 (Android 16) no manifesto final do AAB')
+
+          alvo_min = re.search(r'minSdkVersion\s*=\s*"?(0x[0-9a-fA-F]+|\d+)"?', s)
+          if alvo_min:
+              b = alvo_min.group(1)
+              print('INFO  minSdkVersion =',
+                    int(b, 16) if b.lower().startswith('0x') else int(b))
+          PY
 
       - name: "VERIFICACAO FINAL — Billing Library dentro do AAB"
         # Prova de que a biblioteca esta compilada no bundle, e nao apenas
