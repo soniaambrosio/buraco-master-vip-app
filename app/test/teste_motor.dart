@@ -6451,6 +6451,36 @@ void main() {
       expect(aceitas, greaterThan(500)); // não-vacuidade da varredura
     });
 
+    test('ENC-16 reasonCode é para máquina; ao jogador vai só a mensagem', () {
+      // §16/§17 — a distinção existe, mas os dois canais não se misturam: o
+      // texto que chega ao cliente não carrega o código nem internals do motor,
+      // e o código é estável o bastante para telemetria comparar por igualdade.
+      final j = _jgEncBecoSemSaida();
+      final erro = j.baixar(0, ['7c', '8c', '9c'])['erro'] as String;
+      expect(erro, motivoSemConclusaoLegal);
+      expect(erro.contains(reasonCodeSemConclusaoLegal), isFalse);
+      expect(erro.toLowerCase(), isNot(contains('canônic')));
+      expect(erro.toLowerCase(), isNot(contains('estado')));
+      // nenhuma carta da mão é revelada na mensagem
+      for (final c in ['7c', '8c', '9c', 'orfa']) {
+        expect(erro.contains(c), isFalse);
+      }
+
+      // O código, por sua vez, chega inteiro pela autoridade.
+      final proj = paraCanonico(_jgEncBecoSemSaida());
+      final r = aplicarComAutoridade(_jgEncBecoSemSaida(), 0, [
+        Baixar(jogosNovos: [
+          ['7c', '8c', '9c']
+        ])
+      ]);
+      expect(r.recusaCanonica, isTrue);
+      expect(r.codigo, reasonCodeSemConclusaoLegal);
+      // e é recusa de REGRA, não falha técnica (não vira telemetria de erro)
+      expect(r.falhaTecnica, isFalse);
+      expect(r.evidencia, isNull);
+      expect(proj.canonico.vez, 0);
+    });
+
     test('ENC-14 o gerador único NUNCA oferece uma ação que leve a beco', () {
       // Paridade estrutural: o que o gerador oferece é exatamente o que a
       // autoridade aceita — e nada do que ele oferece leva a estado morto.
