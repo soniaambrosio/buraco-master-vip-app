@@ -8,6 +8,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'screens/resultado_partida_screen.dart';
+// Orientação da Mesa (Vertical / Horizontal / Automática) — adendo de produto.
+// Contrato + serviço de persistência + widgets reaproveitáveis já preparados na
+// branch. A Mesa canônica apenas LIGA esses componentes; nada de RotatedBox.
+import 'screens/mesa_orientation_contract.dart';
+import 'screens/mesa_orientation_widgets.dart';
+import 'services/mesa_orientation_service.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -1310,6 +1316,13 @@ class _MesaScreenState extends State<MesaScreen> {
   int _turnSeconds = 45;
   int _clockSeat = 0;
 
+  // Preferência de orientação da Mesa. Começa com o valor já em memória do
+  // serviço (Vertical por padrão) e é reconfirmada do disco no initState.
+  // Trocar esta preferência é PURAMENTE visual: não recria _j, timers, conexão
+  // nem estado — o State de _MesaScreenState (dono do motor) permanece o mesmo.
+  MesaOrientacaoPreferida _orientacaoPref =
+      MesaOrientationService.instance.atual;
+
   final Map<int, EstadoAmizade> _amizades = <int, EstadoAmizade>{
     1: EstadoAmizade.disponivel,
     2: EstadoAmizade.amigos,
@@ -1363,6 +1376,14 @@ class _MesaScreenState extends State<MesaScreen> {
       // A mesa continua funcional mesmo quando o dispositivo não oferece áudio.
     }
     _startTurnClock();
+    // A Mesa abre já na preferência salva. carregar() é idempotente e devolve o
+    // valor persistido (ou Vertical, default). Só faz setState se mudou, para
+    // não provocar reconstrução desnecessária no primeiro frame.
+    MesaOrientationService.instance.carregar().then((pref) {
+      if (mounted && pref != _orientacaoPref) {
+        setState(() => _orientacaoPref = pref);
+      }
+    });
     // §3.2: o 1º jogador é SORTEADO — se caiu num robô, os robôs abrem a rodada.
     if (_j.vez != 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1734,6 +1755,22 @@ class _MesaScreenState extends State<MesaScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A troca de orientação acontece ABAIXO da camada de estado: o guard aplica
+    // a preferência (e restaura portrait ao sair da Mesa) e o builder apenas
+    // escolhe qual composição desenhar. _MesaScreenState — dono de _j, timers e
+    // scrolls — NÃO é recriado, então girar não reinicia partida, timer,
+    // conexão, chat, mão, aposta ou sala. É puramente apresentação.
+    return MesaOrientationGuard(
+      preferencia: _orientacaoPref,
+      builder: (context, efetiva) =>
+          efetiva == MesaOrientacaoEfetiva.horizontal
+              ? _buildMesaHorizontal()
+              : _buildMesaVertical(),
+    );
+  }
+
+  // Composição VERTICAL — layout aprovado, preservado exatamente como estava.
+  Widget _buildMesaVertical() {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -1745,6 +1782,63 @@ class _MesaScreenState extends State<MesaScreen> {
         ),
       ),
     );
+  }
+
+  // Menu da própria Mesa: troca imediata de orientação, sem sair da partida.
+  // Reaproveita o MesaOrientacaoSelector (mesmo componente das Configurações).
+  void _abrirMenuOrientacao() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF150E07),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.screen_rotation_rounded,
+                        color: _mGoldHi, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Orientação da mesa',
+                      style: TextStyle(
+                        color: Color(0xFFF6E2A6),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                MesaOrientacaoSelector(
+                  valor: _orientacaoPref,
+                  onChanged: (pref) {
+                    Navigator.of(sheetContext).pop();
+                    _aplicarOrientacao(pref);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _aplicarOrientacao(MesaOrientacaoPreferida pref) {
+    if (pref == _orientacaoPref) return;
+    // Só troca a preferência de apresentação — o motor/estado não é tocado.
+    setState(() => _orientacaoPref = pref);
+    // Persiste local (mesma chave das Configurações). Não bloqueia a UI.
+    MesaOrientationService.instance.salvar(pref);
   }
 
   Widget _header() {
@@ -1910,6 +2004,142 @@ class _MesaScreenState extends State<MesaScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ===================== COMPOSIÇÃO HORIZONTAL (PAISAGEM) =====================
+  // Layout próprio da MESMA Mesa canônica — não é RotatedBox nem rotação de 90°
+  // da árvore vertical. Reaproveita todos os blocos (cabeçalho, jogos, miolo,
+  // dock/mão, assentos, trilho social e overlays) e apenas os redispõe para
+  // usar a largura extra: as duas duplas ganham colunas de jogos lado a lado, o
+  // miolo (monte/lixo/mortos) fica centralizado e a mão ocupa toda a base.
+  // Mesmo estado/motor/controllers da vertical — girar não reinicia nada.
+  Widget _buildMesaHorizontal() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _header(),
+            Expanded(child: _boardHorizontal()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _boardHorizontal() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Base da mão: alta o bastante para não cortar a carta. O restante da
+        // altura vai para as faixas de jogos, que já rolam sozinhas (o
+        // _meldArea usa SingleChildScrollView) quando o espaço aperta.
+        final double dockHeight =
+            min(180.0, max(162.0, constraints.maxHeight * 0.46));
+        // Em paisagem a carta da mão pode encolher levemente para caber no dock
+        // sem perder legibilidade (largura de 66 preservada; altura mínima 84).
+        final double handCardHeight =
+            (dockHeight - 78).clamp(84.0, 100.0).toDouble();
+        // Miolo central: largura para monte + lixo + 2 mortos sem apertar.
+        final double centerWidth =
+            (constraints.maxWidth * 0.40).clamp(300.0, 380.0).toDouble();
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFFE6A1), Color(0xFF6A4415), Color(0xFFE0B45D)],
+            ),
+            borderRadius:
+                const BorderRadius.vertical(bottom: Radius.circular(12)),
+          ),
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: _feltColor,
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(10)),
+              border: Border.all(color: const Color(0xFF15100A), width: 1.5),
+            ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _mesaVip
+                        ? const _VipFeltPainter()
+                        : const _PublicFeltPainter(),
+                  ),
+                ),
+                // Faixa de jogo (acima do dock): ELES | miolo | NÓS lado a lado.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  bottom: dockHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 2, 18, 2),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: _meldArea('eles', top: true)),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          width: centerWidth,
+                          child: Center(
+                            child: SingleChildScrollView(
+                              child: _centralTray(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(child: _meldArea('nos', top: false)),
+                      ],
+                    ),
+                  ),
+                ),
+                // Assentos nas laterais (mesma semântica da vertical): a aba fica
+                // colada à borda e o avatar abre no turno ou por toque.
+                Positioned(left: 1, top: 8, child: _sidePlayer(1, left: true)),
+                Positioned(
+                    right: 1, top: 8, child: _sidePlayer(3, left: false)),
+                Positioned(
+                  left: 1,
+                  bottom: dockHeight + 8,
+                  child: _sidePlayer(2, left: true),
+                ),
+                // Trilho social + som + orientação, borda direita acima do dock.
+                Positioned(
+                  right: 4,
+                  bottom: dockHeight + 8,
+                  child: _actionRail(),
+                ),
+                // Mão do jogador: base inteira, aproveitando a largura da paisagem.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: dockHeight,
+                  child: _playerDock(handCardHeight: handCardHeight),
+                ),
+                if (_msg != null)
+                  Positioned(
+                    left: 74,
+                    right: 74,
+                    bottom: dockHeight + 5,
+                    child: _feedbackToast(),
+                  ),
+                if (_j.rodadaEncerrada)
+                  Positioned.fill(child: _overlayFimRodada()),
+                if (_expandedAvatarSeat != null)
+                  Positioned.fill(
+                    child: _avatarOverlay(_expandedAvatarSeat!),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2830,6 +3060,9 @@ class _MesaScreenState extends State<MesaScreen> {
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
         ),
+        const SizedBox(height: 7),
+        // Troca de orientação Vertical / Horizontal / Automática pela Mesa.
+        _railButton(Icons.screen_rotation_rounded, _abrirMenuOrientacao),
       ],
     );
   }
@@ -2854,7 +3087,7 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
-  Widget _playerDock() {
+  Widget _playerDock({double handCardHeight = 100}) {
     final active = _j.vez == 0 && !_j.rodadaEncerrada;
     return Column(
       children: [
@@ -2885,19 +3118,20 @@ class _MesaScreenState extends State<MesaScreen> {
             ],
           ),
         ),
-        Expanded(child: _hand()),
+        Expanded(child: _hand(cardHeight: handCardHeight)),
       ],
     );
   }
 
-  Widget _hand() {
+  Widget _hand({double cardHeight = 100}) {
     final hand = _j.maos[0];
     final count = hand.length;
     if (count == 0) return const SizedBox();
 
     // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
+    // Em paisagem o cardHeight pode ser levemente reduzido pela camada superior
+    // para caber no dock, sem perder legibilidade (largura da carta é mantida).
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
     // Sobreposição compacta e AUTOMÁTICA conforme a quantidade: trecho visível
     // de cada carta entre 32% (poucas cartas) e 25% (muitas) da largura, sem
     // reduzir a carta. A última carta continua inteira (Stack) e a mão mantém

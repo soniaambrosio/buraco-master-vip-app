@@ -113,8 +113,12 @@ jobs:
           echo "assets da tela configurar_mesa copiados: $N arquivos"
           if [ "$N" -lt 8 ]; then echo "ERRO: esperava 8 assets de configurar_mesa, veio $N"; exit 1; fi
 
-      - name: Add Firebase + Google Sign-In + Audio deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
+      - name: Add Firebase + Google Sign-In + Audio + Prefs deps
+        # shared_preferences é usado por configuracoes_service.dart e
+        # mesa_orientation_service.dart (persistência local das preferências,
+        # incluindo a Orientação da mesa). Sem declarar aqui, o `flutter create`
+        # não traz o pacote e o build/analyze quebra por import não resolvido.
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers shared_preferences
 
       - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
         # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco

@@ -23,6 +23,7 @@ import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
+import 'services/mesa_orientation_service.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
@@ -48,6 +49,20 @@ final GoogleSignIn _gsi = GoogleSignIn(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // App em RETRATO por padrão fora da Mesa. Só a Mesa de jogo libera paisagem,
+  // via MesaOrientationGuard, que restaura portraitUp ao sair. Assim as demais
+  // telas (Início, Perfil, Ranking, Loja, Onde jogar, Configurar...) não são
+  // obrigadas a acompanhar a rotação da partida.
+  await SystemChrome.setPreferredOrientations(
+    const [DeviceOrientation.portraitUp],
+  );
+  // Pré-carrega a preferência de orientação da Mesa para memória, para a Mesa
+  // já abrir na escolha salva. Falha de leitura não impede o app de subir.
+  try {
+    await MesaOrientationService.instance.carregar();
+  } catch (_) {
+    // Ambiente sem storage (ex.: web de teste) — segue com o default Vertical.
+  }
   // Blindado: no celular o Firebase sobe normal; no navegador (versão web de
   // teste), se a config de Android não inicializar, o jogo roda mesmo assim —
   // só o login Google fica indisponível, que não é necessário pra jogar/testar.
