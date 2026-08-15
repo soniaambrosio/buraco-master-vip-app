@@ -12,6 +12,12 @@
 # artefato de build, aparece assim que a suite roda na arvore de verdade.
 /app/build/
 
+# Recibos do portao de Release Candidate (`ferramentas/portao-rc`). Sao o
+# registro de UMA execucao numa maquina: versiona-los faria um PASS de terca
+# viajar para a arvore de quem clonasse na sexta, que e exatamente o "recibo
+# antigo lido como execucao atual" que o portao existe para impedir.
+/.portao-rc/
+
 # Log do emulador do Firestore.
 firestore-debug.log
 ui-debug.log
