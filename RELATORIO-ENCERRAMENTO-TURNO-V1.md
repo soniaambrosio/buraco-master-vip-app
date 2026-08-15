@@ -376,15 +376,34 @@ achados          = 0
 
 Zero estados mortos, zero turnos que não progrediram, zero falhas técnicas.
 
+Uma segunda varredura independente, escrita à parte e rodada em paralelo sobre
+as mesmas 120 partidas (mesmas sementes, mesmo robô determinístico), fecha o
+ponto que mais importa contra esta correção — *"recusar aberturas pode impedir a
+rodada de terminar"*:
+
+```
+turnos              = 6374
+rodadas encerradas  = 120 / 120
+achados             = 0
+```
+
+**As 120 rodadas terminaram de verdade**, por batida ou exaustão — nenhuma
+esbarrou no teto de turnos. As duas varreduras convergiram no mesmo número de
+turnos (6374), o que é esperado (robô determinístico, mesmas sementes) e serve
+de conferência cruzada entre duas implementações independentes.
+
 Duas ressalvas, para a evidência não valer mais do que vale:
 
 * é o regime **"início"** (baralho recém-distribuído), justamente aquele em que
   o beco quase não nasce porque o morto ainda está disponível. Serve como prova
   de **progresso e integridade sob jogo realista**, não como caça ao beco — essa
   continua sendo a tabela acima, no regime "dois mortos consumidos";
-* o overlay foi alterado durante a execução para o experimento de não-vacuidade;
-  o `flutter test` compila no início, então o binário exercitado é o do
-  lançamento (motor corrigido), mas a medição não foi repetida para confirmar.
+* o overlay foi alterado durante a execução para o experimento de não-vacuidade.
+  O `flutter test` compila no início, então o binário exercitado é o do
+  lançamento (motor corrigido). Isto ficou **confirmado**: a segunda varredura
+  teve o arquivo de origem editado no meio do voo (parâmetros reduzidos) e ainda
+  assim reportou os números dos parâmetros ORIGINAIS — prova de que a edição
+  posterior não entrou na execução.
 
 **Nenhum estado morto adicional permanece conhecido.**
 
