@@ -625,6 +625,29 @@
       ]
     }
   ],
-  "//fieldOverrides": "Vazio de proposito. As consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore. Declara-las aqui seria criar indice que o Firestore ja mantem. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",
-  "fieldOverrides": []
+  "//fieldOverrides": "ERA VAZIO DE PROPOSITO, e deixou de ser pela OS de Exclusao de Conta. O raciocinio original continua valendo e vale a pena preserva-lo: as consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore, e declara-las aqui seria criar indice que o Firestore ja mantem. O QUE MUDOU: a exclusao de conta precisa achar as referencias ao jogador excluido dentro das contas de OUTRAS pessoas, e essas consultas sao COLLECTION GROUP sobre subcolecao. O indice automatico de campo unico cobre o escopo de colecao; o de grupo de colecao NAO e garantido por ele, e uma consulta sem indice e recusada em producao — a exclusao falharia na etapa de moderacao, em producao, e so ali. As duas entradas abaixo existem para que isso nao aconteca. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",
+  "fieldOverrides": [
+    {
+      "//": "EXCLUSAO DE CONTA — os bloqueios que OUTROS jogadores fizeram contra quem esta saindo. `users/{outro}/blocks/{uidExcluido}`: o UID esta na CHAVE do documento, dentro da conta de terceiro, e nao ha como chegar la partindo do excluido sem varrer a base inteira de usuarios. `bloqueadoUid` e gravado redundantemente por `bloquearJogador` (functions-moderacao/src/index.ts) e e o campo que torna a consulta possivel. [origem: exclusao-de-conta]",
+      "collectionGroup": "blocks",
+      "fieldPath": "bloqueadoUid",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    },
+    {
+      "//": "EXCLUSAO DE CONTA — os silenciamentos que OUTROS configuraram contra quem esta saindo. Mesma geometria do bloqueio acima. `alvoUid` existe no documento porque a propria regra do Firestore exige que ele bata com o id do documento (`request.resource.data.alvoUid == alvoUid`), o que faz dele um campo confiavel mesmo sendo escrito pelo cliente. [origem: exclusao-de-conta]",
+      "collectionGroup": "mutes",
+      "fieldPath": "alvoUid",
+      "indexes": [
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        }
+      ]
+    }
+  ]
 }

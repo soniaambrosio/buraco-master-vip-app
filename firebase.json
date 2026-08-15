@@ -68,6 +68,16 @@
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
       "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "CONTA — resumirExclusaoDeConta, excluirMinhaConta. Origem: OS de Exclusao de Conta e Dados do Jogador v1.",
+      "//porque-codebase-proprio": "PELO MESMO CRITERIO DOS CINCO ACIMA, e aqui ele e mais forte, nao mais fraco. Este e o unico codebase que ESCREVE em colecoes de todos os outros dominios — apaga carteira de torneio, corta titular de compra, neutraliza linha de ranking, remove bloqueio de moderacao. Justamente por isso ele nao pode morar dentro de nenhum deles: hospeda-lo no social faria um deploy quebrado da exclusao derrubar a lista de amigos; hospeda-lo no billing faria o inverso. E, na direcao que mais importa, um erro AQUI nao pode impedir ninguem de jogar, comprar nem denunciar.",
+      "//sem-predeploy-de-dominio": "Torneios, moderacao e social compilam um dominio Dart antes do tsc porque a regra deles mora em Dart. A decisao deste codebase — o que se apaga, o que se anonimiza, o que se retem — nao e regra de jogo: e a matriz de retencao, e ela mora em functions-conta/src/inventario.ts, em TypeScript, ao lado do executor que a obedece. UMA excecao de leitura: `STATUS_INSCRICAO_ATIVA` em src/plano.ts espelha `StatusInscricao.ativo` do dominio Dart, e o espelho e conferido por teste contra o arquivo original em vez de compilado.",
+      "source": "functions-conta",
+      "codebase": "conta",
+      "runtime": "nodejs20",
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
 
