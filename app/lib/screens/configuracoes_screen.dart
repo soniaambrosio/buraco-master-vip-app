@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'mesa_orientation_contract.dart';
+import 'mesa_orientation_widgets.dart';
+import '../services/mesa_orientation_service.dart';
+
 enum MaoDominante { destro, canhoto }
 
 enum Idioma { ptBR }
@@ -279,6 +283,10 @@ class ConfiguracoesScreen extends StatelessWidget {
                                   config.copyWith(maoDominante: v),
                                 ),
                               ),
+                              // Orientação da Mesa (Vertical / Horizontal /
+                              // Automática). Persistida via MesaOrientationService
+                              // (a mesma preferência aplicada na próxima partida).
+                              const _OrientacaoMesaTile(),
                             ],
                           ),
                           _secao(
@@ -926,5 +934,96 @@ class ConfiguracoesScreen extends StatelessWidget {
       case Idioma.ptBR:
         return 'Português (Brasil)';
     }
+  }
+}
+
+/// Tile de Configurações → JOGO para a **Orientação da mesa**.
+///
+/// É autocontido de propósito: lê e persiste a preferência diretamente no
+/// [MesaOrientationService] (SharedPreferences), sem passar pelo modelo
+/// [Configuracoes]/callbacks, exatamente como pede o adendo — persistência
+/// local, default Vertical, aplicada na próxima abertura da Mesa. Visual
+/// alinhado ao restante da seção; nenhuma outra linha da tela é redesenhada.
+class _OrientacaoMesaTile extends StatefulWidget {
+  const _OrientacaoMesaTile();
+
+  @override
+  State<_OrientacaoMesaTile> createState() => _OrientacaoMesaTileState();
+}
+
+class _OrientacaoMesaTileState extends State<_OrientacaoMesaTile> {
+  static const _ouro = Color(0xFFEFB94A);
+  static const _texto = Color(0xFFEFE3CC);
+  static const _textoSec = Color(0xFFB6A884);
+
+  MesaOrientacaoPreferida _valor = MesaOrientationService.instance.atual;
+
+  @override
+  void initState() {
+    super.initState();
+    MesaOrientationService.instance.carregar().then((pref) {
+      if (mounted && pref != _valor) setState(() => _valor = pref);
+    });
+  }
+
+  Future<void> _selecionar(MesaOrientacaoPreferida pref) async {
+    if (pref == _valor) return;
+    setState(() => _valor = pref);
+    await MesaOrientationService.instance.salvar(pref);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _ouro.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _ouro.withValues(alpha: .24)),
+                ),
+                child: const Icon(Icons.screen_rotation_rounded,
+                    color: _ouro, size: 18),
+              ),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Orientação da mesa',
+                      style: TextStyle(
+                        color: _texto,
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Vertical, horizontal ou automática na mesa de jogo',
+                      style: TextStyle(
+                        color: _textoSec,
+                        fontSize: 10.4,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          MesaOrientacaoSelector(valor: _valor, onChanged: _selecionar),
+        ],
+      ),
+    );
   }
 }
