@@ -76,6 +76,23 @@ dependencies:
   # subiu para dependencia porque agora roda em producao.
   crypto: ^3.0.7
 
+  # --- Abertura de link externo ------------------------------------------------
+  # Existe por UMA razao, e ela e de conformidade: a Google Play Billing manda
+  # oferecer, dentro do aplicativo, um caminho para o jogador GERENCIAR a propria
+  # assinatura na loja. Isso e uma tela da Play Store, fora do aplicativo, e nao
+  # ha como abri-la sem sair do processo.
+  #
+  # A tela de exclusao de conta e onde isso mais importa: excluir a conta NAO
+  # cancela a cobranca recorrente, e mandar a pessoa "procurar na Play Store"
+  # depois de avisar que ela continuara pagando seria um aviso sem saida.
+  #
+  # `canLaunchUrl` NAO E USADO, e a ausencia e deliberada: no Android 11+ ele
+  # exige um bloco `<queries>` no AndroidManifest, e o manifesto deste projeto e
+  # gerado pelo `flutter create` do CI. `launchUrl` devolve `false` quando nao ha
+  # quem atenda, e `false` ja e a resposta que `gerenciar_assinatura.dart` trata
+  # — ver `AberturaDeLinkExterno`.
+  url_launcher: ^6.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

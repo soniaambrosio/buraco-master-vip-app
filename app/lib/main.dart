@@ -7,7 +7,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'billing/entitlement_repositorio.dart';
+import 'billing/gerenciar_assinatura.dart';
 import 'conta/controlador_exclusao.dart';
 import 'conta/fonte_exclusao_firebase.dart';
 import 'billing/estado_ui.dart';
@@ -842,10 +844,50 @@ class _ConfiguracoesPreviewHostState
     }
   }
 
+  /// A situação da assinatura de quem está logado, para a tela de exclusão.
+  ///
+  /// LEITURA ÚNICA, e não escuta: a tela de exclusão vive segundos, e uma
+  /// transição de assinatura no meio dela não muda nada do que a pessoa precisa
+  /// decidir. Quem precisa de `snapshots()` é a loja, que fica aberta.
+  ///
+  /// TODO CAMINHO DE DÚVIDA CAI EM "NENHUMA": sem sessão, sem documento, com
+  /// erro de leitura. É o mesmo fail-closed de `EntitlementVip.ausente` — não
+  /// oferecer um botão custa menos do que prometer uma assinatura que não
+  /// existe.
+  Future<AssinaturaParaGerenciar> _lerAssinaturaParaExcluir() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return AssinaturaParaGerenciar.nenhuma;
+      final entitlement = await EntitlementRepositorio().ler(uid);
+      return AssinaturaParaGerenciar.doEntitlement(
+        entitlement,
+        DateTime.now().toUtc(),
+      );
+    } catch (_) {
+      return AssinaturaParaGerenciar.nenhuma;
+    }
+  }
+
+  /// Abre a Play Store fora do aplicativo.
+  ///
+  /// `externalApplication` é obrigatório aqui: o padrão do `url_launcher` no
+  /// Android é a aba interna do navegador, e um endereço `play.google.com`
+  /// aberto numa aba interna mostra a página web da loja em vez de entregar a
+  /// intent ao aplicativo da Play Store — que é onde a assinatura se gerencia.
+  ///
+  /// `canLaunchUrl` NÃO é consultado: no Android 11+ ele exigiria um bloco
+  /// `<queries>` no manifesto, que é gerado pelo CI. `launchUrl` já devolve
+  /// `false` quando ninguém atende, e `false` é tratado pelo controlador.
+  Future<bool> _abrirLinkExterno(Uri destino) {
+    return launchUrl(destino, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _abrirExclusaoDeConta() async {
     final controlador = ControladorDeExclusao(
       fonte: FonteDeExclusaoFirebase(),
       reautenticar: _reautenticarParaExcluir,
+      lerAssinatura: _lerAssinaturaParaExcluir,
+      abrirLinkExterno: _abrirLinkExterno,
       encerrarSessao: () async {
         // Blindado, como o logout comum. E a ordem é a mesma dele: Firebase
         // primeiro, Google depois.

@@ -21,9 +21,17 @@
 // 3. O BOTÃO SÓ ACENDE COM A PALAVRA DIGITADA. É o portão contra o toque
 //    acidental — o único dos três que a tela participa. Os outros dois
 //    (autenticação e reautenticação) são do servidor, e a tela nem os vê.
+//
+// 4. O AVISO DA ASSINATURA TEM SAÍDA. Dizer "a cobrança continua" e parar aí
+//    deixa a pessoa informada e sem porta. `_gerenciarAssinatura` abre a tela
+//    da Google Play, e só aparece para quem tem o que gerenciar — para quem
+//    nunca assinou, o botão seria uma assinatura inventada na tela em que menos
+//    se pode inventar. Gerenciar a assinatura NÃO é etapa da exclusão: não
+//    confirma, não executa e não é exigido para prosseguir.
 
 import 'package:flutter/material.dart';
 
+import '../billing/gerenciar_assinatura.dart';
 import '../conta/controlador_exclusao.dart';
 import '../conta/exclusao_de_conta.dart';
 
@@ -228,7 +236,7 @@ class _ExcluirContaScreenState extends State<ExcluirContaScreen> {
       key: const Key('exclusao-aviso'),
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
       children: [
-        _alerta(),
+        _alerta(c),
         const SizedBox(height: 14),
         _grupo(
           chave: 'apagado',
@@ -269,7 +277,7 @@ class _ExcluirContaScreenState extends State<ExcluirContaScreen> {
     );
   }
 
-  Widget _alerta() {
+  Widget _alerta(ControladorDeExclusao c) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -312,9 +320,104 @@ class _ExcluirContaScreenState extends State<ExcluirContaScreen> {
                 ),
               ),
             ),
+          _gerenciarAssinatura(c),
         ],
       ),
     );
+  }
+
+  /// A SAIDA do primeiro aviso.
+  ///
+  /// O aviso acima diz "a cobranca continua". Sem este bloco, ele seria um
+  /// alerta sem porta: a pessoa saberia que vai continuar pagando e nao teria
+  /// para onde ir — e o unico caminho restante seria procurar a assinatura na
+  /// Play Store por conta propria, depois de ja ter excluido a conta.
+  ///
+  /// SO APARECE QUANDO HA O QUE GERENCIAR. Para quem nunca assinou, o botao
+  /// seria estado enganoso: sugeriria uma assinatura que nao existe, na tela em
+  /// que a pessoa menos precisa de duvida nova. Ver [SituacaoDaAssinatura], que
+  /// separa "tem VIP agora" de "a Google ainda cobra".
+  Widget _gerenciarAssinatura(ControladorDeExclusao c) {
+    final assinatura = c.assinatura;
+    if (!assinatura.ofereceGerenciamento) return const SizedBox.shrink();
+
+    return Padding(
+      key: const Key('exclusao-assinatura'),
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _textoDaAssinatura(assinatura),
+            style: const TextStyle(
+              color: Color(0xFFE8C9C9),
+              fontSize: 11.8,
+              height: 1.35,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const Key('exclusao-botao-gerenciar-assinatura'),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: _perigoClaro),
+              padding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+            // NAO CONFIRMA NADA E NAO EXCLUI NADA. O retorno e ignorado de
+            // proposito: o que ele diz ja esta em `falhouAoAbrirAssinatura`, e
+            // `notifyListeners` redesenha esta arvore com o recado abaixo.
+            onPressed: () {
+              c.abrirGerenciamentoDaAssinatura();
+            },
+            icon: const Icon(
+              Icons.open_in_new_rounded,
+              color: _perigoClaro,
+              size: 17,
+            ),
+            label: const Text(
+              'Gerenciar assinatura na Google Play',
+              style: TextStyle(
+                color: _perigoClaro,
+                fontSize: 12.2,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          // A FALHA E UM RECADO, E NAO UM ESTADO DE ERRO. Nada da exclusao
+          // falhou: o fluxo continua exatamente onde estava, com a palavra que
+          // ja tinha sido digitada, e o botao de excluir intacto logo abaixo.
+          if (c.falhouAoAbrirAssinatura)
+            const Padding(
+              key: Key('exclusao-assinatura-falhou'),
+              padding: EdgeInsets.only(top: 7),
+              child: Text(
+                'Não foi possível abrir a Google Play. Abra a Play Store e '
+                'procure em "Pagamentos e assinaturas".',
+                style: TextStyle(
+                  color: Color(0xFFE8C9C9),
+                  fontSize: 11,
+                  height: 1.3,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// O texto muda com a situacao porque as duas frases sao verdadeiras em
+  /// momentos diferentes, e dizer a errada e o tipo de erro que aparece na
+  /// fatura.
+  static String _textoDaAssinatura(AssinaturaParaGerenciar a) {
+    if (a.situacao == SituacaoDaAssinatura.vigente) {
+      return a.renovacaoAutomatica
+          ? 'Você tem uma assinatura VIP ativa com renovação automática. Ela '
+              'continuará sendo cobrada até você cancelá-la na Google Play.'
+          : 'Você tem uma assinatura VIP ativa. A renovação automática já está '
+              'desligada; confira na Google Play.';
+    }
+    return 'A Google Play ainda tem uma assinatura registrada para esta conta. '
+        'Confira lá se ela continua sendo cobrada.';
   }
 
   Widget _grupo({

@@ -36,10 +36,27 @@
 // primeira, fazendo a tela encerrar a sessão enquanto a outra ainda corre.
 // [_emVoo] existe para que o segundo toque simplesmente não faça nada.
 
+// ---------------------------------------------------------------------------
+// A ASSINATURA VIVE FORA DESTE FLUXO, E CONTINUA VIVENDO DEPOIS DELE
+// ---------------------------------------------------------------------------
+//
+// Excluir a conta nao cancela a cobranca na Google Play. Esse aviso ja existia;
+// o que este arquivo acrescenta e a SAIDA — [abrirGerenciamentoDaAssinatura].
+//
+// Tres propriedades dela sao o ponto, e as tres estao provadas na suite:
+//
+//   1. NAO EXECUTA EXCLUSAO. Nao toca em `_execucoes`, nao chama a fonte, e nao
+//      passa por nenhum dos portoes. Abrir a loja e um desvio, nao um passo.
+//   2. NAO MUDA [fase]. A pessoa volta da Play Store e encontra a tela como
+//      deixou, com a palavra que ja tinha digitado.
+//   3. FALHAR NAO TRAVA NADA. Play Store ausente, link recusado, excecao do
+//      canal — os tres dao no mesmo: um recado, e o fluxo intacto.
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../billing/gerenciar_assinatura.dart';
 import 'exclusao_de_conta.dart';
 import 'fonte_exclusao.dart';
 
@@ -87,13 +104,19 @@ class ControladorDeExclusao extends ChangeNotifier {
     required FonteDeExclusaoDeConta fonte,
     required ReautenticarJogador reautenticar,
     required EncerrarSessao encerrarSessao,
+    required LeituraDaAssinatura lerAssinatura,
+    required AberturaDeLinkExterno abrirLinkExterno,
   }) : _fonte = fonte,
        _reautenticar = reautenticar,
-       _encerrarSessao = encerrarSessao;
+       _encerrarSessao = encerrarSessao,
+       _lerAssinatura = lerAssinatura,
+       _abrirLinkExterno = abrirLinkExterno;
 
   final FonteDeExclusaoDeConta _fonte;
   final ReautenticarJogador _reautenticar;
   final EncerrarSessao _encerrarSessao;
+  final LeituraDaAssinatura _lerAssinatura;
+  final AberturaDeLinkExterno _abrirLinkExterno;
 
   FaseDaExclusao _fase = FaseDaExclusao.inicial;
   ResumoDaExclusao? _resumo;
@@ -104,6 +127,30 @@ class ControladorDeExclusao extends ChangeNotifier {
   FaseDaExclusao get fase => _fase;
   ResumoDaExclusao? get resumo => _resumo;
   FalhaExclusao? get falha => _falha;
+
+  /// O que a Google Play tem desta pessoa.
+  ///
+  /// COMECA EM [AssinaturaParaGerenciar.nenhuma], e nao em `null`, porque a
+  /// ausencia de resposta e uma resposta: enquanto nao se sabe, nao se oferece
+  /// gerenciamento. Um `null` obrigaria toda a tela a decidir de novo o que
+  /// fazer com "ainda nao sei", e alguma dessas decisoes acabaria sendo
+  /// "mostra o botao".
+  AssinaturaParaGerenciar get assinatura => _assinatura;
+  AssinaturaParaGerenciar _assinatura = AssinaturaParaGerenciar.nenhuma;
+
+  /// A ultima tentativa de abrir a Play Store falhou?
+  ///
+  /// Existe para a tela dizer "nao consegui abrir a Play Store" em vez de nao
+  /// dizer nada. NAO e [FalhaExclusao]: nada da exclusao falhou, e mistura-las
+  /// faria a tela de erro do fluxo aparecer por causa de um link.
+  bool get falhouAoAbrirAssinatura => _falhouAoAbrirAssinatura;
+  bool _falhouAoAbrirAssinatura = false;
+
+  /// Quantas vezes a Play Store foi aberta daqui. Existe para o teste do
+  /// "gerenciar nao exclui" poder afirmar os DOIS numeros ao mesmo tempo:
+  /// aberturas 1, execucoes 0.
+  int get aberturasDeAssinatura => _aberturas;
+  int _aberturas = 0;
 
   /// Quantas execuções saíram daqui. Existe para o teste do duplo toque poder
   /// afirmar um NÚMERO — "não houve duas chamadas" sem contar não prova nada.
@@ -146,7 +193,15 @@ class ControladorDeExclusao extends ChangeNotifier {
 
   Future<void> _carregar() async {
     try {
+      // AS DUAS LEITURAS SAO DISPARADAS JUNTAS, e so uma delas pode derrubar o
+      // aviso. `_lerAssinaturaBlindada` engole o proprio erro e devolve
+      // "nenhuma": uma consulta de entitlement que falhou nao pode impedir o
+      // jogador de ver o que acontece com os dados dele. O custo de errar para
+      // este lado e nao mostrar um botao; o custo de errar para o outro seria
+      // uma tela de exclusao que nao carrega por causa do billing.
+      final leituraDaAssinatura = _lerAssinaturaBlindada();
       final resumo = await _fonte.resumir();
+      _assinatura = await leituraDaAssinatura;
       if (_descartado) return;
       _resumo = resumo;
       // A RECUSA DO SERVIDOR VENCE. Uma tela que mostrasse o botão mesmo com
@@ -298,6 +353,59 @@ class ControladorDeExclusao extends ChangeNotifier {
     if (_descartado) return;
     _falha = null;
     _fase = FaseDaExclusao.concluida;
+  }
+
+  // -------------------------------------------------------------------------
+  // ASSINATURA
+  // -------------------------------------------------------------------------
+
+  /// Le a situacao da assinatura sem nunca lancar.
+  ///
+  /// Toda duvida vira [AssinaturaParaGerenciar.nenhuma] — o mesmo padrao
+  /// fail-closed de `EntitlementVip.ausente`: quem nao sabe nao promete.
+  Future<AssinaturaParaGerenciar> _lerAssinaturaBlindada() async {
+    try {
+      return await _lerAssinatura();
+    } catch (_) {
+      return AssinaturaParaGerenciar.nenhuma;
+    }
+  }
+
+  /// Abre a tela de assinaturas da Google Play. `true` se alguem atendeu.
+  ///
+  /// NAO CANCELA A ASSINATURA e NAO EXCLUI A CONTA. Este metodo abre um
+  /// endereco, e e tudo o que ele faz — quem cancela e a pessoa, na loja, e quem
+  /// exclui e [confirmar], atras dos tres portoes.
+  ///
+  /// NAO ESPERA A VEZ NA FILA `_emVoo`, e essa e a decisao menos obvia daqui. A
+  /// trava serve para nao abrir duas chamadas de rede da exclusao; abrir a Play
+  /// Store nao e uma delas, e barrar o botao enquanto o aviso carrega deixaria
+  /// sem saida justamente quem abriu a tela para resolver a cobranca.
+  ///
+  /// TAMBEM NAO MEXE EM [fase]. Sair para a loja e voltar tem de encontrar a
+  /// tela como estava; empurrar o fluxo para um estado de "abrindo" faria a
+  /// pessoa perder a palavra que ja tinha digitado.
+  Future<bool> abrirGerenciamentoDaAssinatura() async {
+    if (_descartado) return false;
+
+    _aberturas++;
+    final destino = linkDeGerenciamentoDeAssinatura(
+      produtoId: _assinatura.produtoId,
+    );
+
+    bool abriu;
+    try {
+      abriu = await _abrirLinkExterno(destino);
+    } catch (_) {
+      // Canal de plataforma indisponivel, Activity ausente, aparelho sem loja.
+      // Os tres dao no mesmo para quem esta olhando a tela: nao abriu.
+      abriu = false;
+    }
+    if (_descartado) return false;
+
+    _falhouAoAbrirAssinatura = !abriu;
+    notifyListeners();
+    return abriu;
   }
 
   /// Volta do estado de falha para o aviso, para tentar de novo.

@@ -24,6 +24,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:buraco_master_vip/billing/gerenciar_assinatura.dart';
 import 'package:buraco_master_vip/conta/controlador_exclusao.dart';
 import 'package:buraco_master_vip/conta/exclusao_de_conta.dart';
 import 'package:buraco_master_vip/conta/fonte_exclusao.dart';
@@ -127,14 +128,27 @@ void main() {
   late int reautenticacoes;
   late bool reautenticacaoAceita;
 
+  /// Os endereços que o controlador mandou abrir, em ordem. Lista, e não
+  /// contador: o teste do deep link precisa afirmar PARA ONDE se foi, e não só
+  /// que se foi.
+  late List<Uri> linksAbertos;
+  late bool aberturaDeLinkAceita;
+
   setUp(() {
     fonte = FonteRoteirizada();
     encerramentos = 0;
     reautenticacoes = 0;
     reautenticacaoAceita = true;
+    linksAbertos = <Uri>[];
+    aberturaDeLinkAceita = true;
   });
 
-  ControladorDeExclusao criar({FonteRoteirizada? comFonte}) {
+  ControladorDeExclusao criar({
+    FonteRoteirizada? comFonte,
+    AssinaturaParaGerenciar assinatura = AssinaturaParaGerenciar.nenhuma,
+    Object? erroAoLerAssinatura,
+    Object? erroAoAbrirLink,
+  }) {
     final c = ControladorDeExclusao(
       fonte: comFonte ?? fonte,
       reautenticar: () async {
@@ -143,6 +157,15 @@ void main() {
       },
       encerrarSessao: () async {
         encerramentos++;
+      },
+      lerAssinatura: () async {
+        if (erroAoLerAssinatura != null) throw erroAoLerAssinatura;
+        return assinatura;
+      },
+      abrirLinkExterno: (destino) async {
+        linksAbertos.add(destino);
+        if (erroAoAbrirLink != null) throw erroAoAbrirLink;
+        return aberturaDeLinkAceita;
       },
     );
     addTearDown(c.dispose);
@@ -322,6 +345,8 @@ void main() {
         fonte: fonte,
         reautenticar: () async => throw StateError('provedor caiu'),
         encerrarSessao: () async => encerramentos++,
+        lerAssinatura: () async => AssinaturaParaGerenciar.nenhuma,
+        abrirLinkExterno: (_) async => true,
       );
       addTearDown(c.dispose);
       fonte.respostas = [
@@ -480,6 +505,8 @@ void main() {
         fonte: fonte,
         reautenticar: () async => true,
         encerrarSessao: () async => throw StateError('signOut falhou'),
+        lerAssinatura: () async => AssinaturaParaGerenciar.nenhuma,
+        abrirLinkExterno: (_) async => true,
       );
       addTearDown(c.dispose);
 
@@ -664,6 +691,238 @@ void main() {
 
       fonte.travaDoExcluir!.complete();
       await tester.pumpAndSettle();
+    });
+  });
+
+  // =========================================================================
+  // A ASSINATURA DA GOOGLE PLAY
+  //
+  // OS de Conformidade de Exclusão de Conta, §7.
+  //
+  // O que este grupo existe para impedir, em uma frase: que a saída oferecida
+  // para o problema da cobrança vire, por descuido, mais um caminho para
+  // excluir a conta. Toda afirmação abaixo sobre "gerenciar" vem acompanhada da
+  // afirmação de que NADA foi excluído — porque é a combinação das duas que
+  // prova o ponto, e não cada uma sozinha.
+  // =========================================================================
+  group('gerenciar a assinatura', () {
+    AssinaturaParaGerenciar vip({
+      bool renovacaoAutomatica = true,
+      String? produtoId = 'master_vip_mensal',
+    }) {
+      return AssinaturaParaGerenciar(
+        situacao: SituacaoDaAssinatura.vigente,
+        produtoId: produtoId,
+        renovacaoAutomatica: renovacaoAutomatica,
+      );
+    }
+
+    test('o assinante ativo tem o caminho para a Play', () async {
+      final c = criar(assinatura: vip());
+      await c.carregarAviso();
+
+      expect(c.assinatura.situacao, SituacaoDaAssinatura.vigente);
+      expect(c.assinatura.ofereceGerenciamento, isTrue);
+    });
+
+    test('quem nunca assinou não recebe estado enganoso', () async {
+      // Sem assinatura, o controlador não oferece gerenciamento nenhum — e a
+      // tela, por consequência, não desenha um botão que sugeriria uma
+      // assinatura inexistente.
+      final c = criar();
+      await c.carregarAviso();
+
+      expect(c.assinatura.situacao, SituacaoDaAssinatura.nenhuma);
+      expect(c.assinatura.ofereceGerenciamento, isFalse);
+      expect(c.assinatura.produtoId, isNull);
+    });
+
+    test('falha ao LER a assinatura não impede o aviso, e não inventa VIP', () async {
+      // O billing cair não pode trancar a porta de saída da conta.
+      final c = criar(erroAoLerAssinatura: StateError('firestore fora do ar'));
+      await c.carregarAviso();
+
+      expect(c.fase, FaseDaExclusao.aguardandoConfirmacao);
+      expect(c.assinatura.ofereceGerenciamento, isFalse);
+    });
+
+    test('abrir a Play NÃO executa exclusão', () async {
+      final c = criar(assinatura: vip());
+      await c.carregarAviso();
+
+      final abriu = await c.abrirGerenciamentoDaAssinatura();
+
+      expect(abriu, isTrue);
+      expect(c.aberturasDeAssinatura, 1);
+      // Os três números que provam que nada da exclusão aconteceu.
+      expect(c.execucoesEmitidas, 0);
+      expect(fonte.chamadasExcluir, 0);
+      expect(encerramentos, 0);
+      // E a fase não se mexeu: quem volta da loja encontra a tela como deixou.
+      expect(c.fase, FaseDaExclusao.aguardandoConfirmacao);
+    });
+
+    test('falha ao ABRIR a Play não executa exclusão e não trava o fluxo', () async {
+      aberturaDeLinkAceita = false;
+      final c = criar(assinatura: vip());
+      await c.carregarAviso();
+
+      final abriu = await c.abrirGerenciamentoDaAssinatura();
+
+      expect(abriu, isFalse);
+      expect(c.falhouAoAbrirAssinatura, isTrue);
+      expect(c.execucoesEmitidas, 0);
+      expect(fonte.chamadasExcluir, 0);
+      // O FLUXO CONTINUA INTEIRO: a exclusão ainda é possível depois da falha.
+      expect(c.fase, FaseDaExclusao.aguardandoConfirmacao);
+      await c.confirmar('EXCLUIR');
+      expect(fonte.chamadasExcluir, 1);
+    });
+
+    test('exceção do canal de plataforma vira "não abriu", e não crash', () async {
+      final c = criar(
+        assinatura: vip(),
+        erroAoAbrirLink: StateError('MissingPluginException'),
+      );
+      await c.carregarAviso();
+
+      expect(await c.abrirGerenciamentoDaAssinatura(), isFalse);
+      expect(c.falhouAoAbrirAssinatura, isTrue);
+      expect(c.execucoesEmitidas, 0);
+    });
+
+    test('com produto conhecido, vai para o deep link do produto', () async {
+      final c = criar(assinatura: vip(produtoId: 'master_vip_mensal'));
+      await c.carregarAviso();
+      await c.abrirGerenciamentoDaAssinatura();
+
+      expect(linksAbertos, hasLength(1));
+      final destino = linksAbertos.single;
+      expect(destino.host, 'play.google.com');
+      expect(destino.queryParameters['sku'], 'master_vip_mensal');
+      expect(destino.queryParameters['package'], kPacotePlayOficial);
+    });
+
+    test('sem produto confiável, vai para a central geral', () async {
+      final c = criar(assinatura: vip(produtoId: null));
+      await c.carregarAviso();
+      await c.abrirGerenciamentoDaAssinatura();
+
+      expect(linksAbertos.single.toString(), kCentralDeAssinaturasPlay);
+    });
+
+    test('a exclusão NÃO depende de cancelar a assinatura', () async {
+      // O ponto da OS: ter assinatura viva não é impedimento. Ninguém precisa
+      // tocar em "gerenciar" para poder sair.
+      final c = criar(assinatura: vip());
+      await c.carregarAviso();
+
+      expect(c.fase, FaseDaExclusao.aguardandoConfirmacao);
+      await c.confirmar('EXCLUIR');
+
+      expect(fonte.chamadasExcluir, 1);
+      expect(c.fase, FaseDaExclusao.concluida);
+      // E nada foi cancelado por baixo do pano: a Play nem foi aberta.
+      expect(c.aberturasDeAssinatura, 0);
+      expect(linksAbertos, isEmpty);
+    });
+
+    testWidgets('a tela mostra a ação ao assinante, e tocar nela não exclui',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2340);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+
+      final c = criar(assinatura: vip());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ExcluirContaScreen(
+            controlador: c,
+            onVoltar: () {},
+            onConcluida: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final botao = find.byKey(
+        const Key('exclusao-botao-gerenciar-assinatura'),
+      );
+      expect(botao, findsOneWidget);
+      expect(find.textContaining('renovação automática'), findsOneWidget);
+
+      await tester.tap(botao);
+      await tester.pumpAndSettle();
+
+      expect(c.aberturasDeAssinatura, 1);
+      // O QUE MAIS IMPORTA NESTE TESTE: o toque abriu a loja e não moveu a
+      // exclusão um milímetro.
+      expect(fonte.chamadasExcluir, 0);
+      expect(encerramentos, 0);
+      expect(find.byKey(const Key('exclusao-concluida')), findsNothing);
+      // E o portão da palavra continua fechado: o botão de excluir segue
+      // desabilitado, porque ninguém digitou nada.
+      final excluir = find.byKey(const Key('exclusao-botao-confirmar'));
+      await tester.scrollUntilVisible(excluir, 300);
+      expect(tester.widget<FilledButton>(excluir).onPressed, isNull);
+    });
+
+    testWidgets('a tela NÃO mostra a ação a quem não tem assinatura',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2340);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+
+      final c = criar();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ExcluirContaScreen(
+            controlador: c,
+            onVoltar: () {},
+            onConcluida: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('exclusao-assinatura')), findsNothing);
+      // O aviso de texto, esse, continua para TODO MUNDO: quem tem assinatura
+      // e não sabe também precisa lê-lo.
+      expect(find.textContaining('NÃO é cancelada'), findsOneWidget);
+    });
+
+    testWidgets('quando a Play não abre, a tela diz — e a exclusão segue viável',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2340);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+
+      aberturaDeLinkAceita = false;
+      final c = criar(assinatura: vip());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ExcluirContaScreen(
+            controlador: c,
+            onVoltar: () {},
+            onConcluida: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const Key('exclusao-botao-gerenciar-assinatura')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('exclusao-assinatura-falhou')),
+        findsOneWidget,
+      );
+      // NÃO virou a tela de erro do fluxo: nada da exclusão falhou.
+      expect(find.byKey(const Key('exclusao-falhou')), findsNothing);
+      expect(find.byKey(const Key('exclusao-aviso')), findsOneWidget);
+      expect(fonte.chamadasExcluir, 0);
     });
   });
 }
