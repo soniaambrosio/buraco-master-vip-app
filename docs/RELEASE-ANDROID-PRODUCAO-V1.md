@@ -11,6 +11,14 @@ merge ou deploy.
 > que segue íntegro. Onde os dois divergem, é porque a auditoria original foi
 > feita sobre uma base mais antiga — a §1 explica exatamente qual e por quê.
 
+> **⚠️ Estado atualizado depois desta OS.** O bloqueio #1 da §17.1 — as 46 artes
+> de `assets/loja/` — foi **fechado** em
+> [CORRECAO-ASSETS-LOJA-V1.md](CORRECAO-ASSETS-LOJA-V1.md). A arte existia: fora
+> entregue pelo Codex e nunca commitada. As 46 estão no repositório, declaradas
+> no `pubspec` e dentro do AAB, e o portão de assets passa. As §7.1, §9 e §17.1
+> abaixo ficam como o registro do que era verdade quando esta OS rodou; o
+> veredito da §18 continua `REPROVADO`, agora só pelos mocks e pelos Secrets.
+
 ---
 
 ## 0. O que muda o enquadramento desta OS

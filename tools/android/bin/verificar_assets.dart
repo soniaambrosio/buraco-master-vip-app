@@ -53,8 +53,11 @@ void main(List<String> argumentos) {
   for (final f in lib.listSync(recursive: true).whereType<File>()) {
     if (!f.path.endsWith('.dart')) continue;
     final relativo = f.path.replaceAll('\\', '/');
-    for (final m in padrao.allMatches(f.readAsStringSync())) {
-      citados.putIfAbsent(m.group(0)!, () => <String>{}).add(relativo);
+    for (final linha in f.readAsLinesSync()) {
+      if (_ehComentario(linha)) continue;
+      for (final m in padrao.allMatches(linha)) {
+        citados.putIfAbsent(m.group(0)!, () => <String>{}).add(relativo);
+      }
     }
   }
 
@@ -155,6 +158,23 @@ void main(List<String> argumentos) {
     stdout.writeln('  - $f');
   }
   exit(1);
+}
+
+/// Linha que é só comentário — `//`, `///` ou corpo de bloco `/* ... */`.
+///
+/// A varredura pula essas linhas porque comentário não carrega asset: o
+/// caminho citado ali é prosa, e o build nunca vai buscá-lo. Sem isso, escrever
+/// "removida a tela que carregava assets/splash.jpg" num comentário faz o
+/// próprio portão reprovar o commit que corrigiu o problema.
+///
+/// O corte é por linha INTEIRA, e não por `//` em qualquer posição, de
+/// propósito: recortar a partir do primeiro `//` da linha destruiria qualquer
+/// URL dentro de string (`'https://...'`) e criaria um alarme falso pior que o
+/// que resolve. Referência de asset real nunca mora numa linha que começa com
+/// comentário.
+bool _ehComentario(String linha) {
+  final t = linha.trimLeft();
+  return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*');
 }
 
 /// Le as linhas do bloco `flutter: assets:` do pubspec.
