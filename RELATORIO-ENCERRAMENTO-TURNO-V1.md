@@ -361,6 +361,31 @@ A versão no portão (`ENC-15`) é a mesma varredura em escala reduzida
 (3 modalidades × 3 sementes × 18 passos), com piso de não-vacuidade nas ações
 aceitas. Custo do portão: **~8s → ~19s**.
 
+### Corroboração: partidas reais dirigidas pelo robô estratégico
+
+Varredura longa, rodada fora do portão (87 min), com o motor já corrigido:
+3 modalidades × 40 sementes × até 120 turnos, dirigida pelo **robô estratégico
+real** (`botJoga`) e com enumeração **exaustiva** de candidatos em cada estado
+visitado.
+
+```
+turnos jogados   = 6374
+estados varridos = 6374
+achados          = 0
+```
+
+Zero estados mortos, zero turnos que não progrediram, zero falhas técnicas.
+
+Duas ressalvas, para a evidência não valer mais do que vale:
+
+* é o regime **"início"** (baralho recém-distribuído), justamente aquele em que
+  o beco quase não nasce porque o morto ainda está disponível. Serve como prova
+  de **progresso e integridade sob jogo realista**, não como caça ao beco — essa
+  continua sendo a tabela acima, no regime "dois mortos consumidos";
+* o overlay foi alterado durante a execução para o experimento de não-vacuidade;
+  o `flutter test` compila no início, então o binário exercitado é o do
+  lançamento (motor corrigido), mas a medição não foi repetida para confirmar.
+
 **Nenhum estado morto adicional permanece conhecido.**
 
 ---
