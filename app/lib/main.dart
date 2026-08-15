@@ -7,6 +7,11 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'billing/entitlement_repositorio.dart';
+import 'billing/estado_ui.dart';
+import 'billing/plano_vip.dart';
+import 'billing/servico_billing.dart';
+import 'elegibilidade/entitlement.dart';
 import 'pages/perfil_page.dart';
 import 'pages/torneios_preview_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
@@ -20,6 +25,7 @@ import 'screens/saguao_screen.dart';
 import 'screens/configuracoes_screen.dart';
 import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
+import 'screens/loja_vip_adaptador.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
@@ -836,6 +842,24 @@ class _ComoJogarPreviewHost extends StatelessWidget {
 
 
 // ===================== LOJA VIP (host) =====================
+//
+// O QUE ESTAVA AQUI, E POR QUE SAIU
+//
+// `onAssinar` fazia `setState(() => _ehVip = true)` depois de 550 ms, e a tela
+// passava a mostrar "Você é VIP 👑". Era placeholder de maquete — o proprio
+// texto dizia "billing entra com o Claude" — mas era tambem, ao pe da letra, o
+// primeiro criterio de reprovacao da OS: VIP concedido por decisao local, sem
+// nenhum servidor envolvido.
+//
+// Agora o selo VIP tem uma fonte so: `playerEntitlements/{uid}`, escrito
+// exclusivamente pelo backend depois de conferir a compra com a Google Play
+// Developer API. O host apenas OBSERVA esse documento. Nao existe caminho, neste
+// arquivo, que ligue o VIP sem o servidor ter ligado antes.
+//
+// Os planos exibidos vem do que a Play Store devolveu, com o preco que ELA
+// formatou. Enquanto o catalogo estiver vazio — que e o estado de hoje, ate a
+// Play Console liberar a area de produtos — a lista sai vazia e a grade de
+// planos simplesmente nao aparece.
 class _LojaPreviewHost extends StatefulWidget {
   const _LojaPreviewHost();
 
@@ -844,7 +868,99 @@ class _LojaPreviewHost extends StatefulWidget {
 }
 
 class _LojaPreviewHostState extends State<_LojaPreviewHost> {
-  bool _ehVip = false;
+  final ServicoBilling _billing = ServicoBilling();
+  final EntitlementRepositorio _entitlements = EntitlementRepositorio();
+
+  StreamSubscription<PainelBilling>? _escutaPainel;
+  StreamSubscription<EntitlementVip>? _escutaEntitlement;
+
+  PainelBilling _painel = const PainelBilling();
+  List<PlanoVipDisponivel> _planos = const <PlanoVipDisponivel>[];
+
+  /// Vem do entitlement do backend. Nunca de uma resposta da Play Store.
+  bool get _ehVip => _painel.mostrarComoVip(DateTime.now().toUtc());
+
+  @override
+  void initState() {
+    super.initState();
+    _escutaPainel = _billing.painel.listen((p) {
+      if (!mounted) return;
+      setState(() {
+        _painel = p;
+        _planos = planosVipDe(_billing.assinaturas);
+      });
+    });
+
+    // A escuta do entitlement e por jogador, e so faz sentido com sessao. Sem
+    // uid o documento nem existe, e o padrao (`ausente`) ja e "sem VIP".
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      _escutaEntitlement = _entitlements.observar(uid).listen(
+        _billing.atualizarEntitlement,
+        // Uma falha de leitura NAO pode acender nem apagar VIP por conta
+        // propria: o estado anterior continua valendo ate o backend responder.
+        onError: (Object _) {},
+      );
+    }
+
+    _billing.iniciar();
+  }
+
+  @override
+  void dispose() {
+    _escutaPainel?.cancel();
+    _escutaEntitlement?.cancel();
+    _billing.encerrar();
+    super.dispose();
+  }
+
+  /// Abre o fluxo de compra do plano-base escolhido.
+  ///
+  /// O `offerToken` e o que faz a Play cobrar o plano CERTO: sem ele, ela usaria
+  /// a oferta padrao do produto, e o jogador que escolheu "Anual" poderia acabar
+  /// assinando o mensal.
+  Future<void> _assinar(String basePlanId) async {
+    PlanoVipDisponivel? escolhido;
+    for (final p in _planos) {
+      if (p.basePlanId == basePlanId) escolhido = p;
+    }
+    if (escolhido == null) {
+      _aviso('Este plano não está disponível agora.');
+      return;
+    }
+    await _billing.comprar(
+      escolhido.produto,
+      ofertaPlanoBase: escolhido.ofertaToken,
+    );
+  }
+
+  /// Texto honesto para cada situacao do fluxo.
+  ///
+  /// `aguardandoRevalidacao` merece o cuidado maior: e o caso em que o jogador
+  /// PAGOU e o servidor ainda nao confirmou. Dizer "erro" faria parecer que o
+  /// dinheiro sumiu; dizer "pronto" seria mentira.
+  String? get _avisoDoEstado {
+    switch (_painel.compra) {
+      case EstadoCompra.aguardandoValidacao:
+        return 'Confirmando sua assinatura com o servidor…';
+      case EstadoCompra.aguardandoRevalidacao:
+        return 'Sua compra foi registrada e será confirmada em instantes. '
+            'Não é preciso comprar de novo.';
+      case EstadoCompra.validada:
+        return 'Assinatura confirmada. Liberando seu VIP…';
+      case EstadoCompra.recusada:
+        return 'Não foi possível validar esta compra.';
+      case EstadoCompra.pendente:
+        return 'Pagamento pendente de aprovação.';
+      case EstadoCompra.cancelada:
+        return 'Compra cancelada.';
+      case EstadoCompra.erroDaPlay:
+        return 'A Play Store não conseguiu concluir a compra.';
+      case EstadoCompra.emAndamento:
+      case EstadoCompra.ociosa:
+        return null;
+    }
+  }
 
   void _aviso(String texto) {
     ScaffoldMessenger.of(context)
@@ -872,8 +988,16 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
 
   @override
   Widget build(BuildContext context) {
+    // A maquete continua fornecendo cosmeticos, pacotes e amigos — nada disso
+    // tem fonte real ainda. O VIP e os planos sao substituidos pelo que o
+    // backend e a Play Store dizem.
+    final vm = LojaVM.mock().copiarCom(
+      ehVip: _ehVip,
+      planos: planosParaLoja(_planos),
+    );
+
     return LojaScreen(
-      vm: LojaVM.mock(ehVip: _ehVip),
+      vm: vm,
       onVoltar: () => Navigator.of(context).maybePop(),
       onNav: (destino) {
         switch (destino) {
@@ -891,11 +1015,13 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
         }
       },
       onComprarMoedas: () => _aviso('Pacotes de moedas'),
-      onAssinar: (planoId) {
-        _aviso('Plano $planoId selecionado — billing entra com o Claude');
-        Future<void>.delayed(const Duration(milliseconds: 550), () {
-          if (mounted) setState(() => _ehVip = true);
-        });
+      // NENHUM `_ehVip = true` aqui, e essa ausencia e o ponto. Este callback
+      // so ABRE o fluxo da Play; o selo VIP acende quando o backend gravar o
+      // entitlement e o `snapshots()` trouxer a mudanca.
+      onAssinar: (basePlanId) {
+        _assinar(basePlanId);
+        final texto = _avisoDoEstado;
+        if (texto != null) _aviso(texto);
       },
       onComprarPacote: (pacoteId) => _aviso('Revisando pacote $pacoteId'),
       onConfirmarCompra: (itemId) =>

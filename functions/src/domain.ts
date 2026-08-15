@@ -22,6 +22,7 @@ require("../lib/domain_bundle.js");
 type PonteJs = (entrada: string) => string;
 
 interface PonteTorneios {
+  comporElegibilidade: PonteJs;
   avaliarElegibilidade: PonteJs;
   inscrever: PonteJs;
   avaliarTransicao: PonteJs;
@@ -150,7 +151,30 @@ export interface ResultadoConvites {
 // API
 // ---------------------------------------------------------------------------
 
+export interface PerfilElegibilidade {
+  userId: string;
+  nivel: number | null;
+  posicaoRanking: number | null;
+  assinaturaAtiva: boolean;
+  convitesAtivos: string[];
+  conquistas: string[];
+  participacoes: string[];
+  titulos: string[];
+  temporadasAtivas: string[];
+  suspenso: boolean;
+}
+
 export const dominio = {
+  /// Monta o retrato de elegibilidade a partir dos documentos das FONTES REAIS
+  /// (`playerModeration/{uid}` e `playerEntitlements/{uid}`).
+  ///
+  /// Esta camada le os documentos; quem decide o que eles significam — se a
+  /// suspensao ainda vale, se o VIP ainda esta no prazo — e o dominio Dart, pelo
+  /// mesmo motivo de sempre: uma segunda implementacao aqui divergiria da
+  /// primeira, e a divergencia seria justamente em quem entra e quem nao entra.
+  comporElegibilidade: (e: unknown) =>
+    chamar<PerfilElegibilidade>(ponte.comporElegibilidade, e),
+
   avaliarElegibilidade: (e: unknown) =>
     chamar<{ elegivel: boolean; falhas: FalhaElegibilidade[] }>(ponte.avaliarElegibilidade, e),
 
