@@ -17,7 +17,13 @@ import 'motor/projecao_estado.dart' show paraCanonico;
 // C10 (rev.1) — derivação combinatória FORA do isolate de UI.
 import 'motor/derivacao_fora_do_frame.dart';
 import 'rules/acoes.dart';
+import 'rules/estado.dart' show EstadoJogo;
 import 'rules/rule_spec.dart';
+// OS BOT-IA V1 — camada ESTRATÉGICA do robô. Ela observa, gera alternativas,
+// pontua e escolhe uma INTENÇÃO; quem valida e aplica continua sendo a
+// autoridade canônica, pelas mesmas entradas do humano. Ver `lib/bot/`.
+import 'bot/executor_bot.dart';
+import 'bot/pesos.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -193,6 +199,23 @@ class Jogo {
   /// precisa reagir a uma falha NOVA compara este contador antes e depois. É o
   /// que torna o fail-closed do robô verificável em vez de heurístico.
   int falhasTecnicas = 0;
+
+  /// OS BOT-IA V1 — configuração da camada estratégica do robô (pesos +
+  /// restrições + semente). Trocá-la muda a PREFERÊNCIA do bot e nada mais: a
+  /// legalidade continua sendo decidida pela autoridade canônica. Existe para o
+  /// relatório de NÃO-VACUIDADE — desligar uma regra por vez e ver o teste
+  /// correspondente cair.
+  ConfiguracaoBot configuracaoBot = ConfiguracaoBot.v1;
+
+  /// OS BOT-IA V1 — rastro AUDITÁVEL da última decisão estratégica: candidatos
+  /// considerados, features, score e o reasonCode que venceu (§8).
+  Map<String, dynamic>? ultimaDecisaoBot;
+
+  /// OS BOT-IA V1 — IMPASSES estratégicos registrados nesta partida. Hoje só um
+  /// caso chega aqui: a mão em que TODA carta legalmente descartável é curinga,
+  /// contra a política do §2. Fica registrado de propósito — a OS proíbe criar
+  /// exceção silenciosa, e este campo é o que torna o caso visível.
+  final List<Map<String, dynamic>> impassesEstrategicos = [];
 
   Jogo(this.apelidos, this.avatares, this.mascotes,
       {int? seed, this.motorConfig = const MotorConfig()})
@@ -1559,78 +1582,15 @@ class Jogo {
     return finais.any(_canastraLiberaBatida);
   }
 
-  // C10 — COMPRA do robô sob AUTORIDADE ÚNICA. A separação é explícita:
-  //   • a HEURÍSTICA escolhe a INTENÇÃO (vale a pena o lixo?) e, quando há mais
-  //     de um uso legal do topo, escolhe QUAL — decidir é papel do agente;
-  //   • a LEGALIDADE e a APLICAÇÃO são sempre do canônico: o robô só escolhe
-  //     DENTRO da lista que a autoridade derivou, e a compra é a mesma transação
-  //     atômica do humano.
-  // No Fechado/STBL a existência de candidato JÁ é a legalidade e a utilidade
-  // (todo candidato põe o topo na mesa); no Aberto a compra é livre, então a
-  // heurística decide sozinha se compensa.
-  void _botCompra(int assento, int marca) {
-    if (specCanonica.exigeUsoDoTopoNoLixo) {
-      final cands = candidatosCompraLixo(assento);
-      if (cands.isNotEmpty) {
-        final r = comprarLixoAtomico(assento, _botEscolheCompraLixo(cands));
-        // C10 (rev.1) FAIL-CLOSED: falha técnica no lixo NÃO vira compra do
-        // monte. O motor quebrou; a segunda transação está proibida.
-        if (_botFalhouTecnicamente(marca)) return;
-        if (r['ok'] == true) return;
-      }
-    } else if (_botDeveComprarLixo(assento)) {
-      final r = comprarLixo(assento, modalidade: modalidade);
-      if (_botFalhouTecnicamente(marca)) return;
-      if (r['ok'] == true) return;
-    }
-    comprarMonte(assento);
-  }
-
-  /// C10 (rev.1) — ABERTURA COMPOSTA do robô. Quando a dupla está vulnerável e
-  /// ainda não abriu, o mínimo pode depender da SOMA dos jogos: baixar um por
-  /// vez seria recusado em cada tentativa isolada, e o robô nunca abriria.
-  ///
-  /// A heurística propõe os grupos (`_agruparMao`); a transação é UMA só
-  /// (`baixarAtomico`), e a legalidade continua sendo do canônico — inclusive o
-  /// mínimo. Tenta do conjunto MAIOR para o menor e para no primeiro aceito:
-  /// abrir com o mínimo satisfeito é o objetivo, não baixar tudo.
-  void _botAbrir(int assento, int marca) {
-    final dupla = _duplaKey(assento);
-    if (primeiraBaixadaFeita[dupla] ?? false) return;
-    if (minimoParaDescer(dupla) <= 0) return; // sem mínimo: o fluxo normal basta
-    final grupos = _agruparMao(maos[assento], false)['jogos'] as List<List<Carta>>;
-    if (grupos.length < 2) return; // 1 grupo não é abertura composta
-    for (var n = grupos.length; n >= 2; n--) {
-      final jogos = [
-        for (final g in grupos.take(n)) [for (final c in g) c.id]
-      ];
-      final restante =
-          maos[assento].length - jogos.fold<int>(0, (s, j) => s + j.length);
-      if (restante < 1) continue; // não zerar a mão pela abertura
-      final r = baixarAtomico(assento, jogosNovos: jogos, rotulo: 'baixar');
-      if (_botFalhouTecnicamente(marca)) return;
-      if (r['ok'] == true) return;
-    }
-  }
-
-  /// Escolha do robô entre candidatos JÁ LEGAIS: prefere a transação que põe
-  /// mais cartas na mesa. Empate resolve pela ordem determinística da própria
-  /// derivação — mesa igual, escolha igual.
-  ComprarLixo _botEscolheCompraLixo(List<ComprarLixo> cands) {
-    int usadas(ComprarLixo c) =>
-        c.jogosNovos.fold<int>(0, (s, j) => s + j.length) +
-        c.extensoes.fold<int>(0, (s, e) => s + e.cartas.length);
-    var melhor = cands.first;
-    var melhorN = usadas(melhor);
-    for (final c in cands.skip(1)) {
-      final n = usadas(c);
-      if (n > melhorN) {
-        melhor = c;
-        melhorN = n;
-      }
-    }
-    return melhor;
-  }
+  // OS BOT-IA V1 — a COMPRA, a ABERTURA COMPOSTA e a escolha entre candidatos
+  // de lixo saíram daqui. Eram três decisões gulosas independentes
+  // (`_botCompra`, `_botAbrir`, `_botEscolheCompraLixo`), cada uma parando no
+  // primeiro resultado legal. Agora são alternativas PONTUADAS pela camada
+  // estratégica (`lib/bot/`), comparadas pelo estado final do turno.
+  //
+  // O que NÃO mudou, e não pode mudar: a legalidade e a aplicação seguem sendo
+  // do canônico, e o robô só escolhe DENTRO dos candidatos que a autoridade
+  // derivou (`candidatosCompraLixo`).
 
   /// C10 — INVARIANTE do robô sob autoridade única: mão vazia com a rodada
   /// aberta e a vez ainda no assento é IMPOSSÍVEL (qualquer ação que zeraria a
@@ -1718,39 +1678,174 @@ class Jogo {
     return rodadaEncerrada || vez != vezAntes;
   }
 
-  // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
-  // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
+  /// OS BOT-IA V1 — PROJEÇÃO só-leitura para a camada estratégica.
+  ///
+  /// Usa `paraCanonico` diretamente (o mesmo caminho de `candidatosCompraLixo`),
+  /// e NÃO o projetor injetável da autoridade: quem exercita falha técnica de
+  /// projeção exercita a APLICAÇÃO, que é onde ela importa. Ainda assim vem
+  /// protegida — se projetar quebrar, isso é falha TÉCNICA e o robô para.
+  EstadoJogo? _projetarParaBot(String metodo) {
+    try {
+      return paraCanonico(this).canonico;
+    } catch (e) {
+      falhasTecnicas++;
+      ultimaFalhaTecnica = {
+        'metodo': metodo,
+        'motivo': 'projeção para a camada estratégica falhou: $e',
+        'evidencia': {'erro': '$e'},
+      };
+      return null;
+    }
+  }
+
+  /// OS BOT-IA V1 — registra o rastro da decisão e, se houver, o IMPASSE.
+  /// O impasse NUNCA é silencioso: fica no `Jogo`, observável e testável.
+  void _registrarDecisaoBot(DecisaoBot d) {
+    ultimaDecisaoBot = d.toJson();
+    if (d.impasse) {
+      impassesEstrategicos.add({
+        'razao': d.razao,
+        'diagnostico': d.diagnosticoImpasse,
+        'rodada': rodada,
+      });
+    }
+  }
+
+  // ROBÔ — sob AUTORIDADE CANÔNICA o turno é decidido pela camada estratégica
+  // (`lib/bot/`): observa por uma visão mascarada, gera PLANOS COMPLETOS de
+  // turno, pontua e escolhe UMA intenção. Sob rollback legado continua valendo
+  // o robô guloso de sempre (`_botJogaLegado`), que é o que o rollback existe
+  // para preservar.
   void botJoga(int assento) {
     if (integridadeErro != null) return; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento) return;
     // C10 (rev.1) — marca de FAIL-CLOSED: qualquer falha técnica daqui em diante
     // encerra o turno do robô na hora, sem segunda transação.
     final marca = falhasTecnicas;
+    if (motorConfig.canonicoAtivo) {
+      _botJogaEstrategico(assento, marca);
+      return;
+    }
+    _botJogaLegado(assento, marca);
+  }
+
+  /// OS BOT-IA V1 — turno do robô sob a autoridade canônica.
+  ///
+  /// Estrutura: COMPRA decidida na visão pública (sem simular carta que ainda
+  /// não é conhecida), depois um laço de JOGO que aplica o plano vencedor e
+  /// REAVALIA do zero sempre que a mão troca — que é o caso do morto (§6/§11).
+  ///
+  /// O fail-closed do C10 continua inteiro: a primeira falha TÉCNICA encerra o
+  /// turno sem segunda transação, e nada aqui muta estado por fora do motor.
+  void _botJogaEstrategico(int assento, int marca) {
+    final executor = ExecutorBot(specCanonica, cfg: configuracaoBot);
+
+    // ---------- 1) COMPRA ----------
     if (!jaComprou) {
-      if (motorConfig.canonicoAtivo) {
-        _botCompra(assento, marca);
-      } else {
-        // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
-        // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
-        // o robô passa a modalidade e obedece à MESMA trava dos humanos.
-        if (_botDeveComprarLixo(assento) &&
-            comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
-          // pegou o lixo
-        } else {
+      final estado = _projetarParaBot('botJoga:compra');
+      if (estado == null) return;
+      final cands = specCanonica.exigeUsoDoTopoNoLixo
+          ? candidatosCompraLixo(assento)
+          : const <ComprarLixo>[];
+      final d = executor.decidirCompra(estado, assento, candidatosLixo: cands);
+      _registrarDecisaoBot(d);
+      final escolha = d.acoes.isEmpty ? const ComprarMonte() : d.acoes.first;
+      if (escolha is ComprarLixo) {
+        final r = (escolha.jogosNovos.isEmpty && escolha.extensoes.isEmpty)
+            ? comprarLixo(assento, modalidade: modalidade)
+            : comprarLixoAtomico(assento, escolha);
+        // C10 (rev.1) FAIL-CLOSED: falha técnica no lixo NÃO vira compra do
+        // monte. O motor quebrou; a segunda transação está proibida.
+        if (_botFalhouTecnicamente(marca)) return;
+        if (r['ok'] != true) {
+          // Recusa de REGRA: a intenção morreu, mas comprar é obrigatório para
+          // o turno existir. O monte é a outra alternativa legal, não um atalho.
           comprarMonte(assento);
+          if (_botFalhouTecnicamente(marca)) return;
         }
+      } else {
+        comprarMonte(assento);
+        if (_botFalhouTecnicamente(marca)) return;
+      }
+    }
+    if (rodadaEncerrada) return;
+
+    // ---------- 2) JOGO ----------
+    // O laço só dá outra volta quando a MÃO TROCA (morto pego) ou quando a
+    // autoridade recusa a intenção por regra — nos dois casos o certo é
+    // reavaliar, não insistir. O teto existe para o turno não girar.
+    const maxVoltas = 8;
+    for (var volta = 0; volta < maxVoltas; volta++) {
+      if (rodadaEncerrada || vez != assento) return;
+      if (maos[assento].isEmpty) {
+        _botMaoVaziaSemSaida(assento);
+        return;
+      }
+      final estado = _projetarParaBot('botJoga:jogo');
+      if (estado == null) return;
+      final d = executor.decidirJogo(estado, assento);
+      _registrarDecisaoBot(d);
+      if (d.vazia) return; // §9 fail-safe: sem plano, o robô não inventa jogada
+      final dupla = _duplaKey(assento);
+      final plano = d.plano;
+
+      if (plano?.baixada != null) {
+        final b = plano!.baixada!;
+        final mortoAntes = mortoPego[dupla] ?? false;
+        final r = baixarAtomico(
+          assento,
+          jogosNovos: [for (final j in b.jogosNovos) [...j]],
+          extensoes: b.extensoes,
+          rotulo: b.jogosNovos.isEmpty ? 'estender' : 'baixar',
+        );
+        if (_botFalhouTecnicamente(marca)) return;
+        if (r['ok'] != true) continue; // recusa de REGRA: reavalia, não insiste
+        if (rodadaEncerrada) return;
+        // §11 — a mão trocou pelo morto: o plano anterior não vale mais.
+        if ((mortoPego[dupla] ?? false) != mortoAntes) continue;
+        if (maos[assento].isEmpty) {
+          _botMaoVaziaSemSaida(assento);
+          return;
+        }
+      }
+
+      final descarte = plano?.descarte ?? _primeiroDescarteDe(d);
+      if (descarte == null) return;
+      final erro = descartar(assento, descarte.carta);
+      if (_botFalhouTecnicamente(marca)) return;
+      if (erro == null) return; // descartou: o turno acabou
+      // Recusa de REGRA no descarte: reavalia com o estado atual em vez de
+      // varrer a mão às cegas (era assim que o robô antigo "encontrava" carta).
+    }
+  }
+
+  /// Primeiro `Descartar` das ações da decisão (defesa; o plano já traz o seu).
+  Descartar? _primeiroDescarteDe(DecisaoBot d) {
+    for (final a in d.acoes) {
+      if (a is Descartar) return a;
+    }
+    return null;
+  }
+
+  // ROBÔ LEGADO (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos
+  // possíveis, ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e
+  // descarta com critério. Alcançável SOMENTE por `MotorConfig.legadoRollback()`
+  // — é o robô que o rollback preserva, e por isso não recebeu a camada nova.
+  void _botJogaLegado(int assento, int marca) {
+    if (!jaComprou) {
+      // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
+      // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
+      // o robô passa a modalidade e obedece à MESMA trava dos humanos.
+      if (_botDeveComprarLixo(assento) &&
+          comprarLixo(assento, modalidade: modalidade)['ok'] == true) {
+        // pegou o lixo
+      } else {
+        comprarMonte(assento);
       }
     }
     if (_botFalhouTecnicamente(marca)) return; // fail-closed: nem tenta o resto
     if (rodadaEncerrada) return;
     final dupla = _duplaKey(assento);
-
-    // 1) ABERTURA. Vulnerável e ainda sem abrir, o mínimo pode depender da SOMA
-    // dos jogos — aí a abertura precisa ser COMPOSTA, numa transação só.
-    if (motorConfig.canonicoAtivo) {
-      _botAbrir(assento, marca);
-      if (_botFalhouTecnicamente(marca)) return;
-    }
 
     // 1b) baixa os jogos que dá (baixar() já respeita a trava/validade)
     final grupos = _agruparMao(maos[assento], false)['jogos'] as List<List<Carta>>;
