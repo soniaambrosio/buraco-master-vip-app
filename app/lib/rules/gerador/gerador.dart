@@ -40,26 +40,115 @@ import '../rule_spec.dart';
 import '../abertura/abertura.dart';
 import '../morto/morto.dart';
 
+/// reasonCode ESTÁVEL da recusa por ausência de conclusão legal do turno
+/// (§16 da OS de encerramento). Serve à observabilidade — distingue "ação
+/// genericamente inválida" e "regra de jogo violada" de "o estado resultante
+/// não teria como concluir o turno". NÃO expõe informação privada do jogo:
+/// é uma constante, sem carta, sem mão e sem assento.
+const String reasonCodeSemConclusaoLegal =
+    'acao_deixaria_turno_sem_conclusao_legal';
+
+/// Mensagem ao JOGADOR para essa recusa. Compreensível e sem internals — o
+/// cliente já trata `motivo` como texto de recusa, então não há UI nova.
+const String motivoSemConclusaoLegal =
+    'Essa jogada deixaria você sem uma forma válida de concluir o turno.';
+
 /// Resultado de aplicar (puro) uma ação pelo gerador único.
 class ResultadoJogada {
   final bool legal;
   final String? motivo;
   final EstadoJogo? proximoEstado; // preenchido só se legal (aplicar puro)
-  const ResultadoJogada({required this.legal, this.motivo, this.proximoEstado});
 
-  factory ResultadoJogada.recusa(String motivo) =>
-      ResultadoJogada(legal: false, motivo: motivo);
+  /// reasonCode ESTÁVEL da recusa (observabilidade), quando houver um. Recusas
+  /// genéricas de regra seguem só com `motivo` — o código existe para os casos
+  /// que precisam ser distinguidos por máquina, não por texto.
+  final String? codigo;
+
+  const ResultadoJogada({
+    required this.legal,
+    this.motivo,
+    this.proximoEstado,
+    this.codigo,
+  });
+
+  factory ResultadoJogada.recusa(String motivo, {String? codigo}) =>
+      ResultadoJogada(legal: false, motivo: motivo, codigo: codigo);
 }
 
 /// É a vez do assento e a rodada segue aberta? (as duas travas globais juntas)
 bool ehVezDe(EstadoJogo estado, int assento) =>
     !estado.rodadaEncerrada && assento == estado.vez;
 
+/// INVARIANTE DE ENCERRAMENTO LEGAL DO TURNO.
+///
+/// Um estado em que o turno segue ABERTO (rodada aberta e vez ainda no mesmo
+/// assento) precisa admitir ao menos UMA transição legal até um desfecho
+/// canônico: descarte válido, batida, tomada do morto, encerramento da
+/// mão/partida, ou passagem da vez. Um estado sem nenhuma delas é
+/// operacionalmente MORTO — a partida trava com a vez parada.
+///
+/// Isto GENERALIZA a regra do esvaziamento que já existia. "Esvaziar é regra"
+/// cobria só o caso mão == 0; o beco real acontece em mão == 1, quando a única
+/// carta não tem descarte legal (sem morto a pegar e sem canastra para bater).
+/// Os dois são o mesmo defeito: aceitar uma mutação sem verificar se o turno
+/// ainda pode terminar.
+///
+/// TERMINAÇÃO: a verificação avalia as continuações com o próprio invariante
+/// DESLIGADO (`_verificarConclusao: false`), portanto há exatamente UM nível —
+/// nunca recursão infinita. Um nível basta e é COMPLETO: toda continuação
+/// possível a partir de mão ≤ 1 esvazia a mão, e esvaziar já é decidido por
+/// `podeEsvaziarMao`/`avaliarBatida` sem depender deste invariante. Com mão ≥ 2
+/// algum descarte é sempre legal, então a questão nem se coloca.
+bool existeConclusaoLegalDoTurno(
+    EstadoJogo estado, int assento, RuleSpec spec) {
+  // Desfechos canônicos JÁ alcançados: a mão encerrou, ou a vez passou.
+  if (estado.rodadaEncerrada) return true;
+  if (estado.vez != assento) return true;
+
+  // Qualquer descarte legal conclui o turno.
+  for (final c in estado.maos[assento]) {
+    if (_aplicar(estado, assento, Descartar(c.id), spec, false).legal) {
+      return true;
+    }
+  }
+  // Mão vazia na fase de jogo: morto DIRETO/INDIRETO ou batida fecham o turno.
+  for (final a in const <Acao>[
+    PegarMorto(),
+    PegarMorto(viaDescarte: true),
+    Bater(),
+  ]) {
+    if (_aplicar(estado, assento, a, spec, false).legal) return true;
+  }
+  // Última carta que COMPLETA uma canastra por EXTENSÃO: aí esvaziar passa a
+  // ser legal e a batida fecha o turno. É jogada legítima — barrá-la seria
+  // quebrar o jogo em nome do invariante. (Meld NOVO precisa de 3 cartas, logo
+  // é impossível com uma só; por isso só extensões entram aqui.)
+  if (estado.maos[assento].length == 1) {
+    final dupla = assento % 2 == 0 ? 'nos' : 'eles';
+    final id = estado.maos[assento].single.id;
+    final melds = estado.jogosDupla[dupla] ?? const <List<CartaSnapshot>>[];
+    for (var k = 0; k < melds.length; k++) {
+      final ext = Baixar(extensoes: [
+        Extensao(k, [id])
+      ]);
+      if (_aplicar(estado, assento, ext, spec, false).legal) return true;
+    }
+  }
+  return false;
+}
+
 /// APLICA uma ação de forma ATÔMICA, passando pelas duas travas globais e
 /// roteando para o avaliador canônico. Nunca muta o estado recebido: em caso
 /// de recusa, `proximoEstado` é null; em caso de sucesso, é um novo estado.
 ResultadoJogada aplicarLegal(
-    EstadoJogo estado, int assento, Acao acao, RuleSpec spec) {
+        EstadoJogo estado, int assento, Acao acao, RuleSpec spec) =>
+    _aplicar(estado, assento, acao, spec, true);
+
+/// Implementação de `aplicarLegal`. `verificarConclusao` só é `false` na
+/// verificação do próprio invariante (ver `existeConclusaoLegalDoTurno`), para
+/// que a checagem tenha profundidade 1 e termine sempre.
+ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
+    RuleSpec spec, bool verificarConclusao) {
   // TRAVA 1 — fora da vez: nada é aplicado (checada ANTES de qualquer conteúdo).
   if (assento != estado.vez) {
     return ResultadoJogada.recusa(
@@ -112,11 +201,19 @@ ResultadoJogada aplicarLegal(
         topoDeclarado: acao.topoDeclarado,
         jogosNovos: acao.jogosNovos,
         extensoes: acao.extensoes);
-    return r.valido
-        ? ResultadoJogada(
-            legal: true,
-            proximoEstado: r.proximoEstado!.copyWith(fase: FaseTurno.jogo))
-        : ResultadoJogada.recusa(r.motivo ?? 'compra do lixo ilegal');
+    if (!r.valido) {
+      return ResultadoJogada.recusa(r.motivo ?? 'compra do lixo ilegal');
+    }
+    final prox = r.proximoEstado!.copyWith(fase: FaseTurno.jogo);
+    // §12 — o MESMO beco entra por este portão: a compra atômica consome a mão
+    // no uso do topo e pode deixar 1 carta órfã sem descarte legal. Mesma regra,
+    // mesma recusa, mesmo reasonCode.
+    if (verificarConclusao &&
+        !existeConclusaoLegalDoTurno(prox, assento, spec)) {
+      return ResultadoJogada.recusa(motivoSemConclusaoLegal,
+          codigo: reasonCodeSemConclusaoLegal);
+    }
+    return ResultadoJogada(legal: true, proximoEstado: prox);
   }
 
   if (acao is Baixar) {
@@ -133,6 +230,14 @@ ResultadoJogada aplicarLegal(
     if (prox.maos[assento].isEmpty && !podeEsvaziarMao(prox, assento, spec)) {
       return ResultadoJogada.recusa(
           'baixar zeraria a mão sem morto a pegar nem canastra para bater');
+    }
+    // CONCLUSÃO DO TURNO é REGRA (generaliza a linha acima): a baixada não pode
+    // deixar o jogador sem NENHUMA transição legal — tipicamente com 1 carta na
+    // mão que não tem descarte legal. Recusa ANTES de qualquer efeito.
+    if (verificarConclusao &&
+        !existeConclusaoLegalDoTurno(prox, assento, spec)) {
+      return ResultadoJogada.recusa(motivoSemConclusaoLegal,
+          codigo: reasonCodeSemConclusaoLegal);
     }
     return ResultadoJogada(legal: true, proximoEstado: prox);
   }

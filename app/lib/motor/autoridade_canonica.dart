@@ -58,6 +58,12 @@ class ResultadoAutoridade {
   final DesfechoAutoridade desfecho;
   final String? motivo;
 
+  /// reasonCode ESTÁVEL da recusa de REGRA, quando a regra define um (hoje só
+  /// `reasonCodeSemConclusaoLegal`). Observabilidade: permite distinguir por
+  /// máquina a recusa "o turno ficaria sem conclusão legal" de uma recusa
+  /// genérica, sem depender do texto do motivo. Nulo nos demais desfechos.
+  final String? codigo;
+
   /// Mortos convertidos em monte (§8.1) durante a jogada (paridade de envelope).
   final int conversoes;
 
@@ -71,6 +77,7 @@ class ResultadoAutoridade {
     this.motivo,
     this.conversoes = 0,
     this.evidencia,
+    this.codigo,
   });
 
   bool get aplicou => desfecho == DesfechoAutoridade.aplicou;
@@ -232,10 +239,15 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
     final r = avaliarComprarLixo(estado, assento, spec,
         topoDeclarado: topoId, jogosNovos: jogos, extensoes: exts);
     if (!r.valido) return;
-    if (vistos.add(_sigCompra(jogos, exts))) {
-      out.add(ComprarLixo(
-          topoDeclarado: topoId, jogosNovos: jogos, extensoes: exts));
-    }
+    final acao = ComprarLixo(
+        topoDeclarado: topoId, jogosNovos: jogos, extensoes: exts);
+    // O que é OFERECIDO tem de ser exatamente o que a autoridade ACEITA. Sem
+    // esta linha, uma compra que deixaria o turno sem conclusão legal seria
+    // enumerada aqui (o avaliador de compra não conhece o invariante) e só
+    // recusada no `aplicarLegal` — com 1 candidato o fluxo executa direto e o
+    // jogador levaria uma recusa por uma jogada que a própria mesa ofereceu.
+    if (!acaoEhLegal(estado, assento, acao, spec)) return;
+    if (vistos.add(_sigCompra(jogos, exts))) out.add(acao);
   }
 
   // ---- USOS DO TOPO (o topo aparece em exatamente uma unidade) ----
@@ -348,8 +360,11 @@ List<Baixar> derivarParticoesAbertura(
   void emitir() {
     d.transacoesValidadas++;
     final jogos = [for (final g in atual) List<CartaId>.from(g)];
-    final r = avaliarBaixar(estado, assento, Baixar(jogosNovos: jogos), spec);
-    if (r.valido) saida.add(Baixar(jogosNovos: jogos));
+    final acao = Baixar(jogosNovos: jogos);
+    // Mesma razão do derivador do lixo: o conjunto OFERECIDO ao jogador é o
+    // conjunto ACEITO pela autoridade. `avaliarBaixar` sozinho não conhece o
+    // invariante de conclusão do turno e ofereceria a partição que deixa beco.
+    if (acaoEhLegal(estado, assento, acao, spec)) saida.add(acao);
   }
 
   void rec(int usadas) {
@@ -423,7 +438,11 @@ class _RunCanonico {
   final String? motivo;
   final EstadoJogo estado;
   final int conversoes;
-  const _RunCanonico(this.recusou, this.motivo, this.estado, this.conversoes);
+
+  /// reasonCode da recusa de regra (repassado do gerador único).
+  final String? codigo;
+  const _RunCanonico(this.recusou, this.motivo, this.estado, this.conversoes,
+      {this.codigo});
 }
 
 /// Aplica a sequência canônica sobre o snapshot imutável `pre` e ESTABILIZA as
@@ -439,7 +458,9 @@ _RunCanonico _rodarEestabiliza(
     final vaiConverter =
         a is ComprarMonte && cur.monte.isEmpty && cur.mortos.isNotEmpty;
     final r = aplicarLegal(cur, assento, a, spec);
-    if (!r.legal) return _RunCanonico(true, r.motivo, cur, conversoes);
+    if (!r.legal) {
+      return _RunCanonico(true, r.motivo, cur, conversoes, codigo: r.codigo);
+    }
     if (vaiConverter) conversoes++;
     cur = r.proximoEstado!;
   }
@@ -550,7 +571,7 @@ ResultadoAutoridade aplicarComAutoridade(
   // (3) RECUSA CANÔNICA (decisão de REGRA) — alvo INTACTO, SEM fallback legado.
   if (run.recusou) {
     return ResultadoAutoridade(DesfechoAutoridade.recusaCanonica,
-        motivo: run.motivo);
+        motivo: run.motivo, codigo: run.codigo);
   }
 
   // (4) Envelope pós (paridade: mortosConvertidos += conversões §8.1).
