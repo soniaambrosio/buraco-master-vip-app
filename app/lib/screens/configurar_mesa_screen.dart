@@ -92,9 +92,20 @@ class ConfigMesaVM {
     required this.custoCriar,
   });
 
+  /// Dados de vitrine para preview e teste.
+  ///
+  /// [ehVip] NASCE `false`, e a mudanca nao e cosmetica: o padrao anterior era
+  /// `true`, e como o host de `main.dart` construia a VM sem passar o parametro,
+  /// toda mesa VIP/ranqueada ficava alcancavel por um booleano que nunca saiu de
+  /// dentro do aplicativo. Um mock e uma FONTE DE DADOS DE EXEMPLO; ele nao pode
+  /// ser fonte de autorizacao, e ausencia de informacao nao pode significar
+  /// direito. Quem precisa de VIP em teste declara `ehVip: true` explicitamente.
+  ///
+  /// Em producao o valor vem de `EscopoVip.de(context)`, que so responde `true`
+  /// com um `playerEntitlements/{uid}` vigente escrito pelo backend.
   factory ConfigMesaVM.mock({
     TipoMesa tipo = TipoMesa.privada,
-    bool ehVip = true,
+    bool ehVip = false,
   }) {
     const cadeiras = [
       CadeiraVM(

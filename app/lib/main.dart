@@ -7,6 +7,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'billing/acesso_vip.dart';
 import 'billing/entitlement_repositorio.dart';
 import 'billing/estado_ui.dart';
 import 'billing/plano_vip.dart';
@@ -34,6 +35,7 @@ import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
 import 'screens/onde_jogar_screen.dart';
 import 'widgets/convite_vip.dart';
+import 'widgets/escopo_vip.dart';
 import 'mesa.dart';
 
 // Paleta da casa
@@ -73,16 +75,70 @@ void main() async {
   runApp(const BuracoApp());
 }
 
-class BuracoApp extends StatelessWidget {
+/// A raiz do aplicativo, com o PORTAO VIP montado acima de tudo.
+///
+/// O escopo fica aqui, e nao dentro de cada tela, porque a pergunta "este
+/// jogador e VIP?" precisa ter UMA resposta por sessao. Enquanto cada host
+/// carregava o proprio booleano, a resposta dependia de qual tela se estava
+/// olhando — e uma delas respondia `true` por padrao de mock.
+class BuracoApp extends StatefulWidget {
   const BuracoApp({super.key});
+
+  @override
+  State<BuracoApp> createState() => _BuracoAppState();
+}
+
+class _BuracoAppState extends State<BuracoApp> {
+  late final PortaoVip _portao = PortaoVip(fonte: _observarEntitlement);
+
+  /// A identidade do jogador ao longo do tempo.
+  ///
+  /// `authStateChanges()` e nao `currentUser`: o segundo e uma fotografia do
+  /// instante da montagem, e quem trocasse de conta depois continuaria com o
+  /// retrato do jogador anterior. Cada emissao daqui reprograma o portao, que
+  /// descarta o direito antigo ANTES de ler o novo.
+  late final Stream<String?> _sessoes = _observarSessao();
+
+  static Stream<String?> _observarSessao() {
+    try {
+      return FirebaseAuth.instance.authStateChanges().map((u) => u?.uid);
+    } catch (_) {
+      // Ambiente sem Firebase (web de teste): sem identidade, sem direito.
+      return Stream<String?>.value(null);
+    }
+  }
+
+  /// A leitura autoritativa de `playerEntitlements/{uid}`.
+  ///
+  /// Uma falha ao sequer construir o repositorio vira erro no stream, e erro
+  /// BLOQUEIA — nao existe caminho em que a indisponibilidade do Firestore
+  /// conceda VIP.
+  static Stream<EntitlementVip> _observarEntitlement(String uid) {
+    try {
+      return EntitlementRepositorio().observar(uid);
+    } catch (e, s) {
+      return Stream<EntitlementVip>.error(e, s);
+    }
+  }
+
+  @override
+  void dispose() {
+    _portao.encerrar();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Buraco Master VIP',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-      home: const SplashOficialScreen(
-        proximaTela: _InicioPreviewHost(),
+    return EscopoVip(
+      portao: _portao,
+      sessoes: _sessoes,
+      child: MaterialApp(
+        title: 'Buraco Master VIP',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
+        home: const SplashOficialScreen(
+          proximaTela: _InicioPreviewHost(),
+        ),
       ),
     );
   }
@@ -399,8 +455,19 @@ class _SaguaoPreviewHost extends StatefulWidget {
   State<_SaguaoPreviewHost> createState() => _SaguaoPreviewHostState();
 }
 
+// O SALAO VIP, E POR QUE ELE ESTAVA ABERTO
+//
+// A tela sempre soube barrar: `SaguaoScreen` so chama `onTrocarSala(vip)` se
+// `vm.ehVip` for verdadeiro, e chama `onVipBloqueado()` caso contrario. O
+// defeito nunca esteve no gate — estava em QUEM ALIMENTAVA `ehVip`. Este host
+// construia a VM com `ehVip: true` escrito a mao, entao o gate recebia sempre a
+// resposta que liberava. Um booleano local decidindo produto pago.
+//
+// Agora `ehVip` e derivado de `EscopoVip.de(context)` a CADA build, e nao
+// guardado no estado: guardar reintroduziria o mesmo problema em outra forma —
+// um valor que envelhece e que alguem pode escrever.
 class _SaguaoPreviewHostState extends State<_SaguaoPreviewHost> {
-  SaguaoVM _vm = SaguaoVM.mock(sala: SalaSaguao.publico, ehVip: true);
+  SaguaoVM _vm = SaguaoVM.mock(sala: SalaSaguao.publico);
 
   void _aviso(String texto) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -413,8 +480,15 @@ class _SaguaoPreviewHostState extends State<_SaguaoPreviewHost> {
   }
 
   void _trocarSala(SalaSaguao sala) {
+    // Segunda barreira, no host: a tela ja recusa o toque sem VIP, mas uma rota
+    // nova (deep link, restauracao de estado) poderia chamar isto direto. Quem
+    // decide continua sendo o entitlement, e nunca o parametro recebido.
+    if (sala == SalaSaguao.vip && !EscopoVip.de(context).liberado) {
+      _aviso('Salão VIP é exclusivo para assinantes.');
+      return;
+    }
     setState(() {
-      _vm = SaguaoVM.mock(sala: sala, ehVip: _vm.ehVip);
+      _vm = SaguaoVM.mock(sala: sala);
     });
   }
 
@@ -427,7 +501,11 @@ class _SaguaoPreviewHostState extends State<_SaguaoPreviewHost> {
           avatar: '',
           texto: texto,
           ehVoce: true,
-          ehVip: _vm.sala == SalaSaguao.vip,
+          // A coroa ao lado do proprio nome e ORNAMENTO, mas ela vinha da sala
+          // em que a mensagem foi escrita — ou seja, o cliente inferia "e VIP"
+          // a partir de onde a pessoa estava. Mesmo sem liberar nada, e a
+          // mesma classe de erro; a coroa agora sai do entitlement.
+          ehVip: EscopoVip.de(context).liberado,
         ),
       );
     setState(() => _vm = _vm.copyWith(mensagens: mensagens));
@@ -448,12 +526,27 @@ class _SaguaoPreviewHostState extends State<_SaguaoPreviewHost> {
 
   @override
   Widget build(BuildContext context) {
+    final acesso = EscopoVip.de(context);
+
+    // O direito pode cair com a tela ABERTA — expiracao, revogacao, estorno,
+    // logout. Sem esta coercao o jogador continuaria dentro do Salao VIP ate
+    // navegar para outro lugar. Recompor a VM na sala publica e o que faz a
+    // perda de direito ter efeito imediato.
+    final vm = acesso.liberado
+        ? _vm.copyWith(ehVip: true)
+        : (_vm.sala == SalaSaguao.vip
+            ? SaguaoVM.mock(sala: SalaSaguao.publico)
+            : _vm.copyWith(ehVip: false));
+
     return SaguaoScreen(
-      vm: _vm,
+      vm: vm,
       onVoltar: () => Navigator.of(context).pop(),
       onTrocarSala: _trocarSala,
-      onVipBloqueado: () =>
-          _aviso('Salão VIP — assinatura e gate ficam com o Claude'),
+      onVipBloqueado: () => _aviso(
+        acesso.carregando
+            ? 'Conferindo sua assinatura…'
+            : 'Salão VIP é exclusivo para assinantes.',
+      ),
       onEnviarFala: (_, fala) => _enviar(fala),
       onEnviarEmoji: _enviar,
       onPresentearSalao: _presentearSalao,
@@ -511,6 +604,14 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
         duration: const Duration(milliseconds: 1300),
         backgroundColor: const Color(0xFF2A1B0E),
       ),
+    );
+  }
+
+  /// Leva para o fluxo de compra REAL. E o unico destino possivel de "Assinar"
+  /// nesta tela — nao ha caminho local que ligue VIP.
+  void _abrirLoja() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const _LojaPreviewHost()),
     );
   }
 
@@ -577,8 +678,11 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
 
   @override
   Widget build(BuildContext context) {
+    // Amigos e beneficio VIP: quem nao tem direito ve o convite de assinatura no
+    // lugar da lista. O valor vem do entitlement a cada build — nunca do estado
+    // local, que era por onde o "Assinar" antigo o ligava.
     return AmigosScreen(
-      vm: _vm,
+      vm: _vm.copyWith(ehVip: EscopoVip.de(context).liberado),
       onVoltar: () => Navigator.of(context).pop(),
       onCopiarCodigo: () async {
         await Clipboard.setData(ClipboardData(text: _vm.meuCodigo));
@@ -592,13 +696,22 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
       onConvidar: (id) => _aviso('Convite pra mesa — integração fica com o Claude (Fase B)'),
       onAssistir: (id) => _aviso('Assistir a mesa — integração fica com o Claude (Fase B)'),
       onAbrirAmigo: (id) => _aviso('Opções do amigo — integração fica com o Claude (Fase B)'),
-      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba, ehVip: _vm.ehVip)),
+      onRecarregar: () => setState(() => _vm = AmigosVM.mock(aba: _vm.aba)),
+      // O CLIQUE EM "ASSINAR" NAO CONCEDE NADA, E ESSA AUSENCIA E O PONTO.
+      //
+      // O que havia aqui era `setState(() => _vm = _vm.copyWith(ehVip: true))`:
+      // um toque na tela transformava um jogador nao-VIP em VIP, sem Play
+      // Store, sem backend e sem compra. E o criterio de reprovacao 4 da OS,
+      // escrito em uma linha.
+      //
+      // O caminho legitimo e abrir a Loja, que hospeda o fluxo real do Google
+      // Play (`ServicoBilling`) e cujo selo VIP ja vem exclusivamente do
+      // entitlement. Se a compra se concretizar, o backend grava
+      // `playerEntitlements/{uid}`, o `snapshots()` traz a mudanca e o
+      // `EscopoVip` acende o VIP em TODAS as telas — inclusive nesta. Se ela
+      // falhar, for cancelada ou ficar pendente, nada acende.
       onAssinar: (plano) {
-        // Fase B: aqui entra o Google Play Billing (assinatura recorrente real) +
-        // a infra conta.vip / ehVip(). Ver ASSINATURA-VIP-INFRA.md.
-        // No mock, "assinar" desbloqueia a prévia pra dar pra navegar a tela VIP.
-        _aviso('Assinatura $plano — pagamento recorrente via Google Play (Fase B)');
-        setState(() => _vm = _vm.copyWith(ehVip: true));
+        _abrirLoja();
       },
     );
   }
@@ -802,16 +915,25 @@ class _LojaPreviewHost extends StatefulWidget {
 
 class _LojaPreviewHostState extends State<_LojaPreviewHost> {
   final ServicoBilling _billing = ServicoBilling();
-  final EntitlementRepositorio _entitlements = EntitlementRepositorio();
 
   StreamSubscription<PainelBilling>? _escutaPainel;
-  StreamSubscription<EntitlementVip>? _escutaEntitlement;
 
   PainelBilling _painel = const PainelBilling();
   List<PlanoVipDisponivel> _planos = const <PlanoVipDisponivel>[];
 
+  /// O acesso VIP como o portao da sessao o enxerga. Preenchido em
+  /// [didChangeDependencies] e usado tanto pelo selo quanto pelo painel.
+  AcessoVip _acesso = const AcessoVip.indefinido();
+
   /// Vem do entitlement do backend. Nunca de uma resposta da Play Store.
-  bool get _ehVip => _painel.mostrarComoVip(DateTime.now().toUtc());
+  ///
+  /// ANTES esta tela abria a PROPRIA escuta, com o uid lido uma unica vez de
+  /// `FirebaseAuth.instance.currentUser` em `initState`. Duas consequencias:
+  /// quem fizesse login com a Loja ja aberta nunca via o proprio VIP, e o uid
+  /// congelado significava que a tela respondia por um jogador que podia nao
+  /// ser mais o da sessao. Agora a fonte e o `EscopoVip`, unica por sessao e
+  /// reprogramada a cada `authStateChanges()`.
+  bool get _ehVip => _acesso.liberado;
 
   @override
   void initState() {
@@ -824,25 +946,28 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
       });
     });
 
-    // A escuta do entitlement e por jogador, e so faz sentido com sessao. Sem
-    // uid o documento nem existe, e o padrao (`ausente`) ja e "sem VIP".
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid != null) {
-      _escutaEntitlement = _entitlements.observar(uid).listen(
-        _billing.atualizarEntitlement,
-        // Uma falha de leitura NAO pode acender nem apagar VIP por conta
-        // propria: o estado anterior continua valendo ate o backend responder.
-        onError: (Object _) {},
-      );
-    }
-
     _billing.iniciar();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final acesso = EscopoVip.de(context);
+    if (identical(acesso.entitlement, _acesso.entitlement) &&
+        acesso.situacao == _acesso.situacao) {
+      return;
+    }
+    _acesso = acesso;
+    // O painel continua recebendo o entitlement porque `ServicoBilling` usa o
+    // par (compra, direito) para explicar a espera — "pagamos, o servidor ainda
+    // nao confirmou". Quem DECIDE o selo, porem, e `_acesso`.
+    final direito = acesso.entitlement;
+    if (direito != null) _billing.atualizarEntitlement(direito);
   }
 
   @override
   void dispose() {
     _escutaPainel?.cancel();
-    _escutaEntitlement?.cancel();
     _billing.encerrar();
     super.dispose();
   }
@@ -1131,8 +1256,10 @@ class _OndeJogarPreviewHost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final acesso = EscopoVip.de(context);
+
     return OndeJogarScreen(
-      vm: OndeJogarVM.mock(),
+      vm: OndeJogarVM.mock(ehVip: acesso.liberado),
       onVoltar: () => Navigator.of(context).maybePop(),
       onEscolher: (id) {
         if (id == 'treino') {
@@ -1153,6 +1280,27 @@ class _OndeJogarPreviewHost extends StatelessWidget {
             : id == 'vip'
                 ? TipoMesa.vip
                 : TipoMesa.privada;
+        // ESTA E A ROTA DIRETA que a OS manda auditar: o lobby escolhe o tipo e
+        // empurra a tela de configuracao ja nele. `_ConfigMesaPreviewHost`
+        // tambem recusa, mas deixar a navegacao acontecer para so entao coagir
+        // para publica seria levar o jogador a uma tela que nao e a que ele
+        // pediu. Barrar aqui e a resposta honesta.
+        if (tipo != TipoMesa.publica && !acesso.liberado) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(
+                  acesso.carregando
+                      ? 'Conferindo sua assinatura…'
+                      : 'Mesa ${tipo.name.toUpperCase()} é exclusiva para VIP',
+                ),
+                duration: const Duration(milliseconds: 1400),
+                backgroundColor: const Color(0xFF2A1B0E),
+              ),
+            );
+          return;
+        }
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => _ConfigMesaPreviewHost(tipoInicial: tipo)),
         );
@@ -1489,6 +1637,17 @@ class _ConfigMesaPreviewHost extends StatefulWidget {
   State<_ConfigMesaPreviewHost> createState() => _ConfigMesaPreviewHostState();
 }
 
+// MESA VIP / RANQUEADA / PRIVADA — o segundo portao que estava aberto.
+//
+// `ConfigurarMesaScreen` calcula `blocked = !vm.ehVip && tipo != publica` e ja
+// recusava corretamente. O que a alimentava era `ConfigMesaVM.mock(tipo: ...)`
+// sem `ehVip`, e o padrao daquele mock era `true` — de modo que a conta dava
+// sempre "liberado". Dois defeitos somados: um mock permissivo e um host que
+// nao consultava ninguem.
+//
+// A POLITICA DO PRODUTO NAO MUDA AQUI: mesa publica e casual, mesa VIP/ranqueada
+// e competicao paga, e VIP compra ACESSO a competicao — nunca vantagem dentro
+// do jogo. O que muda e so de onde sai a resposta sobre quem pode entrar.
 class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
   late ConfigMesaVM _vm = ConfigMesaVM.mock(tipo: widget.tipoInicial);
 
@@ -1522,8 +1681,15 @@ class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
   }
 
   void _trocarTipo(TipoMesa tipo) {
+    // Segunda barreira, no host. A tela ja desenha o cadeado, mas a troca de
+    // tipo tambem e alcancavel pela rota inicial (`tipoInicial`) e por qualquer
+    // caminho futuro que chame isto direto.
+    if (tipo != TipoMesa.publica && !EscopoVip.de(context).liberado) {
+      _aviso('${tipo.name.toUpperCase()} é exclusivo para jogador VIP');
+      return;
+    }
     setState(() {
-      _vm = ConfigMesaVM.mock(tipo: tipo, ehVip: _vm.ehVip);
+      _vm = ConfigMesaVM.mock(tipo: tipo);
     });
   }
 
@@ -1601,12 +1767,27 @@ class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
 
   @override
   Widget build(BuildContext context) {
+    final acesso = EscopoVip.de(context);
+
+    // Se o direito cair com a tela aberta (expiracao, revogacao, logout), a
+    // configuracao volta para mesa publica. Sem isto, `onCriarMesa` ainda
+    // levaria uma `MesaVariant.vip` adiante com base num `_vm` velho — o caso
+    // de "reconstrucao/restauracao de configuracao" que a OS manda auditar.
+    final vm = acesso.liberado
+        ? _vm.copyWith(ehVip: true)
+        : (_vm.tipo != TipoMesa.publica
+            ? ConfigMesaVM.mock(tipo: TipoMesa.publica)
+            : _vm.copyWith(ehVip: false));
+
     return ConfigurarMesaScreen(
-      vm: _vm,
+      vm: vm,
       onVoltar: () => Navigator.of(context).pop(),
       onTipo: _trocarTipo,
-      onTipoBloqueado: (tipo) =>
-          _aviso('${tipo.name.toUpperCase()} é exclusivo para jogador VIP'),
+      onTipoBloqueado: (tipo) => _aviso(
+        acesso.carregando
+            ? 'Conferindo sua assinatura…'
+            : '${tipo.name.toUpperCase()} é exclusivo para jogador VIP',
+      ),
       onModalidade: (value) => setState(() => _vm = _vm.copyWith(modalidade: value)),
       onVerRegras: _verRegras,
       onModo: _trocarModo,
@@ -1623,16 +1804,25 @@ class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
       onCriarMesa: () {
         // Dono cria a mesa → tela "Preparando partida" (cadeiras enchendo) →
         // ao concluir, abre a MesaScreen jogável com a config escolhida.
-        final variant = _vm.tipo == TipoMesa.publica
+        //
+        // TERCEIRA BARREIRA, e a que mais importa: e aqui que a mesa nasce. A
+        // criacao le `vm` — a configuracao ja coagida pelo entitlement — e nao
+        // `_vm`, que e o rascunho local. Sem VIP nao existe combinacao de
+        // estado que faca sair uma `MesaVariant.vip` daqui.
+        if (vm.tipo != TipoMesa.publica && !acesso.liberado) {
+          _aviso('Mesa ${vm.tipo.name.toUpperCase()} é exclusiva para VIP');
+          return;
+        }
+        final variant = vm.tipo == TipoMesa.publica
             ? MesaVariant.publica
             : MesaVariant.vip;
-        final modalidade = _modalidadeLabel(_vm.modalidade);
-        final metaPontos = _vm.pontos;
-        final tempo = _vm.tempo;
+        final modalidade = _modalidadeLabel(vm.modalidade);
+        final metaPontos = vm.pontos;
+        final tempo = vm.tempo;
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => PreparandoPartidaScreen(
-              vm: PreparandoPartidaVM.mock(ehVip: _vm.ehVip),
+              vm: PreparandoPartidaVM.mock(ehVip: acesso.liberado),
               onConcluido: () {
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(

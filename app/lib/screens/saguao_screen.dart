@@ -31,9 +31,16 @@ class SaguaoVM {
     required this.presentes,
   });
 
+  /// Dados de vitrine para preview e teste.
+  ///
+  /// [ehVip] NASCE `false`. O padrao anterior era `true` e o host o herdava sem
+  /// passar nada, o que deixava o Salao VIP aberto para qualquer jogador — um
+  /// mock decidindo autorizacao. Quem precisa de VIP em teste declara
+  /// `ehVip: true` explicitamente; em producao o valor vem de
+  /// `EscopoVip.de(context)`, alimentado por `playerEntitlements/{uid}`.
   factory SaguaoVM.mock({
     SalaSaguao sala = SalaSaguao.publico,
-    bool ehVip = true,
+    bool ehVip = false,
   }) {
     if (sala == SalaSaguao.vip) {
       return SaguaoVM(
