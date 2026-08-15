@@ -452,7 +452,7 @@ Nenhum conflito foi resolvido nesta OS.
 
 ## 11. O QUE ESTA OS PUBLICOU
 
-7 branches publicadas por push simples, cada uma confirmada por
+8 branches publicadas por push simples, cada uma confirmada por
 `git ls-remote origin refs/heads/<branch>` após o push.
 
 | Branch | Hash confirmado no servidor | Por quê |
@@ -464,6 +464,7 @@ Nenhum conflito foi resolvido nesta OS.
 | `claude/sleepy-kilby-f8ff3f` | `37494dde53dbd3826f1cce14f84792a193992517` | 1 commit único: localizar seeds sem depender do staging do CI. |
 | `claude/google-play-publication-v1-bf8d5d` | `604f36200c8f927a46364c2d094a9a4c06e8500b` | 1 commit único: auditoria do pacote Google Play V1. |
 | `backup/os3-antes-limpeza` | `279d7bf82df1742b7cc7348d60f75e1323081ca8` | 1 commit único: atualização de dependências do backend billing. |
+| `correcao/vip-client-enforcement-beneficios-v1` | `8e47d4defa9491083eee3c6ee95f058738e3c25b` | **Apareceu durante a OS.** 1 commit único: `fix(vip): o cliente deixa de conceder VIP, e passa apenas a refleti-lo` — fecha o gate de prontidão VIP. Ver nota. |
 
 > **Nota sobre `claude/player-account-deletion-flow-d04d45`.**
 > Essa branch **moveu durante esta OS**. No snapshot inicial estava em
@@ -473,6 +474,23 @@ Nenhum conflito foi resolvido nesta OS.
 > perdeu, outra sessão adicionou um commit em cima. O worktree dessa branch
 > ainda tem trabalho não versionado (`?? app/lib/conta/`), ou seja, **há uma
 > sessão ativa escrevendo nela**. O hash dela vai mudar de novo.
+
+> **Nota sobre `correcao/vip-client-enforcement-beneficios-v1`.**
+> Essa branch estava em `0ea96c29` (contida, nada a preservar) no snapshot
+> inicial e **ganhou um commit durante esta OS**. A varredura final a pegou:
+> `8e47d4de fix(vip): o cliente deixa de conceder VIP, e passa apenas a
+> refleti-lo`. Foi publicada. O worktree dela também tem trabalho ativo não
+> versionado (`M functions-billing/test/apoio/firestore_falso.js`,
+> `?? functions-billing/varredura.js`, `?? functions-billing/fichasVarredura.js`,
+> `?? app/test/colecoes/data/`, `?? app/test/torneios/data/`) — **outra sessão
+> está escrevendo nela agora**. Só o que estava commitado foi preservado.
+
+> **Consequência operacional para a OS de composição.**
+> Duas branches se moveram sozinhas durante uma OS de ~1h. Esta fotografia é
+> válida para o instante em que foi tirada. Antes de compor a RC, **refazer o
+> `git ls-remote` e a varredura de commits não protegidos**, e confirmar que as
+> sessões paralelas dessas duas branches encerraram — senão a RC vai nascer
+> sem a última entrega delas.
 
 ---
 
@@ -515,7 +533,7 @@ criar redundância seria estética, não preservação.
 
 ```text
 Branches locais no app:                        75
-Refs remotas no app após esta OS:              80
+Refs remotas no app após esta OS:              82
 Branches locais com trabalho único não salvo:   0
 Folhas obrigatórias protegidas:             13/13
 Repositório do servidor:            já protegido, 0 pushes necessários
