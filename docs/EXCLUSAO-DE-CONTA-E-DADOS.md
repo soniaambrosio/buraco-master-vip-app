@@ -449,3 +449,18 @@ garante nesse escopo.
 | `aad09df` | `functions-conta`: matriz, plano, diário, reautenticação, executor, callables |
 | `b304f59` | os dez casos da OS contra Firestore e Auth reais |
 | `d251c14` | cliente Flutter: porta, adaptador, controlador, tela e entrada em Configurações |
+
+---
+
+## 9. O que veio depois
+
+A camada de **conformidade de publicação** que sucede esta OS — recurso web
+externo de exclusão, Política de Privacidade, preenchimento do Data Safety e o
+caminho para gerenciar a assinatura da Google Play — está em
+[`GOOGLE-PLAY-EXCLUSAO-CONTA-DATA-SAFETY.md`](GOOGLE-PLAY-EXCLUSAO-CONTA-DATA-SAFETY.md).
+
+Aquela OS **não alterou nada do que está descrito aqui**: a matriz de
+`inventario.ts`, o plano, o executor, os portões e as recusas continuam
+exatamente como este documento os descreve. O recurso web não reimplementa a
+exclusão — ele chama as mesmas duas callables, com o UID vindo do ID token e
+nunca do navegador.
