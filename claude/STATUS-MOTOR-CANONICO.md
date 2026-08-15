@@ -65,8 +65,14 @@ Pontuação: A=15, JOKER=50, 2=10, 8..K=10, 3..7=5; canastra as_a_as=1000/de_500
   - **`_derivandoLixo` → `_mesaOcupadaPorDerivacao`**; comentários de responsividade corrigidos (`compute` = isolate separado no nativo, mesmo event loop na web).
   - **Verificação local:** 378 `test()` verdes; analyzer 0 erros, avisos idênticos ao de `14b8d03`. Não-vacuidade conferida removendo cada proteção.
 
+- **Parte 2 / REVISÃO 3 — fechamento; volta para auditoria.** Ver `RELATORIO-C10-PARTE2-REVISAO-3.md`. Base `a600b4e`, tip `4e940cb`.
+  - **PAUSA TÉCNICA REAL:** `PARTIDA PAUSADA` era só texto — o `Timer.periodic` seguia vivo e o tick seguinte tentava tudo de novo. Virou estado (`Jogo.pausadaPorFalhaTecnica`) + cancelamento do relógio. Tranca só o caminho AUTOMÁTICO; o jogador segue livre.
+  - **CONTRATO de `jogadaAutomatica` medido pelo ESTADO:** `rodadaEncerrada || vez != vezAntes`. Antes bastava chegar ao fim do laço para devolver `true`, mesmo sem descarte, sem mudança de vez e sem fim de rodada.
+  - **`C10-OCUPADA-04`:** a regressão da trava de concorrência no ROLLBACK LEGADO, onde `estender` não desce para `baixarAtomico`. Sem ela, a guarda direta podia ser removida sem nenhum teste acusar.
+  - **Verificação local:** 383 `test()` verdes; analyzer 0 erros, avisos idênticos ao de `14b8d03`; suíte 21,0s contra 22,5s da rev.2 (sem regressão). Não-vacuidade conferida nos três.
+
 ## Próximo
-1. **Sônia:** aplicar o bundle/diff da revisão 2 e rodar o **Build APK**. Nada é concluído sem CI verde + nova revisão (§16). **C10 NÃO está encerrada.**
+1. **Sônia:** aplicar o bundle/diff da revisão 3 e rodar o **Build APK**. **A C10 NÃO fecha automaticamente com a rev.3:** volta para auditoria e só encerra após revisão estática + aplicação na branch + CI verde (§16).
 2. **Aval necessário:** a correção do -100 no ramo LEGADO (`72345e6`). A OS pedia para não alterar o rollback; a correção de regra pedia para remover "qualquer equivalente". Resolvido pelo lado da regra, em commit isolado para poder ser revertido sozinho.
 3. **Opcional de CI:** mover "Declare assets in pubspec" para antes do portão de qualidade, para viabilizar teste de widget da mesa.
 4. **Fora desta entrega, por instrução:** a OS ampla de Inteligência Estratégica do Bot, que roda depois do C10 homologado.
