@@ -35,6 +35,8 @@
  *   reconciliarEntitlements     varredura agendada de vencimento
  *   reconciliarEntitlementDoJogador   reconsulta autoritativa, so admin
  *   migrarEntitlementsLegado    transicao de `usuarios/{uid}` (so admin)
+ *   backfillPurchaseTokenHash   recupera o hash de `compras/` (so admin, dry-run
+ *                               por padrao)
  *
  * A fonte canonica do direito passou a ser `playerEntitlements/{uid}`, escrita
  * so por este codebase e lida pelos consumidores (torneios, hoje). As decisoes
@@ -89,6 +91,13 @@ const {
   criarDiagnosticoPopulacao,
   criarPortasFirestore,
 } = require('./diagnosticoPopulacao');
+const {
+  criarBackfillHash,
+  criarPortasDeLeitura,
+} = require('./backfillHash');
+// A porta de ESCRITA do backfill e importada aqui e injetada em UM lugar so, sob
+// duas condicoes explicitas. Ver `backfillPurchaseTokenHash`, no fim do arquivo.
+const { criarGravadorDeHash } = require('./backfillHashStore');
 
 initializeApp();
 
@@ -927,6 +936,117 @@ exports.diagnosticarPopulacaoVip = onCall(
       porCategoria: relatorio.resumo.porCategoria,
       porAlerta: relatorio.resumo.porAlerta,
     });
+
+    return relatorio;
+  }
+);
+
+// ===========================================================================
+// BACKFILL DE `purchaseTokenHash` — recuperar o hash historico de `compras/`
+// ===========================================================================
+
+/**
+ * Preenche `playerEntitlements/{uid}/interno/billing.purchaseTokenHash` quando o
+ * valor pode ser recuperado, sem ambiguidade, da chave historica de
+ * `compras/{hash}`. So admin, e DRY-RUN POR PADRAO.
+ *
+ * POR QUE O HASH E RECUPERAVEL E O TOKEN NAO: `chaveDaCompra` e `sha256(token)`,
+ * e o resultado dela E O ID DO DOCUMENTO de `compras/{hash}`. Desde `fe4cdb5` a
+ * mesma transacao que gravava `usuarios/{uid}.vip = true` gravava esse registro
+ * com o `uid` do comprador. O token em claro, esse sim, nunca foi guardado para
+ * as compras antigas, e continua irrecuperavel — mas `concederFichasMensais` nao
+ * precisa dele: precisa do hash, e so dele.
+ *
+ * ISTO NAO E UM PREENCHIMENTO INERTE, e a protecao reflete isso. O campo alimenta
+ * `mesmoToken` em `decidirAtualizacao`, entao um `null` que vira valor muda o que
+ * o sistema aceita dali em diante. A analise antes/depois esta em
+ * `docs/BACKFILL-PURCHASETOKENHASH.md` e fixada em `test/backfillEfeitos.test.js`.
+ *
+ * AS TRES CAMADAS QUE SEPARAM LER DE ESCREVER
+ *
+ *   1. `modo` e `'dry_run'` por OMISSAO. Chamar sem argumento nenhum le e conta.
+ *   2. escrever exige `modo: 'escrever'` E `confirmacao` com a frase exata. Um
+ *      `modo` sozinho nao basta: um cliente administrativo com o campo errado
+ *      preenchido por engano nao pode disparar escrita em base de pagante.
+ *   3. a porta de escrita so e CONSTRUIDA quando as duas condicoes passam.
+ *      `criarBackfillHash` recebe `gravarHash: null` no dry-run, e sem essa porta
+ *      nao existe, dentro de `backfillHash.js`, nenhuma expressao capaz de
+ *      escrever — a garantia e estrutural, e `BFH-43` a verifica pelo fonte.
+ *
+ * A AUTORIZACAO OPERACIONAL E SEPARADA DA EXISTENCIA DO CODIGO: o `claim` de
+ * admin abre a funcao, e a frase de confirmacao abre a escrita. Quem tem o
+ * primeiro nao ganha o segundo de graca.
+ *
+ * O RETORNO E O LOG NAO CARREGAM IDENTIDADE: contagens, e amostras com
+ * `rotuloHash` (oito caracteres, a mesma regra de `rotuloToken`). Nenhum uid,
+ * nenhum token, nenhum hash inteiro.
+ */
+const CONFIRMACAO_DE_ESCRITA = 'EXECUTAR_BACKFILL_PURCHASETOKENHASH';
+
+exports.backfillPurchaseTokenHash = onCall(
+  { region: 'us-central1' },
+  async (request) => {
+    if (!request.auth || request.auth.token.admin !== true) {
+      throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
+    }
+
+    const pedido = request.data || {};
+    const querEscrever = pedido.modo === 'escrever';
+
+    if (querEscrever && pedido.confirmacao !== CONFIRMACAO_DE_ESCRITA) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Modo de escrita exige a confirmacao explicita. Rode o dry-run primeiro.'
+      );
+    }
+
+    const db = getFirestore();
+    const portas = criarPortasDeLeitura({ db, FieldPath });
+
+    const backfill = criarBackfillHash({
+      ...portas,
+      // Sem a correlacao nao ha backfill possivel: e ela que traz o hash. Desligar
+      // so serve para medir o custo da varredura, e o relatorio DIZ que nao
+      // investigou em vez de concluir "sem fonte".
+      lerComprasDoJogador:
+        pedido.correlacionarCompras === false ? null : portas.lerComprasDoJogador,
+      // A UNICA linha deste arquivo que pode produzir escrita de backfill.
+      gravarHash: querEscrever
+        ? criarGravadorDeHash({ db, carimbo: () => FieldValue.serverTimestamp() })
+            .gravarHash
+        : null,
+      agora: () => new Date().toISOString(),
+      registrarErro: (mensagem, contexto) =>
+        console.error('[billing] falha ao examinar jogador no backfill', mensagem, contexto),
+    });
+
+    const relatorio = await backfill.executar({
+      cursorInicial: pedido.cursor || null,
+      tamanhoPagina: pedido.tamanhoPagina || undefined,
+      maxPaginas: pedido.maxPaginas || undefined,
+      // Teto do LOTE PILOTO. Sem ele a primeira execucao real seria a base
+      // inteira, que e exatamente o tipo de decisao que nao da para desfazer.
+      maxEscritas: pedido.maxEscritas || undefined,
+      amostrasPorClasse: pedido.amostrasPorClasse || undefined,
+    });
+
+    // O log leva o resumo, nunca as amostras: rotulo de hash continua sendo um
+    // dado por jogador, e log de producao nao e lugar de lista de gente.
+    console.info('[billing] backfill de purchaseTokenHash', {
+      modo: relatorio.modo,
+      examinados: relatorio.examinados,
+      porClasse: relatorio.resumo.porClasse,
+      escritas: relatorio.resumo.escritas,
+      esgotou: relatorio.esgotou,
+      parada: relatorio.parada,
+    });
+
+    if (!relatorio.esgotou) {
+      console.error('[billing] o backfill NAO esgotou a base nesta execucao', {
+        parada: relatorio.parada,
+        retomarApos: relatorio.cursor,
+      });
+    }
 
     return relatorio;
   }
