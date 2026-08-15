@@ -8,6 +8,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'billing/entitlement_repositorio.dart';
+import 'conta/controlador_exclusao.dart';
+import 'conta/fonte_exclusao_firebase.dart';
 import 'billing/estado_ui.dart';
 import 'billing/plano_vip.dart';
 import 'billing/servico_billing.dart';
@@ -23,6 +25,7 @@ import 'screens/resultado_partida_screen.dart';
 import 'screens/amigos_screen.dart';
 import 'screens/saguao_screen.dart';
 import 'screens/configuracoes_screen.dart';
+import 'screens/excluir_conta_screen.dart';
 import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
 import 'screens/loja_vip_adaptador.dart';
@@ -794,6 +797,87 @@ class _ConfiguracoesPreviewHostState
     }
   }
 
+  // ---------------------------------------------------------------- exclusão
+  //
+  // O HOST É QUEM SABE REAUTENTICAR, e por isso o fluxo nasce aqui. "Apresentar
+  // a credencial de novo" quer dizer coisas diferentes conforme o provedor, e
+  // quem conhece `GoogleSignIn` e `FirebaseAuth` neste aplicativo é esta camada
+  // — o controlador recebe a função pronta e continua testável sem Firebase.
+
+  /// Refaz o login do Google e reautentica o usuário do Firebase.
+  ///
+  /// `signOut` no Google ANTES do `signIn` é o que força o seletor de conta a
+  /// aparecer. Sem ele, a biblioteca devolveria a conta em cache sem nenhum
+  /// gesto da pessoa — e uma "reautenticação" que acontece sozinha não confirma
+  /// nada, que é justamente o oposto do que este passo existe para fazer.
+  Future<bool> _reautenticarParaExcluir() async {
+    try {
+      final usuario = FirebaseAuth.instance.currentUser;
+      if (usuario == null) return false;
+
+      await _gsi.signOut();
+      final conta = await _gsi.signIn();
+      if (conta == null) return false; // desistiu no seletor
+
+      final autenticacao = await conta.authentication;
+      final credencial = GoogleAuthProvider.credential(
+        idToken: autenticacao.idToken,
+        accessToken: autenticacao.accessToken,
+      );
+      await usuario.reauthenticateWithCredential(credencial);
+
+      // O PASSO QUE PARECE SUPÉRFLUO E NÃO É. `reauthenticateWithCredential`
+      // atualiza o `auth_time` no servidor de identidade, mas o ID token que o
+      // aplicativo tem em mãos continua sendo o antigo até expirar. Como a
+      // Function confere exatamente esse claim, sem o refresh forçado a
+      // chamada seguinte levaria o `auth_time` velho e seria recusada de novo —
+      // e o jogador veria o pedido de senha uma segunda vez, logo depois de ter
+      // digitado.
+      await usuario.getIdToken(true);
+      return true;
+    } catch (_) {
+      // Cancelamento e recusa do provedor dão no mesmo para o fluxo: não
+      // prossiga. Reportar erro aqui transformaria uma desistência em falha.
+      return false;
+    }
+  }
+
+  Future<void> _abrirExclusaoDeConta() async {
+    final controlador = ControladorDeExclusao(
+      fonte: FonteDeExclusaoFirebase(),
+      reautenticar: _reautenticarParaExcluir,
+      encerrarSessao: () async {
+        // Blindado, como o logout comum. E a ordem é a mesma dele: Firebase
+        // primeiro, Google depois.
+        try {
+          await FirebaseAuth.instance.signOut();
+        } catch (_) {}
+        try {
+          await _gsi.signOut();
+        } catch (_) {}
+      },
+    );
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (rotaContext) => ExcluirContaScreen(
+          controlador: controlador,
+          onVoltar: () => Navigator.of(rotaContext).maybePop(),
+          // Conta excluída: volta para a raiz. A `SessaoDoJogador` já se
+          // invalidou sozinha quando o `signOut` fez o stream de autenticação
+          // emitir `null` — não há estado a limpar à mão aqui.
+          onConcluida: () =>
+              Navigator.of(rotaContext).popUntil((r) => r.isFirst),
+        ),
+      ),
+    );
+
+    controlador.dispose();
+    if (mounted && FirebaseAuth.instance.currentUser == null) {
+      _aviso('Sua conta foi excluída.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ConfiguracoesScreen(
@@ -811,6 +895,7 @@ class _ConfiguracoesPreviewHostState
         onTermos: () => _aviso('Termos e privacidade — em breve.'),
         onAvaliar: () => _aviso('Avaliar na loja — em breve.'),
         onSair: _confirmarSaida,
+        onExcluirConta: _abrirExclusaoDeConta,
       ),
     );
   }

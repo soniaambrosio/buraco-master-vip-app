@@ -104,6 +104,14 @@ class ConfiguracoesCallbacks {
   final VoidCallback onAvaliar;
   final VoidCallback onSair;
 
+  /// Abre o fluxo de exclusão da própria conta.
+  ///
+  /// `required`, como os outros nove, e a obrigatoriedade é o ponto: um callback
+  /// opcional com padrão inofensivo deixaria a tela compilar em qualquer host
+  /// que esquecesse de ligá-lo, e o botão ficaria lá sem fazer nada. Sendo
+  /// obrigatório, quem constrói a tela é obrigado a decidir para onde ele vai.
+  final VoidCallback onExcluirConta;
+
   const ConfiguracoesCallbacks({
     required this.onAlterar,
     required this.onEditarPerfil,
@@ -115,6 +123,7 @@ class ConfiguracoesCallbacks {
     required this.onTermos,
     required this.onAvaliar,
     required this.onSair,
+    required this.onExcluirConta,
   });
 }
 
@@ -365,6 +374,8 @@ class ConfiguracoesScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           _sairButton(),
+                          const SizedBox(height: 10),
+                          _excluirContaButton(),
                           const SizedBox(height: 16),
                           Text(
                             config.versaoApp.isEmpty
@@ -895,6 +906,43 @@ class ConfiguracoesScreen extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// "Excluir minha conta", abaixo de "Sair da conta".
+  ///
+  /// FORA DA SEÇÃO "CONTA", E DE PROPÓSITO. Lá em cima ele ficaria ao lado de
+  /// "Editar perfil" e "Assinatura VIP" — três tiles idênticos, um deles
+  /// irreversível, a um toque de distância um do outro. Aqui embaixo ele é o
+  /// último item da tela, depois do fim da rolagem, com o desenho mais discreto
+  /// dos dois botões vermelhos: quem chega nele chegou procurando.
+  ///
+  /// E é um `TextButton`, e não um `FilledButton` como o de sair: o botão mais
+  /// destrutivo da tela é o menos chamativo dela. A ênfase visual pertence à
+  /// ação que a pessoa vai querer nove em cada dez vezes, que é sair.
+  Widget _excluirContaButton() {
+    return Center(
+      child: TextButton.icon(
+        onPressed: callbacks.onExcluirConta,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        ),
+        icon: const Icon(
+          Icons.person_remove_outlined,
+          color: Color(0xFF9C6A6A),
+          size: 17,
+        ),
+        label: const Text(
+          'Excluir minha conta',
+          style: TextStyle(
+            color: Color(0xFF9C6A6A),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            decoration: TextDecoration.underline,
+            decorationColor: Color(0x559C6A6A),
           ),
         ),
       ),
