@@ -699,7 +699,7 @@ coleta.
 |---|---|
 | **Branch** | `claude/observabilidade-buraco-vip-f3cd12` |
 | **Base** | `fb9edb5` (`main`) — ver ressalva abaixo |
-| **HEAD final** | preenchido no commit desta auditoria |
+| **HEAD final** | `e6de8e8` (auditoria) seguido de um commit de registro deste próprio quadro — a ponta da branch é o segundo |
 | **Hash remoto** | **nenhum** — a branch não foi publicada |
 | **Arquivos alterados** | 1, criado: `docs/OS-OBSERVABILIDADE-OPERACAO-RECUPERACAO-V1.md` |
 | **Testes executados** | **nenhum** — auditoria de leitura; nenhum código de produto foi tocado |
