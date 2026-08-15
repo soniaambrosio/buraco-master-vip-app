@@ -2,6 +2,12 @@
 # Nunca versionar: e artefato de build, nao fonte.
 /app_build/
 
+# Resíduo de `dart pub get` nas ferramentas de linha de comando. O `pubspec.lock`
+# de cada uma É versionado de propósito (a conferência do AAB precisa rodar com
+# as mesmas versões no CI e na máquina); o `.dart_tool/` não, porque carrega
+# caminho absoluto da máquina que rodou.
+/tools/*/.dart_tool/
+
 # Resíduo de `flutter pub get` rodado direto em app/ (o pacote real). Útil para
 # rodar `flutter analyze` sobre a árvore de verdade, sem overlay; nada disso é
 # fonte.

@@ -1,0 +1,41 @@
+# Ferramentas de preparacao e conferencia da build Android de producao.
+#
+# POR QUE ISTO EXISTE COMO PACOTE, E NAO COMO SCRIPT DENTRO DO WORKFLOW
+#
+# A logica que transforma o scaffold do `flutter create` no projeto de producao
+# (applicationId, namespace, SDKs, assinatura, icone, manifesto) vivia como
+# blocos de Python embutidos no YAML. Isso tinha dois defeitos praticos:
+#
+#   1. So era executavel dentro do GitHub Actions. Nao dava para rodar na
+#      maquina, entao a unica forma de descobrir um erro de patch era gastar um
+#      build inteiro de CI — e este repositorio so dispara workflow por
+#      `workflow_dispatch`, em branch ja publicada.
+#   2. Reescrever a mesma logica em bash para conseguir rodar local criaria duas
+#      implementacoes do mesmo passo, que divergem na primeira manutencao.
+#
+# Em Dart, o MESMO codigo roda no CI e na maquina: o SDK ja vem com o Flutter,
+# que e obrigatorio nos dois lugares. Nada aqui e compilado para dentro do
+# APK/AAB — sao programas de linha de comando.
+name: bmv_android
+description: "Preparacao e conferencia da build Android de producao do Buraco Master VIP."
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  # Le o conteudo do .aab (que e um zip) sem depender de `unzip` estar instalado
+  # — a conferencia precisa rodar igual no Windows e no runner Linux.
+  archive: ^4.0.7
+  # Decodifica os PNG de mipmap tirados de dentro do bundle para compara-los,
+  # pixel a pixel, com a arte oficial. Comparar BYTES nao serviria: o aapt2
+  # recomprime todo PNG de recurso, entao o arquivo dentro do AAB nunca e
+  # identico ao do repositorio — mas a recompressao e sem perda, e os pixels
+  # batem exatamente. E essa igualdade que prova que o icone do artefato e o
+  # oficial, e nao o do scaffold do Flutter.
+  image: ^4.5.4
+  # Parser de verdade para o manifesto que o bundletool despeja. A versao
+  # anterior desta conferencia usava `grep` em XML, que aprova por acidente:
+  # `grep versionCode="3"` casa com um comentario, com outro atributo que
+  # termine igual, ou com o manifesto de uma dependencia.
+  xml: ^7.0.1

@@ -17,7 +17,21 @@ class PerfilService {
 
   /// true  = mostra os números de exemplo aprovados (marketing/screenshots).
   /// false = estado real de jogador novo (nível 1, stats 0, conquistas travadas).
-  static const bool statsDemo = true;
+  ///
+  /// DESLIGADO para a build de produção. Com `true`, o Perfil montava números
+  /// inventados (nível, vitórias, canastras, conquistas desbloqueadas) ao lado
+  /// do nome e da foto REAIS vindos do Firebase Auth — ou seja, o app afirmava
+  /// ao jogador um histórico que ele não tem. É exatamente o que a política de
+  /// *Misrepresentation* da Play trata, e não é uma questão de estilo: o dado
+  /// era apresentado como sendo dele.
+  ///
+  /// Com `false` a mesma tela mostra o estado honesto de jogador novo — a
+  /// própria classe já foi escrita para os dois casos ([_catalogoTravado] e
+  /// [_catalogoDemo]), então nada de visual muda de forma; muda o conteúdo.
+  ///
+  /// Quando a Fase 2 ligar a leitura no Firestore dentro de [carregar], esta
+  /// constante deixa de ter função e sai junto.
+  static const bool statsDemo = false;
 
   /// Catálogo fixo de conquistas do jogo (definições). O `desbloqueada` real virá
   /// dos dados na Fase 2. Aqui, tudo travado (jogador novo).
