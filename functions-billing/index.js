@@ -33,10 +33,15 @@
  *
  *   notificacoesPlay            consumidor de RTDN (Pub/Sub)
  *   reconciliarEntitlements     varredura agendada de vencimento
+ *   concederFichasMensais       entrega mensal do beneficio, agendada
  *   reconciliarEntitlementDoJogador   reconsulta autoritativa, so admin
- *   migrarEntitlementsLegado    transicao de `usuarios/{uid}` (so admin)
- *   backfillPurchaseTokenHash   recupera o hash de `compras/` (so admin, dry-run
- *                               por padrao)
+ *
+ * ESSES CINCO SAO A SUPERFICIE DE PRODUCAO, e nada alem deles deve existir no
+ * projeto implantado. O que mais este arquivo exporta e ferramenta administrativa
+ * de diagnostico (`diagnosticarPopulacaoVip`, `diagnosticarMetadadosLegados`,
+ * `backfillPurchaseTokenHash`) e NAO e implantada: ver `npm run deploy:producao`,
+ * que nomeia as cinco uma a uma justamente para que um deploy nao arraste as
+ * outras. `migrarEntitlementsLegado` foi retirada — ver a lapide no fim do arquivo.
  *
  * A fonte canonica do direito passou a ser `playerEntitlements/{uid}`, escrita
  * so por este codebase e lida pelos consumidores (torneios, hoje). As decisoes
@@ -86,7 +91,6 @@ const { criarLivroDeFichas } = require('./fichasStore');
 const {
   concederFichasDeTodosOsAssinantes,
 } = require('./fichasVarredura');
-const { migrarPaginaDeLegado } = require('./migracaoLegado');
 const {
   criarDiagnosticoPopulacao,
   criarPortasFirestore,
@@ -98,6 +102,12 @@ const {
 // A porta de ESCRITA do backfill e importada aqui e injetada em UM lugar so, sob
 // duas condicoes explicitas. Ver `backfillPurchaseTokenHash`, no fim do arquivo.
 const { criarGravadorDeHash } = require('./backfillHashStore');
+// ACHADO DA OS DE ATIVACAO: este `require` NAO EXISTIA, e `diagnosticarMetadadosLegados`
+// chamava `criarDiagnosticoMetadados` como identificador livre. O modulo carrega
+// (a referencia so e avaliada dentro do handler), a descoberta do deploy passa, e
+// a funcao quebra com ReferenceError na PRIMEIRA invocacao. Ficou latente porque
+// ela nunca foi implantada. Ver `DOC-09`.
+const { criarDiagnosticoMetadados } = require('./recuperacaoMetadados');
 
 initializeApp();
 
@@ -825,51 +835,29 @@ exports.reconciliarEntitlementDoJogador = onCall(
 // ===========================================================================
 
 /**
- * Transporta para `playerEntitlements/{uid}` os direitos que so existem em
- * `usuarios/{uid}`. So admin, idempotente, com cursor.
+ * LAPIDE — `migrarEntitlementsLegado` foi RETIRADA da superficie implantada.
  *
- * POR QUE NAO DA PARA SIMPLESMENTE RECONSULTAR A GOOGLE: `compras/{hash}` guarda
- * o HASH do token, nunca o token. Para as compras anteriores a esta OS nao
- * existe, em lugar nenhum desta arvore, o valor com que se pergunta a Play. A
- * unica informacao disponivel sobre elas e `vipExpiraEm`, que veio da Google no
- * dia da compra.
+ * A callable existiu para transportar para `playerEntitlements/{uid}` os direitos
+ * que so existiam em `usuarios/{uid}`. O censo desta linha de trabalho mediu essa
+ * populacao e ela e ZERO: `usuarios/` sem nenhum portador de VIP legado,
+ * `playerEntitlements/` sem nenhum documento, `compras/` sem nenhuma compra real.
+ * Nao existe migracao a fazer — nem hoje, nem depois, porque a fonte nunca teve
+ * ninguem.
  *
- * O QUE ISSO SIGNIFICA, DITO SEM MAQUIAGEM: o direito migrado vale ate o prazo
- * que ja estava gravado e nao vale um minuto a mais. Se a assinatura renovou,
- * quem repoe o prazo e a proxima notificacao ou a proxima validacao — as duas
- * carregam o token. Se foi estornada no meio, o sistema so descobre no
- * vencimento. A janela de erro e de no maximo um periodo de cobranca, ela existe
- * porque o token nao foi guardado la atras, e ela e menor do que a alternativa,
- * que seria tirar o VIP de todo assinante pagante no dia da virada.
+ * POR QUE A REMOCAO E DE SEGURANCA, E NAO DE ARRUMACAO: era uma callable de
+ * ESCRITA em massa sobre `playerEntitlements/`, a colecao que decide quem tem VIP.
+ * O `claim` de admin a protegia, mas uma ferramenta administrativa sem finalidade
+ * remanescente e superficie de ataque pura — o risco fica, o beneficio nao existe.
+ * Ferramenta de migracao nao deve permanecer exposta depois que a migracao acabou.
  *
- * `origem: 'legado_usuarios'` fica gravado justamente para que esses documentos
- * sejam distinguiveis num relatorio, e para que a remocao do legado possa ser
- * conferida.
+ * O MODULO CONTINUA NA ARVORE. `migracaoLegado.js` e `test/migracao.test.js` ficam
+ * como biblioteca dormente e testada: o que foi retirado e a EXPOSICAO, que e o
+ * que constitui o risco. Se algum dia aparecer populacao legada de verdade, a
+ * decisao por documento ja existe, provada, e volta a ser fiada aqui.
+ *
+ * A prova de que ela deixou de existir em producao esta em
+ * `docs/ATIVACAO-BILLING-PRODUCAO-V1.md`.
  */
-exports.migrarEntitlementsLegado = onCall(
-  { region: 'us-central1' },
-  async (request) => {
-    if (!request.auth || request.auth.token.admin !== true) {
-      throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
-    }
-
-    // A decisao por documento mora em `migracaoLegado.js`, testavel sem
-    // `firebase-functions`. Aqui ficou o portao de admin e a fiacao.
-    const relatorio = await migrarPaginaDeLegado({
-      db: getFirestore(),
-      FieldPath,
-      aplicarProposta: (proposta) =>
-        dependencias().store.aplicarProposta(proposta),
-      ESTADO_VIP,
-      agora: new Date().toISOString(),
-      cursor: (request.data && request.data.cursor) || null,
-      lote: (request.data && request.data.lote) || undefined,
-    });
-
-    console.info('[billing] migracao de entitlement legado', relatorio);
-    return relatorio;
-  }
-);
 
 // ===========================================================================
 // DIAGNOSTICO DA POPULACAO — antes de migrar
