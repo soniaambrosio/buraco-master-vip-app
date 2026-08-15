@@ -2996,6 +2996,12 @@ void main() {
           csm('h2', 'copas', '5'),
           csm('h3', 'ouros', 'K'), // sobra: a baixada NÃO zera a mão
         ],
+        // OS ENCERRAMENTO: sobrar 1 carta só é legal se ela tiver descarte
+        // legal. Sem morto e sem canastra, [h3] seria beco e a baixada seria
+        // (corretamente) recusada — o teste passaria a medir outra coisa.
+        mortos: [
+          [for (var i = 0; i < 11; i++) csm('mtT$i', 'ouros', '3')]
+        ],
       );
       const candValido = Baixar(jogosNovos: [['h0', 'h1', 'h2']]);
       const candInvalido = Baixar(jogosNovos: [['h0', 'h1']]); // < 3 cartas
@@ -3112,8 +3118,15 @@ void main() {
         csm('h2', 'copas', '5'),
         csm('h3', 'ouros', 'K'), // sobra: a baixada NÃO zera a mão
       ];
-      final estJogo = estF(fase: FaseTurno.jogo, mao0: maoSeq);
-      final estCompra = estF(fase: FaseTurno.compra, mao0: maoSeq);
+      // OS ENCERRAMENTO: morto disponível para que sobrar [h3] tenha descarte
+      // legal — senão a recusa viria do beco, não da FASE, que é o que se mede.
+      final mortoOk = [
+        [for (var i = 0; i < 11; i++) csm('mtF$i', 'ouros', '3')]
+      ];
+      final estJogo =
+          estF(fase: FaseTurno.jogo, mao0: maoSeq, mortos: mortoOk);
+      final estCompra =
+          estF(fase: FaseTurno.compra, mao0: maoSeq, mortos: mortoOk);
       const baixada = Baixar(jogosNovos: [['h0', 'h1', 'h2']]);
       expect(acaoEhLegal(estJogo, 0, baixada, fechado), true);
       expect(acaoEhLegal(estCompra, 0, baixada, fechado), false);
@@ -5332,6 +5345,39 @@ void main() {
       expect(j.ultimaFalhaTecnica, isNull);
     });
 
+    test('C10-BOT-03-BECO a MESMA abertura, sem morto, não deixa o robô preso',
+        () {
+      // Este é o caso NOMEADO na OS de encerramento. Fixture idêntico ao do
+      // C10-BOT-03, porém sem morto a pegar e sem canastra: a abertura composta
+      // de 9 cartas atinge o mínimo, mas deixaria [guard] sem descarte legal.
+      //
+      // ANTES desta OS: a autoridade ACEITAVA a abertura, o robô ficava com 1
+      // carta indescartável, o turno não concluía e a vez não passava.
+      // DEPOIS: a abertura é recusada (a dupla simplesmente não abre neste
+      // turno) e o robô conclui o turno pelo descarte.
+      final j = _jgBotAberturaCompostaBecoC10();
+      expect(j.minimoParaDescer('nos'), 75);
+
+      // A abertura que atinge o mínimo é REPROVADA pela autoridade, por deixar
+      // o turno sem conclusão legal — e não por causa do mínimo.
+      final r = j.baixarAtomico(0, jogosNovos: [
+        ['3c', '4c', '5c'],
+        ['Jo', 'Qo', 'Ko'],
+        ['Qe', 'Ke', 'Ae'],
+      ]);
+      expect(r['ok'], isFalse);
+      expect(j.primeiraBaixadaFeita['nos'], isFalse);
+
+      // E o robô, na mesma mesa, encerra o turno de forma canônica.
+      final robo = _jgBotAberturaCompostaBecoC10();
+      final marca = robo.falhasTecnicas;
+      robo.botJoga(0);
+      expect(robo.falhasTecnicas, marca); // sem falha técnica
+      expect(robo.pausadaPorFalhaTecnica, isFalse); // sem pausa da partida
+      expect(robo.vez != 0 || robo.rodadaEncerrada, isTrue); // a vez andou
+      expect(robo.maos[0].length, greaterThan(0)); // não ficou preso com 1 carta
+    });
+
     test('C10-BOT-02 robô só escolhe DENTRO dos candidatos da autoridade', () {
       final j = _jgBotLixoFechadoC10();
       final cands = j.candidatosCompraLixo(0);
@@ -6033,7 +6079,7 @@ void main() {
       final res = aplicarLegal(proj.canonico, 0, baixada, spec);
       expect(res.legal, isFalse);
       expect(res.proximoEstado, isNull); // sem mutação parcial
-      // RED-PROBE: reasonCode entra junto com a correção.
+      expect(res.codigo, reasonCodeSemConclusaoLegal);
 
       // O estado ORIGINAL segue vivo (o descarte é a saída).
       expect(gerarAcoesLegais(proj.canonico, 0, spec), isNotEmpty);
@@ -6195,26 +6241,33 @@ void main() {
       // (Fechado/STBL) consome a mão no uso do topo e pode deixar 1 carta órfã.
       final j = _jgEncLixoBeco();
       final antes = snapEnc(j);
-      final cands = j.candidatosCompraLixo(0);
-      // A derivação continua enumerando o que a REGRA de compra aceita; o que
-      // muda é que a transação que deixaria beco não é mais aplicável.
-      var algumaAplicou = false;
-      for (final c in cands) {
-        final k = _jgEncLixoBeco();
-        if (k.comprarLixoAtomico(0, c)['ok'] == true) {
-          algumaAplicou = true;
-          expect(morto(k, 0), isFalse); // nenhuma compra aceita deixa beco
-        }
-      }
-      // A compra que deixaria a mão em [orfa] sem saída é recusada.
+
+      // A compra que deixaria a mão em [orfa] sem saída é RECUSADA pela
+      // autoridade, mesmo sendo uma compra estruturalmente válida do Fechado
+      // (o topo é usado num 7-8-9 legal).
       final becoDireto = j.comprarLixoAtomico(
           0,
           const ComprarLixo(topoDeclarado: 'lxTopo', jogosNovos: [
             ['lxTopo', '8c', '9c']
           ]));
       expect(becoDireto['ok'], isFalse);
-      expect(snapEnc(j), antes);
-      expect(algumaAplicou || cands.isEmpty, isTrue);
+      expect(snapEnc(j), antes); // atomicidade da recusa
+
+      // E o que é OFERECIDO ao jogador é exatamente o que a autoridade ACEITA:
+      // a derivação não pode listar um candidato que depois seria recusado.
+      final cands = j.candidatosCompraLixo(0);
+      for (final c in cands) {
+        final k = _jgEncLixoBeco();
+        expect(k.comprarLixoAtomico(0, c)['ok'], isTrue,
+            reason: 'candidato oferecido tem de ser aplicável');
+        expect(morto(k, 0), isFalse);
+      }
+      // Neste cenário o único uso possível do topo é justamente o que dá beco,
+      // então a mesa corretamente não oferece compra nenhuma — e o turno segue
+      // com saída pelo monte.
+      expect(cands, isEmpty);
+      expect(morto(j, 0), isFalse);
+      expect(j.comprarMonte(0), isTrue);
     });
 
     test('ENC-12 INVARIANTE varrido: nenhuma ação aceita deixa estado morto',
@@ -7427,6 +7480,9 @@ Jogo _jgLixoMonoAC10() {
     <Carta>[],
   ];
   j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  // OS ENCERRAMENTO: morto ainda por pegar — é o que torna LEGAL sobrar 1 carta
+  // na mão depois da compra (ver _mortoDisponivelEnc).
+  j.mortos = _mortoDisponivelEnc('monoA');
   return j;
 }
 
@@ -7450,6 +7506,8 @@ Jogo _jgLixoMonoBC10() {
     <Carta>[],
   ];
   j.lixo = [Carta('ent', 'ouros', '2', false), Carta('5c', 'copas', '5', false)];
+  // OS ENCERRAMENTO: idem estado A — morto disponível.
+  j.mortos = _mortoDisponivelEnc('monoB');
   return j;
 }
 
@@ -7577,6 +7635,9 @@ Jogo _jgAberturaMultiplaC10() {
     Carta('guard', 'paus', '8', false), // sobra: não zera a mão
   ];
   j.lixo = [Carta('lx', 'espadas', '3', false)];
+  // OS ENCERRAMENTO: morto disponível — sem ele, a abertura de 9 cartas deixaria
+  // a mão em [guard] sem descarte legal (o beco desta OS).
+  j.mortos = _mortoDisponivelEnc('abertMult');
   return j;
 }
 
@@ -7915,6 +7976,21 @@ Jogo _jgBotAberturaCompostaC10() {
     Carta('guard', 'paus', '8', false), // sobra: a abertura não zera a mão
   ];
   j.lixo = [Carta('lx', 'espadas', '3', false)];
+  // OS ENCERRAMENTO: morto disponível. É esta linha que separa o cenário
+  // LEGÍTIMO de abertura composta (aqui) do BECO do C10-BOT-03 — veja
+  // `_jgBotAberturaCompostaBecoC10`, que é este mesmo fixture SEM morto.
+  j.mortos = _mortoDisponivelEnc('botComposta');
+  return j;
+}
+
+/// C10-BOT-03 na forma ORIGINAL (histórica): a mesma abertura composta, porém
+/// SEM morto a pegar e SEM canastra na mesa. Abrir consome 9 das 10 cartas e
+/// deixa [guard] sem descarte legal — o beco que esta OS corrige. Preservado
+/// literalmente para provar o antes/depois do caso nomeado na OS.
+Jogo _jgBotAberturaCompostaBecoC10() {
+  final j = _jgBotAberturaCompostaC10();
+  j.mortos = <List<Carta>>[];
+  j.mortoPego = {'nos': true, 'eles': true};
   return j;
 }
 
@@ -7935,6 +8011,9 @@ Jogo _jgSelecaoAmbiguaC10() {
     Carta('guard', 'paus', 'K', false), // sobra: a baixada não zera a mão
   ];
   j.lixo = [Carta('lx', 'espadas', '3', false)];
+  // OS ENCERRAMENTO: a "carta guarda" sozinha NÃO bastava — sobrar 1 carta sem
+  // morto e sem canastra é o beco. O morto é o que dá saída legal ao turno.
+  j.mortos = _mortoDisponivelEnc('ambigua');
   return j;
 }
 
@@ -8485,10 +8564,26 @@ Jogo _jgEncLixoBeco() {
     Carta('orfa', 'paus', 'K', false),
   ];
   j.jogosDupla['nos'] = [_encMeldCurto()];
-  // topo = 7 de copas: fecha 7-8-9 com a mão e deixa [orfa].
-  j.lixo = [
-    Carta('lxFundo', 'espadas', '5', false),
-    Carta('lxTopo', 'copas', '7', false),
-  ];
+  // Lixo de UMA carta (o topo): comprá-lo traz só ela para a mão. O uso atômico
+  // do topo fecha 7-8-9 com a mão e deixa exatamente [orfa] — o mesmo beco, por
+  // outro portão. Com o lixo mais fundo a mão sobraria com 2+ cartas e haveria
+  // descarte legal (foi o que a 1ª versão deste fixture provou por acidente).
+  j.lixo = [Carta('lxTopo', 'copas', '7', false)];
   return j;
 }
+
+/// OS ENCERRAMENTO DE TURNO V1 — MORTO disponível (11 cartas) para fixtures que
+/// deixam UMA carta na mão depois da jogada.
+///
+/// Por que existe: vários fixtures do C10/C7 usavam o idioma "carta guarda"
+/// (`// sobra: a baixada NÃO zera a mão`) acreditando que sobrar 1 carta era
+/// seguro. Sem morto a pegar e sem canastra na mesa, sobrar 1 carta é
+/// exatamente o BECO desta OS — descartá-la esvazia a mão, e esvaziar é ilegal.
+/// Os fixtures codificavam o defeito sem querer.
+///
+/// A correção preserva o que cada teste mede: dar morto à dupla NÃO muda mão,
+/// mesa nem a combinatória de candidatos/partições — só devolve ao jogador a
+/// saída legal que o cenário real teria. Nenhuma asserção foi afrouxada.
+List<List<Carta>> _mortoDisponivelEnc(String tag) => [
+      [for (var i = 0; i < 11; i++) Carta('mt${tag}_$i', 'ouros', '3', false)]
+    ];
