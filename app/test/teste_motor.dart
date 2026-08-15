@@ -5249,6 +5249,66 @@ void main() {
       expect(snap(j), antes);
     });
 
+    // C10 (rev.3) — a PAUSA precisava ser de ESTADO, não de mensagem. Na rev.2
+    // `PARTIDA PAUSADA` era só texto: o Timer.periodic seguia vivo com o relógio
+    // zerado e o tick seguinte tentava tudo outra vez.
+    test('C10-AUTO-PAUSA-01 após a 1ª falha técnica, nenhuma nova tentativa',
+        () {
+      final j = _jgBotDescarteC10();
+      j.jaComprou = true;
+      final antes = snap(j);
+      j.projetorAutoridadeTest = (_) => throw StateError('projeção quebrou');
+      expect(j.jogadaAutomatica(0), isFalse); // 1ª oportunidade: falha
+      expect(j.falhasTecnicas, 1);
+      expect(j.pausadaPorFalhaTecnica, isTrue);
+
+      // Ticks seguintes do relógio: mais oportunidades, e o projetor CONTINUA
+      // quebrado. Se a pausa não fosse real, cada uma somaria outra falha.
+      for (var tick = 0; tick < 4; tick++) {
+        expect(j.jogadaAutomatica(0), isFalse);
+      }
+      j.projetorAutoridadeTest = null;
+      expect(j.falhasTecnicas, 1); // UMA tentativa, e só
+      expect(j.maos[0].length, 3); // nada comprado, nada descartado
+      expect(j.vez, 0); // turno não avançou artificialmente
+      expect(j.ultimaFalhaTecnica, isNotNull); // evidência preservada
+      expect(snap(j), antes);
+    });
+
+    test('C10-AUTO-PAUSA-02 a pausa técnica não tranca o jogador', () {
+      // Escopo deliberado: a falha foi do piloto automático. O humano segue
+      // livre — tentar de novo na mão é decisão dele, não recuperação inventada.
+      final j = _jgBotDescarteC10();
+      j.jaComprou = true;
+      j.pausadaPorFalhaTecnica = true;
+      expect(j.jogadaAutomatica(0), isFalse); // automático travado
+      expect(j.descartar(0, 'd1'), isNull); // humano passa
+      expect(j.vez, 1);
+    });
+
+    // C10 (rev.3) — o retorno de `jogadaAutomatica` passou a ser medido pelo
+    // ESTADO. Antes bastava chegar ao fim do laço para devolver `true`.
+    test('C10-AUTO-CONTRATO-01 todas as cartas recusadas por REGRA -> false',
+        () {
+      final j = _jgAutoSemDescarteLegalC10();
+      final vezAntes = j.vez;
+      final antes = snap(j);
+      final r = j.jogadaAutomatica(0);
+      expect(r, isFalse); // não fingiu turno concluído
+      expect(j.falhasTecnicas, 0); // foi recusa de REGRA, não falha técnica
+      expect(j.pausadaPorFalhaTecnica, isFalse); // e não pausa a partida
+      expect(j.vez, vezAntes); // a vez continua onde estava
+      expect(j.rodadaEncerrada, isFalse);
+      expect(snap(j), antes); // nenhum descarte inventado
+    });
+
+    test('C10-AUTO-CONTRATO-02 turno realmente concluído -> true', () {
+      final j = _jgBotDescarteC10();
+      final vezAntes = j.vez;
+      expect(j.jogadaAutomatica(0), isTrue);
+      expect(j.vez, isNot(vezAntes)); // a vez passou de verdade
+    });
+
     test('C10-BOT-03 robô abre com ABERTURA COMPOSTA quando o mínimo exige', () {
       // Vulnerável (mínimo 75): nenhum jogo isolado atinge; a soma sim.
       final j = _jgBotAberturaCompostaC10();
@@ -5334,6 +5394,37 @@ void main() {
       expect(jl.comprarLixo(0, modalidade: 'FECHADO')['ok'], isFalse);
       expect(jl.comprarLixoAtomico(0, cands.single)['ok'], isFalse);
       expect(snap(jl), antesL);
+    });
+
+    // C10 (rev.3) — a trava de concorrência no ROLLBACK LEGADO.
+    //
+    // `C10-OCUPADA-01` roda pelo caminho canônico, onde `estender` desce para
+    // `baixarAtomico` — que também barra. Ou seja: aquele teste sobrevive à
+    // remoção da guarda direta de `Jogo.estender()`, e por isso não a prova.
+    // A guarda direta existe pelo LEGADO, onde essa segunda camada não existe.
+    // Este teste é o que cai se ela for removida.
+    test('C10-OCUPADA-04 rollback LEGADO: extensão barrada pela trava direta',
+        () {
+      final j = _jgEstenderC10(cfg: MotorConfig.legadoRollback());
+      expect(j.motorConfig.canonicoAtivo, isFalse); // é mesmo o legado
+      final antes = snap(j);
+      final maoAntes = j.maos[0].length;
+
+      j.mesaOcupadaPorDerivacao = true;
+      final bloqueada = j.estender(0, 0, ['6c']);
+      expect(bloqueada['ok'], isFalse);
+      expect(bloqueada['ocupada'], isTrue);
+      expect(j.maos[0].length, maoAntes); // mão intacta
+      expect(j.jogosDupla['nos']![0].length, 3); // mesa intacta
+      expect(snap(j), antes); // snapshot integralmente intacto
+
+      // Liberada, a MESMA extensão passa — pelo caminho legado, provando que a
+      // recusa veio da trava e não da regra nem da ausência do canônico.
+      j.mesaOcupadaPorDerivacao = false;
+      final livre = j.estender(0, 0, ['6c']);
+      expect(livre['ok'], isTrue);
+      expect(j.jogosDupla['nos']![0].length, 4);
+      expect(j.maos[0].length, maoAntes - 1);
     });
 
     test('C10-OCUPADA-03 derivar NÃO tranca a mesa por si só', () {
@@ -6595,8 +6686,8 @@ Jogo _jgLixoAbertoC10() {
 }
 
 // Fase jogo; mesa da dupla tem 3-4-5 copas; mão tem 6c (estende) e kx (não).
-Jogo _jgEstenderC10() {
-  final j = _c10Base();
+Jogo _jgEstenderC10({MotorConfig? cfg}) {
+  final j = _c10Base(cfg: cfg);
   j.jaComprou = true;
   j.monte = [Carta('mo1', 'copas', '2', false)];
   j.maos[0] = [
@@ -6994,6 +7085,32 @@ Jogo _jgSelecaoAmbiguaC10() {
     Carta('a7', 'copas', '7', false),
     Carta('a8', 'copas', '8', false),
     Carta('guard', 'paus', 'K', false), // sobra: a baixada não zera a mão
+  ];
+  j.lixo = [Carta('lx', 'espadas', '3', false)];
+  return j;
+}
+
+// C10 (rev.3) — fase de JOGO com uma única carta na mão, sem morto disponível
+// (os dois já foram pegos) e sem canastra que libere a batida. Descartar a
+// última carta é RECUSADO POR REGRA ("esvaziar a mão é regra"), e não há outra
+// carta para tentar: é o cenário em que todas as opções de descarte falham por
+// regra, sem nenhuma falha técnica.
+Jogo _jgAutoSemDescarteLegalC10() {
+  final j = _c10Base();
+  j.jaComprou = true;
+  j.monte = [Carta('mo1', 'paus', '8', false)];
+  j.mortos = <List<Carta>>[];
+  j.mortoPego = {'nos': true, 'eles': true};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.maos[0] = [Carta('u1', 'copas', '4', false)];
+  // Jogo de 3 cartas na mesa: existe baixada, mas NÃO é canastra — não libera
+  // a batida, então o descarte que zera a mão continua ilegal.
+  j.jogosDupla['nos'] = [
+    [
+      Carta('n1', 'ouros', '3', false),
+      Carta('n2', 'ouros', '4', false),
+      Carta('n3', 'ouros', '5', false),
+    ]
   ];
   j.lixo = [Carta('lx', 'espadas', '3', false)];
   return j;

@@ -174,6 +174,20 @@ class Jogo {
         }
       : null;
 
+  /// C10 (rev.3) — PAUSA TÉCNICA do fluxo AUTOMÁTICO. Ligada quando a jogada
+  /// automática por tempo esgotado aborta por falha técnica; a partir daí
+  /// nenhuma nova jogada automática começa.
+  ///
+  /// Existe porque `PARTIDA PAUSADA` era só um texto: o `Timer.periodic` seguia
+  /// vivo com `_turnSeconds == 0` e o tick seguinte tentava tudo de novo — nova
+  /// compra, novo descarte, nova falha técnica. A pausa precisava ser de ESTADO,
+  /// não de mensagem.
+  ///
+  /// Escopo deliberado: tranca só o caminho AUTOMÁTICO. O jogador continua livre
+  /// para agir — a falha foi do piloto automático, e decidir tentar de novo na
+  /// mão é escolha humana. Nada aqui avança turno nem inventa recuperação.
+  bool pausadaPorFalhaTecnica = false;
+
   /// C10 (rev.1) — CONTADOR monotônico de falhas técnicas. `ultimaFalhaTecnica`
   /// sozinha não distingue "falhou agora" de "falhou há três jogadas": quem
   /// precisa reagir a uma falha NOVA compara este contador antes e depois. É o
@@ -1653,31 +1667,55 @@ class Jogo {
   /// jogo (compra + descarte), e na tela ela era intestável — o portão de
   /// qualidade não monta widget.
   ///
-  /// Devolve `true` se o turno foi concluído. Falha TÉCNICA para na hora: não
-  /// tenta a próxima carta, não conclui o turno. Recusa de REGRA, sim, segue
-  /// para a carta seguinte (é o comportamento antigo, e é legítimo — a mão pode
-  /// ter cartas que não se pode descartar).
+  /// C10 (rev.3) — CONTRATO do retorno, decidido pelo ESTADO EFETIVO:
+  ///   `true`  = o turno realmente terminou (a vez passou) OU a rodada encerrou
+  ///             legalmente;
+  ///   `false` = nenhuma ação conseguiu concluir o turno.
+  ///
+  /// A rev.2 devolvia `true` por ter chegado ao fim do laço: se TODAS as cartas
+  /// fossem recusadas por regra, a função dizia "concluí" sem descarte, sem
+  /// mudança de vez e sem fim de rodada — e a tela seguia como se o turno
+  /// automático tivesse acontecido. Agora o sucesso é medido, não presumido.
+  ///
+  /// Recusa de REGRA segue tentando a próxima carta (legítimo: a mão pode ter
+  /// cartas que não se pode descartar). Falha TÉCNICA encerra a tentativa na
+  /// hora. Nada de inventar descarte ou forçar `_passarVez`.
   ///
   /// Quem chama compara `falhasTecnicas` antes e depois para saber se a parada
-  /// foi por falha técnica ou por fim normal.
+  /// foi por falha técnica ou por esgotamento das opções legais.
   bool jogadaAutomatica(int assento) {
+    // C10 (rev.3) — PAUSA TÉCNICA: depois da primeira falha técnica automática,
+    // nenhuma nova tentativa começa. Sem isto a tela mostrava "PAUSADA" mas o
+    // relógio seguia vivo e o tick seguinte tentava tudo de novo.
+    if (pausadaPorFalhaTecnica) return false;
     if (mesaOcupadaPorDerivacao) return false;
     if (integridadeErro != null) return false;
     if (rodadaEncerrada || vez != assento) return false;
+
     final marca = falhasTecnicas;
+    final vezAntes = vez;
+
     if (!jaComprou) {
       comprarMonte(assento);
-      if (falhasTecnicas != marca) return false;
+      if (falhasTecnicas != marca) {
+        pausadaPorFalhaTecnica = true;
+        return false;
+      }
       ordenar(assento);
     }
     if (jaComprou && !rodadaEncerrada) {
       for (final c in List<Carta>.from(maos[assento])) {
         final erro = descartar(assento, c.id);
-        if (falhasTecnicas != marca) return false; // sem segundo descarte
-        if (erro == null) break;
+        if (falhasTecnicas != marca) {
+          pausadaPorFalhaTecnica = true; // sem segundo descarte, sem novo tick
+          return false;
+        }
+        if (erro == null) break; // descartou: o turno acabou
       }
     }
-    return true;
+    // SUCESSO medido pelo estado: a vez passou, ou a rodada encerrou legalmente
+    // (batida, morto indireto que devolve à compra, exaustão do baralho).
+    return rodadaEncerrada || vez != vezAntes;
   }
 
   // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
@@ -2083,6 +2121,11 @@ class _MesaScreenState extends State<MesaScreen> {
 
   void _startTurnClock() {
     _turnTimer?.cancel();
+    // C10 (rev.3) — depois de uma pausa técnica o relógio não volta a rodar.
+    if (_j.pausadaPorFalhaTecnica) {
+      _turnTimer = null;
+      return;
+    }
     _turnTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       if (_j.rodadaEncerrada) return;
@@ -2093,6 +2136,10 @@ class _MesaScreenState extends State<MesaScreen> {
         });
         return;
       }
+      // C10 (rev.3) — pausa TÉCNICA: o relógio não volta a disparar a jogada
+      // automática. A trava de estado é `_j.pausadaPorFalhaTecnica`; esta
+      // checagem só evita o tick inútil (o timer já foi cancelado na parada).
+      if (_j.pausadaPorFalhaTecnica) return;
       if (_turnSeconds > 0) {
         setState(() => _turnSeconds -= 1);
       } else {
@@ -2118,6 +2165,8 @@ class _MesaScreenState extends State<MesaScreen> {
     if (_j.vez != 0 || _j.rodadaEncerrada || _botsRodando) return;
     // Não atropela derivação nem escolha humana em andamento.
     if (_mesaOcupadaPorDerivacao) return;
+    // C10 (rev.3) — já pausada por falha técnica: nem tenta.
+    if (_j.pausadaPorFalhaTecnica) return;
 
     final marca = _j.falhasTecnicas;
     final concluiu = _j.jogadaAutomatica(0);
@@ -2133,10 +2182,20 @@ class _MesaScreenState extends State<MesaScreen> {
     _rodarBots();
   }
 
-  /// C10 (rev.2) — parada visível da jogada automática por falha técnica. Não
-  /// finge que o turno terminou: a vez continua onde está e os robôs NÃO são
-  /// acionados. A evidência já está em `_j.ultimaFalhaTecnica`.
+  /// C10 (rev.3) — parada EFETIVA da jogada automática por falha técnica.
+  ///
+  /// A rev.2 só exibia `PARTIDA PAUSADA`: o `Timer.periodic` continuava vivo com
+  /// `_turnSeconds == 0`, e o tick seguinte chamava tudo de novo — nova compra,
+  /// novo descarte, nova falha. A mensagem não correspondia ao estado do fluxo.
+  ///
+  /// Agora a pausa é real em duas camadas: `Jogo.pausadaPorFalhaTecnica` (a
+  /// trava de estado, que `jogadaAutomatica` respeita venha de onde vier) e o
+  /// cancelamento do relógio (que evita até o tick inútil). A vez continua onde
+  /// está, os robôs NÃO são acionados e `ultimaFalhaTecnica` é preservada.
   void _pararPorFalhaTecnica() {
+    _j.pausadaPorFalhaTecnica = true; // redundante com o modelo, e explícito
+    _turnTimer?.cancel();
+    _turnTimer = null;
     if (!mounted) return;
     setState(() => _msg = 'PARTIDA PAUSADA · falha técnica do motor na jogada '
         'automática; nada foi alterado.');
