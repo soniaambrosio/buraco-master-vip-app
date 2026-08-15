@@ -1051,3 +1051,79 @@ exports.backfillPurchaseTokenHash = onCall(
     return relatorio;
   }
 );
+
+// ===========================================================================
+// DIAGNOSTICO DOS METADADOS LEGADOS — quem fica APTO a ficha mensal
+// ===========================================================================
+
+/**
+ * Mede, para cada entitlement, o que falta (`purchaseTokenHash`, `planoBase`,
+ * `inicioEm`), o que e recuperavel de fonte historica real, e — a metrica que
+ * importa — **quantos ficam aptos ao ciclo mensal de fichas**. So admin, e
+ * SOMENTE LEITURA.
+ *
+ * POR QUE ELE NAO TEM MODO DE ESCRITA, e a ausencia e uma decisao registrada:
+ *
+ *   `planoBase` e recuperavel (`compras/{hash}.concessao.planoBase`, persistido
+ *   desde `767b74a`). `inicioEm` NAO E — nenhuma das cinco geracoes de
+ *   `validarCompraPlay` jamais gravou o `startTime` da assinatura, e as duas
+ *   datas que `compras/` tem sao carimbos da validacao deste sistema, nao do
+ *   inicio na Google.
+ *
+ *   Sem `inicioEm`, `mesesDecorridos` devolve -1 e NENHUMA parcela vence. Logo,
+ *   preencher hash e plano no direito migrado nao entrega uma ficha sequer
+ *   (`EFE-13`). Uma rotina de escrita para esses dois campos seria codigo que
+ *   altera documento de pagante em troca de zero efeito — e criaria justamente o
+ *   mal-entendido que o relatorio existe para evitar ("os campos foram
+ *   preenchidos, logo o jogador voltou a receber"). Quando e se `inicioEm` ganhar
+ *   uma fonte, a escrita se faz com o padrao ja pronto de `backfillHashStore.js`.
+ *
+ * A GARANTIA DE NAO ESCREVER E ESTRUTURAL e mora em `recuperacaoMetadados.js`: o
+ * modulo nao recebe `db`, so leitores, nao importa nenhum store, e `REC-40` prova
+ * isso lendo o proprio fonte. As portas de leitura sao as mesmas de
+ * `backfillPurchaseTokenHash`, reusadas em vez de reescritas.
+ *
+ * O RETORNO NAO CARREGA IDENTIDADE: contagens, e amostras com veredito por campo.
+ * Nenhum uid, nenhum token, nenhum hash — nem o rotulo de oito caracteres, que
+ * aqui nao serve para nada.
+ */
+exports.diagnosticarMetadadosLegados = onCall(
+  { region: 'us-central1' },
+  async (request) => {
+    if (!request.auth || request.auth.token.admin !== true) {
+      throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
+    }
+
+    const pedido = request.data || {};
+    const portas = criarPortasDeLeitura({ db: getFirestore(), FieldPath });
+
+    const diagnostico = criarDiagnosticoMetadados({
+      ...portas,
+      // A correlacao com `compras/` e o que responde se o campo e recuperavel.
+      // Desligar so serve para medir o custo da varredura, e o relatorio diz
+      // "nao investigado" em vez de concluir "sem fonte".
+      lerComprasDoJogador:
+        pedido.correlacionarCompras === false ? null : portas.lerComprasDoJogador,
+      agora: () => new Date().toISOString(),
+      registrarErro: (mensagem, contexto) =>
+        console.error('[billing] falha ao examinar metadados do jogador', mensagem, contexto),
+    });
+
+    const relatorio = await diagnostico.diagnosticar({
+      cursorInicial: pedido.cursor || null,
+      tamanhoPagina: pedido.tamanhoPagina || undefined,
+      maxPaginas: pedido.maxPaginas || undefined,
+      amostrasPorClasse: pedido.amostrasPorClasse || undefined,
+    });
+
+    console.info('[billing] diagnostico de metadados legados', {
+      examinados: relatorio.examinados,
+      porClasse: relatorio.resumo.porClasse,
+      porBloqueio: relatorio.resumo.porBloqueio,
+      aptidao: relatorio.resumo.aptidao,
+      esgotou: relatorio.esgotou,
+    });
+
+    return relatorio;
+  }
+);
