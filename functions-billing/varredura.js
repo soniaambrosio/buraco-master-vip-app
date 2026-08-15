@@ -75,6 +75,71 @@ const TAMANHO_PAGINA = 200;
 const MAX_PAGINAS = 500;
 
 /**
+ * O ALGORITMO, separado de QUEM entrega a pagina.
+ *
+ * `varrerPaginado` (abaixo) precisa do `db` para montar a consulta. Ha um
+ * consumidor que NAO PODE receber `db`: `diagnosticoPopulacao.js`, cuja garantia
+ * de nao escrever e estrutural — ele nao recebe nenhuma porta capaz de escrever,
+ * e um `db` seria exatamente isso. Sem esta separacao, aquele modulo teria que
+ * reimplementar cursor, esgotamento e teto de paginas; duas copias do mesmo laco
+ * divergem, e a que divergir vai ser a que ninguem olhou.
+ *
+ * Entao o laco mora aqui uma vez so, sobre um `lerPagina` injetado, e
+ * `varrerPaginado` passa a ser este mesmo laco com um leitor de pagina feito de
+ * consulta do Firestore.
+ *
+ * @param {object} opcoes
+ * @param {function({cursor: *, tamanho: number}): Promise<Array<{id: string, valor: *}>>}
+ *   opcoes.lerPagina
+ *   Devolve ATE `tamanho` itens, em ordem estavel e crescente por `id`,
+ *   estritamente depois de `cursor`. Uma pagina menor que `tamanho` significa
+ *   fim — e por isso este contrato exige que o leitor nunca devolva menos por
+ *   outro motivo (filtrar em memoria depois de ler, por exemplo, mentiria o fim).
+ * @param {function(*, string): Promise<void>} opcoes.aoVisitar
+ *   Recebe `(valor, id)`. Excecao SOBE — ver a nota em `varrerPaginado`.
+ * @param {number} [opcoes.tamanhoPagina]
+ * @param {number} [opcoes.maxPaginas]
+ * @param {*} [opcoes.cursorInicial]
+ *
+ * @returns {Promise<{visitados: number, paginas: number, esgotou: boolean,
+ *   cursor: *}>}
+ */
+async function varrerPorPagina({
+  lerPagina,
+  aoVisitar,
+  tamanhoPagina = TAMANHO_PAGINA,
+  maxPaginas = MAX_PAGINAS,
+  cursorInicial = null,
+}) {
+  let cursor = cursorInicial;
+  let visitados = 0;
+  let paginas = 0;
+
+  for (;;) {
+    if (paginas >= maxPaginas) {
+      return { visitados, paginas, esgotou: false, cursor };
+    }
+
+    const itens = await lerPagina({ cursor, tamanho: tamanhoPagina });
+    paginas += 1;
+
+    for (const item of itens) {
+      // O cursor avanca ANTES do trabalho. Se `aoVisitar` estourar, a proxima
+      // pagina ainda comeca depois deste documento — e o que impede um
+      // documento problematico de prender a varredura num laco.
+      cursor = item.id;
+      visitados += 1;
+      await aoVisitar(item.valor, item.id);
+    }
+
+    // Pagina incompleta e a unica evidencia local de que a colecao acabou.
+    if (itens.length < tamanhoPagina) {
+      return { visitados, paginas, esgotou: true, cursor };
+    }
+  }
+}
+
+/**
  * Percorre todos os documentos de uma consulta, pagina a pagina, ate esgotar.
  *
  * @param {object} opcoes
@@ -112,37 +177,21 @@ async function varrerPaginado({
   maxPaginas = MAX_PAGINAS,
   cursorInicial = null,
 }) {
-  let cursor = cursorInicial;
-  let visitados = 0;
-  let paginas = 0;
+  return varrerPorPagina({
+    lerPagina: async ({ cursor, tamanho }) => {
+      // A ordenacao entra AQUI, e nao no `where` de quem chama, para que nao
+      // exista consulta paginada neste codebase sem criterio estavel.
+      let q = consulta().orderBy(FieldPath.documentId()).limit(tamanho);
+      if (cursor) q = q.startAfter(cursor);
 
-  for (;;) {
-    if (paginas >= maxPaginas) {
-      return { visitados, paginas, esgotou: false, cursor };
-    }
-
-    // A ordenacao entra AQUI, e nao no `where` de quem chama, para que nao
-    // exista consulta paginada neste codebase sem criterio estavel.
-    let q = consulta().orderBy(FieldPath.documentId()).limit(tamanhoPagina);
-    if (cursor) q = q.startAfter(cursor);
-
-    const pagina = await q.get();
-    paginas += 1;
-
-    for (const doc of pagina.docs) {
-      // O cursor avanca ANTES do trabalho. Se `aoVisitar` estourar, a proxima
-      // pagina ainda comeca depois deste documento — e o que impede um
-      // documento problematico de prender a varredura num laco.
-      cursor = doc.id;
-      visitados += 1;
-      await aoVisitar(doc);
-    }
-
-    // Pagina incompleta e a unica evidencia local de que a colecao acabou.
-    if (pagina.size < tamanhoPagina) {
-      return { visitados, paginas, esgotou: true, cursor };
-    }
-  }
+      const pagina = await q.get();
+      return pagina.docs.map((doc) => ({ id: doc.id, valor: doc }));
+    },
+    aoVisitar: (doc) => aoVisitar(doc),
+    tamanhoPagina,
+    maxPaginas,
+    cursorInicial,
+  });
 }
 
-module.exports = { TAMANHO_PAGINA, MAX_PAGINAS, varrerPaginado };
+module.exports = { TAMANHO_PAGINA, MAX_PAGINAS, varrerPorPagina, varrerPaginado };

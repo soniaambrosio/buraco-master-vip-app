@@ -323,6 +323,20 @@ class FirestoreFalso {
     return [...this._docs.keys()].sort();
   }
 
+  /**
+   * Fotografia de caminho + VERSAO de todo o banco.
+   *
+   * `caminhos()` sozinho nao serve para provar ausencia de escrita: reescrever um
+   * documento que ja existe nao cria caminho novo, entao a lista sairia igual. A
+   * versao sobe a cada `_gravar`, entao dois retratos identicos significam que
+   * nenhuma escrita aconteceu — inclusive as que sobrescrevem em cima.
+   */
+  retrato() {
+    return [...this._docs.entries()]
+      .map(([caminho, e]) => `${caminho}@${e.versao}`)
+      .sort();
+  }
+
   /** Semeia um documento sem passar por transacao. */
   semear(caminho, dados) {
     this._gravar(caminho, dados);

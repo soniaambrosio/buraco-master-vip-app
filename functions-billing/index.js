@@ -85,6 +85,10 @@ const {
   concederFichasDeTodosOsAssinantes,
 } = require('./fichasVarredura');
 const { migrarPaginaDeLegado } = require('./migracaoLegado');
+const {
+  criarDiagnosticoPopulacao,
+  criarPortasFirestore,
+} = require('./diagnosticoPopulacao');
 
 initializeApp();
 
@@ -854,6 +858,76 @@ exports.migrarEntitlementsLegado = onCall(
     });
 
     console.info('[billing] migracao de entitlement legado', relatorio);
+    return relatorio;
+  }
+);
+
+// ===========================================================================
+// DIAGNOSTICO DA POPULACAO — antes de migrar
+// ===========================================================================
+
+/**
+ * Conta quem esta em `usuarios/` e em `playerEntitlements/`, projeta o que a
+ * migracao faria com cada um, e mede quantos jogadores perdem a ficha mensal por
+ * falta de `purchaseTokenHash`. So admin, e SOMENTE LEITURA.
+ *
+ * POR QUE ELE E UMA FUNCAO E NAO UMA CONSULTA NO CONSOLE: as respostas que
+ * interessam sao cruzamentos entre tres colecoes (`usuarios`, `playerEntitlements`
+ * com a subcolecao `interno`, e `compras`), e `interno/billing` esta fechado para
+ * cliente E para admin nas regras — so o Admin SDK alcanca. Nao existe consulta
+ * de console que responda "quantos vigentes estao sem hash".
+ *
+ * A GARANTIA DE NAO ESCREVER E ESTRUTURAL, e mora em `diagnosticoPopulacao.js`:
+ * o modulo nao recebe `db`, so leitores, e `DIAG-31`/`DIAG-32` provam isso pelo
+ * fonte e pelo estado do banco. Esta fiacao nao pode afrouxar a garantia porque
+ * `criarPortasFirestore` e quem fala com o `db`, e o corpo dela e so `.get()`.
+ *
+ * O RETORNO NAO CARREGA IDENTIDADE: contagens, e amostras com `rotulo` (doze
+ * caracteres de sha256 do uid). Nenhum uid, nenhum e-mail, nenhum token, nenhum
+ * hash de token. O rotulo e deterministico, entao um operador que ja suspeita de
+ * uma conta calcula o rotulo dela e confere — sem que a funcao enumere ninguem.
+ *
+ * `esgotou: false` no retorno significa que o teto de paginas mordeu e que
+ * `cursor` e o ponto de retomada; somar os pedacos e responsabilidade de quem
+ * chama, e `somarResumos` existe para isso.
+ */
+exports.diagnosticarPopulacaoVip = onCall(
+  { region: 'us-central1' },
+  async (request) => {
+    if (!request.auth || request.auth.token.admin !== true) {
+      throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
+    }
+
+    const pedido = request.data || {};
+    const portas = criarPortasFirestore({ db: getFirestore(), FieldPath });
+
+    const diagnostico = criarDiagnosticoPopulacao({
+      ...portas,
+      // A correlacao com `compras/` custa uma consulta por jogador. Ela e o que
+      // responde se o hash e recuperavel, entao o padrao e LIGADA: desligar por
+      // omissao faria o relatorio dizer "nao investigado" justamente na pergunta
+      // que motivou a OS. Quem precisa de um censo barato desliga de propria mao.
+      lerComprasDoJogador:
+        pedido.correlacionarCompras === false ? null : portas.lerComprasDoJogador,
+      agora: () => new Date().toISOString(),
+    });
+
+    const relatorio = await diagnostico.diagnosticar({
+      cursorInicial: pedido.cursor || null,
+      tamanhoPagina: pedido.tamanhoPagina || undefined,
+      maxPaginas: pedido.maxPaginas || undefined,
+      amostrasPorCategoria: pedido.amostrasPorCategoria || undefined,
+    });
+
+    // O log leva o resumo, nunca as amostras: rotulo anonimo continua sendo um
+    // dado por jogador, e log de producao nao e lugar de lista de gente.
+    console.info('[billing] diagnostico da populacao VIP', {
+      examinados: relatorio.resumo.examinados,
+      esgotou: relatorio.esgotou,
+      porCategoria: relatorio.resumo.porCategoria,
+      porAlerta: relatorio.resumo.porAlerta,
+    });
+
     return relatorio;
   }
 );
