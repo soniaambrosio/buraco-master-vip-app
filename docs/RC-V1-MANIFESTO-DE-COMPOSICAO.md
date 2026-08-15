@@ -533,7 +533,11 @@ criar redundância seria estética, não preservação.
 
 ```text
 Branches locais no app:                        75
-Refs remotas no app após esta OS:              82
+Refs remotas no app no inicio da OS:           73
+Refs remotas no app ao final da OS:            83
+  criadas por esta OS:                          9
+  criadas por sessao paralela:                  1
+    (claude/android-api-36-compat-a62a58 — nao fui eu; ja contida)
 Branches locais com trabalho único não salvo:   0
 Folhas obrigatórias protegidas:             13/13
 Repositório do servidor:            já protegido, 0 pushes necessários
