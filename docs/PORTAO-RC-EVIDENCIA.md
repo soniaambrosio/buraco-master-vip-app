@@ -213,7 +213,35 @@ desenvolvimento:
 
 ---
 
-## 7. Cobertura — o que esta RC não cobre
+## 7. Demonstração — recibo antigo não passa por execução atual
+
+Esta se demonstrou sozinha. O último recibo era do commit `054406e`; o commit da
+evidência (`7a90811`) entrou por cima. Sem tocar em nada:
+
+```bash
+node ferramentas/portao-rc/portao-rc.js --conferir
+```
+
+```
+  RECIBO NAO VALE PARA ESTA ARVORE.
+
+  • O recibo e de OUTRO COMMIT:
+      recibo  054406ea27fda2e0640b07a1281ea6442811cc77
+      arvore  7a9081163cf3519ff0e02228bdadb77a53527ec9
+    Um verde do commit anterior nao diz nada sobre este. E o caso mais
+    comum do recibo antigo: o portao rodou, alguem commitou por cima, e o
+    arquivo continuou la dizendo PASS.
+
+  • O recibo e de uma execucao PARCIAL (perfil `parcial`).
+    Execucao restrita serve para depurar, e nao para assinar RC.
+```
+
+**exit 5.** Recusa pelos dois motivos independentes, e é exatamente o cenário
+descrito: o portão rodou, alguém commitou por cima, e o arquivo continuou lá.
+
+---
+
+## 8. Cobertura — o que esta RC não cobre
 
 Declaradas no catálogo, com endereço, e visíveis em toda execução:
 
