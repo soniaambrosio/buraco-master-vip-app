@@ -190,6 +190,53 @@ test('B reentrega do mesmo messageId nao duplica efeito, trilha nem consulta', a
   assert.equal(ev.token.length, 8, 'a trilha guarda rotulo, nao hash inteiro');
 });
 
+test('B2 duas entregas SIMULTANEAS do mesmo messageId: so uma atravessa', async () => {
+  // O teste B acima passa mesmo com a barreira transacional desligada, porque o
+  // atalho de `rtdn.js` responde antes de a transacao ser alcancada. Ou seja: B
+  // prova o atalho, e nao a barreira. Este prova a barreira.
+  //
+  // O cenario e o unico em que ela e a UNICA linha de defesa: duas entregas da
+  // mesma mensagem em voo ao mesmo tempo. As duas passam pelo atalho (o evento
+  // ainda nao existe), as duas perguntam a Google, e as duas chegam a transacao
+  // com carimbos de consulta DIFERENTES — entao a regra de ordem tambem nao as
+  // pega. So a marca "ja processei", relida dentro da transacao, segura.
+  const c = cenarioDeModulo();
+  c.registrarCompra(HASH_A, { uid: U1 });
+  c.db.zerarDiario();
+
+  const proposta = (verificadoEm, expiraEm) => ({
+    uid: U1, estado: ESTADO.ATIVO, vipAtivo: true, produtoId: PRODUTO,
+    inicioEm: PASSADO, expiraEm, renovacaoAutomatica: true, origem: 'play',
+    purchaseTokenHash: HASH_A, purchaseToken: TOKEN_A, verificadoEm, fonte: 'rtdn',
+  });
+
+  // A SEGUNDA entrega e segurada antes do commit; a primeira commita e cria o
+  // documento de evento. Na retentativa, a segunda tem de reconhece-lo.
+  let aSegurar = 2;
+  let liberar;
+  const porta = new Promise((r) => { liberar = r; });
+  c.db.pausarAntesDoCommit = async () => {
+    aSegurar -= 1;
+    if (aSegurar === 0) await porta;
+  };
+
+  const primeira = c.store.aplicarProposta(proposta(T1, FUTURO), { id: 'msg_B2' });
+  const segunda = c.store.aplicarProposta(proposta(T2, FUTURO_LONGE), { id: 'msg_B2' });
+  liberar();
+  const [ra, rb] = await Promise.all([primeira, segunda]);
+
+  const motivos = [ra.motivo, rb.motivo];
+  assert.ok(
+    motivos.includes('evento_repetido'),
+    `a barreira de idempotencia da transacao nao atuou: ${JSON.stringify(motivos)}`
+  );
+  assert.equal(c.db.escritasEm(publicoDe(U1)), 1, 'a mesma mensagem produziu dois efeitos');
+  assert.equal(c.db.escritasEm(internoDe(U1)), 1);
+  // O prazo gravado e o da entrega que atravessou, e nao uma mistura das duas.
+  assert.equal(c.publico(U1).expiraEm, FUTURO);
+  assert.ok(c.db.conflitos >= 1, 'nao houve contencao: a corrida nao aconteceu');
+});
+
 // ===========================================================================
 // C — mesmo token com messageId diferente
 // ===========================================================================

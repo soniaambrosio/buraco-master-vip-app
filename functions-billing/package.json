@@ -15,7 +15,9 @@
     "test:adversarial": "node --test test/adversarial.test.js",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "//prova:nao-vacuidade": "Neutraliza, uma a uma, as protecoes de producao dos casos criticos e exige que os testes correspondentes fiquem VERMELHOS. Muta arquivo de producao em copia temporaria e restaura sempre; aborta se a arvore nao estiver limpa.",
+    "prova:nao-vacuidade": "node test/apoio/nao_vacuidade.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",
