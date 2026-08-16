@@ -284,6 +284,65 @@ jobs:
           cd app_build
           flutter test test/teste_motor.dart --reporter expanded
 
+      - name: "PORTAO DE QUALIDADE — handshake autenticado da conexao online"
+        # O portao que esta OS existe para instalar AQUI, e nao so no build.yml.
+        #
+        # O `build.yml` produz APK de TESTE e nao roda desde que a chave de teste
+        # virou Secret. Ou seja: ate esta OS, o unico pipeline que realmente
+        # gera artefato publicavel NAO exercitava uma linha do protocolo
+        # autenticado — e foi assim que uma arvore com `online_service.dart`
+        # ainda em protocolo 1 chegou a produzir AAB enquanto o servidor ja
+        # exigia protocolo >= 2.
+        #
+        # Roda sobre o MESMO `app_build/lib` que o `flutter build appbundle`
+        # compila logo abaixo. Nao e uma classe isolada testada a parte.
+        run: |
+          if [ ! -f app/test/online_auth_test.dart ]; then
+            echo "ERRO: app/test/online_auth_test.dart nao encontrado — portao OBRIGATORIO."
+            exit 1
+          fi
+          mkdir -p app_build/test
+          cp app/test/online_auth_test.dart app_build/test/
+          cd app_build
+          flutter test test/online_auth_test.dart --reporter expanded
+          echo "PORTAO VERDE: protocolo v2, credencial, renovacao, logout e troca de conta."
+
+      - name: "PORTAO — nenhum caminho do release fala protocolo 1"
+        # Complemento estrutural do portao acima: os testes provam o que o
+        # codigo FAZ, este prova que nao sobrou outro caminho que o contorne.
+        # Um segundo cliente WebSocket, ou um `protocolo = 1` esquecido em
+        # qualquer arquivo, passaria despercebido pelos testes do primeiro.
+        run: |
+          falhou=0
+
+          echo "--- quem abre WebSocket dentro de app_build/lib ---"
+          ABRIDORES=$(grep -rl "WebSocketChannel" app_build/lib || true)
+          echo "${ABRIDORES:-nenhum}"
+          N=$(printf '%s\n' "$ABRIDORES" | grep -c . || true)
+          if [ "$N" != "1" ]; then
+            echo "ERRO: esperava EXATAMENTE 1 cliente WebSocket, achei $N."
+            falhou=1
+          fi
+
+          echo "--- versao de protocolo declarada ---"
+          if ! grep -qE 'protocolo\s*=\s*2\s*;' app_build/lib/services/online_service.dart; then
+            echo "ERRO: online_service.dart nao declara 'protocolo = 2'."
+            falhou=1
+          fi
+          if grep -rnE 'protocolo\s*[:=]\s*1\b' app_build/lib; then
+            echo "ERRO: alguem declara protocolo 1 no codigo do release."
+            falhou=1
+          fi
+
+          echo "--- o app nao pode declarar identidade ---"
+          if grep -rnE "'jogadorId'\s*:" app_build/lib; then
+            echo "ERRO: o cliente esta mandando jogadorId — identidade e do servidor."
+            falhou=1
+          fi
+
+          [ "$falhou" = "0" ] || exit 1
+          echo "PORTAO VERDE: um unico cliente, protocolo 2, sem identidade declarada."
+
       - name: "PORTAO DE QUALIDADE — cliente Billing (os 15 casos da OS)"
         # Tres riscos distintos, todos com custo em dinheiro:
         #  - catalogo: nenhum ID nem preco de produto entra no codigo antes de a

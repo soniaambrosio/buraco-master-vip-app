@@ -104,6 +104,20 @@ dev_dependencies:
   # Fakes de Firestore e Functions nos testes do adaptador, sem subir emulador.
   fake_cloud_firestore: ^4.2.0
 
+  # DECLARADAS AQUI, e não por `flutter pub add` dentro do workflow. As duas já
+  # chegam como dependência transitiva (`stream_channel` via web_socket_channel,
+  # `fake_async` via flutter_test), mas `test/online_auth_test.dart` importa as
+  # duas DIRETAMENTE: stream_channel para o canal WebSocket falso, fake_async
+  # para atravessar o backoff da reconexão sem esperar segundos de verdade.
+  #
+  # O `pub add` que fazia isso no build.yml rodava ANTES do passo que copia
+  # `app/pubspec.yaml` para dentro do scaffold — ou seja, era apagado logo em
+  # seguida. Este arquivo é a fonte da verdade das dependências desde a OS do
+  # AAB de produção; declarar aqui é o único lugar que funciona nos dois
+  # workflows.
+  stream_channel: ^2.1.4
+  fake_async: ^1.3.3
+
 dependency_overrides:
   # O jni 1.0.1 (dependencia transitiva) adicionou um bloco
   # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com

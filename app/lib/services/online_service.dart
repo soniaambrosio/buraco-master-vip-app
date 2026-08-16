@@ -61,6 +61,14 @@ typedef ObterIdToken = Future<String?> Function();
 /// Fábrica do canal. Existe pelo mesmo motivo: o teste troca por um canal falso.
 typedef AbrirCanal = WebSocketChannel Function(Uri url);
 
+/// Quem está logado NESTE aparelho, ao longo do tempo. Emite o uid, ou `null`
+/// quando não há ninguém.
+///
+/// É uma FUNÇÃO que devolve o stream, e não o stream pronto, de propósito: o
+/// padrão toca em `FirebaseAuth.instance`, e construir um `OnlineService` não
+/// pode exigir Firebase inicializado. A assinatura só acontece no `conectar()`.
+typedef ObterIdentidade = Stream<String?> Function();
+
 class OnlineService extends ChangeNotifier {
   // Servidor de produção já no ar (ver NO-AR.md). Trocável se mudar de host.
   static const String servidorUrl =
@@ -78,12 +86,17 @@ class OnlineService extends ChangeNotifier {
   /// pendurado em "identificando você…" para sempre.
   static const Duration limiteDeAutenticacao = Duration(seconds: 15);
 
-  OnlineService({ObterIdToken? obterIdToken, AbrirCanal? abrirCanal})
-      : _obterIdToken = obterIdToken ?? _idTokenDoFirebase,
-        _abrirCanal = abrirCanal ?? WebSocketChannel.connect;
+  OnlineService({
+    ObterIdToken? obterIdToken,
+    AbrirCanal? abrirCanal,
+    ObterIdentidade? obterIdentidade,
+  })  : _obterIdToken = obterIdToken ?? _idTokenDoFirebase,
+        _abrirCanal = abrirCanal ?? WebSocketChannel.connect,
+        _obterIdentidade = obterIdentidade ?? _identidadeDoFirebase;
 
   final ObterIdToken _obterIdToken;
   final AbrirCanal _abrirCanal;
+  final ObterIdentidade _obterIdentidade;
 
   /// Credencial padrão: o ID Token do usuário logado no Firebase.
   ///
@@ -96,8 +109,24 @@ class OnlineService extends ChangeNotifier {
     return u.getIdToken();
   }
 
+  /// Identidade padrão: quem o Firebase Auth diz que está logado, ao longo do
+  /// tempo. `authStateChanges` emite o estado atual assim que se assina, e
+  /// depois a cada login, logout ou troca de conta.
+  static Stream<String?> _identidadeDoFirebase() =>
+      FirebaseAuth.instance.authStateChanges().map((u) => u?.uid);
+
   WebSocketChannel? _canal;
   StreamSubscription<dynamic>? _sub;
+
+  /// Vigilância da conta local. Sem ela, um socket já autenticado como A
+  /// continuaria de pé — e continuaria valendo no servidor até o token vencer —
+  /// depois de a pessoa sair da conta ou entrar com outra.
+  StreamSubscription<String?>? _identidadeSub;
+
+  /// Último uid observado neste processo. Não vem do servidor nem sai daqui:
+  /// serve só para reconhecer a TRANSIÇÃO de conta.
+  String? _uidLocal;
+  bool _uidLocalConhecido = false;
 
   OnlineStatus status = OnlineStatus.desconectado;
   String? erro; // última mensagem de erro (conexão ou do servidor)
@@ -141,7 +170,90 @@ class OnlineService extends ChangeNotifier {
   /// Abre a conexão com o servidor. Idempotente.
   void conectar() {
     _querConectado = true;
+    _vigiarIdentidade();
     _abrir();
+  }
+
+  /// Assina a conta local na PRIMEIRA conexão, e não no construtor: o padrão
+  /// toca em `FirebaseAuth.instance`, que nem sempre está inicializado quando um
+  /// `OnlineService` é criado (uma tela pode ser construída antes do Firebase).
+  ///
+  /// Falha aqui é silenciosa e não impede jogar: sem Firebase disponível não há
+  /// troca de conta a vigiar, porque também não haveria credencial para
+  /// apresentar — `_abrir()` cai em `naoAutenticado` logo em seguida.
+  void _vigiarIdentidade() {
+    if (_identidadeSub != null) return;
+    try {
+      _identidadeSub = _obterIdentidade().listen(_aoMudarIdentidade);
+    } catch (_) {
+      _identidadeSub = null;
+    }
+  }
+
+  /// A conta LOCAL mudou. Duas transições importam, e as duas invalidam a
+  /// conexão atual — o servidor derivou a identidade do token apresentado no
+  /// `auth`, então o socket continua sendo de quem o abriu.
+  ///
+  ///   uid -> null ..... a pessoa saiu da conta. Falha TERMINAL: reconectar
+  ///                     sozinho não tem o que apresentar, e ficar tentando
+  ///                     mostraria "conexão instável" para sempre.
+  ///   uid -> outro .... entrou outra conta no mesmo processo. Derruba o socket
+  ///                     do anterior e reabre do zero, com credencial nova.
+  ///
+  /// A PRIMEIRA emissão nunca derruba nada: `authStateChanges` entrega o estado
+  /// atual assim que se assina, e isso não é transição.
+  void _aoMudarIdentidade(String? uid) {
+    final anterior = _uidLocal;
+    final haviaLeitura = _uidLocalConhecido;
+    _uidLocal = uid;
+    _uidLocalConhecido = true;
+
+    if (!haviaLeitura) return; // primeira leitura: só registra
+    if (uid == anterior) return; // nada mudou
+
+    // A mesa era do dono anterior. Esquecer é o que impede `_aoAutenticar()` de
+    // mandar `entrarMesa` com o código dele em nome de quem acabou de entrar.
+    _esquecerMesa();
+
+    if (uid == null) {
+      _falhaTerminal(OnlineStatus.naoAutenticado, 'você saiu da conta');
+      return;
+    }
+
+    _derrubarSocket();
+    _pendentes.clear();
+    _tentativas = 0;
+    _jaAutenticouNestaConexao = false;
+    // O erro anterior era da conta anterior. Quem entrou agora ainda não
+    // fracassou em nada.
+    erro = null;
+    if (_querConectado) {
+      status = OnlineStatus.conectando;
+      notifyListeners();
+      _abrir();
+    } else {
+      status = OnlineStatus.desconectado;
+      notifyListeners();
+    }
+  }
+
+  /// Descarta o que pertencia à sessão anterior nesta mesa.
+  void _esquecerMesa() {
+    codigo = null;
+    meuAssento = null;
+    visao = null;
+  }
+
+  /// Fecha socket, assinatura e temporizadores, sem decidir status nem
+  /// reconexão — quem chama decide.
+  void _derrubarSocket() {
+    _reconectarTimer?.cancel();
+    _limiteAuthTimer?.cancel();
+    _limiteAuthTimer = null;
+    _sub?.cancel();
+    _sub = null;
+    _canal?.sink.close();
+    _canal = null;
   }
 
   Future<void> _abrir() async {
@@ -281,13 +393,9 @@ class OnlineService extends ChangeNotifier {
   /// Fecha tudo (sair da tela online).
   void desligar() {
     _querConectado = false;
-    _reconectarTimer?.cancel();
-    _limiteAuthTimer?.cancel();
-    _limiteAuthTimer = null;
-    _sub?.cancel();
-    _sub = null;
-    _canal?.sink.close();
-    _canal = null;
+    _derrubarSocket();
+    _identidadeSub?.cancel();
+    _identidadeSub = null;
     _pendentes.clear();
     status = OnlineStatus.desconectado;
     notifyListeners();
@@ -439,13 +547,10 @@ class OnlineService extends ChangeNotifier {
   /// demais, servidor velho demais.
   void _falhaTerminal(OnlineStatus novo, String mensagem) {
     _querConectado = false;
-    _reconectarTimer?.cancel();
-    _limiteAuthTimer?.cancel();
-    _limiteAuthTimer = null;
-    _sub?.cancel();
-    _sub = null;
-    _canal?.sink.close();
-    _canal = null;
+    _derrubarSocket();
+    // A vigilância da conta NÃO é cancelada aqui, e a diferença importa: depois
+    // de `você saiu da conta`, quem volta a entrar precisa tirar o serviço do
+    // estado terminal — e é o stream de identidade que avisa.
     _pendentes.clear();
     status = novo;
     erro = mensagem;

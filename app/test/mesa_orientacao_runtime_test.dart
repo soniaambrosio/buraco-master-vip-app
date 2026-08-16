@@ -58,6 +58,8 @@ void main() {
               onTermos: () {},
               onAvaliar: () {},
               onSair: () {},
+              // `onExcluirConta` e obrigatorio desde a OS de Exclusao de Conta.
+              onExcluirConta: () {},
             ),
           ),
         ),
@@ -106,6 +108,8 @@ void main() {
               onTermos: () {},
               onAvaliar: () {},
               onSair: () {},
+              // `onExcluirConta` e obrigatorio desde a OS de Exclusao de Conta.
+              onExcluirConta: () {},
             ),
           ),
         ),

@@ -84,9 +84,43 @@ class _SinkFalso implements WebSocketSink {
   Future<void> get done => Future.value();
 }
 
+/// Conta logada no aparelho, de mentira.
+///
+/// Reproduz o que importa de `authStateChanges`: é broadcast, e quem assina
+/// DEPOIS recebe imediatamente o último valor emitido. Sem essa retenção o
+/// serviço nunca leria o estado inicial — ele só assina no `conectar()`.
+class _ContaLocalFalsa {
+  final _controlador = StreamController<String?>.broadcast();
+  String? _ultimo;
+  bool _temUltimo = false;
+
+  void add(String? uid) {
+    _ultimo = uid;
+    _temUltimo = true;
+    _controlador.add(uid);
+  }
+
+  Stream<String?> get stream {
+    if (!_temUltimo) return _controlador.stream;
+    return Stream<String?>.value(_ultimo).followedBy(_controlador.stream);
+  }
+}
+
+extension _Concatenar<T> on Stream<T> {
+  Stream<T> followedBy(Stream<T> outro) async* {
+    yield* this;
+    yield* outro;
+  }
+}
+
 /// Ambiente: um serviço com credencial e canal controlados pelo teste.
 class _Cenario {
-  _Cenario({String? token, Object? erroDoToken, Object? falhaAoAbrir}) {
+  _Cenario({
+    String? token,
+    Object? erroDoToken,
+    Object? falhaAoAbrir,
+    String? uidInicial,
+  }) {
     _token = token;
     _erroDoToken = erroDoToken;
     _falhaAoAbrir = falhaAoAbrir;
@@ -102,13 +136,20 @@ class _Cenario {
         canais.add(c);
         return c;
       },
+      // Espelha `authStateChanges`: entrega o estado ATUAL a quem assina, e
+      // depois cada mudança. O `_contaLocal` é broadcast com valor semeado.
+      obterIdentidade: () => _contaLocal.stream,
     );
+    _contaLocal.add(uidInicial);
   }
 
   late final OnlineService servico;
   final List<_CanalFalso> canais = [];
   final List<Uri> urlsAbertas = [];
   int pedidosDeToken = 0;
+
+  /// Conta logada NESTE aparelho, ao longo do tempo.
+  final _contaLocal = _ContaLocalFalsa();
 
   String? _token;
   Object? _erroDoToken;
@@ -118,6 +159,12 @@ class _Cenario {
 
   void trocarToken(String? novo) => _token = novo;
   void pararDeFalharAoAbrir() => _falhaAoAbrir = null;
+
+  /// A pessoa entra, sai ou troca de conta no aparelho.
+  Future<void> contaLocalPassaASer(String? uid) async {
+    _contaLocal.add(uid);
+    await _assentar();
+  }
 
   /// Conecta e espera o app terminar de pedir credencial e abrir o socket.
   Future<void> conectar() async {
@@ -588,6 +635,163 @@ void main() {
       expect(comToken, hasLength(1));
       expect(jsonDecode(comToken.single)['tipo'], 'auth');
       expect(c.servico.erro ?? '', isNot(contains(kToken)));
+    });
+  });
+
+  // Os dois grupos abaixo cobrem os casos 6 e 7 da OS de composição
+  // operacional: sair da conta, e trocar de conta no MESMO processo. Os dois
+  // eram o mesmo buraco — o socket já autenticado continuava valendo no
+  // servidor até o token vencer, porque a identidade foi derivada no `auth` e
+  // nada do lado do app avisava que a conta local tinha mudado.
+
+  group('sair da conta invalida a sessão online', () {
+    test('logout com a conexão de pé derruba o socket', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      expect(c.servico.status, OnlineStatus.conectado);
+
+      await c.contaLocalPassaASer(null);
+
+      expect(c.canal.fechado, isTrue);
+      expect(c.servico.status, OnlineStatus.naoAutenticado);
+    });
+
+    test('logout é falha TERMINAL, não vira reconexão infinita', () {
+      fakeAsync((async) {
+        final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+        c.servico.conectar();
+        async.elapse(const Duration(milliseconds: 10));
+        c.canal.servidorEnvia({'tipo': 'autenticado', 'jogadorId': 'uid-a'});
+        async.elapse(const Duration(milliseconds: 10));
+
+        c.contaLocalPassaASer(null);
+        async.elapse(const Duration(milliseconds: 10));
+        final aberturasAposLogout = c.canais.length;
+
+        // Muito além do maior backoff (12s).
+        async.elapse(const Duration(minutes: 2));
+
+        expect(c.canais.length, aberturasAposLogout,
+            reason: 'não pode abrir socket novo depois do logout');
+        expect(c.servico.status, OnlineStatus.naoAutenticado);
+      });
+    });
+
+    test('depois do logout, comandos não reabrem a conexão', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      await c.contaLocalPassaASer(null);
+
+      final antes = c.canais.length;
+      c.servico.criarMesa(apelido: 'Sônia');
+      await c.assentar();
+
+      expect(c.canais.length, antes);
+    });
+
+    test('a mesa do dono anterior é esquecida no logout', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      c.canal.servidorEnvia({'tipo': 'entrou', 'codigo': 'MESA7', 'assento': 1});
+      await c.assentar();
+      expect(c.servico.codigo, 'MESA7');
+
+      await c.contaLocalPassaASer(null);
+
+      expect(c.servico.codigo, isNull);
+      expect(c.servico.meuAssento, isNull);
+      expect(c.servico.visao, isNull);
+    });
+
+    test('voltar a entrar tira o serviço do estado terminal', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      await c.contaLocalPassaASer(null);
+      expect(c.servico.status, OnlineStatus.naoAutenticado);
+
+      await c.contaLocalPassaASer('uid-a');
+
+      expect(c.servico.status, isNot(OnlineStatus.naoAutenticado));
+      expect(c.servico.erro, isNull);
+    });
+  });
+
+  group('troca de usuário no mesmo processo', () {
+    test('o socket do usuário anterior é derrubado', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      final canalDeA = c.canal;
+
+      await c.contaLocalPassaASer('uid-b');
+
+      expect(canalDeA.fechado, isTrue,
+          reason: 'a conexão de A não pode continuar valendo para B');
+    });
+
+    test('a conexão de B é aberta com credencial NOVA', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      final canaisAntes = c.canais.length;
+      final pedidosAntes = c.pedidosDeToken;
+
+      const tokenDeB = 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImsyIn0.OUTRO.ASSINATURA';
+      c.trocarToken(tokenDeB);
+      await c.contaLocalPassaASer('uid-b');
+
+      expect(c.canais.length, canaisAntes + 1);
+      expect(c.pedidosDeToken, greaterThan(pedidosAntes));
+      final auth = c.canal.doTipo('auth');
+      expect(auth, hasLength(1));
+      expect(auth.single['token'], tokenDeB,
+          reason: 'B não pode ser autenticado com a credencial de A');
+      expect(auth.single['protocolo'], 2);
+    });
+
+    test('a credencial de A não sai pelo socket de B', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+
+      c.trocarToken('token-de-b');
+      await c.contaLocalPassaASer('uid-b');
+
+      for (final m in c.canal.enviadas) {
+        expect(m, isNot(contains(kToken)));
+      }
+    });
+
+    test('B não é mandado para a mesa de A', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      await c.conectar();
+      await c.servidorAceita(jogadorId: 'uid-a');
+      c.canal.servidorEnvia({'tipo': 'entrou', 'codigo': 'MESA7', 'assento': 1});
+      await c.assentar();
+
+      c.trocarToken('token-de-b');
+      await c.contaLocalPassaASer('uid-b');
+      await c.servidorAceita(jogadorId: 'uid-b');
+
+      expect(c.canal.doTipo('entrarMesa'), isEmpty,
+          reason: 'reentrar em MESA7 usaria o código do dono anterior');
+      expect(c.servico.meuAssento, isNull);
+    });
+
+    test('comandos de A na fila não são entregues em nome de B', () async {
+      final c = _Cenario(token: kToken, uidInicial: 'uid-a');
+      c.servico.criarMesa(apelido: 'Sônia'); // fila, antes de autenticar
+      await c.assentar();
+
+      c.trocarToken('token-de-b');
+      await c.contaLocalPassaASer('uid-b');
+      await c.servidorAceita(jogadorId: 'uid-b');
+
+      expect(c.canal.doTipo('criarMesa'), isEmpty);
     });
   });
 

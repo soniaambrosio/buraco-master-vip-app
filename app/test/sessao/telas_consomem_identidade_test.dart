@@ -20,6 +20,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:buraco_master_vip/pages/perfil_page.dart';
 import 'package:buraco_master_vip/screens/amigos_screen.dart';
 import 'package:buraco_master_vip/screens/perfil_screen.dart';
+import 'package:buraco_master_vip/ranking/ranking_apresentacao.dart';
+import 'package:buraco_master_vip/ranking/ranking_contract.dart';
 import 'package:buraco_master_vip/screens/ranking_screen.dart';
 import 'package:buraco_master_vip/sessao/escopo_sessao.dart';
 import 'package:buraco_master_vip/sessao/fonte_identidade.dart';
@@ -65,7 +67,13 @@ class RankingHostDeTeste extends StatelessWidget {
   Widget build(BuildContext context) {
     final identidade = EscopoSessao.identidadeDe(context);
     return RankingScreen(
-      vm: RankingVM.mock(),
+      // `RankingVM.mock()` NÃO existe mais: a integração de identidade a
+      // retirou de `ranking_screen.dart` porque era a única origem dos dados da
+      // tela e viajava dentro do APK. O substituto é o mesmo que a tela real
+      // usa enquanto não há página carregada — `vmVazio`, de
+      // `ranking_apresentacao.dart` —, o que mantém este host uma réplica fiel
+      // de `RankingPage` em vez de inventar dado de exemplo aqui.
+      vm: vmVazio(RankingEscopo.global),
       estado: switch (identidade.fase) {
         FaseIdentidade.carregando ||
         FaseIdentidade.naoCarregada => RankingEstado.carregando,
