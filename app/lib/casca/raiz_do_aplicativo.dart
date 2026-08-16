@@ -85,6 +85,14 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
   late final bool _sessaoEhMinha;
   late final bool _onlineEhMeu;
 
+  /// A abertura já tocou nesta execução do aplicativo.
+  ///
+  /// MORA AQUI, e não na casca, porque a casca é reconstruída do zero a cada
+  /// troca de sessão (ver a chave do `MaterialApp` abaixo). Se o estado
+  /// morasse lá, a animação de abertura tocaria de novo depois de cada login e
+  /// de cada logout.
+  bool _aberturaTerminou = false;
+
   @override
   void initState() {
     super.initState();
@@ -118,20 +126,49 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
     // Os três escopos ficam ACIMA do `MaterialApp` de propósito: as rotas
     // empurradas pelo `Navigator` herdam daqui, e é isso que permite a uma tela
     // aberta por `push` ler a sessão, sair da conta e usar o mesmo transporte.
+    // Eles também ficam acima da chave abaixo, então sobrevivem à troca de
+    // sessão — quem morre é a navegação, não a sessão.
     return EscopoSessao(
       sessao: _sessao,
       child: EscopoAutenticacao(
         comandos: _autenticacao,
         child: EscopoTransporte(
           online: _online,
-          child: MaterialApp(
-            title: 'Buraco Master VIP',
-            debugShowCheckedModeBanner: false,
-            theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-            home: CascaDeProducao(
-              duracaoDaSplash: widget.duracaoDaSplash,
-              somNaSplash: widget.somNaSplash,
-              limiteDeResolucao: widget.limiteDeResolucao,
+          child: ListenableBuilder(
+            listenable: _sessao,
+            builder: (context, _) => MaterialApp(
+              // A CHAVE É O QUE APAGA A PILHA DE NAVEGAÇÃO NA TROCA DE SESSÃO.
+              //
+              // Trocar a tela de baixo não basta: `Navigator.push` empilha
+              // rotas SOBRE a `home`, e trocar a `home` deixa as de cima
+              // intactas. Sem isto, alguém que saísse da conta com a tela de
+              // Ajustes ou a do lobby abertas continuaria olhando para elas —
+              // telas privadas, de uma sessão que acabou.
+              //
+              // O jeito imperativo seria a tela de logout dar `popUntil`. Isso
+              // devolve a decisão de navegação para quem saiu, exige que TODA
+              // superfície futura de logout se lembre de fazer o mesmo, e não
+              // cobre a troca de conta sem logout — em que a pilha do jogador
+              // anterior também tem de morrer.
+              //
+              // A geração sobe uma vez por troca de sessão, e não quando só a
+              // fase da identidade muda: um Ranking carregando não derruba a
+              // navegação de ninguém.
+              key: ValueKey<int>(_sessao.geracao),
+              title: 'Buraco Master VIP',
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
+              home: CascaDeProducao(
+                aberturaTerminou: _aberturaTerminou,
+                onAberturaConcluida: () {
+                  if (mounted && !_aberturaTerminou) {
+                    setState(() => _aberturaTerminou = true);
+                  }
+                },
+                duracaoDaSplash: widget.duracaoDaSplash,
+                somNaSplash: widget.somNaSplash,
+                limiteDeResolucao: widget.limiteDeResolucao,
+              ),
             ),
           ),
         ),

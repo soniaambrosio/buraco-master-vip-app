@@ -88,7 +88,7 @@ class SessaoDoJogador extends ChangeNotifier {
     // resposta que não vem, e a Splash ficaria eterna.
     _assinatura = uids.listen(_aplicarSessao)
       ..onDone(_marcarResolvida)
-      ..onError((Object _, StackTrace __) => _marcarResolvida());
+      ..onError((Object _, StackTrace _) => _marcarResolvida());
     if (uidInicial != null) scheduleMicrotask(garantirCarregada);
   }
 

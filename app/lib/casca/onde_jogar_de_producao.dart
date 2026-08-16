@@ -82,9 +82,9 @@ class OndeJogarDeProducao extends StatelessWidget {
       onEscolher: (id) {
         switch (id) {
           case 'treino':
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const MesaScreen()),
-            );
+            Navigator.of(
+              context,
+            ).push(MaterialPageRoute<void>(builder: (_) => const MesaScreen()));
           case 'privada':
             Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const LobbyOnline()),

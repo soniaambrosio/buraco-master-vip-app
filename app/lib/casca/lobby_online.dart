@@ -65,9 +65,17 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     // gesto de querer jogar online. A trava importa porque
     // `didChangeDependencies` roda de novo a cada notificação do escopo — sem
     // ela, cada mudança de status viraria um `conectar()` a mais.
-    if (_srv != null && !_pediuConexao) {
+    //
+    // DEPOIS DO QUADRO, e não aqui dentro: `conectar()` muda o status na hora e
+    // notifica, e o ouvinte desse aviso é o `EscopoTransporte`, que fica ACIMA
+    // desta tela. Marcar um ancestral como sujo enquanto um descendente está
+    // sendo construído é erro de framework — o Flutter constrói de cima para
+    // baixo e já passou por ele.
+    if (srv != null && !_pediuConexao) {
       _pediuConexao = true;
-      _srv!.conectar();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) srv.conectar();
+      });
     }
   }
 
@@ -125,7 +133,10 @@ class _LobbyOnlineState extends State<LobbyOnline> {
               onPressed: srv.tentarNovamente,
               child: const Text(
                 'Tentar de novo',
-                style: TextStyle(color: _ouroClaro, fontWeight: FontWeight.w800),
+                style: TextStyle(
+                  color: _ouroClaro,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ),
@@ -321,7 +332,9 @@ class _LobbyOnlineState extends State<LobbyOnline> {
       ...List.generate(assentos.length, (i) {
         final a = assentos[i] as Map?;
         final vazio = a == null || a['vazio'] == true;
-        final nome = vazio ? 'aguardando…' : (a['apelido'] ?? 'jogador').toString();
+        final nome = vazio
+            ? 'aguardando…'
+            : (a['apelido'] ?? 'jogador').toString();
         final ehVoce = !vazio && a['ehVoce'] == true;
         return Container(
           margin: const EdgeInsets.only(bottom: 8),

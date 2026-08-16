@@ -51,7 +51,12 @@ class _SplashOficialScreenState extends State<SplashOficialScreen>
   late final Animation<double> _progresso;
   late final Animation<double> _saida;
 
-  final AudioPlayer _audio = AudioPlayer();
+  /// Só existe quando há som para tocar.
+  ///
+  /// Era um campo criado sempre, e com som desligado isso construía um tocador
+  /// para não usar — e um `stop()` na saída que, em ambiente sem plugin de
+  /// áudio, ficava pendente para sempre e segurava a abertura do aplicativo.
+  AudioPlayer? _audio;
   bool _navegou = false;
 
   @override
@@ -91,7 +96,8 @@ class _SplashOficialScreenState extends State<SplashOficialScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (widget.habilitarSom) {
         try {
-          await _audio.play(
+          final audio = _audio = AudioPlayer();
+          await audio.play(
             AssetSource('splash/splash_intro.mp3'),
             volume: 0.52,
           );
@@ -109,7 +115,7 @@ class _SplashOficialScreenState extends State<SplashOficialScreen>
     if (_navegou || !mounted) return;
     _navegou = true;
     try {
-      await _audio.stop();
+      await _audio?.stop();
     } catch (_) {
       // Mesma razão do `play`: a abertura do aplicativo não pode depender de o
       // áudio estar disponível.
@@ -144,7 +150,7 @@ class _SplashOficialScreenState extends State<SplashOficialScreen>
   @override
   void dispose() {
     _controller.dispose();
-    _audio.dispose();
+    _audio?.dispose();
     super.dispose();
   }
 

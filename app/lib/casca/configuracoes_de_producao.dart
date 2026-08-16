@@ -17,8 +17,11 @@
 //      ele existia porque a tela de baixo continuaria sendo a Home privada.
 //
 // Agora: a identidade vem do `EscopoSessao`, e o logout é um comando canônico.
-// Não há `popUntil` — a raiz troca de tela sozinha ao ver a sessão cair, e as
-// rotas privadas empilhadas saem junto porque a árvore inteira é substituída.
+// Não há `popUntil` — a raiz troca de tela sozinha ao ver a sessão cair, e a
+// pilha de navegação inteira é descartada junto, porque o `MaterialApp` é
+// chaveado pela geração da sessão (ver `raiz_do_aplicativo.dart`). É o que faz
+// esta tela poder sumir sem se preocupar em navegar: ela não sobrevive à
+// própria ação.
 
 import 'package:flutter/material.dart';
 
@@ -149,7 +152,8 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
       onVoltar: () => Navigator.of(context).maybePop(),
       callbacks: ConfiguracoesCallbacks(
         onAlterar: _salvar,
-        onEditarPerfil: () => _aviso('Editar perfil ainda não está disponível.'),
+        onEditarPerfil: () =>
+            _aviso('Editar perfil ainda não está disponível.'),
         onAssinaturaVip: () =>
             _aviso('A assinatura VIP ainda não está disponível.'),
         onMoedasCompras: () =>
@@ -160,7 +164,8 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
         onSuporte: () => _aviso('O suporte ainda não está disponível.'),
         onTermos: () =>
             _aviso('Os termos e a privacidade ainda não estão disponíveis.'),
-        onAvaliar: () => _aviso('A avaliação na loja ainda não está disponível.'),
+        onAvaliar: () =>
+            _aviso('A avaliação na loja ainda não está disponível.'),
         onSair: _confirmarSaida,
       ),
     );

@@ -51,10 +51,20 @@ const Duration kLimitePadraoDeResolucao = Duration(seconds: 8);
 class CascaDeProducao extends StatefulWidget {
   const CascaDeProducao({
     super.key,
+    required this.aberturaTerminou,
+    required this.onAberturaConcluida,
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
   });
+
+  /// A abertura já tocou nesta execução.
+  ///
+  /// Vem de fora porque esta tela é reconstruída do zero a cada troca de
+  /// sessão. Guardado aqui dentro, o valor se perderia e a animação de abertura
+  /// tocaria de novo a cada login e a cada logout.
+  final bool aberturaTerminou;
+  final VoidCallback onAberturaConcluida;
 
   /// Duração da abertura. Nula usa o padrão da própria splash.
   final Duration? duracaoDaSplash;
@@ -69,9 +79,6 @@ class CascaDeProducao extends StatefulWidget {
 }
 
 class _CascaDeProducaoState extends State<CascaDeProducao> {
-  /// A abertura terminou de tocar.
-  bool _aberturaTerminou = false;
-
   /// O teto de espera estourou sem a sessão se pronunciar.
   bool _esperaEstourou = false;
 
@@ -131,22 +138,19 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
     // A sessão respondeu. A abertura ainda pode estar tocando — e ela toca até
     // o fim: cortar a animação porque a resposta chegou cedo faria a abertura
     // durar um tempo diferente a cada vez que o aplicativo abrisse.
-    if (!_aberturaTerminou) return _splash();
+    if (!widget.aberturaTerminou) return _splash();
 
     if (!sessao.estado.autenticado) return const LoginDeProducao();
     return const HomeDeProducao();
   }
 
   Widget _splash() => SplashOficialScreen(
-    // A chave amarra o estado da splash à ESTA instância: sem ela, sair do ramo
+    // A chave amarra o estado da splash a ESTA instância: sem ela, sair do ramo
     // de espera e voltar recriaria a animação do zero.
     key: const ValueKey('splash-da-casca'),
     habilitarSom: widget.somNaSplash,
     duracao: widget.duracaoDaSplash ?? const Duration(milliseconds: 3800),
-    onConcluida: () {
-      if (!mounted || _aberturaTerminou) return;
-      setState(() => _aberturaTerminou = true);
-    },
+    onConcluida: widget.onAberturaConcluida,
   );
 }
 
@@ -176,7 +180,11 @@ class _EsperaEstourada extends StatelessWidget {
           'A verificação da sua conta está demorando mais que o normal. '
           'Confira sua conexão e tente de novo.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: Color(0xFFB9A886), fontSize: 13, height: 1.35),
+          style: TextStyle(
+            color: Color(0xFFB9A886),
+            fontSize: 13,
+            height: 1.35,
+          ),
         ),
         const SizedBox(height: 20),
         FilledButton(
