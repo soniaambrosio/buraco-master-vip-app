@@ -73,13 +73,32 @@ enum FaseRanking {
   /// um jogador recém-chegado pode estar corretamente fora da tabela.
   disponivel,
 
-  /// A autoridade recusou por credencial: não há sessão, ela expirou, ou a
-  /// leitura foi negada para esta conta.
+  /// A autoridade recusou o acesso, e NÃO SE SABE POR QUÊ.
+  ///
+  /// -------------------------------------------------------------------------
+  /// O ESTADO QUE FALTAVA
+  /// -------------------------------------------------------------------------
+  ///
+  /// `unauthenticated` chega tanto de credencial recusada quanto de App Check
+  /// ausente ou inválido (ver [MotivoFalhaRanking.credencialOuAtestacao]). Com
+  /// sessão local viva, chamar isso de [sessaoInvalida] é afirmar o que não se
+  /// provou, e a tela passava a dar o único conselho errado — "entre de novo"
+  /// numa conta em que a pessoa já está — enquanto escondia o botão de tentar
+  /// novamente, que é a ação que resolve quando a causa é atestação.
+  ///
+  /// Este estado é NEUTRO de propósito: diz que não deu para acessar, não diz
+  /// de quem é a culpa, e oferece a única coisa honesta — insistir.
+  acessoRecusado,
+
+  /// A sessão do jogador acabou, e há prova disso: não existe sessão local.
   ///
   /// Separada de [falha] porque a AÇÃO é outra. Numa falha recuperável, tentar
   /// de novo é a coisa certa e o botão diz isso; aqui, insistir só repete a
   /// recusa — quem resolve é entrar na conta de novo. Oferecer "tentar
   /// novamente" para uma sessão morta é prometer o que o botão não cumpre.
+  ///
+  /// SÓ PODE SER USADA COM PROVA INDEPENDENTE. Um código de erro que também
+  /// significa "falta atestação" não é prova.
   sessaoInvalida,
 }
 
@@ -127,7 +146,11 @@ class EstadoRanking {
   /// A consulta falhou, e insistir pode resolver.
   const EstadoRanking.falha() : this._(fase: FaseRanking.falha);
 
-  /// A credencial não serve: sem sessão, expirada ou recusada.
+  /// A autoridade recusou o acesso, sem dizer se foi credencial ou atestação.
+  const EstadoRanking.acessoRecusado()
+    : this._(fase: FaseRanking.acessoRecusado);
+
+  /// Não há sessão local: a recusa É sobre a sessão, e dizê-lo é honesto.
   const EstadoRanking.sessaoInvalida()
     : this._(fase: FaseRanking.sessaoInvalida);
 
@@ -173,11 +196,27 @@ class EstadoRanking {
   ///
   /// `naoEncontrado` também vira indisponível: um id público sem colocação
   /// nenhuma não é um defeito, é um perfil que não está na tabela.
-  factory EstadoRanking.daFalha(MotivoFalhaRanking motivo) => switch (motivo) {
+  ///
+  /// [haSessaoLocal] É A PROVA, e é obrigatório. Recusa de acesso não diz de
+  /// quem é a culpa: `unauthenticated` cobre credencial inválida E App Check
+  /// ausente ou inválido. Com sessão local viva não há como afirmar que a sessão
+  /// acabou, e o estado tem de ser o neutro [FaseRanking.acessoRecusado], que
+  /// oferece insistir. Sem sessão local, a afirmação passa a ser verificável, e
+  /// aí [FaseRanking.sessaoInvalida] é honesta.
+  ///
+  /// O parâmetro é exigido em vez de ter valor padrão de propósito: um padrão
+  /// faria a chamada esquecida escolher um lado sozinha, e o lado que ela
+  /// escolheria em silêncio é justamente o que produziu o defeito.
+  factory EstadoRanking.daFalha(
+    MotivoFalhaRanking motivo, {
+    required bool haSessaoLocal,
+  }) => switch (motivo) {
     MotivoFalhaRanking.semTemporada ||
     MotivoFalhaRanking.naoEncontrado => const EstadoRanking.indisponivel(),
-    MotivoFalhaRanking.naoAutenticado ||
-    MotivoFalhaRanking.recusado => const EstadoRanking.sessaoInvalida(),
+    MotivoFalhaRanking.credencialOuAtestacao || MotivoFalhaRanking.recusado =>
+      haSessaoLocal
+          ? const EstadoRanking.acessoRecusado()
+          : const EstadoRanking.sessaoInvalida(),
     MotivoFalhaRanking.indisponivel ||
     MotivoFalhaRanking.respostaInvalida ||
     MotivoFalhaRanking.desconhecida => const EstadoRanking.falha(),
@@ -236,9 +275,15 @@ class EstadoRanking {
 
   /// Insistir pode mudar o resultado.
   ///
-  /// Só a falha recuperável. Ausência declarada não vira botão (não há o que
-  /// tentar) e sessão inválida também não (tentar de novo repete a recusa).
-  bool get podeTentarDeNovo => fase == FaseRanking.falha;
+  /// A falha recuperável e o acesso recusado. Ausência declarada não vira botão
+  /// (não há o que tentar) e sessão comprovadamente inválida também não (tentar
+  /// de novo repete a recusa).
+  ///
+  /// [FaseRanking.acessoRecusado] ENTRA, e essa é metade da correção: quando a
+  /// recusa vem de atestação, insistir depois de o App Check estar ativo é
+  /// exatamente o que resolve — e era a ação que a tela escondia.
+  bool get podeTentarDeNovo =>
+      fase == FaseRanking.falha || fase == FaseRanking.acessoRecusado;
 
   @override
   bool operator ==(Object outro) =>

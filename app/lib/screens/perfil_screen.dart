@@ -739,6 +739,11 @@ class _PerfilScreenState extends State<PerfilScreen> {
       case FaseRanking.falha:
         return 'Não foi possível carregar sua classificação. '
             'Use o botão de tentar novamente.';
+      // NEUTRO, e essa é a correção: a recusa pode ser de credencial OU de
+      // atestação (App Check), e daqui não dá para saber qual. A frase não
+      // acusa a sessão de nada e aponta para a única ação que pode funcionar.
+      case FaseRanking.acessoRecusado:
+        return 'Não foi possível acessar sua classificação. Tente novamente.';
       case FaseRanking.sessaoInvalida:
         return 'Classificação indisponível: entre na sua conta de novo.';
       case FaseRanking.indisponivel:

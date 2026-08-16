@@ -14,11 +14,20 @@
 // declara `firebase_app_check` no pubspec mas NÃO o ativa (ver a nota no
 // próprio pubspec: a ativação acontece antes da abertura pública). Enquanto
 // estiver assim, as duas callables recusam em produção — exatamente como já
-// acontece com `obterMinhaIdentidade`, que tem a mesma exigência. A recusa
-// chega aqui como `permission-denied` e vira `MotivoFalhaRanking.recusado`, que
-// a tela mostra como indisponibilidade com botão de tentar de novo. Nenhum dado
-// é inventado por causa disso; é uma pendência de ativação, não de código, e
-// está registrada no laudo.
+// acontece com `obterMinhaIdentidade`, que tem a mesma exigência.
+//
+// A RECUSA CHEGA COMO `unauthenticated`, E NÃO COMO `permission-denied`. Este
+// cabeçalho já afirmou o contrário, e a homologação independente mostrou que
+// era leitura errada do contrato: em `firebase-functions` 6.x
+// (`lib/common/providers/https.js`), token de App Check AUSENTE ou INVÁLIDO com
+// `enforceAppCheck` lança `HttpsError("unauthenticated")` — o mesmíssimo código
+// de uma credencial recusada. Os dois são indistinguíveis daqui, e por isso o
+// motivo se chama `credencialOuAtestacao` em vez de fingir saber qual foi.
+//
+// Quem resolve a ambiguidade é a camada que conhece a sessão: com sessão local
+// viva, o estado é o neutro `acessoRecusado`, com botão de tentar de novo e sem
+// afirmar que a sessão expirou. Nenhum dado é inventado por causa disso; é uma
+// pendência de ativação, não de código, e está registrada no laudo.
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -112,8 +121,13 @@ class TransporteRankingFirebase extends TransporteRanking {
   /// `internal` entra em [MotivoFalhaRanking.indisponivel] pela mesma razão que
   /// em `fonte_identidade_firebase.dart`: é o código de exceção não tratada, e
   /// costuma ser transitório.
+  ///
+  /// `unauthenticated` NÃO é traduzido para uma conclusão sobre a sessão: o
+  /// mesmo código chega de credencial recusada e de App Check ausente ou
+  /// inválido. A tradução para aqui preserva a ambiguidade; desfazê-la é
+  /// trabalho de quem sabe se existe sessão local.
   static MotivoFalhaRanking _traduzir(String codigo) => switch (codigo) {
-    'unauthenticated' => MotivoFalhaRanking.naoAutenticado,
+    'unauthenticated' => MotivoFalhaRanking.credencialOuAtestacao,
     'failed-precondition' => MotivoFalhaRanking.semTemporada,
     'not-found' || 'invalid-argument' => MotivoFalhaRanking.naoEncontrado,
     'permission-denied' => MotivoFalhaRanking.recusado,

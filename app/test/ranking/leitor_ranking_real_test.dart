@@ -396,11 +396,28 @@ void main() {
   // =========================================================================
   group('falhas viram fases, e cada fase oferece outra coisa', () {
     test('CASO 15 — erro de autenticação não vira "sem ranking"', () {
-      final e = EstadoRanking.daFalha(MotivoFalhaRanking.naoAutenticado);
-      expect(e.fase, FaseRanking.sessaoInvalida);
-      // E não oferece retry: insistir só repete a recusa.
-      expect(e.podeTentarDeNovo, isFalse);
-      expect(e.liga, isNull);
+      // A afirmação original deste caso continua valendo nos DOIS ramos: recusa
+      // de acesso nunca é ausência de ranking, e nunca carrega liga.
+      //
+      // O que mudou é que o motivo deixou de se chamar `naoAutenticado`: o
+      // código `unauthenticated` também chega de App Check ausente ou inválido,
+      // e a decisão sobre a sessão passou a exigir prova.
+      final semSessao = EstadoRanking.daFalha(
+        MotivoFalhaRanking.credencialOuAtestacao,
+        haSessaoLocal: false,
+      );
+      expect(semSessao.fase, FaseRanking.sessaoInvalida);
+      // Sem sessão, insistir só repete a recusa.
+      expect(semSessao.podeTentarDeNovo, isFalse);
+      expect(semSessao.liga, isNull);
+
+      final comSessao = EstadoRanking.daFalha(
+        MotivoFalhaRanking.credencialOuAtestacao,
+        haSessaoLocal: true,
+      );
+      expect(comSessao.fase, FaseRanking.acessoRecusado);
+      expect(comSessao.fase, isNot(FaseRanking.indisponivel));
+      expect(comSessao.liga, isNull);
     });
 
     test('CASO 16 — payload malformado é falha, e não ausência', () {
@@ -424,13 +441,19 @@ void main() {
         }),
         throwsA(isA<FalhaRanking>()),
       );
-      final e = EstadoRanking.daFalha(MotivoFalhaRanking.respostaInvalida);
+      final e = EstadoRanking.daFalha(
+        MotivoFalhaRanking.respostaInvalida,
+        haSessaoLocal: true,
+      );
       expect(e.fase, FaseRanking.falha);
       expect(e.podeTentarDeNovo, isTrue);
     });
 
     test('sem temporada é ausência declarada, não erro', () {
-      final e = EstadoRanking.daFalha(MotivoFalhaRanking.semTemporada);
+      final e = EstadoRanking.daFalha(
+        MotivoFalhaRanking.semTemporada,
+        haSessaoLocal: true,
+      );
       expect(e.fase, FaseRanking.indisponivel);
       expect(e.podeTentarDeNovo, isFalse);
     });

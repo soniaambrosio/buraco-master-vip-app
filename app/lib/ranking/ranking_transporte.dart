@@ -20,7 +20,9 @@
 // ---------------------------------------------------------------------------
 //
 // `abrirRanking({ escopo, limite? })`
-//   exige autenticação (`unauthenticated` sem ela) e App Check.
+//   exige autenticação (`unauthenticated` sem ela) e App Check — que, quando
+//   falha, devolve O MESMO `unauthenticated`, e não `permission-denied`. Ver
+//   [MotivoFalhaRanking.credencialOuAtestacao].
 //   devolve `{ resumo: { escopo, temporadaId, temporadaNome, faixaTempo, fimEm,
 //                        divisao, podio[], escadaLigas[], eu }, primeiraPagina }`
 //   `resumo.eu` é `JogadorPublicado | null` — NULO quando o jogador ainda não
@@ -51,9 +53,31 @@
 /// fazer com `naoAutenticado` sem saber que existe um código `unauthenticated`
 /// do Firebase do outro lado.
 enum MotivoFalhaRanking {
-  /// Não há sessão autenticada, ou a credencial foi recusada. Diferente de
-  /// [indisponivel]: repetir a chamada não resolve, é preciso entrar de novo.
-  naoAutenticado,
+  /// A autoridade recusou por CREDENCIAL OU ATESTAÇÃO, sem dizer qual das duas
+  /// (`unauthenticated`).
+  ///
+  /// -------------------------------------------------------------------------
+  /// O NOME É COMPRIDO PORQUE O CÓDIGO É AMBÍGUO, E ESCONDER ISSO CUSTOU CARO
+  /// -------------------------------------------------------------------------
+  ///
+  /// Este motivo já se chamou `naoAutenticado`, e o nome era uma conclusão que
+  /// o código recebido não autoriza. Em `firebase-functions` 6.x — a faixa que
+  /// `functions-ranking/package.json` declara — uma callable com
+  /// `enforceAppCheck: true` responde `unauthenticated` em TRÊS situações
+  /// diferentes (`lib/common/providers/https.js`):
+  ///
+  ///   - o token de autenticação é inválido;
+  ///   - o token de App Check é INVÁLIDO;
+  ///   - o token de App Check está AUSENTE.
+  ///
+  /// Nos dois últimos a sessão do jogador está viva e intacta. Traduzir isso
+  /// para "sua sessão expirou" é afirmar um fato que ninguém provou — e mandar
+  /// a pessoa entrar de novo numa conta em que ela já está.
+  ///
+  /// O TRANSPORTE NÃO DESFAZ A AMBIGUIDADE, porque não tem como. Quem decide é
+  /// a camada que sabe se existe sessão local: ver
+  /// [EstadoRanking.daFalha].
+  credencialOuAtestacao,
 
   /// A autoridade respondeu que não há temporada de ranking em andamento
   /// (`failed-precondition`). Não é falha técnica — é ausência declarada, e a
@@ -73,6 +97,9 @@ enum MotivoFalhaRanking {
   indisponivel,
 
   /// A autoridade recusou a leitura para esta conta (`permission-denied`).
+  ///
+  /// Também não prova sessão morta: prova que ESTA leitura foi negada. Cai no
+  /// mesmo estado neutro de [credencialOuAtestacao] quando há sessão local.
   recusado,
 
   /// Código que este cliente não conhece. Tratado como falha, e não como

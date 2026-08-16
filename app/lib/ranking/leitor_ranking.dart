@@ -231,7 +231,15 @@ class LeitorDeRanking {
       estado = EstadoRanking.daFotografia(foto);
       temporadaDaResposta = foto.temporadaId;
     } on FalhaRanking catch (e) {
-      estado = EstadoRanking.daFalha(e.motivo);
+      // A PROVA DE SESSÃO VEM DA PRÓPRIA CHAVE. Este leitor só é consultado em
+      // nome de uma conta, e a conta é o `publicId` que o chamador passou —
+      // então "há sessão local" não é suposição, é o argumento recebido. Vazio
+      // é o único caso em que não há conta a que pertencer, e é lá que
+      // `sessaoInvalida` volta a ser uma afirmação verificável.
+      estado = EstadoRanking.daFalha(
+        e.motivo,
+        haSessaoLocal: chave.contaPublicId.trim().isNotEmpty,
+      );
     } catch (_) {
       // Exceção fora do vocabulário: é defeito, e defeito não vira ausência.
       // Sem `rethrow` de propósito — uma falha de ranking não pode derrubar a
