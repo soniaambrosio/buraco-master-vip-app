@@ -120,12 +120,19 @@ ProjecaoBMV paraCanonico(Jogo j) {
     duplaQueBateu: j.duplaQueBateu,
     // ----- DERIVADO + transporte: preserva as TRÊS fases -----
     fase: _faseCanonicaDe(j.costuraFaseCanonica, j.jaComprou),
+    // ----- CANÔNICO (1:1) — OS CANONIZAÇÃO DO LIXO V1 -----
+    // §5.2 do ABERTO. Saiu do EnvelopeRuntime e entrou no estado canônico: é a
+    // ÚNICA informação do envelope que decidia legalidade, e o motor que decide
+    // (rules/) não enxergava o envelope. Round-trip EXATO como qualquer campo
+    // canônico — o legado continua guardando o mesmo valor em
+    // `_lixoUnicoCompradoId`, agora como PROJEÇÃO do canônico, não como
+    // autoridade paralela.
+    lixoUnicoCompradoId: j.costuraLixoUnicoCompradoId,
   );
 
   final envelope = EnvelopeRuntime(
     // RUNTIME ENVELOPE — privados (via seam)
     cont: j.costuraCont,
-    lixoUnicoCompradoId: j.costuraLixoUnicoCompradoId,
     mortosConvertidos: j.costuraMortosConvertidos,
     iniciadorRodada: j.costuraIniciadorRodada,
     rodadaContada: j.costuraRodadaContada,
@@ -170,13 +177,14 @@ void aplicarEmJogo(Jogo alvo, EstadoJogo e, EnvelopeRuntime env) {
   alvo.mortoPego = {...e.mortoPego};
   alvo.rodadaEncerrada = e.rodadaEncerrada;
   alvo.duplaQueBateu = e.duplaQueBateu;
+  // OS CANONIZAÇÃO DO LIXO V1 — a trava §5.2 vem do CANÔNICO (era do envelope).
+  alvo.costuraLixoUnicoCompradoId = e.lixoUnicoCompradoId;
   // ----- DERIVADO: fase -> jaComprou (jogo|mortoPendente => comprou) -----
   alvo.jaComprou = e.fase != FaseTurno.compra;
   // ----- TRANSPORTE: carrega a fase canônica EXATA (as três) na costura -----
   alvo.costuraFaseCanonica = e.fase.name;
   // ----- RUNTIME ENVELOPE (privados via seam) -----
   alvo.costuraCont = env.cont;
-  alvo.costuraLixoUnicoCompradoId = env.lixoUnicoCompradoId;
   alvo.costuraMortosConvertidos = env.mortosConvertidos;
   alvo.costuraIniciadorRodada = env.iniciadorRodada;
   alvo.costuraRodadaContada = env.rodadaContada;

@@ -6506,23 +6506,26 @@ void main() {
   // ===================================================================
   // OS — CANONIZAÇÃO DO ESTADO DE COMPRA DO LIXO V1
   //
-  // CARACTERIZAÇÃO (commit 1): estes testes fotografam o comportamento da
-  // BASE `4c3cd6f`, ANTES de qualquer correção. Onde o comportamento
-  // fotografado é o DEFEITO, isso está dito na própria asserção — nenhum deles
-  // afirma que o defeito é correto.
-  //
-  // A regra em questão é a §5.2 do ABERTO: quem compra um lixo de UMA carta só
+  // Os testes LIX-C0x nasceram no commit de CARACTERIZAÇÃO fotografando a base
+  // `4c3cd6f`, e cada um traz anotado o que afirmava ANTES da canonização. A
+  // regra em questão é a §5.2 do ABERTO: quem compra um lixo de UMA carta só
   // não pode devolver essa mesma carta como descarte no mesmo turno (anti
-  // "turno nulo"). No motor LEGADO ela vive em `_lixoUnicoCompradoId`, um campo
-  // privado do `Jogo` que a projeção carrega no `EnvelopeRuntime` — FORA do
-  // `EstadoJogo` canônico.
+  // "turno nulo").
+  //
+  // ANTES: a regra vivia só em `_lixoUnicoCompradoId`, campo privado do `Jogo`
+  // que a projeção carregava no `EnvelopeRuntime` — FORA do `EstadoJogo`. Como
+  // o motor que decide (`rules/`) nunca enxergou o envelope, sob a autoridade
+  // canônica (config de PRODUÇÃO) a regra simplesmente não era aplicada.
+  // DEPOIS: `EstadoJogo.lixoUnicoCompradoId` é a autoridade única.
   // ===================================================================
-  group('OS LIXO CANÔNICO V1 — caracterização do estado lateral', () {
+  group('OS LIXO CANÔNICO V1 — §5.2 canonizada', () {
     RuleSpec specDe(EstadoJogo e) =>
         RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
 
     test('LIX-C01 o motor LEGADO enforca a §5.2 e registra a trava no campo '
         'lateral', () {
+      // INALTERADO pela canonização: o caminho de rollback nunca mudou. Este é
+      // o teste que fixa QUAL é a regra a preservar.
       final j = _lixBase(config: MotorConfig.legadoRollback());
       expect(j.costuraLixoUnicoCompradoId, isNull); // nasce sem trava
 
@@ -6542,8 +6545,10 @@ void main() {
       expect(j.vez, 1);
     });
 
-    test('LIX-C02 sob a AUTORIDADE CANÔNICA (produção) a §5.2 simplesmente '
-        'NÃO EXISTE — o turno nulo é aceito', () {
+    test('LIX-C02 sob a AUTORIDADE CANÔNICA a §5.2 agora EXISTE — o turno nulo '
+        'é recusado', () {
+      // ANTES: este teste afirmava o DEFEITO — o campo ficava null, o descarte
+      // era ACEITO e o turno nulo se consumava (lixo idêntico, vez passada).
       final j = _lixBase(config: MotorConfig.producao());
       final lixoAntes = j.lixo.map((c) => c.id).toList();
       expect(lixoAntes, ['lxUnico']);
@@ -6551,95 +6556,99 @@ void main() {
       expect(j.comprarLixo(0)['ok'], isTrue);
       expect(idsMao(j, 0), contains('lxUnico'));
 
-      // DEFEITO 1 — o campo lateral NUNCA é escrito pelo caminho canônico: o
-      // envelope é puro pass-through (autoridade_canonica.dart `_envelopePos`).
-      expect(j.costuraLixoUnicoCompradoId, isNull);
+      // A trava NASCE — e nasce no estado canônico, projetada de volta no Jogo.
+      expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(paraCanonico(j).canonico.lixoUnicoCompradoId, 'lxUnico');
 
-      // DEFEITO 2 — e por isso o descarte da MESMA carta é ACEITO.
-      expect(j.descartar(0, 'lxUnico'), isNull);
+      // E é NORMATIVA sob a autoridade canônica.
+      final erro = j.descartar(0, 'lxUnico');
+      expect(erro, isNotNull);
+      expect(erro, contains('não pode devolvê-la no mesmo turno'));
+      expect(j.vez, 0); // turno nulo BARRADO
+      expect(j.lixo, isEmpty); // e a carta não voltou para o lixo
 
-      // TURNO NULO consumado: o lixo voltou EXATAMENTE ao que era e a vez
-      // passou sem que nada tenha acontecido na partida.
-      expect(j.lixo.map((c) => c.id).toList(), lixoAntes);
+      // O turno continua tendo saída: qualquer outra carta encerra normalmente.
+      expect(j.descartar(0, 'm1'), isNull);
       expect(j.vez, 1);
     });
 
-    test('LIX-C03 o `EstadoJogo` canônico não representa a trava: dois '
-        'ENVELOPES diferentes decidem igual', () {
-      // Compra do lixo pela autoridade; a partir daqui existe UM estado
-      // canônico e a pergunta é se o envelope consegue mudar alguma decisão.
+    test('LIX-C03 a trava é do ESTADO: dois `EstadoJogo` que só diferem nela '
+        'decidem DIFERENTE', () {
+      // ANTES: o teste equivalente usava dois ENVELOPES e provava que decidiam
+      // IGUAL — o dado lateral era invisível para a autoridade. Agora não há
+      // envelope onde esconder a informação: ela está no estado, e muda decisão.
       final j = _lixBase(config: MotorConfig.producao());
       expect(j.comprarLixo(0)['ok'], isTrue);
-      final proj = paraCanonico(j);
-      final estado = proj.canonico;
-      final spec = specDe(estado);
+      final comTrava = paraCanonico(j).canonico;
+      final spec = specDe(comTrava);
+      expect(comTrava.lixoUnicoCompradoId, 'lxUnico');
 
-      // Envelope A: como a autoridade o deixou (trava ausente).
-      final envA = proj.envelope;
-      expect(envA.lixoUnicoCompradoId, isNull);
-      // Envelope B: idêntico, EXCETO a trava — o valor que o legado teria posto.
-      final envB = _envelopeCom(envA, 'lxUnico');
+      // Mesmo estado, SEM a trava — a única diferença entre os dois.
+      final semTrava = comTrava.copyWith(lixoUnicoCompradoId: null);
 
-      // Mesmo EstadoJogo, dois envelopes: o gerador único decide IGUAL, porque
-      // a autoridade canônica nem enxerga o envelope.
-      final acoes = gerarAcoesLegais(estado, 0, spec);
-      expect(acoes.whereType<Descartar>().map((d) => d.carta),
-          contains('lxUnico'));
-      expect(aplicarLegal(estado, 0, const Descartar('lxUnico'), spec).legal,
+      // O gerador ÚNICO decide diferente, como tem de decidir.
+      List<String> descartes(EstadoJogo e) => [
+            for (final a in gerarAcoesLegais(e, 0, spec))
+              if (a is Descartar) a.carta
+          ];
+      expect(descartes(semTrava), contains('lxUnico'));
+      expect(descartes(comTrava), isNot(contains('lxUnico')));
+
+      // E `aplicarLegal` acompanha o gerador (nunca divergem).
+      expect(
+          aplicarLegal(semTrava, 0, const Descartar('lxUnico'), spec).legal,
           isTrue);
+      final rec = aplicarLegal(comTrava, 0, const Descartar('lxUnico'), spec);
+      expect(rec.legal, isFalse);
+      expect(rec.codigo, reasonCodeLixoUnicoDevolvido);
+      expect(rec.proximoEstado, isNull); // sem mutação parcial
 
-      // E o mesmo vale ponta a ponta: reconstruído com um envelope ou com o
-      // outro, o `Jogo` real toma a MESMA decisão sob autoridade canônica.
-      String? descartarCom(EnvelopeRuntime env) {
-        final alvo = Jogo.paraCostura(motorConfig: MotorConfig.producao());
-        aplicarEmJogo(alvo, estado.cloneProfundo(), env);
-        return alvo.descartar(0, 'lxUnico');
-      }
-
-      expect(descartarCom(envA), isNull); // aceito
-      expect(descartarCom(envB), isNull); // aceito TAMBÉM, apesar da trava
-      // Conclusão registrada: a divergência do envelope NÃO altera decisão —
-      // não porque o estado esteja seguro, e sim porque a regra §5.2 está
-      // AUSENTE do motor que decide. Ver LIX-C02.
+      // As duas posições também deixam de ter a MESMA identidade.
+      expect(comTrava.assinatura(), isNot(semTrava.assinatura()));
     });
 
-    test('LIX-C04 a porta canônica DESCARTA a trava: `EnvelopeRuntime.vazio()` '
-        'apaga a informação', () {
-      // O AdaptadorLegado só recebe `EstadoJogo` — o envelope é reconstruído
-      // vazio. Toda informação que só existe no envelope é PERDIDA nesse
-      // trajeto, e a trava do lixo é uma delas.
+    test('LIX-C04 a porta canônica PRESERVA a trava: `EnvelopeRuntime.vazio()` '
+        'não perde mais nada', () {
+      // ANTES: o AdaptadorLegado só recebe `EstadoJogo` e reconstrói o envelope
+      // VAZIO — a trava era apagada nesse trajeto e a regra deixava de valer do
+      // outro lado da porta. Agora ela viaja DENTRO do estado.
       final j = _lixBase(config: MotorConfig.legadoRollback());
       expect(j.comprarLixo(0, modalidade: 'ABERTO')['ok'], isTrue);
       expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
 
       final estado = paraCanonico(j).canonico;
+      expect(estado.lixoUnicoCompradoId, 'lxUnico');
+
       final alvo = Jogo.paraCostura(motorConfig: MotorConfig.legadoRollback());
       aplicarEmJogo(alvo, estado, EnvelopeRuntime.vazio());
 
-      // Mesma posição, MESMO estado canônico — e a trava sumiu.
-      expect(alvo.costuraLixoUnicoCompradoId, isNull);
-      // Consequência direta: o legado, que ENFORCA a regra, deixa de enforcá-la
-      // depois de passar pela porta.
-      expect(alvo.descartar(0, 'lxUnico'), isNull);
+      // Mesma posição, MESMO estado canônico — e a trava chegou inteira.
+      expect(alvo.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(alvo.descartar(0, 'lxUnico'), isNotNull); // segue recusando
     });
 
-    test('LIX-C05 um SNAPSHOT do estado canônico não é suficiente para '
+    test('LIX-C05 um SNAPSHOT do estado canônico é AUTOSSUFICIENTE para '
         'reproduzir a posição', () {
+      // ANTES: a assinatura e a serialização do EstadoJogo não tinham a trava —
+      // o snapshot de uma posição não bastava para continuar a partida direito.
       final j = _lixBase(config: MotorConfig.producao());
       expect(j.comprarLixo(0)['ok'], isTrue);
       final estado = paraCanonico(j).canonico;
+      final spec = specDe(estado);
 
-      // Serializa/desserializa SÓ o canônico (é o que um snapshot de posição
-      // carrega) e pergunta a mesma coisa aos dois.
+      // Round-trip por serialização pura (é o que um snapshot carrega).
       final round = desserializarEstado(
           jsonDecode(jsonEncode(serializarEstado(estado))) as Map);
+      expect(round.lixoUnicoCompradoId, 'lxUnico');
       expect(round.assinatura(), estado.assinatura());
 
-      // A assinatura canônica não tem NENHUMA linha para a trava do lixo: ela
-      // não faz parte da identidade do estado hoje. (`lxUnico` aparece, sim,
-      // mas só como carta na mão — o que não diz nada sobre a proibição.)
-      expect(estado.assinatura(), isNot(contains('lixoUnico')));
-      expect(serializarEstado(estado).keys, isNot(contains('lixoUnicoCompradoId')));
+      // A identidade do estado passa a incluir a trava, e a decisão sobrevive
+      // ao round-trip.
+      expect(serializarEstado(estado).keys, contains('lixoUnicoCompradoId'));
+      expect(aplicarLegal(round, 0, const Descartar('lxUnico'), spec).legal,
+          isFalse);
+      expect(gerarAcoesLegais(round, 0, spec).map((a) => '$a'),
+          gerarAcoesLegais(estado, 0, spec).map((a) => '$a'));
     });
   });
 }
@@ -8956,23 +8965,3 @@ List<Carta> _lixMorto() => [
         Carta('mtlix$v', 'copas', v, false)
     ];
 
-/// Cópia de um `EnvelopeRuntime` mudando SÓ `lixoUnicoCompradoId` — é o "dado
-/// lateral" cuja capacidade de alterar decisões está sob julgamento.
-EnvelopeRuntime _envelopeCom(EnvelopeRuntime e, String? lixoUnicoCompradoId) =>
-    EnvelopeRuntime(
-      cont: e.cont,
-      lixoUnicoCompradoId: lixoUnicoCompradoId,
-      mortosConvertidos: e.mortosConvertidos,
-      iniciadorRodada: e.iniciadorRodada,
-      rodadaContada: e.rodadaContada,
-      lixoTopoObrigatorio: e.lixoTopoObrigatorio,
-      integridadeErro: e.integridadeErro,
-      assentoQueBateu: e.assentoQueBateu,
-      rodada: e.rodada,
-      placar: {...e.placar},
-      encerrada: e.encerrada,
-      pontosRodada: e.pontosRodada,
-      apelidos: e.apelidos,
-      avatares: e.avatares,
-      mascotes: e.mascotes,
-    );

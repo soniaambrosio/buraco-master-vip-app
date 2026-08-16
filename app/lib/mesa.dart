@@ -89,6 +89,13 @@ class Jogo {
   String? lixoTopoObrigatorio;
   // §5.2 ABERTO: quem compra um lixo de UMA carta só não pode devolver essa
   // mesma carta como descarte no mesmo turno (anti "turno nulo").
+  //
+  // OS CANONIZAÇÃO DO LIXO V1 — a AUTORIDADE desta regra é
+  // `EstadoJogo.lixoUnicoCompradoId` (rules/estado.dart), decidida pelo gerador
+  // único. Este campo continua existindo por dois motivos, nenhum deles
+  // "segunda fonte de verdade": (1) o motor LEGADO de rollback precisa do seu
+  // próprio slot; (2) sob autoridade canônica ele é PROJEÇÃO — `aplicarEmJogo`
+  // o escreve a partir do estado canônico, como já fazia com a fase.
   String? _lixoUnicoCompradoId;
   // §8.1: mortos convertidos em monte nesta rodada. É EVENTO DE BARALHO, e
   // NÃO afeta a pontuação: a dupla que ficou sem morto paga o -100 assim mesmo
