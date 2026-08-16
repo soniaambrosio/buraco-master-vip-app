@@ -677,35 +677,84 @@ class _PerfilScreenState extends State<PerfilScreen> {
     );
   }
 
-  /// A liga e a colocacao, do jeito que o contrato real permite afirmar.
+  /// A liga e a colocação, para os olhos e para o leitor de tela.
   ///
-  /// O anuncio para leitor de tela entra no proximo commit.
+  /// ---------------------------------------------------------------------
+  /// POR QUE A SEMÂNTICA NÃO É O TEXTO VISÍVEL
+  /// ---------------------------------------------------------------------
+  ///
+  /// Lido em voz alta, o que está na tela vira lixo. "💎 Liga", "Ouro" e "·
+  /// #128 no mundo" chegam como três fragmentos soltos, o emoji é anunciado
+  /// como "diamante" — que parece o NOME de uma liga —, o `·` vira ruído e o
+  /// `#` costuma sair como "cerquilha". E o travessão da ausência, que aos
+  /// olhos se lê como "não tem", é anunciado como "traço".
+  ///
+  /// Por isso o bloco inteiro vira UM nó semântico com uma frase escrita para
+  /// ser ouvida, e os filhos saem da árvore de acessibilidade. Não é
+  /// duplicação: é a mesma informação dita de dois jeitos, cada um no seu
+  /// meio. O que não pode acontecer — e é o que `excludeSemantics` impede — é
+  /// o leitor de tela anunciar a frase E depois soletrar os fragmentos.
+  ///
+  /// Os estados não numéricos são anunciados como estados, e nunca como uma
+  /// liga vazia: "carregando" não é ausência de liga, e "ainda não
+  /// classificado" não é o mesmo que "não consegui carregar".
   Widget _linhaCompetitiva(EstadoRanking ranking) {
-    return Wrap(
-      alignment: WrapAlignment.center,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 6,
-      children: [
-        if (ranking.ehLigaDeVerdade || !ranking.temLiga)
-          const Text(
-            '💎 Liga',
-            style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
-          ),
-        Text(
-          ranking.ligaParaExibicao,
-          style: const TextStyle(
-            color: Color(0xFF9FDCFF),
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        if (ranking.temPosicao)
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: _anuncioCompetitivo(ranking),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 6,
+        children: [
+          if (ranking.ehLigaDeVerdade || !ranking.temLiga)
+            const Text(
+              '💎 Liga',
+              style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+            ),
           Text(
-            '· #${ranking.posicaoMundial} no mundo',
-            style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+            ranking.ligaParaExibicao,
+            style: const TextStyle(
+              color: Color(0xFF9FDCFF),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-      ],
+          if (ranking.temPosicao)
+            Text(
+              '· #${ranking.posicaoMundial} no mundo',
+              style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+            ),
+        ],
+      ),
     );
+  }
+
+  /// A frase que o leitor de tela anuncia.
+  static String _anuncioCompetitivo(EstadoRanking ranking) {
+    switch (ranking.fase) {
+      case FaseRanking.carregando:
+        return 'Carregando sua classificação.';
+      case FaseRanking.falha:
+        return 'Não foi possível carregar sua classificação. '
+            'Use o botão de tentar novamente.';
+      case FaseRanking.sessaoInvalida:
+        return 'Classificação indisponível: entre na sua conta de novo.';
+      case FaseRanking.indisponivel:
+        return 'Classificação ainda não disponível.';
+      case FaseRanking.disponivel:
+        final liga = ranking.liga;
+        final posicao = ranking.posicaoMundial;
+        if (liga == null && posicao == null) return 'Ainda não classificado.';
+        // Liga sem `ligaId` é rótulo de qualificação, e é anunciado como ele
+        // é — "Em colocacao" —, sem a palavra Liga na frente.
+        final ligaDita = ranking.ehLigaDeVerdade
+            ? 'Liga $liga'
+            : (liga ?? 'Sem liga');
+        if (posicao == null) return '$ligaDita. Sem colocação no mundo.';
+        return '$ligaDita. Posição $posicao no mundo.';
+    }
   }
 
   Widget _xp() {
