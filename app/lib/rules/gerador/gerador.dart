@@ -36,6 +36,7 @@
 // propõe candidatos; a legalidade — inclusive a fase — é sempre decidida aqui).
 import '../estado.dart';
 import '../acoes.dart';
+import '../modalidade.dart'; // §5.2 é regra do ABERTO — a trava lê a modalidade
 import '../rule_spec.dart';
 import '../abertura/abertura.dart';
 import '../morto/morto.dart';
@@ -52,6 +53,16 @@ const String reasonCodeSemConclusaoLegal =
 /// cliente já trata `motivo` como texto de recusa, então não há UI nova.
 const String motivoSemConclusaoLegal =
     'Essa jogada deixaria você sem uma forma válida de concluir o turno.';
+
+/// reasonCode ESTÁVEL da recusa da §5.2 do ABERTO (devolver ao lixo a carta que
+/// foi comprada sozinha dele no mesmo turno). Como o `reasonCodeSemConclusaoLegal`,
+/// serve à observabilidade e não carrega carta, mão nem assento.
+const String reasonCodeLixoUnicoDevolvido = 'descarte_devolve_lixo_unico';
+
+/// Mensagem ao JOGADOR para a recusa da §5.2. Mantém o texto que o motor legado
+/// já mostrava, para que a regra continue se explicando da mesma forma.
+const String motivoLixoUnicoDevolvido =
+    'Você pegou essa carta sozinha do lixo — não pode devolvê-la no mesmo turno.';
 
 /// Resultado de aplicar (puro) uma ação pelo gerador único.
 class ResultadoJogada {
@@ -185,8 +196,12 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
     }
     final topo = prox.monte.removeLast(); // topo do monte = último
     prox.maos[assento].add(topo);
+    // §5.2 — comprar do MONTE não cria trava nenhuma (e limpa qualquer resíduo:
+    // a trava é uma propriedade do turno, e a fase de compra é o começo dele).
     return ResultadoJogada(
-        legal: true, proximoEstado: prox.copyWith(fase: FaseTurno.jogo));
+        legal: true,
+        proximoEstado:
+            prox.copyWith(fase: FaseTurno.jogo, lixoUnicoCompradoId: null));
   }
 
   if (acao is ComprarLixo) {
@@ -204,7 +219,19 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
     if (!r.valido) {
       return ResultadoJogada.recusa(r.motivo ?? 'compra do lixo ilegal');
     }
-    final prox = r.proximoEstado!.copyWith(fase: FaseTurno.jogo);
+    // §5.2 do ABERTO — a trava NASCE aqui, e só aqui: comprar um lixo de
+    // EXATAMENTE uma carta prende essa carta até a vez passar, senão o jogador
+    // devolveria a mesma carta e o turno não teria acontecido ("turno nulo").
+    // O tamanho do lixo é lido do estado PRÉVIO: depois da compra ele está
+    // vazio, e essa informação deixa de existir na posição.
+    // No Fechado/STBL a compra é ATÔMICA (o topo já é usado na própria
+    // transação), então lá não há o que travar.
+    final travaLixo =
+        spec.modalidade == Modalidade.aberto && estado.lixo.length == 1
+            ? estado.lixo.last.id
+            : null;
+    final prox = r.proximoEstado!
+        .copyWith(fase: FaseTurno.jogo, lixoUnicoCompradoId: travaLixo);
     // §12 — o MESMO beco entra por este portão: a compra atômica consome a mão
     // no uso do topo e pode deixar 1 carta órfã sem descarte legal. Mesma regra,
     // mesma recusa, mesmo reasonCode.
@@ -251,16 +278,27 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
     if (!mao.any((c) => c.id == acao.carta)) {
       return ResultadoJogada.recusa('carta não está na mão: ${acao.carta}');
     }
+    // §5.2 do ABERTO — a carta comprada SOZINHA do lixo neste turno não volta
+    // como descarte. Devolvê-la faria o turno inteiro não ter acontecido.
+    if (estado.lixoUnicoCompradoId != null &&
+        estado.lixoUnicoCompradoId == acao.carta) {
+      return ResultadoJogada.recusa(motivoLixoUnicoDevolvido,
+          codigo: reasonCodeLixoUnicoDevolvido);
+    }
     final prox = estado.cloneProfundo();
     final idx = prox.maos[assento].indexWhere((c) => c.id == acao.carta);
     final carta = prox.maos[assento].removeAt(idx);
     prox.lixo.add(carta); // vai para o topo do lixo
     if (prox.maos[assento].isNotEmpty) {
-      // Descarte normal encerra o turno: próximo assento inicia em compra.
+      // Descarte normal encerra o turno: próximo assento inicia em compra — e a
+      // trava do lixo MORRE aqui (§5.2 vale só dentro do próprio turno; deixá-la
+      // passar proibiria uma carta legítima do adversário).
       return ResultadoJogada(
           legal: true,
-          proximoEstado:
-              prox.copyWith(vez: (assento + 1) % 4, fase: FaseTurno.compra));
+          proximoEstado: prox.copyWith(
+              vez: (assento + 1) % 4,
+              fase: FaseTurno.compra,
+              lixoUnicoCompradoId: null));
     }
     // O descarte ZEROU a mão. Esvaziar é REGRA: só é legal se a dupla puder
     // pegar o morto OU bater (podeEsvaziarMao). Senão, recusa (estado intacto).
@@ -281,7 +319,10 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
     // BATIDA (a legalidade é decidida por avaliarBatida — não duplicada aqui).
     final b = avaliarBatida(prox, assento, spec);
     return b.valido
-        ? ResultadoJogada(legal: true, proximoEstado: b.proximoEstado)
+        ? ResultadoJogada(
+            legal: true,
+            // Rodada encerrada: a trava do lixo morre junto com o turno.
+            proximoEstado: b.proximoEstado!.copyWith(lixoUnicoCompradoId: null))
         : ResultadoJogada.recusa(
             b.motivo ?? 'não pode encerrar o turno com a mão vazia');
   }
@@ -297,7 +338,9 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
       return r.valido
           ? ResultadoJogada(
               legal: true,
-              proximoEstado: r.proximoEstado!.copyWith(fase: FaseTurno.compra))
+              // Morto INDIRETO passa a vez: fim do turno, fim da trava do lixo.
+              proximoEstado: r.proximoEstado!.copyWith(
+                  fase: FaseTurno.compra, lixoUnicoCompradoId: null))
           : ResultadoJogada.recusa(r.motivo ?? 'não pode pegar o morto');
     }
     // Morto DIRETO: mão esvaziada BAIXANDO, na fase de jogo; mantém a vez e
@@ -319,7 +362,10 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
     }
     final r = avaliarBatida(estado, assento, spec);
     return r.valido
-        ? ResultadoJogada(legal: true, proximoEstado: r.proximoEstado)
+        ? ResultadoJogada(
+            legal: true,
+            // Rodada encerrada: a trava do lixo morre junto com o turno.
+            proximoEstado: r.proximoEstado!.copyWith(lixoUnicoCompradoId: null))
         : ResultadoJogada.recusa(r.motivo ?? 'não pode bater');
   }
 

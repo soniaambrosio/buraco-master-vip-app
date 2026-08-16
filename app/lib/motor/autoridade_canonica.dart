@@ -497,7 +497,6 @@ _RunCanonico _rodarEestabiliza(
 EnvelopeRuntime _envelopePos(EnvelopeRuntime pre, int conversoes) =>
     EnvelopeRuntime(
       cont: pre.cont,
-      lixoUnicoCompradoId: pre.lixoUnicoCompradoId,
       mortosConvertidos: pre.mortosConvertidos + conversoes,
       iniciadorRodada: pre.iniciadorRodada,
       rodadaContada: pre.rodadaContada,

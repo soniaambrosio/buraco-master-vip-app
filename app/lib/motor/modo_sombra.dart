@@ -437,6 +437,9 @@ Map<String, String> _campos(EstadoJogo e0) {
     'rodadaEncerrada': '${n.rodadaEncerrada}',
     'duplaQueBateu': '${n.duplaQueBateu}',
     'fase': n.fase.name,
+    // OS CANONIZAÇÃO DO LIXO V1 — §5.2 virou campo canônico, então entra na
+    // PARIDADE: se um motor criar/limpar a trava e o outro não, a sombra acusa.
+    'lixoUnicoCompradoId': '${n.lixoUnicoCompradoId}',
   };
 }
 
@@ -478,6 +481,9 @@ Map<String, Object?> serializarEstado(EstadoJogo e) => {
       'rodadaEncerrada': e.rodadaEncerrada,
       'duplaQueBateu': e.duplaQueBateu,
       'fase': e.fase.name,
+      // OS CANONIZAÇÃO DO LIXO V1 — §5.2 é estado canônico: sem esta chave o
+      // snapshot não seria autossuficiente para retomar a posição.
+      'lixoUnicoCompradoId': e.lixoUnicoCompradoId,
     };
 
 FaseTurno _faseDeName(String s) {
@@ -494,7 +500,6 @@ FaseTurno _faseDeName(String s) {
 // ---- EnvelopeRuntime: serialização COMPLETA (runtime + sidecar) ----
 Map<String, Object?> serializarEnvelope(EnvelopeRuntime e) => {
       'cont': e.cont,
-      'lixoUnicoCompradoId': e.lixoUnicoCompradoId,
       'mortosConvertidos': e.mortosConvertidos,
       'iniciadorRodada': e.iniciadorRodada,
       'rodadaContada': e.rodadaContada,
@@ -514,7 +519,6 @@ Map<String, Object?> serializarEnvelope(EnvelopeRuntime e) => {
 
 EnvelopeRuntime desserializarEnvelope(Map m) => EnvelopeRuntime(
       cont: m['cont'] as int,
-      lixoUnicoCompradoId: m['lixoUnicoCompradoId'] as String?,
       mortosConvertidos: m['mortosConvertidos'] as int,
       iniciadorRodada: m['iniciadorRodada'] as int,
       rodadaContada: m['rodadaContada'] as bool,
@@ -569,4 +573,5 @@ EstadoJogo desserializarEstado(Map m) => EstadoJogo(
       rodadaEncerrada: m['rodadaEncerrada'] as bool,
       duplaQueBateu: m['duplaQueBateu'] as String?,
       fase: _faseDeName(m['fase'] as String),
+      lixoUnicoCompradoId: m['lixoUnicoCompradoId'] as String?,
     );

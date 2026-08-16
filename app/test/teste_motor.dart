@@ -6502,6 +6502,835 @@ void main() {
       }
     });
   });
+
+  // ===================================================================
+  // OS — CANONIZAÇÃO DO ESTADO DE COMPRA DO LIXO V1
+  //
+  // Os testes LIX-C0x nasceram no commit de CARACTERIZAÇÃO fotografando a base
+  // `4c3cd6f`, e cada um traz anotado o que afirmava ANTES da canonização. A
+  // regra em questão é a §5.2 do ABERTO: quem compra um lixo de UMA carta só
+  // não pode devolver essa mesma carta como descarte no mesmo turno (anti
+  // "turno nulo").
+  //
+  // ANTES: a regra vivia só em `_lixoUnicoCompradoId`, campo privado do `Jogo`
+  // que a projeção carregava no `EnvelopeRuntime` — FORA do `EstadoJogo`. Como
+  // o motor que decide (`rules/`) nunca enxergou o envelope, sob a autoridade
+  // canônica (config de PRODUÇÃO) a regra simplesmente não era aplicada.
+  // DEPOIS: `EstadoJogo.lixoUnicoCompradoId` é a autoridade única.
+  // ===================================================================
+  group('OS LIXO CANÔNICO V1 — §5.2 canonizada', () {
+    RuleSpec specDe(EstadoJogo e) =>
+        RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+
+    test('LIX-C01 o motor LEGADO enforca a §5.2 e registra a trava no campo '
+        'lateral', () {
+      // INALTERADO pela canonização: o caminho de rollback nunca mudou. Este é
+      // o teste que fixa QUAL é a regra a preservar.
+      final j = _lixBase(config: MotorConfig.legadoRollback());
+      expect(j.costuraLixoUnicoCompradoId, isNull); // nasce sem trava
+
+      expect(j.comprarLixo(0, modalidade: 'ABERTO')['ok'], isTrue);
+      // O legado NASCE a trava: o id do topo do lixo de uma carta só.
+      expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(idsMao(j, 0), contains('lxUnico'));
+
+      // E ela é NORMATIVA: devolver a mesma carta é recusado.
+      final erro = j.descartar(0, 'lxUnico');
+      expect(erro, isNotNull);
+      expect(erro, contains('não pode devolvê-la no mesmo turno'));
+      expect(j.vez, 0); // a vez NÃO passou — o turno nulo foi barrado
+
+      // Qualquer OUTRA carta continua descartável (a trava é de uma carta só).
+      expect(j.descartar(0, 'm1'), isNull);
+      expect(j.vez, 1);
+    });
+
+    test('LIX-C02 sob a AUTORIDADE CANÔNICA a §5.2 agora EXISTE — o turno nulo '
+        'é recusado', () {
+      // ANTES: este teste afirmava o DEFEITO — o campo ficava null, o descarte
+      // era ACEITO e o turno nulo se consumava (lixo idêntico, vez passada).
+      final j = _lixBase(config: MotorConfig.producao());
+      final lixoAntes = j.lixo.map((c) => c.id).toList();
+      expect(lixoAntes, ['lxUnico']);
+
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      expect(idsMao(j, 0), contains('lxUnico'));
+
+      // A trava NASCE — e nasce no estado canônico, projetada de volta no Jogo.
+      expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(paraCanonico(j).canonico.lixoUnicoCompradoId, 'lxUnico');
+
+      // E é NORMATIVA sob a autoridade canônica.
+      final erro = j.descartar(0, 'lxUnico');
+      expect(erro, isNotNull);
+      expect(erro, contains('não pode devolvê-la no mesmo turno'));
+      expect(j.vez, 0); // turno nulo BARRADO
+      expect(j.lixo, isEmpty); // e a carta não voltou para o lixo
+
+      // O turno continua tendo saída: qualquer outra carta encerra normalmente.
+      expect(j.descartar(0, 'm1'), isNull);
+      expect(j.vez, 1);
+    });
+
+    test('LIX-C03 a trava é do ESTADO: dois `EstadoJogo` que só diferem nela '
+        'decidem DIFERENTE', () {
+      // ANTES: o teste equivalente usava dois ENVELOPES e provava que decidiam
+      // IGUAL — o dado lateral era invisível para a autoridade. Agora não há
+      // envelope onde esconder a informação: ela está no estado, e muda decisão.
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final comTrava = paraCanonico(j).canonico;
+      final spec = specDe(comTrava);
+      expect(comTrava.lixoUnicoCompradoId, 'lxUnico');
+
+      // Mesmo estado, SEM a trava — a única diferença entre os dois.
+      final semTrava = comTrava.copyWith(lixoUnicoCompradoId: null);
+
+      // O gerador ÚNICO decide diferente, como tem de decidir.
+      List<String> descartes(EstadoJogo e) => [
+            for (final a in gerarAcoesLegais(e, 0, spec))
+              if (a is Descartar) a.carta
+          ];
+      expect(descartes(semTrava), contains('lxUnico'));
+      expect(descartes(comTrava), isNot(contains('lxUnico')));
+
+      // E `aplicarLegal` acompanha o gerador (nunca divergem).
+      expect(
+          aplicarLegal(semTrava, 0, const Descartar('lxUnico'), spec).legal,
+          isTrue);
+      final rec = aplicarLegal(comTrava, 0, const Descartar('lxUnico'), spec);
+      expect(rec.legal, isFalse);
+      expect(rec.codigo, reasonCodeLixoUnicoDevolvido);
+      expect(rec.proximoEstado, isNull); // sem mutação parcial
+
+      // As duas posições também deixam de ter a MESMA identidade.
+      expect(comTrava.assinatura(), isNot(semTrava.assinatura()));
+    });
+
+    test('LIX-C04 a porta canônica PRESERVA a trava: `EnvelopeRuntime.vazio()` '
+        'não perde mais nada', () {
+      // ANTES: o AdaptadorLegado só recebe `EstadoJogo` e reconstrói o envelope
+      // VAZIO — a trava era apagada nesse trajeto e a regra deixava de valer do
+      // outro lado da porta. Agora ela viaja DENTRO do estado.
+      final j = _lixBase(config: MotorConfig.legadoRollback());
+      expect(j.comprarLixo(0, modalidade: 'ABERTO')['ok'], isTrue);
+      expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
+
+      final estado = paraCanonico(j).canonico;
+      expect(estado.lixoUnicoCompradoId, 'lxUnico');
+
+      final alvo = Jogo.paraCostura(motorConfig: MotorConfig.legadoRollback());
+      aplicarEmJogo(alvo, estado, EnvelopeRuntime.vazio());
+
+      // Mesma posição, MESMO estado canônico — e a trava chegou inteira.
+      expect(alvo.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(alvo.descartar(0, 'lxUnico'), isNotNull); // segue recusando
+    });
+
+    test('LIX-C05 um SNAPSHOT do estado canônico é AUTOSSUFICIENTE para '
+        'reproduzir a posição', () {
+      // ANTES: a assinatura e a serialização do EstadoJogo não tinham a trava —
+      // o snapshot de uma posição não bastava para continuar a partida direito.
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final estado = paraCanonico(j).canonico;
+      final spec = specDe(estado);
+
+      // Round-trip por serialização pura (é o que um snapshot carrega).
+      final round = desserializarEstado(
+          jsonDecode(jsonEncode(serializarEstado(estado))) as Map);
+      expect(round.lixoUnicoCompradoId, 'lxUnico');
+      expect(round.assinatura(), estado.assinatura());
+
+      // A identidade do estado passa a incluir a trava, e a decisão sobrevive
+      // ao round-trip.
+      expect(serializarEstado(estado).keys, contains('lixoUnicoCompradoId'));
+      expect(aplicarLegal(round, 0, const Descartar('lxUnico'), spec).legal,
+          isFalse);
+      expect(gerarAcoesLegais(round, 0, spec).map(_acaoChave),
+          gerarAcoesLegais(estado, 0, spec).map(_acaoChave));
+    });
+  });
+
+  // ===================================================================
+  // OS LIXO CANÔNICO V1 — regra, ciclo de vida, cópia e paridade
+  // ===================================================================
+  group('OS LIXO CANÔNICO V1 — regra do ABERTO', () {
+    RuleSpec specDe(EstadoJogo e) =>
+        RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+
+    /// Estado logo após a compra do lixo pela autoridade, na mesa pedida.
+    ({EstadoJogo estado, RuleSpec spec}) aposCompra(Jogo j) {
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final e = paraCanonico(j).canonico;
+      return (estado: e, spec: specDe(e));
+    }
+
+    // ---------- QUANDO A TRAVA NASCE (e quando não nasce) ----------
+
+    test('LIX-01 compra do MONTE não cria trava nenhuma', () {
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarMonte(0), isTrue);
+      final e = paraCanonico(j).canonico;
+      expect(e.lixoUnicoCompradoId, isNull);
+      // e todo descarte da mão segue disponível
+      expect(
+          gerarAcoesLegais(e, 0, specDe(e)).whereType<Descartar>().length,
+          e.maos[0].length);
+    });
+
+    test('LIX-02 compra do LIXO com UMA carta cria a trava naquela carta', () {
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      expect(r.estado.lixoUnicoCompradoId, 'lxUnico');
+      expect(r.estado.lixo, isEmpty);
+      expect(r.estado.maos[0].map((c) => c.id), contains('lxUnico'));
+    });
+
+    test('LIX-03 compra do LIXO com DUAS OU MAIS cartas NÃO cria trava', () {
+      // A regra é literal: só o lixo de uma carta faz o turno poder ser nulo.
+      // Com duas, devolver o topo ainda deixa a outra carta na mão — o turno
+      // aconteceu.
+      final j = _lixBase(config: MotorConfig.producao(), lixo: [
+        Carta('lxFundo', 'ouros', '9', false),
+        Carta('lxTopo', 'espadas', '3', false),
+      ]);
+      final r = aposCompra(j);
+      expect(r.estado.lixoUnicoCompradoId, isNull);
+      // e as duas cartas compradas podem ser descartadas
+      final legais = gerarAcoesLegais(r.estado, 0, r.spec)
+          .whereType<Descartar>()
+          .map((d) => d.carta);
+      expect(legais, containsAll(<String>['lxTopo', 'lxFundo']));
+    });
+
+    test('LIX-04 no FECHADO/STBL a compra é atômica e não gera trava', () {
+      // §5.2 é regra do ABERTO. No Fechado/STBL o topo já é USADO na própria
+      // transação de compra, então não há como devolvê-lo.
+      for (final modalidade in ['FECHADO', 'STBL']) {
+        final j = _lixBase(
+          config: MotorConfig.producao(),
+          modalidade: modalidade,
+          mao0: [
+            Carta('8c', 'copas', '8', false),
+            Carta('9c', 'copas', '9', false),
+            Carta('gx', 'paus', 'Q', false),
+            Carta('gy', 'espadas', '4', false),
+          ],
+          lixo: [Carta('lxUnico', 'copas', '7', false)],
+        );
+        final res = j.comprarLixo(0);
+        expect(res['ok'], isTrue, reason: modalidade);
+        final e = paraCanonico(j).canonico;
+        expect(e.lixoUnicoCompradoId, isNull, reason: modalidade);
+      }
+    });
+
+    // ---------- O QUE A TRAVA PROÍBE (e o que ela NÃO proíbe) ----------
+
+    test('LIX-05 a trava recusa SÓ o descarte daquela carta', () {
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      final descartes = gerarAcoesLegais(r.estado, 0, r.spec)
+          .whereType<Descartar>()
+          .map((d) => d.carta)
+          .toSet();
+      expect(descartes, isNot(contains('lxUnico')));
+      // as outras três continuam todas legais — a trava não é um bloqueio geral
+      expect(descartes, containsAll(<String>['m1', 'm2', 'm3']));
+    });
+
+    test('LIX-06 a carta travada pode ser BAIXADA e ESTENDIDA — só não '
+        'descartada', () {
+      // A regra proíbe DEVOLVER a carta ao lixo, não usá-la. Confundir as duas
+      // coisas tiraria do jogador uma jogada legítima.
+      final j = _lixBase(
+        config: MotorConfig.producao(),
+        mao0: [
+          Carta('7c', 'copas', '7', false),
+          Carta('8c', 'copas', '8', false),
+          Carta('extra1', 'paus', 'Q', false),
+          Carta('extra2', 'espadas', '4', false),
+        ],
+        lixo: [Carta('lxUnico', 'copas', '9', false)],
+      );
+      final r = aposCompra(j);
+      expect(r.estado.lixoUnicoCompradoId, 'lxUnico');
+      // baixar 7-8-9 de copas USANDO a carta travada é legal
+      final baixada = Baixar(jogosNovos: [
+        ['7c', '8c', 'lxUnico']
+      ]);
+      final ap = aplicarLegal(r.estado, 0, baixada, r.spec);
+      expect(ap.legal, isTrue);
+      // e a trava continua de pé no resto do turno (a carta só saiu da mão)
+      expect(ap.proximoEstado!.lixoUnicoCompradoId, 'lxUnico');
+    });
+
+    test('LIX-07 a recusa é fechada: nada muda e o reasonCode é estável', () {
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      final antes = r.estado.assinatura();
+      final rec = aplicarLegal(r.estado, 0, const Descartar('lxUnico'), r.spec);
+      expect(rec.legal, isFalse);
+      expect(rec.proximoEstado, isNull);
+      expect(rec.codigo, reasonCodeLixoUnicoDevolvido);
+      expect(rec.motivo, motivoLixoUnicoDevolvido);
+      expect(r.estado.assinatura(), antes); // estado intacto
+      // O código é para máquina; ao jogador vai só a mensagem.
+      expect(rec.motivo!.contains(reasonCodeLixoUnicoDevolvido), isFalse);
+    });
+
+    // ---------- §9 — INTERAÇÃO COM A GARANTIA DE ENCERRAMENTO DO TURNO ----
+
+    test('LIX-08 a informação do lixo MUDA a continuação possível do turno',
+        () {
+      // Depois de comprar o lixo de uma carta, baixar a mão inteira deixaria
+      // como única carta justamente a travada. Não há descarte, não há morto a
+      // pegar com a mão cheia, não há extensão: o turno ficaria sem conclusão.
+      final r = aposCompra(_lixBecoPorTrava());
+      expect(r.estado.lixoUnicoCompradoId, 'lxUnico');
+
+      final baixada = Baixar(jogosNovos: [
+        ['7c', '8c', '9c']
+      ]);
+      final rec = aplicarLegal(r.estado, 0, baixada, r.spec);
+      expect(rec.legal, isFalse);
+      expect(rec.codigo, reasonCodeSemConclusaoLegal);
+      expect(rec.proximoEstado, isNull);
+
+      // E o gerador ÚNICO não oferece essa baixada (paridade estrutural).
+      expect(
+          gerarAcoesLegais(r.estado, 0, r.spec, candidatos: [baixada])
+              .whereType<Baixar>(),
+          isEmpty);
+    });
+
+    test('LIX-09 o MESMO estado sem a trava aceita a mesma baixada — a única '
+        'diferença é o campo canônico', () {
+      // Isola a variável: um só campo muda entre os dois estados.
+      final r = aposCompra(_lixBecoPorTrava());
+      final semTrava = r.estado.copyWith(lixoUnicoCompradoId: null);
+      final baixada = Baixar(jogosNovos: [
+        ['7c', '8c', '9c']
+      ]);
+      final ap = aplicarLegal(semTrava, 0, baixada, r.spec);
+      expect(ap.legal, isTrue);
+      // sem a trava, a carta órfã tem descarte legal (esvazia com morto a pegar)
+      expect(
+          aplicarLegal(ap.proximoEstado!, 0, const Descartar('lxUnico'), r.spec)
+              .legal,
+          isTrue);
+    });
+
+    test('LIX-10 o invariante de encerramento continua válido DEPOIS da '
+        'canonização: nenhuma ação aceita cria beco', () {
+      // Varredura dirigida sobre as mesas desta OS, no mesmo formato da OS de
+      // encerramento: toda ação candidata é aplicada; o que a autoridade ACEITA
+      // tem de admitir continuação legal.
+      final fabricas = <String, Jogo Function()>{
+        'base': () => _lixBase(config: MotorConfig.producao()),
+        'beco-por-trava': () => _lixBecoPorTrava(),
+        'sem-morto': () =>
+            _lixBase(config: MotorConfig.producao(), comMorto: false,
+                mortoPegoNos: true),
+        'lixo-duplo': () => _lixBase(config: MotorConfig.producao(), lixo: [
+              Carta('lxFundo', 'ouros', '9', false),
+              Carta('lxTopo', 'espadas', '3', false),
+            ]),
+        'canastra': () => _lixBase(
+              config: MotorConfig.producao(),
+              comMorto: false,
+              mortoPegoNos: true,
+              jogosNos: [_encCanastra()],
+            ),
+      };
+
+      var aceitas = 0;
+      for (final entry in fabricas.entries) {
+        // Percorre os dois caminhos de compra e, em cada um, todas as ações.
+        for (final compra in <Acao>[const ComprarMonte(), const ComprarLixo()]) {
+          final inicial = paraCanonico(entry.value()).canonico;
+          final spec = specDe(inicial);
+          final rc = aplicarLegal(inicial, 0, compra, spec);
+          if (!rc.legal) continue;
+          final estado = rc.proximoEstado!;
+          aceitas++;
+          final mao = estado.maos[0];
+          final candidatos = <Acao>[];
+          final n = mao.length;
+          for (var mask = 1; mask < (1 << n); mask++) {
+            final ids = <String>[
+              for (var i = 0; i < n; i++)
+                if (mask & (1 << i) != 0) mao[i].id
+            ];
+            if (ids.length >= 3) candidatos.add(Baixar(jogosNovos: [ids]));
+            if (ids.length == 1) {
+              final melds = estado.jogosDupla['nos'] ?? const [];
+              for (var k = 0; k < melds.length; k++) {
+                candidatos.add(Baixar(extensoes: [Extensao(k, ids)]));
+              }
+            }
+          }
+          for (final acao in [
+            ...candidatos,
+            const PegarMorto(),
+            const PegarMorto(viaDescarte: true),
+            const Bater(),
+            for (final c in mao) Descartar(c.id),
+          ]) {
+            final r = aplicarLegal(estado, 0, acao, spec);
+            if (!r.legal) {
+              expect(r.proximoEstado, isNull,
+                  reason: '${entry.key}: recusa não pode devolver estado');
+              continue;
+            }
+            aceitas++;
+            final pos = r.proximoEstado!;
+            if (!pos.rodadaEncerrada && pos.vez == 0) {
+              expect(gerarAcoesLegais(pos, 0, spec), isNotEmpty,
+                  reason: '${entry.key}/$compra/$acao deixou estado MORTO');
+            }
+          }
+        }
+      }
+      expect(aceitas, greaterThan(40)); // não-vacuidade (medido: 48)
+    });
+
+    // ---------- §12 — CICLO DE VIDA COMPLETO ----------
+
+    test('LIX-11 a trava MORRE quando a vez passa (descarte normal)', () {
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      expect(paraCanonico(j).canonico.lixoUnicoCompradoId, 'lxUnico');
+
+      expect(j.descartar(0, 'm1'), isNull);
+      expect(j.vez, 1);
+      // Nenhum resíduo para o turno seguinte — senão o adversário ficaria
+      // proibido de descartar uma carta que ele nunca comprou do lixo.
+      expect(paraCanonico(j).canonico.lixoUnicoCompradoId, isNull);
+      expect(j.costuraLixoUnicoCompradoId, isNull);
+    });
+
+    test('LIX-12 a trava SOBREVIVE às ações intermediárias do próprio turno',
+        () {
+      final j = _lixBase(
+        config: MotorConfig.producao(),
+        mao0: [
+          Carta('7c', 'copas', '7', false),
+          Carta('8c', 'copas', '8', false),
+          Carta('9c', 'copas', '9', false),
+          Carta('guarda1', 'paus', 'Q', false),
+          Carta('guarda2', 'espadas', '4', false),
+        ],
+      );
+      final r = aposCompra(j);
+      expect(r.estado.lixoUnicoCompradoId, 'lxUnico');
+      // Baixar no meio do turno não pode limpar a trava (o turno continua).
+      final ap = aplicarLegal(
+          r.estado,
+          0,
+          Baixar(jogosNovos: [
+            ['7c', '8c', '9c']
+          ]),
+          r.spec);
+      expect(ap.legal, isTrue);
+      expect(ap.proximoEstado!.lixoUnicoCompradoId, 'lxUnico');
+      // e continua proibindo o descarte da carta travada
+      expect(
+          aplicarLegal(ap.proximoEstado!, 0, const Descartar('lxUnico'), r.spec)
+              .legal,
+          isFalse);
+    });
+
+    test('LIX-13 morto DIRETO mantém a trava (mesma vez); morto INDIRETO a '
+        'apaga (a vez passa)', () {
+      // DIRETO: a mão zerou BAIXANDO, o jogador continua no turno e ainda vai
+      // descartar — a trava tem de continuar valendo.
+      final direto = _lixBase(
+        config: MotorConfig.producao(),
+        mao0: [
+          Carta('7c', 'copas', '7', false),
+          Carta('8c', 'copas', '8', false),
+        ],
+        lixo: [Carta('lxUnico', 'copas', '9', false)],
+      );
+      final rd = aposCompra(direto);
+      expect(rd.estado.lixoUnicoCompradoId, 'lxUnico');
+      final baixaTudo = aplicarLegal(
+          rd.estado,
+          0,
+          Baixar(jogosNovos: [
+            ['7c', '8c', 'lxUnico']
+          ]),
+          rd.spec);
+      expect(baixaTudo.legal, isTrue);
+      expect(baixaTudo.proximoEstado!.maos[0], isEmpty);
+      final md =
+          aplicarLegal(baixaTudo.proximoEstado!, 0, const PegarMorto(), rd.spec);
+      expect(md.legal, isTrue);
+      expect(md.proximoEstado!.vez, 0); // mesma vez
+      expect(md.proximoEstado!.lixoUnicoCompradoId, 'lxUnico');
+
+      // INDIRETO: o descarte zerou a mão e a vez passa — a trava morre.
+      //
+      // Note a forma do cenário: para a mão ZERAR num turno com trava, a carta
+      // travada precisa ter saído BAIXANDO — ela nunca pode ser a última carta
+      // descartada, porque descartá-la é justamente o que a §5.2 proíbe. Uma
+      // primeira versão deste teste tentou zerar a mão descartando com a trava
+      // ainda na mão e provou só que o cenário era impossível.
+      final indireto = _lixBase(
+        config: MotorConfig.producao(),
+        mao0: [
+          Carta('7c', 'copas', '7', false),
+          Carta('8c', 'copas', '8', false),
+          Carta('unica', 'paus', 'Q', false),
+        ],
+        lixo: [Carta('lxUnico', 'copas', '9', false)],
+      );
+      final ri = aposCompra(indireto);
+      expect(ri.estado.lixoUnicoCompradoId, 'lxUnico');
+      final baixaComTravada = aplicarLegal(
+          ri.estado,
+          0,
+          Baixar(jogosNovos: [
+            ['7c', '8c', 'lxUnico']
+          ]),
+          ri.spec);
+      expect(baixaComTravada.legal, isTrue);
+      expect(baixaComTravada.proximoEstado!.maos[0].map((c) => c.id),
+          ['unica']);
+      final desc = aplicarLegal(
+          baixaComTravada.proximoEstado!, 0, const Descartar('unica'), ri.spec);
+      expect(desc.legal, isTrue);
+      expect(desc.proximoEstado!.fase, FaseTurno.mortoPendente);
+      // ainda é o mesmo turno: a trava permanece
+      expect(desc.proximoEstado!.lixoUnicoCompradoId, 'lxUnico');
+      final mi = aplicarLegal(desc.proximoEstado!, 0,
+          const PegarMorto(viaDescarte: true), ri.spec);
+      expect(mi.legal, isTrue);
+      expect(mi.proximoEstado!.vez, 1); // a vez passou
+      expect(mi.proximoEstado!.lixoUnicoCompradoId, isNull);
+    });
+
+    test('LIX-14 a BATIDA encerra a rodada e apaga a trava', () {
+      final j = _lixBase(
+        config: MotorConfig.producao(),
+        comMorto: false,
+        mortoPegoNos: true,
+        jogosNos: [_encCanastra()],
+        mao0: [
+          Carta('7c', 'copas', '7', false),
+          Carta('8c', 'copas', '8', false),
+          Carta('unica', 'paus', 'Q', false),
+        ],
+        lixo: [Carta('lxUnico', 'copas', '9', false)],
+      );
+      final r = aposCompra(j);
+      expect(r.estado.lixoUnicoCompradoId, 'lxUnico');
+      // A carta travada sai BAIXANDO (é a única forma de a mão zerar num turno
+      // com trava — descartá-la é proibido).
+      final baixa = aplicarLegal(
+          r.estado,
+          0,
+          Baixar(jogosNovos: [
+            ['7c', '8c', 'lxUnico']
+          ]),
+          r.spec);
+      expect(baixa.legal, isTrue);
+      // Descartar a última carta zera a mão: com canastra limpa na mesa e sem
+      // morto pendente, isso é BATIDA.
+      final b = aplicarLegal(
+          baixa.proximoEstado!, 0, const Descartar('unica'), r.spec);
+      expect(b.legal, isTrue);
+      expect(b.proximoEstado!.rodadaEncerrada, isTrue);
+      expect(b.proximoEstado!.duplaQueBateu, 'nos');
+      expect(b.proximoEstado!.lixoUnicoCompradoId, isNull);
+    });
+
+    test('LIX-15 a compra do turno SEGUINTE zera qualquer resíduo', () {
+      // Defesa em profundidade: mesmo que um estado chegue de fora com a trava
+      // suja, a compra que abre o turno a limpa.
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      final sujo = r.estado.copyWith(
+          vez: 1, fase: FaseTurno.compra, lixoUnicoCompradoId: 'lxUnico');
+      final ap = aplicarLegal(sujo, 1, const ComprarMonte(), r.spec);
+      expect(ap.legal, isTrue);
+      expect(ap.proximoEstado!.lixoUnicoCompradoId, isNull);
+    });
+
+    // ---------- §11 — CÓPIA, IGUALDADE, SNAPSHOT ----------
+
+    test('LIX-16 clone, normalização e copyWith preservam a trava', () {
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      expect(r.estado.cloneProfundo().lixoUnicoCompradoId, 'lxUnico');
+      expect(r.estado.normalizar().lixoUnicoCompradoId, 'lxUnico');
+      // copyWith que mexe em OUTRO campo não pode apagar a trava por descuido
+      expect(r.estado.copyWith(vez: 2).lixoUnicoCompradoId, 'lxUnico');
+      expect(r.estado.copyWith(fase: FaseTurno.compra).lixoUnicoCompradoId,
+          'lxUnico');
+      // e a sentinela permite LIMPAR de propósito
+      expect(r.estado.copyWith(lixoUnicoCompradoId: null).lixoUnicoCompradoId,
+          isNull);
+      // trocar por outra carta também funciona
+      expect(r.estado.copyWith(lixoUnicoCompradoId: 'outra').lixoUnicoCompradoId,
+          'outra');
+    });
+
+    test('LIX-17 estados canônicos IGUAIS decidem IGUAL; estados que só '
+        'diferem na trava não são iguais', () {
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      final copia = r.estado.cloneProfundo();
+
+      // (a) mesma assinatura -> mesmas ações legais e mesma decisão.
+      expect(copia.assinatura(), r.estado.assinatura());
+      expect(gerarAcoesLegais(copia, 0, r.spec).map(_acaoChave).toList(),
+          gerarAcoesLegais(r.estado, 0, r.spec).map(_acaoChave).toList());
+      for (final c in r.estado.maos[0]) {
+        expect(aplicarLegal(copia, 0, Descartar(c.id), r.spec).legal,
+            aplicarLegal(r.estado, 0, Descartar(c.id), r.spec).legal);
+      }
+
+      // (b) diferir SÓ na trava já muda a assinatura — a informação omitida da
+      // identidade era exatamente o defeito desta OS.
+      final semTrava = r.estado.copyWith(lixoUnicoCompradoId: null);
+      expect(semTrava.assinatura(), isNot(r.estado.assinatura()));
+    });
+
+    test('LIX-18 round-trip Jogo -> canônico -> Jogo preserva a trava', () {
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final proj = paraCanonico(j);
+      final alvo = Jogo.paraCostura(motorConfig: MotorConfig.producao());
+      aplicarEmJogo(alvo, proj.canonico, proj.envelope);
+      expect(alvo.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(paraCanonico(alvo).canonico.assinatura(),
+          proj.canonico.assinatura());
+      // e o objeto RECONSTRUÍDO decide igual ao original
+      expect(alvo.descartar(0, 'lxUnico'), isNotNull);
+    });
+
+    test('LIX-19 o snapshot de Replay carrega a trava e o motor a recupera',
+        () {
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final snap = jsonDecode(jsonEncode(serializarProjecao(paraCanonico(j))))
+          as Map<String, dynamic>;
+      expect((snap['canonico'] as Map)['lixoUnicoCompradoId'], 'lxUnico');
+      // e NÃO ficou uma segunda cópia no envelope
+      expect((snap['envelope'] as Map).containsKey('lixoUnicoCompradoId'),
+          isFalse);
+
+      final volta = desserializarProjecao(snap);
+      expect(volta.canonico.lixoUnicoCompradoId, 'lxUnico');
+      expect(
+          aplicarLegal(volta.canonico, 0, const Descartar('lxUnico'),
+                  specDe(volta.canonico))
+              .legal,
+          isFalse);
+    });
+
+    // ---------- §10 — BOT ----------
+
+    test('LIX-20 o BOT respeita a §5.2 sem nenhuma regra especial', () {
+      // O bot planeja sobre o MESMO EstadoJogo e valida cada plano pela MESMA
+      // `aplicarLegal`. Como a trava agora está no estado, ela chega ao bot de
+      // graça — não há (nem pode haver) exceção no bot.
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      final decisao = ExecutorBot(r.spec).decidirJogo(r.estado, 0);
+      expect(decisao.vazia, isFalse);
+
+      // Nenhuma ação decidida pelo bot devolve a carta travada ao lixo...
+      for (final a in decisao.acoes) {
+        if (a is Descartar) expect(a.carta, isNot('lxUnico'));
+      }
+      // ...e TUDO o que ele decide, a autoridade aceita (paridade estrutural:
+      // o bot valida cada plano com a mesma `aplicarLegal`).
+      var cur = r.estado;
+      for (final a in decisao.acoes) {
+        final ap = aplicarLegal(cur, 0, a, r.spec);
+        expect(ap.legal, isTrue, reason: 'bot propôs ação que a autoridade '
+            'recusa: $a');
+        cur = ap.proximoEstado!;
+      }
+    });
+
+    test('LIX-21 clone/simulação do bot conserva a trava', () {
+      // A informação tem de sobreviver ao clone que o bot usa para simular.
+      final r = aposCompra(_lixBase(config: MotorConfig.producao()));
+      final clone = r.estado.cloneProfundo();
+      expect(clone.lixoUnicoCompradoId, 'lxUnico');
+      final bot = ExecutorBot(r.spec);
+      final original = bot.decidirJogo(r.estado, 0);
+      final doClone = bot.decidirJogo(clone, 0);
+      // Mesma posição, mesma decisão — o clone não perdeu contexto nenhum.
+      expect(doClone.assinaturaDecisao, original.assinaturaDecisao);
+      expect([for (final a in doClone.acoes) _acaoChave(a)],
+          [for (final a in original.acoes) _acaoChave(a)]);
+      for (final a in doClone.acoes) {
+        if (a is Descartar) expect(a.carta, isNot('lxUnico'));
+      }
+      // e simular sobre o clone não vazou para o original
+      expect(r.estado.lixoUnicoCompradoId, 'lxUnico');
+    });
+
+    test('LIX-22 gerador e aplicador NÃO divergem para o humano nem para o bot',
+        () {
+      // §18.5 — o gerador nunca oferece o que `aplicarLegal` recusaria por
+      // causa deste contexto.
+      for (final j in <Jogo>[
+        _lixBase(config: MotorConfig.producao()),
+        _lixBecoPorTrava(),
+      ]) {
+        final r = aposCompra(j);
+        final mao = r.estado.maos[0];
+        final candidatos = <Acao>[
+          for (final c in mao) Descartar(c.id),
+          Baixar(jogosNovos: [
+            [for (final c in mao) c.id]
+          ]),
+        ];
+        final oferecidas =
+            gerarAcoesLegais(r.estado, 0, r.spec, candidatos: candidatos)
+                .map(_acaoChave)
+                .toSet();
+        for (final a in [...candidatos, const ComprarMonte(), const Bater()]) {
+          final legal = aplicarLegal(r.estado, 0, a, r.spec).legal;
+          expect(oferecidas.contains(_acaoChave(a)), legal,
+              reason: 'gerador != aplicador para ${_acaoChave(a)}');
+        }
+      }
+    });
+
+    // ---------- §14 — VARREDURA DE ESTADOS ----------
+
+    test('LIX-23 varredura de BARALHOS REAIS: a trava nunca vaza e nunca cria '
+        'beco', () {
+      // Passeio determinístico por partidas reais no ABERTO, preferindo a
+      // compra do LIXO sempre que ela existir — é o regime onde a trava nasce.
+      // Verifica, a CADA passo aceito:
+      //   (1) a trava só existe depois de comprar um lixo de 1 carta;
+      //   (2) ela nunca sobrevive à passagem da vez nem ao fim da rodada;
+      //   (3) nenhuma ação aceita deixa estado morto;
+      //   (4) gerador e aplicador concordam em cada ação candidata.
+      final achados = <String>[];
+      var estados = 0;
+      var acoes = 0;
+      var travasNascidas = 0;
+
+      for (var seed = 1; seed <= 12; seed++) {
+        final jogo = Jogo(const ['A', 'B', 'C', 'D'], const ['', '', '', ''],
+            const ['', '', '', ''],
+            seed: seed, motorConfig: MotorConfig.producao());
+        jogo.modalidade = 'ABERTO';
+        var e = paraCanonico(jogo).canonico;
+        final spec = RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+        final rnd = Random(seed * 104729);
+
+        for (var passo = 0; passo < 60 && !e.rodadaEncerrada; passo++) {
+          estados++;
+          final assento = e.vez;
+          final mao = e.maos[assento];
+          final travaAntes = e.lixoUnicoCompradoId;
+          final lixoAntes = e.lixo.length;
+
+          // Candidatos: base + jogos novos de 3 cartas + extensões de 1 carta.
+          final cands = <Acao>[
+            const ComprarMonte(),
+            const ComprarLixo(),
+            const PegarMorto(),
+            const PegarMorto(viaDescarte: true),
+            const Bater(),
+            for (final c in mao) Descartar(c.id),
+          ];
+          for (var i = 0; i < mao.length; i++) {
+            for (var k = i + 1; k < mao.length; k++) {
+              for (var m = k + 1; m < mao.length; m++) {
+                cands.add(Baixar(jogosNovos: [
+                  [mao[i].id, mao[k].id, mao[m].id]
+                ]));
+              }
+            }
+            for (final d in const ['nos', 'eles']) {
+              final melds = e.jogosDupla[d] ?? const <List<CartaSnapshot>>[];
+              for (var k = 0; k < melds.length; k++) {
+                cands.add(Baixar(extensoes: [
+                  Extensao(k, [mao[i].id])
+                ]));
+              }
+            }
+          }
+
+          final oferecidas =
+              gerarAcoesLegais(e, assento, spec, candidatos: cands)
+                  .map(_acaoChave)
+                  .toSet();
+          final legais = <Acao>[];
+          for (final a in cands) {
+            acoes++;
+            final r = aplicarLegal(e, assento, a, spec);
+            // (4) gerador == aplicador
+            if (oferecidas.contains(_acaoChave(a)) != r.legal) {
+              achados.add(
+                  'seed$seed/p$passo gerador!=aplicador em ${_acaoChave(a)}');
+            }
+            if (!r.legal) {
+              if (r.proximoEstado != null) {
+                achados.add('seed$seed/p$passo recusa devolveu estado em $a');
+              }
+              continue;
+            }
+            legais.add(a);
+            final pos = r.proximoEstado!;
+
+            // (1) origem da trava
+            if (pos.lixoUnicoCompradoId != null &&
+                pos.lixoUnicoCompradoId != travaAntes) {
+              travasNascidas++;
+              if (a is! ComprarLixo || lixoAntes != 1) {
+                achados.add('seed$seed/p$passo trava nasceu fora da compra '
+                    'de lixo unitário em ${_acaoChave(a)}');
+              }
+            }
+            // (2) sem vazamento entre turnos
+            if ((pos.vez != assento || pos.rodadaEncerrada) &&
+                pos.lixoUnicoCompradoId != null) {
+              achados.add('seed$seed/p$passo trava VAZOU para o turno '
+                  'seguinte em ${_acaoChave(a)}');
+            }
+            // (3) sem estado morto
+            if (!pos.rodadaEncerrada &&
+                pos.vez == assento &&
+                gerarAcoesLegais(pos, assento, spec).isEmpty) {
+              achados.add(
+                  'seed$seed/p$passo estado MORTO após ${_acaoChave(a)}');
+            }
+          }
+
+          if (legais.isEmpty) {
+            achados.add('seed$seed/p$passo estado SEM ação legal');
+            break;
+          }
+          // Prefere comprar o LIXO — é o que leva a varredura à região de
+          // interesse em vez de passear pelo monte a partida inteira.
+          final lixos = legais.whereType<ComprarLixo>().toList();
+          final escolha =
+              lixos.isNotEmpty ? lixos.first : legais[rnd.nextInt(legais.length)];
+          e = aplicarLegal(e, assento, escolha, spec).proximoEstado!;
+        }
+      }
+
+      expect(achados, isEmpty, reason: achados.take(5).join(' | '));
+      // NÃO-VACUIDADE (medido nesta base: 720 estados, 110.183 ações avaliadas,
+      // 308 nascimentos de trava). Os pisos ficam abaixo do medido só para não
+      // quebrar por variação de caminho, mas bem acima de zero: uma varredura
+      // que nunca comprasse um lixo de UMA carta não provaria nada sobre a §5.2.
+      //
+      // Que ela DETECTA regressão foi verificado por mutação: removendo a
+      // limpeza da trava no descarte normal, esta varredura acusa
+      // "trava VAZOU para o turno seguinte" já na primeira semente.
+      expect(travasNascidas, greaterThan(50),
+          reason: 'a varredura quase não comprou lixo de UMA carta');
+      expect(acoes, greaterThan(50000));
+      expect(estados, greaterThan(400));
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -8708,3 +9537,149 @@ Jogo _jgEncLixoBeco() {
 List<List<Carta>> _mortoDisponivelEnc(String tag) => [
       [for (var i = 0; i < 11; i++) Carta('mt${tag}_$i', 'ouros', '3', false)]
     ];
+
+// ===================================================================
+// OS CANONIZAÇÃO DO ESTADO DE COMPRA DO LIXO V1 — mesas determinísticas
+// ===================================================================
+
+/// Terreno base da §5.2: ABERTO, assento 0 na fase de COMPRA, dupla NOS já
+/// aberta, MORTO disponível (para que sobrar poucas cartas nunca seja beco) e
+/// LIXO DE EXATAMENTE UMA CARTA (`lxUnico`) — a condição que faz a trava nascer.
+///
+/// A mão de 3 cartas soltas é deliberada: nenhuma delas combina com `lxUnico`
+/// nem entre si, então a única coisa que a compra do lixo muda é a presença de
+/// `lxUnico` na mão. Isso isola a regra sob teste de qualquer efeito de meld.
+Jogo _lixBase({
+  required MotorConfig config,
+  String modalidade = 'ABERTO',
+  List<Carta>? lixo,
+  List<Carta>? mao0,
+  bool mortoPegoNos = false,
+  bool comMorto = true,
+  List<List<Carta>>? jogosNos,
+  bool jaComprou = false,
+}) {
+  final j = Jogo.paraCostura(motorConfig: config);
+  j.vez = 0;
+  j.modalidade = modalidade;
+  j.jaComprou = jaComprou;
+  j.mortoPego = {'nos': mortoPegoNos, 'eles': true};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.rodadasVulneravel = {'nos': 0, 'eles': 0};
+  j.maos = [
+    mao0 ??
+        [
+          Carta('m1', 'paus', 'K', false),
+          Carta('m2', 'espadas', '9', false),
+          Carta('m3', 'ouros', 'J', false),
+        ],
+    [Carta('b1', 'paus', '4', false)],
+    [Carta('c1', 'paus', '5', false)],
+    [Carta('d1', 'paus', '6', false)],
+  ];
+  j.jogosDupla = {
+    'nos': jogosNos ?? [_encMeldCurto()],
+    'eles': <List<Carta>>[],
+  };
+  j.monte = [
+    Carta('mo1', 'paus', '8', false),
+    Carta('mo2', 'copas', '8', false),
+  ];
+  j.mortos = comMorto ? [_lixMorto()] : <List<Carta>>[];
+  j.lixo = lixo ?? [Carta('lxUnico', 'espadas', '3', false)];
+  _lixCompletarBaralho(j);
+  return j;
+}
+
+/// Chave estável de uma `Acao` para comparar conjuntos de ações.
+///
+/// `Acao` não implementa `toString`, então `'$acao'` colapsa TODAS as
+/// instâncias de um mesmo tipo em "Instance of 'Descartar'" — comparar assim
+/// faria qualquer teste de paridade gerador×aplicador passar por acidente.
+/// `toJson` é o contrato real e distingue carta a carta.
+String _acaoChave(Acao a) => jsonEncode(a.toJson());
+
+/// §9 — a mesa em que a INFORMAÇÃO DO LIXO decide a continuação do turno.
+///
+/// Mão = 7-8-9 de copas (um meld inteiro) e lixo de UMA carta (`lxUnico`, K de
+/// espadas — que não estende nenhum jogo da mesa). Depois de comprar o lixo,
+/// baixar 7-8-9 deixa a mão em `[lxUnico]`, e `lxUnico` é justamente a carta
+/// TRAVADA pela §5.2. Sem a trava, descartá-la seria legal (há morto a pegar);
+/// com a trava, o turno fica sem NENHUMA conclusão — que é o beco que a OS
+/// anterior ensinou o motor a recusar.
+///
+/// É a prova de que a trava é regra de verdade: ela muda o conjunto de
+/// continuações possíveis, não só a legalidade de um descarte isolado.
+Jogo _lixBecoPorTrava() => _lixBase(
+      config: MotorConfig.producao(),
+      mao0: [
+        Carta('7c', 'copas', '7', false),
+        Carta('8c', 'copas', '8', false),
+        Carta('9c', 'copas', '9', false),
+      ],
+      lixo: [Carta('lxUnico', 'espadas', 'K', false)],
+    );
+
+/// Completa a mesa até as 108 cartas do perfil BMV_STANDARD_108, jogando o
+/// excedente no FUNDO do monte.
+///
+/// Por que é obrigatório aqui: `auditarIntegridade` roda no caminho LEGADO e
+/// recusa qualquer mesa incompleta (`DECK_TOTAL_MISMATCH`) ou com carta
+/// repetida além de 2× (`DUPLICATE_RANK_SUIT_OVERFLOW`). O motor CANÔNICO não
+/// audita, então mesas parciais passam nele e travam no legado — e esta OS
+/// precisa rodar a MESMA posição nos dois motores para comparar.
+///
+/// O excedente vai para o fundo porque as duas convenções de topo (legado
+/// `monte[0]`, canônico `monte.last` após a reversão da projeção) apontam para
+/// a FRENTE da lista: nada do que é acrescentado aqui muda qual carta a próxima
+/// compra do monte traz, nem entra em qualquer decisão de legalidade.
+void _lixCompletarBaralho(Jogo j) {
+  const naipes = ['copas', 'ouros', 'paus', 'espadas'];
+  const valores = [
+    'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'
+  ];
+  final usados = <String, int>{};
+  void contar(Carta c) {
+    final k = c.valor == 'JOKER' ? 'jk' : '${c.naipe}|${c.valor}';
+    usados[k] = (usados[k] ?? 0) + 1;
+  }
+
+  for (final m in j.maos) {
+    m.forEach(contar);
+  }
+  j.monte.forEach(contar);
+  j.lixo.forEach(contar);
+  for (final mo in j.mortos) {
+    mo.forEach(contar);
+  }
+  for (final jogos in j.jogosDupla.values) {
+    for (final m in jogos) {
+      m.forEach(contar);
+    }
+  }
+
+  var n = 0;
+  for (final na in naipes) {
+    for (final v in valores) {
+      for (var i = usados['$na|$v'] ?? 0; i < 2; i++) {
+        j.monte.add(Carta('pad${n++}', na, v, v == '2'));
+      }
+    }
+  }
+  for (var i = usados['jk'] ?? 0; i < 4; i++) {
+    j.monte.add(Carta('pad${n++}', null, 'JOKER', true));
+  }
+}
+
+/// MORTO de 11 cartas DISTINTAS para as mesas desta OS.
+///
+/// `_mortoDisponivelEnc` empilha 11 cópias de `ouros 3`, o que é inofensivo no
+/// motor canônico (não audita o baralho) mas dispara
+/// `DUPLICATE_RANK_SUIT_OVERFLOW` em `auditarIntegridade`, que o caminho LEGADO
+/// executa. Como esta OS compara os DOIS motores sobre a MESMA mesa, o morto
+/// precisa ser íntegro para os dois.
+List<Carta> _lixMorto() => [
+      for (final v in ['A', '3', '4', '5', '6', '7', '9', '10', 'J', 'Q', 'K'])
+        Carta('mtlix$v', 'copas', v, false)
+    ];
+

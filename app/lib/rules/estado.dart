@@ -55,6 +55,24 @@ class EstadoJogo {
   final String? duplaQueBateu;
   final FaseTurno fase; // fase do turno (compra/jogo/mortoPendente)
 
+  /// §5.2 do ABERTO — id da carta comprada SOZINHA do lixo NESTE turno: ela não
+  /// pode voltar como descarte antes da vez passar (anti "turno nulo").
+  /// `null` = sem trava.
+  ///
+  /// É ESTADO NORMATIVO e não é derivável do resto da posição: depois da compra
+  /// a carta está misturada na mão e o lixo ficou vazio — e "lixo vazio na fase
+  /// de jogo" também acontece no início da rodada, quando nenhuma trava existe.
+  /// Por isso mora aqui, e não num envelope ao lado: dois estados idênticos
+  /// nesta lista de campos precisam decidir igual.
+  ///
+  /// CICLO DE VIDA (decidido pelo gerador único, nunca por quem chama):
+  ///   nasce   -> ComprarLixo no ABERTO com o lixo de EXATAMENTE uma carta;
+  ///   zera    -> ComprarMonte e qualquer outra compra do lixo;
+  ///   perdura -> pela fase de jogo do MESMO turno (baixar, morto direto);
+  ///   morre   -> quando a vez passa (descarte, morto indireto) ou a rodada
+  ///              encerra (batida). Nunca atravessa para o turno seguinte.
+  final String? lixoUnicoCompradoId;
+
   const EstadoJogo({
     required this.modalidade,
     required this.metaPontos,
@@ -70,6 +88,7 @@ class EstadoJogo {
     this.rodadaEncerrada = false,
     this.duplaQueBateu,
     this.fase = FaseTurno.compra,
+    this.lixoUnicoCompradoId,
   });
 
   static List<CartaSnapshot> _copiaLista(List<CartaSnapshot> l) =>
@@ -98,6 +117,7 @@ class EstadoJogo {
         rodadaEncerrada: rodadaEncerrada,
         duplaQueBateu: duplaQueBateu,
         fase: fase,
+        lixoUnicoCompradoId: lixoUnicoCompradoId,
       );
 
   /// NORMALIZAÇÃO para comparação determinística no modo sombra.
@@ -141,6 +161,7 @@ class EstadoJogo {
       rodadaEncerrada: rodadaEncerrada,
       duplaQueBateu: duplaQueBateu,
       fase: fase,
+      lixoUnicoCompradoId: lixoUnicoCompradoId,
     );
   }
 
@@ -162,16 +183,27 @@ class EstadoJogo {
       ..writeln('pb=${n.primeiraBaixadaFeita}')
       ..writeln('mp=${n.mortoPego}')
       ..writeln('fim=${n.rodadaEncerrada} bateu=${n.duplaQueBateu}')
-      ..writeln('fase=${n.fase.name}');
+      ..writeln('fase=${n.fase.name}')
+      // §5.2 entra na IDENTIDADE do estado: dois estados que só diferem na
+      // trava do lixo decidem diferente, logo não podem ter a mesma assinatura.
+      ..writeln('lixoUnico=${n.lixoUnicoCompradoId}');
     return sb.toString();
   }
 
+  /// Sentinela do `copyWith`: distingue "parâmetro não informado" de "informado
+  /// como null". Sem ela, `lixoUnicoCompradoId: null` seria indistinguível de
+  /// omitir o campo — e a trava do lixo jamais poderia ser LIMPA por cópia, que
+  /// é exatamente o que a passagem da vez precisa fazer.
+  static const Object _naoInformado = Object();
+
   /// Cópia rasa alterando poucos campos (compartilha as coleções deste estado).
-  EstadoJogo copyWith(
-          {int? vez,
-          bool? rodadaEncerrada,
-          String? duplaQueBateu,
-          FaseTurno? fase}) =>
+  EstadoJogo copyWith({
+    int? vez,
+    bool? rodadaEncerrada,
+    String? duplaQueBateu,
+    FaseTurno? fase,
+    Object? lixoUnicoCompradoId = _naoInformado,
+  }) =>
       EstadoJogo(
         modalidade: modalidade,
         metaPontos: metaPontos,
@@ -187,5 +219,8 @@ class EstadoJogo {
         rodadaEncerrada: rodadaEncerrada ?? this.rodadaEncerrada,
         duplaQueBateu: duplaQueBateu ?? this.duplaQueBateu,
         fase: fase ?? this.fase,
+        lixoUnicoCompradoId: identical(lixoUnicoCompradoId, _naoInformado)
+            ? this.lixoUnicoCompradoId
+            : lixoUnicoCompradoId as String?,
       );
 }

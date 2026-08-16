@@ -3,9 +3,15 @@
 // nenhum campo operacional desapareça silenciosamente (matriz do PLANO-C9 v2.1).
 //
 // Categorias carregadas aqui:
-//  • RUNTIME ENVELOPE (operacionais): cont, lixoUnicoCompradoId,
-//    mortosConvertidos, iniciadorRodada, rodadaContada, lixoTopoObrigatorio,
-//    integridadeErro, assentoQueBateu, rodada, placar, encerrada, pontosRodada.
+//  • RUNTIME ENVELOPE (operacionais): cont, mortosConvertidos, iniciadorRodada,
+//    rodadaContada, lixoTopoObrigatorio, integridadeErro, assentoQueBateu,
+//    rodada, placar, encerrada, pontosRodada.
+//
+// OS CANONIZAÇÃO DO LIXO V1 — `lixoUnicoCompradoId` SAIU daqui. Era o único
+// campo do envelope que decidia LEGALIDADE (§5.2 do ABERTO), e envelope não é
+// lugar de regra: a autoridade canônica nunca o lia, então a regra não existia
+// sob a autoridade ON. Agora ele é campo de `EstadoJogo`. NÃO reintroduzir aqui
+// — duas cópias seriam duas verdades.
 //  • UI/SIDECAR (pass-through, sem efeito de regra): apelidos, avatares, mascotes.
 //
 // NÃO contém regra. NÃO importa `mesa.dart` (é só um contêiner de dados tipado).
@@ -14,7 +20,6 @@
 class EnvelopeRuntime {
   // ---- RUNTIME ENVELOPE: operacionais privados no legado (via seam) ----
   final int cont; // _cont: gerador de ids de carta (unicidade)
-  final String? lixoUnicoCompradoId; // _lixoUnicoCompradoId: anti "turno nulo"
   final int mortosConvertidos; // _mortosConvertidos: §8.1 (NÃO afeta o −100)
   final int iniciadorRodada; // _iniciadorRodada: rotação de início
   final bool rodadaContada; // _rodadaContada: contagem já aplicada
@@ -35,7 +40,6 @@ class EnvelopeRuntime {
 
   const EnvelopeRuntime({
     required this.cont,
-    required this.lixoUnicoCompradoId,
     required this.mortosConvertidos,
     required this.iniciadorRodada,
     required this.rodadaContada,
@@ -57,7 +61,6 @@ class EnvelopeRuntime {
   /// C9-C, onde o runtime carrega o envelope completo).
   factory EnvelopeRuntime.vazio() => const EnvelopeRuntime(
         cont: 0,
-        lixoUnicoCompradoId: null,
         mortosConvertidos: 0,
         iniciadorRodada: -1,
         rodadaContada: false,
