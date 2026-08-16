@@ -193,12 +193,22 @@ class _LobbyOnlineState extends State<LobbyOnline> {
           decoration: BoxDecoration(color: cor, shape: BoxShape.circle),
         ),
         const SizedBox(width: 8),
-        Text(
-          txt,
-          style: TextStyle(
-            color: cor,
-            fontWeight: FontWeight.w700,
-            fontSize: 13,
+        // FLEXÍVEL, e não solto: a frase mais longa desta lista tem 41
+        // caracteres, e sobram 302 pontos para ela (430 de largura máxima, ou a
+        // do aparelho se for menor, menos os 20 de padding de cada lado, menos
+        // os 18 do ponto colorido). Em negrito de 13 isso cabe raspando — e
+        // deixa de caber assim que o aparelho é mais estreito ou a pessoa usa o
+        // ajuste de fonte grande do sistema, que é justamente quem mais precisa
+        // ler o recado. Sem restrição, o texto estoura a linha e some cortado;
+        // com ela, quebra em duas.
+        Flexible(
+          child: Text(
+            txt,
+            style: TextStyle(
+              color: cor,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
           ),
         ),
       ],
