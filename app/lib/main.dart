@@ -1189,7 +1189,13 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
     final (cor, txt) = switch (_srv.status) {
       OnlineStatus.conectado => (const Color(0xFF27AE60), 'conectado ao servidor'),
       OnlineStatus.conectando => (_ouro, 'conectando…'),
+      // a conexão está aberta, mas o servidor ainda não aceitou a credencial —
+      // nenhum comando de jogador roda nesse intervalo
+      OnlineStatus.autenticando => (_ouro, 'identificando você…'),
       OnlineStatus.erro => (const Color(0xFFE05B5B), 'sem conexão'),
+      OnlineStatus.naoAutenticado => (const Color(0xFFE05B5B), 'entre na sua conta para jogar online'),
+      OnlineStatus.atualizacaoObrigatoria => (const Color(0xFFE05B5B), 'atualize o aplicativo para jogar online'),
+      OnlineStatus.servidorDesatualizado => (const Color(0xFFE05B5B), 'servidor em atualização — tente mais tarde'),
       OnlineStatus.desconectado => (_mut, 'desconectado'),
     };
     return Row(
