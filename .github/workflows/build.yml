@@ -285,6 +285,28 @@ jobs:
           flutter test test/sessao --reporter expanded
           echo "PORTÃO VERDE: sessão canônica validada no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE PRODUÇÃO — casca real (roteamento, mocks, dados pessoais)"
+        # Prova que o APK não abre numa bancada de prévias: partida fria decide
+        # entre Login e Home pela sessão, o logout derruba socket e pilha de
+        # navegação, a Home não recebe VM.mock() e nenhuma rota que nasce em
+        # main() alcança maquete. Inclui a auditoria estrutural, que é o que
+        # impede um segundo dono de autenticação de voltar e um dado pessoal
+        # real de reentrar no código distribuído.
+        run: |
+          if [ ! -d app/test/casca ]; then
+            echo "ERRO: app/test/casca não encontrado — o portão da casca é OBRIGATÓRIO."
+            exit 1
+          fi
+          if [ ! -f app/test/casca/auditoria_casca_test.dart ]; then
+            echo "ERRO: auditoria_casca_test.dart não encontrado — é ela que prova a AUSÊNCIA."
+            exit 1
+          fi
+          mkdir -p app_build/test/casca
+          cp -R app/test/casca/. app_build/test/casca/
+          cd app_build
+          flutter test test/casca --reporter expanded
+          echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
         # validado por perfil de build, protocolo 2 no handshake, renovação de
