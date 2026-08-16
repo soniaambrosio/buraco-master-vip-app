@@ -47,10 +47,15 @@ O workflow `crashlytics-homologacao.yml` dispara por `push` na própria branch.
 > abaixo, e pelo histórico do repositório (há runs `event: push` em
 > `integracao/orientacao-mesa-atualizada`).
 
-| Run | Commit | Resultado | O que provou |
+Cada run avançou um portão. É a sequência que interessa, não só o último estado:
+
+| Run | Commit | Parou em | O que ficou provado |
 |---|---|---|---|
-| [31949119691](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31949119691) | `d244721` | failure | O Secret **existe** (portão passou); a configuração é que estava errada |
-| [31949486346](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31949486346) | `7e323c1` | failure | Anotação nomeou a causa exata (abaixo) |
+| [31949119691](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31949119691) | `d244721` | JSON do app oficial | O Secret **existe** — o portão anterior passou |
+| [31949486346](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31949486346) | `7e323c1` | JSON do app oficial | A anotação nomeou a causa exata |
+| [31952115167](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31952115167) | `04447a6` | suítes | **Secret atualizado pela Sônia** — os três portões de configuração passam |
+| [31953642823](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31953642823) | `a69e157` | suítes | `flutter analyze`: 2 apontamentos |
+| [—](https://github.com/soniaambrosio/buraco-master-vip-app/actions) | `41b4bb5` | suítes | Os apontamentos nomeados: `prefer_initializing_formals` |
 
 Anotação do run 31949486346, palavra por palavra:
 
@@ -60,13 +65,40 @@ declara 3: com.buracomastervip.app, com.buracomastervip.poc.buraco_master_vip,
 com.mycompany.buracomastervip
 ```
 
-**Diagnóstico:** o Secret `BMV_GOOGLE_SERVICES_JSON_B64` existe e é válido, mas
-guarda um `google-services.json` **anterior à criação do app oficial**. Trocar
-Secret exige acesso administrativo ao repositório, que esta execução não tem.
+**Diagnóstico:** o Secret `BMV_GOOGLE_SERVICES_JSON_B64` existia e era válido,
+mas guardava um `google-services.json` **anterior à criação do app oficial**.
+Trocar Secret exige acesso administrativo ao repositório, que esta execução não
+tem; o conteúdo de substituição foi preparado localmente, fora do repositório,
+em `C:\Users\sonii\bmv-secret\`. Nada disso foi versionado nem impresso.
 
-O conteúdo de substituição foi preparado localmente, fora do repositório, em
-`C:\Users\sonii\bmv-secret\` (o `.json` e a linha base64 de 8192 caracteres).
-Nada disso foi versionado nem impresso.
+**A Sônia atualizou o Secret**, e o run `31952115167` provou isso sozinho: os
+portões `Secret`, `JSON é do app oficial` e `identidade da build` passam desde
+então, e a falha andou para a frente.
+
+### O apontamento que travou os portões
+
+`flutter analyze` sai com código 1 para **qualquer** apontamento, `info`
+inclusive. O Flutter do CI (3.44.8) é mais novo que o local (3.41.4) e traz uma
+regra que o local não tem:
+
+```
+info • Use an initializing formal to assign a parameter to a field.
+       Try using an initialing formal ('this._coletor') to initialize the field
+     • lib/observability/observabilidade.dart:50:9 • prefer_initializing_formals
+```
+
+A sugestão da regra **não compila**. Verificado, não deduzido:
+
+```dart
+class A { A._({required this._x}); final int _x; }
+// Error: This requires the experimental 'private-named-parameters'
+//        language feature to be enabled.
+```
+
+Parâmetro nomeado privado exige um experimento de linguagem. A regra é falso
+positivo para parâmetro nomeado neste SDK, e ficou suprimida com
+`ignore_for_file` — o `// ignore:` local errava o alvo porque o apontamento é
+reportado na **lista de inicialização**, não na linha do construtor.
 
 ---
 
@@ -153,6 +185,20 @@ I TRuntime.CctTransportBackend: Status Code: 200
 
 **HTTP 200 no endpoint de relatórios do Crashlytics.** Duas ocorrências foram
 enviadas assim (uma por build, ver §6).
+
+**Artefato exato que produziu essas ocorrências:**
+
+| | |
+|---|---|
+| commit | `a9425a784a378d1001e16120bc0ee322e8b69d6f` (verificado por `grep` no `libapp.so`) |
+| versionCode | `144` |
+| versionName | `1.0.0` |
+| applicationId | `io.github.soniaambrosio.buracomastervip` |
+| sha256 do APK | `b6ff5e7ac67e42cd8fb3430a341cefcfc4a111de31bdd4271f55a641244584f4` |
+
+Commits posteriores a `a9425a7` mexem só em workflow, documentação e num
+comentário de supressão de lint — nenhuma linha de comportamento em tempo de
+execução.
 
 O que procurar no painel (Firebase Console > Crashlytics > **Buraco Master VIP
 Oficial**):
@@ -262,12 +308,25 @@ sobe **sem** `options`, deixando o `google-services.json` ser a única verdade.
 
 `versionCode = git rev-list --count HEAD`.
 
+Revalidado com um repositório de teste construído para o fim, não por leitura:
+
+```
+main (3 commits)                    -> 3
+  featA = main + 1 commit           -> 4
+  featB = main + 1 commit           -> 4      <-- MESMO número, linhagens diferentes
+main após merge --no-ff de featA    -> 5
+main após merge --no-ff de featB    -> 7
+mesma leitura repetida              -> 7, 7   (rebuild do mesmo commit)
++1 commit                           -> 8      (avançar nunca diminui)
+```
+
 | Cenário | Comportamento | Certo? |
 |---|---|---|
 | Rebuild do mesmo commit | mesmo número | sim |
 | Novo commit na mesma linhagem | +1 | sim |
 | Histórico com merge | conta todos os ancestrais; nunca diminui ao avançar | sim |
-| Branch divergente | **duas branches podem produzir o mesmo número** | não, e é por isso que existe o livro-razão |
+| Branch divergente | **duas branches produzem o mesmo número** (medido: featA=featB=4) | não — é o furo, e é o que o livro-razão fecha |
+| Composição futura de RC | herda o mesmo furo se a RC nascer de outra linhagem | mitigado pelo livro-razão |
 | Repetição de número já emitido, com outro SHA | gate **reprova** | sim |
 | Regressão | gate **reprova** | sim |
 
