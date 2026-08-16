@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -178,160 +177,15 @@ class _BuracoAppState extends State<BuracoApp> {
   }
 }
 
-// ===================== SPLASH (abertura) =====================
-class _Particula {
-  double x, y, r, a, sp, ph, vy;
-  bool big;
-  _Particula(this.x, this.y, this.r, this.a, this.sp, this.ph, this.vy, this.big);
-}
-
-class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
-  @override
-  State<SplashScreen> createState() => _SplashScreenState();
-}
-
-class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  final _rnd = Random();
-  final List<_Particula> _ps = [];
-  Size _size = Size.zero;
-  late final Ticker _ticker;
-  Duration _last = Duration.zero;
-  double _elapsed = 0;
-  double _tap = 0;
-  bool _saiu = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ticker = createTicker(_tick)..start();
-  }
-
-  double _rr(double a, double b) => a + (b - a) * _rnd.nextDouble();
-
-  void _semear(Size s) {
-    _ps.clear();
-    final n = (s.width * s.height / 9000).round().clamp(38, 72);
-    for (var i = 0; i < n; i++) {
-      _ps.add(_Particula(_rr(0, s.width), _rr(0, s.height), _rr(.6, 2.3),
-          _rr(.25, .95), _rr(.7, 1.9), _rr(0, 6.283), _rr(-14, -4),
-          _rnd.nextDouble() < 0.13));
-    }
-  }
-
-  void _tick(Duration elapsed) {
-    var dt = (elapsed - _last).inMicroseconds / 1e6;
-    if (dt > 0.05) dt = 0.05;
-    _last = elapsed;
-    _elapsed += dt;
-    final s = _size;
-    if (s.width > 0) {
-      if (_ps.isEmpty) _semear(s);
-      for (final p in _ps) {
-        p.ph += p.sp * dt * 2.4;
-        p.y += p.vy * dt;
-        if (p.y < -8) {
-          p.y = s.height + 8;
-          p.x = _rr(0, s.width);
-        }
-      }
-    }
-    if (_elapsed > 2.6 && _tap < 0.92) _tap = (_tap + dt).clamp(0.0, 0.92);
-    if (_elapsed > 6.5) _entrar();
-    if (mounted) setState(() {});
-  }
-
-  void _entrar() {
-    if (_saiu) return;
-    _saiu = true;
-    _ticker.stop();
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 550),
-        pageBuilder: (_, __, ___) => const _InicioPreviewHost(),
-        transitionsBuilder: (_, anim, __, child) =>
-            FadeTransition(opacity: anim, child: child),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ticker.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    _size = MediaQuery.of(context).size;
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0704),
-      body: GestureDetector(
-        onTap: _entrar,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.asset('assets/splash.jpg',
-                fit: BoxFit.cover, alignment: Alignment.center),
-            CustomPaint(painter: _PontinhosPainter(_ps), size: Size.infinite),
-            Align(
-              alignment: const Alignment(0, 0.92),
-              child: Opacity(
-                opacity: _tap,
-                child: const Text(
-                  'TOQUE PARA ENTRAR',
-                  style: TextStyle(
-                    color: Color(0xFFD6C49A),
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.8,
-                    shadows: [Shadow(color: Colors.black, blurRadius: 10)],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PontinhosPainter extends CustomPainter {
-  final List<_Particula> ps;
-  _PontinhosPainter(this.ps);
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (final p in ps) {
-      final tw = .5 + .5 * sin(p.ph);
-      final al = (p.a * tw).clamp(0.0, 1.0);
-      final rr = p.r * (p.big ? 2.3 : 1);
-      final radius = rr * 4;
-      final center = Offset(p.x, p.y);
-      final rect = Rect.fromCircle(center: center, radius: radius);
-      final shader = RadialGradient(
-        colors: [
-          Color.fromRGBO(255, 242, 205, al),
-          Color.fromRGBO(246, 226, 166, al * .5),
-          const Color.fromRGBO(246, 226, 166, 0),
-        ],
-        stops: const [0.0, 0.4, 1.0],
-      ).createShader(rect);
-      canvas.drawCircle(center, radius, Paint()..shader = shader);
-      if (p.big && tw > .82) {
-        final sp = Paint()
-          ..color = Color.fromRGBO(255, 246, 215, al * .8)
-          ..strokeWidth = .8;
-        canvas.drawLine(Offset(p.x - rr * 5, p.y), Offset(p.x + rr * 5, p.y), sp);
-        canvas.drawLine(Offset(p.x, p.y - rr * 5), Offset(p.x, p.y + rr * 5), sp);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _PontinhosPainter old) => true;
-}
+// A tela de abertura é `SplashOficialScreen` (ver `home:` acima), em
+// `screens/splash_oficial_screen.dart`.
+//
+// Existia aqui uma segunda implementação de splash — `SplashScreen`,
+// `_SplashScreenState`, `_Particula` e `_PontinhosPainter` — com zero
+// referências: ninguém a construía, e as quatro classes só se citavam entre si.
+// Ela carregava `assets/splash.jpg`, um arquivo que nunca existiu neste
+// repositório. Removida em vez de receber o asset: adicionar a arte serviria
+// apenas para engordar o bundle alimentando código que não roda.
 
 // ===================== INÍCIO — PRÉVIA VISUAL CODEX =====================
 class _InicioPreviewHost extends StatefulWidget {

@@ -1,0 +1,198 @@
+{
+  "avatares": [
+    {
+      "name": "Nobre",
+      "asset": "assets/loja/avatares/nobre.webp"
+    },
+    {
+      "name": "Diva",
+      "asset": "assets/loja/avatares/diva.webp"
+    },
+    {
+      "name": "Magnata",
+      "asset": "assets/loja/avatares/magnata.webp"
+    },
+    {
+      "name": "Duquesa",
+      "asset": "assets/loja/avatares/duquesa.webp"
+    },
+    {
+      "name": "Barão",
+      "asset": "assets/loja/avatares/barao.webp"
+    },
+    {
+      "name": "Condessa",
+      "asset": "assets/loja/avatares/condessa.webp"
+    },
+    {
+      "name": "Lorde",
+      "asset": "assets/loja/avatares/lorde.webp"
+    },
+    {
+      "name": "Imperatriz",
+      "asset": "assets/loja/avatares/imperatriz.webp"
+    }
+  ],
+  "dorsos": [
+    {
+      "name": "Royal",
+      "asset": "assets/loja/dorsos/royal.webp"
+    },
+    {
+      "name": "Diamante",
+      "asset": "assets/loja/dorsos/diamante.webp"
+    },
+    {
+      "name": "Elite",
+      "asset": "assets/loja/dorsos/elite.webp"
+    },
+    {
+      "name": "Império",
+      "asset": "assets/loja/dorsos/imperio.webp"
+    },
+    {
+      "name": "Prestige",
+      "asset": "assets/loja/dorsos/prestige.webp"
+    },
+    {
+      "name": "Luxo",
+      "asset": "assets/loja/dorsos/luxo.webp"
+    },
+    {
+      "name": "Neon",
+      "asset": "assets/loja/dorsos/neon.webp"
+    },
+    {
+      "name": "Supremo",
+      "asset": "assets/loja/dorsos/supremo.webp"
+    }
+  ],
+  "efeitos": [
+    {
+      "name": "Explosão VIP",
+      "asset": "assets/loja/efeitos/explosao_vip.webp"
+    },
+    {
+      "name": "Chuva de Ouro",
+      "asset": "assets/loja/efeitos/chuva_de_ouro.webp"
+    },
+    {
+      "name": "Coroa Triunfal",
+      "asset": "assets/loja/efeitos/coroa_triunfal.webp"
+    },
+    {
+      "name": "Mesa Congelando",
+      "asset": "assets/loja/efeitos/mesa_congelando.webp"
+    },
+    {
+      "name": "Cartas em Chamas",
+      "asset": "assets/loja/efeitos/cartas_em_chamas.webp"
+    },
+    {
+      "name": "Confete Real",
+      "asset": "assets/loja/efeitos/confete_real.webp"
+    }
+  ],
+  "emojis": [
+    {
+      "name": "Malandro",
+      "asset": "assets/loja/emojis/malandro.webp"
+    },
+    {
+      "name": "Gargalhada",
+      "asset": "assets/loja/emojis/gargalhada.webp"
+    },
+    {
+      "name": "Apaixonado",
+      "asset": "assets/loja/emojis/apaixonado.webp"
+    },
+    {
+      "name": "Surpreso",
+      "asset": "assets/loja/emojis/surpreso.webp"
+    },
+    {
+      "name": "Pensativo",
+      "asset": "assets/loja/emojis/pensativo.webp"
+    },
+    {
+      "name": "Furioso",
+      "asset": "assets/loja/emojis/furioso.webp"
+    },
+    {
+      "name": "Triste",
+      "asset": "assets/loja/emojis/triste.webp"
+    },
+    {
+      "name": "Piscadinha",
+      "asset": "assets/loja/emojis/piscadinha.webp"
+    }
+  ],
+  "mascotes": [
+    {
+      "name": "Coruja Jogadora",
+      "asset": "assets/loja/mascotes/coruja_jogadora.webp"
+    },
+    {
+      "name": "Gato Malandro",
+      "asset": "assets/loja/mascotes/gato_malandro.webp"
+    },
+    {
+      "name": "Bulldog de Óculos",
+      "asset": "assets/loja/mascotes/bulldog_de_oculos.webp"
+    },
+    {
+      "name": "Macaco Trapaceiro",
+      "asset": "assets/loja/mascotes/macaco_trapaceiro.webp"
+    },
+    {
+      "name": "Mini-Curinga",
+      "asset": "assets/loja/mascotes/mini_curinga.webp"
+    },
+    {
+      "name": "Dragão de Cartas",
+      "asset": "assets/loja/mascotes/dragao_de_cartas.webp"
+    }
+  ],
+  "molduras": [
+    {
+      "name": "Realeza",
+      "asset": "assets/loja/molduras/realeza.webp"
+    },
+    {
+      "name": "Ametista",
+      "asset": "assets/loja/molduras/ametista.webp"
+    },
+    {
+      "name": "Fênix",
+      "asset": "assets/loja/molduras/fenix.webp"
+    },
+    {
+      "name": "Neon",
+      "asset": "assets/loja/molduras/neon.webp"
+    },
+    {
+      "name": "Gelo Real",
+      "asset": "assets/loja/molduras/gelo_real.webp"
+    },
+    {
+      "name": "Ouro Velho",
+      "asset": "assets/loja/molduras/ouro_velho.webp"
+    },
+    {
+      "name": "Rubi",
+      "asset": "assets/loja/molduras/rubi.webp"
+    },
+    {
+      "name": "Esmeralda",
+      "asset": "assets/loja/molduras/esmeralda.webp"
+    },
+    {
+      "name": "Safira",
+      "asset": "assets/loja/molduras/safira.webp"
+    },
+    {
+      "name": "Pérola Negra",
+      "asset": "assets/loja/molduras/perola_negra.webp"
+    }
+  ]
+}

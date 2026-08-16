@@ -1,0 +1,26 @@
+# Ferramenta de linha de comando que GERA o launcher icon oficial do Android a
+# partir da arte aprovada. Nao e parte do app: nada aqui e compilado para dentro
+# do APK/AAB.
+#
+# Existe como pacote versionado, e nao como script solto no workflow, por um
+# motivo pratico: o icone precisa ser REPRODUZIVEL. Se amanha a arte-fonte for
+# atualizada, `dart run tools/icone/bin/gerar.dart` refaz as sete densidades, o
+# adaptive icon e o icone da ficha da Play em um comando, com o mesmo
+# reamostramento de sempre. Gerar isso na mao, uma densidade por vez, e como o
+# projeto acabou com o icone padrao do Flutter no lugar do proprio icone.
+#
+# Uso (a partir da raiz do repositorio):
+#   dart pub get --directory tools/icone
+#   dart run tools/icone/bin/gerar.dart
+name: bmv_icone
+description: "Gerador do launcher icon oficial do Buraco Master VIP."
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  # Decodifica o .webp da arte oficial e reamostra em cubico. Escolhida por ser
+  # Dart puro: roda no mesmo SDK que ja e obrigatorio para o app, sem exigir
+  # Python/Pillow nem ImageMagick na maquina de quem for regerar.
+  image: ^4.5.4
