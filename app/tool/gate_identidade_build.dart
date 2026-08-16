@@ -116,9 +116,16 @@ void main(List<String> args) {
       stderr.writeln('ERRO: diretório de símbolos não existe: $dir');
       exit(2);
     }
+    final raiz = _normalizar(d.path);
+    final rotulo = raiz.split('/').where((p) => p.isNotEmpty).last;
     for (final e in d.listSync(recursive: true).whereType<File>()) {
-      final rel = _normalizar(e.path.substring(opcoes.repo.length).replaceAll('\\', '/'));
-      simbolos[rel] = sha256Hex(e.readAsBytesSync());
+      // Relativo ao diretório de símbolos, prefixado pelo nome dele. Não usa
+      // o caminho do repositório: o diretório de símbolos costuma ficar em
+      // `app_build/`, fora da árvore versionada, e às vezes fora dela por
+      // completo. O que importa no manifesto é qual símbolo é qual.
+      final abs = _normalizar(e.path);
+      final rel = abs.startsWith('$raiz/') ? abs.substring(raiz.length + 1) : abs;
+      simbolos['$rotulo/$rel'] = sha256Hex(e.readAsBytesSync());
     }
   }
 
