@@ -55,12 +55,20 @@ import 'online_service.dart';
 /// É a resposta à pergunta que o construtor obrigatório do [OnlineService] faz:
 /// de onde vem a credencial. Vem de `sessao.obterCredencial` — o método que
 /// carrega a trava de geração — e de nenhum outro lugar.
+///
+/// [endpoint] é a costura do ENDEREÇO, e existe pelo mesmo motivo de
+/// [abrirCanal]: em produção fica nulo, e o transporte resolve o endereço pela
+/// configuração do build (`EndpointServidor`). O teste injeta um endereço
+/// sintético para exercitar credencial e transporte sem depender de
+/// `--dart-define` — e sem que volte a existir URL de produção no código.
 OnlineService criarOnlineServiceDaSessao(
   SessaoDoJogador sessao, {
   AbrirCanal? abrirCanal,
+  Uri? endpoint,
 }) => OnlineService(
   obterIdToken: sessao.obterCredencial,
   abrirCanal: abrirCanal,
+  endpoint: endpoint,
 );
 
 /// Propaga trocas de sessão para o transporte — uma transição por troca.

@@ -23,6 +23,7 @@ import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
 import 'services/ponte_sessao_online.dart';
+import 'services/redacao_segredos.dart';
 import 'services/configuracoes_service.dart';
 import 'sessao/escopo_sessao.dart';
 import 'sessao/identidade_publica_sessao.dart';
@@ -1134,6 +1135,16 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
   static const _texto = Color(0xFFEFE3CC);
   static const _mut = Color(0xFF9A8C6C);
 
+  // NÃO existe aqui um vigia próprio de `FirebaseAuth.authStateChanges()`.
+  //
+  // A folha da conexão publicável tinha um: ao ver logout, ele chamava
+  // `encerrarPorLogout()` direto. Numa árvore com `SessaoDoJogador`, isso volta
+  // a ser um SEGUNDO dono de autenticação — uma tela com opinião própria sobre
+  // quem está logado, sem noção da geração da sessão. Quem observa a sessão e
+  // traduz cada troca numa única transição do transporte é a
+  // [PonteSessaoOnline], montada logo abaixo. Ela cobre logout, login e troca
+  // de conta; o vigia cobria só logout.
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -1146,8 +1157,10 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
     final sessao = EscopoSessao.talvezDe(context);
     if (sessao == null) {
       // Pré-visualização isolada, sem escopo de sessão acima. Sem sessão não há
-      // credencial, e o transporte para em "entre na sua conta para jogar
-      // online" — que é a verdade deste ambiente, e não um estado inventado.
+      // credencial, e o transporte para num estado terminal explícito — "entre
+      // na sua conta para jogar online", ou "este aplicativo está mal
+      // configurado" se este build também não tiver endereço de servidor. As
+      // duas mensagens são a verdade deste ambiente, e não um estado inventado.
       _srv = OnlineService(obterIdToken: () async => null);
     } else {
       _srv = criarOnlineServiceDaSessao(sessao);
@@ -1228,6 +1241,11 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
       OnlineStatus.naoAutenticado => (const Color(0xFFE05B5B), 'entre na sua conta para jogar online'),
       OnlineStatus.atualizacaoObrigatoria => (const Color(0xFFE05B5B), 'atualize o aplicativo para jogar online'),
       OnlineStatus.servidorDesatualizado => (const Color(0xFFE05B5B), 'servidor em atualização — tente mais tarde'),
+      // este build saiu sem endereço de servidor utilizável — nenhuma tentativa
+      // de rede conserta isso, então a mensagem aponta para o build, não para a rede
+      OnlineStatus.configuracaoInvalida => (const Color(0xFFE05B5B), 'este aplicativo está mal configurado'),
+      // o ciclo automático desistiu: melhor dizer isso do que girar para sempre
+      OnlineStatus.semConexao => (const Color(0xFFE05B5B), 'sem conexão — toque para tentar de novo'),
       OnlineStatus.desconectado => (_mut, 'desconectado'),
     };
     return Row(
@@ -1705,8 +1723,10 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseAuth.instance.signInWithCredential(cred);
     } catch (e) {
       if (mounted) {
+        // A exceção do login pode trazer junto o e-mail e pedaços da credencial.
+        // Isso vai para a tela (e para qualquer captura dela): redige antes.
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não consegui entrar: $e')),
+          SnackBar(content: Text('Não consegui entrar: ${redigirObjeto(e)}')),
         );
       }
     }

@@ -147,6 +147,11 @@ class _SinkFalso implements WebSocketSink {
 // O ambiente: sessão real + ponte real + transporte real
 // ===========================================================================
 
+/// Endereço sintético do "servidor" destas provas. Não existe, não é resolvido
+/// e nenhum teste toca a rede — o canal é falso. Está aqui porque o endereço
+/// real saiu do código e passou a vir da configuração do build.
+const String kEndpointDeTeste = 'wss://servidor-de-teste.invalido';
+
 class _Ambiente {
   _Ambiente() {
     sessao = SessaoDoJogador(
@@ -156,6 +161,11 @@ class _Ambiente {
     );
     online = criarOnlineServiceDaSessao(
       sessao,
+      // O endereço do servidor passou a vir da configuração do build, e um
+      // build de teste não tem nenhuma. Injetar aqui mantém estas provas
+      // focadas na sessão e na credencial — a validação do endereço tem suíte
+      // própria (`conexao_producao_test.dart`, grupo 1).
+      endpoint: Uri.parse(kEndpointDeTeste),
       abrirCanal: (url) {
         urls.add(url);
         final c = _CanalFalso();
@@ -836,7 +846,7 @@ void main() {
       await logarEConectar();
 
       final url = amb.urls.single;
-      expect(url.toString(), OnlineService.servidorUrl);
+      expect(url.toString(), kEndpointDeTeste);
       expect(url.toString(), isNot(contains(kTokenA)));
       expect(url.queryParameters, isEmpty);
     });

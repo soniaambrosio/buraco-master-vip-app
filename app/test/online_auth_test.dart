@@ -91,6 +91,10 @@ class _Cenario {
     _erroDoToken = erroDoToken;
     _falhaAoAbrir = falhaAoAbrir;
     servico = OnlineService(
+      // O endereço do servidor agora vem da configuração do build, e um build
+      // de teste não tem nenhuma. Injetar aqui mantém estas provas focadas na
+      // credencial — a validação do endereço tem suíte própria.
+      endpoint: Uri.parse('wss://servidor-de-teste.invalido'),
       obterIdToken: () async {
         pedidosDeToken++;
         if (_erroDoToken != null) throw _erroDoToken!;
@@ -197,7 +201,7 @@ void main() {
       await c.conectar();
 
       final url = c.urlsAbertas.single.toString();
-      expect(url, OnlineService.servidorUrl);
+      expect(url, 'wss://servidor-de-teste.invalido');
       expect(url, isNot(contains(kToken)));
       expect(c.urlsAbertas.single.queryParameters, isEmpty);
     });
@@ -506,8 +510,13 @@ void main() {
         // o servidor simplesmente não responde
         async.elapse(OnlineService.limiteDeAutenticacao + const Duration(seconds: 1));
 
-        expect(c.servico.status, isNot(OnlineStatus.autenticando));
-        expect(c.canal.fechado, isTrue);
+        // O socket mudo é ABANDONADO — é isso que impede a tela de ficar
+        // pendurada em "identificando você…" para sempre.
+        expect(c.canais.first.fechado, isTrue);
+        // E o app segue para uma tentativa NOVA em vez de esperar sem fim.
+        // (o backoff é curto na primeira tentativa, então ela já cabe aqui)
+        expect(c.canais.length, greaterThan(1),
+            reason: 'desistir da tentativa muda não pode virar desistir de conectar');
         c.servico.desligar();
       });
     });
