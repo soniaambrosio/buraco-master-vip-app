@@ -106,7 +106,8 @@ void main(List<String> args) {
       stderr.writeln('ERRO: artefato declarado não existe: $caminho');
       exit(2);
     }
-    artefatos[_normalizar(caminho)] = sha256Hex(f.readAsBytesSync());
+    artefatos[_rotuloDeArtefato(opcoes.repo, caminho)] =
+        sha256Hex(f.readAsBytesSync());
   }
 
   final simbolos = <String, String>{};
@@ -316,6 +317,20 @@ String _juntar(String base, String relativo) =>
     relativo.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(relativo)
         ? relativo
         : '$base/$relativo';
+
+/// Nome do artefato no manifesto.
+///
+/// Caminho de dentro do repositório vira caminho relativo; caminho de fora
+/// vira só o nome do arquivo. O manifesto é publicado junto do artefato, e um
+/// caminho absoluto ali não acrescenta nada e ainda carrega o nome de usuário
+/// da máquina que compilou.
+String _rotuloDeArtefato(String repo, String caminho) {
+  final abs = _normalizar(caminho);
+  final raiz = _normalizar(repo);
+  if (abs.startsWith('$raiz/')) return abs.substring(raiz.length + 1);
+  if (!abs.contains(':') && !caminho.startsWith('/')) return _normalizar(caminho);
+  return abs.split('/').last;
+}
 
 String _normalizar(String caminho) {
   var c = caminho.replaceAll('\\', '/');
