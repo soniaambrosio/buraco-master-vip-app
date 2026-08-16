@@ -22,6 +22,7 @@ import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
+import 'services/redacao_segredos.dart';
 import 'services/configuracoes_service.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
@@ -1055,11 +1056,24 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
   static const _texto = Color(0xFFEFE3CC);
   static const _mut = Color(0xFF9A8C6C);
 
+  /// Vigia a sessão do Firebase. Sair da conta com esta tela aberta precisa
+  /// derrubar a conexão na hora: a credencial que a autenticou deixou de valer,
+  /// e a mesa/assento pertenciam a quem saiu.
+  StreamSubscription<User?>? _vigiaDaSessao;
+
   @override
   void initState() {
     super.initState();
     _srv.addListener(_atualizar);
     _srv.conectar();
+    try {
+      _vigiaDaSessao = FirebaseAuth.instance.authStateChanges().listen((u) {
+        if (u == null) _srv.encerrarPorLogout();
+      });
+    } catch (_) {
+      // Ambiente sem Firebase configurado (ex.: web de teste) — sem vigia.
+      // A conexão já falha por falta de credencial, então nada fica aberto.
+    }
   }
 
   void _atualizar() {
@@ -1068,6 +1082,7 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
 
   @override
   void dispose() {
+    _vigiaDaSessao?.cancel();
     _srv.removeListener(_atualizar);
     _srv.desligar();
     _codigo.dispose();
@@ -1129,6 +1144,11 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
       OnlineStatus.naoAutenticado => (const Color(0xFFE05B5B), 'entre na sua conta para jogar online'),
       OnlineStatus.atualizacaoObrigatoria => (const Color(0xFFE05B5B), 'atualize o aplicativo para jogar online'),
       OnlineStatus.servidorDesatualizado => (const Color(0xFFE05B5B), 'servidor em atualização — tente mais tarde'),
+      // este build saiu sem endereço de servidor utilizável — nenhuma tentativa
+      // de rede conserta isso, então a mensagem aponta para o build, não para a rede
+      OnlineStatus.configuracaoInvalida => (const Color(0xFFE05B5B), 'este aplicativo está mal configurado'),
+      // o ciclo automático desistiu: melhor dizer isso do que girar para sempre
+      OnlineStatus.semConexao => (const Color(0xFFE05B5B), 'sem conexão — toque para tentar de novo'),
       OnlineStatus.desconectado => (_mut, 'desconectado'),
     };
     return Row(
@@ -1606,8 +1626,10 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseAuth.instance.signInWithCredential(cred);
     } catch (e) {
       if (mounted) {
+        // A exceção do login pode trazer junto o e-mail e pedaços da credencial.
+        // Isso vai para a tela (e para qualquer captura dela): redige antes.
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não consegui entrar: $e')),
+          SnackBar(content: Text('Não consegui entrar: ${redigirObjeto(e)}')),
         );
       }
     }
