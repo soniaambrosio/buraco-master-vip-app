@@ -61,6 +61,18 @@ const {
   cenarioDeIndex,
 } = require('./apoio/cenario');
 const { FalhaTransitoriaPlay, FalhaPermanentePlay } = require('./apoio/play_falsa');
+const { armadilhaDeRede } = require('./apoio/armadilha_de_rede');
+
+/**
+ * Armada ANTES de qualquer teste e conferida no fim (X4).
+ *
+ * A OS exige provar que nenhuma chamada real aconteceu. Isso nao se prova
+ * lendo o codigo — se prova quebrando a saida: `http.request`, `https.request`,
+ * `net.Socket.prototype.connect`, `dns.lookup` e `fetch` passam a LANCAR. Se
+ * alguma coisa nesta suite tentar falar com a Google, com o Firebase ou com o
+ * que for, o teste morre em vez de silenciosamente funcionar.
+ */
+const rede = armadilhaDeRede();
 
 /** Prefixos que este dominio pode escrever. Qualquer outro e invasao. */
 const DOMINIO = ['playerEntitlements/', 'billingEvents/', 'compras/', 'usuarios/', 'configuracao/'];
@@ -1758,4 +1770,32 @@ test('X3 a origem da notificacao: pacote alheio e recusado', () => {
   );
   assert.equal(tipoTorto.acao, 'reconciliar');
   assert.ok(Number.isNaN(tipoTorto.tipo));
+});
+
+test('X4 a suite inteira rodou sem tocar na rede, e as portas sao mesmo as falsas', () => {
+  // A armadilha esta armada desde a carga deste arquivo. Zero aqui significa que
+  // nenhum dos 64 testes acima abriu socket, resolveu nome ou fez requisicao.
+  assert.deepEqual(
+    rede.tentativas,
+    [],
+    `a suite tentou usar a rede: ${JSON.stringify(rede.tentativas)}`
+  );
+
+  // E as portas que `index.js` enxerga sao as plantadas, e nao as reais.
+  const { google } = require('googleapis');
+  assert.equal(google.auth.GoogleAuth.name, 'GoogleAuthFalso');
+  const admin = require('firebase-admin/firestore');
+  assert.equal(typeof admin.getFirestore, 'function');
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(admin, 'Timestamp'),
+    'firebase-admin/firestore real foi carregado: a troca de portas nao valeu'
+  );
+
+  // `firebase-functions` continua sendo o pacote REAL — e ele que define o
+  // formato dos gatilhos que X2 confere. Trocar isso por imitacao faria a
+  // homologacao provar o proprio duble.
+  assert.equal(
+    typeof require('firebase-functions/v2/https').onCall,
+    'function'
+  );
 });
