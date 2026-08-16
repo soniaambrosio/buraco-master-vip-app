@@ -55,7 +55,17 @@ Cada run avançou um portão. É a sequência que interessa, não só o último 
 | [31949486346](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31949486346) | `7e323c1` | JSON do app oficial | A anotação nomeou a causa exata |
 | [31952115167](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31952115167) | `04447a6` | suítes | **Secret atualizado pela Sônia** — os três portões de configuração passam |
 | [31953642823](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31953642823) | `a69e157` | suítes | `flutter analyze`: 2 apontamentos |
-| [—](https://github.com/soniaambrosio/buraco-master-vip-app/actions) | `41b4bb5` | suítes | Os apontamentos nomeados: `prefer_initializing_formals` |
+| [31953928434](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31953928434) | `0897b6a` | suítes | Apontamentos nomeados: `prefer_initializing_formals` |
+| [31954057385](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31954057385) | `dd00f2c` | — | supressão no alvo certo |
+| **[31954647964](https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/31954647964)** | **`dde3e0b`** | **nenhum** | **VERDE de ponta a ponta** |
+
+O run verde percorreu todos os passos, do portão do Secret ao
+`actions/upload-artifact`, e publicou o artifact **`bmv-crashlytics-homologacao`**
+(APK de release + `MANIFESTO-BUILD.json`). Como o upload é o último passo do
+job, a existência do artifact é prova de que scaffold, overlay, assets,
+dependências, instalação do `google-services.json`, remendo do host Android,
+build do APK, verificação do APK e gate do manifesto passaram — todos, no
+runner, com o Flutter 3.44.8 pinado.
 
 Anotação do run 31949486346, palavra por palavra:
 
@@ -365,18 +375,17 @@ Cobertura acrescentada por esta OS:
 
 ## 10. O que ficou por fora, e por quê
 
-1. **Workflow verde não foi alcançado.** O Secret
-   `BMV_GOOGLE_SERVICES_JSON_B64` guarda um `google-services.json` anterior ao
-   app oficial, e trocá-lo exige acesso administrativo ao repositório. O
-   conteúdo correto está preparado; a troca é uma ação de quem administra.
+1. **A confirmação visual no painel do Crashlytics** depende de sessão logada no
+   Firebase Console. Do lado do aparelho o envio está provado — HTTP 200 no
+   endpoint de relatórios do Crashlytics, duas vezes — mas **ler a ocorrência na
+   tela do painel não foi feito por esta execução**. É o único item do critério
+   de PASS que continua em aberto, e é externo por natureza.
 
-2. **A confirmação visual no painel do Crashlytics** depende de sessão logada no
-   Firebase Console. O envio está provado do lado do aparelho (HTTP 200 no
-   endpoint de relatórios); a leitura da ocorrência na tela não foi feita por
-   esta execução.
+2. **Upload de símbolos não se aplica** a este app — ver §6.2. Não é bloqueio, é
+   premissa corrigida: `crashlytics:symbols:upload` trata símbolo nativo de NDK,
+   e a legibilidade do stack foi resolvida na origem, sem símbolo nenhum.
 
-3. **Upload de símbolos não se aplica** — ver §6.2. Não é bloqueio, é premissa
-   corrigida.
-
-4. **Flutter local (3.41.4) ≠ CI (3.44.8).** Os APKs desta evidência foram
-   compilados com 3.41.4.
+3. **Flutter local (3.41.4) ≠ CI (3.44.8).** Os APKs instalados no emulador
+   foram compilados com 3.41.4; o APK do run verde, com 3.44.8. A diferença já
+   cobrou seu preço uma vez (§2, `prefer_initializing_formals`), então vale
+   repetir: o CI é a autoridade sobre análise estática, não a máquina local.
