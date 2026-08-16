@@ -29,6 +29,7 @@ import '../moderacao/relacao_social.dart' as moderacao;
 
 import 'amizade.dart';
 import 'apresentacao.dart';
+import 'busca_apelido.dart';
 import 'erros_sociais.dart';
 import 'identidade_publica.dart';
 import 'listagem_social.dart';
@@ -235,6 +236,85 @@ String vistaDaRelacaoJson(String json) {
   });
 }
 
+// ------------------------------------------------------------------ busca
+
+/// Valida o pedido de busca e devolve a FAIXA de chaves a consultar.
+///
+/// O TypeScript recebe `chaveInicio`/`chaveFim` prontas e só as usa no
+/// `where`/`orderBy`. Ele não sabe o que "prefixo" significa, e é assim que a
+/// semântica da busca fica num lugar só.
+String avaliarConsultaDeBuscaJson(String json) {
+  final e = _entrada(json);
+  return jsonEncode(avaliarConsultaDeBusca(
+    termo: e['termo'],
+    modo: e['modo'],
+    limite: e['limite'],
+  ).toJson());
+}
+
+/// A chave de comparação de um texto qualquer.
+///
+/// Exposta separadamente da consulta porque o TESTE de equivalência (§5: a
+/// normalização da gravação e a da busca são a mesma) precisa comparar a chave
+/// de um apelido com o `apelidoOrdenacao` gravado, sem passar pela validação.
+String chaveDeBuscaJson(String json) {
+  final e = _entrada(json);
+  final termo = e['termo'];
+  return jsonEncode({
+    'chave': termo is String ? chaveDeBusca(termo) : null,
+  });
+}
+
+/// Quais candidatos desta rodada de varredura sobrevivem ao bloqueio.
+///
+/// Chamada UMA VEZ POR RODADA, antes de a relação de amizade ser lida: quem vai
+/// ser escondido não custa uma leitura de `friendships`, e a visibilidade não
+/// pode depender dela.
+String filtrarVisiveisDaBuscaJson(String json) {
+  final e = _entrada(json);
+  final candidatos = ((e['candidatos'] as List?) ?? const []).map((bruto) {
+    final m = (bruto as Map).cast<String, Object?>();
+    return VisibilidadeDeCandidato(
+      publicId: (m['publicId'] as String?) ?? '',
+      euBloqueeiOAlvo: m['euBloqueeiOAlvo'] == true,
+      alvoMeBloqueou: m['alvoMeBloqueou'] == true,
+    );
+  }).toList(growable: false);
+
+  return jsonEncode({'publicIds': filtrarVisiveisDaBusca(candidatos)});
+}
+
+/// Filtra os candidatos pelo bloqueio e rotula cada um com relação e ações.
+///
+/// ENTRA UID, NÃO SAI UID. Os uids dos candidatos são necessários para compor a
+/// relação (quem é o solicitante? sou eu mesmo?) e morrem nesta função: o mapa
+/// devolvido tem `publicId`, `relacao` e `acoes`, e mais nada.
+String projetarResultadosDeBuscaJson(String json) {
+  final e = _entrada(json);
+  final candidatos = ((e['candidatos'] as List?) ?? const []).map((bruto) {
+    final m = (bruto as Map).cast<String, Object?>();
+    return CandidatoDeBusca(
+      publicId: (m['publicId'] as String?) ?? '',
+      uidAlvo: (m['uidAlvo'] as String?) ?? '',
+      estado: EstadoAmizade.porNome(m['estado']),
+      solicitanteUid: m['solicitanteUid'] as String?,
+      euBloqueeiOAlvo: m['euBloqueeiOAlvo'] == true,
+      alvoMeBloqueou: m['alvoMeBloqueou'] == true,
+    );
+  }).toList(growable: false);
+
+  final resultados = projetarResultadosDeBusca(
+    uidObservador: (e['uidObservador'] as String?) ?? '',
+    candidatos: candidatos,
+    observadorComChatSilenciado: e['observadorComChatSilenciado'] == true,
+    observadorComRestricaoSocial: e['observadorComRestricaoSocial'] == true,
+  );
+
+  return jsonEncode({
+    'itens': resultados.map((r) => r.toJson()).toList(growable: false),
+  });
+}
+
 // --------------------------------------------------------------- listagem
 
 String paginarAmigosJson(String json) {
@@ -272,6 +352,11 @@ String constantesJson(String _) => jsonEncode({
       'apelidoMaximo': kApelidoMaximo,
       'paginaPadrao': kPaginaPadrao,
       'paginaMaxima': kPaginaMaxima,
+      'consultaMinima': kConsultaMinima,
+      'consultaMaxima': kConsultaMaxima,
+      'resultadosPadrao': kResultadosPadrao,
+      'resultadosMaximo': kResultadosMaximo,
+      'buscaComCursor': !kSemCursor,
       'esquema': kEsquemaSocial,
       'camposPublicos': camposPublicos.toList(growable: false),
       'errosConhecidos':
@@ -294,6 +379,10 @@ void main() {
     'avaliarCancelamento': avaliarCancelamentoJson,
     'avaliarRemocao': avaliarRemocaoJson,
     'vistaDaRelacao': vistaDaRelacaoJson,
+    'avaliarConsultaDeBusca': avaliarConsultaDeBuscaJson,
+    'chaveDeBusca': chaveDeBuscaJson,
+    'filtrarVisiveisDaBusca': filtrarVisiveisDaBuscaJson,
+    'projetarResultadosDeBusca': projetarResultadosDeBuscaJson,
     'paginarAmigos': paginarAmigosJson,
     'constantes': constantesJson,
   };

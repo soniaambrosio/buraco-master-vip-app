@@ -280,6 +280,376 @@ export async function estadoDeContato(
 }
 
 // ===========================================================================
+// BUSCA POR APELIDO (OS de Busca §4, §6, §8, §9)
+// ===========================================================================
+
+/// Um candidato cru: o que a consulta ao indice devolveu, antes de qualquer
+/// decisao sobre bloqueio ou relacao.
+export interface CandidatoCru {
+  publicId: string;
+  perfil: Record<string, unknown>;
+}
+
+/// Quantos documentos cabem numa ida ao banco durante a varredura.
+///
+/// DECISAO DE LOTE, NAO DE VARREDURA. Ele nao encerra busca nenhuma: quando o
+/// lote enche, a varredura simplesmente faz outra rodada. Existe porque
+/// `bloqueiosParaBusca` monta `2N + 1` referencias num unico `getAll`, e uma ida
+/// com milhares de referencias e pior que algumas idas grandes.
+const TAMANHO_MAXIMO_DO_LOTE = 200;
+
+/// Um lote cru da faixa, e por onde continuar.
+interface LoteDaFaixa {
+  candidatos: CandidatoCru[];
+  /// O ULTIMO documento lido, para a rodada seguinte comecar depois dele.
+  ///
+  /// E um cursor, e ele e INTERNO: nasce e morre dentro de UMA chamada de
+  /// `buscarJogadoresPorApelido`, nunca e serializado e nunca chega ao cliente.
+  /// O contrato de §9 — "a busca nao pagina" — e sobre o cliente nao poder
+  /// avancar; ele nao proibe o servidor de ler o que precisa para responder uma
+  /// pergunta so.
+  ultimo: FirebaseFirestore.QueryDocumentSnapshot | null;
+  /// O lote veio cheio, entao pode haver mais adiante na faixa.
+  podeHaverMais: boolean;
+}
+
+/// Le um lote da faixa de chaves que o dominio montou.
+///
+/// A CONSULTA E SOBRE O DOCUMENTO PUBLICO, e nao sobre uma colecao de indice
+/// paralela (§4). `apelidoOrdenacao` ja existe la, ja e derivado do apelido a
+/// cada escrita e ja e recalculado pelo servidor — criar `nicknameIndex` seria
+/// manter uma segunda copia do mesmo campo, e uma copia e uma divergencia
+/// esperando o dia em que alguem escrever so num dos dois.
+///
+/// `estado == 'ativo'` VAI NA CONSULTA, e nao num filtro depois: uma pagina de
+/// vinte que virasse tres depois de descartar contas indisponiveis faria o teto
+/// de resultados depender de quem esta desativado. E o par igualdade+faixa e
+/// exatamente o que o indice composto declarado em firestore.indexes.json serve.
+///
+/// A ORDEM E TOTAL: `apelidoOrdenacao` desempatado por `publicId`, que e unico.
+/// Sem o desempate, duas pessoas com o mesmo apelido teriam ordem indefinida
+/// entre chamadas — e §14 exige resultado deterministico. E e a ordem total que
+/// torna o `startAfter` da rodada seguinte exato: nao ha empate que faca um
+/// documento ser pulado nem lido duas vezes.
+async function loteDaFaixa(
+  chaveInicio: string,
+  chaveFim: string,
+  exato: boolean,
+  tamanho: number,
+  depoisDe: FirebaseFirestore.QueryDocumentSnapshot | null
+): Promise<LoteDaFaixa> {
+  const colecao = db().collection(C_PERFIS_PUBLICOS);
+
+  let consulta = exato
+    ? colecao
+        .where("estado", "==", "ativo")
+        .where("apelidoOrdenacao", "==", chaveInicio)
+    : colecao
+        .where("estado", "==", "ativo")
+        .where("apelidoOrdenacao", ">=", chaveInicio)
+        .where("apelidoOrdenacao", "<=", chaveFim);
+
+  consulta = consulta
+    .orderBy("apelidoOrdenacao", "asc")
+    .orderBy("publicId", "asc")
+    .limit(tamanho);
+
+  if (depoisDe) consulta = consulta.startAfter(depoisDe);
+
+  const snap = await consulta.get();
+  return {
+    candidatos: snap.docs.map((d) => ({
+      publicId: d.id,
+      perfil: d.data() as Record<string, unknown>,
+    })),
+    ultimo: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+    podeHaverMais: snap.docs.length === tamanho,
+  };
+}
+
+export interface PaginaDeBusca {
+  /// Ja filtrados pelo bloqueio, ja cortados no limite, na ordem do banco.
+  candidatos: CandidatoCru[];
+  /// Os UIDs dos candidatos acima. Ficam nesta camada; a resposta nao os tem.
+  uidPorPublicId: Map<string, string>;
+  /// Havia mais candidatos VISIVEIS do que o teto. NAO acompanha cursor: ver
+  /// `kSemCursor` em app/lib/social/busca_apelido.dart. O cliente refina o
+  /// termo; ele nao avanca.
+  truncado: boolean;
+  sancao: SancaoDoObservador;
+  bloqueios: Map<string, BloqueioDeBusca>;
+}
+
+/// Varre a faixa ate juntar os candidatos VISIVEIS que a pagina precisa.
+///
+/// POR QUE UMA VARREDURA, E NAO UMA CONSULTA SO — e o defeito que isto conserta:
+///
+/// Uma consulta de `limite + 1` documentos, filtrada depois, tem dois vazamentos
+/// pelo mesmo buraco. `truncado` sairia calculado sobre o lote BRUTO, entao um
+/// bloqueado na posicao `limite + 1` diria "havia mais" num resultado que, para
+/// quem procura, esta completo — e o mundo sem aquela pessoa responderia
+/// `truncado: false`. Pior: um bloqueado entre os primeiros ROUBARIA A VAGA de
+/// um jogador legitimo, que sumiria da resposta por causa de um bloqueio alheio.
+///
+/// Nos dois casos, alguem que deveria ser invisivel mexe no que se ve. A regra
+/// da §8 e mais forte que "nao aparece na lista": para quem procura, o
+/// bloqueado NAO EXISTE — e um inexistente nao altera contagem, ordem nem
+/// metadado.
+///
+/// DUAS SAIDAS, E SO DUAS. A varredura termina quando junta `limite + 1`
+/// candidatos VISIVEIS (ha mais) ou quando a faixa acaba (nao ha). Nao existe
+/// uma terceira — "parei por teto interno e presumo que truncou" —, e a ausencia
+/// dela e o ponto deste desenho.
+///
+/// Uma versao anterior tinha teto de cinco rodadas, e ele reintroduzia a MESMA
+/// classe de vazamento que a varredura existe para fechar: esgotar o teto sem
+/// esgotar a faixa fazia `truncado: true` depender de QUANTOS estavam ocultos, e
+/// deixava candidatos legitimos posteriores aos ocultos fora da resposta — o
+/// "roubo de vaga", em escala maior. Raridade nao torna a propriedade verdadeira;
+/// ou o oculto e observacionalmente indistinguivel do inexistente, ou nao e.
+///
+/// A TERMINACAO E GARANTIDA pela faixa ser finita e pela ordem ser TOTAL: cada
+/// rodada comeca depois do ultimo documento da anterior, entao consome ao menos
+/// um documento e nunca reve o mesmo. O custo e limitado pelo tamanho da faixa,
+/// e o unico jeito de a varredura continuar e TODO candidato visto ate ali
+/// estar oculto para quem procura — o que exige uma relacao de bloqueio com cada
+/// um deles.
+///
+/// A RELACAO DE AMIZADE NAO E LIDA AQUI. Ela so interessa a quem vai aparecer, e
+/// ler `friendships` de um candidato que sera escondido seria trabalho jogado
+/// fora — alem de fazer a visibilidade parecer depender dela.
+export async function varrerVisiveis(
+  observadorUid: string,
+  chaveInicio: string,
+  chaveFim: string,
+  exato: boolean,
+  limite: number
+): Promise<PaginaDeBusca> {
+  const porPublicId = new Map<string, CandidatoCru>();
+  const uidPorPublicId = new Map<string, string>();
+  const bloqueios = new Map<string, BloqueioDeBusca>();
+  const visiveis: string[] = [];
+
+  let sancao: SancaoDoObservador = {
+    chatSilenciado: false,
+    restricaoSocial: false,
+  };
+  let depoisDe: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let rodada = 0;
+
+  // AS DUAS SAIDAS ESTAO AQUI, e nao ha outra: `visiveis.length > limite` (ha
+  // mais do que cabe) e o `break` de faixa esgotada, mais abaixo.
+  while (visiveis.length <= limite) {
+    // O LOTE DOBRA A CADA RODADA. A primeira le o minimo necessario
+    // (`limite + 1`) porque e a rodada que quase sempre resolve; as seguintes so
+    // acontecem quando ha oculto no caminho, e ai dobrar faz o numero de idas ao
+    // banco crescer com o LOGARITMO da quantidade de ocultos em vez de
+    // linearmente — mil ocultos custam dez rodadas, nao cem.
+    //
+    // O teto por rodada e de LOTE, nao de varredura: ele so decide quantos
+    // documentos cabem numa ida (`bloqueiosParaBusca` monta `2N + 1` referencias
+    // num `getAll`, e uma ida gigante seria pior que duas medias). Ele nao
+    // encerra a busca, e por isso nao pode influenciar `truncado`.
+    const tamanho = Math.min((limite + 1) * 2 ** rodada, TAMANHO_MAXIMO_DO_LOTE);
+    rodada++;
+
+    const lote = await loteDaFaixa(
+      chaveInicio,
+      chaveFim,
+      exato,
+      tamanho,
+      depoisDe
+    );
+    if (lote.candidatos.length === 0) break; // faixa esgotada
+
+    const uids = await resolverUids(lote.candidatos.map((c) => c.publicId));
+    const ctx = await bloqueiosParaBusca(observadorUid, [...uids.values()]);
+    sancao = ctx.sancao;
+
+    const paraFiltrar: {
+      publicId: string;
+      euBloqueeiOAlvo: boolean;
+      alvoMeBloqueou: boolean;
+    }[] = [];
+
+    for (const c of lote.candidatos) {
+      const alvoUid = uids.get(c.publicId);
+      // Perfil publico sem entrada no mapa reverso e dado inconsistente, nao
+      // resultado: sem uid nao ha como conferir bloqueio, e exibir alguem cujo
+      // bloqueio nao foi conferido e exatamente o que §8 proibe. Descartado
+      // ANTES do filtro, e por isso ele tambem nao ocupa vaga.
+      if (!alvoUid) {
+        logger.warn("perfil publico sem mapa reverso, omitido da busca", {
+          publicId: c.publicId,
+        });
+        continue;
+      }
+      const b = ctx.porUid.get(alvoUid) ?? {
+        euBloqueeiOAlvo: false,
+        alvoMeBloqueou: false,
+      };
+      porPublicId.set(c.publicId, c);
+      uidPorPublicId.set(c.publicId, alvoUid);
+      bloqueios.set(c.publicId, b);
+      paraFiltrar.push({ publicId: c.publicId, ...b });
+    }
+
+    // QUEM DECIDE E O DOMINIO, tambem aqui. A varredura sabe ler e paginar; ela
+    // nao sabe o que torna alguem invisivel.
+    visiveis.push(...dominio.filtrarVisiveisDaBusca(paraFiltrar).publicIds);
+
+    depoisDe = lote.ultimo;
+    if (!lote.podeHaverMais) break; // faixa esgotada
+  }
+
+  // Uma varredura longa nao muda a RESPOSTA, mas diz alguma coisa sobre a conta:
+  // so se chega aqui se todo candidato visto ate certo ponto estivesse oculto.
+  // Log, e nao mudanca de comportamento — o desfecho continua sendo um dos dois.
+  if (rodada > 4) {
+    logger.warn("varredura de busca precisou de muitas rodadas", {
+      rodadas: rodada,
+      visiveis: visiveis.length,
+    });
+  }
+
+  // `truncado` SO SOBRE OS VISIVEIS. Uma linha, e ela e o contrato inteiro da
+  // §8 no metadado: como as unicas saidas do laco sao "juntei mais do que cabe"
+  // e "a faixa acabou", esta comparacao nao tem por onde saber que existiu
+  // alguem oculto. Acrescentar aqui qualquer termo sobre COMO a varredura
+  // terminou reabriria o vazamento.
+  const truncado = visiveis.length > limite;
+  const pagina = visiveis.slice(0, limite);
+
+  return {
+    candidatos: pagina.map((p) => porPublicId.get(p) as CandidatoCru),
+    uidPorPublicId: new Map(pagina.map((p) => [p, uidPorPublicId.get(p) as string])),
+    truncado,
+    sancao,
+    bloqueios: new Map(pagina.map((p) => [p, bloqueios.get(p) as BloqueioDeBusca])),
+  };
+}
+
+/// `publicId -> uid` para varios ids, numa ida so.
+///
+/// N leituras por ID (`getAll`), e nao uma consulta: o mapa reverso e uma
+/// colecao chaveada pelo proprio publicId, entao nao ha indice a construir nem
+/// varredura a fazer. Um `where('publicId','in',[...])` custaria o mesmo e
+/// esbarraria no teto de 30 valores da clausula.
+export async function resolverUids(
+  publicIds: string[]
+): Promise<Map<string, string>> {
+  const unicos = [...new Set(publicIds.filter((p) => p.length > 0))];
+  if (unicos.length === 0) return new Map();
+  const docs = await db().getAll(
+    ...unicos.map((p) => db().collection(C_INDICE_PUBLICO).doc(p))
+  );
+  const mapa = new Map<string, string>();
+  for (const d of docs) {
+    const uid = dados(d)?.uid;
+    if (typeof uid === "string") mapa.set(d.id, uid);
+  }
+  return mapa;
+}
+
+/// O bloqueio nos DOIS sentidos entre um observador e varios alvos.
+export interface BloqueioDeBusca {
+  euBloqueeiOAlvo: boolean;
+  alvoMeBloqueou: boolean;
+}
+
+/// Estado de moderacao do OBSERVADOR, lido uma vez para a busca inteira.
+export interface SancaoDoObservador {
+  chatSilenciado: boolean;
+  restricaoSocial: boolean;
+}
+
+export interface ContextoDeBloqueio {
+  sancao: SancaoDoObservador;
+  porUid: Map<string, BloqueioDeBusca>;
+}
+
+/// Le, de uma vez, o bloqueio nos dois sentidos contra cada alvo e a sancao de
+/// quem pesquisa.
+///
+/// POR QUE NAO CHAMAR `estadoDeContato` N VEZES: cada chamada faria tres
+/// leituras, e uma delas — `playerModeration/{observador}` — seria a MESMA em
+/// todas. Vinte resultados custariam sessenta leituras, um terco delas
+/// repetidas. Aqui sao `2N + 1` refs num unico `getAll`.
+///
+/// NAO DECIDE NADA. Devolve fatos (existe o documento de bloqueio? a sancao esta
+/// vigente?) e quem decide e o dominio, em `projetarResultadosDeBusca` — que
+/// chama a MESMA `avaliarContato` da moderacao que o resto do codebase usa.
+export async function bloqueiosParaBusca(
+  observadorUid: string,
+  alvosUids: string[]
+): Promise<ContextoDeBloqueio> {
+  const usuarios = db().collection(C_USUARIOS);
+  const alvos = [...new Set(alvosUids.filter((u) => u.length > 0))];
+
+  const refEstado = db().collection(C_MODERACAO_JOGADOR).doc(observadorUid);
+  const refsIda = alvos.map((a) =>
+    usuarios.doc(observadorUid).collection(SUB_BLOQUEIOS).doc(a)
+  );
+  const refsVolta = alvos.map((a) =>
+    usuarios.doc(a).collection(SUB_BLOQUEIOS).doc(observadorUid)
+  );
+
+  const docs = await db().getAll(refEstado, ...refsIda, ...refsVolta);
+
+  const agora = agoraUtc();
+  const e = dados(docs[0]) ?? {};
+  const vigente = (campo: string): boolean =>
+    typeof e[campo] === "string" && agora < (e[campo] as string);
+
+  const porUid = new Map<string, BloqueioDeBusca>();
+  alvos.forEach((alvo, i) => {
+    porUid.set(alvo, {
+      euBloqueeiOAlvo: docs[1 + i].exists,
+      alvoMeBloqueou: docs[1 + alvos.length + i].exists,
+    });
+  });
+
+  return {
+    sancao: {
+      chatSilenciado: vigente("chatSilenciadoAte"),
+      restricaoSocial:
+        vigente("socialRestritoAte") || e.suspensaoPermanente === true,
+    },
+    porUid,
+  };
+}
+
+/// O estado canonico da relacao entre um jogador e varios outros.
+///
+/// Le `friendships/{pairKey}` por ID — a chave do par e funcao dos dois uids, e
+/// por isso nao ha consulta a fazer.
+export async function relacoesParaBusca(
+  observadorUid: string,
+  alvosUids: string[]
+): Promise<Map<string, RelacaoLida>> {
+  const alvos = [...new Set(alvosUids.filter((u) => u.length > 0))];
+  const pares = alvos.map((a) =>
+    a === observadorUid ? null : dominio.chaveDoPar(observadorUid, a).pairKey
+  );
+  const comDocumento = pares.filter((p): p is string => p !== null);
+  if (comDocumento.length === 0) return new Map();
+
+  const docs = await db().getAll(
+    ...comDocumento.map((p) => db().collection(C_AMIZADES).doc(p))
+  );
+  const porPar = new Map<string, RelacaoLida>();
+  for (const d of docs) porPar.set(d.id, lerRelacao(dados(d)));
+
+  const porUid = new Map<string, RelacaoLida>();
+  alvos.forEach((alvo, i) => {
+    const par = pares[i];
+    const rel = par ? porPar.get(par) : undefined;
+    if (rel) porUid.set(alvo, rel);
+  });
+  return porUid;
+}
+
+// ===========================================================================
 // A TRANSACAO DA RELACAO
 // ===========================================================================
 

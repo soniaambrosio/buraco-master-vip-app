@@ -87,6 +87,34 @@ enum ErroSocial {
   /// Identificador interno malformado. Rede de segurança: nenhuma chamada
   /// legítima chega aqui, porque o UID vem do contexto autenticado.
   identificadorInvalido,
+
+  // ------------------------------------------------------------------------
+  // BUSCA POR APELIDO (OS de Busca e Descoberta §5, §6, §9)
+  //
+  // ACRESCENTADOS NO FIM, e não intercalados por afinidade: a §17 daquela OS
+  // manda preservar o contrato anterior, e embora o contrato seja o `.name` (e
+  // não a ordem), reordenar um enum é o tipo de mudança que passa despercebida
+  // e reaparece num `index` gravado em algum lugar.
+  // ------------------------------------------------------------------------
+
+  /// Termo de busca inutilizável: não é texto, ficou vazio depois de
+  /// normalizado, carrega caractere de controle, ou o modo pedido não existe.
+  ///
+  /// UM CÓDIGO PARA OS QUATRO, de propósito. São todos "o cliente montou o
+  /// pedido errado", e a tela faz a mesma coisa com todos: pedir que a pessoa
+  /// digite de novo. Códigos separados serviriam ao depurador, não ao jogador —
+  /// e o depurador tem o log do servidor, que registra qual foi.
+  consultaInvalida,
+
+  /// Termo mais curto que o menor apelido possível, medido DEPOIS da
+  /// normalização (§9, "tamanho mínimo da consulta").
+  ///
+  /// É o freio antienumeração mais simples que existe: com ele, não há consulta
+  /// que devolva "os jogadores cujo apelido começa com a".
+  consultaMuitoCurta,
+
+  /// Termo mais longo que o maior apelido possível (§9, "tamanho máximo").
+  consultaMuitoLonga,
 }
 
 /// Versão do formato dos documentos sociais gravados por esta OS.

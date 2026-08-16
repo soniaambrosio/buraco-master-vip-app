@@ -28,6 +28,10 @@ interface PonteSocial {
   avaliarCancelamento: PonteJs;
   avaliarRemocao: PonteJs;
   vistaDaRelacao: PonteJs;
+  avaliarConsultaDeBusca: PonteJs;
+  chaveDeBusca: PonteJs;
+  filtrarVisiveisDaBusca: PonteJs;
+  projetarResultadosDeBusca: PonteJs;
   paginarAmigos: PonteJs;
   constantes: PonteJs;
 }
@@ -92,9 +96,48 @@ export interface ConstantesSociais {
   apelidoMaximo: number;
   paginaPadrao: number;
   paginaMaxima: number;
+  /// Limites da BUSCA por apelido. Vem do dominio pelo mesmo motivo que os
+  /// outros: um teto que exista em dois lugares e um teto que vai divergir.
+  consultaMinima: number;
+  consultaMaxima: number;
+  resultadosPadrao: number;
+  resultadosMaximo: number;
+  /// Sempre `false` na v1. Declarado — em vez de simplesmente ausente — para que
+  /// a decisao antienumeracao de §9 apareca no contrato e num teste, e nao so na
+  /// falta de um campo `cursor` na resposta.
+  buscaComCursor: boolean;
   esquema: number;
   camposPublicos: string[];
   errosConhecidos: string[];
+}
+
+export type ModoBusca = "exato" | "prefixo";
+
+/// Uma consulta ja validada pelo dominio, com a faixa pronta.
+export interface ConsultaDeBusca {
+  aceita: boolean;
+  recusa: string | null;
+  modo: ModoBusca;
+  chaveInicio: string;
+  chaveFim: string;
+  limite: number;
+}
+
+/// Um candidato ANTES da projecao. Carrega uid; nao sai desta camada.
+export interface CandidatoDeBusca {
+  publicId: string;
+  uidAlvo: string;
+  estado: EstadoAmizade;
+  solicitanteUid: string | null;
+  euBloqueeiOAlvo: boolean;
+  alvoMeBloqueou: boolean;
+}
+
+/// O resultado sanitizado: identidade publica, relacao e acoes. Sem uid.
+export interface ResultadoDeBusca {
+  publicId: string;
+  relacao: string;
+  acoes: string[];
 }
 
 export interface EntradaSocial {
@@ -206,6 +249,36 @@ export const dominio = {
     euBloqueeiOAlvo: boolean;
     contatoPermitido: boolean;
   }): { relacao: string; acoes: string[] } => chamar(ponte.vistaDaRelacao, e),
+
+  /// Valida o termo e monta a faixa de chaves (OS de Busca §5, §6, §9).
+  avaliarConsultaDeBusca: (e: {
+    termo: unknown;
+    modo?: unknown;
+    limite?: unknown;
+  }): ConsultaDeBusca => chamar(ponte.avaliarConsultaDeBusca, e),
+
+  /// A chave de comparacao de um texto. E a MESMA que produz `apelidoOrdenacao`.
+  chaveDeBusca: (termo: unknown): { chave: string | null } =>
+    chamar(ponte.chaveDeBusca, { termo }),
+
+  /// Quais candidatos de UMA RODADA da varredura sobrevivem ao bloqueio (§8).
+  filtrarVisiveisDaBusca: (
+    candidatos: {
+      publicId: string;
+      euBloqueeiOAlvo: boolean;
+      alvoMeBloqueou: boolean;
+    }[]
+  ): { publicIds: string[] } =>
+    chamar(ponte.filtrarVisiveisDaBusca, { candidatos }),
+
+  /// Filtra por bloqueio e rotula relacao/acoes, numa travessia so (§8, §10).
+  projetarResultadosDeBusca: (e: {
+    uidObservador: string;
+    candidatos: CandidatoDeBusca[];
+    observadorComChatSilenciado?: boolean;
+    observadorComRestricaoSocial?: boolean;
+  }): { itens: ResultadoDeBusca[] } =>
+    chamar(ponte.projetarResultadosDeBusca, e),
 
   paginarAmigos: (e: {
     itens: EntradaSocial[];

@@ -809,8 +809,25 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     // Perfil publico — a fonte UNICA de apelido e avatar (§31)
     // ---------------------------------------------------------------------
-    // Leitura por qualquer autenticado: e o que permite `Ranking/Hall ->
+    // Leitura POR ID para qualquer autenticado: e o que permite `Ranking/Hall ->
     // publicId -> Ver Perfil` sem que nenhuma dessas telas conheca UID.
+    //
+    // `list` NEGADO AO CLIENTE (OS de Busca e Descoberta §9 e §12).
+    //
+    // A OS de Identidade Publica concedeu `get, list` juntos, e o `list` nunca
+    // teve consumidor: as telas resolvem um publicId por vez, e as Functions
+    // usam o Admin SDK, que ignora estas regras. O que ele tinha era efeito
+    // colateral — `getDocs(collection('publicProfiles'))` devolvia o apelido e o
+    // publicId de TODOS os jogadores numa consulta, paginavel ate o fim da base.
+    // Isso e a "listagem irrestrita de usuarios" que a OS de Busca proibe, e ela
+    // existia antes de haver busca.
+    //
+    // NAO E REGRESSAO DO DOCUMENTO PUBLICO DELIBERADO: `get` continua aberto a
+    // qualquer autenticado, que e o que faz o perfil ser publico. O que sai e a
+    // VARREDURA. Quem precisa procurar por apelido chama
+    // `buscarJogadoresPorApelido`, que impoe tamanho minimo de termo, teto de
+    // resultados, ausencia de cursor e respeito ao bloqueio — nenhum dos quatro
+    // exprimivel numa regra do Firestore.
     //
     // Escrita fechada, inclusive para o dono. Nao e desconfianca do jogador: e
     // que a alteracao precisa normalizar o apelido (produzindo
@@ -818,8 +835,13 @@ service cloud.firestore {
     // amigos. Regra do Firestore nao normaliza texto nem escreve em 200
     // documentos — deixar o cliente gravar aqui daria um perfil com ordenacao
     // incoerente e um apelido que nunca passou por validacao.
+    //
+    // E o cliente tambem nao escreve o INDICE DE BUSCA, porque nao ha indice
+    // separado para escrever: a busca corre sobre `apelidoOrdenacao`, campo
+    // derivado deste mesmo documento, coberto por este mesmo `write: if false`.
     match /publicProfiles/{publicId} {
-      allow get, list: if autenticado();
+      allow get: if autenticado();
+      allow list: if ehAdmin();
       allow write: if false;
     }
 
