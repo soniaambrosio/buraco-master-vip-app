@@ -60,6 +60,16 @@ dev_dependencies:
   # Fakes de Firestore e Functions nos testes do adaptador, sem subir emulador.
   fake_cloud_firestore: ^4.2.0
 
+  # Usados pelos portoes de autenticacao da conexao online. Chegam de graca como
+  # dependencia transitiva (stream_channel via web_socket_channel, fake_async via
+  # flutter_test), mas as suites os importam DIRETAMENTE: stream_channel para o
+  # canal WebSocket falso, fake_async para atravessar o backoff da reconexao sem
+  # esperar segundos de verdade. Declarar aqui evita
+  # depend_on_referenced_packages e, mais importante, impede que um bump de
+  # web_socket_channel tire a suite do ar sem ninguem ter pedido.
+  stream_channel: ^2.1.4
+  fake_async: ^1.3.3
+
 dependency_overrides:
   # O jni 1.0.1 (dependencia transitiva) adicionou um bloco
   # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
