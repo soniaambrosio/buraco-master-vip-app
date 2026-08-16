@@ -32,6 +32,18 @@ dependencies:
   firebase_core: ^4.13.0
   firebase_auth: ^6.5.7
 
+  # Destino real dos eventos de falha (lib/observability/coletor_crashlytics.dart).
+  # E o UNICO arquivo do app que conhece o fornecedor de crash reporting.
+  #
+  # Sobre a VERSAO EXATA (sem `^`): a folha da observabilidade fixou 5.2.7 porque
+  # la o pubspec era GERADO a cada run do CI, e a restricao de versao era a unica
+  # trava possivel. Aqui essa premissa nao vale mais — a Casca V2 trouxe
+  # `pubspec.yaml` e `pubspec.lock` versionados, e o lock ja prende a resolucao.
+  # A exatidao fica assim mesmo, de proposito: ela era uma decisao explicita da
+  # folha de entrada, nada custa preserva-la, e afrouxar para `^` seria trocar a
+  # escolha de outra OS por conta propria sem nenhum ganho.
+  firebase_crashlytics: 5.2.7
+
   # Necessarios pelo modulo de colecoes (lib/colecoes/colecao_firebase.dart):
   # o catalogo, a campanha e o inventario vivem no Firestore, e o resgate e uma
   # Cloud Function `https.onCall` — que exige cloud_functions no cliente.

@@ -156,7 +156,16 @@ jobs:
         # projeto é gerado a cada run, então a única trava possível é a
         # restrição de versão. 5.2.7 declara `sdk: ^3.6.0` e
         # `flutter: >=3.27.0`, satisfeitos pelo Flutter 3.44.8 pinado acima.
-        run: cd app_build && flutter pub add firebase_core "firebase_crashlytics:5.2.7" firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+        #
+        # `cloud_firestore` e `cloud_functions` entraram na integração P0 V3, e
+        # não porque a observabilidade precise delas: `app/lib/colecoes/` —
+        # trazido pela Casca V2 — importa as duas, este workflow copia `app/lib`
+        # inteiro para dentro do scaffold, e a lista aqui nunca acompanhou. O
+        # APK não compilaria. As restrições são as MESMAS de `app/pubspec.yaml`,
+        # que é a fonte da verdade do `ci-os-integracao.yml`; manter os dois
+        # workflows na mesma versão é o que impede um gate passar num pacote e
+        # a release sair com outro.
+        run: cd app_build && flutter pub add firebase_core "firebase_crashlytics:5.2.7" firebase_auth "cloud_firestore:^6.8.0" "cloud_functions:^6.3.6" "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
 
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
