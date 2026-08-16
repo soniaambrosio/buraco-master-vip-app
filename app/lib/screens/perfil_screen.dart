@@ -124,7 +124,7 @@ class PerfilVM {
   factory PerfilVM.mock({bool ehMeuPerfil = true}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
-      nome: 'Sônia Rainha',
+      nome: 'Aurora',
       avatar: '👑',
       mascote: '🦊',
       moldura: 'assets/perfil/vitrine_moldura.webp',

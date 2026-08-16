@@ -129,7 +129,7 @@ class RankingVM {
       podio: const [
         PodioEntry(
           posicao: 1,
-          nome: 'Sônia Rainha',
+          nome: 'Aurora',
           avatar: '👑',
           moldura: 'assets/ranking/podio_ouro.webp',
           pontos: 5020,

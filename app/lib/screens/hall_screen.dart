@@ -42,15 +42,15 @@ class HallVM {
       honrados: [
         HonradoHall(
           categoria: HallCategoria.campeaoHoje,
-          id: 'sonia',
-          nome: 'Sônia Rainha',
+          id: 'aurora',
+          nome: 'Aurora',
           avatar: '👑',
           stats: [EstatHall('342'), EstatHall('18'), EstatHall('68%')],
         ),
         HonradoHall(
           categoria: HallCategoria.melhorDupla,
-          id: 'sonia-claudia',
-          nome: 'Sônia & Cláudia',
+          id: 'aurora-claudia',
+          nome: 'Aurora & Cláudia',
           avatar: '👑',
           avatar2: '🐰',
           stats: [EstatHall('287'), EstatHall('71%'), EstatHall('94%')],

@@ -1,24 +1,30 @@
-import 'package:firebase_auth/firebase_auth.dart';
-
 import '../screens/perfil_screen.dart';
 import '../sessao/identidade_publica_sessao.dart';
 
 /// Origem dos dados do Perfil (camada de lógica — Claude).
 ///
-/// FASE 1: identidade REAL (Firebase Auth) + arquitetura pronta. Como ainda não
-/// existe persistência (sem Cloud Firestore, a mesa não grava resultados), os
-/// NÚMEROS do perfil são de demonstração enquanto [statsDemo] = true — assim a
-/// tela aprovada continua cheia. Vire para false quando quiser o estado honesto
-/// de jogador novo (zerado).
+/// FASE 1: identidade REAL (sessão canônica) + arquitetura pronta. Como ainda
+/// não existe persistência (sem Cloud Firestore, a mesa não grava resultados),
+/// os NÚMEROS do perfil ficam no estado honesto de jogador novo.
 ///
 /// FASE 2: trocar a origem por Firestore (`usuarios/{uid}`) dentro de [carregar],
 /// SEM mudar a assinatura nem o visual. O nome já é real desde a Fase 1.
 class PerfilService {
   const PerfilService();
 
-  /// true  = mostra os números de exemplo aprovados (marketing/screenshots).
+  /// true  = mostra os números de exemplo (marketing/screenshots).
   /// false = estado real de jogador novo (nível 1, stats 0, conquistas travadas).
-  static const bool statsDemo = true;
+  ///
+  /// DESLIGADO, e é decisão desta OS. Com ele ligado, qualquer pessoa que
+  /// instalasse o aplicativo abria o próprio perfil e via nível 24, título
+  /// "Rainha da Canastra", Liga Diamante, 342 vitórias, 1.204 partidas, quatro
+  /// conquistas desbloqueadas e doze presentes — números que não vieram de lugar
+  /// nenhum, apresentados como se fossem dela. Um perfil zerado é feio; um
+  /// perfil que mente é pior.
+  ///
+  /// A chave permanece porque a tela precisa de um jeito de ser vista cheia para
+  /// aprovação visual. O que não pode é o aplicativo publicado usá-la.
+  static const bool statsDemo = false;
 
   /// Catálogo fixo de conquistas do jogo (definições). O `desbloqueada` real virá
   /// dos dados na Fase 2. Aqui, tudo travado (jogador novo).
@@ -60,23 +66,18 @@ class PerfilService {
     Presente(id: 'diamante', nome: 'Diamante', icone: 'assets/perfil/presente_diamante.webp', quantidade: 2),
   ];
 
-  /// Nome do Firebase Auth — APRESENTAÇÃO, e só ela.
+  /// Rótulo de apresentação para quem ainda não tem apelido escolhido.
   ///
-  /// Serve de último recurso VISUAL quando o jogador ainda não escolheu apelido.
-  /// Não é identidade e não substitui `publicId` em lugar nenhum.
+  /// ANTES ISTO LIA `FirebaseAuth.instance.currentUser?.displayName`. Funcionava,
+  /// e mesmo assim era uma segunda fonte de nome: o `displayName` do Google e o
+  /// apelido de `publicProfiles` são autoridades diferentes, e na troca de conta
+  /// elas se atualizam em momentos diferentes — o perfil do jogador novo abriria
+  /// com o nome do anterior até o SDK acompanhar.
   ///
-  /// O `try` cobre o mesmo ambiente que `main()` já cobre: sem Firebase
-  /// inicializado (navegador de teste, teste de widget), o perfil abre com o
-  /// nome genérico em vez de explodir.
-  String _nomeDoAuth() {
-    try {
-      final n = FirebaseAuth.instance.currentUser?.displayName?.trim();
-      if (n != null && n.isNotEmpty) return n;
-    } catch (_) {
-      // Sem Firebase: segue com o nome genérico.
-    }
-    return 'Jogador(a)';
-  }
+  /// 'Jogador(a)' é um RÓTULO, não um nome: ninguém consegue buscar por ele e
+  /// ele não é gravado em lugar nenhum. Fallback de apresentação não é fallback
+  /// de identidade.
+  static const String _rotuloSemApelido = 'Jogador(a)';
 
   /// Carrega o perfil. FASE 2: substituir o corpo por leitura no Firestore.
   ///
@@ -94,9 +95,15 @@ class PerfilService {
   }) async {
     await Future.delayed(const Duration(milliseconds: 350)); // simula I/O (Fase 2: await Firestore)
     final apelido = identidade?.apelido.trim() ?? '';
+    // Sem apelido escolhido, o `publicId` é o que os outros jogadores veem —
+    // ele É o identificador público, e exibi-lo não vaza nada. O rótulo genérico
+    // fica para quando não há identidade nenhuma.
+    final publico = identidade?.publicId ?? '';
     return _montar(
       ehMeuPerfil: ehMeuPerfil,
-      nome: apelido.isNotEmpty ? apelido : _nomeDoAuth(),
+      nome: apelido.isNotEmpty
+          ? apelido
+          : (publico.isNotEmpty ? publico : _rotuloSemApelido),
       demo: statsDemo,
     );
   }
