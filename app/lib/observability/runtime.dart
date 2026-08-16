@@ -39,6 +39,7 @@ Future<void> runBuracoMasterVip({
   IdentidadeBuild? identidade,
   ColetorDeFalhas? coletor,
   bool forcarColetorReal = false,
+  void Function(Observabilidade obs)? aposSubir,
 }) {
   return executarObservado(
     identidade: identidade,
@@ -67,6 +68,12 @@ Future<void> runBuracoMasterVip({
       }
 
       runApp(construirApp());
+
+      // Depois do `runApp`, ainda DENTRO da zona protegida: o que este gancho
+      // agendar e deixar escapar será capturado como falha assíncrona real,
+      // pelo mesmo caminho de um defeito de produção. É o que o gatilho de
+      // homologação usa.
+      aposSubir?.call(obs);
     },
   );
 }

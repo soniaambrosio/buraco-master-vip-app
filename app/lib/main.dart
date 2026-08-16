@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,7 @@ import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'observability/coletor_crashlytics.dart';
+import 'observability/gatilho_homologacao.dart';
 import 'observability/observability.dart';
 import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
@@ -54,20 +56,42 @@ void main() => runBuracoMasterVip(
       // Em debug e em teste ele é ignorado (ver `deveUsarColetorReal`).
       coletor: ColetorCrashlytics(),
       // Blindado como antes: no celular o Firebase sobe normal; no navegador
-      // (versão web de teste), se a config de Android não inicializar, o jogo
-      // roda mesmo assim — só o login Google fica indisponível, que não é
-      // necessário pra jogar/testar. A diferença é que agora essa falha vira
-      // um evento NÃO FATAL em vez de um `catch (_) {}` mudo.
-      antesDeRodar: () => Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
-          appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
-          messagingSenderId: '203886484007',
-          projectId: 'buraco-master-vip',
-          storageBucket: 'buraco-master-vip.firebasestorage.app',
-        ),
-      ),
+      // (versão web de teste), se a config não inicializar, o jogo roda mesmo
+      // assim — só o login Google fica indisponível, que não é necessário pra
+      // jogar/testar. A diferença é que agora essa falha vira um evento NÃO
+      // FATAL em vez de um `catch (_) {}` mudo.
+      antesDeRodar: _iniciarFirebase,
+      // Sem `--dart-define=BMV_CRASH_HOMOLOGACAO=true`, o corpo deste método é
+      // descartado pelo AOT. Ver observability/gatilho_homologacao.dart.
+      aposSubir: GatilhoHomologacao.armarSePedido,
     );
+
+/// Inicializa o Firebase pela fonte certa de cada plataforma.
+///
+/// No Android o `google-services.json` é compilado dentro do APK e o SDK
+/// NATIVO já cria o app padrão a partir dele — é essa configuração que o
+/// Crashlytics usa, porque o Crashlytics é nativo. Passar `options` aqui
+/// criaria uma segunda verdade: o Dart apontando para um App ID e o
+/// Crashlytics reportando para outro. O projeto tem quatro apps Android
+/// registrados, então esse engano encheria o painel do app errado sem que
+/// erro nenhum aparecesse.
+///
+/// Fora do Android não existe `google-services.json`, e a configuração
+/// explícita continua sendo a única fonte.
+Future<void> _iniciarFirebase() {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return Firebase.initializeApp();
+  }
+  return Firebase.initializeApp(
+    options: const FirebaseOptions(
+      apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
+      appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
+      messagingSenderId: '203886484007',
+      projectId: 'buraco-master-vip',
+      storageBucket: 'buraco-master-vip.firebasestorage.app',
+    ),
+  );
+}
 
 class BuracoApp extends StatelessWidget {
   const BuracoApp({super.key});

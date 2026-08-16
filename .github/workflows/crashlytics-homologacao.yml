@@ -1,32 +1,52 @@
 name: Crashlytics — homologação Android
 
-# Workflow de HOMOLOGAÇÃO. Não publica nada: não gera Release do GitHub, não
+# Workflow de HOMOLOGAÇÃO. Não publica nada: não cria Release do GitHub, não
 # sobe nada para a Play Console e não faz deploy de Functions/Rules/Hosting.
-# O artefato sai como artifact do run, alcançável só por quem tem acesso ao
-# repositório.
+# O APK e os símbolos saem como artifact do run, alcançáveis só por quem tem
+# acesso ao repositório.
 #
-# Roda na própria branch, sem merge em main — é o único jeito de ter evidência
-# real de CI para uma OS que não pode mesclar.
+# Roda na própria branch, sem merge em main — é o único jeito de uma OS que não
+# pode mesclar ter evidência real de CI.
+#
+# O APK sai assinado com a chave de DEBUG do scaffold. É deliberado: uma build
+# de homologação não pode ser instalável como se fosse a de produção, e assim
+# nenhum secret de keystore é necessário aqui.
 
 on:
   push:
     branches:
       - claude/crashlytics-android-operacional-v1
   workflow_dispatch:
+    inputs:
+      armar_crash:
+        description: "Compilar com o gatilho de crash de homologação armado"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+env:
+  BMV_APPLICATION_ID: io.github.soniaambrosio.buracomastervip
+  BMV_FIREBASE_APP_ID: '1:203886484007:android:b1cd95baa0b9e6e629cc02'
+
 jobs:
-  prerequisitos:
-    name: Pré-requisitos externos
+  homologacao:
+    name: Build de homologação com Crashlytics
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # O versionCode determinístico é `git rev-list --count HEAD`.
+          # O versionCode determinístico é `git rev-list --count HEAD`, e num
+          # clone raso isso vale 1 sempre.
           fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -36,22 +56,16 @@ jobs:
           # artefato, e o manifesto registra qual foi.
           flutter-version: 3.44.8
 
+      # ---------------------------------------------------------------- gates
       - name: "PORTÃO — Secret do google-services.json"
         env:
           GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
         run: |
           if [ -z "${GS_B64}" ]; then
             echo "::error::Secret BMV_GOOGLE_SERVICES_JSON_B64 ausente."
-            echo ""
-            echo "Sem ele o plugin google-services não tem o que ler e o"
-            echo "Crashlytics não sobe. O conteúdo NÃO pode ser versionado."
-            echo ""
-            echo "Como criar (uma vez, por quem administra o repositório):"
-            echo "  1. Firebase Console > Configurações do projeto >"
-            echo "     app 'Buraco Master VIP Oficial' > baixar google-services.json"
-            echo "  2. base64 -w0 google-services.json      (Linux / Git Bash)"
-            echo "  3. Settings > Secrets and variables > Actions > New secret"
-            echo "     Nome: BMV_GOOGLE_SERVICES_JSON_B64"
+            echo "Firebase Console > app 'Buraco Master VIP Oficial' >"
+            echo "baixar google-services.json; depois base64 -w0 e colar em"
+            echo "Settings > Secrets and variables > Actions."
             exit 1
           fi
           echo "Secret presente (${#GS_B64} caracteres de base64)."
@@ -67,7 +81,126 @@ jobs:
             --json=/tmp/gs/google-services.json \
             --esperado=app/data/observabilidade/firebase_app_oficial.json
 
-      - name: "Identidade da build"
+      - name: "PORTÃO — identidade da build (SHA, árvore, versionCode)"
         run: |
-          dart --version
           dart run app/tool/gate_identidade_build.dart --ambiente=homologacao --sem-artefatos
+          dart run app/tool/gate_identidade_build.dart --ambiente=homologacao --defines > /tmp/defines.txt
+          echo "BMV_DEFINES=$(tr '\n' ' ' < /tmp/defines.txt)" >> "$GITHUB_ENV"
+          echo "BMV_VERSION_CODE=$(grep BMV_VERSION_CODE /tmp/defines.txt | cut -d= -f3)" >> "$GITHUB_ENV"
+          echo "BMV_VERSION_NAME=$(grep BMV_VERSION_NAME /tmp/defines.txt | cut -d= -f3)" >> "$GITHUB_ENV"
+          cat /tmp/defines.txt
+
+      - name: "PORTÃO — suítes de observabilidade"
+        run: |
+          flutter create --org com.buracomastervip --project-name buraco_master_vip /tmp/suite >/dev/null
+          cp -R app/lib/. /tmp/suite/lib/
+          mkdir -p /tmp/suite/test/observabilidade
+          cp app/test/observabilidade/*.dart /tmp/suite/test/observabilidade/
+          rm -f /tmp/suite/test/widget_test.dart
+          cd /tmp/suite
+          flutter pub add firebase_core "firebase_crashlytics:5.2.7" firebase_auth \
+            "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences >/dev/null
+          flutter analyze lib/observability
+          flutter test test/observabilidade --reporter expanded
+
+      # ------------------------------------------------------------- montagem
+      - name: Scaffold do projeto Android
+        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+
+      - name: Overlay do código
+        run: cp -R app/lib/. app_build/lib/
+
+      - name: Copiar e declarar assets
+        run: dart run app/tool/preparar_assets.dart --origem=app/assets --projeto=app_build
+
+      - name: Dependências
+        # firebase_crashlytics com versão EXATA: o pubspec deste projeto é
+        # gerado a cada run, então a restrição é a única trava possível.
+        run: |
+          cd app_build
+          flutter pub add firebase_core "firebase_crashlytics:5.2.7" firebase_auth \
+            "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+
+      - name: "Instalar google-services.json (via Secret)"
+        env:
+          GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          printf '%s' "$GS_B64" | tr -d '[:space:]' | base64 -d > app_build/android/app/google-services.json
+          test -s app_build/android/app/google-services.json
+          echo "instalado: $(stat -c%s app_build/android/app/google-services.json) bytes"
+
+      - name: "Remendo do host Android (plugins, applicationId, SDKs)"
+        run: |
+          dart run app/tool/patch_host_android.dart \
+            --projeto=app_build \
+            --applicationId="${BMV_APPLICATION_ID}" \
+            --versionCode="${BMV_VERSION_CODE}" \
+            --versionName="${BMV_VERSION_NAME}"
+          echo "===== settings.gradle.kts ====="; cat app_build/android/settings.gradle.kts
+          echo "===== app/build.gradle.kts ====="; cat app_build/android/app/build.gradle.kts
+
+      # ---------------------------------------------------------------- build
+      - name: Build release APK + símbolos
+        run: |
+          cd app_build
+          EXTRA=""
+          if [ "${{ inputs.armar_crash }}" = "true" ]; then
+            EXTRA="--dart-define=BMV_CRASH_HOMOLOGACAO=true"
+            echo "::warning::build ARMADA para crash de homologação — não publicar"
+          fi
+          flutter build apk --release \
+            --split-debug-info=build/simbolos \
+            ${BMV_DEFINES} ${EXTRA}
+          echo "--- símbolos ---"; ls -l build/simbolos/
+
+      - name: "VERIFICAÇÃO — o APK é o que dissemos que é"
+        run: |
+          APK=app_build/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          AAPT=$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt2 | sort | tail -1)
+          echo "--- badging ---"
+          "$AAPT" dump badging "$APK" | head -3 | tee /tmp/badging.txt
+          grep -q "package: name='${BMV_APPLICATION_ID}'" /tmp/badging.txt \
+            || { echo "::error::applicationId do APK não é ${BMV_APPLICATION_ID}"; exit 1; }
+          grep -q "versionCode='${BMV_VERSION_CODE}'" /tmp/badging.txt \
+            || { echo "::error::versionCode do APK não é ${BMV_VERSION_CODE}"; exit 1; }
+
+          echo "--- SHA gravado dentro do binário ---"
+          mkdir -p /tmp/apkx && unzip -o -q "$APK" 'lib/*/libapp.so' -d /tmp/apkx
+          SO=$(find /tmp/apkx -name libapp.so | head -1)
+          grep -a -q "${GITHUB_SHA}" "$SO" \
+            || { echo "::error::o SHA ${GITHUB_SHA} não está no libapp.so"; exit 1; }
+          echo "OK: ${GITHUB_SHA} presente em $(basename $(dirname $SO))/libapp.so"
+
+          echo "--- Crashlytics realmente empacotado ---"
+          unzip -l "$APK" | grep -qi "crashlytics" \
+            && echo "OK: recursos do Crashlytics dentro do APK" \
+            || { echo "::error::nenhum recurso do Crashlytics no APK"; exit 1; }
+
+          echo "--- gatilho de homologação ---"
+          if grep -a -q "BMV-HOMOLOG-CRASH" "$SO"; then
+            echo "build ARMADA (marcador presente)"
+          else
+            echo "OK: build normal — o marcador NÃO existe no binário"
+          fi
+
+      - name: "GATE — manifesto do artefato"
+        run: |
+          dart run app/tool/gate_identidade_build.dart \
+            --ambiente=homologacao \
+            --artefato=app_build/build/app/outputs/flutter-apk/app-release.apk \
+            --simbolos=app_build/build/simbolos \
+            --manifesto=app_build/MANIFESTO-BUILD.json
+          cat app_build/MANIFESTO-BUILD.json
+
+      - name: Upload do APK, manifesto e símbolos
+        # Artifact do run, nunca Release pública: quem lê stack ofuscado
+        # precisa de acesso ao repositório.
+        uses: actions/upload-artifact@v4
+        with:
+          name: bmv-crashlytics-homologacao
+          path: |
+            app_build/build/app/outputs/flutter-apk/app-release.apk
+            app_build/build/simbolos/
+            app_build/MANIFESTO-BUILD.json
+          if-no-files-found: error
