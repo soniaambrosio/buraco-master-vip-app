@@ -11,6 +11,8 @@
     "build:domain": "cd .. && dart compile js -O2 -o functions/lib/domain_bundle.js app/lib/torneios/js_bridge.dart",
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "//test:costura": "Costura P0 entre runtimes: o produtor REAL do entitlement (functions-billing/entitlement.js) alimenta o consumidor REAL (o dominio Dart compilado). Exige `npm run build:domain` antes, porque functions/lib/ e artefato gerado e nao versionado.",
+    "test:costura": "node test/costura_p0_runtime.js",
     "serve": "npm run build && firebase emulators:start --only functions,firestore",
     "deploy": "npm run build:domain && npm run build && firebase deploy --only functions"
   },
