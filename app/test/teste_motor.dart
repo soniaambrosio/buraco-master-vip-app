@@ -6502,6 +6502,146 @@ void main() {
       }
     });
   });
+
+  // ===================================================================
+  // OS — CANONIZAÇÃO DO ESTADO DE COMPRA DO LIXO V1
+  //
+  // CARACTERIZAÇÃO (commit 1): estes testes fotografam o comportamento da
+  // BASE `4c3cd6f`, ANTES de qualquer correção. Onde o comportamento
+  // fotografado é o DEFEITO, isso está dito na própria asserção — nenhum deles
+  // afirma que o defeito é correto.
+  //
+  // A regra em questão é a §5.2 do ABERTO: quem compra um lixo de UMA carta só
+  // não pode devolver essa mesma carta como descarte no mesmo turno (anti
+  // "turno nulo"). No motor LEGADO ela vive em `_lixoUnicoCompradoId`, um campo
+  // privado do `Jogo` que a projeção carrega no `EnvelopeRuntime` — FORA do
+  // `EstadoJogo` canônico.
+  // ===================================================================
+  group('OS LIXO CANÔNICO V1 — caracterização do estado lateral', () {
+    RuleSpec specDe(EstadoJogo e) =>
+        RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+
+    test('LIX-C01 o motor LEGADO enforca a §5.2 e registra a trava no campo '
+        'lateral', () {
+      final j = _lixBase(config: MotorConfig.legadoRollback());
+      expect(j.costuraLixoUnicoCompradoId, isNull); // nasce sem trava
+
+      expect(j.comprarLixo(0, modalidade: 'ABERTO')['ok'], isTrue);
+      // O legado NASCE a trava: o id do topo do lixo de uma carta só.
+      expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
+      expect(idsMao(j, 0), contains('lxUnico'));
+
+      // E ela é NORMATIVA: devolver a mesma carta é recusado.
+      final erro = j.descartar(0, 'lxUnico');
+      expect(erro, isNotNull);
+      expect(erro, contains('não pode devolvê-la no mesmo turno'));
+      expect(j.vez, 0); // a vez NÃO passou — o turno nulo foi barrado
+
+      // Qualquer OUTRA carta continua descartável (a trava é de uma carta só).
+      expect(j.descartar(0, 'm1'), isNull);
+      expect(j.vez, 1);
+    });
+
+    test('LIX-C02 sob a AUTORIDADE CANÔNICA (produção) a §5.2 simplesmente '
+        'NÃO EXISTE — o turno nulo é aceito', () {
+      final j = _lixBase(config: MotorConfig.producao());
+      final lixoAntes = j.lixo.map((c) => c.id).toList();
+      expect(lixoAntes, ['lxUnico']);
+
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      expect(idsMao(j, 0), contains('lxUnico'));
+
+      // DEFEITO 1 — o campo lateral NUNCA é escrito pelo caminho canônico: o
+      // envelope é puro pass-through (autoridade_canonica.dart `_envelopePos`).
+      expect(j.costuraLixoUnicoCompradoId, isNull);
+
+      // DEFEITO 2 — e por isso o descarte da MESMA carta é ACEITO.
+      expect(j.descartar(0, 'lxUnico'), isNull);
+
+      // TURNO NULO consumado: o lixo voltou EXATAMENTE ao que era e a vez
+      // passou sem que nada tenha acontecido na partida.
+      expect(j.lixo.map((c) => c.id).toList(), lixoAntes);
+      expect(j.vez, 1);
+    });
+
+    test('LIX-C03 o `EstadoJogo` canônico não representa a trava: dois '
+        'ENVELOPES diferentes decidem igual', () {
+      // Compra do lixo pela autoridade; a partir daqui existe UM estado
+      // canônico e a pergunta é se o envelope consegue mudar alguma decisão.
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final proj = paraCanonico(j);
+      final estado = proj.canonico;
+      final spec = specDe(estado);
+
+      // Envelope A: como a autoridade o deixou (trava ausente).
+      final envA = proj.envelope;
+      expect(envA.lixoUnicoCompradoId, isNull);
+      // Envelope B: idêntico, EXCETO a trava — o valor que o legado teria posto.
+      final envB = _envelopeCom(envA, 'lxUnico');
+
+      // Mesmo EstadoJogo, dois envelopes: o gerador único decide IGUAL, porque
+      // a autoridade canônica nem enxerga o envelope.
+      final acoes = gerarAcoesLegais(estado, 0, spec);
+      expect(acoes.whereType<Descartar>().map((d) => d.carta),
+          contains('lxUnico'));
+      expect(aplicarLegal(estado, 0, const Descartar('lxUnico'), spec).legal,
+          isTrue);
+
+      // E o mesmo vale ponta a ponta: reconstruído com um envelope ou com o
+      // outro, o `Jogo` real toma a MESMA decisão sob autoridade canônica.
+      String? descartarCom(EnvelopeRuntime env) {
+        final alvo = Jogo.paraCostura(motorConfig: MotorConfig.producao());
+        aplicarEmJogo(alvo, estado.cloneProfundo(), env);
+        return alvo.descartar(0, 'lxUnico');
+      }
+
+      expect(descartarCom(envA), isNull); // aceito
+      expect(descartarCom(envB), isNull); // aceito TAMBÉM, apesar da trava
+      // Conclusão registrada: a divergência do envelope NÃO altera decisão —
+      // não porque o estado esteja seguro, e sim porque a regra §5.2 está
+      // AUSENTE do motor que decide. Ver LIX-C02.
+    });
+
+    test('LIX-C04 a porta canônica DESCARTA a trava: `EnvelopeRuntime.vazio()` '
+        'apaga a informação', () {
+      // O AdaptadorLegado só recebe `EstadoJogo` — o envelope é reconstruído
+      // vazio. Toda informação que só existe no envelope é PERDIDA nesse
+      // trajeto, e a trava do lixo é uma delas.
+      final j = _lixBase(config: MotorConfig.legadoRollback());
+      expect(j.comprarLixo(0, modalidade: 'ABERTO')['ok'], isTrue);
+      expect(j.costuraLixoUnicoCompradoId, 'lxUnico');
+
+      final estado = paraCanonico(j).canonico;
+      final alvo = Jogo.paraCostura(motorConfig: MotorConfig.legadoRollback());
+      aplicarEmJogo(alvo, estado, EnvelopeRuntime.vazio());
+
+      // Mesma posição, MESMO estado canônico — e a trava sumiu.
+      expect(alvo.costuraLixoUnicoCompradoId, isNull);
+      // Consequência direta: o legado, que ENFORCA a regra, deixa de enforcá-la
+      // depois de passar pela porta.
+      expect(alvo.descartar(0, 'lxUnico'), isNull);
+    });
+
+    test('LIX-C05 um SNAPSHOT do estado canônico não é suficiente para '
+        'reproduzir a posição', () {
+      final j = _lixBase(config: MotorConfig.producao());
+      expect(j.comprarLixo(0)['ok'], isTrue);
+      final estado = paraCanonico(j).canonico;
+
+      // Serializa/desserializa SÓ o canônico (é o que um snapshot de posição
+      // carrega) e pergunta a mesma coisa aos dois.
+      final round = desserializarEstado(
+          jsonDecode(jsonEncode(serializarEstado(estado))) as Map);
+      expect(round.assinatura(), estado.assinatura());
+
+      // A assinatura canônica não tem NENHUMA linha para a trava do lixo: ela
+      // não faz parte da identidade do estado hoje. (`lxUnico` aparece, sim,
+      // mas só como carta na mão — o que não diz nada sobre a proibição.)
+      expect(estado.assinatura(), isNot(contains('lixoUnico')));
+      expect(serializarEstado(estado).keys, isNot(contains('lixoUnicoCompradoId')));
+    });
+  });
 }
 
 // C9-A — DUBLÊ REAL da porta (só para os testes de C9-A). Implementação
@@ -8708,3 +8848,131 @@ Jogo _jgEncLixoBeco() {
 List<List<Carta>> _mortoDisponivelEnc(String tag) => [
       [for (var i = 0; i < 11; i++) Carta('mt${tag}_$i', 'ouros', '3', false)]
     ];
+
+// ===================================================================
+// OS CANONIZAÇÃO DO ESTADO DE COMPRA DO LIXO V1 — mesas determinísticas
+// ===================================================================
+
+/// Terreno base da §5.2: ABERTO, assento 0 na fase de COMPRA, dupla NOS já
+/// aberta, MORTO disponível (para que sobrar poucas cartas nunca seja beco) e
+/// LIXO DE EXATAMENTE UMA CARTA (`lxUnico`) — a condição que faz a trava nascer.
+///
+/// A mão de 3 cartas soltas é deliberada: nenhuma delas combina com `lxUnico`
+/// nem entre si, então a única coisa que a compra do lixo muda é a presença de
+/// `lxUnico` na mão. Isso isola a regra sob teste de qualquer efeito de meld.
+Jogo _lixBase({
+  required MotorConfig config,
+  String modalidade = 'ABERTO',
+  List<Carta>? lixo,
+}) {
+  final j = Jogo.paraCostura(motorConfig: config);
+  j.vez = 0;
+  j.modalidade = modalidade;
+  j.jaComprou = false; // fase de COMPRA
+  j.mortoPego = {'nos': false, 'eles': true};
+  j.primeiraBaixadaFeita = {'nos': true, 'eles': false};
+  j.rodadasVulneravel = {'nos': 0, 'eles': 0};
+  j.maos = [
+    [
+      Carta('m1', 'paus', 'K', false),
+      Carta('m2', 'espadas', '9', false),
+      Carta('m3', 'ouros', 'J', false),
+    ],
+    [Carta('b1', 'paus', '4', false)],
+    [Carta('c1', 'paus', '5', false)],
+    [Carta('d1', 'paus', '6', false)],
+  ];
+  j.jogosDupla = {'nos': [_encMeldCurto()], 'eles': <List<Carta>>[]};
+  j.monte = [
+    Carta('mo1', 'paus', '8', false),
+    Carta('mo2', 'copas', '8', false),
+  ];
+  j.mortos = [_lixMorto()];
+  j.lixo = lixo ?? [Carta('lxUnico', 'espadas', '3', false)];
+  _lixCompletarBaralho(j);
+  return j;
+}
+
+/// Completa a mesa até as 108 cartas do perfil BMV_STANDARD_108, jogando o
+/// excedente no FUNDO do monte.
+///
+/// Por que é obrigatório aqui: `auditarIntegridade` roda no caminho LEGADO e
+/// recusa qualquer mesa incompleta (`DECK_TOTAL_MISMATCH`) ou com carta
+/// repetida além de 2× (`DUPLICATE_RANK_SUIT_OVERFLOW`). O motor CANÔNICO não
+/// audita, então mesas parciais passam nele e travam no legado — e esta OS
+/// precisa rodar a MESMA posição nos dois motores para comparar.
+///
+/// O excedente vai para o fundo porque as duas convenções de topo (legado
+/// `monte[0]`, canônico `monte.last` após a reversão da projeção) apontam para
+/// a FRENTE da lista: nada do que é acrescentado aqui muda qual carta a próxima
+/// compra do monte traz, nem entra em qualquer decisão de legalidade.
+void _lixCompletarBaralho(Jogo j) {
+  const naipes = ['copas', 'ouros', 'paus', 'espadas'];
+  const valores = [
+    'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'
+  ];
+  final usados = <String, int>{};
+  void contar(Carta c) {
+    final k = c.valor == 'JOKER' ? 'jk' : '${c.naipe}|${c.valor}';
+    usados[k] = (usados[k] ?? 0) + 1;
+  }
+
+  for (final m in j.maos) {
+    m.forEach(contar);
+  }
+  j.monte.forEach(contar);
+  j.lixo.forEach(contar);
+  for (final mo in j.mortos) {
+    mo.forEach(contar);
+  }
+  for (final jogos in j.jogosDupla.values) {
+    for (final m in jogos) {
+      m.forEach(contar);
+    }
+  }
+
+  var n = 0;
+  for (final na in naipes) {
+    for (final v in valores) {
+      for (var i = usados['$na|$v'] ?? 0; i < 2; i++) {
+        j.monte.add(Carta('pad${n++}', na, v, v == '2'));
+      }
+    }
+  }
+  for (var i = usados['jk'] ?? 0; i < 4; i++) {
+    j.monte.add(Carta('pad${n++}', null, 'JOKER', true));
+  }
+}
+
+/// MORTO de 11 cartas DISTINTAS para as mesas desta OS.
+///
+/// `_mortoDisponivelEnc` empilha 11 cópias de `ouros 3`, o que é inofensivo no
+/// motor canônico (não audita o baralho) mas dispara
+/// `DUPLICATE_RANK_SUIT_OVERFLOW` em `auditarIntegridade`, que o caminho LEGADO
+/// executa. Como esta OS compara os DOIS motores sobre a MESMA mesa, o morto
+/// precisa ser íntegro para os dois.
+List<Carta> _lixMorto() => [
+      for (final v in ['A', '3', '4', '5', '6', '7', '9', '10', 'J', 'Q', 'K'])
+        Carta('mtlix$v', 'copas', v, false)
+    ];
+
+/// Cópia de um `EnvelopeRuntime` mudando SÓ `lixoUnicoCompradoId` — é o "dado
+/// lateral" cuja capacidade de alterar decisões está sob julgamento.
+EnvelopeRuntime _envelopeCom(EnvelopeRuntime e, String? lixoUnicoCompradoId) =>
+    EnvelopeRuntime(
+      cont: e.cont,
+      lixoUnicoCompradoId: lixoUnicoCompradoId,
+      mortosConvertidos: e.mortosConvertidos,
+      iniciadorRodada: e.iniciadorRodada,
+      rodadaContada: e.rodadaContada,
+      lixoTopoObrigatorio: e.lixoTopoObrigatorio,
+      integridadeErro: e.integridadeErro,
+      assentoQueBateu: e.assentoQueBateu,
+      rodada: e.rodada,
+      placar: {...e.placar},
+      encerrada: e.encerrada,
+      pontosRodada: e.pontosRodada,
+      apelidos: e.apelidos,
+      avatares: e.avatares,
+      mascotes: e.mascotes,
+    );
