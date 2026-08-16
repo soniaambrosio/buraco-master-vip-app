@@ -471,11 +471,37 @@ jobs:
           s = re.sub(r'versionCode = flutter\.versionCode', f'versionCode = {vc}', s)
           s = re.sub(r'versionCode\s+flutter\.versionCode', f'versionCode = {vc}', s)
 
+          # 6) targetSdk FIXO em 36 (Android 16), em vez de herdado do SDK.
+          #    O scaffold gera `targetSdk = flutter.targetSdkVersion`, e o proprio
+          #    Flutter documenta esse campo como "should always be the latest
+          #    available stable version" — ou seja, ele ANDA sozinho a cada bump do
+          #    canal stable. targetSdk decide COMPORTAMENTO de runtime (edge-to-edge,
+          #    restricao de orientacao, permissoes) e e o valor que a Play cobra:
+          #    nao pode mudar por efeito colateral de uma atualizacao de toolchain.
+          #    Fixar aqui faz o APK de teste rodar sob as MESMAS regras do AAB que
+          #    vai para a loja (ver o mesmo patch em release-aab.yml).
+          #    compileSdk continua herdado de proposito: ele precisa acompanhar o
+          #    SDK e os plugins, e compileSdk >= targetSdk e a configuracao correta.
+          s, n_target = re.subn(r'targetSdk\s*=\s*flutter\.targetSdkVersion',
+                                'targetSdk = 36', s, count=1)
+          if n_target != 1:
+              raise AssertionError(
+                  'nao encontrei `targetSdk = flutter.targetSdkVersion` no scaffold. '
+                  'O template do Flutter mudou de forma — conferir qual targetSdk o '
+                  'build passou a usar ANTES de gerar qualquer APK.'
+              )
+
           open(p, 'w', encoding='utf-8').write(s)
           print("build.gradle.kts patchado. versionCode =", vc)
           print("---- trechos relevantes ----")
-          for m in ['create("test")', 'signingConfig = signingConfigs.getByName("test")', f'versionCode = {vc}']:
-              print("OK" if m in s else "FALTOU", '->', m)
+          faltou = False
+          for m in ['create("test")', 'signingConfig = signingConfigs.getByName("test")', f'versionCode = {vc}', 'targetSdk = 36']:
+              tem = m in s
+              print("OK" if tem else "FALTOU", '->', m)
+              if not tem:
+                  faltou = True
+          if faltou:
+              raise AssertionError('patch do build.gradle.kts incompleto')
           PY
           echo "===== build.gradle.kts final ====="
           cat app_build/android/app/build.gradle.kts
