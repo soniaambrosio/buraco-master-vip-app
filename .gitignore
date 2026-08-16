@@ -1,3 +1,13 @@
 # Scaffold Flutter gerado localmente/CI (flutter create app_build).
 # Nunca versionar: e artefato de build, nao fonte.
 /app_build/
+
+# Saidas de build do Dart/Flutter. Ficam aqui porque o gate de identidade
+# (app/tool/gate_identidade_build.dart) reprova arvore suja, e sem estas
+# linhas um `flutter pub get` rodado dentro de app/ reprovaria a release.
+.dart_tool/
+/app/build/
+/app/.flutter-plugins-dependencies
+
+# Logs de depuracao de emulador. Sao efemeros e mudam a cada execucao.
+*-debug.log
