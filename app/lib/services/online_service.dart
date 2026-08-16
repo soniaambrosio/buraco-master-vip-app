@@ -185,6 +185,21 @@ class OnlineService extends ChangeNotifier {
   OnlineStatus status = OnlineStatus.desconectado;
   String? erro; // última mensagem de erro (conexão ou do servidor)
 
+  /// O CÓDIGO da última recusa do servidor, quando ele mandou um.
+  ///
+  /// O servidor já vinha mandando isto — `NAO_AUTENTICADO`,
+  /// `CREDENCIAL_EXPIRADA`, `IDENTIDADE_DIVERGENTE`, `ATUALIZACAO_OBRIGATORIA`
+  /// —, e até agora só o último era lido; os outros eram descartados junto com
+  /// a mensagem. Expor o campo não muda comportamento nenhum aqui: quem
+  /// precisa dele é a porta de comandos da mesa, para distinguir "sua jogada
+  /// não vale" (a pessoa tenta outra) de "sua credencial venceu" (a pessoa não
+  /// tem o que tentar). Sem essa distinção, as duas viram o mesmo balão de
+  /// erro e a segunda deixa a mesa travada sem explicação.
+  ///
+  /// Nulo quando a recusa veio sem código — que é o caso das recusas de regra
+  /// do motor, hoje enviadas só com `motivo`.
+  String? erroCodigo;
+
   // Estado da sessão online (vem do servidor)
   int? meuAssento; // assento do jogador nesta mesa
   String? codigo; // código da mesa
@@ -256,6 +271,7 @@ class OnlineService extends ChangeNotifier {
   void tentarNovamente() {
     _tentativas = 0;
     erro = null;
+    erroCodigo = null;
     if (_estadoTerminal) {
       status = OnlineStatus.desconectado;
       notifyListeners();
@@ -276,6 +292,7 @@ class OnlineService extends ChangeNotifier {
     try {
       status = OnlineStatus.conectando;
       erro = null;
+      erroCodigo = null;
       notifyListeners();
 
       // 0) ENDEREÇO. Antes de qualquer coisa: um build mal configurado não
@@ -322,6 +339,7 @@ class OnlineService extends ChangeNotifier {
         // Mensagem própria, e não a da exceção: a do transporte costuma trazer
         // a URL e o que mais ele quiser junto.
         erro = 'não foi possível conectar ao servidor';
+        erroCodigo = null;
         notifyListeners();
         _agendarReconexao();
         return;
@@ -353,6 +371,7 @@ class OnlineService extends ChangeNotifier {
         onError: (Object e) {
           if (geracao != _geracaoTransporte) return;
           erro = 'conexão instável';
+          erroCodigo = null;
           _aoCair();
         },
         cancelOnError: true,
@@ -392,6 +411,7 @@ class OnlineService extends ChangeNotifier {
     _renovando = false;
     status = OnlineStatus.erro;
     erro = 'o servidor não respondeu à identificação';
+    erroCodigo = null;
     notifyListeners();
     if (_querConectado) _agendarReconexao();
   }
@@ -482,6 +502,7 @@ class OnlineService extends ChangeNotifier {
   void encerrarSessao() {
     codigo = null;
     erro = null;
+    erroCodigo = null;
     _meuApelido = 'Você';
     _tentativas = 0;
     _jaAutenticouNestaConexao = false;
@@ -556,6 +577,7 @@ class OnlineService extends ChangeNotifier {
         if (msg['codigo'] != null) codigo = msg['codigo'] as String;
         meuAssento = msg['assento'] as int?;
         erro = null;
+        erroCodigo = null;
         break;
       case 'estado':
         // A visão é a projeção DO SEU ASSENTO, calculada pelo servidor. Uma
@@ -568,6 +590,7 @@ class OnlineService extends ChangeNotifier {
         if (bruta is! Map) return;
         visao = bruta.cast<String, dynamic>();
         erro = null;
+        erroCodigo = null;
         break;
       case 'erro':
         if (msg['codigo'] == 'ATUALIZACAO_OBRIGATORIA') {
@@ -591,6 +614,11 @@ class OnlineService extends ChangeNotifier {
         // O motivo vem do servidor e vai para a tela: passa pela redação, que é
         // barata, para o caso de ele ecoar algo que não devia.
         erro = redigir((msg['motivo'] as String?) ?? 'erro no servidor');
+        // SEMPRE atribuído, inclusive quando vem nulo. Uma recusa de regra do
+        // motor chega só com `motivo`, e herdar o código da recusa anterior
+        // faria a porta de comandos da mesa tratar "sua jogada não vale" como
+        // "sua credencial venceu" — e travar a pessoa numa mesa que está boa.
+        erroCodigo = msg['codigo'] as String?;
         break;
       default:
         return;
@@ -655,6 +683,7 @@ class OnlineService extends ChangeNotifier {
     status = OnlineStatus.conectado;
     _tentativas = 0;
     erro = null;
+    erroCodigo = null;
     notifyListeners();
 
     // Se caímos e voltamos com uma mesa aberta, tenta reentrar na mesma mesa.
@@ -702,6 +731,9 @@ class OnlineService extends ChangeNotifier {
     if (novo == OnlineStatus.naoAutenticado) _limparProjecao();
     status = novo;
     erro = redigir(mensagem);
+    // O status já conta a história de uma falha terminal; um código antigo
+    // pendurado aqui só confundiria quem for classificar a recusa.
+    erroCodigo = null;
     notifyListeners();
   }
 
