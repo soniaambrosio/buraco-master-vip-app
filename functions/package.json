@@ -11,6 +11,10 @@
     "build:domain": "cd .. && dart compile js -O2 -o functions/lib/domain_bundle.js app/lib/torneios/js_bridge.dart",
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "//test:conquistas": "Idempotencia e concorrencia da concessao, contra o Firestore do EMULADOR. Exige `build:domain` e `build` antes — a suite roda o JS compilado, e nao o TypeScript.",
+    "test:conquistas": "node --test test/conquista_idempotencia.test.js",
+    "//emulador:conquistas": "So firestore: a suite chama as funcoes do modulo diretamente, dentro de transacoes; nao precisa do emulador de Functions.",
+    "emulador:conquistas": "npm run build:domain && npm run build && cd .. && firebase emulators:exec --only firestore \"cd functions && npm run test:conquistas\"",
     "serve": "npm run build && firebase emulators:start --only functions,firestore",
     "deploy": "npm run build:domain && npm run build && firebase deploy --only functions"
   },

@@ -27,9 +27,11 @@
 // `matches`, `matches/{id}/events`, `rankingLedger`, `fraudSignals` e
 // `users/{uid}/matchHistory`. Este arquivo e a unica porta.
 
-import { getFirestore, Transaction } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, Transaction } from "firebase-admin/firestore";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
+
+import { dominio } from "./domain";
 
 const db = () => getFirestore();
 
@@ -170,8 +172,27 @@ export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) =
       }
       // Reenvio identico: sucesso, sem regravar. Este e o caminho do retry e do
       // callback repetido — reenvio nao e falha.
+      //
+      // A conquista e avaliada AQUI TAMBEM, e nao so no caminho novo. Duas
+      // razoes: o reenvio precisa convergir para o mesmo estado final (se a
+      // concessao da primeira vez se perdeu, esta a repara), e uma partida
+      // fechada antes desta funcionalidade existir passa a poder receber a
+      // conquista ao ser reenviada — sem nunca duplicar, porque o id do
+      // documento e fixo por jogador.
+      const conquistaReenvio = await planejarPrimeiraBatidaReal(tx, registro, matchId);
+      aplicarPlanoDeConquista(tx, conquistaReenvio);
+      logger.info("conquista avaliada em reenvio", {
+        matchId,
+        conquista: "primeira_batida_real",
+        resultado: conquistaReenvio.resultado,
+        motivo: conquistaReenvio.motivo,
+      });
       return { aceito: true, jaRegistrado: true, matchId };
     }
+
+    // ULTIMA LEITURA da transacao. Tudo abaixo e escrita, e o Firestore recusa
+    // uma leitura depois da primeira escrita.
+    const conquista = await planejarPrimeiraBatidaReal(tx, registro, matchId);
 
     tx.set(matchRef, { ...registro, registradoPor: autor });
 
@@ -210,12 +231,25 @@ export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) =
       );
     }
 
+    aplicarPlanoDeConquista(tx, conquista);
+
     logger.info("encerramento de partida registrado", {
       matchId,
       estado,
       eventos: eventos.length,
       lancamentos: lancamentos.length,
       sinais: sinais.length,
+    });
+    // Log proprio, e nao um campo no anterior: o operador precisa conseguir
+    // filtrar so a conquista. Sem uid, sem apelido, sem e-mail e sem carta —
+    // so o que responde "por que fulano nao recebeu?" quando alguem perguntar,
+    // e a partida ja e identificada pelo matchId da linha de cima.
+    logger.info("conquista avaliada no encerramento", {
+      matchId,
+      conquista: "primeira_batida_real",
+      versaoContrato: 1,
+      resultado: conquista.resultado,
+      motivo: conquista.motivo,
     });
     return { aceito: true, jaRegistrado: false, matchId };
   });
@@ -224,6 +258,111 @@ export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) =
 /// Espelha `EstadoDaPartida.terminal` do dominio Dart.
 function ehTerminal(estado: string | undefined): boolean {
   return estado === "finalizada" || estado === "abandonada" || estado === "cancelada";
+}
+
+/// Concede a conquista `primeira_batida_real`, se este encerramento a merecer.
+///
+/// QUEM DECIDE e o dominio Dart (`app/lib/conquistas/primeira_batida_real.dart`),
+/// chamado por `dominio.avaliarPrimeiraBatidaReal`. Esta funcao nao tem regra de
+/// elegibilidade nenhuma: ela le o veredito e executa.
+///
+/// IDEMPOTENCIA, e ela e o ponto inteiro desta funcao:
+///
+///   playerAchievements/{uid}/items/primeira_batida_real
+///
+/// O id do documento e CONSTANTE por jogador. Nao ha chave derivada de partida,
+/// de tentativa ou de relogio — e deliberado: a conquista e "a PRIMEIRA vez", e
+/// um id que variasse por partida permitiria uma segunda concessao na segunda
+/// vitoria, que e exatamente o que nao pode acontecer. Com id fixo, a segunda
+/// vitoria colide com o documento da primeira e nao cria nada.
+///
+/// O `create` (e nao `set`) e o que transforma a colisao em no-op: dentro da
+/// transacao, a leitura previa ja diz se existe, e a criacao so acontece quando
+/// nao existe. Reenvio, retry da Function, duas chamadas simultaneas e
+/// reprocessamento do mesmo fechamento convergem todos para UM documento, com o
+/// `obtidaEm` da PRIMEIRA vez — a data nao e reescrita, porque a conquista e o
+/// marco daquele dia e nao do dia em que alguem reprocessou a fila.
+///
+/// Roda DENTRO da transacao do encerramento (§21 da rastreabilidade): nao existe
+/// caminho que feche a partida sem avaliar a conquista, nem que conceda a
+/// conquista sem a partida ter fechado.
+/// O que fazer com a conquista neste encerramento. Decidido na fase de LEITURA.
+interface PlanoDeConquista {
+  resultado: "concedida" | "ja_existente" | "inelegivel";
+  motivo: string | null;
+  uid: string | null;
+  /// Preenchido so quando `resultado === "concedida"`. Aplicado depois, na fase
+  /// de escrita — o Firestore exige TODA leitura antes de QUALQUER escrita
+  /// dentro de uma transacao, e misturar as duas fases faz a transacao falhar
+  /// em tempo de execucao, nao de compilacao.
+  gravar: { ref: FirebaseFirestore.DocumentReference; dados: Record<string, unknown> } | null;
+}
+
+/// EXPORTADA para o teste de idempotencia (`functions/test/`), que a executa
+/// contra o emulador do Firestore dentro de transacoes de verdade. Sem isso, a
+/// unica forma de provar concorrencia seria reimplementar a transacao no teste —
+/// e o teste passaria a provar a copia, nao este codigo.
+export async function planejarPrimeiraBatidaReal(
+  tx: Transaction,
+  registro: Record<string, unknown>,
+  matchId: string
+): Promise<PlanoDeConquista> {
+  let veredito;
+  try {
+    veredito = dominio.avaliarPrimeiraBatidaReal({ registro });
+  } catch (e) {
+    // Envelope que o dominio recusa ler. NAO derruba o encerramento: a partida
+    // fechou de verdade, e perder o registro dela por causa de uma conquista
+    // seria trocar o dado importante pelo acessorio. Fica no log como recusa.
+    return { resultado: "inelegivel", motivo: "envelope_ilegivel", uid: null, gravar: null };
+  }
+
+  if (!veredito.elegivel || !veredito.userId) {
+    return { resultado: "inelegivel", motivo: veredito.motivo, uid: null, gravar: null };
+  }
+
+  const ref = db()
+    .collection("playerAchievements")
+    .doc(veredito.userId)
+    .collection("items")
+    .doc(veredito.conquistaId);
+
+  const atual = await tx.get(ref);
+  if (atual.exists) {
+    // Ja tinha. Sucesso idempotente, e nao erro: e o caminho do jogador que
+    // vence a segunda partida, e o do redelivery. Note que NAO ha reescrita —
+    // `obtidaEm` continua sendo o da primeira vez.
+    return { resultado: "ja_existente", motivo: null, uid: veredito.userId, gravar: null };
+  }
+
+  return {
+    resultado: "concedida",
+    motivo: null,
+    uid: veredito.userId,
+    gravar: {
+      ref,
+      dados: {
+        id: veredito.conquistaId,
+        // Carimbo do SERVIDOR. Nem o cliente nem a autoridade que chama
+        // escolhem a data.
+        obtidaEm: FieldValue.serverTimestamp(),
+        partidaId: matchId,
+        origem: veredito.origem,
+        versaoContrato: veredito.versaoContrato,
+        // O assento e prova, nao decoracao: com ele, uma auditoria futura
+        // reabre a partida e confere a concessao sem depender deste log.
+        assento: veredito.assento,
+      },
+    },
+  };
+}
+
+/// Aplica o plano e devolve o resultado para o log. `create`, e nao `set`: se
+/// duas transacoes concorrentes passarem pela leitura ao mesmo tempo, a segunda
+/// falha no commit em vez de sobrescrever a primeira — e o Firestore reexecuta a
+/// transacao, que na segunda passada ve o documento e cai em `ja_existente`.
+export function aplicarPlanoDeConquista(tx: Transaction, plano: PlanoDeConquista): void {
+  if (plano.gravar) tx.create(plano.gravar.ref, plano.gravar.dados);
 }
 
 // ---------------------------------------------------------------------------

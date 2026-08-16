@@ -25,6 +25,7 @@ import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import '../conquistas/primeira_batida_real.dart';
 import '../elegibilidade/composicao.dart';
 import 'annual_closing.dart';
 import 'assets_registry.dart';
@@ -582,8 +583,34 @@ List<LinhaClassificacao> _linhas(Object? valor) => [
         ),
     ];
 
+/// `{registro: {...}}` — o JSON de `RegistroDePartida.toJson()`, inteiro.
+///
+/// Devolve `VeredictoPrimeiraBatidaReal.toJson()`: `{elegivel, userId, assento,
+/// motivo, conquistaId, versaoContrato, origem}`.
+///
+/// A Function passa o registro INTEIRO, e não campos escolhidos: assim quem
+/// decide o que é relevante continua sendo o domínio, e um campo renomeado
+/// quebra aqui — com teste — em vez de virar `null` silencioso do outro lado.
+///
+/// Este arquivo pertence ao domínio de torneios, e a conquista não é torneio.
+/// Ela entra aqui porque é ESTA a ponte que o codebase `torneios` carrega, e é
+/// nele que vive `rastreabilidade.ts`, que faz a concessão. O cabeçalho de
+/// `rastreabilidade.ts` já registrava que levar decisão para dentro da ponte
+/// "exigiria mexer no js_bridge.dart de torneios"; é o que se faz aqui, para a
+/// regra da conquista não nascer duplicada em TypeScript.
+String avaliarPrimeiraBatidaRealJson(String entrada) {
+  try {
+    final json = jsonDecode(entrada) as Map<String, dynamic>;
+    final fatos = FatosDoEncerramento.doRegistroJson(json['registro']);
+    return jsonEncode(avaliarPrimeiraBatidaReal(fatos).toJson());
+  } catch (e) {
+    return _erro(e);
+  }
+}
+
 void main() {
   final api = <String, _Ponte>{
+    'avaliarPrimeiraBatidaReal': avaliarPrimeiraBatidaRealJson,
     'comporElegibilidade': comporElegibilidadeJson,
     'avaliarElegibilidade': avaliarElegibilidadeJson,
     'inscrever': inscreverJson,
