@@ -91,17 +91,35 @@ jobs:
           cat /tmp/defines.txt
 
       - name: "PORTÃO — suítes de observabilidade"
+        # O overlay é montado aqui de novo, num diretório separado, porque o
+        # projeto de build ainda não existe neste ponto — e o portão precisa
+        # reprovar ANTES de gastar sete minutos de Gradle.
         run: |
           flutter create --org com.buracomastervip --project-name buraco_master_vip /tmp/suite >/dev/null
           cp -R app/lib/. /tmp/suite/lib/
           mkdir -p /tmp/suite/test/observabilidade
           cp app/test/observabilidade/*.dart /tmp/suite/test/observabilidade/
+          # O widget_test.dart do scaffold tem erro pré-existente na base e
+          # derrubaria a suíte inteira sem ter nada a ver com esta OS.
           rm -f /tmp/suite/test/widget_test.dart
           cd /tmp/suite
           flutter pub add firebase_core "firebase_crashlytics:5.2.7" firebase_auth \
             "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences >/dev/null
-          flutter analyze lib/observability
-          flutter test test/observabilidade --reporter expanded
+
+          # `flutter analyze` sai com 1 para QUALQUER apontamento, info
+          # inclusive — e o Flutter do CI é mais novo que o local, então uma
+          # regra de lint nova aparece aqui primeiro. Mostrar a saída é o que
+          # evita um "exit code 1" mudo, cujo log só quem é admin baixa.
+          if ! flutter analyze lib/observability > /tmp/analyze.txt 2>&1; then
+            cat /tmp/analyze.txt
+            echo "::error title=analyze::$(grep -cE '^\s+(error|warning|info)' /tmp/analyze.txt) apontamento(s) em lib/observability"
+            exit 1
+          fi
+          cat /tmp/analyze.txt
+
+          # `--reporter=github` faz o próprio flutter_test emitir as anotações
+          # de cada teste que falhar, com nome e arquivo.
+          flutter test test/observabilidade --reporter=github
 
       # ------------------------------------------------------------- montagem
       - name: Scaffold do projeto Android
