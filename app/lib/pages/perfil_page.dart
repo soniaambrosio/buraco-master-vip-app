@@ -22,6 +22,36 @@ class PerfilPage extends StatefulWidget {
   /// false = visitando outro jogador (a UI oculta os controles de dono).
   final bool ehMeuPerfil;
 
+  /// O texto do convite, montado a partir do que o VM REALMENTE tem.
+  ///
+  /// ERA uma interpolação única com dois fallbacks embutidos —
+  /// `Nível ${vm?.nivel ?? 1} · Liga ${vm?.liga ?? 'Bronze'}` — e o segundo era
+  /// o pior dos três lugares onde a liga inventada aparecia: os outros dois
+  /// ficavam na tela do dono, este SAÍA DO APARELHO. A pessoa colava no grupo
+  /// da família um texto afirmando uma liga que ninguém lhe atribuiu.
+  ///
+  /// Agora cada trecho competitivo só entra se houver o que afirmar, e quando
+  /// não há, o convite continua sendo um convite — perde a linha, não a função.
+  /// Público, e por isso o mais rigoroso de todos: aqui nem o travessão entra,
+  /// porque num texto solto ele não se lê como ausência, se lê como ruído.
+  ///
+  /// ESTÁTICO E PÚBLICO de propósito: o texto é a superfície que sai do
+  /// aparelho, e um teste precisa poder conferi-lo sem encenar um toque e sem
+  /// mexer na área de transferência.
+  static String textoDeCompartilhamento(PerfilVM? vm) {
+    const convite = 'Vem jogar Buraco comigo no Buraco Master VIP!';
+    // Sem VM não há nada carregado: não existe nem nome para afirmar.
+    if (vm == null) return '$convite 👑';
+
+    final partes = <String>['Nível ${vm.nivel}'];
+    final liga = vm.ranking.liga;
+    if (liga != null) partes.add('Liga $liga');
+    final posicao = vm.ranking.posicaoMundial;
+    if (posicao != null) partes.add('#$posicao no mundo');
+
+    return '$convite Sou ${vm.nome} 👑 ${partes.join(' · ')}.';
+  }
+
   @override
   State<PerfilPage> createState() => _PerfilPageState();
 }
@@ -108,36 +138,8 @@ class _PerfilPageState extends State<PerfilPage> {
       );
   }
 
-  /// O texto do convite, montado a partir do que o VM REALMENTE tem.
-  ///
-  /// ERA uma interpolação única com dois fallbacks embutidos —
-  /// `Nível ${vm?.nivel ?? 1} · Liga ${vm?.liga ?? 'Bronze'}` — e o segundo era
-  /// o pior dos três lugares onde o Bronze aparecia: os outros dois ficavam na
-  /// tela do dono, este SAÍA DO APARELHO. A pessoa colava no grupo da família um
-  /// texto afirmando uma liga que ninguém lhe atribuiu.
-  ///
-  /// Agora cada trecho competitivo só entra se houver o que afirmar, e quando
-  /// não há, o convite continua sendo um convite — perde a linha, não a função.
-  /// Público, e por isso o mais rigoroso: aqui nem o travessão entra.
-  ///
-  /// Separado do gesto para poder ser conferido em teste sem mexer na área de
-  /// transferência.
-  static String textoDeCompartilhamento(PerfilVM? vm) {
-    const convite = 'Vem jogar Buraco comigo no Buraco Master VIP!';
-    // Sem VM não há nada carregado: não existe nem nome para afirmar.
-    if (vm == null) return '$convite 👑';
-
-    final partes = <String>['Nível ${vm.nivel}'];
-    final liga = vm.ranking.liga;
-    if (liga != null) partes.add('Liga $liga');
-    final posicao = vm.ranking.posicaoMundial;
-    if (posicao != null) partes.add('#$posicao no mundo');
-
-    return '$convite Sou ${vm.nome} 👑 ${partes.join(' · ')}.';
-  }
-
   Future<void> _compartilhar() async {
-    final texto = textoDeCompartilhamento(_vm);
+    final texto = PerfilPage.textoDeCompartilhamento(_vm);
     await Clipboard.setData(ClipboardData(text: texto));
     if (!mounted) return;
     _toast('Convite copiado! É só colar e mandar pra galera 🎉');
