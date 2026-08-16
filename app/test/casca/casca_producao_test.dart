@@ -17,9 +17,11 @@ import 'dart:convert';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:buraco_master_vip/casca/configuracoes_de_producao.dart';
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
 import 'package:buraco_master_vip/casca/lobby_online.dart';
 import 'package:buraco_master_vip/casca/login_de_producao.dart';
@@ -50,8 +52,9 @@ class _FonteFalsa implements FonteDeIdentidade {
   @override
   Future<IdentidadePublica> obterMinhaIdentidade() {
     chamadas++;
-    if (automatica)
+    if (automatica) {
       return Future<IdentidadePublica>.value(_identidade(apelido));
+    }
     final c = Completer<IdentidadePublica>();
     pendentes.add(c);
     return c.future;
@@ -430,6 +433,41 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(LoginDeProducao), findsOneWidget);
+      expect(find.byType(HomeDeProducao), findsNothing);
+    });
+
+    testWidgets('logout pelos Ajustes descarta a pilha de rotas privadas', (
+      tester,
+    ) async {
+      // A tela de Ajustes lê preferências do disco; sem isto o plugin lança e a
+      // carga vira exceção assíncrona no meio do teste.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await _abrirAplicativo(tester, b);
+      await _passarAAbertura(tester);
+
+      // O caminho REAL: Home → Ajustes → Sair da conta → confirmar.
+      await tester.tap(find.text('Ajustes'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ConfiguracoesDeProducao), findsOneWidget);
+
+      // `scrollUntilVisible` para assim que o finder ENCONTRA o widget, e isso
+      // acontece um pouco antes de ele estar de fato dentro da tela.
+      await tester.scrollUntilVisible(find.text('Sair da conta'), 200);
+      await tester.ensureVisible(find.text('Sair da conta'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sair da conta'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Sair'));
+      await tester.pumpAndSettle();
+
+      expect(b.autenticacao.saidas, 1);
+      expect(find.byType(LoginDeProducao), findsOneWidget);
+      // A PROVA QUE IMPORTA: a tela privada não sobrou por cima da pública.
+      // Trocar a tela de baixo não removeria uma rota empurrada por `push`.
+      expect(find.byType(ConfiguracoesDeProducao), findsNothing);
       expect(find.byType(HomeDeProducao), findsNothing);
     });
 

@@ -102,7 +102,9 @@ class AutenticacaoFirebase implements ComandosDeAutenticacao {
       // A exceção do login costuma trazer o e-mail tentado e pedaços da
       // credencial. Redigir ANTES de construir a mensagem é o que garante que o
       // texto em claro nunca chegue a existir fora deste `catch`.
-      return ResultadoDeLogin.falhou('Não consegui entrar: ${redigirObjeto(e)}');
+      return ResultadoDeLogin.falhou(
+        'Não consegui entrar: ${redigirObjeto(e)}',
+      );
     }
   }
 

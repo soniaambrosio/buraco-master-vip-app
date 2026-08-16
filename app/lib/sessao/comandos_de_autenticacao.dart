@@ -71,8 +71,7 @@ class ResultadoDeLogin {
   const ResultadoDeLogin._(this.desfecho, this.mensagem);
 
   const ResultadoDeLogin.entrou() : this._(DesfechoDeLogin.entrou, null);
-  const ResultadoDeLogin.cancelado()
-    : this._(DesfechoDeLogin.cancelado, null);
+  const ResultadoDeLogin.cancelado() : this._(DesfechoDeLogin.cancelado, null);
 
   /// [mensagem] é o que a pessoa vai ler. Quem constrói este valor é
   /// responsável por já tê-la redigido — ver `redigirObjeto`.

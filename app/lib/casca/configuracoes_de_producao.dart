@@ -57,11 +57,16 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
   @override
   void initState() {
     super.initState();
-    ConfiguracoesService.instance.carregar(versaoApp: kVersaoDoAplicativo).then(
-      (c) {
-        if (mounted) setState(() => _config = c);
-      },
-    );
+    ConfiguracoesService.instance
+        .carregar(versaoApp: kVersaoDoAplicativo)
+        .then((c) {
+          if (mounted) setState(() => _config = c);
+        })
+        // Sem armazenamento local disponível a tela abre nos padrões, que é o
+        // que ela já mostra. Sem este `catch`, a falha viraria exceção
+        // assíncrona sem dono e derrubaria a tela inteira por causa de uma
+        // preferência de som.
+        .catchError((Object _) {});
   }
 
   void _aviso(String texto) {
@@ -94,7 +99,9 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
       // pessoal à mostra numa tela que se abre no meio de uma mesa.
       email: '',
       vip: false,
-      moedas: 0,
+      // Nulo, e não zero: sem autoridade de economia, "0 moedas disponíveis" é
+      // uma afirmação sobre a carteira de alguém que ninguém consultou.
+      moedas: null,
     );
   }
 

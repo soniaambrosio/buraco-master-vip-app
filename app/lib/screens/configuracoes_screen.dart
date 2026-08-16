@@ -13,7 +13,13 @@ class PerfilResumo {
   final bool vip;
   final String? vipPlano;
   final String? vipValidoAte;
-  final int moedas;
+
+  /// Saldo, ou `null` quando não há autoridade de economia que o informe.
+  ///
+  /// Era obrigatório, e quem montava a tela sem fonte passava `0` — que a
+  /// pessoa lê como "estou sem moedas", e não como "o aplicativo ainda não sabe
+  /// quantas". Nulo tira o número da tela em vez de afirmar um.
+  final int? moedas;
 
   const PerfilResumo({
     required this.apelido,
@@ -190,7 +196,9 @@ class ConfiguracoesScreen extends StatelessWidget {
                               _navTile(
                                 icone: Icons.monetization_on_outlined,
                                 titulo: 'Moedas e compras',
-                                subtitulo: '${perfil.moedas} moedas disponíveis',
+                                subtitulo: perfil.moedas == null
+                                    ? 'Pacotes de moedas e histórico'
+                                    : '${perfil.moedas} moedas disponíveis',
                                 onTap: callbacks.onMoedasCompras,
                               ),
                             ],
@@ -503,29 +511,36 @@ class ConfiguracoesScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-            decoration: BoxDecoration(
-              color: _cardSecundario,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _borda),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.monetization_on_rounded, color: _ouro, size: 17),
-                const SizedBox(width: 4),
-                Text(
-                  '${perfil.moedas}',
-                  style: const TextStyle(
-                    color: _ouroClaro,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
+          // A pastilha de saldo só aparece quando há saldo a mostrar. Ver
+          // [PerfilResumo.moedas].
+          if (perfil.moedas case final int saldo)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+              decoration: BoxDecoration(
+                color: _cardSecundario,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _borda),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.monetization_on_rounded,
+                    color: _ouro,
+                    size: 17,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Text(
+                    '$saldo',
+                    style: const TextStyle(
+                      color: _ouroClaro,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
