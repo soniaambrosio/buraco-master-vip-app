@@ -277,3 +277,67 @@ describe('ENT — o legado nao virou porta dos fundos', () => {
     );
   });
 });
+
+describe('ENT — a porta do BACKEND continua aberta', () => {
+  // A metade que faltava. Os testes acima provam que `allow write: if false`
+  // fecha a porta do aplicativo; nenhum deles prova que ela nao fechou a porta
+  // de quem PRECISA escrever. Uma regra que barra todo mundo, inclusive o
+  // Billing, passaria em todos os `assertFails` acima e quebraria o produto —
+  // e o sintoma seria "ninguem consegue ser VIP", descoberto em producao.
+  //
+  // `withSecurityRulesDisabled` e exatamente o privilegio que o Admin SDK tem:
+  // as Cloud Functions de Billing ignoram estas regras. Provar isso aqui e o
+  // que transforma "o cliente nao escreve" em "so o servidor escreve".
+
+  test('ENT-23 o backend CRIA e ATUALIZA o entitlement', async () => {
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+
+      // Criacao — o caminho de `validarCompraPlay`.
+      await assertSucceeds(
+        setDoc(doc(db, 'playerEntitlements/uidNovoAssinante'),
+          entitlement({ uid: 'uidNovoAssinante' }))
+      );
+
+      // Revogacao — o caminho da RTDN. E a operacao que o cliente jamais pode
+      // fazer, e que o servidor precisa poder fazer a qualquer momento.
+      await assertSucceeds(
+        updateDoc(doc(db, 'playerEntitlements/uidNovoAssinante'), {
+          vipAtivo: false,
+          estado: 'revogado',
+        })
+      );
+    });
+  });
+
+  test('ENT-24 o backend escreve o documento INTERNO que ninguem le', async () => {
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(
+        setDoc(
+          doc(ctx.firestore(), 'playerEntitlements/uidNovoAssinante/interno/billing'),
+          { uid: 'uidNovoAssinante', purchaseToken: 'token-cru', esquema: 1 }
+        )
+      );
+    });
+
+    // E continua ilegivel pelo dono — a separacao em dois documentos existe
+    // porque regra do Firestore libera o DOCUMENTO INTEIRO.
+    await assertFails(
+      getDoc(doc(comoDono(), 'playerEntitlements/uidNovoAssinante/interno/billing'))
+    );
+  });
+
+  test('ENT-25 o backend registra a trilha de notificacoes ja processadas', async () => {
+    // A barreira de idempotencia do RTDN. Se as regras a fechassem para o
+    // backend tambem, um estorno reprocessado seria descartado como repetido.
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      await assertSucceeds(
+        setDoc(doc(ctx.firestore(), 'billingEvents/mensagem-2'), {
+          messageId: 'mensagem-2',
+          estado: 'concluido',
+          aplicado: true,
+        })
+      );
+    });
+  });
+});

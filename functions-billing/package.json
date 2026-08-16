@@ -8,9 +8,10 @@
   },
   "scripts": {
     "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio. Mesma disciplina de firebase/testes/package.json.",
-    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/fichas.test.js",
+    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/fichas.test.js test/varredura.test.js test/migracao.test.js test/reconciliacao.test.js test/diagnosticoPopulacao.test.js test/backfillHash.test.js test/backfillEfeitos.test.js test/recuperacaoMetadados.test.js test/recuperacaoEfeitos.test.js test/superficieDeploy.test.js",
     "serve": "firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions",
+    "//deploy:producao": "As CINCO funcoes da superficie de producao, nomeadas uma a uma. O alvo antigo era `firebase deploy --only functions`, que nao e o codebase de billing: e OS QUATRO codebases do firebase.json (colecoes, billing, torneios, moderacao) — um deploy de billing derrubaria inscricao em torneio e moderacao junto. Nomear tambem impede que as ferramentas administrativas (diagnosticarPopulacaoVip, diagnosticarMetadadosLegados, backfillPurchaseTokenHash) sejam implantadas so por dividirem o mesmo index.js. Deployar as cinco de UMA vez e o que mantem producao correspondendo a UMA linhagem: alvos separados produzem geracoes diferentes convivendo, que foi o estado encontrado nesta OS.",
+    "deploy:producao": "firebase deploy --only functions:billing:validarCompraPlay,functions:billing:notificacoesPlay,functions:billing:reconciliarEntitlements,functions:billing:concederFichasMensais,functions:billing:reconciliarEntitlementDoJogador",
     "logs": "firebase functions:log"
   },
   "dependencies": {
