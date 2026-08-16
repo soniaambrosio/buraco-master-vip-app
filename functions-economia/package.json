@@ -1,0 +1,21 @@
+{
+  "name": "bmv-economia-functions",
+  "description": "Cloud Functions da economia basica do jogador: bonus de boas-vindas e resultado economico da partida. NAO e billing: nada aqui depende de compra, assinatura ou catalogo pago.",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio. Mesma disciplina de functions-billing/package.json e firebase/testes/package.json.",
+    "test": "node --test test/economia.test.js test/carteira.test.js",
+    "//apoio": "test/apoio/firestore_falso.js e copia BYTE A BYTE de functions-billing/test/apoio/firestore_falso.js. Copiado, e nao importado do vizinho, porque codebase de Functions e unidade de implantacao independente e nao pode depender do diretorio de outra — a mesma razao pela qual functions-billing/ existe separado de functions/.",
+    "serve": "firebase emulators:start --only functions:economia",
+    "deploy": "firebase deploy --only functions:economia",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

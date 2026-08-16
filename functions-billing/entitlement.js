@@ -167,12 +167,19 @@ function consolidarAssinatura(resposta, agora) {
   // vence — encerrar no primeiro tiraria acesso ja pago.
   let expiraEm = null;
   let produtoId = null;
+  // O plano-base e o que distingue mensal de trimestral de anual: com UM produto
+  // de assinatura carregando os tres planos, `produtoId` e igual nas tres compras
+  // e so `basePlanId` diz qual foi. Quem precisa da distincao e a entrega mensal
+  // de fichas, que le este campo do documento em vez de reconsultar a Google a
+  // cada tick.
+  let planoBase = null;
   let renovacaoAutomatica = false;
   for (const item of itens) {
     const fim = instante(item && item.expiryTime);
     if (fim && (!expiraEm || anteriorA(expiraEm, fim))) {
       expiraEm = fim;
       produtoId = (item && item.productId) || produtoId;
+      planoBase = (item && item.offerDetails && item.offerDetails.basePlanId) || null;
     }
     if (item && item.autoRenewingPlan && item.autoRenewingPlan.autoRenewEnabled === true) {
       renovacaoAutomatica = true;
@@ -192,6 +199,7 @@ function consolidarAssinatura(resposta, agora) {
     estado,
     vipAtivo: ESTADOS_COM_ACESSO.has(estado) && dentroDoPrazo,
     produtoId,
+    planoBase,
     inicioEm: instante(resposta && resposta.startTime),
     expiraEm,
     renovacaoAutomatica,
@@ -213,6 +221,7 @@ function consolidarTerminal(estadoTerminal, agora) {
     estado: estadoTerminal,
     vipAtivo: false,
     produtoId: null,
+    planoBase: null,
     inicioEm: null,
     // O direito acaba AGORA, e nao no fim do periodo pago: e isso que separa
     // revogacao/estorno de um cancelamento comum.
@@ -417,11 +426,19 @@ function documentosDeEntitlement(atual, proposta) {
   const produtoId =
     proposta.produtoId || (mesmoToken ? atual.produtoId || null : null);
 
+  // Mesma heranca, e por peso maior: sem `planoBase` a entrega mensal de fichas
+  // nao sabe QUANTO deve. Perde-lo numa varredura por relogio (que nao consulta a
+  // Google e portanto nao traz o campo) suspenderia as parcelas de um jogador
+  // adimplente sem nenhum erro aparecer.
+  const planoBase =
+    proposta.planoBase || (mesmoToken ? (atual && atual.planoBase) || null : null);
+
   const publico = {
     uid: proposta.uid,
     vipAtivo: proposta.vipAtivo === true,
     estado: proposta.estado,
     produtoId,
+    planoBase,
     origem: proposta.origem,
     inicioEm: proposta.inicioEm || null,
     expiraEm: proposta.expiraEm || null,
