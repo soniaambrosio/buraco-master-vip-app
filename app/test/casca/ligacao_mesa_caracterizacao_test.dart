@@ -236,42 +236,15 @@ void main() {
   });
 
   // =========================================================================
-  // O DEFEITO — este caso descreve o que a OS remove
+  // O DEFEITO — removido pelo commit que ligou a mesa
   // =========================================================================
-  group('o buraco desta OS', () {
-    testWidgets('o caminho online termina no aviso de fatia seguinte', (
-      tester,
-    ) async {
-      final b = Bancada(uidInicial: 'uid-A');
-      addTearDown(b.fechar);
-
-      await abrirAplicativo(tester, b);
-      await irAoLobby(tester);
-      b.canal.servidorEnvia({'tipo': 'autenticado'});
-      await tester.pumpAndSettle();
-
-      // A pessoa cria a mesa e o servidor responde com assento e partida.
-      await tester.enterText(find.byType(TextField).first, 'Ana');
-      await tester.tap(find.text('Criar mesa'));
-      await tester.pumpAndSettle();
-      b.canal.servidorEnvia({
-        'tipo': 'entrou',
-        'codigo': 'BURACO-0001',
-        'assento': 0,
-      });
-      b.canal.servidorEnvia({'tipo': 'estado', 'visao': visaoDeJogo()});
-      await tester.pumpAndSettle();
-
-      // A visão de partida CHEGA — o transporte funciona…
-      expect(b.online.emJogo, isTrue);
-
-      // …e o que a pessoa vê é um resumo em texto, com a promessa de outra
-      // fatia. É este o defeito: a mesa completa não existe.
-      expect(
-        find.textContaining('A mesa visual completa online é a próxima fatia'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Cartas na sua mão: 3'), findsOneWidget);
-    });
-  });
+  //
+  // Aqui morava `o caminho online termina no aviso de fatia seguinte`: com a
+  // visão de partida chegando do servidor, o app desenhava um resumo em texto
+  // e prometia que a mesa visual completa "é a próxima fatia (A2)".
+  //
+  // Ele foi apagado no MESMO commit que ligou a mesa, e substituído pelo seu
+  // oposto em `mesa_online_test.dart` — `o aviso de "próxima fatia" não existe
+  // mais`. Quem quiser conferir a passagem de "não chega" para "chega" lê o
+  // `git log` deste arquivo, e não uma frase de relatório.
 }

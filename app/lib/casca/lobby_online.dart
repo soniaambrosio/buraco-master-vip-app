@@ -27,11 +27,37 @@
 // da geração da sessão. Quem observa a sessão e traduz cada troca numa única
 // transição do transporte é a `PonteSessaoOnline`, montada na raiz. Ela cobre
 // logout, login e troca de conta; o vigia cobria só logout.
+//
+// ---------------------------------------------------------------------------
+// LOBBY → MESA É UMA TROCA DE CORPO, NÃO UMA ROTA NOVA
+// ---------------------------------------------------------------------------
+//
+// Quando a visão deixa de dizer `lobby: true`, esta tela passa a desenhar a
+// mesa completa NO MESMO LUGAR da pilha de navegação. Não há `push`.
+//
+// A alternativa imperativa — empurrar a mesa como rota quando a partida começa
+// — tem três defeitos, e os três aparecem em produção antes de aparecer em
+// teste. Primeiro: `OnlineService` notifica a cada mensagem do servidor, e um
+// `push` dentro do ouvinte empilha uma mesa por atualização recebida. Dá para
+// remendar com uma bandeira "já empurrei", e aí vem o segundo: um `pop` (o
+// gesto de voltar do Android, que ninguém precisa de permissão para fazer)
+// devolve a pessoa a um lobby cuja mesa já começou — uma tela que afirma
+// "aguardando jogadores" sobre uma partida em andamento. O terceiro é a volta:
+// rodada encerrada, queda, retomada e fim de partida viram, cada um, uma
+// decisão de empilhar ou desempilhar, espalhada por vários pontos.
+//
+// Sendo o corpo desta rota, nada disso existe. O estado do servidor determina o
+// que se desenha, e voltar significa a mesma coisa que sempre significou: sair
+// da tela do online. É o mesmo raciocínio que `casca_de_producao.dart` usa para
+// escolher entre Login e Home, e pelo mesmo motivo.
 
 import 'package:flutter/material.dart';
 
 import '../services/online_service.dart';
 import 'escopo_transporte.dart';
+import 'mesa_online/estado_mesa_online.dart';
+import 'mesa_online/mesa_online_screen.dart';
+import 'mesa_online/porta_de_comandos_online.dart';
 
 class LobbyOnline extends StatefulWidget {
   const LobbyOnline({super.key});
@@ -43,6 +69,13 @@ class LobbyOnline extends StatefulWidget {
 class _LobbyOnlineState extends State<LobbyOnline> {
   OnlineService? _srv;
   bool _pediuConexao = false;
+
+  /// A porta por onde as ações da mesa saem.
+  ///
+  /// Nasce e morre com o transporte que esta tela está usando — ela é um
+  /// ouvinte dele, e uma porta apontando para um `OnlineService` trocado seria
+  /// um ouvinte pendurado num objeto que já não é o da árvore.
+  PortaDeComandosOnline? _porta;
 
   final TextEditingController _codigo = TextEditingController();
   final TextEditingController _apelido = TextEditingController(text: 'Você');
@@ -58,8 +91,16 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     final srv = EscopoTransporte.talvezDe(context);
     if (identical(srv, _srv)) return;
     _srv?.removeListener(_atualizar);
+    _porta?.removeListener(_atualizar);
+    _porta?.dispose();
+    _porta = null;
     _srv = srv;
     _srv?.addListener(_atualizar);
+    if (srv != null) {
+      // A porta também notifica: intenção pendente e recusa são estado dela, e
+      // sem este ouvinte o botão travado nunca destravaria na tela.
+      _porta = PortaDeComandosOnline(srv)..addListener(_atualizar);
+    }
 
     // O PEDIDO DE CONEXÃO É DA PESSOA, e acontece uma vez: abrir esta tela é o
     // gesto de querer jogar online. A trava importa porque
@@ -87,6 +128,10 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   void dispose() {
     // Só solta o ouvinte. O transporte continua vivo — ele é da raiz.
     _srv?.removeListener(_atualizar);
+    // A porta, ao contrário, é DESTA tela: ela foi construída aqui e morre
+    // aqui. Descartá-la também solta o ouvinte que ela mantém no transporte.
+    _porta?.removeListener(_atualizar);
+    _porta?.dispose();
     _codigo.dispose();
     _apelido.dispose();
     super.dispose();
@@ -109,14 +154,48 @@ class _LobbyOnlineState extends State<LobbyOnline> {
       );
     }
 
+    // A LEITURA DA VISÃO ACONTECE UMA VEZ, AQUI. Nenhum dos ramos abaixo lê o
+    // mapa cru por conta própria — o que chega neles é ou um estado validado,
+    // ou uma recusa com motivo.
+    final leitura = AdaptadorVisaoOnline.ler(
+      srv.visao,
+      assentoDaConexao: srv.meuAssento,
+    );
+
+    // PARTIDA EM ANDAMENTO: esta rota deixa de ser o lobby e passa a ser a
+    // mesa. Sem `push` — ver o cabeçalho do arquivo.
+    if (leitura is VisaoDeJogo) {
+      final porta = _porta;
+      if (porta != null) {
+        return MesaOnlineScreen(
+          estado: leitura.estado,
+          porta: porta,
+          conectado: srv.status == OnlineStatus.conectado,
+          avisoDeConexao: _avisoDeConexao(srv),
+          onSair: () {
+            porta.sairDaMesa();
+            // Sair da MESA não é sair da tela do online: a pessoa volta para a
+            // entrada, onde pode criar outra mesa ou entrar num código. Quem
+            // decide sair da tela é o gesto de voltar.
+          },
+        );
+      }
+    }
+
     final v = srv.visao;
     final List<Widget> corpo;
     if (v == null) {
       corpo = _entrada(srv);
-    } else if (v['lobby'] == true) {
+    } else if (leitura is VisaoDeLobby) {
       corpo = _lobby(srv, v);
+    } else if (leitura is VisaoRecusada) {
+      // O servidor mandou algo que não descreve uma mesa. Dizer isso, e dar uma
+      // saída, é o oposto de desenhar uma mesa com os buracos preenchidos por
+      // zero.
+      corpo = _visaoIlegivel(srv, leitura);
     } else {
-      corpo = _emJogo(srv, v);
+      // `VisaoDeJogo` sem porta montada: só acontece fora da casca de produção.
+      corpo = _semTransporteParaJogar();
     }
 
     return _MolduraDoLobby(
@@ -400,80 +479,81 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     ];
   }
 
-  // Partida em andamento: mostra o estado do servidor (prova que a visão chega).
-  // A renderização completa da mesa online é a fatia A2.
-  List<Widget> _emJogo(OnlineService srv, Map<String, dynamic> v) {
-    final placar = (v['placar'] as Map?) ?? const {};
-    final mao = (v['suaMao'] as List?) ?? const [];
-    final suaVez = v['suaVez'] == true;
-    final topo = v['lixoTopo'] as Map?;
-    return [
-      Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1C130C),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0x33EFB94A)),
-        ),
-        child: Column(
-          children: [
-            Text(
-              suaVez ? '👉 Sua vez!' : '⏳ Vez de outro jogador',
-              style: TextStyle(
-                color: suaVez ? _ouroClaro : _mut,
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Placar  —  Nós ${placar['nos'] ?? 0}  ×  ${placar['eles'] ?? 0} Eles',
-              style: const TextStyle(color: _texto),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Rodada ${v['rodada'] ?? '-'}  ·  ${(v['modalidade'] ?? '').toString().toUpperCase()}',
-              style: const TextStyle(color: _mut, fontSize: 12),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Cartas na sua mão: ${mao.length}',
-              style: const TextStyle(color: _texto),
-            ),
-            if (topo != null)
-              Text(
-                'Topo do lixo: ${topo['valor'] ?? ''} ${topo['naipe'] ?? ''}',
-                style: const TextStyle(color: _mut, fontSize: 12),
-              ),
-          ],
-        ),
+  /// O que dizer sobre a conexão enquanto a mesa está aberta.
+  ///
+  /// Nulo quando não há nada a dizer — e é assim que a faixa some. Uma faixa
+  /// permanente dizendo "conectado" é ruído sobre a mesa.
+  String? _avisoDeConexao(OnlineService srv) => switch (srv.status) {
+    OnlineStatus.conectado => null,
+    OnlineStatus.conectando => 'reconectando… as ações voltam quando a mesa voltar',
+    OnlineStatus.autenticando => 'identificando você…',
+    OnlineStatus.naoAutenticado => 'sua sessão terminou — entre de novo para jogar',
+    OnlineStatus.semConexao => 'sem conexão — a mesa está congelada como você a deixou',
+    _ => 'sem conexão com o servidor',
+  };
+
+  /// A visão chegou e não descreve uma mesa.
+  ///
+  /// Nenhuma tentativa de desenhar o que deu para entender: uma mesa meio lida
+  /// é indistinguível, para quem olha, de uma mesa em que se está perdendo.
+  List<Widget> _visaoIlegivel(OnlineService srv, VisaoRecusada recusa) => [
+    Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0x33E05B5B),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0x55E05B5B)),
       ),
-      const SizedBox(height: 16),
-      Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0x2227AE60),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0x5527AE60)),
-        ),
-        child: const Text(
-          '✅ Conectado e recebendo a partida do servidor!\n'
-          'A mesa visual completa online é a próxima fatia (A2).',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Color(0xFFBFE9CC),
-            fontSize: 12.5,
-            height: 1.4,
+      child: Column(
+        children: [
+          const Text('⚠️', style: TextStyle(fontSize: 28)),
+          const SizedBox(height: 10),
+          const Text(
+            'Não consegui entender a mesa',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _ouroClaro,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Text(
+            recusa.motivo,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFF6C9C9),
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+        ],
       ),
-      const SizedBox(height: 10),
-      TextButton(
-        onPressed: srv.sair,
-        child: const Text('Sair da mesa', style: TextStyle(color: _mut)),
+    ),
+    const SizedBox(height: 14),
+    OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: _ouroClaro,
+        side: const BorderSide(color: _ouro),
+        padding: const EdgeInsets.symmetric(vertical: 13),
       ),
-    ];
-  }
+      onPressed: srv.sair,
+      child: const Text(
+        'Sair da mesa',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+    ),
+  ];
+
+  /// Visão de partida sem porta de comandos montada. Só alcançável fora da
+  /// casca de produção — a mesma situação em que não há transporte.
+  List<Widget> _semTransporteParaJogar() => const [
+    Text(
+      'O jogo online não está disponível nesta visualização.',
+      textAlign: TextAlign.center,
+      style: TextStyle(color: _mut, fontSize: 13),
+    ),
+  ];
 }
 
 class _MolduraDoLobby extends StatelessWidget {
