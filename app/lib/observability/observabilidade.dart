@@ -17,6 +17,19 @@
 //   · O mesmo defeito não é emitido duas vezes. Framework e zona reportam o
 //     mesmo erro em vários cenários; a janela de deduplicação corta isso.
 
+// `prefer_initializing_formals` pede `required this._coletor` no construtor
+// privado abaixo. Não dá: parâmetro NOMEADO privado exige o experimento
+// `private-named-parameters`, e sem ele o compilador recusa —
+//
+//     Error: This requires the experimental 'private-named-parameters'
+//     language feature to be enabled.
+//
+// Verificado, não deduzido. A regra é falso positivo para parâmetro nomeado
+// neste SDK. Fica no arquivo inteiro porque o apontamento é reportado na
+// LISTA DE INICIALIZAÇÃO, não na linha do construtor, e `// ignore:` local
+// erra o alvo. O apontamento só aparece no Flutter do CI (3.44.8).
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -30,16 +43,6 @@ import 'trilha_operacional.dart';
 /// Fachada única da observabilidade. O app inteiro fala só com
 /// `Observabilidade.instancia`.
 class Observabilidade {
-  // `prefer_initializing_formals` pede `required this._coletor` aqui. Não dá:
-  // parâmetro NOMEADO privado exige o experimento `private-named-parameters`,
-  // e sem ele o próprio compilador recusa —
-  //
-  //     Error: This requires the experimental 'private-named-parameters'
-  //     language feature to be enabled.
-  //
-  // Ou seja, a regra é um falso positivo para parâmetro nomeado neste SDK.
-  // O apontamento só aparece no Flutter do CI (3.44.8), não no local (3.41.4).
-  // ignore: prefer_initializing_formals
   Observabilidade._({
     required this.identidade,
     required ColetorDeFalhas coletor,
