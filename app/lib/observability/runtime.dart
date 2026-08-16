@@ -45,6 +45,8 @@ Future<void> runBuracoMasterVip({
     identidade: identidade,
     coletor: coletor,
     forcarColetorReal: forcarColetorReal,
+    // O coletor real depende do Firebase, que sobe dentro do corpo.
+    adiarColetor: true,
     corpo: (obs) async {
       // Dentro da zona, por exigência do `runZonedGuarded`.
       WidgetsFlutterBinding.ensureInitialized();
@@ -66,6 +68,12 @@ Future<void> runBuracoMasterVip({
           );
         }
       }
+
+      // Só AGORA o coletor real pode existir: até a linha acima,
+      // `FirebaseCrashlytics.instance` lança `[core/no-app]`. As portas já
+      // estavam ligadas desde o começo, e o que tiver acontecido no meio do
+      // caminho — inclusive a falha do próprio Firebase — sai do buffer aqui.
+      await obs.ligarColetorPendente();
 
       runApp(construirApp());
 
@@ -89,6 +97,7 @@ Future<void> executarObservado({
   bool forcarColetorReal = false,
   DateTime Function()? relogio,
   bool instalarHooks = true,
+  bool adiarColetor = false,
 }) async {
   final obs = await Observabilidade.instalar(
     identidade: identidade,
@@ -96,6 +105,7 @@ Future<void> executarObservado({
     forcarColetorReal: forcarColetorReal,
     relogio: relogio,
     instalarHooks: instalarHooks,
+    adiarColetor: adiarColetor,
   );
 
   final pronto = Completer<void>();

@@ -87,6 +87,19 @@ class Observabilidade {
   final Map<String, DateTime> _vistos = <String, DateTime>{};
   static const int _tetoDeAssinaturas = 128;
 
+  /// Coletor real que ainda não pôde iniciar (o Firebase não subiu).
+  ColetorDeFalhas? _coletorPendente;
+
+  /// Eventos ocorridos antes do coletor existir.
+  ///
+  /// Pequeno de propósito: a janela entre instalar as portas e o Firebase
+  /// subir é de milissegundos, e o que interessa dela é o começo — se algo
+  /// quebrar aí, quebra logo. Guardar mais seria segurar memória para nada.
+  final List<EventoFalha> _bufferInicial = <EventoFalha>[];
+  static const int _tetoDoBuffer = 20;
+
+  bool get aguardandoColetor => _coletorPendente != null;
+
   // --- instalação -------------------------------------------------------
 
   /// Instala a camada e liga as portas 1 e 2. A porta 3 (zona) é ligada por
@@ -103,6 +116,7 @@ class Observabilidade {
     Duration janelaDeduplicacao = const Duration(seconds: 10),
     Redator redator = const Redator(),
     bool instalarHooks = true,
+    bool adiarColetor = false,
   }) async {
     final id = identidade ?? IdentidadeBuild.doBinario();
     final obs = Observabilidade._(
@@ -121,7 +135,13 @@ class Observabilidade {
           ehDebug: kDebugMode,
           forcar: forcarColetorReal,
         );
-    if (autorizado) {
+    if (autorizado && adiarColetor) {
+      // O coletor real depende do Firebase, que ainda não subiu. Guardamos o
+      // coletor e ligamos as portas AGORA mesmo assim: falha durante a
+      // inicialização do Firebase é justamente o que ninguém consegue ver, e
+      // é o que o buffer preserva até haver para onde mandar.
+      obs._coletorPendente = coletorReal;
+    } else if (autorizado) {
       final ok = await obs._protegidoAsync(
         () => coletorReal.iniciar(id),
         seFalhar: false,
@@ -287,7 +307,46 @@ class Observabilidade {
       eventosDeduplicados++;
       return;
     }
+    if (_coletorPendente != null) {
+      // Ainda não há para onde mandar. Segura até [ligarColetorPendente].
+      _bufferInicial.add(evento);
+      if (_bufferInicial.length > _tetoDoBuffer) _bufferInicial.removeAt(0);
+      return;
+    }
     _semDeixarEscapar(() => _coletor.enviar(evento));
+  }
+
+  /// Liga o coletor que ficou pendente e despeja o que aconteceu até aqui.
+  ///
+  /// Chamado por [runBuracoMasterVip] depois da inicialização do Firebase —
+  /// antes disso `FirebaseCrashlytics.instance` lança `[core/no-app]`.
+  ///
+  /// Devolve `true` se o coletor real assumiu. Falhar aqui não é fatal: o app
+  /// segue com o [ColetorNulo], como sempre.
+  Future<bool> ligarColetorPendente() async {
+    final pendente = _coletorPendente;
+    if (pendente == null) return _coletor is! ColetorNulo;
+
+    final ok = await _protegidoAsync(
+      () => pendente.iniciar(identidade),
+      seFalhar: false,
+    );
+    _coletorPendente = null;
+
+    if (ok != true) {
+      _bufferInicial.clear();
+      marco(MarcoOperacional.coletorIndisponivel);
+      return false;
+    }
+
+    _coletor = pendente;
+    marco(MarcoOperacional.coletorIniciado);
+    final atrasados = List<EventoFalha>.of(_bufferInicial);
+    _bufferInicial.clear();
+    for (final e in atrasados) {
+      _semDeixarEscapar(() => _coletor.enviar(e));
+    }
+    return true;
   }
 
   bool _ehRepeticao(String assinatura) {

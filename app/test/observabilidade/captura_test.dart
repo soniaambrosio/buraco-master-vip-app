@@ -415,6 +415,90 @@ void main() {
     });
   });
 
+  group('coletor adiado — o Firebase ainda não subiu', () {
+    // Este grupo nasceu de um defeito encontrado num aparelho de verdade:
+    // `ColetorCrashlytics()` resolvia `FirebaseCrashlytics.instance` no
+    // construtor, e como o coletor é passado como ARGUMENTO de
+    // `runBuracoMasterVip`, isso rodava antes da zona protegida existir. O
+    // `[core/no-app]` derrubava o `main()` inteiro: sem UI, sem
+    // observabilidade e sem nada no painel para contar por quê. Nenhum teste
+    // em Dart pegava, porque em teste o coletor sempre vinha pronto.
+
+    Future<Observabilidade> adiado(ColetorDeFalhas c) => Observabilidade.instalar(
+          identidade: identidadeDeTeste,
+          coletorReal: c,
+          forcarColetorReal: true,
+          adiarColetor: true,
+          instalarHooks: false,
+          relogio: () => agora,
+        );
+
+    test('adiado, o coletor NÃO é iniciado durante a instalação', () async {
+      final obs = await adiado(memoria);
+      expect(obs.aguardandoColetor, isTrue);
+      expect(memoria.vezesIniciado, 0,
+          reason: 'iniciar() cedo demais é exatamente o defeito');
+      expect(obs.coletor, isA<ColetorNulo>());
+    });
+
+    test('o que falhar na janela é guardado e entregue depois', () async {
+      final obs = await adiado(memoria);
+
+      // A falha típica da janela é o próprio Firebase não subir — e é
+      // justamente a que ninguém conseguia ver.
+      obs.registrarFalha(StateError('Firebase não inicializou'));
+      expect(memoria.eventos, isEmpty, reason: 'ainda não há para onde mandar');
+
+      expect(await obs.ligarColetorPendente(), isTrue);
+      expect(memoria.vezesIniciado, 1);
+      expect(memoria.eventos, hasLength(1));
+      expect(memoria.eventos.single.mensagem, contains('Firebase não inicializou'));
+      expect(obs.aguardandoColetor, isFalse);
+    });
+
+    test('depois de ligado, evento novo vai direto', () async {
+      final obs = await adiado(memoria);
+      await obs.ligarColetorPendente();
+      obs.registrarFalha(StateError('depois de ligado'));
+      expect(memoria.eventos, hasLength(1));
+    });
+
+    test('o buffer não cresce sem limite', () async {
+      final obs = await adiado(memoria);
+      for (var i = 0; i < 60; i++) {
+        obs.registrarFalha(StateError('falha $i'));
+      }
+      await obs.ligarColetorPendente();
+      expect(memoria.eventos.length, lessThanOrEqualTo(20));
+      expect(memoria.eventos.last.mensagem, contains('falha 59'));
+    });
+
+    test('coletor que falha ao ligar não derruba nada', () async {
+      final obs = await adiado(ColetorQuebrado());
+      obs.registrarFalha(StateError('na janela'));
+
+      expect(await obs.ligarColetorPendente(), isFalse);
+      expect(obs.coletor, isA<ColetorNulo>());
+      expect(obs.trilha.marcos, contains(MarcoOperacional.coletorIndisponivel));
+      expect(() => obs.registrarFalha(StateError('depois')), returnsNormally);
+    });
+
+    test('ligar de novo, sem pendência, é inofensivo', () async {
+      final obs = await adiado(memoria);
+      expect(await obs.ligarColetorPendente(), isTrue);
+      expect(await obs.ligarColetorPendente(), isTrue);
+      expect(memoria.vezesIniciado, 1);
+    });
+
+    test('sem adiar, o comportamento antigo continua valendo', () async {
+      final obs = await instalar();
+      expect(obs.aguardandoColetor, isFalse);
+      expect(memoria.vezesIniciado, 1);
+      obs.registrarFalha(StateError('direto'));
+      expect(memoria.eventos, hasLength(1));
+    });
+  });
+
   test('a instância inerte antes de instalar é segura', () {
     final inerte = Observabilidade.instancia;
     expect(() => inerte.registrarFalha(StateError('x')), returnsNormally);

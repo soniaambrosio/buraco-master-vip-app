@@ -35,9 +35,28 @@ class FalhaRedigida implements Exception {
 
 class ColetorCrashlytics implements ColetorDeFalhas {
   ColetorCrashlytics({FirebaseCrashlytics? crashlytics})
-      : _crashlytics = crashlytics ?? FirebaseCrashlytics.instance;
+      : _injetado = crashlytics;
 
-  final FirebaseCrashlytics _crashlytics;
+  /// Só é passado em teste. Em produção fica nulo e a instância é resolvida
+  /// sob demanda — ver [_crashlytics].
+  final FirebaseCrashlytics? _injetado;
+
+  /// Resolvido a cada uso, NUNCA no construtor.
+  ///
+  /// `FirebaseCrashlytics.instance` chama `Firebase.app()` por baixo, e isso
+  /// lança `[core/no-app]` enquanto o Firebase não tiver inicializado. No
+  /// construtor isso é fatal de um jeito cruel: o coletor é criado como
+  /// ARGUMENTO da função que sobe o app —
+  ///
+  ///     runBuracoMasterVip(coletor: ColetorCrashlytics(), ...)
+  ///
+  /// — e argumento é avaliado ANTES da chamada. A exceção acontecia fora da
+  /// zona protegida, antes de existir handler nenhum, e derrubava o `main()`
+  /// inteiro: sem UI, sem observabilidade e sem nada no painel contando a
+  /// história. Aconteceu num aparelho de verdade; nenhum teste em Dart pegava,
+  /// porque em teste o coletor sempre vinha injetado.
+  FirebaseCrashlytics get _crashlytics =>
+      _injetado ?? FirebaseCrashlytics.instance;
 
   @override
   String get nome => 'crashlytics';
