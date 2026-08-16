@@ -13,6 +13,10 @@
  * fica de fora e so o invólucro `onCall` (autenticacao e claim), coberto pelas
  * Rules e pela checagem `exigirAutoridadeDePartida`.
  *
+ * As duas moram em `src/conquistas.ts`, e nao em `src/rastreabilidade.ts`,
+ * porque `index.ts` reexporta este ultimo e o Firebase trata cada export do
+ * entrypoint como funcao a implantar.
+ *
  * Uso (a partir de functions/):
  *   npm run build:domain && npm run build
  *   npm run emulador:conquistas
@@ -35,7 +39,7 @@ initializeApp({ projectId: process.env.GCLOUD_PROJECT });
 const {
   planejarPrimeiraBatidaReal,
   aplicarPlanoDeConquista,
-} = require('../lib/rastreabilidade.js');
+} = require('../lib/conquistas.js');
 
 const db = getFirestore();
 
