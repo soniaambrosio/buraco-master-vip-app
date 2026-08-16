@@ -26,6 +26,22 @@
 // é a única reação correta.
 //
 // ---------------------------------------------------------------------------
+// DUAS PROTEÇÕES POR CHAVE, E UMA GLOBAL
+// ---------------------------------------------------------------------------
+//
+// Geração e número de pedido protegem CADA CHAVE do próprio passado. Elas não
+// bastam, e a homologação independente mostrou por quê: com duas chaves em voo
+// e uma virada de temporada no meio, cada resposta é, na sua própria chave, a
+// mais recente — e mesmo assim uma delas fala de um mundo que acabou. A
+// resposta vencida era devolvida como atual e ainda despejava do cache a
+// fotografia boa da temporada nova.
+//
+// A terceira guarda é GLOBAL e mora em [_aceitarTemporada]. Ela não ordena
+// `temporadaId` — o cliente não tem como saber qual identificador é mais novo,
+// e fingir que sabe seria a mesma classe de erro que inventar liga. O que ele
+// sabe é a ordem em que perguntou.
+//
+// ---------------------------------------------------------------------------
 // O QUE ELE NÃO FAZ
 // ---------------------------------------------------------------------------
 //
@@ -107,6 +123,29 @@ class LeitorDeRanking {
 
   int _sequencia = 0;
 
+  /// A temporada que este leitor aceita como vigente, e o NÚMERO DO PEDIDO que
+  /// a estabeleceu.
+  ///
+  /// ---------------------------------------------------------------------
+  /// POR QUE UM NÚMERO DE PEDIDO, E NÃO O `temporadaId` SOZINHO
+  /// ---------------------------------------------------------------------
+  ///
+  /// A pergunta "T1 ou T2 é mais nova?" não tem resposta no cliente.
+  /// `temporadaId` é opaco: comparar `'T-2026-01'` com `'T-2026-02'` por ordem
+  /// de string funcionaria hoje e mentiria no dia em que a autoridade emitisse
+  /// `'verao'` e `'inverno'`, ou um ULID, ou qualquer coisa que não ordene. E
+  /// aceitar como mais nova a última resposta que CHEGOU é justamente o defeito:
+  /// resposta atrasada chega por último e não é a mais nova.
+  ///
+  /// O que o cliente sabe com certeza é a ordem em que ELE PERGUNTOU. Então a
+  /// comparação é entre pedidos, não entre temporadas: uma resposta de outra
+  /// temporada só troca a temporada aceita se nasceu de um pedido POSTERIOR ao
+  /// que estabeleceu a atual. Nascida antes, ela é notícia velha — mesmo que
+  /// tenha chegado depois, e mesmo que seja de outra chave, que é o caso que a
+  /// guarda de sequência por chave não via.
+  String? _temporadaAceita;
+  int _pedidoDaTemporada = 0;
+
   /// Quantas chamadas de transporte foram realmente emitidas. Só diagnóstico de
   /// teste — nunca um número de produto.
   int get chamadasEmitidas => _chamadas;
@@ -118,12 +157,19 @@ class LeitorDeRanking {
   /// junto. Descartar o cache aqui é o que garante que a fotografia de A não
   /// apareça em B nem por um frame — mesmo que B tenha, por acaso, o mesmo
   /// `publicId` num teste mal montado.
+  /// A TEMPORADA ACEITA VAI JUNTO, e essa linha não é higiene: ela é o que
+  /// impede a conta que entra de herdar a autoridade temporal da que saiu. Sem
+  /// isso, um jogador cuja sessão anterior já vira T2 receberia a resposta
+  /// legítima de T1 da conta nova e a descartaria como "vencida" — ficaria sem
+  /// ranking nenhum, por um fato que não é sobre ele.
   void aoMudarSessao(int geracao) {
     if (geracao == _geracao) return;
     _geracao = geracao;
     _ultimoPedido.clear();
     _emVoo.clear();
     _cache.clear();
+    _temporadaAceita = null;
+    _pedidoDaTemporada = 0;
   }
 
   /// A fotografia guardada para esta conta e alvo, se houver.
@@ -201,21 +247,19 @@ class LeitorDeRanking {
       _emVoo.remove(chave);
     }
 
-    // AS DUAS GUARDAS, nesta ordem, e ANTES de qualquer escrita.
+    // AS TRÊS GUARDAS, nesta ordem, e ANTES de qualquer escrita.
     //
     // A geração primeiro: se a sessão trocou, esta resposta é sobre outra
     // pessoa, e nem o cache pode recebê-la.
     if (geracaoDoPedido != _geracao) return null;
-    // Depois a sequência: mesma sessão, mesma chave, mas já houve pedido mais
-    // novo. A resposta é velha e não pode sobrescrever a mais recente — nem
-    // quando a velha chega DEPOIS, que é o caso que ninguém encena e todo mundo
-    // sofre.
+    // Depois a sequência POR CHAVE: mesma sessão, mesma chave, mas já houve
+    // pedido mais novo. A resposta é velha e não pode sobrescrever a mais
+    // recente — nem quando a velha chega DEPOIS.
     if (_ultimoPedido[chave] != numero) return null;
-
-    // A invalidação por temporada vem DEPOIS das guardas de propósito: uma
-    // resposta descartada não pode esvaziar o cache de quem está na tela. Já
-    // aconteceu de uma resposta velha "limpar" dado bom a caminho do lixo.
-    _invalidarPorTemporada(temporadaDaResposta);
+    // E por último a temporada, que é GLOBAL. As duas de cima são por chave e
+    // por sessão; nenhuma delas enxerga duas chaves em voo separadas por uma
+    // virada de temporada, que era exatamente o buraco.
+    if (!_aceitarTemporada(temporadaDaResposta, numero)) return null;
 
     // Só fotografia boa entra no cache. Guardar falha faria o retry seguinte
     // mostrar o erro anterior como se fosse dado.
@@ -225,18 +269,39 @@ class LeitorDeRanking {
     return estado;
   }
 
-  /// A temporada virou: fotografias de outra temporada não valem mais.
+  /// Decide se esta resposta ainda pertence ao presente.
   ///
-  /// A virada só é perceptível quando uma resposta nova revela um
-  /// `temporadaId` diferente — o cliente não tem calendário, e inventar um
-  /// seria a mesma classe de erro que inventar liga. Quando ela aparece, tudo
-  /// que era de outra temporada sai do cache de uma vez, para que nenhuma tela
-  /// combine a liga de uma temporada com a colocação de outra.
-  void _invalidarPorTemporada(String? temporadaId) {
-    if (temporadaId == null) return;
+  /// Devolve `false` para a resposta VENCIDA — a que fala de uma temporada
+  /// diferente da aceita e nasceu de um pedido ANTERIOR ao que estabeleceu a
+  /// aceita. Nesse caso ela não é devolvida, não entra no cache, não invalida
+  /// nada e não muda a temporada aceita: uma notícia velha não tem o direito de
+  /// apagar a nova, que era o segundo efeito do defeito.
+  ///
+  /// Devolve `true` nos três casos legítimos:
+  ///
+  ///   - `temporadaId` nulo — o contrato publica nulo em
+  ///     `consultarJogadorPorIdPublico` quando não há temporada vigente. Isso é
+  ///     ausência de notícia, e não notícia de virada: não estabelece, não
+  ///     derruba e não invalida nada. Uma fotografia sem temporada também não
+  ///     envenena o cache, porque não afirma temporada nenhuma;
+  ///   - mesma temporada da aceita — vale mesmo vindo de outra chave e mesmo
+  ///     chegando fora de ordem: não há nada de vencido nela;
+  ///   - temporada diferente vinda de pedido POSTERIOR — é a virada de verdade.
+  ///     Ela passa a ser a aceita, e só então as fotografias incompatíveis saem
+  ///     do cache.
+  bool _aceitarTemporada(String? temporadaId, int numero) {
+    if (temporadaId == null) return true;
+    if (temporadaId == _temporadaAceita) return true;
+    if (_temporadaAceita != null && numero < _pedidoDaTemporada) return false;
+
+    _temporadaAceita = temporadaId;
+    _pedidoDaTemporada = numero;
+    // Fotografia SEM temporada fica: ela não afirma pertencer a nenhuma, então
+    // não pode estar errada sobre esta.
     _cache.removeWhere(
       (_, estado) =>
           estado.temporadaId != null && estado.temporadaId != temporadaId,
     );
+    return true;
   }
 }
