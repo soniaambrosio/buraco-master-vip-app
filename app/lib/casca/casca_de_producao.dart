@@ -96,10 +96,11 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
     _relogioDaEspera?.cancel();
     _relogioDaEspera = Timer(_limite, () {
       if (!mounted) return;
-      // A conferência é feita AGORA, e não quando o timer foi armado: se a
-      // sessão respondeu no meio do caminho, não há nada a relatar.
-      final sessao = EscopoSessao.talvezDe(context);
-      if (sessao != null && sessao.resolvida) return;
+      // Marca e pronto: não é preciso conferir a sessão aqui, porque o `build`
+      // só consulta esta bandeira DEPOIS de constatar que ela não respondeu. Se
+      // respondeu no meio do caminho, o ramo nunca é avaliado — e ler o escopo
+      // de dentro de um timer criaria dependência fora da fase de build por
+      // nada.
       setState(() => _esperaEstourou = true);
     });
   }
