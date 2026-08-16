@@ -51,14 +51,26 @@ class AppFirebaseEsperado {
 
 /// Veredito da conferência.
 class ResultadoConfigFirebase {
-  ResultadoConfigFirebase(List<String> reprovacoes, {this.clientesEncontrados = 0})
-      : reprovacoes = List<String>.unmodifiable(reprovacoes);
+  ResultadoConfigFirebase(
+    List<String> reprovacoes, {
+    List<String> pacotesEncontrados = const <String>[],
+  })  : reprovacoes = List<String>.unmodifiable(reprovacoes),
+        pacotesEncontrados = List<String>.unmodifiable(pacotesEncontrados);
 
   final List<String> reprovacoes;
 
+  /// Pacotes que o arquivo declara.
+  ///
+  /// Estes SÃO impressos no diagnóstico, e é uma exceção deliberada à regra de
+  /// não ecoar o arquivo: package name é identificador público — aparece na URL
+  /// da Play Store de qualquer app. O que nunca sai daqui é `api_key`,
+  /// `client_id` e afins. Sem esta lista, "o pacote esperado não está no
+  /// arquivo" não diz qual arquivo foi parar no Secret.
+  final List<String> pacotesEncontrados;
+
   /// Quantos aplicativos Android o arquivo declara. Um `google-services.json`
   /// de projeto costuma trazer todos; saber quantos ajuda a diagnosticar.
-  final int clientesEncontrados;
+  int get clientesEncontrados => pacotesEncontrados.length;
 
   bool get aprovado => reprovacoes.isEmpty;
   int get codigoDeSaida => aprovado ? 0 : 1;
@@ -137,9 +149,9 @@ ResultadoConfigFirebase validarGoogleServices({
   if (oClienteCerto == null) {
     reprovacoes.add(
         'o arquivo não declara o pacote `${esperado.packageName}`; '
-        'declara ${pacotesVistos.length} pacote(s), nenhum deles o esperado');
+        'declara ${pacotesVistos.length}: ${pacotesVistos.join(', ')}');
     return ResultadoConfigFirebase(reprovacoes,
-        clientesEncontrados: pacotesVistos.length);
+        pacotesEncontrados: pacotesVistos);
   }
 
   final ci = oClienteCerto['client_info'] as Map;
@@ -160,6 +172,5 @@ ResultadoConfigFirebase validarGoogleServices({
     reprovacoes.add('o pacote `${esperado.packageName}` está sem `api_key`');
   }
 
-  return ResultadoConfigFirebase(reprovacoes,
-      clientesEncontrados: pacotesVistos.length);
+  return ResultadoConfigFirebase(reprovacoes, pacotesEncontrados: pacotesVistos);
 }

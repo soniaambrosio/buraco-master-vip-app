@@ -56,7 +56,16 @@ void main(List<String> args) {
   stdout.writeln('pacote esperado:   ${esperado.packageName}');
   stdout.writeln('App ID esperado:   ${esperado.mobilesdkAppId}');
   stdout.writeln('apps no arquivo:   ${r.clientesEncontrados}');
+  for (final p in r.pacotesEncontrados) {
+    stdout.writeln('  · $p${p == esperado.packageName ? '   <- o esperado' : ''}');
+  }
   stdout.writeln('---------------------------------');
   stdout.writeln(r.veredito);
+
+  // Anotação do GitHub Actions: sobe o motivo para o topo do run, em vez de
+  // deixá-lo enterrado num log que só quem tem acesso de admin baixa.
+  for (final motivo in r.reprovacoes) {
+    stdout.writeln('::error title=google-services.json::$motivo');
+  }
   exit(r.codigoDeSaida);
 }
