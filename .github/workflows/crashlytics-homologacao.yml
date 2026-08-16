@@ -112,7 +112,12 @@ jobs:
           # evita um "exit code 1" mudo, cujo log só quem é admin baixa.
           if ! flutter analyze lib/observability > /tmp/analyze.txt 2>&1; then
             cat /tmp/analyze.txt
-            echo "::error title=analyze::$(grep -cE '^\s+(error|warning|info)' /tmp/analyze.txt) apontamento(s) em lib/observability"
+            # Uma anotação POR apontamento. Contar não adianta: quem itera
+            # precisa do arquivo, da linha e da regra, e o log completo do run
+            # só quem é admin do repositório consegue baixar.
+            grep -E '^\s+(error|warning|info)' /tmp/analyze.txt | while read -r linha; do
+              echo "::error title=analyze::${linha}"
+            done
             exit 1
           fi
           cat /tmp/analyze.txt
