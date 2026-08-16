@@ -8,7 +8,11 @@
   },
   "scripts": {
     "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio. Mesma disciplina de firebase/testes/package.json.",
-    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js",
+    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/adversarial.test.js",
+    "//test:baseline": "A suite historica exatamente como estava antes da homologacao adversarial, para que o baseline de 79 testes continue reproduzivel por um comando so.",
+    "test:baseline": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js",
+    "//test:adversarial": "Matriz A-W. UNICO alvo que exige `npm ci`: ele carrega `index.js` com as portas trocadas por falsas (ver test/apoio/carga_index.js), e `index.js` importa firebase-functions. Os outros tres continuam rodando sem node_modules.",
+    "test:adversarial": "node --test test/adversarial.test.js",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
