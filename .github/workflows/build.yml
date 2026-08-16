@@ -34,6 +34,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # OBRIGATÓRIO para o gate de identidade: o versionCode determinístico
+          # é `git rev-list --count HEAD`, e num clone raso isso vale 1 sempre.
+          fetch-depth: 0
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -148,7 +152,11 @@ jobs:
           ls -l app_build/assets/torneios/premiacao/coroas/ app_build/assets/torneios/premiacao/selos/
 
       - name: Add Firebase + Google Sign-In + Audio deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+        # firebase_crashlytics vai com VERSÃO EXATA (sem `^`): o pubspec deste
+        # projeto é gerado a cada run, então a única trava possível é a
+        # restrição de versão. 5.2.7 declara `sdk: ^3.6.0` e
+        # `flutter: >=3.27.0`, satisfeitos pelo Flutter 3.44.8 pinado acima.
+        run: cd app_build && flutter pub add firebase_core "firebase_crashlytics:5.2.7" firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
 
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
@@ -322,6 +330,27 @@ jobs:
           flutter test test/conexao_producao_test.dart --reporter expanded
           echo "PORTÃO VERDE: conexão publicável validada no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE QUALIDADE — observabilidade e identidade de build"
+        # Cobre captura (framework/zona/plataforma/manual), redação
+        # adversarial, deduplicação, coletor indisponível, manifesto
+        # reprodutível e as regras do gate de release.
+        #
+        # Posição, e por quê: fica DEPOIS dos portões da Casca e da conexão e
+        # ANTES da análise estática. Isso não é estética — a análise abaixo roda
+        # sobre `lib test` de dentro do `app_build`, e são os portões que copiam
+        # as suítes para lá. Copiar a observabilidade depois do analyze deixaria
+        # justamente a camada nova fora da análise.
+        run: |
+          if [ ! -d app/test/observabilidade ]; then
+            echo "ERRO: app/test/observabilidade não encontrado — o portão é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/observabilidade
+          cp app/test/observabilidade/*.dart app_build/test/observabilidade/
+          cd app_build
+          flutter test test/observabilidade --reporter expanded
+          echo "PORTÃO VERDE: observabilidade validada no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE CONFIGURAÇÃO — endereço do servidor deste build"
         # O app recusa endereço ruim em tempo de execução, mas descobrir isso no
         # celular de quem instalou é tarde demais. Aqui a mesma regra roda ANTES
@@ -363,6 +392,19 @@ jobs:
           flutter analyze --no-fatal-infos --no-fatal-warnings lib test
           echo "PORTÃO VERDE: análise estática sem erros no commit ${GITHUB_SHA}."
 
+      - name: "GATE DE IDENTIDADE — pré-build (SHA, árvore, versionCode)"
+        # Reprova ANTES de compilar: SHA ausente, árvore suja, versionCode
+        # inválido/repetido/regressivo. Exporta os --dart-define que gravam a
+        # identidade DENTRO do binário — é o que permite um crash em campo
+        # dizer de qual commit ele veio.
+        run: |
+          dart run app/tool/gate_identidade_build.dart --ambiente=homologacao --sem-artefatos
+          dart run app/tool/gate_identidade_build.dart --ambiente=homologacao --defines > /tmp/bmv-defines.txt
+          echo "BMV_DEFINES=$(tr '\n' ' ' < /tmp/bmv-defines.txt)" >> "$GITHUB_ENV"
+          echo "BMV_VERSION_CODE=$(grep BMV_VERSION_CODE /tmp/bmv-defines.txt | cut -d= -f3)" >> "$GITHUB_ENV"
+          echo "--- defines desta build ---"
+          cat /tmp/bmv-defines.txt
+
       - name: Bump minSdk to 23 (Firebase)
         run: |
           f=app_build/android/app/build.gradle.kts
@@ -385,9 +427,13 @@ jobs:
           echo "key.properties criado (senhas ocultas):"
           sed 's/Password=.*/Password=***/' app_build/android/key.properties
 
-      - name: Patch build.gradle.kts (signingConfig 'test' + versionCode incremental)
+      - name: Patch build.gradle.kts (signingConfig 'test' + versionCode determinístico)
         env:
-          VERSION_CODE: ${{ github.run_number }}
+          # ANTES: ${{ github.run_number }} — um contador do CI. Recompilar o
+          # MESMO commit dava outro número, e renomear o workflow zerava o
+          # contador (regressão). AGORA: a contagem de commits até o HEAD,
+          # calculada e auditada pelo gate. Mesmo commit -> mesmo versionCode.
+          VERSION_CODE: ${{ env.BMV_VERSION_CODE }}
         run: |
           python3 - <<'PY'
           import os, re
@@ -647,13 +693,32 @@ jobs:
           echo "baralho: $(find app_build/assets/baralho -maxdepth 1 -type f | wc -l) | sons: $(find app_build/assets/sons -maxdepth 1 -type f | wc -l) | perfil: $(find app_build/assets/perfil -maxdepth 1 -type f | wc -l) | ranking principais: $(find app_build/assets/ranking -maxdepth 1 -type f | wc -l) | selos: $(find app_build/assets/ranking/selos -maxdepth 1 -type f | wc -l) | hall: $(find app_build/assets/hall -maxdepth 1 -type f | wc -l) | inicio: $(find app_build/assets/inicio -maxdepth 1 -type f | wc -l) | configurar mesa: $(find app_build/assets/configurar_mesa -maxdepth 1 -type f | wc -l)"
 
       - name: Build release APK por ABI (menor; arm64 pro celular)
-        # O endereço do servidor entra AQUI, pela configuração do build. Sem
-        # este --dart-define o app sai sem endpoint e o online não sobe — de
-        # propósito: é melhor falhar claro do que embutir endereço no código.
+        # Este passo é onde as DUAS linhagens se encontram, e as duas coisas que
+        # elas gravam no binário são necessárias — nenhuma substitui a outra:
+        #
+        #   BMV_SERVIDOR_URL (Casca/conexão) — o endereço do servidor entra AQUI,
+        #   pela configuração do build. Sem ele o app sai sem endpoint e o online
+        #   não sobe, de propósito: é melhor falhar claro do que embutir endereço
+        #   no código. O portão de configuração acima já reprovou endereço
+        #   ausente, inseguro ou local antes de chegarmos neste ponto.
+        #
+        #   BMV_DEFINES (observabilidade) — a identidade de build (SHA, branch,
+        #   versionCode, ambiente, toolchain) gravada DENTRO do binário. Nenhum
+        #   caminho de código a altera, então o APK não consegue mentir sobre a
+        #   própria origem. Vem do gate de identidade, que já reprovou árvore
+        #   suja ou versionCode regressivo.
+        #
+        # `--split-debug-info` produz os símbolos que tornam o stack trace de um
+        # crash legível; eles são hasheados no manifesto logo abaixo, o que amarra
+        # símbolo e artefato à MESMA identidade.
         run: |
           cd app_build
           flutter build apk --release --split-per-abi \
-            --dart-define=BMV_SERVIDOR_URL="${BMV_SERVIDOR_URL}"
+            --split-debug-info=build/simbolos \
+            --dart-define=BMV_SERVIDOR_URL="${BMV_SERVIDOR_URL}" \
+            ${BMV_DEFINES}
+          echo "--- símbolos produzidos ---"
+          ls -l build/simbolos/
 
       - name: Conferir baralho DENTRO do APK (prova de bundling)
         run: |
@@ -680,11 +745,36 @@ jobs:
             "$APKSIGNER" verify --print-certs ../build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | grep -iE "SHA-1|SHA-256" || true
           fi
 
+      - name: "GATE DE IDENTIDADE — pós-build (manifesto do artefato)"
+        # Agora com os artefatos na mão: hasheia APK e símbolos e grava o
+        # manifesto. É o documento que uma investigação cruza com o SHA que
+        # veio no crash. Não registra no livro-razão daqui: registrar é ato
+        # deliberado, feito localmente e revisado em commit (ver o runbook).
+        run: |
+          dart run app/tool/gate_identidade_build.dart \
+            --ambiente=homologacao \
+            --artefato=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            --simbolos=app_build/build/simbolos \
+            --manifesto=app_build/MANIFESTO-BUILD.json
+          echo "--- manifesto ---"
+          cat app_build/MANIFESTO-BUILD.json
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: bmv-teste-apk
           path: app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          if-no-files-found: error
+
+      - name: Upload manifesto e símbolos da build
+        # Símbolos NÃO vão para a Release pública: eles ficam no artefato do
+        # run, alcançáveis só por quem tem acesso ao repositório.
+        uses: actions/upload-artifact@v4
+        with:
+          name: bmv-identidade-build
+          path: |
+            app_build/MANIFESTO-BUILD.json
+            app_build/build/simbolos/
           if-no-files-found: error
 
       - name: Publish APK as Release (link direto pro celular)

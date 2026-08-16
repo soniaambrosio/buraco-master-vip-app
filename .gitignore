@@ -5,17 +5,31 @@
 # Resíduo de `flutter pub get` rodado direto em app/ (o pacote real). Útil para
 # rodar `flutter analyze` sobre a árvore de verdade, sem overlay; nada disso é
 # fonte.
-/app/.dart_tool/
+#
+# A regra é SEM âncora de raiz de propósito (a Casca trazia `/app/.dart_tool/`,
+# a Observabilidade trazia `.dart_tool/`): o gate de identidade de build reprova
+# árvore suja, e um `.dart_tool/` gerado em QUALQUER subdiretório — não só em
+# `app/` — reprovaria a release. Fica a forma mais larga das duas.
+.dart_tool/
 /app/.flutter-plugins-dependencies
 
 # Saida de `flutter test` rodado direto em app/. Mesmo caso do .dart_tool acima:
 # artefato de build, aparece assim que a suite roda na arvore de verdade.
 /app/build/
 
-# Log do emulador do Firestore.
-firestore-debug.log
-ui-debug.log
-firebase-debug.log
+# Seeds copiados de `app/data/` para dentro de `app/test/` quando a suite roda
+# fora do overlay do CI (ver o passo "copy seeds" dos workflows). Sao COPIAS de
+# arquivos ja versionados: versiona-las criaria uma segunda fonte da verdade,
+# livre para ficar velha sem ninguem ver — e sujaria a arvore justamente no
+# momento em que o gate de identidade a exige limpa.
+/app/test/torneios/data/
+/app/test/colecoes/data/
+
+# Logs de depuracao de emulador. Sao efemeros e mudam a cada execucao.
+# A Casca listava os tres nomes conhecidos (firestore/ui/firebase); a
+# Observabilidade generalizou para o sufixo. Mantida a forma larga, que cobre
+# os tres e os proximos.
+*-debug.log
 
 # Dependencias e saida de build das Cloud Functions. Cada codebase tem as suas.
 # `functions/lib/` inclui o domain_bundle.js, que e GERADO pelo predeploy
