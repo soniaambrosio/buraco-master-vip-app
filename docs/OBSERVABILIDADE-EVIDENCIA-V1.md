@@ -198,9 +198,10 @@ PASS — identidade de build provada
 
 ### 4.3 Build de validação, não publicável
 
-`flutter build apk` exige Modo de Desenvolvedor nesta máquina (symlinks), então
-a validação usou o alvo **web**, que compila o mesmo `lib/` em release com os
-mesmos defines e produz um mapa de símbolos real:
+Duas validações, ambas em release e com os mesmos defines. Nenhum AAB foi
+gerado, nada foi assinado com chave de produção e nada foi publicado.
+
+**Web** — compila o mesmo `lib/` e produz mapa de origem:
 
 ```bash
 DEF=$(dart run app/tool/gate_identidade_build.dart --ambiente=producao --defines)
@@ -210,28 +211,62 @@ flutter build web --release --source-maps $DEF
 √ Built build\web                    exit 0
 ```
 
-Isso prova, com o compilador e não com argumentação, que o app inteiro — camada
-de observabilidade e adaptador do Crashlytics incluídos — **compila em release
-com a identidade carimbada**. Nenhum AAB foi gerado; nada foi publicado.
-
-### 4.4 Gate pós-build com artefato e símbolos reais
+**APK Android** — o mesmo caminho que o CI usa, incluindo a produção de
+símbolos por `--split-debug-info`. Rodado num caminho curto
+(`C:\Users\sonii\bmv3`) por causa do limite MAX_PATH do Windows:
 
 ```bash
-dart run app/tool/gate_identidade_build.dart --ambiente=producao \
-  --artefato=app_build/main.dart.js \
-  --simbolos=app_build/simbolos \
-  --manifesto=app_build/MANIFESTO-BUILD.json --registrar
+flutter build apk --release --split-per-abi --split-debug-info=build/simbolos $DEF
+```
+```
+√ Built build\app\outputs\flutter-apk\app-armeabi-v7a-release.apk (16.3MB)
+√ Built build\app\outputs\flutter-apk\app-arm64-v8a-release.apk  (18.8MB)
+√ Built build\app\outputs\flutter-apk\app-x86_64-release.apk     (20.2MB)
+                                     exit 0
+```
+
+Símbolos produzidos:
+
+```
+app.android-arm.symbols      2 871 688 bytes
+app.android-arm64.symbols    3 362 824 bytes
+app.android-x64.symbols      3 361 856 bytes
+```
+
+Isso prova com o compilador, e não com argumentação, que o app inteiro — camada
+de observabilidade e adaptador do Crashlytics incluídos — **compila e liga em
+release para Android** com a identidade carimbada.
+
+### 4.3.1 O carimbo está DENTRO do binário
+
+Não é promessa de configuração: o SHA e a branch estão no snapshot AOT do APK.
+
+```bash
+unzip -o "app-arm64-v8a-release.apk" "lib/arm64-v8a/libapp.so" -d /tmp/apkx
+grep -a -c "15cc70684eede83611adcdd46911e48485793707" /tmp/apkx/lib/arm64-v8a/libapp.so
+# 1
+grep -a -o "claude/observabilidade-build-recuperacao-v1-f47093" /tmp/apkx/lib/arm64-v8a/libapp.so
+# claude/observabilidade-build-recuperacao-v1-f47093
+```
+
+Um APK em campo, aberto por qualquer pessoa, revela de qual commit veio.
+
+### 4.4 Gate pós-build com APK e símbolos reais
+
+```bash
+dart run app/tool/gate_identidade_build.dart --ambiente=homologacao \
+  --artefato=<...>/app-arm64-v8a-release.apk \
+  --simbolos=<...>/build/simbolos \
+  --manifesto=app_build/MANIFESTO-BUILD.json
 ```
 
 ```
-build:        1.0.0 (137) · ffc6251 · producao
 árvore:       limpa
 artefatos:    1
-símbolos:     1
-manifesto:    029e0dbd09a358a0ff467a9fe20d61571abad24e9714221569806461b35579b3
+símbolos:     3
+manifesto:    9c8fa2a90f01832fc63144a775e28d1790b658f1bef1773cf9b729ac84799cf7
 PASS — identidade de build provada
 manifesto gravado em app_build/MANIFESTO-BUILD.json
-versionCode 137 registrado no livro-razão
 ```
 **exit 0**
 
@@ -240,34 +275,43 @@ Manifesto produzido:
 ```json
 {
   "artefatos": {
-    "app_build/main.dart.js": "25ff53444e3ae22e8be4a09776b92cf9ed36dd5323a1688ddfdc5b18724c7a38"
+    "app-arm64-v8a-release.apk": "4b506a182a7fef7ffe47ca7ea60c26fd760112f803faa7052667f5a6a076864a"
   },
   "esquema": 1,
   "identidade": {
-    "ambiente": "producao",
+    "ambiente": "homologacao",
     "branch": "claude/observabilidade-build-recuperacao-v1-f47093",
     "dart": "3.11.1",
     "flutter": "3.41.4",
-    "sha": "ffc6251b0251bfbe945300d0b240c0aad2951aa0",
-    "versionCode": 137,
+    "sha": "fc5a5132efa6960640b41d8b7eb1812f913fd02f",
+    "versionCode": 139,
     "versionName": "1.0.0"
   },
   "simbolos": {
-    "simbolos/main.dart.js.map": "6c636fb44f6fff4530651841607e7d37b4f416cd27bcb1b0a021e5d53043af25"
+    "simbolos/app.android-arm.symbols": "f5a445e151024d6786bd63d68fca2492f94b73a516d2e61f23844e782da5fb63",
+    "simbolos/app.android-arm64.symbols": "5bfc7879bbe48f4a1afe9dc060ca759b28fa7b4dce9e309563ff38ff316b2a08",
+    "simbolos/app.android-x64.symbols": "34202993fc817c1de320d5181db0ddc15f70d606cca923efd5e2a166ebd19d50"
   }
 }
 ```
 
+Caminho de artefato de fora do repositório entra como nome de arquivo, nunca
+como caminho absoluto: o manifesto é publicado junto do artefato e não deve
+carregar o nome de usuário da máquina que compilou.
+
 ### 4.5 Reprodutibilidade
 
-Segunda execução, mesmo commit, mesmos artefatos:
+Duas execuções seguidas, mesmo commit e mesmos artefatos (medido antes com o
+artefato web, `ffc6251`):
 
 ```
 manifesto:    029e0dbd09a358a0ff467a9fe20d61571abad24e9714221569806461b35579b3
 PASS
+manifesto:    029e0dbd09a358a0ff467a9fe20d61571abad24e9714221569806461b35579b3
+PASS
 ```
-**exit 0** — impressão digital **idêntica**. Sem timestamp e com chaves
-ordenadas, o manifesto é comparável byte a byte.
+**exit 0** nas duas — impressão digital **idêntica**. Sem timestamp e com
+chaves ordenadas, o manifesto é comparável byte a byte.
 
 ### 4.6 `versionCode` repetido reprova
 
@@ -351,20 +395,21 @@ reprova.
    build — **não foram executadas pelo GitHub Actions**. Foram validadas
    localmente comando a comando, com o mesmo overlay que o CI monta.
 
-2. **`flutter build apk` não roda nesta máquina** (exige Modo de Desenvolvedor
-   para symlinks). A validação de build usou o alvo web, que compila o mesmo
-   `lib/`. A produção de símbolos `--split-debug-info` é específica de alvo AOT
-   nativo e, portanto, **só será exercida no CI**.
-
-3. **Flutter local (3.41.4) ≠ Flutter do CI (3.44.8).** A compatibilidade do
+2. **Flutter local (3.41.4) ≠ Flutter do CI (3.44.8).** A compatibilidade do
    `firebase_crashlytics 5.2.7` com o pin foi estabelecida por análise de
-   restrição, não por execução sob 3.44.8.
+   restrição, não por execução sob 3.44.8. Os APKs de §4.3 foram compilados
+   sob 3.41.4.
 
-4. **O caminho nativo do Crashlytics não foi exercido.** Nenhum crash real foi
+3. **O caminho nativo do Crashlytics não foi exercido.** Nenhum crash real foi
    provocado em dispositivo, e nenhum evento chegou a painel de fornecedor —
-   ambos proibidos pela OS. O que está provado é que o adaptador só recebe
-   evento já redigido, que sua falha não derruba o app, e que ele nem sequer é
-   ligado sem identidade provável.
+   ambos proibidos pela OS. O que está provado é que o adaptador compila e liga
+   em release para Android, que só recebe evento já redigido, que sua falha não
+   derruba o app, e que ele nem sequer é ligado sem identidade provável.
+
+4. **O upload de símbolos para o painel não existe.** Ele exigiria o plugin
+   Gradle do Crashlytics e um `google-services.json` — Firebase Console, fora
+   desta OS. Os símbolos são produzidos, hasheados e arquivados junto do
+   artefato; a deofuscação é local.
 
 ---
 
