@@ -21,6 +21,8 @@ import 'screens/configuracoes_screen.dart';
 import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
+import 'observability/coletor_crashlytics.dart';
+import 'observability/observability.dart';
 import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
 import 'screens/splash_oficial_screen.dart';
@@ -46,26 +48,26 @@ final GoogleSignIn _gsi = GoogleSignIn(
       '203886484007-a5e1ob9b7uequoffj6u76h5vltici9a4.apps.googleusercontent.com',
 );
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Blindado: no celular o Firebase sobe normal; no navegador (versão web de
-  // teste), se a config de Android não inicializar, o jogo roda mesmo assim —
-  // só o login Google fica indisponível, que não é necessário pra jogar/testar.
-  try {
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
-        appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
-        messagingSenderId: '203886484007',
-        projectId: 'buraco-master-vip',
-        storageBucket: 'buraco-master-vip.firebasestorage.app',
+void main() => runBuracoMasterVip(
+      construirApp: () => const BuracoApp(),
+      // Único ponto do app que conhece o fornecedor de crash reporting.
+      // Em debug e em teste ele é ignorado (ver `deveUsarColetorReal`).
+      coletor: ColetorCrashlytics(),
+      // Blindado como antes: no celular o Firebase sobe normal; no navegador
+      // (versão web de teste), se a config de Android não inicializar, o jogo
+      // roda mesmo assim — só o login Google fica indisponível, que não é
+      // necessário pra jogar/testar. A diferença é que agora essa falha vira
+      // um evento NÃO FATAL em vez de um `catch (_) {}` mudo.
+      antesDeRodar: () => Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: 'AIzaSyC8ylNsHzt0nxmbosG1J9RTPLALpUOTBdQ',
+          appId: '1:203886484007:android:734aaa61ca5ca68b29cc02',
+          messagingSenderId: '203886484007',
+          projectId: 'buraco-master-vip',
+          storageBucket: 'buraco-master-vip.firebasestorage.app',
+        ),
       ),
     );
-  } catch (_) {
-    // Ambiente sem Firebase configurado (ex.: web de teste) — segue o jogo.
-  }
-  runApp(const BuracoApp());
-}
 
 class BuracoApp extends StatelessWidget {
   const BuracoApp({super.key});
