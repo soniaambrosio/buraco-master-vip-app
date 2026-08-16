@@ -44,6 +44,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'credencial_de_sessao.dart';
 import 'fonte_identidade.dart';
 import 'identidade_publica_sessao.dart';
 
@@ -59,11 +60,18 @@ class SessaoDoJogador extends ChangeNotifier {
   ///
   /// [uidInicial] cobre o caso de o app subir com sessão já restaurada, quando
   /// o stream ainda não emitiu.
+  /// [credenciais] é o provedor da credencial que o transporte apresenta ao
+  /// servidor. O padrão não tem credencial nenhuma para dar — quem monta a
+  /// sessão de produção passa a de verdade (ver `sessao_firebase.dart`). Esse
+  /// padrão é seguro: sem provedor, o transporte fica "não autenticado", que é
+  /// a leitura honesta de uma sessão que não sabe emitir credencial.
   SessaoDoJogador({
     required FonteDeIdentidade fonte,
     required Stream<String?> uids,
     String? uidInicial,
-  }) : _fonte = fonte {
+    FonteDeCredencial credenciais = const SemCredencial(),
+  }) : _fonte = fonte,
+       _credenciais = credenciais {
     if (uidInicial != null) {
       // Estado montado à mão, sem passar por `_aplicarSessao`: o carregamento
       // fica para o microtask abaixo. Disparar dentro do construtor notificaria
@@ -76,6 +84,7 @@ class SessaoDoJogador extends ChangeNotifier {
   }
 
   final FonteDeIdentidade _fonte;
+  final FonteDeCredencial _credenciais;
   late final StreamSubscription<String?> _assinatura;
 
   EstadoIdentidadeSessao _estado = EstadoIdentidadeSessao.deslogado;
@@ -102,6 +111,59 @@ class SessaoDoJogador extends ChangeNotifier {
   /// teste que diz "não houve tempestade" sem contar chamadas não prova nada.
   int get chamadasEmitidas => _chamadas;
   int _chamadas = 0;
+
+  /// A geração corrente da sessão.
+  ///
+  /// Sobe UMA vez por troca de sessão — login, logout, troca de jogador — e não
+  /// sobe quando só a fase da identidade muda (`carregando` → `disponivel`). É
+  /// o que permite a quem observa esta sessão distinguir "a identidade avançou"
+  /// de "o jogador é outro", e reagir só ao segundo. Ver
+  /// `services/ponte_sessao_online.dart`.
+  int get geracao => _geracao;
+
+  // -------------------------------------------------------------------------
+  // Credencial da sessão
+  // -------------------------------------------------------------------------
+
+  /// A credencial que o transporte apresenta ao servidor, ou `null`.
+  ///
+  /// ESTA É A ÚNICA PORTA. O cliente WebSocket não fala com o provedor de
+  /// autenticação: ele pede aqui, porque só aqui existe a geração que sabe se a
+  /// resposta ainda vale.
+  ///
+  /// Devolve `null` — nunca lança e nunca devolve token velho — em qualquer um
+  /// destes casos:
+  ///
+  ///   * a sessão não está autenticada (não há de quem emitir credencial);
+  ///   * o provedor falhou ou não tem token (rede fora, SDK ausente);
+  ///   * **a sessão virou enquanto o token estava a caminho**.
+  ///
+  /// O terceiro é a razão de este método existir. Entre pedir e receber há um
+  /// await, e um logout cabe inteiro nele. Sem a trava de geração, o token que
+  /// voltasse seria o do jogador que acabou de sair, e o transporte o
+  /// apresentaria como se nada tivesse acontecido — o mesmo vazamento entre
+  /// contas que a sessão já impede do lado da identidade, entrando pela porta
+  /// do transporte.
+  Future<String?> obterCredencial() async {
+    if (_descartado || !_estado.autenticado) return null;
+
+    // O crachá da resposta, capturado ANTES do await — igual ao que `_disparar`
+    // faz com a identidade.
+    final geracao = _geracao;
+
+    String? token;
+    try {
+      token = await _credenciais.obterToken();
+    } catch (_) {
+      // Um provedor que escapa do contrato não derruba a sessão: vira "sem
+      // credencial", que o transporte já sabe tratar.
+      return null;
+    }
+
+    if (_descartado || geracao != _geracao) return null;
+    if (token == null || token.isEmpty) return null;
+    return token;
+  }
 
   // -------------------------------------------------------------------------
   // Ciclo de vida da sessão

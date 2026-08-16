@@ -14,23 +14,39 @@
 // ---------------------------------------------------------------------------
 // IDENTIDADE — leia antes de mexer aqui.
 //
-// O app NÃO diz ao servidor quem ele é. Ele APRESENTA uma credencial (o ID
-// Token do Firebase Auth) e o servidor decide a identidade a partir dela. Não
-// existe mais campo `jogadorId` saindo daqui: mandar um seria, no melhor caso,
-// redundante e, no pior, recusado pelo servidor como identidade divergente.
+// O app NÃO diz ao servidor quem ele é. Ele APRESENTA uma credencial e o
+// servidor decide a identidade a partir dela. Não existe mais campo
+// `jogadorId` saindo daqui: mandar um seria, no melhor caso, redundante e, no
+// pior, recusado pelo servidor como identidade divergente.
 //
-//   conectar → obter ID Token → abrir socket → {tipo:"auth"} →
+//   conectar → pedir credencial à SESSÃO → abrir socket → {tipo:"auth"} →
 //   esperar "autenticado" → SÓ ENTÃO soltar a fila de comandos
 //
-// Sem usuário do Firebase, nem tenta conectar. Com credencial recusada, para de
+// Sem credencial, nem tenta conectar. Com credencial recusada, para de
 // reconectar — insistir com token ruim só gera loop. E o token nunca aparece em
 // log, mensagem de erro ou `toString()`.
+//
+// ---------------------------------------------------------------------------
+// DE ONDE VEM A CREDENCIAL — e por que não é do Firebase, aqui.
+// ---------------------------------------------------------------------------
+//
+// Este arquivo NÃO importa `firebase_auth`, e há teste estrutural que falha se
+// alguém voltar a importar. A credencial chega por [ObterIdToken], e em
+// produção esse callback é `SessaoDoJogador.obterCredencial` — o mesmo objeto
+// que é dono da identidade pública e da geração de sessão.
+//
+// O motivo é concreto: ler `FirebaseAuth.instance` aqui criaria um SEGUNDO dono
+// de autenticação, com relógio próprio e sem noção de geração. Entre pedir o
+// token e usá-lo existe um await, e um logout cabe inteiro nele — o token que
+// voltasse seria do jogador que ACABOU de sair. Pedindo à sessão, essa resposta
+// atrasada volta `null` e morre antes de virar um `auth` no fio.
+//
+// A ponte que liga os dois ciclos de vida mora em `ponte_sessao_online.dart`.
 // ---------------------------------------------------------------------------
 
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -55,7 +71,13 @@ enum OnlineStatus {
 }
 
 /// Fonte da credencial da conexão. Assinatura própria (e não o `User` do
-/// Firebase) para o teste conseguir exercitar o nosso código sem subir o SDK.
+/// Firebase) por duas razões: o teste consegue exercitar o nosso código sem
+/// subir o SDK, e a produção pluga `SessaoDoJogador.obterCredencial` sem que
+/// este arquivo precise conhecer a camada de sessão.
+///
+/// O contrato é o mesmo dos dois lados: devolve a credencial atual, ou `null`
+/// quando não há credencial válida a apresentar — incluindo o caso em que a
+/// sessão virou enquanto o token estava a caminho.
 typedef ObterIdToken = Future<String?> Function();
 
 /// Fábrica do canal. Existe pelo mesmo motivo: o teste troca por um canal falso.
@@ -78,23 +100,22 @@ class OnlineService extends ChangeNotifier {
   /// pendurado em "identificando você…" para sempre.
   static const Duration limiteDeAutenticacao = Duration(seconds: 15);
 
-  OnlineService({ObterIdToken? obterIdToken, AbrirCanal? abrirCanal})
-      : _obterIdToken = obterIdToken ?? _idTokenDoFirebase,
+  /// [obterIdToken] é OBRIGATÓRIO, e essa obrigatoriedade é o mecanismo.
+  ///
+  /// Enquanto havia um padrão que lia o Firebase sozinho, `OnlineService()`
+  /// solto em qualquer canto do app já nascia sabendo autenticar — e nascia
+  /// como um segundo dono de credencial, sem vínculo com a sessão. Sem padrão,
+  /// todo ponto de construção precisa dizer DE ONDE vem a credencial, e a única
+  /// resposta certa é `SessaoDoJogador.obterCredencial`.
+  ///
+  /// Ver `criarOnlineServiceDaSessao` em `ponte_sessao_online.dart`, que é como
+  /// a produção monta este objeto.
+  OnlineService({required ObterIdToken obterIdToken, AbrirCanal? abrirCanal})
+      : _obterIdToken = obterIdToken,
         _abrirCanal = abrirCanal ?? WebSocketChannel.connect;
 
   final ObterIdToken _obterIdToken;
   final AbrirCanal _abrirCanal;
-
-  /// Credencial padrão: o ID Token do usuário logado no Firebase.
-  ///
-  /// `getIdToken()` devolve o token em cache e só vai à rede quando ele já
-  /// expirou ou está perto disso — então chamar a cada tentativa de conexão é
-  /// barato e garante credencial fresca na reconexão.
-  static Future<String?> _idTokenDoFirebase() async {
-    final u = FirebaseAuth.instance.currentUser;
-    if (u == null) return null;
-    return u.getIdToken();
-  }
 
   WebSocketChannel? _canal;
   StreamSubscription<dynamic>? _sub;
@@ -133,8 +154,30 @@ class OnlineService extends ChangeNotifier {
 
   Timer? _limiteAuthTimer;
 
+  // Geração do TRANSPORTE. Sobe toda vez que esta conexão é encerrada de forma
+  // deliberada — [desligar], [encerrarSessao] ou uma falha terminal.
+  //
+  // Espelha, do lado do socket, a geração que a sessão mantém do lado da
+  // identidade, e existe pelo mesmo motivo: `_abrir` e `_renovarCredencial`
+  // esperam um `await` para a credencial chegar, e nesse intervalo cabe um
+  // logout inteiro. Sem crachá, a continuação do await abriria um socket (ou
+  // apresentaria um token) para uma sessão que já não existe.
+  //
+  // A sessão devolvendo `null` já barra a maior parte disso; esta geração fecha
+  // o resto — o caso em que a credencial VOLTOU válida logo antes de o jogador
+  // sair, e a continuação seguiria em frente com ela na mão.
+  int _geracaoTransporte = 0;
+
   bool get conectado => status == OnlineStatus.conectado;
   bool get autenticado => status == OnlineStatus.conectado;
+
+  /// O jogador PEDIU para estar online? (independe de já estar).
+  ///
+  /// Continua verdadeiro enquanto o backoff tenta voltar, e falso depois de
+  /// [desligar] ou de uma falha terminal. Quem lê isto é a ponte de sessão, e o
+  /// motivo está lá: numa troca de conta ela precisa saber se restabelece a
+  /// conexão sob a identidade nova ou se deixa o jogador desconectado.
+  bool get querConectado => _querConectado;
   bool get noLobby => visao != null && visao!['lobby'] == true;
   bool get emJogo => visao != null && visao!['lobby'] != true;
 
@@ -151,6 +194,8 @@ class OnlineService extends ChangeNotifier {
       return;
     }
     _abrindo = true;
+    // O crachá desta tentativa, capturado ANTES do primeiro await.
+    final geracao = _geracaoTransporte;
     try {
       status = OnlineStatus.conectando;
       erro = null;
@@ -164,18 +209,27 @@ class OnlineService extends ChangeNotifier {
       try {
         token = await _obterIdToken();
       } catch (_) {
-        token = null; // qualquer erro do SDK vale como "não tem credencial"
+        token = null; // qualquer erro do provedor vale como "não tem credencial"
       }
+      // LOGOUT DURANTE A BUSCA DA CREDENCIAL. A tentativa morre calada: não
+      // vira falha (ninguém falhou — o jogador saiu), não abre socket e não
+      // mexe no status, que `desligar` já acertou.
+      if (geracao != _geracaoTransporte || !_querConectado) return;
       if (token == null || token.isEmpty) {
         _falhaDeCredencial('entre na sua conta para jogar online');
         return;
       }
 
-      // 2) SOCKET.
+      // 2) SOCKET. O canal fica numa variável LOCAL até estar pronto e ainda
+      //    ser desta geração: um canal publicado em `_canal` antes disso seria
+      //    visível para o resto da classe enquanto ainda não serve para nada,
+      //    e sobreviveria a um `desligar` que já tivesse passado por aqui.
+      final WebSocketChannel canal;
       try {
-        _canal = _abrirCanal(Uri.parse(servidorUrl));
-        await _canal!.ready; // espera a conexão ficar pronta (lança se falhar)
+        canal = _abrirCanal(Uri.parse(servidorUrl));
+        await canal.ready; // espera a conexão ficar pronta (lança se falhar)
       } catch (e) {
+        if (geracao != _geracaoTransporte) return;
         _canal = null;
         status = OnlineStatus.erro;
         erro = 'não foi possível conectar ao servidor';
@@ -183,6 +237,14 @@ class OnlineService extends ChangeNotifier {
         _agendarReconexao();
         return;
       }
+
+      // LOGOUT ENQUANTO O SOCKET ABRIA. O socket existe e é nosso, então é
+      // nossa a obrigação de fechá-lo — `desligar` não podia tê-lo visto.
+      if (geracao != _geracaoTransporte || !_querConectado) {
+        canal.sink.close();
+        return;
+      }
+      _canal = canal;
 
       // 3) CREDENCIAL NA PRIMEIRA MENSAGEM. Até o servidor responder
       //    "autenticado", nada mais é enviado.
@@ -281,6 +343,9 @@ class OnlineService extends ChangeNotifier {
   /// Fecha tudo (sair da tela online).
   void desligar() {
     _querConectado = false;
+    // O crachá sobe ANTES de qualquer outra coisa: é o que faz uma busca de
+    // credencial ou uma abertura de socket já em voo desistirem ao voltar.
+    _geracaoTransporte++;
     _reconectarTimer?.cancel();
     _limiteAuthTimer?.cancel();
     _limiteAuthTimer = null;
@@ -291,6 +356,34 @@ class OnlineService extends ChangeNotifier {
     _pendentes.clear();
     status = OnlineStatus.desconectado;
     notifyListeners();
+  }
+
+  /// A sessão do jogador virou: logout, login ou troca de conta.
+  ///
+  /// Vai além de [desligar] porque desligar é sobre a CONEXÃO e isto é sobre a
+  /// PESSOA. Além de derrubar socket, reconexão e fila, apaga o estado privado
+  /// que sobraria do jogador anterior — código da mesa, assento, visão e
+  /// apelido.
+  ///
+  /// Sem isto, o jogador B que entrasse depois de A reconectaria e mandaria
+  /// `entrarMesa` com o código da mesa de A: não é vazamento de credencial, mas
+  /// é o app levando alguém para dentro de uma mesa que não é dele.
+  ///
+  /// O estado final é [OnlineStatus.desconectado] — e não `naoAutenticado` — de
+  /// propósito: `desconectado` é um estado do qual `conectar()` volta a
+  /// funcionar, e quem acabou de entrar precisa conseguir jogar.
+  ///
+  /// Quem chama isto é a ponte (`ponte_sessao_online.dart`), uma vez por
+  /// geração de sessão. Nenhuma tela precisa saber que isto existe.
+  void encerrarSessao() {
+    codigo = null;
+    meuAssento = null;
+    visao = null;
+    erro = null;
+    _meuApelido = 'Você';
+    _tentativas = 0;
+    _jaAutenticouNestaConexao = false;
+    desligar(); // sobe a geração, derruba tudo e notifica uma vez só
   }
 
   // ---------- Interno ----------
@@ -383,7 +476,10 @@ class OnlineService extends ChangeNotifier {
   /// no MESMO socket. Enquanto isso o status volta a `autenticando`, então os
   /// comandos voltam para a fila — igual à primeira autenticação.
   Future<void> _renovarCredencial() async {
-    if (_canal == null) return;
+    final canal = _canal;
+    if (canal == null) return;
+    final geracao = _geracaoTransporte;
+
     status = OnlineStatus.autenticando;
     notifyListeners();
 
@@ -393,7 +489,10 @@ class OnlineService extends ChangeNotifier {
     } catch (_) {
       token = null;
     }
-    if (_canal == null) return; // caiu enquanto buscava o token
+    // Caiu, foi desligado ou a sessão virou enquanto o token vinha. A renovação
+    // morre calada: apresentar credencial nova num socket que já não é o nosso
+    // é o mesmo vazamento entre contas, só que mais difícil de ver.
+    if (geracao != _geracaoTransporte || !identical(_canal, canal)) return;
     if (token == null || token.isEmpty) {
       _falhaDeCredencial('entre na sua conta para continuar jogando online');
       return;
@@ -439,6 +538,7 @@ class OnlineService extends ChangeNotifier {
   /// demais, servidor velho demais.
   void _falhaTerminal(OnlineStatus novo, String mensagem) {
     _querConectado = false;
+    _geracaoTransporte++; // nada que estiver em voo pode ressuscitar isto
     _reconectarTimer?.cancel();
     _limiteAuthTimer?.cancel();
     _limiteAuthTimer = null;

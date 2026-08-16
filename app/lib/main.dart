@@ -22,6 +22,7 @@ import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
+import 'services/ponte_sessao_online.dart';
 import 'services/configuracoes_service.dart';
 import 'sessao/escopo_sessao.dart';
 import 'sessao/identidade_publica_sessao.dart';
@@ -1113,7 +1114,18 @@ class _OnlineLobbyHost extends StatefulWidget {
 }
 
 class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
-  final OnlineService _srv = OnlineService();
+  /// O transporte NASCE AMARRADO À SESSÃO, e por isso não pode ser inicializado
+  /// num campo: a sessão vem da árvore, e a árvore só está disponível a partir
+  /// de `didChangeDependencies`.
+  ///
+  /// Antes daqui existia `OnlineService()` puro e simples, que sabia buscar
+  /// credencial no Firebase sozinho. Era o segundo dono de autenticação do app.
+  /// Hoje o construtor exige dizer de onde vem a credencial, e a única resposta
+  /// certa é a sessão canônica.
+  late final OnlineService _srv;
+  PonteSessaoOnline? _ponte;
+  bool _ligado = false;
+
   final TextEditingController _codigo = TextEditingController();
   final TextEditingController _apelido = TextEditingController(text: 'Você');
 
@@ -1123,8 +1135,25 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
   static const _mut = Color(0xFF9A8C6C);
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Roda de novo a cada notificação da sessão (o escopo é um
+    // `InheritedNotifier`); a trava garante UM transporte e UMA ponte por
+    // montagem desta tela. Sem ela, cada login criaria um socket a mais.
+    if (_ligado) return;
+    _ligado = true;
+
+    final sessao = EscopoSessao.talvezDe(context);
+    if (sessao == null) {
+      // Pré-visualização isolada, sem escopo de sessão acima. Sem sessão não há
+      // credencial, e o transporte para em "entre na sua conta para jogar
+      // online" — que é a verdade deste ambiente, e não um estado inventado.
+      _srv = OnlineService(obterIdToken: () async => null);
+    } else {
+      _srv = criarOnlineServiceDaSessao(sessao);
+      _ponte = PonteSessaoOnline(sessao: sessao, online: _srv);
+    }
+
     _srv.addListener(_atualizar);
     _srv.conectar();
   }
@@ -1135,8 +1164,11 @@ class _OnlineLobbyHostState extends State<_OnlineLobbyHost> {
 
   @override
   void dispose() {
-    _srv.removeListener(_atualizar);
-    _srv.desligar();
+    if (_ligado) {
+      _ponte?.dispose();
+      _srv.removeListener(_atualizar);
+      _srv.desligar();
+    }
     _codigo.dispose();
     _apelido.dispose();
     super.dispose();
