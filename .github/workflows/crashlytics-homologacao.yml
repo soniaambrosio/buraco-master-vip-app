@@ -1,0 +1,73 @@
+name: Crashlytics — homologação Android
+
+# Workflow de HOMOLOGAÇÃO. Não publica nada: não gera Release do GitHub, não
+# sobe nada para a Play Console e não faz deploy de Functions/Rules/Hosting.
+# O artefato sai como artifact do run, alcançável só por quem tem acesso ao
+# repositório.
+#
+# Roda na própria branch, sem merge em main — é o único jeito de ter evidência
+# real de CI para uma OS que não pode mesclar.
+
+on:
+  push:
+    branches:
+      - claude/crashlytics-android-operacional-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prerequisitos:
+    name: Pré-requisitos externos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # O versionCode determinístico é `git rev-list --count HEAD`.
+          fetch-depth: 0
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Mesmo pin do build.yml. "Mesmo commit, outro Flutter" é outro
+          # artefato, e o manifesto registra qual foi.
+          flutter-version: 3.44.8
+
+      - name: "PORTÃO — Secret do google-services.json"
+        env:
+          GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          if [ -z "${GS_B64}" ]; then
+            echo "::error::Secret BMV_GOOGLE_SERVICES_JSON_B64 ausente."
+            echo ""
+            echo "Sem ele o plugin google-services não tem o que ler e o"
+            echo "Crashlytics não sobe. O conteúdo NÃO pode ser versionado."
+            echo ""
+            echo "Como criar (uma vez, por quem administra o repositório):"
+            echo "  1. Firebase Console > Configurações do projeto >"
+            echo "     app 'Buraco Master VIP Oficial' > baixar google-services.json"
+            echo "  2. base64 -w0 google-services.json      (Linux / Git Bash)"
+            echo "  3. Settings > Secrets and variables > Actions > New secret"
+            echo "     Nome: BMV_GOOGLE_SERVICES_JSON_B64"
+            exit 1
+          fi
+          echo "Secret presente (${#GS_B64} caracteres de base64)."
+
+      - name: "PORTÃO — o JSON é do app Android oficial"
+        env:
+          GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          mkdir -p /tmp/gs
+          printf '%s' "$GS_B64" | tr -d '[:space:]' | base64 -d > /tmp/gs/google-services.json
+          test -s /tmp/gs/google-services.json
+          dart run app/tool/validar_google_services.dart \
+            --json=/tmp/gs/google-services.json \
+            --esperado=app/data/observabilidade/firebase_app_oficial.json
+
+      - name: "Identidade da build"
+        run: |
+          dart --version
+          dart run app/tool/gate_identidade_build.dart --ambiente=homologacao --sem-artefatos

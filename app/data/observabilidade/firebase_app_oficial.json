@@ -1,0 +1,25 @@
+{
+  "_comentario": [
+    "Identidade do aplicativo Android CANONICO do Buraco Master VIP no Firebase.",
+    "Nada aqui e segredo: package name e App ID viajam dentro de todo APK",
+    "publicado, e o project id aparece em qualquer requisicao do cliente. O que e",
+    "credencial (google-services.json completo, chaves, keystore) NAO mora no",
+    "repositorio — vem por Secret do GitHub em tempo de build.",
+    "",
+    "Este arquivo existe para que o gate consiga REPROVAR uma configuracao que",
+    "aponte para o app errado. O projeto tem quatro apps Android registrados, tres",
+    "deles historicos, e escolher o errado produz um build que instala, roda, e",
+    "manda crash para um painel que ninguem olha.",
+    "",
+    "Levantado em 16/08/2026 via Firebase Management API:",
+    "  1a8d6087... com.buracomastervip.app              (Buraco Master VIP (Android))",
+    "  734aaa61... com.buracomastervip.poc.buraco_master_vip  (BMV Teste)",
+    "  7d871ec4... com.mycompany.buracomastervip        (buraco-master-vip Android)",
+    "  b1cd95ba... io.github.soniaambrosio.buracomastervip    (Buraco Master VIP Oficial)  <- este"
+  ],
+  "projectId": "buraco-master-vip",
+  "projectNumber": "203886484007",
+  "packageName": "io.github.soniaambrosio.buracomastervip",
+  "mobilesdkAppId": "1:203886484007:android:b1cd95baa0b9e6e629cc02",
+  "displayName": "Buraco Master VIP Oficial"
+}
