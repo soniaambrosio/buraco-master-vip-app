@@ -35,6 +35,7 @@
  *   reconciliarEntitlements     varredura agendada de vencimento
  *   reconciliarEntitlementDoJogador   reconsulta autoritativa, so admin
  *   migrarEntitlementsLegado    transicao de `usuarios/{uid}` (so admin)
+ *   diagnosticarEntitlementsLegado  raio-x da migracao, SO LEITURA (so admin)
  *
  * A fonte canonica do direito passou a ser `playerEntitlements/{uid}`, escrita
  * so por este codebase e lida pelos consumidores (torneios, hoje). As decisoes
@@ -74,6 +75,10 @@ const {
 } = require('./entitlementStore');
 const { criarReconciliador } = require('./reconciliacao');
 const { criarProcessadorRtdn } = require('./rtdn');
+const { criarDiagnosticoLegado } = require('./diagnosticoLegado');
+
+const { planoDoCatalogo, fichasDoIndice, indicesDevidos } = require('./fichas');
+const { criarLivroDeFichas } = require('./fichasStore');
 
 initializeApp();
 
@@ -150,7 +155,13 @@ function dependencias() {
     log: console,
   });
 
-  infra = { store, reconciliador, rtdn };
+  const livroFichas = criarLivroDeFichas({
+    db: getFirestore(),
+    carimbo: () => FieldValue.serverTimestamp(),
+    incremento: (n) => FieldValue.increment(n),
+  });
+
+  infra = { store, reconciliador, rtdn, livroFichas };
   return infra;
 }
 
@@ -447,6 +458,9 @@ exports.validarCompraPlay = onCall(
         concessao.vip = true;
         concessao.vipExpiraEm = item ? item.expiryTime : null;
         concessao.planoBase = item && item.offerDetails ? item.offerDetails.basePlanId : null;
+        // As fichas de ATIVACAO nao sao creditadas nesta transacao — elas sao a
+        // parcela de indice 0 do livro-razao, liquidada logo abaixo pelo mesmo
+        // caminho que o agendador usa. Ver o comentario no passo 7.1.
       } else {
         // `fichas` vem do catalogo no servidor, nunca do payload do app.
         const fichas = Number(definicao.fichas || 0);
@@ -469,6 +483,59 @@ exports.validarCompraPlay = onCall(
     if (resultadoConcessao.conflito) {
       console.error('[billing] conflito de titularidade na concessao:', resultadoConcessao.motivo);
       throw new HttpsError('permission-denied', 'Esta compra nao pertence a esta conta.');
+    }
+
+    // 7.1) FICHAS DE ATIVACAO — a parcela de indice 0.
+    //
+    //      FORA da transacao de concessao, e de proposito. A idempotencia desta
+    //      parcela nao vem de `compras/{hash}`: vem do livro-razao, que e a mesma
+    //      barreira que `concederFichasMensais` atravessa. Com isso existe UM
+    //      caminho de credito de fichas, nao dois que podem divergir — e o
+    //      agendador vira, sem nenhum codigo de reparo, a rede de seguranca
+    //      desta linha: se o processo morrer aqui, o jogador ja tem o VIP e a
+    //      parcela 0 fica pendente ate o proximo tick, que a paga uma unica vez.
+    //
+    //      Roda tambem no caminho `jaConcedida` porque a corrida pode ter sido
+    //      perdida para uma execucao que morreu antes de chegar ate aqui.
+    if (ehAssinatura) {
+      const planoBase =
+        (resultadoConcessao.concessao && resultadoConcessao.concessao.planoBase) || null;
+      const plano = planoDoCatalogo(definicao, planoBase);
+      if (!plano) {
+        // Nao derruba a compra: o VIP foi pago e ja foi concedido. Mas e
+        // divergencia entre a Play e `configuracao/billing` — o plano-base que a
+        // Google devolveu nao esta configurado — e divergencia economica em
+        // silencio e exatamente o que nao pode acontecer.
+        console.error('[billing] plano-base sem configuracao de fichas', {
+          uid,
+          produtoId,
+          planoBase,
+          token: rotuloToken(chaveDaCompra(tokenCompra)),
+        });
+      } else {
+        try {
+          const r = await dependencias().livroFichas.liquidarParcela({
+            uid,
+            purchaseTokenHash: chaveDaCompra(tokenCompra),
+            indice: 0,
+            fichas: fichasDoIndice(plano, 0),
+            produtoId,
+            planoBase,
+            origem: 'validacao',
+          });
+          console.info('[billing] parcela de ativacao', {
+            uid,
+            planoBase,
+            creditado: r.creditado,
+            motivo: r.motivo,
+          });
+        } catch (e) {
+          // O agendador liquida no proximo tick. Falhar a chamada inteira aqui
+          // faria o app reapresentar uma compra que a Google ja considera
+          // fechada — custo maior que o atraso de uma parcela.
+          console.error('[billing] falha ao liquidar parcela de ativacao:', e.message, { uid });
+        }
+      }
     }
 
     if (resultadoConcessao.jaConcedida) {
@@ -591,6 +658,133 @@ exports.reconciliarEntitlements = onSchedule(
     console.info('[billing] varredura de vencimento', {
       candidatos: vencidos.size,
       fechados,
+    });
+  }
+);
+
+// ===========================================================================
+// FICHAS — a entrega MENSAL do beneficio da assinatura
+// ===========================================================================
+
+/**
+ * Liquida as parcelas de fichas ja vencidas de cada assinante ativo.
+ *
+ * POR QUE ISTO E UM AGENDADOR, E NAO UM OUVINTE DE RTDN
+ *
+ * A Play notifica RENOVACAO, e renovacao acontece a cada ciclo de COBRANCA: uma
+ * vez por mes no plano mensal, uma vez por TRIMESTRE no trimestral, uma vez por
+ * ANO no anual. Nao existe notificacao para "mes 2 do plano anual" — e a politica
+ * aprovada promete 1.500 fichas em cada um dos 11 meses seguintes a ativacao.
+ * Nenhum evento da plataforma marca essas datas. Quem as marca e o relogio.
+ *
+ * A mesma natureza de `reconciliarEntitlements` logo acima: uma conclusao sobre
+ * um prazo que a Google ja informou, tirada sem perguntar nada a ninguem.
+ *
+ * POR QUE RODAR DE NOVO NAO DOBRA NADA
+ *
+ * Cada parcela e uma linha deterministica em `fichasConcessoes`, e criar a linha
+ * e creditar o saldo sao a MESMA transacao. Um segundo tick — ou dois ticks
+ * concorrentes, ou um retry depois de falha parcial — encontra a linha e nao
+ * credita. E a disciplina de `idempotencia.js`, aplicada a um evento que nao vem
+ * de fora: vem do calendario.
+ *
+ * DIARIO, E NAO DE HORA EM HORA, porque a unidade da politica e o mes: um atraso
+ * de ate 24h na parcela e invisivel para o jogador e corta o custo da varredura
+ * por 24. Nenhuma parcela se perde por causa do intervalo — ela so e liquidada no
+ * tick seguinte, com o valor certo, porque o que manda e o indice do mes e nao o
+ * momento em que o job passou.
+ */
+exports.concederFichasMensais = onSchedule(
+  { schedule: 'every day 09:00', timeZone: 'America/Sao_Paulo', region: 'us-central1' },
+  async () => {
+    const db = getFirestore();
+    const agora = new Date().toISOString();
+
+    // UMA leitura do catalogo por tick, e nao uma por jogador: a politica e a
+    // mesma para todo mundo dentro do tick, e ler por jogador multiplicaria o
+    // custo sem mudar nenhuma decisao.
+    const catalogo = await lerCatalogo();
+
+    const ativos = await db
+      .collection(COL_ENTITLEMENT)
+      .where('vipAtivo', '==', true)
+      .limit(500)
+      .get();
+
+    let jogadores = 0;
+    let parcelas = 0;
+    let fichas = 0;
+    let truncados = 0;
+    let semPlano = 0;
+
+    for (const doc of ativos.docs) {
+      const uid = doc.id;
+      const dados = doc.data();
+      try {
+        // Prazo vencido nao gera parcela, mesmo com `vipAtivo: true` gravado. A
+        // varredura de vencimento roda a cada 30 minutos e fecha esses
+        // documentos, mas ela pode nao ter passado ainda — e pagar um mes que o
+        // jogador nao pagou e exatamente o erro que nao da para desfazer.
+        if (!dados.expiraEm || !anteriorA(agora, dados.expiraEm)) continue;
+
+        const definicao = catalogo[dados.produtoId];
+        const plano = planoDoCatalogo(definicao, dados.planoBase);
+        if (!plano) {
+          semPlano += 1;
+          continue;
+        }
+
+        const interno = await dependencias().store.refsEntitlement(uid).interno.get();
+        const hash = interno.exists ? interno.data().purchaseTokenHash : null;
+        if (!hash) {
+          // Sem token nao ha livro-razao estavel para este direito — e sem ele
+          // nao existe idempotencia. Direito migrado do legado cai aqui, de
+          // proposito: ele nunca teve compra registrada por este codebase.
+          semPlano += 1;
+          continue;
+        }
+
+        const { indices, truncado } = indicesDevidos({
+          inicioEm: dados.inicioEm,
+          agora,
+        });
+        if (truncado) truncados += 1;
+
+        let creditouAlgo = false;
+        for (const indice of indices) {
+          const r = await dependencias().livroFichas.liquidarParcela({
+            uid,
+            purchaseTokenHash: hash,
+            indice,
+            fichas: fichasDoIndice(plano, indice),
+            produtoId: dados.produtoId || null,
+            planoBase: dados.planoBase || null,
+            origem: 'agendador',
+          });
+          if (r.creditado > 0) {
+            parcelas += 1;
+            fichas += r.creditado;
+            creditouAlgo = true;
+          }
+        }
+        if (creditouAlgo) jogadores += 1;
+      } catch (e) {
+        // Um jogador problematico nao trava a varredura: o tick seguinte tenta de
+        // novo, e cada parcela e idempotente.
+        console.error('[billing] falha ao conceder fichas', e.message, { uid });
+      }
+    }
+
+    // Nada aqui e silencioso de proposito: `truncados` e `semPlano` sao os dois
+    // jeitos de a varredura entregar MENOS do que a politica promete, e uma
+    // varredura que corta sem dizer se le como "estava tudo em dia".
+    console.info('[billing] entrega mensal de fichas', {
+      candidatos: ativos.size,
+      jogadores,
+      parcelas,
+      fichas,
+      truncados,
+      semPlano,
     });
   }
 );
@@ -747,5 +941,71 @@ exports.migrarEntitlementsLegado = onCall(
       // `null` quando a pagina veio incompleta: acabou.
       cursor: pagina.size === lote ? ultimo : null,
     };
+  }
+);
+
+/**
+ * DIAGNOSTICO da populacao legada. So admin, e SO LEITURA.
+ *
+ * A pergunta que `migrarEntitlementsLegado` nao responde: quantos jogadores ela
+ * atinge, e quantos terminam pior do que estao hoje. Rodar a migracao para
+ * descobrir isso e uma decisao sem volta — o que ela grava vira o `atual` que
+ * `decidirAtualizacao` passa a proteger com `legado_nao_sobrescreve`.
+ *
+ * VARRE `usuarios/` INTEIRA, e nao so `where('vip','==',true)` como a migracao.
+ * De proposito: o filtro da migracao e uma HIPOTESE sobre como o legado marcou
+ * assinante, e um diagnostico que herda a hipotese do que audita nao consegue
+ * desmenti-la. Varrendo tudo, `fora_da_populacao` da a base total e o operador ve
+ * a seletividade do filtro em vez de supo-la.
+ *
+ * A ausencia de escrita e estrutural: `criarDiagnosticoLegado` so recebe as duas
+ * portas de leitura abaixo, e nao existe caminho de escrita dentro do modulo.
+ * Ver `diagnosticoLegado.js` e o teste `DL-13`.
+ */
+exports.diagnosticarEntitlementsLegado = onCall(
+  { region: 'us-central1' },
+  async (request) => {
+    if (!request.auth || request.auth.token.admin !== true) {
+      throw new HttpsError('permission-denied', 'Operacao restrita a administracao.');
+    }
+
+    const db = getFirestore();
+    const store = dependencias().store;
+
+    const diagnostico = criarDiagnosticoLegado({
+      lerPaginaLegado: async ({ cursor, lote }) => {
+        let consulta = db
+          .collection('usuarios')
+          .orderBy(FieldPath.documentId())
+          .limit(lote);
+        if (cursor) consulta = consulta.startAfter(cursor);
+        const pagina = await consulta.get();
+        return {
+          docs: pagina.docs.map((d) => ({ uid: d.id, dados: d.data() })),
+          fim: pagina.size < lote,
+        };
+      },
+      lerEntitlement: async (uid) => {
+        const refs = store.refsEntitlement(uid);
+        const [pub, int] = await Promise.all([refs.publico.get(), refs.interno.get()]);
+        return {
+          publico: pub.exists ? pub.data() : null,
+          interno: int.exists ? int.data() : null,
+        };
+      },
+    });
+
+    const relatorio = await diagnostico.varrer({
+      cursor: (request.data && request.data.cursor) || null,
+      lote: Math.min(Number((request.data && request.data.lote) || 100), 400),
+    });
+
+    console.info('[billing] diagnostico do legado (somente leitura)', {
+      examinados: relatorio.examinados,
+      porCategoria: relatorio.porCategoria,
+      porAlerta: relatorio.porAlerta,
+    });
+
+    return relatorio;
   }
 );

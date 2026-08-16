@@ -131,6 +131,24 @@ flutter:
     # de origem nao trazia esta pasta — sem a linha, as duas artes sumiriam do
     # bundle sem nenhum erro de compilacao avisar.
     - assets/mesa_vip/
+    # Cosméticos da Loja. As seis categorias precisam de uma linha cada, pelo
+    # mesmo motivo do comentário acima: `assets/loja/` não arrastaria as
+    # subpastas.
+    #
+    # A arte foi entregue pelo Codex junto do contrato da tela
+    # (`loja_categoria_screen.dart`) e ficou meses fora do repositório: o código
+    # citava os 46 caminhos, nenhum arquivo existia, e nada no build acusava —
+    # as imagens só falhavam no aparelho do jogador. O portão
+    # `tools/android/bin/verificar_assets.dart` existe para que essa combinação
+    # não volte a passar despercebida. Inventário e proveniência em
+    # `docs/CORRECAO-ASSETS-LOJA-V1.md`; nomes aprovados em
+    # `app/data/loja/loja_cosmeticos.manifest.json`.
+    - assets/loja/dorsos/
+    - assets/loja/molduras/
+    - assets/loja/avatares/
+    - assets/loja/mascotes/
+    - assets/loja/efeitos/
+    - assets/loja/emojis/
     - assets/torneios/capas/
     - assets/torneios/premiacao/coroas/
     - assets/torneios/premiacao/selos/

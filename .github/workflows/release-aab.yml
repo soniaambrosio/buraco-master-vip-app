@@ -1,12 +1,15 @@
 name: Release AAB (Teste interno)
 
 # ============================================================================
-# AAB OFICIAL — faixa de TESTE INTERNO da Play Console.
+# PIPELINE OFICIAL DE PUBLICACAO ANDROID DO BURACO MASTER VIP.
 #
-# Este workflow existe separado do "Build APK" porque as duas coisas NAO se
-# misturam:
-#   build.yml       -> APK de teste, applicationId .poc, keystore de teste.
-#   release-aab.yml -> AAB oficial, applicationId de producao, chave de UPLOAD.
+# Este e o UNICO workflow que produz pacote de publicacao. Ele gera um AAB
+# (`flutter build appbundle --release`), que e o formato exigido pela Play para
+# apps novos. O outro workflow Android, `build.yml`, produz APK de TESTE com
+# applicationId `.poc` e nunca deve ser usado para publicar — desde esta OS ele
+# diz isso no proprio cabecalho, e a copia obsoleta que existia na raiz do
+# repositorio foi removida (nao era executavel pelo GitHub Actions, so induzia
+# leitura errada).
 #
 # Objetivo imediato: publicar UMA versao contendo a Google Play Billing Library
 # para que a Play Console libere a area de produtos (assinaturas e consumiveis).
@@ -20,24 +23,29 @@ name: Release AAB (Teste interno)
 # Chave de assinatura: vem 100% de GitHub Secrets. Nenhuma senha neste arquivo.
 #
 # ---------------------------------------------------------------------------
-# O QUE MUDOU EM RELACAO A VERSAO ANTERIOR DESTE WORKFLOW
+# ONDE MORA A LOGICA DE MONTAGEM
 #
-# A logica aprovada (portoes, patch do Gradle, google-services, manifesto,
-# verificacoes finais dentro do .aab) esta preservada. O que saiu foi a montagem
-# manual do projeto, que hoje tem fonte melhor no proprio repositorio:
+# Os passos que transformam o scaffold do `flutter create` no projeto de
+# producao (applicationId, namespace, SDKs, assinatura, icone, manifesto) NAO
+# estao mais escritos como Python embutido neste YAML. Eles vivem em
+# `tools/android/`, em Dart, e sao chamados daqui.
 #
-#   - `flutter pub add ...` + remendo Python do `jni`  ->  `cp pubspec.yaml
-#     pubspec.lock`. O repositorio passou a versionar os dois, com
-#     `dependency_overrides` incluido, entao as dependencias do AAB sao as MESMAS
-#     que rodam em teste. Antes, dois builds do mesmo commit podiam resolver
-#     versoes diferentes — e `in_app_purchase` e justamente a dependencia onde
-#     isso nao pode acontecer.
-#   - copia de assets pasta a pasta  ->  `find assets -type f ! -name '*.dart'`,
-#     que e o overlay ja usado por `ci-os-integracao.yml`. A lista manual ficava
-#     desatualizada a cada pasta nova, e o sintoma era arte sumindo do bundle sem
-#     nenhum erro de compilacao avisar.
-#   - injecao do bloco `assets:` no pubspec  ->  desnecessaria: `app/pubspec.yaml`
-#     ja o declara.
+# A razao e concreta: codigo dentro do YAML so roda dentro do GitHub Actions, e
+# este repositorio so dispara workflow por `workflow_dispatch`, em branch ja
+# publicada. Na pratica, a unica forma de descobrir um erro de patch era gastar
+# um build inteiro de CI — e foi assim que dois defeitos passaram despercebidos
+# ate a OS do AAB de producao:
+#
+#   * o passo que forcava `minSdk = 23` colocava o projeto ABAIXO do piso do
+#     proprio engine do Flutter (24);
+#   * a "VERIFICACAO FINAL — Billing Library dentro do AAB" procurava o caminho
+#     `com/android/billingclient` na LISTAGEM do zip. Num AAB as classes vivem
+#     dentro de `base/dex/classes*.dex`, nunca como arquivos — a busca dava zero
+#     sempre, e o passo tinha `exit 1` no zero. Ou seja: o portao teria
+#     reprovado todo build, inclusive um build correto.
+#
+# Em Dart, os mesmos programas rodam na maquina de quem confere. Os dois
+# defeitos acima foram encontrados assim, rodando local, antes de gastar CI.
 # ============================================================================
 
 on:
@@ -186,6 +194,36 @@ jobs:
           echo "--- versoes de Billing resolvidas ---"
           flutter pub deps --style=compact 2>/dev/null | grep -iE "in_app_purchase|cloud_functions|firebase_auth" || true
 
+      - name: Ferramentas Android do repositorio
+        run: dart pub get --directory tools/android
+
+      - name: "PORTAO — assets citados no codigo precisam existir e ser empacotados"
+        # Cruza tres listas que precisam concordar: os caminhos `assets/...`
+        # citados no Dart, os arquivos que existem, e as pastas declaradas no
+        # bloco `flutter: assets:` do pubspec.
+        #
+        # Nenhuma divergencia entre elas produz erro de compilacao. Foi assim
+        # que 46 caminhos de `assets/loja/` passaram a ser citados por
+        # `loja_categoria_screen.dart` sem que a pasta existisse: a tela abre e
+        # as artes falham no aparelho do jogador, silenciosamente.
+        #
+        # O portao e fail-closed de proposito. Se a arte da Loja ainda nao
+        # chegou, a saida NAO e ignorar: ou a arte entra, ou a tela sai do
+        # caminho do release. Passar `--tolerar-ausentes=assets/loja/` e
+        # possivel, mas deixa a divida escrita aqui, visivel em toda execucao.
+        run: dart run tools/android/bin/verificar_assets.dart --app=app
+
+      - name: "PORTAO — o icone versionado precisa sair da arte oficial"
+        # Regera os mipmaps a partir de `app/assets/splash/logo_splash_oficial.webp`
+        # e exige que o resultado seja identico ao que esta versionado. Impede
+        # que alguem edite um PNG de icone a mao e o artefato passe a carregar
+        # uma arte que nao corresponde a fonte aprovada.
+        run: |
+          dart pub get --directory tools/icone
+          dart run tools/icone/bin/gerar.dart
+          git diff --exit-code -- android/launcher-icon \
+            || { echo "ERRO: android/launcher-icon nao corresponde a arte-fonte. Rode 'dart run tools/icone/bin/gerar.dart' e versione o resultado."; exit 1; }
+
       - name: Overlay do codigo e dos assets REAIS
         run: |
           cp -R app/lib/. app_build/lib/
@@ -271,12 +309,6 @@ jobs:
       # ANDROID
       # ---------------------------------------------------------------------
 
-      - name: Bump minSdk to 23 (Firebase)
-        run: |
-          f=app_build/android/app/build.gradle.kts
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
-          grep -n "minSdk" "$f" || true
-
       - name: "Instalar google-services.json oficial (via Secret)"
         env:
           GS_B64: ${{ secrets.BMV_GOOGLE_SERVICES_JSON_B64 }}
@@ -351,110 +383,40 @@ jobs:
           EOF
           sed 's/Password=.*/Password=***/' app_build/android/key.properties
 
-      - name: Patch build.gradle.kts (applicationId oficial + assinatura de upload + versao)
+      - name: "Preparar o projeto Android de producao"
+        # Um passo so, e um programa so (`tools/android/bin/preparar_release.dart`),
+        # para tudo que transforma o scaffold em projeto de producao:
+        #
+        #   applicationId ... io.github.soniaambrosio.buracomastervip
+        #   namespace ....... o MESMO, com a MainActivity movida junto de pacote.
+        #                     Trocar o namespace sem mover a classe compila e
+        #                     estoura ClassNotFoundException ao abrir; por isso
+        #                     as duas coisas andam no mesmo passo.
+        #   compileSdk ...... 36
+        #   targetSdk ....... 36  (fixo, e nao `flutter.targetSdkVersion`: o alvo
+        #                     do artefato nao pode mudar sozinho a cada bump do
+        #                     canal stable — a Play sobe o alvo minimo todo ano e
+        #                     esse numero precisa ser decisao registrada)
+        #   minSdk .......... 24  (piso do proprio engine do Flutter)
+        #   assinatura ...... signingConfig "upload", lida de key.properties
+        #   debuggable ...... false, explicito
+        #   icone ........... launcher oficial nas 5 densidades + adaptive icon,
+        #                     APAGANDO antes os mipmaps do scaffold
+        #   manifesto ....... label, permissao de Billing, Impeller desligado
+        #
+        # Cada patch confere o proprio resultado e aborta com mensagem nomeada.
+        # Sem fallback: um patch que erra o alvo e segue produz um AAB que
+        # compila, parece pronto, e esta assinado com a chave de debug.
         env:
           VERSION_CODE: ${{ inputs.version_code }}
           VERSION_NAME: ${{ inputs.version_name }}
         run: |
-          python3 - <<'PY'
-          import os, re
-          p = 'app_build/android/app/build.gradle.kts'
-          s = open(p, encoding='utf-8').read()
-          # Normaliza CRLF -> LF antes de qualquer regex.
-          s = s.replace('\r\n', '\n')
-          vc = os.environ['VERSION_CODE']
-          vn = os.environ['VERSION_NAME']
-          app_id = os.environ['BMV_APPLICATION_ID']
-
-          # 1) imports
-          if 'import java.util.Properties' not in s:
-              s = 'import java.util.Properties\nimport java.io.FileInputStream\n' + s
-
-          # 2) carrega key.properties antes de `android {`
-          loader = (
-              'val keystoreProperties = Properties()\n'
-              'val keystorePropertiesFile = rootProject.file("key.properties")\n'
-              'if (keystorePropertiesFile.exists()) {\n'
-              '    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n'
-              '}\n\n'
-          )
-          if 'val keystoreProperties' not in s:
-              s = re.sub(r'\nandroid\s*\{', '\n' + loader + 'android {', s, count=1)
-
-          # 3) signingConfig "upload"
-          signing = (
-              '\n    signingConfigs {\n'
-              '        create("upload") {\n'
-              '            keyAlias = keystoreProperties["keyAlias"] as String\n'
-              '            keyPassword = keystoreProperties["keyPassword"] as String\n'
-              '            storeFile = file(keystoreProperties["storeFile"] as String)\n'
-              '            storePassword = keystoreProperties["storePassword"] as String\n'
-              '        }\n'
-              '    }\n'
-          )
-          if 'create("upload")' not in s:
-              s = re.sub(r'android\s*\{', 'android {' + signing, s, count=1)
-
-          # 4) release assinado com a chave de upload.
-          #    Sem minify: o codigo do BillingClient precisa continuar visivel
-          #    para a analise da Play Console neste primeiro envio.
-          novo_buildtypes = (
-              '    buildTypes {\n'
-              '        getByName("release") {\n'
-              '            signingConfig = signingConfigs.getByName("upload")\n'
-              '            isMinifyEnabled = false\n'
-              '            isShrinkResources = false\n'
-              '        }\n'
-              '    }\n'
-          )
-          # Sem fallback "esperto" aqui, de proposito. A versao antiga deste patch
-          # injetava o bloco antes da ultima chave do arquivo quando o regex nao
-          # casava — e a ultima chave e a do bloco `flutter { }`, nao a do
-          # `android { }`. O resultado era um build.gradle.kts que compilava com
-          # cara de sucesso e gerava um AAB assinado com a chave de DEBUG, que a
-          # Play Console recusa. Falhar aqui e muito mais barato.
-          if not re.search(r'buildTypes\s*\{.*?\n    \}\n', s, flags=re.DOTALL):
-              raise AssertionError(
-                  'nao localizei o bloco buildTypes do scaffold. O template do '
-                  'Flutter provavelmente mudou de formato — ajuste este patch '
-                  'antes de gerar qualquer AAB.'
-              )
-          s = re.sub(r'buildTypes\s*\{.*?\n    \}\n', novo_buildtypes, s, count=1, flags=re.DOTALL)
-
-          # 5) applicationId OFICIAL da Play Console (o scaffold gera o .poc)
-          s2, n = re.subn(r'applicationId\s*=\s*"[^"]*"', f'applicationId = "{app_id}"', s, count=1)
-          if n != 1:
-              raise AssertionError('nao encontrei applicationId no build.gradle.kts para substituir')
-          s = s2
-
-          # 6) versao explicita (nao herda do pubspec)
-          s = re.sub(r'versionCode\s*=\s*flutter\.versionCode', f'versionCode = {vc}', s)
-          s = re.sub(r'versionName\s*=\s*flutter\.versionName', f'versionName = "{vn}"', s)
-
-          open(p, 'w', encoding='utf-8').write(s)
-
-          print('---- conferencia do patch ----')
-          # `namespace` continua com o pacote do scaffold DE PROPOSITO: ele so
-          # nomeia o pacote Java/R gerado, nao a identidade na Play Store.
-          checks = {
-              f'applicationId = "{app_id}"': True,
-              'create("upload")': True,
-              'signingConfig = signingConfigs.getByName("upload")': True,
-              f'versionCode = {vc}': True,
-              f'versionName = "{vn}"': True,
-              'applicationId = "com.buracomastervip.poc.buraco_master_vip"': False,
-              'signingConfigs.getByName("debug")': False,
-          }
-          erro = False
-          for m, deve_ter in checks.items():
-              tem = m in s
-              ok = (tem == deve_ter)
-              print(('OK   ' if ok else 'FALHA'), '->', ('deve conter' if deve_ter else 'NAO pode conter'), repr(m))
-              if not ok:
-                  erro = True
-          if erro:
-              raise AssertionError('patch do build.gradle.kts incompleto')
-          PY
+          dart run tools/android/bin/preparar_release.dart \
+            --scaffold=app_build \
+            --application-id="${BMV_APPLICATION_ID}" \
+            --version-code="${VERSION_CODE}" \
+            --version-name="${VERSION_NAME}" \
+            --icone=android/launcher-icon/res
           echo "===== build.gradle.kts final ====="
           cat app_build/android/app/build.gradle.kts
 
@@ -493,70 +455,6 @@ jobs:
           print('OK: plugin google-services declarado e aplicado.')
           PY
 
-      - name: "Declarar com.android.vending.BILLING no manifesto"
-        # A permissao ja entra sozinha pelo merge do manifesto da Billing Library,
-        # mas declara-la explicitamente deixa a intencao registrada e sobrevive a
-        # qualquer troca de dependencia.
-        run: |
-          python3 - <<'PY'
-          import re
-          p = 'app_build/android/app/src/main/AndroidManifest.xml'
-          s = open(p, encoding='utf-8').read()
-          if 'com.android.vending.BILLING' not in s:
-              m = re.search(r'^([ \t]*)<application\b', s, flags=re.MULTILINE)
-              assert m, 'nao encontrei <application> no manifesto'
-              indent = m.group(1)
-              perm = f'{indent}<uses-permission android:name="com.android.vending.BILLING" />\n'
-              s = s[:m.start()] + perm + s[m.start():]
-              open(p, 'w', encoding='utf-8').write(s)
-          assert 'com.android.vending.BILLING' in open(p, encoding='utf-8').read()
-          print('BILLING declarado no manifesto de origem.')
-          PY
-          grep -n "BILLING" app_build/android/app/src/main/AndroidManifest.xml
-
-      - name: Set app display name
-        run: |
-          sed -i 's/android:label="[^"]*"/android:label="Buraco Master VIP"/' app_build/android/app/src/main/AndroidManifest.xml
-          grep -o 'android:label="[^"]*"' app_build/android/app/src/main/AndroidManifest.xml
-
-      - name: Desativar Impeller (renderiza webp com transparencia via Skia)
-        run: |
-          python3 - <<'PY'
-          p = 'app_build/android/app/src/main/AndroidManifest.xml'
-          s = open(p, encoding='utf-8').read()
-          meta = '<meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false" />'
-          if 'EnableImpeller' not in s:
-              s = s.replace('</application>', '        ' + meta + '\n    </application>', 1)
-          open(p, 'w', encoding='utf-8').write(s)
-          PY
-          grep -n "EnableImpeller" app_build/android/app/src/main/AndroidManifest.xml
-
-      - name: Configure dark native launch screen
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          root = Path('app_build/android/app/src/main/res')
-          color = '#050201'
-          for rel in ['values/colors.xml', 'values-night/colors.xml']:
-              p = root / rel
-              p.parent.mkdir(parents=True, exist_ok=True)
-              if p.exists():
-                  s = p.read_text(encoding='utf-8')
-                  if 'splash_background' not in s:
-                      s = s.replace('</resources>', f'    <color name="splash_background">{color}</color>\n</resources>')
-              else:
-                  s = f'<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="splash_background">{color}</color>\n</resources>\n'
-              p.write_text(s, encoding='utf-8')
-          for rel in ['drawable/launch_background.xml', 'drawable-v21/launch_background.xml']:
-              p = root / rel
-              p.parent.mkdir(parents=True, exist_ok=True)
-              p.write_text('''<?xml version="1.0" encoding="utf-8"?>
-          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-              <item android:drawable="@color/splash_background" />
-          </layer-list>
-          ''', encoding='utf-8')
-          PY
-
       - name: Build release AAB
         run: cd app_build && flutter build appbundle --release
 
@@ -571,58 +469,49 @@ jobs:
           gh release download --repo google/bundletool --pattern 'bundletool-all-*.jar' --output bundletool.jar
           java -jar bundletool.jar version
 
-      - name: "VERIFICACAO FINAL — manifesto real dentro do AAB"
+      - name: "VERIFICACAO FINAL — bundletool validate"
+        # Checagem estrutural do proprio formato do bundle, feita pela mesma
+        # ferramenta que a Play usa para abri-lo.
+        run: |
+          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
+          test -s "$AAB" || { echo "ERRO: AAB nao foi gerado"; exit 1; }
+          java -jar bundletool.jar validate --bundle="$AAB" > validate.txt
+          echo "bundletool validate: OK"
+          head -20 validate.txt
+
+      - name: "VERIFICACAO FINAL — manifesto e conteudo reais dentro do AAB"
+        # Tudo que este passo afirma sai de DENTRO do artefato: o manifesto
+        # depois do merge das dependencias (que e o unico lugar onde a lista de
+        # permissoes existe de fato), a tabela de strings do dex, e os PNG de
+        # mipmap.
+        #
+        # Confere, entre outros: applicationId, versionCode/versionName,
+        # min/targetSdk, ausencia do pacote de PoC, MainActivity no pacote
+        # oficial, `debuggable` desligado, conjunto EXATO de permissoes, Billing
+        # Library compilada no dex, e igualdade pixel a pixel entre o launcher
+        # icon do bundle e a arte oficial versionada.
         env:
           VERSION_CODE: ${{ inputs.version_code }}
           VERSION_NAME: ${{ inputs.version_name }}
         run: |
           AAB=app_build/build/app/outputs/bundle/release/app-release.aab
-          test -s "$AAB" || { echo "ERRO: AAB nao foi gerado"; exit 1; }
           java -jar bundletool.jar dump manifest --bundle="$AAB" > manifesto-final.xml
           echo "===================== MANIFESTO FINAL ====================="
           cat manifesto-final.xml
           echo "==========================================================="
-
-          erro=0
-          if grep -q 'package="'"${BMV_APPLICATION_ID}"'"' manifesto-final.xml; then
-            echo "OK    applicationId = ${BMV_APPLICATION_ID}"
-          else
-            echo "FALHA applicationId nao confere"; erro=1
-          fi
-          if grep -q 'com.android.vending.BILLING' manifesto-final.xml; then
-            echo "OK    permissao com.android.vending.BILLING presente"
-          else
-            echo "FALHA permissao com.android.vending.BILLING AUSENTE"; erro=1
-          fi
-          if grep -q 'versionCode="'"${VERSION_CODE}"'"' manifesto-final.xml; then
-            echo "OK    versionCode = ${VERSION_CODE}"
-          else
-            echo "FALHA versionCode nao confere"; erro=1
-          fi
-          if grep -q 'versionName="'"${VERSION_NAME}"'"' manifesto-final.xml; then
-            echo "OK    versionName = ${VERSION_NAME}"
-          else
-            echo "FALHA versionName nao confere"; erro=1
-          fi
-          [ "$erro" = "0" ] || { echo "VERIFICACAO REPROVADA — nao envie este AAB."; exit 1; }
-
-      - name: "VERIFICACAO FINAL — Billing Library dentro do AAB"
-        # Prova de que a biblioteca esta compilada no bundle, e nao apenas
-        # declarada no pubspec. E isso que destrava a area de produtos.
-        run: |
-          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
-          N=$(unzip -l "$AAB" | grep -c 'com/android/billingclient' || true)
-          echo "classes do BillingClient no AAB: $N"
-          unzip -l "$AAB" | grep 'com/android/billingclient' | head -5 || true
-          if [ "$N" -lt 1 ]; then
-            echo "FALHA: a Google Play Billing Library NAO esta no AAB."
-            exit 1
-          fi
-          echo "OK    Google Play Billing Library empacotada."
+          dart run tools/android/bin/verificar_aab.dart \
+            --aab="$AAB" \
+            --manifesto=manifesto-final.xml \
+            --application-id="${BMV_APPLICATION_ID}" \
+            --version-code="${VERSION_CODE}" \
+            --version-name="${VERSION_NAME}" \
+            --icone=android/launcher-icon/res
 
       - name: "VERIFICACAO FINAL — assinatura e impressao digital do AAB"
         # Imprime as impressoes digitais da chave que assinou, e o SHA-256 do
-        # proprio arquivo. Os dois vao para o relatorio da OS.
+        # proprio arquivo. Os dois vao para o relatorio da OS. Nada aqui expoe
+        # material secreto: impressao digital de certificado e informacao
+        # publica, e e exatamente o que a Play Console mostra.
         run: |
           AAB=app_build/build/app/outputs/bundle/release/app-release.aab
           echo "===== SHA-256 do artefato ====="
@@ -630,11 +519,11 @@ jobs:
           echo "===== impressoes digitais da chave que assinou o AAB ====="
           unzip -o -q "$AAB" -d aab_extraido 'META-INF/*' || true
           CERT=$(find aab_extraido/META-INF -type f \( -name '*.RSA' -o -name '*.EC' -o -name '*.DSA' \) | head -1)
-          if [ -n "$CERT" ]; then
-            keytool -printcert -file "$CERT" | grep -iE "SHA1:|SHA256:|Owner:|Valid"
-          else
-            echo "AVISO: nao localizei o bloco de assinatura para imprimir o certificado."
+          if [ -z "$CERT" ]; then
+            echo "ERRO: o AAB nao tem bloco de assinatura — nao foi assinado."
+            exit 1
           fi
+          keytool -printcert -file "$CERT" | grep -iE "SHA1:|SHA256:|Owner:|Valid"
           echo "=========================================================="
           echo "A chave de upload ATUAL registrada na Play Console e:"
           echo "  SHA-1:   32:6B:CA:26:34:29:45:41:D5:DA:21:17:DB:87:80:91:32:D2:D9:9C"

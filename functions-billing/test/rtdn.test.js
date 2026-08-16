@@ -768,3 +768,152 @@ test('RTDN-21 o carimbo da consulta e capturado ANTES da chamada de rede', async
   // O gravado e o instante da PERGUNTA, nao o da resposta.
   assert.strictEqual(db.ver(DOC_INTERNO).ultimaVerificacaoEm, T1);
 });
+
+// ============================================ RTDN-22 a RTDN-26 CICLO DE VIDA
+//
+// O QUE ESTE BLOCO ACRESCENTA
+//
+// Os casos acima provam cada desfecho isolado. Faltavam quatro estados que a OS
+// de prontidao nomeia e que so aparecem no MEIO de uma assinatura real —
+// carencia, espera, pausa e recuperacao —, e faltava a propriedade que nenhum
+// caso isolado alcanca: que a SEQUENCIA inteira converge, com o mesmo token,
+// sem que um estado deixe residuo no seguinte.
+//
+// Carencia e espera sao o par que costuma ser confundido, e a diferenca vale
+// dinheiro: em CARENCIA a Google ainda esta tentando cobrar e o jogador CONTINUA
+// com acesso; em ESPERA a cobranca ja falhou de vez e o acesso ACABA. Trocar os
+// dois entrega VIP de graca ou tira VIP de quem pagou.
+
+/**
+ * Instantes estritamente crescentes, comecando DEPOIS de `T1`.
+ *
+ * O `depois de T1` nao e detalhe de arrumacao: `semearEntitlement` grava
+ * `ultimaVerificacaoEm: T1`, e `decidirAtualizacao` recusa proposta cuja
+ * verificacao nao seja ESTRITAMENTE mais nova (`verificacao_antiga`). Um relogio
+ * comecando no proprio T1 faria o primeiro evento de cada cenario ser descartado
+ * — e o teste acusaria o codigo de producao por um empate que so o teste criou.
+ */
+function relogioCrescente(quantidade) {
+  const base = Date.parse(T1) + 3600_000;
+  return Array.from({ length: quantidade }, (_, i) =>
+    new Date(base + i * 3600_000).toISOString()
+  );
+}
+
+test('RTDN-22 carencia: a cobranca falhou e a Google ainda tenta — o VIP CONTINUA', async () => {
+  const { db, rtdn } = montar({
+    respostas: () => respostaPlay('SUBSCRIPTION_STATE_IN_GRACE_PERIOD', FUTURO),
+  });
+
+  const r = await rtdn.processarNotificacao(
+    mensagem(notificacaoAssinatura(NOTIFICACAO.IN_GRACE_PERIOD))
+  );
+
+  assert.strictEqual(r.aplicado, true);
+  assert.strictEqual(r.estado, ESTADO.EM_CARENCIA);
+  // O ponto do caso: carencia NAO corta acesso.
+  assert.strictEqual(r.vipAtivo, true);
+  assert.strictEqual(db.ver(DOC_PUBLICO).vipAtivo, true);
+});
+
+test('RTDN-23 espera: a carencia acabou sem pagamento — o acesso ACABA, com prazo futuro', async () => {
+  const { db, rtdn } = montar({
+    respostas: () => respostaPlay('SUBSCRIPTION_STATE_ON_HOLD', FUTURO),
+    relogio: relogioCrescente(2),
+  });
+  semearEntitlement(db, { estado: ESTADO.EM_CARENCIA, vipAtivo: true, expiraEm: FUTURO });
+
+  const r = await rtdn.processarNotificacao(
+    mensagem(notificacaoAssinatura(NOTIFICACAO.ON_HOLD), 'msg-hold')
+  );
+
+  assert.strictEqual(r.estado, ESTADO.EM_ESPERA);
+  // O prazo AINDA E FUTURO e mesmo assim nao ha acesso: quem decide aqui e o
+  // estado economico, nao o relogio. Confundir com carencia daria VIP de graca.
+  assert.strictEqual(r.vipAtivo, false);
+  assert.strictEqual(db.ver(DOC_PUBLICO).vipAtivo, false);
+});
+
+test('RTDN-24 recuperacao: o pagamento entrou depois da espera e o direito VOLTA', async () => {
+  const { db, rtdn, chamadasPlay } = montar({
+    respostas: () => ativa(FUTURO_ESTENDIDO),
+    relogio: relogioCrescente(2),
+  });
+  semearEntitlement(db, { estado: ESTADO.EM_ESPERA, vipAtivo: false, expiraEm: FUTURO });
+
+  const r = await rtdn.processarNotificacao(
+    mensagem(notificacaoAssinatura(NOTIFICACAO.RECOVERED), 'msg-recovered')
+  );
+
+  assert.strictEqual(r.aplicado, true);
+  assert.strictEqual(r.estado, ESTADO.ATIVO);
+  assert.strictEqual(r.vipAtivo, true);
+  // Recuperacao nao e excecao de desenho: ela passa pela MESMA reconsulta.
+  assert.deepStrictEqual(chamadasPlay, [TOKEN]);
+  // E traz prazo novo — recuperar sem estender deixaria o jogador pagando por um
+  // periodo ja vencido.
+  assert.strictEqual(db.ver(DOC_PUBLICO).expiraEm, FUTURO_ESTENDIDO);
+});
+
+test('RTDN-25 pausa e retomada: pausado nao tem acesso, retomado volta a ter', async () => {
+  const respostasPorVez = ['SUBSCRIPTION_STATE_PAUSED', 'SUBSCRIPTION_STATE_ACTIVE'];
+  let vez = 0;
+  const { db, rtdn } = montar({
+    respostas: () => respostaPlay(respostasPorVez[vez++], FUTURO_ESTENDIDO),
+    relogio: relogioCrescente(3),
+  });
+  semearEntitlement(db, { estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO });
+
+  const pausado = await rtdn.processarNotificacao(
+    mensagem(notificacaoAssinatura(NOTIFICACAO.PAUSED), 'msg-paused')
+  );
+  assert.strictEqual(pausado.estado, ESTADO.PAUSADO);
+  assert.strictEqual(pausado.vipAtivo, false);
+
+  const retomado = await rtdn.processarNotificacao(
+    mensagem(notificacaoAssinatura(NOTIFICACAO.RESTARTED), 'msg-restarted')
+  );
+  assert.strictEqual(retomado.estado, ESTADO.ATIVO);
+  assert.strictEqual(retomado.vipAtivo, true);
+  assert.strictEqual(db.ver(DOC_PUBLICO).vipAtivo, true);
+});
+
+test('RTDN-26 a assinatura inteira, na ordem, com um token so: cada passo conclui o seguinte', async () => {
+  // Compra -> renovacao -> carencia -> espera -> recuperacao -> cancelamento ->
+  // expiracao. E a unica prova de que os estados COMPOEM: nenhum caso isolado
+  // mostra que a espera nao deixa residuo que impeca a recuperacao, nem que o
+  // cancelamento preserva o prazo que a expiracao depois consome.
+  const roteiro = [
+    [NOTIFICACAO.PURCHASED, 'SUBSCRIPTION_STATE_ACTIVE', FUTURO, ESTADO.ATIVO, true],
+    [NOTIFICACAO.RENEWED, 'SUBSCRIPTION_STATE_ACTIVE', FUTURO_ESTENDIDO, ESTADO.ATIVO, true],
+    [NOTIFICACAO.IN_GRACE_PERIOD, 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD', FUTURO_ESTENDIDO, ESTADO.EM_CARENCIA, true],
+    [NOTIFICACAO.ON_HOLD, 'SUBSCRIPTION_STATE_ON_HOLD', FUTURO_ESTENDIDO, ESTADO.EM_ESPERA, false],
+    [NOTIFICACAO.RECOVERED, 'SUBSCRIPTION_STATE_ACTIVE', FUTURO_ESTENDIDO, ESTADO.ATIVO, true],
+    [NOTIFICACAO.CANCELED, 'SUBSCRIPTION_STATE_CANCELED', FUTURO_ESTENDIDO, ESTADO.CANCELADO_VIGENTE, true],
+    [NOTIFICACAO.EXPIRED, 'SUBSCRIPTION_STATE_EXPIRED', PASSADO, ESTADO.EXPIRADO, false],
+  ];
+
+  let passo = 0;
+  const { db, rtdn } = montar({
+    respostas: () => respostaPlay(roteiro[passo][1], roteiro[passo][2]),
+    relogio: relogioCrescente(roteiro.length + 1),
+  });
+
+  for (; passo < roteiro.length; passo += 1) {
+    const [tipo, , , estadoEsperado, vipEsperado] = roteiro[passo];
+    const r = await rtdn.processarNotificacao(
+      mensagem(notificacaoAssinatura(tipo), `msg-ciclo-${passo}`)
+    );
+    assert.strictEqual(r.estado, estadoEsperado, `passo ${passo}: estado`);
+    assert.strictEqual(r.vipAtivo, vipEsperado, `passo ${passo}: acesso`);
+  }
+
+  // No fim, o documento conta a historia inteira e nao guarda residuo de estado
+  // intermediario: um `set` sem merge por passo e o que garante isso.
+  const pub = db.ver(DOC_PUBLICO);
+  assert.strictEqual(pub.estado, ESTADO.EXPIRADO);
+  assert.strictEqual(pub.vipAtivo, false);
+  // O token nunca mudou, entao o direito e o MESMO o tempo todo — e por isso
+  // nenhum passo caiu em `token_superado`.
+  assert.strictEqual(db.ver(DOC_INTERNO).purchaseTokenHash, HASH);
+});

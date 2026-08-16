@@ -9,18 +9,33 @@ permissions:
   contents: write
 
 # ============================================================================
+# APK DE TESTE — NAO E PACOTE DE PUBLICACAO.
+#
+# Este workflow existe para instalar o app em aparelho durante o
+# desenvolvimento. Ele produz APK, com applicationId `.poc`, assinado com uma
+# chave de TESTE. Nada disso pode ir para a Google Play:
+#
+#   * a Play exige AAB para apps novos, e este workflow nao gera AAB;
+#   * o applicationId `.poc` e imutavel depois da primeira publicacao;
+#   * a chave de teste nao e a chave de upload registrada na Play Console.
+#
+# O PACOTE DE PUBLICACAO SAI DE `.github/workflows/release-aab.yml`. Esse e o
+# unico pipeline oficial de publicacao Android.
+#
+# ---------------------------------------------------------------------------
 # ASSINATURA FIXA DE TESTE (resolve INSTALL_FAILED_UPDATE_INCOMPATIBLE)
-# - Keystore permanente: keystore/buraco-master-vip-test.jks.b64  (alias: bmv-test)
-# - Mesma chave do debug fixo antigo -> MESMO SHA-1 -> login Google segue valendo.
-# - Senhas vêm por ENV (abaixo) e viram key.properties no CI. NUNCA ficam no gradle.
+# - Chave permanente de teste, alias `bmv-test`. Mesmo SHA-1 de sempre, entao o
+#   login Google do APK de teste segue valendo.
+# - A chave e as senhas vem 100% de GitHub Secrets. Ate esta OS, o `.jks` estava
+#   VERSIONADO em `keystore/` e as senhas estavam em texto claro logo abaixo
+#   desta linha. As duas coisas sairam do repositorio: material de assinatura,
+#   mesmo de teste, nao se versiona, e uma senha commitada continua no historico
+#   do git para sempre.
 # - applicationId de teste fixo: com.buracomastervip.poc.buraco_master_vip
-# - versionCode = número do run (incrementa a cada build).
-# Produção fica numa config SEPARADA (ver bloco comentado no fim do patch do gradle).
+# - versionCode = numero do run (incrementa a cada build).
 # ============================================================================
 env:
   BMV_KEY_ALIAS: bmv-test
-  BMV_STORE_PASSWORD: bmvtest2026
-  BMV_KEY_PASSWORD: bmvtest2026
   BMV_APPLICATION_ID: com.buracomastervip.poc.buraco_master_vip
 
 jobs:
@@ -319,18 +334,54 @@ jobs:
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
           grep -n "minSdk" "$f" || true
 
-      - name: Install fixed TEST keystore (assinatura estável / SHA-1 do login Google)
+      - name: "PORTAO — secrets da chave de TESTE precisam existir"
+        env:
+          KS_B64: ${{ secrets.BMV_TEST_KEYSTORE_B64 }}
+          KS_STORE_PASS: ${{ secrets.BMV_TEST_STORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.BMV_TEST_KEY_PASSWORD }}
         run: |
-          base64 -d keystore/buraco-master-vip-test.jks.b64 > app_build/android/app/buraco-master-vip-test.jks
-          echo "keystore de teste instalado: $(ls -l app_build/android/app/buraco-master-vip-test.jks | awk '{print $5}') bytes"
+          # Falha cedo e com nome. Sem a chave, o Gradle cai na assinatura de
+          # debug e o APK resultante instala por cima do anterior com SHA-1
+          # diferente — que e exatamente o INSTALL_FAILED_UPDATE_INCOMPATIBLE
+          # que a chave fixa existe para evitar.
+          faltou=0
+          for n in KS_B64 KS_STORE_PASS KS_KEY_PASS; do
+            eval "v=\$$n"
+            if [ -z "$v" ]; then echo "FALTOU o secret correspondente a $n"; faltou=1; fi
+          done
+          if [ "$faltou" = "1" ]; then
+            echo ""
+            echo "Cadastre em Settings > Secrets and variables > Actions:"
+            echo "  BMV_TEST_KEYSTORE_B64    (base64 do .jks de teste, alias bmv-test)"
+            echo "  BMV_TEST_STORE_PASSWORD"
+            echo "  BMV_TEST_KEY_PASSWORD"
+            echo ""
+            echo "A chave e as senhas sairam do repositorio na OS do AAB de producao."
+            echo "Se o .jks de teste tiver sido perdido, gere um novo e registre o"
+            echo "novo SHA-1 no Firebase Console, senao o login Google do APK de"
+            echo "teste para de funcionar."
+            exit 1
+          fi
+          echo "Todos os secrets da chave de teste estao presentes."
 
-      - name: Write key.properties (senhas por ENV, nunca no build.gradle)
+      - name: Install fixed TEST keystore (assinatura estável / SHA-1 do login Google)
+        env:
+          KS_B64: ${{ secrets.BMV_TEST_KEYSTORE_B64 }}
+        run: |
+          printf '%s' "$KS_B64" | tr -d '[:space:]' | base64 -d > app_build/android/app/buraco-master-vip-test.jks
+          test -s app_build/android/app/buraco-master-vip-test.jks
+          echo "keystore de teste instalado: $(stat -c%s app_build/android/app/buraco-master-vip-test.jks) bytes"
+
+      - name: Write key.properties (senhas por Secret, nunca no repositório)
+        env:
+          KS_STORE_PASS: ${{ secrets.BMV_TEST_STORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.BMV_TEST_KEY_PASSWORD }}
         run: |
           cat > app_build/android/key.properties <<EOF
           storeFile=${GITHUB_WORKSPACE}/app_build/android/app/buraco-master-vip-test.jks
-          storePassword=${BMV_STORE_PASSWORD}
+          storePassword=${KS_STORE_PASS}
           keyAlias=${BMV_KEY_ALIAS}
-          keyPassword=${BMV_KEY_PASSWORD}
+          keyPassword=${KS_KEY_PASS}
           EOF
           echo "key.properties criado (senhas ocultas):"
           sed 's/Password=.*/Password=***/' app_build/android/key.properties
