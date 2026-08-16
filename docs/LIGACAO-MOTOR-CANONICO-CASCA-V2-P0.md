@@ -105,6 +105,8 @@ sobre a partida.
 | `pontosRodada` | `pontosRodada` | mapa cru, ainda não desenhado |
 | `precisaUsarTopo` | `precisaUsarTopo` | destaca a carta; **não bloqueia** |
 | `versaoEstado` | `versaoEstado` | **o servidor de `16a692b` não manda** — nulo |
+| `rodadasVulneravel` | — | **não atravessa** — ver §7 |
+| `mortoPego` | — | **não atravessa** — ver §7 |
 | `jogadorId`, `avatar*` | — | **não atravessam**: esta fatia não desenha avatar |
 | `maos`, `monte`, mãos alheias | — | **não existem na visão de assento** e não são lidos |
 
@@ -218,6 +220,8 @@ Nada aqui foi preenchido com valor plausível.
 | **`eventoId` / idempotência no servidor** | não existe no protocolo. Ver §5.3. |
 | **Avatar dos jogadores** | chega na visão, mas o adaptador não o transporta e esta fatia não desenha foto. |
 | **`pontosRodada` detalhado** | transportado, ainda não desenhado — falta a tela de contagem. |
+| **Selo de vulnerável (`rodadasVulneravel`)** | o servidor MANDA (`{nos,eles}`, e o comentário dele diz que é "pra tela mostrar o selo *vulnerável · precisa N+*"). O adaptador não o transporta e esta fatia não o desenha. Desenhá-lo pede a regra do mínimo por nível de vulnerabilidade, que é justamente o tipo de segunda opinião sobre a regra que esta OS proíbe. Fica registrado como ausência, e não como campo esquecido. |
+| **`mortoPego`** | o servidor manda por dupla. A mesa mostra a CONTAGEM de mortos restantes (`mortosQtd`), que é o que a pessoa precisa para jogar; quem pegou qual morto não tem lugar nesta tela. |
 | **Vencedor sem `duplaQueBateu`** | partida encerrada sem o servidor dizer quem bateu mostra "A partida terminou" e o placar. Anunciar um vencedor seria inferência. |
 | **Conquista, ranking, economia** | o cliente não concede nada por inferência. Fora do escopo desta OS. |
 
@@ -236,7 +240,13 @@ Nada aqui foi preenchido com valor plausível.
 
 2. **Sem versão de estado, uma reordenação de mensagens não é detectável.** Um
    socket entrega em ordem, então o risco é teórico hoje. O mecanismo de
-   comparação já existe e é testado; falta só o servidor mandar o campo.
+   comparação (`EstadoMesaOnline.substitui`) já existe e é testado, mas — para
+   ser exato — **não tem chamador em produção hoje**: com `versaoEstado` sempre
+   nulo dos dois lados ele responderia "substitui" a tudo, e ligá-lo agora seria
+   um portão que não filtra nada. Quem descarta mensagem de sessão antiga é o
+   crachá de geração do `OnlineService`, e isso está ligado e testado. Quando o
+   servidor passar a mandar o campo, o ponto de ligação é a leitura da visão em
+   `lobby_online.dart`.
 
 3. **O teto de espera de 12 s é uma escolha, não uma medida.** Não há telemetria
    de latência real de partida. Curto demais destrava cedo e a pessoa pode
