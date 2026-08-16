@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "descricao": "Configuracao da campanha Kit Pioneiros 2026. Este arquivo e o ESPELHO VERSIONADO do documento Firestore `campaigns/pioneiros_2026`: serve de seed inicial, de documentacao do contrato e de fixture de teste. Em producao, a fonte da verdade e o documento no Firestore, editavel pela administracao SEM novo build.",
+  "documentoFirestore": "campaigns/pioneiros_2026",
+  "convencoes": {
+    "status": "draft = invisivel e sem concessao | active = campanha valendo | paused = visivel conforme catalogVisibility, porem sem conceder | closed = encerrada, resgates novos recusados e inventario ja concedido preservado",
+    "featureFlag": "chave lida do Remote Config/documento de flags; desligada, a campanha nao aparece e nenhuma concessao ocorre, independentemente do status",
+    "startAt/endAt": "janela de vigencia em ISO-8601 UTC (sufixo Z obrigatorio); null = sem limite daquele lado",
+    "claimDeadline": "prazo final de RESGATE, opcional e independente de endAt; null = sem prazo",
+    "eligibilityMode": "allowlist | closedTest | matchInWindow | hybrid | adminGrant",
+    "eligibilitySource": "caminho da fonte confiavel de elegibilidade; subcolecao por UID para suportar listas grandes sem array gigante em um unico documento",
+    "catalogVisibility": "hidden = nao elegivel nao ve nada | teaser = nao elegivel ve a colecao bloqueada, sem poder resgatar",
+    "grantMode": "all_items_one_time = pacote completo, uma unica vez, por usuario elegivel",
+    "rewardIds": "composicao exata da concessao; conferida contra ColecaoItemIds.pioneiros2026 no carregamento"
+  },
+  "campanha": {
+    "campaignId": "pioneiros_2026",
+    "collectionId": "pioneiros_2026",
+    "displayName": "Kit Pioneiros 2026",
+    "version": 1,
+    "status": "draft",
+    "featureFlag": "kitPioneiros2026Enabled",
+    "startAt": null,
+    "endAt": null,
+    "claimDeadline": null,
+    "eligibilityMode": "allowlist",
+    "eligibilitySource": "campaigns/pioneiros_2026/eligible/{uid}",
+    "catalogVisibility": "hidden",
+    "grantMode": "all_items_one_time",
+    "rewardIds": [
+      "pioneer_2026_crown",
+      "pioneer_2026_chest",
+      "pioneer_2026_mascot_bulldog",
+      "pioneer_2026_mascot_owl",
+      "pioneer_2026_emblem",
+      "pioneer_2026_throne",
+      "pioneer_2026_medallion",
+      "pioneer_2026_mascot_dragon",
+      "pioneer_2026_vortex",
+      "pioneer_2026_statue"
+    ]
+  },
+  "notaDeAtivacao": "Entregue em `status: draft` e sem janela definida de proposito. A ativacao (status, janela, modo de elegibilidade e visibilidade) e decisao da Sonia e acontece editando o documento no Firestore — nao exige alterar codigo nem publicar nova versao do aplicativo."
+}

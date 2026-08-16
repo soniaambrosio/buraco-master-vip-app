@@ -1,0 +1,137 @@
+# pubspec.yaml — dependencias e assets do Buraco Master VIP.
+#
+# ATE AQUI o repositorio nao tinha pubspec: o CI rodava `flutter create` e depois
+# `flutter pub add`, resolvendo as versoes do zero a cada build. Isso significava
+# que dois builds do MESMO commit podiam usar versoes diferentes de pacote.
+#
+# Agora este arquivo, junto de pubspec.lock, e a fonte da verdade. O workflow
+# copia ambos para dentro do scaffold e roda `flutter pub get` — sem `pub add`,
+# sem remendo de YAML em tempo de build.
+#
+# O bloco `assets` tambem migrou para ca. Antes ele era injetado por um script
+# Python dentro do workflow, com uma cadeia de "se nao achar tal linha, insere
+# depois dela". Declarar aqui e mais simples e falha mais cedo.
+
+name: buraco_master_vip
+description: "Buraco Master VIP."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  # Faixa aberta no patch de proposito: o CI fixa o Flutter em 3.44.8, e travar
+  # o Dart num patch exato quebraria o build a cada bump do canal stable.
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # --- Firebase --------------------------------------------------------------
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+
+  # Necessarios pelo modulo de colecoes (lib/colecoes/colecao_firebase.dart):
+  # o catalogo, a campanha e o inventario vivem no Firestore, e o resgate e uma
+  # Cloud Function `https.onCall` — que exige cloud_functions no cliente.
+  cloud_firestore: ^6.8.0
+  cloud_functions: ^6.3.6
+
+  # App Check: a integracao fica pronta aqui, porem DESLIGADA por padrao. Ver
+  # docs/KIT-PIONEIROS-2026-SEGURANCA.md — a ativacao acontece antes da abertura
+  # publica, nao agora.
+  firebase_app_check: ^0.4.6
+
+  google_sign_in: 6.2.1
+  audioplayers: ^6.7.1
+  web_socket_channel: ^3.0.3
+  shared_preferences: ^2.5.5
+
+  # --- Google Play Billing ----------------------------------------------------
+  # Plugin oficial do time Flutter (flutter/packages). Resolve para
+  # `in_app_purchase_android` 0.5.0, que empacota a Google Play Billing Library
+  # 8 e declara `com.android.vending.BILLING` no proprio manifesto do plugin —
+  # e o merge desse manifesto que faz a Play Console reconhecer o AAB como
+  # capaz de faturar. Nenhum manifesto nosso precisa declarar a permissao.
+  #
+  # Escolhido em vez de um wrapper de terceiros porque a autoridade da compra
+  # e o backend (`functions-billing/validarCompraPlay`): o cliente so precisa
+  # abrir o fluxo e entregar o `purchaseToken`, e para isso o plugin oficial e
+  # o de menor superficie e maior manutencao.
+  in_app_purchase: ^3.3.0
+
+  # Declarado EXPLICITO, e nao deixado como dependencia transitiva: o cliente
+  # importa `package:in_app_purchase_android/...` para ler o `basePlanId` e o
+  # `offerToken` de cada plano-base, e para escolher o plano na hora da compra.
+  # Depender disso por transitividade funciona ate o dia em que a resolucao
+  # muda de forma — e ai o erro aparece como "pacote nao encontrado" num build
+  # de release, nao aqui.
+  in_app_purchase_android: ^0.5.0
+
+  # Usado por `lib/billing/validacao.dart` para derivar o MESMO rotulo de token
+  # que o backend usa em log (`rotuloToken` = 8 primeiros hex do SHA-256). E o
+  # que permite correlacionar uma compra entre app e servidor sem que o
+  # `purchaseToken` apareca em lugar nenhum. Ja existia como dev_dependency;
+  # subiu para dependencia porque agora roda em producao.
+  crypto: ^3.0.7
+
+  # --- Abertura de link externo ------------------------------------------------
+  # Existe por UMA razao, e ela e de conformidade: a Google Play Billing manda
+  # oferecer, dentro do aplicativo, um caminho para o jogador GERENCIAR a propria
+  # assinatura na loja. Isso e uma tela da Play Store, fora do aplicativo, e nao
+  # ha como abri-la sem sair do processo.
+  #
+  # A tela de exclusao de conta e onde isso mais importa: excluir a conta NAO
+  # cancela a cobranca recorrente, e mandar a pessoa "procurar na Play Store"
+  # depois de avisar que ela continuara pagando seria um aviso sem saida.
+  #
+  # `canLaunchUrl` NAO E USADO, e a ausencia e deliberada: no Android 11+ ele
+  # exige um bloco `<queries>` no AndroidManifest, e o manifesto deste projeto e
+  # gerado pelo `flutter create` do CI. `launchUrl` devolve `false` quando nao ha
+  # quem atenda, e `false` ja e a resposta que `gerenciar_assinatura.dart` trata
+  # — ver `AberturaDeLinkExterno`.
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # `crypto` saiu daqui: virou dependencia de producao (ver o bloco Billing
+  # acima). O portao de integridade das artes continua usando o mesmo pacote.
+
+  # Fakes de Firestore e Functions nos testes do adaptador, sem subir emulador.
+  fake_cloud_firestore: ^4.2.0
+
+dependency_overrides:
+  # O jni 1.0.1 (dependencia transitiva) adicionou um bloco
+  # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
+  # "Could not find method kotlin()". O 1.0.0 tem build.gradle Groovy simples e
+  # API praticamente identica.
+  jni: 1.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Flutter NAO inclui subdiretorios recursivamente: cada pasta precisa da
+  # propria linha. `assets/ranking/` nao arrasta `assets/ranking/selos/`.
+  assets:
+    - assets/splash/
+    - assets/sons/
+    - assets/baralho/
+    - assets/perfil/
+    - assets/ranking/
+    - assets/ranking/selos/
+    - assets/hall/
+    - assets/inicio/
+    - assets/configurar_mesa/
+    # Preservado da linha de trabalho desta branch: `mesa_vip_preview_screen.dart`
+    # carrega `assets/mesa_vip/fundo_preto_vip.webp` e `dorso_vip.webp`. A lista
+    # de origem nao trazia esta pasta — sem a linha, as duas artes sumiriam do
+    # bundle sem nenhum erro de compilacao avisar.
+    - assets/mesa_vip/
+    - assets/torneios/capas/
+    - assets/torneios/premiacao/coroas/
+    - assets/torneios/premiacao/selos/
+    - assets/colecoes/pioneiros_2026/

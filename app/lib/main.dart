@@ -7,6 +7,15 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'billing/entitlement_repositorio.dart';
+import 'billing/gerenciar_assinatura.dart';
+import 'conta/controlador_exclusao.dart';
+import 'conta/fonte_exclusao_firebase.dart';
+import 'billing/estado_ui.dart';
+import 'billing/plano_vip.dart';
+import 'billing/servico_billing.dart';
+import 'elegibilidade/entitlement.dart';
 import 'pages/perfil_page.dart';
 import 'pages/torneios_preview_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
@@ -18,11 +27,17 @@ import 'screens/resultado_partida_screen.dart';
 import 'screens/amigos_screen.dart';
 import 'screens/saguao_screen.dart';
 import 'screens/configuracoes_screen.dart';
+import 'screens/excluir_conta_screen.dart';
 import 'screens/como_jogar_screen.dart';
 import 'screens/loja_screen.dart';
+import 'screens/loja_vip_adaptador.dart';
 import 'screens/loja_categoria_screen.dart';
 import 'services/online_service.dart';
 import 'services/configuracoes_service.dart';
+import 'sessao/escopo_sessao.dart';
+import 'sessao/identidade_publica_sessao.dart';
+import 'sessao/sessao_do_jogador.dart';
+import 'sessao/sessao_firebase.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
 import 'screens/hall_screen.dart';
@@ -67,16 +82,43 @@ void main() async {
   runApp(const BuracoApp());
 }
 
-class BuracoApp extends StatelessWidget {
+/// Raiz do app — e a dona da [SessaoDoJogador].
+///
+/// A SESSÃO NASCE AQUI, e não numa tela, porque é aqui que ela vive tanto
+/// quanto o app. O controller assina o fluxo de autenticação sozinho: quando um
+/// login acontece, a identidade pública é resolvida sem que ninguém tenha
+/// aberto Ranking, Perfil ou Social. Ver `lib/sessao/sessao_do_jogador.dart`.
+///
+/// Isto NÃO é "jogar a chamada no widget raiz" (o antipadrão de §16): a raiz não
+/// chama nada e não tem `initState` de identidade. Ela só constrói o objeto que
+/// modela a responsabilidade e o pendura na árvore.
+class BuracoApp extends StatefulWidget {
   const BuracoApp({super.key});
+
+  @override
+  State<BuracoApp> createState() => _BuracoAppState();
+}
+
+class _BuracoAppState extends State<BuracoApp> {
+  late final SessaoDoJogador _sessao = criarSessaoDoJogador();
+
+  @override
+  void dispose() {
+    _sessao.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Buraco Master VIP',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-      home: const SplashOficialScreen(
-        proximaTela: _InicioPreviewHost(),
+    return EscopoSessao(
+      sessao: _sessao,
+      child: MaterialApp(
+        title: 'Buraco Master VIP',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
+        home: const SplashOficialScreen(
+          proximaTela: _InicioPreviewHost(),
+        ),
       ),
     );
   }
@@ -515,10 +557,16 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
       setState(() => _vm = _vm.semBusca());
       return;
     }
+    // O código é lido AGORA, e não dentro do timer: `context` depois de o
+    // widget sair da árvore é uso inválido, e a busca não precisa do valor
+    // fresco — 350ms não trocam a identidade da sessão.
+    final meuCodigo = EscopoSessao.identidadeDe(context).publicId;
     _debounce = Timer(const Duration(milliseconds: 350), () {
       final low = t.toLowerCase();
       final achados = _diretorio
-          .where((r) => r.apelido.toLowerCase().contains(low) || vm_codigoBate(r, low))
+          .where((r) =>
+              r.apelido.toLowerCase().contains(low) ||
+              vm_codigoBate(r, low, meuCodigo))
           .toList();
       if (!mounted) return;
       setState(() => _vm = _vm.copyWith(termoBusca: t, resultados: achados));
@@ -526,8 +574,14 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
   }
 
   // Busca também pelo "código" (na Fase A só o próprio código bate; Fase B: código real por jogador).
-  bool vm_codigoBate(ResultadoBusca r, String low) =>
-      r.id == 'sonia' && _vm.meuCodigo.toLowerCase().contains(low);
+  //
+  // `meuCodigo` nulo = identidade ainda não resolvida, e aí NADA bate por
+  // código. Casar com o uid ou com um placeholder faria a busca encontrar o
+  // jogador por um identificador que não é o dele.
+  bool vm_codigoBate(ResultadoBusca r, String low, String? meuCodigo) =>
+      r.id == 'sonia' &&
+      meuCodigo != null &&
+      meuCodigo.toLowerCase().contains(low);
 
   void _enviarPedido(String id) {
     setState(() {
@@ -569,14 +623,38 @@ class _AmigosPreviewHostState extends State<_AmigosPreviewHost> {
     }
   }
 
+  /// O "meu código" da tela de Amigos É o `publicId` canônico.
+  ///
+  /// Vem da sessão, e nunca do `uid`: §5 proíbe a queda silenciosa, e o uid é
+  /// identidade INTERNA — exibi-lo aqui vazaria a chave de `users/{uid}` numa
+  /// tela feita para ser mostrada a estranhos.
+  ///
+  /// Sem identidade resolvida, o texto vira um travessão. Isso é FALLBACK DE
+  /// APRESENTAÇÃO, não de identidade: '—' não é um identificador, ninguém
+  /// consegue buscar por ele, e ele não é persistido em lugar nenhum. A
+  /// distinção importa — o proibido é fabricar um valor que PASSE por publicId.
+  String get _meuCodigo =>
+      EscopoSessao.identidadeDe(context).publicId ?? '—';
+
+  bool get _temCodigo => EscopoSessao.identidadeDe(context).publicId != null;
+
   @override
   Widget build(BuildContext context) {
+    // Descoberta e busca por apelido NÃO dependem de o Ranking ter sido aberto:
+    // a identidade já está resolvida pela sessão quando esta tela monta, venha
+    // o jogador de onde vier.
+    final vm = _vm.copyWith(meuCodigo: _meuCodigo);
     return AmigosScreen(
-      vm: _vm,
+      vm: vm,
       onVoltar: () => Navigator.of(context).pop(),
       onCopiarCodigo: () async {
-        await Clipboard.setData(ClipboardData(text: _vm.meuCodigo));
-        if (mounted) _aviso('Código ${_vm.meuCodigo} copiado');
+        if (!_temCodigo) {
+          _aviso('Seu código ainda está carregando — só um instante 🙂');
+          return;
+        }
+        final codigo = _meuCodigo;
+        await Clipboard.setData(ClipboardData(text: codigo));
+        if (mounted) _aviso('Código $codigo copiado');
       },
       onConvidarLink: () => _aviso('Compartilhar convite — integração fica com o Claude (Fase B)'),
       onBuscar: _buscar,
@@ -721,6 +799,127 @@ class _ConfiguracoesPreviewHostState
     }
   }
 
+  // ---------------------------------------------------------------- exclusão
+  //
+  // O HOST É QUEM SABE REAUTENTICAR, e por isso o fluxo nasce aqui. "Apresentar
+  // a credencial de novo" quer dizer coisas diferentes conforme o provedor, e
+  // quem conhece `GoogleSignIn` e `FirebaseAuth` neste aplicativo é esta camada
+  // — o controlador recebe a função pronta e continua testável sem Firebase.
+
+  /// Refaz o login do Google e reautentica o usuário do Firebase.
+  ///
+  /// `signOut` no Google ANTES do `signIn` é o que força o seletor de conta a
+  /// aparecer. Sem ele, a biblioteca devolveria a conta em cache sem nenhum
+  /// gesto da pessoa — e uma "reautenticação" que acontece sozinha não confirma
+  /// nada, que é justamente o oposto do que este passo existe para fazer.
+  Future<bool> _reautenticarParaExcluir() async {
+    try {
+      final usuario = FirebaseAuth.instance.currentUser;
+      if (usuario == null) return false;
+
+      await _gsi.signOut();
+      final conta = await _gsi.signIn();
+      if (conta == null) return false; // desistiu no seletor
+
+      final autenticacao = await conta.authentication;
+      final credencial = GoogleAuthProvider.credential(
+        idToken: autenticacao.idToken,
+        accessToken: autenticacao.accessToken,
+      );
+      await usuario.reauthenticateWithCredential(credencial);
+
+      // O PASSO QUE PARECE SUPÉRFLUO E NÃO É. `reauthenticateWithCredential`
+      // atualiza o `auth_time` no servidor de identidade, mas o ID token que o
+      // aplicativo tem em mãos continua sendo o antigo até expirar. Como a
+      // Function confere exatamente esse claim, sem o refresh forçado a
+      // chamada seguinte levaria o `auth_time` velho e seria recusada de novo —
+      // e o jogador veria o pedido de senha uma segunda vez, logo depois de ter
+      // digitado.
+      await usuario.getIdToken(true);
+      return true;
+    } catch (_) {
+      // Cancelamento e recusa do provedor dão no mesmo para o fluxo: não
+      // prossiga. Reportar erro aqui transformaria uma desistência em falha.
+      return false;
+    }
+  }
+
+  /// A situação da assinatura de quem está logado, para a tela de exclusão.
+  ///
+  /// LEITURA ÚNICA, e não escuta: a tela de exclusão vive segundos, e uma
+  /// transição de assinatura no meio dela não muda nada do que a pessoa precisa
+  /// decidir. Quem precisa de `snapshots()` é a loja, que fica aberta.
+  ///
+  /// TODO CAMINHO DE DÚVIDA CAI EM "NENHUMA": sem sessão, sem documento, com
+  /// erro de leitura. É o mesmo fail-closed de `EntitlementVip.ausente` — não
+  /// oferecer um botão custa menos do que prometer uma assinatura que não
+  /// existe.
+  Future<AssinaturaParaGerenciar> _lerAssinaturaParaExcluir() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return AssinaturaParaGerenciar.nenhuma;
+      final entitlement = await EntitlementRepositorio().ler(uid);
+      return AssinaturaParaGerenciar.doEntitlement(
+        entitlement,
+        DateTime.now().toUtc(),
+      );
+    } catch (_) {
+      return AssinaturaParaGerenciar.nenhuma;
+    }
+  }
+
+  /// Abre a Play Store fora do aplicativo.
+  ///
+  /// `externalApplication` é obrigatório aqui: o padrão do `url_launcher` no
+  /// Android é a aba interna do navegador, e um endereço `play.google.com`
+  /// aberto numa aba interna mostra a página web da loja em vez de entregar a
+  /// intent ao aplicativo da Play Store — que é onde a assinatura se gerencia.
+  ///
+  /// `canLaunchUrl` NÃO é consultado: no Android 11+ ele exigiria um bloco
+  /// `<queries>` no manifesto, que é gerado pelo CI. `launchUrl` já devolve
+  /// `false` quando ninguém atende, e `false` é tratado pelo controlador.
+  Future<bool> _abrirLinkExterno(Uri destino) {
+    return launchUrl(destino, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _abrirExclusaoDeConta() async {
+    final controlador = ControladorDeExclusao(
+      fonte: FonteDeExclusaoFirebase(),
+      reautenticar: _reautenticarParaExcluir,
+      lerAssinatura: _lerAssinaturaParaExcluir,
+      abrirLinkExterno: _abrirLinkExterno,
+      encerrarSessao: () async {
+        // Blindado, como o logout comum. E a ordem é a mesma dele: Firebase
+        // primeiro, Google depois.
+        try {
+          await FirebaseAuth.instance.signOut();
+        } catch (_) {}
+        try {
+          await _gsi.signOut();
+        } catch (_) {}
+      },
+    );
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (rotaContext) => ExcluirContaScreen(
+          controlador: controlador,
+          onVoltar: () => Navigator.of(rotaContext).maybePop(),
+          // Conta excluída: volta para a raiz. A `SessaoDoJogador` já se
+          // invalidou sozinha quando o `signOut` fez o stream de autenticação
+          // emitir `null` — não há estado a limpar à mão aqui.
+          onConcluida: () =>
+              Navigator.of(rotaContext).popUntil((r) => r.isFirst),
+        ),
+      ),
+    );
+
+    controlador.dispose();
+    if (mounted && FirebaseAuth.instance.currentUser == null) {
+      _aviso('Sua conta foi excluída.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ConfiguracoesScreen(
@@ -738,6 +937,7 @@ class _ConfiguracoesPreviewHostState
         onTermos: () => _aviso('Termos e privacidade — em breve.'),
         onAvaliar: () => _aviso('Avaliar na loja — em breve.'),
         onSair: _confirmarSaida,
+        onExcluirConta: _abrirExclusaoDeConta,
       ),
     );
   }
@@ -769,6 +969,24 @@ class _ComoJogarPreviewHost extends StatelessWidget {
 
 
 // ===================== LOJA VIP (host) =====================
+//
+// O QUE ESTAVA AQUI, E POR QUE SAIU
+//
+// `onAssinar` fazia `setState(() => _ehVip = true)` depois de 550 ms, e a tela
+// passava a mostrar "Você é VIP 👑". Era placeholder de maquete — o proprio
+// texto dizia "billing entra com o Claude" — mas era tambem, ao pe da letra, o
+// primeiro criterio de reprovacao da OS: VIP concedido por decisao local, sem
+// nenhum servidor envolvido.
+//
+// Agora o selo VIP tem uma fonte so: `playerEntitlements/{uid}`, escrito
+// exclusivamente pelo backend depois de conferir a compra com a Google Play
+// Developer API. O host apenas OBSERVA esse documento. Nao existe caminho, neste
+// arquivo, que ligue o VIP sem o servidor ter ligado antes.
+//
+// Os planos exibidos vem do que a Play Store devolveu, com o preco que ELA
+// formatou. Enquanto o catalogo estiver vazio — que e o estado de hoje, ate a
+// Play Console liberar a area de produtos — a lista sai vazia e a grade de
+// planos simplesmente nao aparece.
 class _LojaPreviewHost extends StatefulWidget {
   const _LojaPreviewHost();
 
@@ -777,7 +995,99 @@ class _LojaPreviewHost extends StatefulWidget {
 }
 
 class _LojaPreviewHostState extends State<_LojaPreviewHost> {
-  bool _ehVip = false;
+  final ServicoBilling _billing = ServicoBilling();
+  final EntitlementRepositorio _entitlements = EntitlementRepositorio();
+
+  StreamSubscription<PainelBilling>? _escutaPainel;
+  StreamSubscription<EntitlementVip>? _escutaEntitlement;
+
+  PainelBilling _painel = const PainelBilling();
+  List<PlanoVipDisponivel> _planos = const <PlanoVipDisponivel>[];
+
+  /// Vem do entitlement do backend. Nunca de uma resposta da Play Store.
+  bool get _ehVip => _painel.mostrarComoVip(DateTime.now().toUtc());
+
+  @override
+  void initState() {
+    super.initState();
+    _escutaPainel = _billing.painel.listen((p) {
+      if (!mounted) return;
+      setState(() {
+        _painel = p;
+        _planos = planosVipDe(_billing.assinaturas);
+      });
+    });
+
+    // A escuta do entitlement e por jogador, e so faz sentido com sessao. Sem
+    // uid o documento nem existe, e o padrao (`ausente`) ja e "sem VIP".
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      _escutaEntitlement = _entitlements.observar(uid).listen(
+        _billing.atualizarEntitlement,
+        // Uma falha de leitura NAO pode acender nem apagar VIP por conta
+        // propria: o estado anterior continua valendo ate o backend responder.
+        onError: (Object _) {},
+      );
+    }
+
+    _billing.iniciar();
+  }
+
+  @override
+  void dispose() {
+    _escutaPainel?.cancel();
+    _escutaEntitlement?.cancel();
+    _billing.encerrar();
+    super.dispose();
+  }
+
+  /// Abre o fluxo de compra do plano-base escolhido.
+  ///
+  /// O `offerToken` e o que faz a Play cobrar o plano CERTO: sem ele, ela usaria
+  /// a oferta padrao do produto, e o jogador que escolheu "Anual" poderia acabar
+  /// assinando o mensal.
+  Future<void> _assinar(String basePlanId) async {
+    PlanoVipDisponivel? escolhido;
+    for (final p in _planos) {
+      if (p.basePlanId == basePlanId) escolhido = p;
+    }
+    if (escolhido == null) {
+      _aviso('Este plano não está disponível agora.');
+      return;
+    }
+    await _billing.comprar(
+      escolhido.produto,
+      ofertaPlanoBase: escolhido.ofertaToken,
+    );
+  }
+
+  /// Texto honesto para cada situacao do fluxo.
+  ///
+  /// `aguardandoRevalidacao` merece o cuidado maior: e o caso em que o jogador
+  /// PAGOU e o servidor ainda nao confirmou. Dizer "erro" faria parecer que o
+  /// dinheiro sumiu; dizer "pronto" seria mentira.
+  String? get _avisoDoEstado {
+    switch (_painel.compra) {
+      case EstadoCompra.aguardandoValidacao:
+        return 'Confirmando sua assinatura com o servidor…';
+      case EstadoCompra.aguardandoRevalidacao:
+        return 'Sua compra foi registrada e será confirmada em instantes. '
+            'Não é preciso comprar de novo.';
+      case EstadoCompra.validada:
+        return 'Assinatura confirmada. Liberando seu VIP…';
+      case EstadoCompra.recusada:
+        return 'Não foi possível validar esta compra.';
+      case EstadoCompra.pendente:
+        return 'Pagamento pendente de aprovação.';
+      case EstadoCompra.cancelada:
+        return 'Compra cancelada.';
+      case EstadoCompra.erroDaPlay:
+        return 'A Play Store não conseguiu concluir a compra.';
+      case EstadoCompra.emAndamento:
+      case EstadoCompra.ociosa:
+        return null;
+    }
+  }
 
   void _aviso(String texto) {
     ScaffoldMessenger.of(context)
@@ -805,8 +1115,16 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
 
   @override
   Widget build(BuildContext context) {
+    // A maquete continua fornecendo cosmeticos, pacotes e amigos — nada disso
+    // tem fonte real ainda. O VIP e os planos sao substituidos pelo que o
+    // backend e a Play Store dizem.
+    final vm = LojaVM.mock().copiarCom(
+      ehVip: _ehVip,
+      planos: planosParaLoja(_planos),
+    );
+
     return LojaScreen(
-      vm: LojaVM.mock(ehVip: _ehVip),
+      vm: vm,
       onVoltar: () => Navigator.of(context).maybePop(),
       onNav: (destino) {
         switch (destino) {
@@ -824,11 +1142,13 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
         }
       },
       onComprarMoedas: () => _aviso('Pacotes de moedas'),
-      onAssinar: (planoId) {
-        _aviso('Plano $planoId selecionado — billing entra com o Claude');
-        Future<void>.delayed(const Duration(milliseconds: 550), () {
-          if (mounted) setState(() => _ehVip = true);
-        });
+      // NENHUM `_ehVip = true` aqui, e essa ausencia e o ponto. Este callback
+      // so ABRE o fluxo da Play; o selo VIP acende quando o backend gravar o
+      // entitlement e o `snapshots()` trouxer a mudanca.
+      onAssinar: (basePlanId) {
+        _assinar(basePlanId);
+        final texto = _avisoDoEstado;
+        if (texto != null) _aviso(texto);
       },
       onComprarPacote: (pacoteId) => _aviso('Revisando pacote $pacoteId'),
       onConfirmarCompra: (itemId) =>
@@ -1968,6 +2288,12 @@ class _RankingPreviewHost extends StatefulWidget {
   State<_RankingPreviewHost> createState() => _RankingPreviewHostState();
 }
 
+/// Ranking é CONSUMIDOR da identidade pública, e só isso.
+///
+/// Não cria, não garante, não escolhe e não deriva `publicId`: lê o estado
+/// canônico da sessão e obedece à fase em que ele está. Abrir esta tela dez
+/// vezes não produz nenhuma chamada de identidade — o estado já foi resolvido
+/// no login, e `EscopoSessao.identidadeDe` é leitura pura.
 class _RankingPreviewHostState extends State<_RankingPreviewHost> {
   RankingAba _aba = RankingAba.temporada;
 
@@ -1986,16 +2312,36 @@ class _RankingPreviewHostState extends State<_RankingPreviewHost> {
   @override
   Widget build(BuildContext context) {
     final vm = RankingVM.mock(aba: _aba);
+    final identidade = EscopoSessao.identidadeDe(context);
 
     return RankingScreen(
       vm: vm,
+      // A fase da identidade MANDA na tela (§11). Enquanto ela carrega, o
+      // Ranking espera; se falhou, o Ranking mostra erro e oferece retry. O que
+      // ele não faz em nenhuma das duas é seguir em frente com um identificador
+      // inventado para "não travar a tela".
+      estado: switch (identidade.fase) {
+        FaseIdentidade.carregando ||
+        FaseIdentidade.naoCarregada =>
+          RankingEstado.carregando,
+        FaseIdentidade.falha => RankingEstado.erro,
+        FaseIdentidade.naoAutenticado ||
+        FaseIdentidade.disponivel =>
+          RankingEstado.normal,
+      },
+      mensagemErro: identidade.fase == FaseIdentidade.falha
+          ? 'Não consegui carregar seu perfil de jogador agora. Tenta de novo?'
+          : null,
       onVoltar: () => Navigator.of(context).maybePop(),
       onTrocarAba: (aba) => setState(() => _aba = aba),
       onAbrirHall: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const _HallPreviewHost()),
       ),
       onVerJogador: (posicao) => _aviso('Perfil da posição #$posicao'),
-      onRecarregar: () => setState(() {}),
+      // RETRY EXPLÍCITO, nascido do gesto do jogador — nunca do `build`.
+      // `recarregar` é deduplicada, então apertar duas vezes não abre duas
+      // chamadas.
+      onRecarregar: () => EscopoSessao.talvezDe(context)?.recarregar(),
       onCarregarMais: null,
       onNavTap: (destino) {
         switch (destino) {

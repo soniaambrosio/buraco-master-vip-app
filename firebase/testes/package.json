@@ -1,0 +1,32 @@
+{
+  "name": "buraco-master-vip-testes-seguranca",
+  "description": "Prova as regras do Firestore e a idempotencia do resgate contra os emuladores.",
+  "private": true,
+  "scripts": {
+    "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um arquivo renomeado sairia da suite em silencio.",
+    "test": "node --test seguranca.test.js moderacao.test.js social.test.js entitlement.test.js",
+    "test:rastreabilidade": "node --test rastreabilidade.test.js",
+    "//test:ranking": "So o Bloco 7/7. Como o de rastreabilidade, prova REGRAS e nao chama Cloud Function nenhuma.",
+    "test:ranking": "node --test ranking.test.js",
+    "//test:social": "So as REGRAS do bloco 6/7. As Functions sociais ficam puladas aqui de proposito: este alvo roda no portao que sobe apenas o Firestore.",
+    "test:social": "node --test social.test.js",
+    "//test:social:functions": "Regras E chamadas reais as Cloud Functions. O runner CONFERE que o emulador de Functions esta atendendo e FALHA se nao estiver — `emulators:exec` nao exporta FUNCTIONS_EMULATOR_HOST, entao sem ele a suite ficaria permanentemente pulada com o portao verde (§37).",
+    "test:social:functions": "node com-functions.js social.test.js",
+    "//test:integrado": "Uniao das SEIS suites. E o alvo da homologacao P0 integrada: prova os blocos de firestore.rules no MESMO arquivo de regras, que e onde um bloco poderia afrouxar o do vizinho. Ranking e social entram JUNTOS desde a OS de integracao de identidade: sao os dois blocos que falam de `publicId`, e separa-los esconderia exatamente a regressao que a integracao existe para impedir. `entitlement` entra na mesma uniao desde a consolidacao das duas linhas (identidade/ranking + billing/RTDN) feita pela OS de exclusao de conta.",
+    "test:integrado": "node --test seguranca.test.js moderacao.test.js social.test.js rastreabilidade.test.js ranking.test.js entitlement.test.js",
+    "emulador": "cd .. && firebase emulators:exec --only firestore,functions,auth \"cd testes && npm test\"",
+    "//emulador-regras": "So Firestore: prova as REGRAS sem precisar compilar as Functions. E o que roda quando se mexe apenas em firestore.rules.",
+    "emulador-regras": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm test\"",
+    "//emulador:rastreabilidade": "So firestore: este harness prova REGRAS, e nao chama Cloud Function nenhuma. Subir functions aqui obrigaria a compilar o bundle do dominio de torneios para provar regra de rastreabilidade, que e dependencia que a suite nao tem.",
+    "emulador:rastreabilidade": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm run test:rastreabilidade\"",
+    "emulador:ranking": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm run test:ranking\"",
+    "//emulador:social": "REGRAS + FUNCTIONS do codebase social. `functions:social` de proposito: subir os outros codebases exigiria compilar o dominio de torneios e o de moderacao para provar regra social, que e dependencia que esta suite nao tem. Exige `npm run build:domain && npm run build` em functions-social/ antes.",
+    "emulador:social": "cd ../.. && firebase emulators:exec --only firestore,auth,functions:social --project demo-bmv \"cd firebase/testes && npm run test:social:functions\"",
+    "//emulador:integrado": "O run que a homologacao P0 exige: um emulador, um firestore.rules, as quatro suites.",
+    "emulador:integrado": "cd .. && firebase emulators:exec --only firestore \"cd testes && npm run test:integrado\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.2.0"
+  }
+}

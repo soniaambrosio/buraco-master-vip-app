@@ -1,0 +1,580 @@
+// index.ts — Cloud Functions de identidade publica e grafo social.
+//
+// A MESMA REPARTICAO DE PAPEIS DOS OUTROS CODEBASES:
+//
+//   QUEM DECIDE  -> o dominio Dart (app/lib/social/), via domain.ts. O que e
+//                   apelido valido, quem pode aceitar, quando o limite estoura,
+//                   que acoes a tela pode oferecer.
+//   QUEM EXECUTA -> repositorio.ts. Transacao, leitura e escrita.
+//   QUEM ATENDE  -> este arquivo. Autenticacao, forma do payload e traducao de
+//                   recusa em erro.
+//
+// Se um `if` de politica social aparecer aqui, ele esta no lugar errado.
+//
+// DUAS COISAS QUE O CLIENTE NUNCA ESCOLHE, e que por isso jamais sao lidas do
+// payload: o UID de quem chama (vem de `req.auth`) e o instante (vem do
+// servidor). Aceitar qualquer um dos dois deixaria uma pessoa pedir amizade em
+// nome de outra, ou datar uma solicitacao para tras.
+//
+// O CLIENTE SO FALA EM `publicId` (§13, §21, §31-D). Nenhuma funcao aqui aceita
+// UID de terceiro no payload, e nenhuma devolve UID em resposta nenhuma — a
+// trava de `exigirRespostaSegura` transforma um vazamento acidental em erro.
+
+import { initializeApp } from "firebase-admin/app";
+import { logger } from "firebase-functions";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { CallableRequest, HttpsError, onCall } from "firebase-functions/v2/https";
+
+import {
+  C_AMIZADES,
+  C_PERFIS_PUBLICOS,
+  entradaPublica,
+  exigirRespostaSegura,
+} from "./chaves";
+import { LIMITES, VereditoAmizade, agoraUtc, dominio } from "./domain";
+import {
+  desfazerPorBloqueio,
+  db,
+  estadoDeContato,
+  exigirDocumentoPublicoLimpo,
+  garantirIdentidade,
+  lerPerfilPublico,
+  lerPerfisPublicos,
+  operarRelacao,
+  paginaDeAmigos,
+  paginaDeSolicitacoes,
+  propagarApelidoParaAmigos,
+  publicIdDe,
+  reconciliarProjecoes,
+  resolverUid,
+} from "./repositorio";
+
+initializeApp();
+
+/// App Check EXIGIDO em producao, dispensado sob o emulador.
+///
+/// `FUNCTIONS_EMULATOR` e posto pelo proprio emulador e nunca vale "true" numa
+/// instancia implantada — nao ha caminho pelo qual um cliente real desligue esta
+/// verificacao, porque ela nao le nada que venha do pedido. Mesma decisao, pelo
+/// mesmo motivo, que `functions-moderacao/src/index.ts`.
+const exigirAppCheck = process.env.FUNCTIONS_EMULATOR !== "true";
+
+const opcoesCliente = {
+  enforceAppCheck: exigirAppCheck,
+  region: "southamerica-east1",
+};
+
+// --------------------------------------------------------------- autenticacao
+
+function exigirAutenticacao(req: CallableRequest): string {
+  const uid = req.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "E preciso estar autenticado.");
+  }
+  return uid;
+}
+
+function exigirAdmin(req: CallableRequest): string {
+  const uid = exigirAutenticacao(req);
+  if (req.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Operacao restrita a administracao.");
+  }
+  return uid;
+}
+
+/// O apelido sugerido no primeiro acesso vem do TOKEN, nunca do payload.
+///
+/// `req.auth.token.name` e o `displayName` que o provedor de identidade (Google,
+/// por exemplo) atestou. Ler o apelido inicial do payload deixaria o cliente
+/// escolher o proprio nome antes de qualquer validacao ter rodado — o que, alias,
+/// ele PODE fazer depois, por `atualizarPerfilPublico`, que valida.
+function apelidoDoToken(req: CallableRequest): string {
+  const nome = req.auth?.token?.name;
+  return typeof nome === "string" ? nome : "";
+}
+
+// ------------------------------------------------------------------- recusas
+
+/// Traduz um codigo do dominio numa `HttpsError`.
+///
+/// O codigo vai em `details.recusa` porque o cliente precisa distinguir
+/// "ja sao amigos" de "limite atingido" para escrever a mensagem certa na tela —
+/// e §35 proibe que ele dependa do TEXTO. O texto e para o log humano.
+function recusar(recusa: string | null): never {
+  const naoEncontrado =
+    recusa === "identidadeNaoEncontrada" ||
+    recusa === "perfilPublicoNaoDisponivel" ||
+    recusa === "perfilPublicoInvalido";
+
+  throw new HttpsError(
+    naoEncontrado ? "not-found" : "failed-precondition",
+    recusa ?? "pedido recusado",
+    { recusa }
+  );
+}
+
+/// Resolve o `publicId` que veio do cliente para um UID interno.
+///
+/// TODA rota social passa por aqui. E o unico ponto do sistema que faz
+/// `publicId -> uid`, e §31-D exige que ele seja exatamente isso: interno ao
+/// backend, invisivel para Ranking, Hall e cliente.
+///
+/// A resposta para "id malformado" e para "id que nao existe" e a MESMA
+/// (`not-found`), de proposito: diferencia-las daria um oraculo de quais ids ja
+/// foram cunhados, que e meia enumeracao de graca.
+async function exigirUidDoPublicId(bruto: unknown): Promise<string> {
+  if (typeof bruto !== "string") {
+    throw new HttpsError("invalid-argument", "publicId e obrigatorio.");
+  }
+  const normalizado = dominio.normalizarIdPublico(bruto).publicId;
+  if (!normalizado) recusar("perfilPublicoInvalido");
+  const uid = await resolverUid(normalizado);
+  if (!uid) recusar("perfilPublicoNaoDisponivel");
+  return uid;
+}
+
+// ===========================================================================
+// IDENTIDADE E PERFIL PROPRIO (§10, §11, §31-E)
+// ===========================================================================
+
+/// Obtem — criando na primeira vez — a identidade publica de quem chama (§10).
+///
+/// IDEMPOTENTE: duas chamadas simultaneas nao criam duas identidades. Ver
+/// `garantirIdentidade`.
+///
+/// §31-E: a resposta do PROPRIO perfil carrega o que a tela de edicao precisa
+/// (os limites de apelido, se o avatar tem catalogo), e esses campos NAO existem
+/// na resposta publica destinada a terceiros — sao respostas de funcoes
+/// diferentes, montadas de fontes diferentes, e nao um documento so com recorte.
+export const obterMinhaIdentidade = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const { publicId, criada } = await garantirIdentidade(uid, apelidoDoToken(req));
+  const perfil = await lerPerfilPublico(publicId);
+
+  return exigirRespostaSegura({
+    publicId,
+    criada,
+    perfil: entradaPublica(perfil, publicId, null),
+    estado: typeof perfil?.estado === "string" ? perfil.estado : "ativo",
+    // Metadados de EDICAO. Sao do dono e so viajam nesta funcao.
+    edicao: {
+      apelidoMinimo: LIMITES.apelidoMinimo,
+      apelidoMaximo: LIMITES.apelidoMaximo,
+      // Catalogo vazio hoje: nao ha fonte canonica de avatar nesta arvore. §8
+      // manda tratar a ausencia, e o contrato registra a pendencia.
+      catalogoDeAvatarDisponivel: false,
+    },
+    limites: {
+      amigos: LIMITES.limiteAmigos,
+      solicitacoesEnviadas: LIMITES.limiteSolicitacoesEnviadas,
+      paginaMaxima: LIMITES.paginaMaxima,
+    },
+  });
+});
+
+/// Altera apelido e/ou avatar (§11).
+///
+/// A ALTERACAO PASSA PELA AUTORIDADE, e nao pelo cliente escrevendo direto em
+/// `publicProfiles`, por duas razoes que as Rules nao cobririam: a normalizacao
+/// do apelido (que produz `apelidoOrdenacao`) e o leque para as projecoes dos
+/// amigos. Uma regra do Firestore nao normaliza texto nem escreve em 200
+/// documentos.
+///
+/// O cliente NAO pode alterar `publicId`, `criadoEm` nem `esquema`: o mapa de
+/// campos vem do dominio e simplesmente nao os produz.
+export const atualizarPerfilPublico = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const { apelido, avatarRef, removerAvatar } = (req.data ?? {}) as Record<
+    string,
+    unknown
+  >;
+
+  const publicId = await publicIdDe(uid);
+  if (!publicId) recusar("identidadeNaoEncontrada");
+
+  const veredito = dominio.avaliarAtualizacaoDeApresentacao({
+    apelido: typeof apelido === "string" ? apelido : null,
+    avatarRef,
+    removerAvatar: removerAvatar === true,
+    agora: agoraUtc(),
+  });
+  if (!veredito.aceita || !veredito.campos) recusar(veredito.recusa);
+
+  const campos = veredito.campos;
+  exigirDocumentoPublicoLimpo(campos);
+  await db().collection(C_PERFIS_PUBLICOS).doc(publicId).set(campos, {
+    merge: true,
+  });
+
+  // O leque de §22: so a CHAVE DE ORDENACAO das projecoes. O apelido exibido
+  // continua vindo de `publicProfiles`, entao esta propagacao nunca e o que faz
+  // o nome novo aparecer — §31-I ja vale sem ela.
+  let projecoes = 0;
+  if (typeof campos.apelidoOrdenacao === "string") {
+    projecoes = await propagarApelidoParaAmigos(uid, campos.apelidoOrdenacao);
+  }
+
+  return exigirRespostaSegura({
+    atualizado: true,
+    publicId,
+    projecoesAtualizadas: projecoes,
+  });
+});
+
+// ===========================================================================
+// VER PERFIL (§31-A a §31-J)
+// ===========================================================================
+
+/// Abre o perfil publico de outro jogador — ou o proprio — por `publicId`.
+///
+/// A PORTA UNICA de §31-C: Ranking, Hall, lista de amigos, solicitacoes,
+/// participantes de mesa e o proprio Perfil chamam ESTA funcao. Nao ha um
+/// endpoint de perfil por tela.
+///
+/// UID NAO E NECESSARIO NO CLIENTE e nao aparece na resposta (§31-D e §31-F).
+export const verPerfilPublico = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const { publicId } = (req.data ?? {}) as Record<string, unknown>;
+
+  const normalizado =
+    typeof publicId === "string"
+      ? dominio.normalizarIdPublico(publicId).publicId
+      : null;
+  if (!normalizado) recusar("perfilPublicoInvalido");
+
+  const perfil = await lerPerfilPublico(normalizado);
+  const recusaDeLeitura = dominio.recusaDeConsultaPublica({
+    publicId: normalizado,
+    existe: perfil !== undefined,
+    estado: typeof perfil?.estado === "string" ? perfil.estado : null,
+  }).recusa;
+  if (recusaDeLeitura) {
+    // §31-G: conta removida e conta inexistente respondem igual. O log guarda a
+    // diferenca; a resposta nao.
+    logger.info("perfil publico indisponivel", { recusa: recusaDeLeitura });
+    recusar("perfilPublicoNaoDisponivel");
+  }
+
+  const alvoUid = await resolverUid(normalizado);
+  if (!alvoUid) recusar("perfilPublicoNaoDisponivel");
+
+  // O proprio perfil: nao ha relacao a compor, e nao ha bloqueio de si mesmo.
+  if (alvoUid === uid) {
+    return exigirRespostaSegura({
+      perfil: entradaPublica(perfil, normalizado, null),
+      relacao: "euMesmo",
+      acoes: ["editarPerfil"],
+    });
+  }
+
+  const { pairKey } = dominio.chaveDoPar(uid, alvoUid);
+  const [relDoc, contato] = await Promise.all([
+    db().collection(C_AMIZADES).doc(pairKey).get(),
+    estadoDeContato(uid, alvoUid),
+  ]);
+
+  const dadosRel = relDoc.exists
+    ? (relDoc.data() as Record<string, unknown>)
+    : undefined;
+  const estado =
+    dadosRel?.estado === "amigos" || dadosRel?.estado === "pendente"
+      ? dadosRel.estado
+      : "nenhuma";
+
+  const vista = dominio.vistaDaRelacao({
+    uidObservador: uid,
+    uidAlvo: alvoUid,
+    estado,
+    solicitanteUid:
+      typeof dadosRel?.solicitanteUid === "string" ? dadosRel.solicitanteUid : null,
+    euBloqueeiOAlvo: contato.euBloqueeiOAlvo,
+    contatoPermitido: contato.permitido,
+  });
+
+  return exigirRespostaSegura({
+    perfil: entradaPublica(perfil, normalizado, null),
+    relacao: vista.relacao,
+    acoes: vista.acoes,
+    // `amigosDesde` so viaja quando a relacao e de amizade: numa relacao
+    // bloqueada ou inexistente ele nao existe, e inventa-lo daria informacao.
+    amigosDesde:
+      vista.relacao === "amigos" && typeof dadosRel?.amigosDesde === "string"
+        ? dadosRel.amigosDesde
+        : null,
+  });
+});
+
+/// Localiza um jogador por identidade publica (§28 e §34).
+///
+/// Versao MAGRA de `verPerfilPublico`: devolve so a apresentacao, sem compor
+/// relacao nem consultar bloqueio. E o que a tela de "adicionar por codigo" usa
+/// para confirmar "e esta pessoa?" antes de enviar o pedido.
+export const localizarJogadorPorIdentidade = onCall(
+  opcoesCliente,
+  async (req) => {
+    exigirAutenticacao(req);
+    const { publicId } = (req.data ?? {}) as Record<string, unknown>;
+
+    const normalizado =
+      typeof publicId === "string"
+        ? dominio.normalizarIdPublico(publicId).publicId
+        : null;
+    if (!normalizado) recusar("perfilPublicoInvalido");
+
+    const perfil = await lerPerfilPublico(normalizado);
+    const recusaDeLeitura = dominio.recusaDeConsultaPublica({
+      publicId: normalizado,
+      existe: perfil !== undefined,
+      estado: typeof perfil?.estado === "string" ? perfil.estado : null,
+    }).recusa;
+    if (recusaDeLeitura) recusar("perfilPublicoNaoDisponivel");
+
+    return exigirRespostaSegura({
+      perfil: entradaPublica(perfil, normalizado, null),
+    });
+  }
+);
+
+// ===========================================================================
+// GRAFO SOCIAL (§13 a §17)
+// ===========================================================================
+
+/// Resposta padrao de uma operacao sobre a relacao.
+///
+/// `repeticao: true` significa "o desfecho pedido ja valia" — e vai como SUCESSO,
+/// nunca como erro. Devolver erro faria o cliente tentar de novo, e a proxima
+/// tentativa tambem "falharia": um laco que so termina quando o jogador desiste.
+/// Mesmo padrao de `jaRegistrada: true` na denuncia.
+function respostaDaOperacao(veredito: VereditoAmizade, estadoFinal: string) {
+  if (!veredito.aceita && !veredito.repeticao) recusar(veredito.recusa);
+  return exigirRespostaSegura({
+    ok: true,
+    repeticao: veredito.repeticao,
+    motivo: veredito.repeticao ? veredito.recusa : null,
+    estado: estadoFinal,
+  });
+}
+
+/// Envia um pedido de amizade (§13) — ou aceita o inverso (§27).
+export const enviarSolicitacaoAmizade = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const alvoUid = await exigirUidDoPublicId(
+    (req.data as Record<string, unknown> | undefined)?.publicId
+  );
+
+  if (alvoUid === uid) recusar("autoAmizadeInvalida");
+
+  const { veredito, estadoFinal } = await operarRelacao(uid, alvoUid, (ctx) =>
+    dominio.avaliarSolicitacao({
+      solicitanteUid: uid,
+      destinatarioUid: alvoUid,
+      estadoAtual: ctx.relacao.estado,
+      solicitantePendenteUid: ctx.relacao.solicitanteUid,
+      contatoPermitido: ctx.contato.permitido,
+      amigosDoSolicitante: ctx.contadoresChamador.amigos,
+      amigosDoDestinatario: ctx.contadoresOutro.amigos,
+      pendentesEnviadasDoSolicitante:
+        ctx.contadoresChamador.solicitacoesEnviadas,
+    })
+  );
+
+  return respostaDaOperacao(veredito, estadoFinal);
+});
+
+/// Aceita uma solicitacao recebida (§14). Somente o destinatario.
+export const aceitarSolicitacaoAmizade = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const alvoUid = await exigirUidDoPublicId(
+    (req.data as Record<string, unknown> | undefined)?.publicId
+  );
+
+  const { veredito, estadoFinal } = await operarRelacao(uid, alvoUid, (ctx) =>
+    dominio.avaliarAceite({
+      uidQueAceita: uid,
+      estadoAtual: ctx.relacao.estado,
+      destinatarioPendenteUid: ctx.relacao.destinatarioUid,
+      contatoPermitido: ctx.contato.permitido,
+      amigosDeQuemAceita: ctx.contadoresChamador.amigos,
+      amigosDoOutro: ctx.contadoresOutro.amigos,
+    })
+  );
+
+  return respostaDaOperacao(veredito, estadoFinal);
+});
+
+/// Recusa uma solicitacao recebida (§15). Nao pune e nao bloqueia.
+export const recusarSolicitacaoAmizade = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const alvoUid = await exigirUidDoPublicId(
+    (req.data as Record<string, unknown> | undefined)?.publicId
+  );
+
+  const { veredito, estadoFinal } = await operarRelacao(uid, alvoUid, (ctx) =>
+    dominio.avaliarRecusa({
+      uidQueRecusa: uid,
+      estadoAtual: ctx.relacao.estado,
+      destinatarioPendenteUid: ctx.relacao.destinatarioUid,
+    })
+  );
+
+  return respostaDaOperacao(veredito, estadoFinal);
+});
+
+/// Cancela uma solicitacao enviada (§16). Somente o remetente.
+export const cancelarSolicitacaoAmizade = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const alvoUid = await exigirUidDoPublicId(
+    (req.data as Record<string, unknown> | undefined)?.publicId
+  );
+
+  const { veredito, estadoFinal } = await operarRelacao(uid, alvoUid, (ctx) =>
+    dominio.avaliarCancelamento({
+      uidQueCancela: uid,
+      estadoAtual: ctx.relacao.estado,
+      solicitantePendenteUid: ctx.relacao.solicitanteUid,
+    })
+  );
+
+  return respostaDaOperacao(veredito, estadoFinal);
+});
+
+/// Desfaz a amizade (§17). Bilateral: some dos dois lados.
+export const removerAmizade = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const alvoUid = await exigirUidDoPublicId(
+    (req.data as Record<string, unknown> | undefined)?.publicId
+  );
+
+  const { veredito, estadoFinal } = await operarRelacao(uid, alvoUid, (ctx) =>
+    dominio.avaliarRemocao({
+      uidQueRemove: uid,
+      estadoAtual: ctx.relacao.estado,
+      ehMembro: ctx.relacao.membros.includes(uid),
+    })
+  );
+
+  return respostaDaOperacao(veredito, estadoFinal);
+});
+
+// ===========================================================================
+// LISTAS (§22, §23, §24)
+// ===========================================================================
+
+/// Resolve uma pagina crua (publicIds) na apresentacao publica de cada item.
+///
+/// O APELIDO E LIDO AGORA, e nao copiado da projecao. E o que faz §31-I valer por
+/// construcao: quem trocou de nome ontem aparece com o nome novo hoje, sem
+/// depender de nenhuma propagacao ter dado certo.
+async function resolverPagina(pagina: {
+  itens: { publicId: string; desde: string | null }[];
+  proximoCursor: string | null;
+}) {
+  const perfis = await lerPerfisPublicos(pagina.itens.map((i) => i.publicId));
+  return exigirRespostaSegura({
+    itens: pagina.itens.map((i) =>
+      entradaPublica(perfis.get(i.publicId), i.publicId, i.desde)
+    ),
+    proximoCursor: pagina.proximoCursor,
+  });
+}
+
+function limiteDoPedido(data: unknown): number {
+  const bruto = (data as Record<string, unknown> | undefined)?.limite;
+  const n = typeof bruto === "number" ? Math.floor(bruto) : 0;
+  if (n <= 0) return LIMITES.paginaPadrao;
+  return Math.min(n, LIMITES.paginaMaxima);
+}
+
+function cursorDoPedido(data: unknown): string | null {
+  const bruto = (data as Record<string, unknown> | undefined)?.cursor;
+  return typeof bruto === "string" && bruto.length > 0 ? bruto : null;
+}
+
+/// Lista os amigos, paginado e ordenado por apelido (§22).
+export const listarAmigos = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const pagina = await paginaDeAmigos(
+    uid,
+    cursorDoPedido(req.data),
+    limiteDoPedido(req.data)
+  );
+  return resolverPagina(pagina);
+});
+
+/// Lista as solicitacoes RECEBIDAS pendentes (§23).
+export const listarSolicitacoesRecebidas = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const pagina = await paginaDeSolicitacoes(
+    uid,
+    "recebida",
+    cursorDoPedido(req.data),
+    limiteDoPedido(req.data)
+  );
+  return resolverPagina(pagina);
+});
+
+/// Lista as solicitacoes ENVIADAS pendentes (§24).
+export const listarSolicitacoesEnviadas = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const pagina = await paginaDeSolicitacoes(
+    uid,
+    "enviada",
+    cursorDoPedido(req.data),
+    limiteDoPedido(req.data)
+  );
+  return resolverPagina(pagina);
+});
+
+// ===========================================================================
+// BLOQUEIO: A FAXINA (§18)
+// ===========================================================================
+
+/// Reage ao bloqueio criado pelo codebase de MODERACAO.
+///
+/// POR QUE UM GATILHO, e nao uma chamada dentro de `bloquearJogador`: os dois
+/// codebases sao unidades de implantacao independentes (ver o cabecalho de
+/// firebase.json), e fazer a moderacao chamar o social significaria que um deploy
+/// quebrado do social derrubaria a capacidade de BLOQUEAR alguem — que e a
+/// ferramenta de protecao mais urgente do aplicativo. A dependencia tem que
+/// apontar para o lado seguro: o social reage, a moderacao nao espera.
+///
+/// A JANELA ENTRE O BLOQUEIO E ESTA FAXINA NAO E EXPLORAVEL. Toda operacao
+/// social le o bloqueio DENTRO da propria transacao, entao durante a janela a
+/// amizade existe no banco mas nenhuma acao passa. A faxina alinha o banco com a
+/// realidade; ela nao e o que produz a realidade.
+export const aoBloquearJogador = onDocumentCreated(
+  {
+    document: "users/{bloqueadorUid}/blocks/{bloqueadoUid}",
+    region: "southamerica-east1",
+  },
+  async (evento) => {
+    const { bloqueadorUid, bloqueadoUid } = evento.params;
+    if (!bloqueadorUid || !bloqueadoUid || bloqueadorUid === bloqueadoUid) return;
+
+    try {
+      const { desfez } = await desfazerPorBloqueio(bloqueadorUid, bloqueadoUid);
+      logger.info("faxina social por bloqueio", { desfez });
+    } catch (erro) {
+      // NAO relanca: falhar aqui reprocessaria o gatilho, e a segunda passagem
+      // encontraria a relacao ja apagada. O log e o que importa, porque a
+      // seguranca ja esta garantida pela checagem em cada operacao.
+      logger.error("falha na faxina social por bloqueio", { erro: `${erro}` });
+    }
+  }
+);
+
+// ===========================================================================
+// ADMINISTRACAO
+// ===========================================================================
+
+/// Reconstroi as projecoes de um jogador a partir da fonte de verdade (§20).
+///
+/// SO ADMIN. E a ferramenta de reparo que §20 pede quando existem projecoes, e
+/// tambem a resposta honesta a "e se o leque de apelido falhar no meio?".
+export const reconciliarPerfilSocial = onCall(opcoesCliente, async (req) => {
+  exigirAdmin(req);
+  const { publicId } = (req.data ?? {}) as Record<string, unknown>;
+  const alvoUid = await exigirUidDoPublicId(publicId);
+  const resultado = await reconciliarProjecoes(alvoUid);
+  return { reconciliado: true, ...resultado };
+});

@@ -240,6 +240,35 @@ class Jogo {
   String contagemPorZona() =>
       _zonas().entries.map((e) => '${e.key}=${e.value.length}').join(' · ');
 
+  // ===== SNAPSHOT / RETOMADA (OS-01 §9) =====
+  // O motor guarda cinco escalares privados que NÃO aparecem em nenhuma zona de
+  // cartas mas mudam o que é legal no turno. Sem eles, uma partida retomada
+  // parece igual e joga diferente. Estes dois métodos existem só para o codec de
+  // snapshot (lib/motor/snapshot_partida.dart) — não são API de tela.
+
+  /// Escalares internos que precisam viajar no snapshot para a retomada ser fiel.
+  Map<String, Object?> estadoInternoParaSnapshot() => {
+        'contadorIds': _cont,
+        'lixoUnicoCompradoId': _lixoUnicoCompradoId,
+        'mortosConvertidos': _mortosConvertidos,
+        'iniciadorRodada': _iniciadorRodada,
+        'rodadaContada': _rodadaContada,
+      };
+
+  /// Reaplica os escalares internos vindos de um snapshot.
+  void aplicarEstadoInternoDeSnapshot(Map<String, Object?> m) {
+    _cont = (m['contadorIds'] as num?)?.toInt() ?? _cont;
+    _lixoUnicoCompradoId = m['lixoUnicoCompradoId'] as String?;
+    _mortosConvertidos = (m['mortosConvertidos'] as num?)?.toInt() ?? 0;
+    _iniciadorRodada = (m['iniciadorRodada'] as num?)?.toInt() ?? -1;
+    _rodadaContada = m['rodadaContada'] == true;
+  }
+
+  /// §5.2 ABERTO: carta comprada sozinha do lixo que NÃO pode ser devolvida como
+  /// descarte neste turno. null = sem restrição. Exposto para a visão do assento
+  /// poder dizer ao dono da mão o que ele não pode descartar.
+  String? get descarteProibidoId => _lixoUnicoCompradoId;
+
   // ===== PONTUAÇÃO (porte fiel de motor/jogo.js: pontuarDuplaJogo + contarPontos) =====
   // canastra: as_a_as=1000, de_500=500, limpa=200, suja=100; + cartas baixadas;
   // + bônus de batida (100); − cartas na mão; − morto não pego (−100, só se ALGUÉM pegou).
@@ -296,6 +325,36 @@ class Jogo {
     // exato — empate na meta força uma RODADA EXTRA até desempatar.
     final n = placar['nos']!, e = placar['eles']!;
     if ((n >= metaPontos || e >= metaPontos) && n != e) encerrada = true;
+  }
+
+  // Canastras LIMPAS que a dupla fez na última rodada apurada.
+  //
+  // Existe porque o quarto critério de desempate do projeto conta canastras
+  // limpas, e quem sabe o que é limpa é este arquivo — não a camada que consome
+  // o número. Ler `pontosRodada` em vez de varrer os jogos de novo é deliberado:
+  // a classificação já foi feita em `_pontuarDupla`, e refazê-la aqui criaria uma
+  // segunda definição de "limpa" que divergiria na primeira mudança de regra.
+  //
+  // As três faixas somadas são as que a batida trata como LIMPA no Aberto/SBTL
+  // ("limpa, 500 ou 1000"), e as três só existem com zero curinga por construção
+  // — `_finalizar` só devolve `as_a_as`/`de_500` quando qtdCuringas é 0, e
+  // `limpa` é literalmente o caso sem curinga. Canastra suja não entra.
+  //
+  // 0 quando a rodada ainda não foi apurada: não houve apuração, não há número.
+  // Também volta a 0 quando `novaRodada()` limpa `pontosRodada` — por isso quem
+  // precisa do total da PARTIDA acumula a cada apuração (ver `MotorPartida`),
+  // em vez de perguntar aqui no fim.
+  int canastrasLimpasNaRodada(String dupla) {
+    final r = pontosRodada?[dupla];
+    if (r is! Map) return 0;
+    final det = r['detalhe'];
+    if (det is! Map) return 0;
+    int ler(String k) {
+      final v = det[k];
+      return v is num ? v.toInt() : 0;
+    }
+
+    return ler('limpas') + ler('de500') + ler('asAas');
   }
 
   // Nova rodada: mantém o placar, redistribui tudo o resto.

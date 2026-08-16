@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Política de Privacidade — Buraco Master VIP</title>
+<meta name="description" content="Política de Privacidade do Buraco Master VIP: quais dados são tratados, o que é apagado na exclusão da conta, o que é anonimizado, o que é desvinculado e o que é retido.">
+<meta name="robots" content="index, follow">
+
+<!--
+  ===========================================================================
+  index.html — POLITICA DE PRIVACIDADE.
+  ===========================================================================
+
+  NAO EXISTIA POLITICA NESTE REPOSITORIO antes desta OS. Este arquivo e a
+  primeira, e ele foi escrito a partir de UMA fonte: a matriz de retencao
+  executavel em `functions-conta/src/inventario.ts`.
+
+  ---------------------------------------------------------------------------
+  A REGRA QUE GOVERNA O TEXTO ABAIXO
+  ---------------------------------------------------------------------------
+
+      NAO PROMETER O QUE A MATRIZ NAO FAZ.
+
+  A frase facil seria "todos os seus dados sao apagados". Ela seria FALSA: a
+  matriz classifica 61 caminhos em cinco classes, e so uma delas apaga. Escrever
+  a frase facil transformaria a politica numa promessa que o codigo desmente —
+  e a Google Play exige coerencia entre a politica declarada e o tratamento
+  real.
+
+  Por isso as quatro secoes de "O que acontece quando voce exclui a conta"
+  espelham, uma a uma, as classes APAGAR / ANONIMIZAR / DESVINCULAR / RETER. Os
+  exemplos citados sao itens reais da matriz, e nao ilustracoes inventadas.
+
+  ---------------------------------------------------------------------------
+  A SEGUNDA REGRA: TERMOS DIFERENTES PARA COISAS DIFERENTES
+  ---------------------------------------------------------------------------
+
+  Chamar tudo o que sobra de "dado anonimo" seria impreciso, e a impressao seria
+  boa demais. O que sobra e de tres naturezas:
+
+    ANONIMIZACAO DE APRESENTACAO — apelido e avatar viram um rotulo neutro. O
+    registro continua chaveado pelo mesmo identificador tecnico.
+
+    DESVINCULACAO — o campo que ligava o registro a conta e cortado. O fato
+    fica; a ponte some.
+
+    PSEUDONIMIZACAO / RETENCAO TECNICA — o registro continua chaveado por um
+    identificador opaco de 28 caracteres. Depois da exclusao esse identificador
+    nao resolve para pessoa nenhuma, porque a conta de autenticacao, o perfil
+    privado e o mapa de identidade foram apagados — mas ele NAO e um dado
+    anonimo no sentido estrito, e esta politica nao o chama assim.
+
+  ---------------------------------------------------------------------------
+  O QUE ESTA PAGINA NAO AFIRMA
+  ---------------------------------------------------------------------------
+
+  PRAZOS. Nenhum periodo de conservacao foi escrito, porque nenhum existe
+  decidido neste projeto. Inventar "5 anos" ou "indefinidamente" seria escrever
+  uma obrigacao juridica que ninguem assumiu. A secao "Por quanto tempo"
+  declara isso com todas as letras, e a decisao esta registrada como pendencia
+  em docs/GOOGLE-PLAY-EXCLUSAO-CONTA-DATA-SAFETY.md.
+
+  DADOS INSTITUCIONAIS. Razao social, CNPJ, endereco e encarregado de dados nao
+  existem no repositorio. Aparecem como {{PENDENTE:...}}, declarados em
+  web/PENDENCIAS-EXTERNAS.json.
+-->
+
+<style>
+  :root {
+    --ouro: #efb94a; --ouro-claro: #f6e2a6; --fundo: #080503;
+    --card: #1c130c; --texto: #efe3cc; --texto-sec: #b6a884;
+    --borda: #4a3a22; --perigo-claro: #ffc2c2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fundo); color: var(--texto);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6; font-size: 16px;
+  }
+  main { max-width: 780px; margin: 0 auto; padding: 24px 18px 64px; }
+  header { border-bottom: 1px solid var(--borda); padding-bottom: 18px; margin-bottom: 8px; }
+  h1 { color: var(--ouro-claro); font-size: 1.6rem; margin: 0 0 6px; }
+  h2 { color: var(--ouro); font-size: 1.18rem; margin: 32px 0 10px; }
+  h3 { color: var(--ouro-claro); font-size: 1rem; margin: 22px 0 6px; }
+  a { color: var(--ouro); }
+  .sub { color: var(--texto-sec); font-size: .92rem; }
+  .card { background: var(--card); border: 1px solid var(--borda); border-radius: 14px; padding: 14px 18px; margin: 14px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86rem; color: var(--ouro-claro); }
+  .pendente { color: var(--perigo-claro); font-weight: 700; }
+  footer { margin-top: 44px; border-top: 1px solid var(--borda); padding-top: 16px; color: var(--texto-sec); font-size: .85rem; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--borda); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { color: var(--ouro-claro); }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Política de Privacidade — Buraco Master VIP</h1>
+  <p class="sub">
+    Aplicativo <strong>Buraco Master VIP</strong>, pacote
+    <code>io.github.soniaambrosio.buracomastervip</code>, publicado na Google
+    Play por <span class="pendente">{{PENDENTE:NOME_DO_DESENVOLVEDOR}}</span>.
+  </p>
+  <p class="sub">
+    Contato sobre privacidade:
+    <span class="pendente">{{PENDENTE:EMAIL_DE_SUPORTE}}</span>.
+    Identificação do controlador dos dados:
+    <span class="pendente">{{PENDENTE:IDENTIFICACAO_DO_CONTROLADOR}}</span>.
+  </p>
+  <p class="sub">
+    Versão desta política:
+    <span class="pendente">{{PENDENTE:DATA_DE_VIGENCIA}}</span>.
+  </p>
+</header>
+
+<h2>1. Resumo</h2>
+<p>
+  O Buraco Master VIP é um jogo de cartas multijogador. Para jogar contra outras
+  pessoas, manter classificação, guardar compras e permitir moderação, o
+  aplicativo cria uma conta e trata os dados descritos abaixo.
+</p>
+<p>
+  Você pode excluir sua conta a qualquer momento, pelo aplicativo
+  (<em>Configurações → Excluir minha conta</em>) ou pela
+  <a href="/exclusao-de-conta/">página de exclusão de conta</a>, sem precisar
+  instalar nem abrir o aplicativo.
+</p>
+
+<h2>2. Quem somos</h2>
+<p>
+  Este aplicativo é desenvolvido e publicado por
+  <span class="pendente">{{PENDENTE:NOME_DO_DESENVOLVEDOR}}</span>
+  (<span class="pendente">{{PENDENTE:IDENTIFICACAO_DO_CONTROLADOR}}</span>).
+  Para exercer qualquer direito previsto nesta política, escreva para
+  <span class="pendente">{{PENDENTE:EMAIL_DE_SUPORTE}}</span>.
+</p>
+
+<h2>3. Que dados tratamos</h2>
+
+<h3>3.1 Dados de conta e autenticação</h3>
+<p>
+  O acesso é feito com <strong>Conta do Google</strong>. Recebemos do Google, e
+  guardamos no Firebase Authentication, os dados da conta usada para entrar —
+  identificador da conta, endereço de e-mail, e o nome e a foto que o provedor
+  disponibiliza. Não recebemos e nunca guardamos sua senha do Google.
+</p>
+
+<h3>3.2 Identidade pública e perfil</h3>
+<p>
+  Para que outras pessoas possam encontrar você e jogar com você, o aplicativo
+  gera um <strong>código público de jogador</strong> e mantém um perfil público
+  com apelido e avatar escolhidos por você. O perfil privado guarda suas
+  preferências.
+</p>
+
+<h3>3.3 Dados de jogo, classificação e torneios</h3>
+<p>
+  Registramos as partidas que você joga, os resultados, os lançamentos que
+  produzem a sua classificação e os registros de inscrição, participação e
+  premiação em torneios. Esses registros descrevem <em>partidas entre várias
+  pessoas</em>, e não apenas você.
+</p>
+
+<h3>3.4 Dados sociais</h3>
+<p>
+  Amizades, solicitações de amizade, e as suas listas de jogadores bloqueados e
+  silenciados.
+</p>
+
+<h3>3.5 Dados de moderação e segurança</h3>
+<p>
+  Denúncias que você faz e denúncias sobre você, sanções aplicadas, o estado
+  consolidado de moderação da conta, trilhas administrativas e sinais
+  antifraude.
+</p>
+
+<h3>3.6 Dados de compras e assinatura</h3>
+<p>
+  Quando você compra na Google Play, o Google confirma a compra ao nosso
+  servidor e nós guardamos o registro da transação, o direito adquirido
+  (por exemplo, o VIP) e as notificações de mudança de estado da assinatura
+  enviadas pelo Google. <strong>Não recebemos e não guardamos dados do seu
+  cartão ou meio de pagamento</strong> — o pagamento acontece inteiramente
+  dentro da Google Play.
+</p>
+
+<h3>3.7 Dados de carteira e itens</h3>
+<p>
+  Saldo de fichas, itens cosméticos, coleções e comprovantes de resgate de
+  campanhas.
+</p>
+
+<h2>4. Por que tratamos esses dados</h2>
+<ul>
+  <li><strong>Para prestar o serviço</strong>: autenticar você, montar mesas, registrar partidas e entregar o que foi comprado.</li>
+  <li><strong>Para manter a integridade da competição</strong>: garantir que a classificação de todos os participantes reflita o que aconteceu nas mesas.</li>
+  <li><strong>Para proteger jogadores</strong>: processar denúncias, aplicar e manter sanções, e detectar fraude e conluio.</li>
+  <li><strong>Para cumprir obrigações relacionadas a compras</strong>: manter a consistência de transações que envolveram dinheiro real e que a Google Play pode estornar depois.</li>
+</ul>
+
+<h2>5. Com quem compartilhamos</h2>
+<p>
+  <strong>Não vendemos seus dados e não os usamos para publicidade.</strong>
+  Utilizamos os seguintes serviços para operar o aplicativo:
+</p>
+<ul>
+  <li><strong>Google Firebase</strong> (Authentication, Cloud Firestore, Cloud Functions): armazenamento e processamento dos dados descritos acima.</li>
+  <li><strong>Google Play / Google Play Billing</strong>: processamento de compras e assinaturas. A relação de pagamento é entre você e o Google.</li>
+</ul>
+<p>
+  Outros jogadores veem apenas a sua <strong>apresentação pública</strong>:
+  apelido, avatar, código público de jogador e o que decorre das partidas
+  jogadas (classificação, resultados, participação em torneios).
+</p>
+
+<h2>6. Exclusão da conta</h2>
+
+<p>
+  Você pode excluir sua conta por dois caminhos, e nenhum deles depende do
+  outro:
+</p>
+<ul>
+  <li><strong>No aplicativo</strong>: <em>Configurações → Excluir minha conta</em>.</li>
+  <li><strong>Na web</strong>: <a href="/exclusao-de-conta/">página de exclusão de conta</a> — sem instalar e sem abrir o aplicativo.</li>
+</ul>
+
+<p>
+  Em ambos os casos a exclusão exige que você esteja autenticado, que tenha
+  provado sua identidade recentemente, e que confirme digitando a palavra
+  <code>EXCLUIR</code>. A exclusão age apenas sobre a conta autenticada:
+  <strong>não existe caminho pelo qual alguém peça a exclusão da conta de outra
+  pessoa</strong>.
+</p>
+
+<div class="card">
+  <p>
+    <strong>A exclusão da conta não cancela a sua assinatura na Google
+    Play.</strong> A cobrança recorrente é um contrato entre você e o Google.
+    Para cancelá-la, use
+    <a href="https://play.google.com/store/account/subscriptions" target="_blank" rel="noopener noreferrer">
+      Pagamentos e assinaturas na Google Play</a>.
+    Cancelar não é requisito para excluir a conta.
+  </p>
+</div>
+
+<h2>7. O que acontece com cada dado quando você exclui a conta</h2>
+
+<p>
+  Não é verdade que tudo é apagado, e dizer que é seria mentir. Alguns
+  registros descrevem partidas com outras pessoas, transações financeiras
+  reais ou histórico disciplinar, e apagá-los reescreveria o passado de
+  terceiros. O que fazemos com cada grupo está descrito abaixo — e a lista
+  completa e atualizada aparece para você, item a item, na própria tela de
+  exclusão, vinda do servidor.
+</p>
+
+<table>
+  <tr>
+    <th>O que fazemos</th>
+    <th>O que isso significa</th>
+  </tr>
+  <tr>
+    <td><strong>Apagamos</strong></td>
+    <td>O registro deixa de existir.</td>
+  </tr>
+  <tr>
+    <td><strong>Anonimizamos a apresentação</strong></td>
+    <td>O registro continua existindo; apelido e avatar são substituídos por um rótulo neutro, e o perfil público fica indisponível. O registro segue identificado por um identificador técnico.</td>
+  </tr>
+  <tr>
+    <td><strong>Desvinculamos</strong></td>
+    <td>O registro continua existindo e o campo que o ligava à sua conta é removido.</td>
+  </tr>
+  <tr>
+    <td><strong>Retemos</strong></td>
+    <td>O registro continua como está, chaveado por um identificador técnico opaco que, depois da exclusão, não permite chegar até você.</td>
+  </tr>
+</table>
+
+<h3>7.1 O que é apagado</h3>
+<ul>
+  <li>A conta de autenticação (e-mail, provedor, nome e foto vindos do Google). É apagada por último, e é o que torna todo o restante irreversível.</li>
+  <li>O documento privado do jogador e as preferências.</li>
+  <li>O mapa entre a sua conta e o seu código público de jogador.</li>
+  <li>A carteira de fichas.</li>
+  <li>O direito VIP consolidado e o registro interno de compra que guarda o token da Google Play.</li>
+  <li>Itens, coleções e comprovantes de resgate de campanhas.</li>
+  <li>Amizades e solicitações de amizade — inclusive a cópia que existia do lado das outras pessoas.</li>
+  <li>As suas listas de bloqueados e silenciados, e os bloqueios e silenciamentos que outras pessoas tinham feito contra você.</li>
+  <li>O seu histórico pessoal de partidas (a projeção da sua conta).</li>
+  <li>Os comprovantes pessoais das denúncias que você fez.</li>
+</ul>
+
+<h3>7.2 O que fica sem o seu nome (anonimização de apresentação)</h3>
+<p>
+  A linha permanece porque apagá-la mudaria a colocação de quem jogou com você:
+  quem terminou em terceiro passaria a segundo por um motivo que não aconteceu
+  na mesa. O que sai é a identificação visível.
+</p>
+<ul>
+  <li>O seu perfil público: apelido e avatar são substituídos e o perfil passa a constar como indisponível.</li>
+  <li>As suas linhas de classificação por temporada e o agregado global: apelido e avatar viram um rótulo neutro.</li>
+  <li>Os registros do Hall, quando existirem.</li>
+</ul>
+<p class="sub">
+  <strong>Precisão de termo:</strong> isto é anonimização <em>da apresentação</em>.
+  A linha continua chaveada por um identificador técnico — ver 7.4.
+</p>
+
+<h3>7.3 O que fica sem ligação com a sua conta (desvinculação)</h3>
+<ul>
+  <li>Os registros das suas compras: a transação permanece, e o campo que a ligava à sua conta é removido. É o que impede que uma notificação futura do Google conceda algo a uma conta que não existe mais.</li>
+  <li>Os eventos de assinatura recebidos do Google: o evento permanece (apagá-lo faria uma reentrega ser processada de novo) e o vínculo com a sua conta é removido.</li>
+  <li>O índice do seu código público de jogador: o registro permanece marcado como retirado, sem vínculo com a conta, para que o mesmo código nunca seja atribuído a outra pessoa — o que faria essa pessoa aparecer, aos olhos de quem lê, como dona do seu histórico.</li>
+</ul>
+
+<h3>7.4 O que é retido, e por quê</h3>
+<p>
+  Estes registros permanecem porque não descrevem apenas você, ou porque
+  removê-los quebraria uma garantia que protege outras pessoas. Eles continuam
+  chaveados por um identificador técnico opaco. Depois da exclusão, esse
+  identificador <strong>não permite chegar até você</strong>: a conta de
+  autenticação, o perfil privado e o mapa de identidade foram apagados, e não
+  resta caminho de volta. Ainda assim, esta política não os chama de dados
+  anônimos — são <strong>pseudonimizados</strong>.
+</p>
+<ul>
+  <li><strong>Partidas e seus eventos</strong> — uma partida é de quatro pessoas. Apagá-la, ou remover um dos competidores, mudaria o registro das outras três.</li>
+  <li><strong>Lançamentos de classificação</strong> — o extrato que prova por que a pontuação de cada jogador é o que é, inclusive a dos seus adversários.</li>
+  <li><strong>Registros de processamento de classificação</strong> — o que impede a mesma partida de pontuar duas vezes num reprocessamento.</li>
+  <li><strong>Inscrições, histórico e premiações de torneios</strong> — sustentam a classificação e a premiação dos demais inscritos.</li>
+  <li><strong>Denúncias</strong> — as que você fez são processos abertos contra terceiros; as que você sofreu são o fundamento de sanções aplicadas.</li>
+  <li><strong>Sanções e o estado consolidado de moderação</strong> — apagá-los transformaria a exclusão de conta num caminho para limpar ficha disciplinar.</li>
+  <li><strong>Trilhas administrativas de moderação, classificação e concessões</strong> — por desenho, não podem ser apagadas por quem as gerou.</li>
+  <li><strong>Sinais antifraude</strong> — um mesmo registro cita vários envolvidos; apagá-lo por causa de um destruiria a suspeita sobre os demais.</li>
+  <li><strong>Mecanismos de idempotência</strong> — barreiras que impedem que uma operação já executada seja reprocessada.</li>
+  <li><strong>O registro da própria exclusão</strong> — guarda que a conta foi excluída, quando, e um resumo para responder a pedidos posteriores. Não guarda apelido, e-mail nem avatar.</li>
+</ul>
+
+<h2>8. Por quanto tempo guardamos</h2>
+<div class="card">
+  <p>
+    <strong>Os dados apagados na exclusão da conta são removidos
+    imediatamente</strong>, no momento em que você conclui a exclusão. Não há
+    fila nem período de espera.
+  </p>
+  <p>
+    Para os registros descritos em 7.4, <strong>ainda não há um prazo de
+    conservação definido</strong> nesta política, e esta política não vai
+    declarar um prazo que não tenha sido efetivamente decidido. Esses registros
+    são mantidos enquanto persistirem as finalidades descritas — integridade da
+    competição, consistência financeira, moderação, antifraude e auditoria.
+    <span class="pendente">{{PENDENTE:PRAZOS_DE_RETENCAO}}</span>
+  </p>
+</div>
+
+<h2>9. Seus direitos</h2>
+<ul>
+  <li><strong>Acesso</strong>: a tela de exclusão lista, item a item, os dados que existem sobre você e o destino de cada um.</li>
+  <li><strong>Correção</strong>: apelido e avatar podem ser alterados no aplicativo.</li>
+  <li><strong>Exclusão</strong>: pelos dois caminhos descritos na seção 6, com os limites descritos na seção 7.</li>
+  <li><strong>Contato</strong>: <span class="pendente">{{PENDENTE:EMAIL_DE_SUPORTE}}</span>.</li>
+</ul>
+
+<h2>10. Crianças</h2>
+<p>
+  O aplicativo não é destinado a crianças. Recursos de chat público podem ser
+  restritos por idade nas configurações.
+  <span class="pendente">{{PENDENTE:IDADE_MINIMA}}</span>
+</p>
+
+<h2>11. Alterações nesta política</h2>
+<p>
+  Alterações relevantes serão publicadas nesta página, com atualização da data
+  de vigência no topo.
+</p>
+
+<footer>
+  <p>
+    <a href="/exclusao-de-conta/">Excluir minha conta</a> ·
+    Buraco Master VIP ·
+    <code>io.github.soniaambrosio.buracomastervip</code>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>
