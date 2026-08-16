@@ -78,8 +78,17 @@ class SessaoDoJogador extends ChangeNotifier {
       // uma plateia que ainda não teve como se inscrever.
       _geracao++;
       _estado = EstadoIdentidadeSessao.naoCarregada(uidInicial);
+      // O app subiu com sessão já restaurada: o fluxo de autenticação não
+      // precisa se pronunciar para sabermos que há alguém.
+      _resolvida = true;
     }
-    _assinatura = uids.listen(_aplicarSessao);
+    // `onDone` e `onError` fecham o caso em que o fluxo NUNCA emite: sem
+    // Firebase configurado, `criarSessaoDoJogador` entrega um stream vazio, que
+    // termina de imediato. Sem isto a raiz esperaria para sempre por uma
+    // resposta que não vem, e a Splash ficaria eterna.
+    _assinatura = uids.listen(_aplicarSessao)
+      ..onDone(_marcarResolvida)
+      ..onError((Object _, StackTrace __) => _marcarResolvida());
     if (uidInicial != null) scheduleMicrotask(garantirCarregada);
   }
 
@@ -97,6 +106,19 @@ class SessaoDoJogador extends ChangeNotifier {
   Future<void>? _emVoo;
 
   bool _descartado = false;
+
+  /// O fluxo de autenticação já se pronunciou ao menos uma vez?
+  ///
+  /// EXISTE PARA A RAIZ DO APP DECIDIR PARA ONDE IR, e a distinção que ela
+  /// carrega é a que faltava: `estado.autenticado == false` significa as duas
+  /// coisas ao mesmo tempo — "não há ninguém logado" e "ainda não sabemos".
+  /// Tratar as duas como a mesma coisa faz um jogador com sessão salva ver a
+  /// tela de login piscar antes de a Home aparecer.
+  ///
+  /// Vira `true` uma única vez, e nunca volta: logout não desresolve nada — a
+  /// resposta "não há ninguém" continua sendo uma resposta.
+  bool get resolvida => _resolvida;
+  bool _resolvida = false;
 
   /// A fotografia atual. Imutável — quem lê não consegue alterar.
   EstadoIdentidadeSessao get estado => _estado;
@@ -169,13 +191,28 @@ class SessaoDoJogador extends ChangeNotifier {
   // Ciclo de vida da sessão
   // -------------------------------------------------------------------------
 
+  /// O fluxo de autenticação se pronunciou — venha ele com uid, sem uid, com
+  /// erro ou terminando sem nunca emitir.
+  void _marcarResolvida() {
+    if (_descartado || _resolvida) return;
+    _resolvida = true;
+    notifyListeners();
+  }
+
   /// Login, logout e troca de usuário entram todos por aqui.
   void _aplicarSessao(String? uid, {bool notificar = true}) {
     if (_descartado) return;
+    // A resolução é anotada ANTES de qualquer atalho: mesmo uma reemissão do
+    // mesmo uid é o fluxo se pronunciando, e é isso que a raiz espera.
+    final primeiroPronunciamento = !_resolvida;
+    _resolvida = true;
     // Reemissão do mesmo uid (o stream de auth repete em refresh de token) não
     // é troca de sessão: invalidar aqui jogaria fora um cache válido e faria
     // cada renovação de token virar uma chamada nova.
-    if (uid == _estado.uid && _geracao > 0) return;
+    if (uid == _estado.uid && _geracao > 0) {
+      if (primeiroPronunciamento && notificar) notifyListeners();
+      return;
+    }
 
     // A INVALIDAÇÃO É INCONDICIONAL e vem ANTES de qualquer coisa: a geração
     // sobe, o voo é solto e o estado é substituído. Nenhum resquício do jogador
