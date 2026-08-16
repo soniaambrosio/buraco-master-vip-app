@@ -297,6 +297,78 @@ void main() {
             'números de outra pessoa',
       );
     });
+
+    test('o ramo publicável do Perfil não escreve valor nenhum', () {
+      // ESTE É O TESTE QUE FALTAVA, e a folha `casca-producao-auth-roteamento-v2`
+      // é quem o trouxe. O caso acima checava só `statsDemo == false`, e era
+      // EXATAMENTE por isso que o defeito passava por ele: desligar a chave
+      // resolvia os números de marketing e deixava intacto o outro ramo do
+      // ternário, que escrevia nível 1, título 'Novato(a)', quatro zeros de
+      // estatística, zero presentes e oito conquistas travadas.
+      //
+      // A prova é do FORMATO do literal, e por isso é estrutural: um dia esses
+      // campos vão receber valor do Firestore, e aí quem manda é o teste de
+      // comportamento (`casca_producao_test.dart` e a suíte de ranking). O que
+      // não pode voltar é a CONSTANTE escrita no código.
+      //
+      // A comparação normaliza espaços porque o formatador quebra estas linhas
+      // de jeitos diferentes conforme o comprimento.
+      final servico = _codigo(
+        File('lib/services/perfil_service.dart'),
+      ).replaceAll(RegExp(r'\s+'), ' ');
+
+      const proibidos = [
+        "liga: demo ? 'Diamante' : 'Bronze'",
+        'posicaoMundial: demo ? 128 : 0',
+        'nivel: demo ? 24 : 1',
+        "titulo: demo ? 'Rainha da Canastra' : 'Novato(a)'",
+        'presentesCount: demo ? 12 : 0',
+        'conquistas: demo ? _catalogoDemo : _catalogoTravado',
+      ];
+      for (final linha in proibidos) {
+        expect(
+          servico,
+          isNot(contains(linha)),
+          reason: 'voltou a inventar valor para jogador sem fonte: $linha',
+        );
+      }
+
+      final ausencias = <Pattern>[
+        'nivel: demo ? 24 : null',
+        'xpAtual: demo ? 3240 : null',
+        'xpProximo: demo ? 5000 : null',
+        "titulo: demo ? 'Rainha da Canastra' : null",
+        'presentesCount: demo ? 12 : null',
+        'conquistas: demo ? _catalogoDemo : null',
+        // `stats` é o único cujo ramo demo tem vírgulas dentro, então a âncora
+        // é o fim do construtor. A vírgula final é opcional (o formatador a
+        // acrescenta quando quebra a linha), e por isso entra no casamento.
+        RegExp(r'aproveitamento: 68,? ?\) : null'),
+      ];
+      for (final ausencia in ausencias) {
+        expect(
+          servico,
+          contains(ausencia),
+          reason: 'sem fonte, o campo precisa chegar AUSENTE: $ausencia',
+        );
+      }
+
+      // E o catálogo "tudo travado" não pode reaparecer por nenhuma porta: oito
+      // troféus apagados afirmam que a pessoa não ganhou nenhum, e quem sabe
+      // isso é o backend de recompensas, que o cliente ainda não lê.
+      expect(servico, isNot(contains('_catalogoTravado')));
+    });
+
+    test('o convite copiado não carrega valor inventado', () {
+      // O `_compartilhar` montava 'Nível ${vm?.nivel ?? 1} · Liga
+      // ${vm?.liga ?? 'Bronze'}'. Com os `??`, a afirmação inventada saía do
+      // aplicativo pela área de transferência — o pior destino possível, porque
+      // vai parar na conversa de outra pessoa.
+      final pagina = _codigo(File('lib/pages/perfil_page.dart'));
+      expect(pagina, isNot(contains("?? 'Bronze'")));
+      expect(pagina, isNot(contains('?? 1')));
+      expect(pagina, isNot(contains('Bronze')));
+    });
   });
 
   // =========================================================================
