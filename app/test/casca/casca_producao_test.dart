@@ -27,7 +27,9 @@ import 'package:buraco_master_vip/casca/lobby_online.dart';
 import 'package:buraco_master_vip/casca/login_de_producao.dart';
 import 'package:buraco_master_vip/casca/onde_jogar_de_producao.dart';
 import 'package:buraco_master_vip/casca/raiz_do_aplicativo.dart';
+import 'package:buraco_master_vip/pages/perfil_page.dart';
 import 'package:buraco_master_vip/screens/inicio_screen.dart';
+import 'package:buraco_master_vip/screens/perfil_screen.dart';
 import 'package:buraco_master_vip/screens/splash_oficial_screen.dart';
 import 'package:buraco_master_vip/services/online_service.dart';
 import 'package:buraco_master_vip/services/ponte_sessao_online.dart';
@@ -631,6 +633,113 @@ void main() {
 
       expect(find.byType(HomeDeProducao), findsOneWidget);
       expect(find.textContaining('ainda não está disponível'), findsOneWidget);
+    });
+  });
+
+  // =========================================================================
+  // 10 — o Perfil alcançável também só afirma o que tem fonte
+  //
+  // O Perfil é a segunda tela privada do aplicativo, e é a que mais tem lugar
+  // para número. Enquanto a Home já nascia com `moedas: null` e `liga: null`, o
+  // Perfil vinha de um caminho "jogador novo" que escrevia nível 1, título
+  // 'Novato(a)', Liga Bronze e posição 0 — e a tela desenhava
+  // "💎 Liga Bronze · #0 no mundo". Zero desenhado é afirmação: diz que a pessoa
+  // foi classificada e ficou em último. Ninguém a classificou.
+  // =========================================================================
+  group('o Perfil só afirma o que tem fonte', () {
+    Future<void> abrirPerfil(WidgetTester tester, _Bancada b) async {
+      await _abrirAplicativo(tester, b);
+      await _passarAAbertura(tester);
+      // Pela GRADE da Home, e não construindo a página na mão: o que precisa
+      // ser provado é o Perfil ALCANÇÁVEL.
+      //
+      // `warnIfMissed: false` porque o alvo do toque é o `InkWell` do item, e
+      // não o `Text` que o localiza — o aviso do `flutter_test` é sobre o
+      // widget encontrado, não sobre o gesto. A prova de que o toque funcionou
+      // é a asserção seguinte: o `PerfilPage` está na árvore.
+      await tester.tap(find.text('Perfil').first, warnIfMissed: false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // O serviço simula I/O antes de responder.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+    }
+
+    testWidgets('o Perfil é alcançável a partir da Home', (tester) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      expect(find.byType(PerfilPage), findsOneWidget);
+      // A identidade real da sessão chega até lá.
+      expect(find.text('Ana'), findsWidgets);
+    });
+
+    testWidgets(
+      'sem autoridade de ranking, liga e posição não são desenhadas',
+      (tester) async {
+        final b = _Bancada(uidInicial: 'uid-A');
+        addTearDown(b.fechar);
+
+        await abrirPerfil(tester, b);
+
+        final vm = tester.widget<PerfilScreen>(find.byType(PerfilScreen)).vm;
+        expect(vm.liga, isNull, reason: 'não há autoridade de ranking');
+        expect(
+          vm.posicaoMundial,
+          isNull,
+          reason: 'ninguém classificou ninguém',
+        );
+
+        expect(find.textContaining('no mundo'), findsNothing);
+        expect(find.textContaining('Liga'), findsNothing);
+        expect(find.text('Bronze'), findsNothing);
+        expect(find.text('#0'), findsNothing);
+      },
+    );
+
+    testWidgets('progressão, estatísticas e conquistas ficam ausentes', (
+      tester,
+    ) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      final vm = tester.widget<PerfilScreen>(find.byType(PerfilScreen)).vm;
+      expect(vm.nivel, isNull, reason: 'não há sistema de XP ligado');
+      expect(vm.xpAtual, isNull);
+      expect(vm.xpProximo, isNull);
+      expect(vm.titulo, isNull, reason: 'título é concedido, não presumido');
+      expect(vm.stats, isNull, reason: 'nada grava resultado de partida');
+      expect(vm.presentesCount, isNull);
+      expect(
+        vm.conquistas,
+        isEmpty,
+        reason: 'quem sabe o que foi desbloqueado é o backend de recompensas',
+      );
+
+      // E nenhum desses vira um zero desenhado.
+      expect(find.textContaining('XP'), findsNothing);
+      expect(find.text('Novato(a)'), findsNothing);
+      expect(find.text('CONQUISTAS'), findsNothing);
+      expect(find.text('Vitórias'), findsNothing);
+      expect(find.text('Partidas'), findsNothing);
+    });
+
+    testWidgets('o VM do Perfil não é a maquete', (tester) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      final vm = tester.widget<PerfilScreen>(find.byType(PerfilScreen)).vm;
+      final maquete = PerfilVM.mock();
+      expect(vm.nome, isNot(maquete.nome));
+      expect(vm.nivel, isNot(maquete.nivel));
+      expect(vm.liga, isNot(maquete.liga));
+      expect(vm.stats, isNot(maquete.stats));
     });
   });
 

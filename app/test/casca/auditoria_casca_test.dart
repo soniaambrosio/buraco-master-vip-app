@@ -297,6 +297,65 @@ void main() {
             'números de outra pessoa',
       );
     });
+
+    test('o Perfil sem fonte não escreve liga, nível nem posição', () {
+      // A chave `statsDemo` desligada não bastava: o caminho NÃO-demo ainda
+      // escrevia `liga: 'Bronze'`, `posicaoMundial: 0`, `nivel: 1` e
+      // `titulo: 'Novato(a)'`. A tela desenhava "💎 Liga Bronze · #0 no mundo",
+      // que é uma afirmação de classificação sobre alguém que ninguém
+      // classificou — o Ranking não tem fórmula registrada.
+      //
+      // Esta prova é do FORMATO do literal, e por isso é estrutural: um dia
+      // esses campos vão receber valor do Firestore, e aí o teste de
+      // comportamento (`casca_producao_test.dart`) é que manda. O que não pode
+      // voltar é o valor CONSTANTE no código.
+      final servico = _codigo(File('lib/services/perfil_service.dart'));
+      const proibidos = [
+        "liga: demo ? 'Diamante' : 'Bronze'",
+        "posicaoMundial: demo ? 128 : 0",
+        "nivel: demo ? 24 : 1",
+        "titulo: demo ? 'Rainha da Canastra' : 'Novato(a)'",
+      ];
+      for (final linha in proibidos) {
+        expect(
+          servico.replaceAll(RegExp(r'\s+'), ' '),
+          isNot(contains(linha)),
+          reason: 'voltou a inventar valor para jogador sem fonte: $linha',
+        );
+      }
+      // E o caminho não-demo continua entregando ausência. A comparação é sobre
+      // a fonte com espaços normalizados, porque o formatador quebra estas
+      // linhas de jeitos diferentes conforme o comprimento.
+      final numaLinha = servico.replaceAll(RegExp(r'\s+'), ' ');
+      final ausencias = <Pattern>[
+        "liga: demo ? 'Diamante' : null",
+        'posicaoMundial: demo ? 128 : null',
+        'nivel: demo ? 24 : null',
+        'presentesCount: demo ? 12 : null',
+        // `stats` é o único cujo ramo demo tem vírgulas dentro, então a âncora
+        // é o fim do construtor. A vírgula final é opcional (o formatador a
+        // acrescenta quando quebra a linha), então ela entra no casamento.
+        RegExp(r'aproveitamento: 68,? ?\) : null'),
+        'conquistas: demo ? _catalogoDemo : const []',
+      ];
+      for (final ausencia in ausencias) {
+        expect(
+          numaLinha,
+          contains(ausencia),
+          reason: 'sem fonte, o campo precisa chegar ausente: $ausencia',
+        );
+      }
+    });
+
+    test('o convite copiado não carrega valor inventado', () {
+      // O `_compartilhar` montava 'Nível ${vm?.nivel ?? 1} · Liga
+      // ${vm?.liga ?? 'Bronze'}'. Com os `??`, a afirmação inventada saía do
+      // aplicativo pela área de transferência — o pior destino possível, porque
+      // vai parar na conversa de outra pessoa.
+      final pagina = _codigo(File('lib/pages/perfil_page.dart'));
+      expect(pagina, isNot(contains("?? 'Bronze'")));
+      expect(pagina, isNot(contains('?? 1')));
+    });
   });
 
   // =========================================================================

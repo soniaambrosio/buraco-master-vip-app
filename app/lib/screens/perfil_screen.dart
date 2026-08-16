@@ -84,16 +84,28 @@ class PerfilVM {
   final String moldura;
   final String dorso;
   final String efeito;
-  final int nivel;
-  final int xpAtual;
-  final int xpProximo;
-  final String titulo;
-  final String tituloEmoji;
-  final String liga;
-  final int posicaoMundial;
-  final PerfilStats stats;
+  // O QUE PODE SER NULO, E POR QUÊ.
+  //
+  // Progressão (nível/XP/título), classificação (liga e posição no mundo),
+  // estatísticas e presentes são NULÁVEIS porque hoje não existe autoridade que
+  // os informe: nada grava resultado de partida no cliente, e o Ranking não tem
+  // fórmula registrada. Nulo aqui quer dizer "não há fonte", e a tela responde
+  // não desenhando o elemento — a mesma regra da Home de produção.
+  //
+  // Antes disto, o caminho "jogador novo" preenchia liga com `Bronze` e posição
+  // com `0`, e a tela exibia "💎 Liga Bronze · #0 no mundo". Um zero desenhado é
+  // uma AFIRMAÇÃO: diz que a pessoa foi classificada e ficou em último. Ninguém
+  // a classificou. Um perfil vazio é feio; um perfil que inventa é pior.
+  final int? nivel;
+  final int? xpAtual;
+  final int? xpProximo;
+  final String? titulo;
+  final String? tituloEmoji;
+  final String? liga;
+  final int? posicaoMundial;
+  final PerfilStats? stats;
   final UltimaConquista? ultimaConquista;
-  final int presentesCount;
+  final int? presentesCount;
   final List<Conquista> conquistas;
   final List<ItemVitrine> vitrine;
   final List<Presente> presentes;
@@ -358,12 +370,17 @@ class _PerfilScreenState extends State<PerfilScreen> {
                 _ultimaConquista(vm.ultimaConquista!),
               ],
               _presentes(),
-              _tituloSecao(
-                'CONQUISTAS',
-                acao: 'ver todas ›',
-                onAcao: widget.onVerTodasConquistas,
-              ),
-              _conquistas(),
+              // Sem fonte de conquistas, a seção inteira sai — título incluído.
+              // Uma grade de oito troféus apagados diria "você não ganhou
+              // nenhum", e ninguém conferiu isso.
+              if (vm.conquistas.isNotEmpty) ...[
+                _tituloSecao(
+                  'CONQUISTAS',
+                  acao: 'ver todas ›',
+                  onAcao: widget.onVerTodasConquistas,
+                ),
+                _conquistas(),
+              ],
               _tituloSecao(
                 'VITRINE EQUIPADA',
                 acao: vm.ehMeuPerfil ? 'trocar ›' : null,
@@ -480,33 +497,36 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   ),
                   child: Center(child: _icone(vm.avatar, 44)),
                 ),
-                Positioned(
-                  left: 0,
-                  bottom: 8,
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [_ouroClaro, Color(0xFFD5A84A)],
+                // Sem sistema de progressão ligado, não há nível para carimbar
+                // no avatar. O selo some inteiro em vez de mostrar "1".
+                if (vm.nivel != null)
+                  Positioned(
+                    left: 0,
+                    bottom: 8,
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [_ouroClaro, Color(0xFFD5A84A)],
+                        ),
+                        border: Border.all(color: const Color(0xFF3A2606), width: 2),
+                        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
                       ),
-                      border: Border.all(color: const Color(0xFF3A2606), width: 2),
-                      boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
-                    ),
-                    child: Text(
-                      '${vm.nivel}',
-                      style: const TextStyle(
-                        color: Color(0xFF3A2606),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
+                      child: Text(
+                        '${vm.nivel}',
+                        style: const TextStyle(
+                          color: Color(0xFF3A2606),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
                   ),
-                ),
                 Positioned(
                   right: 0,
                   bottom: 4,
@@ -594,49 +614,73 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ],
             ],
           ),
-          const SizedBox(height: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: const LinearGradient(colors: [Color(0xFF2A1E0C), Color(0xFF191007)]),
-              border: Border.all(color: _ouro.withValues(alpha: .30)),
-            ),
-            child: Text(
-              '${vm.tituloEmoji} ${vm.titulo}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFF0D99A),
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
+          // Título honorífico só existe se alguém o concedeu. Sem fonte, a
+          // faixa inteira sai — "Novato(a)" também é um título inventado.
+          if (vm.titulo != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(colors: [Color(0xFF2A1E0C), Color(0xFF191007)]),
+                border: Border.all(color: _ouro.withValues(alpha: .30)),
+              ),
+              child: Text(
+                vm.tituloEmoji == null
+                    ? vm.titulo!
+                    : '${vm.tituloEmoji} ${vm.titulo}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFF0D99A),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 7),
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 6,
-            children: [
-              const Text('💎 Liga', style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12)),
-              Text(
-                vm.liga,
-                style: const TextStyle(color: Color(0xFF9FDCFF), fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                '· #${vm.posicaoMundial} no mundo',
-                style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
-              ),
-            ],
-          ),
+          ],
+          // Liga e posição são afirmações do RANKING. Sem autoridade de ranking
+          // ligada no cliente, a linha não é desenhada — nem com travessão, que
+          // ainda ocuparia o lugar de um valor.
+          if (vm.liga != null || vm.posicaoMundial != null) ...[
+            const SizedBox(height: 7),
+            Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 6,
+              children: [
+                if (vm.liga != null) ...[
+                  const Text('💎 Liga', style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12)),
+                  Text(
+                    vm.liga!,
+                    style: const TextStyle(color: Color(0xFF9FDCFF), fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
+                ],
+                if (vm.posicaoMundial != null)
+                  Text(
+                    vm.liga == null
+                        ? '#${vm.posicaoMundial} no mundo'
+                        : '· #${vm.posicaoMundial} no mundo',
+                    style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 
   Widget _xp() {
-    final progresso = vm.xpProximo <= 0 ? 0.0 : (vm.xpAtual / vm.xpProximo).clamp(0.0, 1.0);
+    // Barra de XP sem sistema de XP seria uma barra vazia dizendo que a pessoa
+    // está no começo de uma jornada que o jogo ainda não conta.
+    final nivel = vm.nivel;
+    final xpAtual = vm.xpAtual;
+    final xpProximo = vm.xpProximo;
+    if (nivel == null || xpAtual == null || xpProximo == null) {
+      return const SizedBox.shrink();
+    }
+    final progresso = xpProximo <= 0 ? 0.0 : (xpAtual / xpProximo).clamp(0.0, 1.0);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 13, 16, 0),
       child: Column(
@@ -648,7 +692,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   children: [
                     const TextSpan(text: 'Nível '),
                     TextSpan(
-                      text: '${vm.nivel}',
+                      text: '$nivel',
                       style: const TextStyle(color: _ouro, fontWeight: FontWeight.w800),
                     ),
                   ],
@@ -657,7 +701,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ),
               const Spacer(),
               Text(
-                '${_numero(vm.xpAtual)} / ${_numero(vm.xpProximo)} XP',
+                '${_numero(xpAtual)} / ${_numero(xpProximo)} XP',
                 style: const TextStyle(color: Color(0xFFC9BA99), fontSize: 11),
               ),
             ],
@@ -691,11 +735,16 @@ class _PerfilScreenState extends State<PerfilScreen> {
   }
 
   Widget _stats() {
+    // Vitórias, partidas e canastras vêm de resultado de partida gravado. Nada
+    // grava resultado no cliente hoje, então quatro zeros não seriam "o placar
+    // de quem ainda não jogou" — seriam um placar sem placar nenhum atrás.
+    final stats = vm.stats;
+    if (stats == null) return const SizedBox.shrink();
     final dados = [
-      (_numero(vm.stats.vitorias), 'Vitórias'),
-      (_numero(vm.stats.partidas), 'Partidas'),
-      (_numero(vm.stats.canastras), 'Canastras'),
-      ('${vm.stats.aproveitamento}%', 'Aproveit.'),
+      (_numero(stats.vitorias), 'Vitórias'),
+      (_numero(stats.partidas), 'Partidas'),
+      (_numero(stats.canastras), 'Canastras'),
+      ('${stats.aproveitamento}%', 'Aproveit.'),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
@@ -828,6 +877,11 @@ class _PerfilScreenState extends State<PerfilScreen> {
   }
 
   Widget _presentes() {
+    // Presente é item de inventário, e não existe inventário ligado no cliente.
+    // Sem fonte, o baú não é desenhado — abrir um baú vazio é pior do que ele
+    // não estar ali.
+    final quantos = vm.presentesCount;
+    if (quantos == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       child: Material(
@@ -861,7 +915,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        'presentes que você recebeu · ${vm.presentesCount}',
+                        'presentes que você recebeu · $quantos',
                         style: const TextStyle(color: Color(0xFFC3B0E8), fontSize: 10.5),
                       ),
                     ],

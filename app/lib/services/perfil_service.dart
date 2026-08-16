@@ -26,18 +26,11 @@ class PerfilService {
   /// aprovação visual. O que não pode é o aplicativo publicado usá-la.
   static const bool statsDemo = false;
 
-  /// Catálogo fixo de conquistas do jogo (definições). O `desbloqueada` real virá
-  /// dos dados na Fase 2. Aqui, tudo travado (jogador novo).
-  static const List<Conquista> _catalogoTravado = [
-    Conquista(id: 'primeiro_lugar', label: '1º lugar', icone: 'assets/perfil/conquista_1_lugar.webp', desbloqueada: false),
-    Conquista(id: 'sequencia_10', label: 'Sequência 10', icone: 'assets/perfil/conquista_sequencia_10.webp', desbloqueada: false),
-    Conquista(id: 'cem_canastras', label: '100 canastras', icone: 'assets/perfil/conquista_100_canastras.webp', desbloqueada: false),
-    Conquista(id: 'diamante', label: 'Chegou ao Diamante', icone: 'assets/perfil/conquista_diamante.webp', desbloqueada: false),
-    Conquista(id: 'campeao', label: 'Campeão', icone: 'assets/perfil/conquista_campeao.webp', desbloqueada: false),
-    Conquista(id: 'imortal', label: 'Imortal', icone: 'assets/perfil/conquista_imortal.webp', desbloqueada: false),
-    Conquista(id: 'lenda', label: 'Lenda', icone: 'assets/perfil/conquista_lenda.webp', desbloqueada: false),
-    Conquista(id: 'perfeito', label: 'Perfeito', icone: 'assets/perfil/conquista_perfeito.webp', desbloqueada: false),
-  ];
+  // O catálogo "tudo travado" que existia aqui foi retirado junto com o resto
+  // dos números sem fonte. Ele parecia inofensivo — oito troféus apagados —, mas
+  // afirmava que a pessoa não desbloqueou nenhum, e quem sabe isso é o backend
+  // de recompensas, que o cliente ainda não lê. A Fase 2 traz o catálogo com o
+  // `desbloqueada` de verdade; até lá a seção não é desenhada.
 
   static const List<Conquista> _catalogoDemo = [
     Conquista(id: 'primeiro_lugar', label: '1º lugar', icone: 'assets/perfil/conquista_1_lugar.webp', desbloqueada: true),
@@ -120,16 +113,28 @@ class PerfilService {
       moldura: 'assets/perfil/vitrine_moldura.webp',
       dorso: 'assets/perfil/vitrine_dorso.webp',
       efeito: 'assets/perfil/vitrine_efeito.webp',
-      nivel: demo ? 24 : 1,
-      xpAtual: demo ? 3240 : 0,
-      xpProximo: demo ? 5000 : 1000,
-      titulo: demo ? 'Rainha da Canastra' : 'Novato(a)',
-      tituloEmoji: demo ? '👑' : '🃏',
-      liga: demo ? 'Diamante' : 'Bronze',
-      posicaoMundial: demo ? 128 : 0,
+      // NULO É A RESPOSTA CERTA AQUI, e não o zero.
+      //
+      // O caminho não-demo escrevia nível 1, título 'Novato(a)', Liga Bronze,
+      // posição 0 e quatro estatísticas zeradas. Nenhum desses números veio de
+      // lugar nenhum: não há sistema de XP, não há título concedido, o Ranking
+      // não tem fórmula registrada e nada grava resultado de partida. "Liga
+      // Bronze · #0 no mundo" não é um perfil vazio — é o aplicativo dizendo à
+      // pessoa que ela foi classificada e ficou em último.
+      //
+      // Com nulo, a tela não desenha o elemento. Quando a FASE 2 trouxer
+      // Firestore, é aqui que os valores passam a chegar, e a tela volta a
+      // mostrá-los sem precisar mudar.
+      nivel: demo ? 24 : null,
+      xpAtual: demo ? 3240 : null,
+      xpProximo: demo ? 5000 : null,
+      titulo: demo ? 'Rainha da Canastra' : null,
+      tituloEmoji: demo ? '👑' : null,
+      liga: demo ? 'Diamante' : null,
+      posicaoMundial: demo ? 128 : null,
       stats: demo
           ? const PerfilStats(vitorias: 342, partidas: 1204, canastras: 89, aproveitamento: 68)
-          : const PerfilStats(vitorias: 0, partidas: 0, canastras: 0, aproveitamento: 0),
+          : null,
       ultimaConquista: demo
           ? const UltimaConquista(
               titulo: 'Primeira Batida Real',
@@ -138,8 +143,12 @@ class PerfilService {
               raridade: 'Comum Especial',
             )
           : null,
-      presentesCount: demo ? 12 : 0,
-      conquistas: demo ? _catalogoDemo : _catalogoTravado,
+      presentesCount: demo ? 12 : null,
+      // Conquista concedida é assunto do backend (`RecompensaConcessao`), e o
+      // cliente ainda não lê essa autoridade. Lista vazia = "não há fonte", e a
+      // tela responde omitindo a seção. Mostrar as oito travadas afirmaria que
+      // a pessoa não conquistou nenhuma — o que ninguém verificou.
+      conquistas: demo ? _catalogoDemo : const [],
       vitrine: _vitrinePadrao,
       presentes: demo ? _presentesDemo : const [],
     );

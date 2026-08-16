@@ -57,8 +57,9 @@ class _PerfilPageState extends State<PerfilPage> {
   Future<void> _carregar() async {
     // Lido do escopo a cada carga: o Perfil consome o MESMO estado canônico que
     // Ranking e Social — não existe `identidadeDoPerfil`.
-    final IdentidadePublica? identidade =
-        EscopoSessao.identidadeDe(context).identidade;
+    final IdentidadePublica? identidade = EscopoSessao.identidadeDe(
+      context,
+    ).identidade;
     setState(() {
       _estado = PerfilEstado.carregando;
       _erro = null;
@@ -107,12 +108,25 @@ class _PerfilPageState extends State<PerfilPage> {
       );
   }
 
+  /// O convite leva só o que a tela pode afirmar.
+  ///
+  /// Antes ele montava 'Nível ${vm?.nivel ?? 1} · Liga ${vm?.liga ?? 'Bronze'}'
+  /// — com os `??`, o texto copiado dizia "Nível 1 · Liga Bronze" mesmo quando
+  /// não havia nível nem liga em lugar nenhum. Era a afirmação inventada da tela
+  /// saindo do aplicativo pela área de transferência, que é o pior destino
+  /// possível para ela: vai para o WhatsApp de outra pessoa.
   Future<void> _compartilhar() async {
     final vm = _vm;
     final nome = vm?.nome ?? 'Jogador(a)';
+    final nivel = vm?.nivel;
+    final liga = vm?.liga;
+    final selo = [
+      if (nivel != null) 'Nível $nivel',
+      if (liga != null) 'Liga $liga',
+    ].join(' · ');
     final texto =
-        'Vem jogar Buraco comigo no Buraco Master VIP! Sou $nome 👑 '
-        'Nível ${vm?.nivel ?? 1} · Liga ${vm?.liga ?? 'Bronze'}.';
+        'Vem jogar Buraco comigo no Buraco Master VIP! Sou $nome 👑'
+        '${selo.isEmpty ? '' : ' $selo.'}';
     await Clipboard.setData(ClipboardData(text: texto));
     if (!mounted) return;
     _toast('Convite copiado! É só colar e mandar pra galera 🎉');
