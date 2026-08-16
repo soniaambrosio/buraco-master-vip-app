@@ -93,6 +93,18 @@ class PerfilService {
   Future<PerfilVM> carregar({
     bool ehMeuPerfil = true,
     IdentidadePublica? identidade,
+    // O ranking chega PRONTO de fora, e este serviço não o consulta.
+    //
+    // Quem consulta é o leitor, uma vez, e Home e Perfil leem o mesmo
+    // resultado. Se o serviço chamasse a callable por conta própria, seriam
+    // duas consultas do mesmo fato e duas chances de as telas discordarem — que
+    // é a forma que o defeito do Bronze tomaria hoje.
+    //
+    // NULO é "ninguém me deu ranking", e não "sem ranking": montar o Perfil sem
+    // casca é legítimo (prévia, teste de widget), e nesse caso vale o que
+    // `_montar` já decidia — a constante da casca, ou a fixture da prévia
+    // quando a chave de demonstração está ligada.
+    EstadoRanking? ranking,
   }) async {
     await Future.delayed(const Duration(milliseconds: 350)); // simula I/O (Fase 2: await Firestore)
     final apelido = identidade?.apelido.trim() ?? '';
@@ -106,6 +118,7 @@ class PerfilService {
           ? apelido
           : (publico.isNotEmpty ? publico : _rotuloSemApelido),
       demo: statsDemo,
+      ranking: ranking,
     );
   }
 

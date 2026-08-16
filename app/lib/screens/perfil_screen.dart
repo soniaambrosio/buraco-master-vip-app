@@ -131,6 +131,35 @@ class PerfilVM {
     required this.presentes,
   });
 
+  /// O mesmo perfil, com outro estado competitivo.
+  ///
+  /// Existe porque o ranking é a única parte do VM que muda SOZINHA depois da
+  /// carga: o resto vem de uma consulta que já terminou, e ele vem de outra que
+  /// ainda pode estar em voo. Sem isto, a página teria de recarregar o perfil
+  /// inteiro para trocar uma liga — ou, pior, congelar o ranking no instante da
+  /// carga e nunca mais atualizá-lo.
+  PerfilVM comRanking(EstadoRanking outro) => PerfilVM(
+    ehMeuPerfil: ehMeuPerfil,
+    nome: nome,
+    avatar: avatar,
+    mascote: mascote,
+    moldura: moldura,
+    dorso: dorso,
+    efeito: efeito,
+    nivel: nivel,
+    xpAtual: xpAtual,
+    xpProximo: xpProximo,
+    titulo: titulo,
+    tituloEmoji: tituloEmoji,
+    ranking: outro,
+    stats: stats,
+    ultimaConquista: ultimaConquista,
+    presentesCount: presentesCount,
+    conquistas: conquistas,
+    vitrine: vitrine,
+    presentes: presentes,
+  );
+
   factory PerfilVM.mock({bool ehMeuPerfil = true}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
@@ -636,25 +665,46 @@ class _PerfilScreenState extends State<PerfilScreen> {
           // admitida e não desloca o cabeçalho. Já a colocação SOME quando não
           // existe: não há travessão que faça `#` parecer honesto, e o trecho
           // é o último da linha, então tirá-lo não mexe em mais nada.
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 6,
-            children: [
-              const Text('💎 Liga', style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12)),
-              Text(
-                vm.ranking.ligaParaExibicao,
-                style: const TextStyle(color: Color(0xFF9FDCFF), fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              if (vm.ranking.temPosicao)
-                Text(
-                  '· #${vm.ranking.posicaoMundial} no mundo',
-                  style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
-                ),
-            ],
-          ),
+          //
+          // O PREFIXO "Liga" SÓ APARECE DIANTE DE UMA LIGA. O backend usa o
+          // mesmo campo para o nome da Liga e para o estado de qualificação
+          // ("Em colocacao"), e distingue os dois por `ligaId`. Sem esta
+          // guarda, a tela escreveria "💎 Liga Em colocacao" — que não é
+          // português e, pior, faz um estado passar por conquista.
+          _linhaCompetitiva(vm.ranking),
         ],
       ),
+    );
+  }
+
+  /// A liga e a colocacao, do jeito que o contrato real permite afirmar.
+  ///
+  /// O anuncio para leitor de tela entra no proximo commit.
+  Widget _linhaCompetitiva(EstadoRanking ranking) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      children: [
+        if (ranking.ehLigaDeVerdade || !ranking.temLiga)
+          const Text(
+            '💎 Liga',
+            style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+          ),
+        Text(
+          ranking.ligaParaExibicao,
+          style: const TextStyle(
+            color: Color(0xFF9FDCFF),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        if (ranking.temPosicao)
+          Text(
+            '· #${ranking.posicaoMundial} no mundo',
+            style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+          ),
+      ],
     );
   }
 

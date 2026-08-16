@@ -130,8 +130,10 @@ class LeitorDeRanking {
   ///
   /// Devolvida como DADO ANTERIOR: quem chama pode mostrá-la enquanto uma nova
   /// consulta corre, mas nunca como se a consulta tivesse dado certo.
-  EstadoRanking? emCache({required String contaPublicId, String? alvoPublicId}) =>
-      _cache[_chaveDe(contaPublicId, alvoPublicId)];
+  EstadoRanking? emCache({
+    required String contaPublicId,
+    String? alvoPublicId,
+  }) => _cache[_chaveDe(contaPublicId, alvoPublicId)];
 
   /// O ranking do jogador autenticado.
   Future<EstadoRanking?> meuRanking({required String contaPublicId}) =>
