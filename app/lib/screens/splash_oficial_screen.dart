@@ -5,17 +5,33 @@ import 'package:flutter/material.dart';
 
 /// Splash oficial animada do Buraco Master VIP.
 ///
-/// A tela é exclusivamente visual. O destino final é recebido em [proximaTela].
-/// O som pode ser desligado pela camada de preferências por [habilitarSom].
+/// A tela é exclusivamente visual. O som pode ser desligado pela camada de
+/// preferências por [habilitarSom].
+///
+/// DOIS MODOS DE SAÍDA, e a diferença importa:
+///
+///   * [proximaTela] — a splash empurra o destino sozinha. É o modo antigo, e
+///     serve a quem só quer atravessar a abertura.
+///   * [onConcluida] — a splash AVISA que terminou e não navega. É o modo que a
+///     casca de produção usa, porque quem decide o destino é a sessão, não a
+///     animação: no fim da abertura a resposta pode ainda não ter chegado, e a
+///     splash precisa continuar na tela até chegar.
+///
+/// Exatamente um dos dois é obrigatório.
 class SplashOficialScreen extends StatefulWidget {
   const SplashOficialScreen({
     super.key,
-    required this.proximaTela,
+    this.proximaTela,
+    this.onConcluida,
     this.habilitarSom = true,
     this.duracao = const Duration(milliseconds: 3800),
-  });
+  }) : assert(
+         (proximaTela == null) != (onConcluida == null),
+         'informe proximaTela OU onConcluida, nunca os dois',
+       );
 
-  final Widget proximaTela;
+  final Widget? proximaTela;
+  final VoidCallback? onConcluida;
   final bool habilitarSom;
   final Duration duracao;
 
@@ -92,13 +108,26 @@ class _SplashOficialScreenState extends State<SplashOficialScreen>
   Future<void> _abrirAplicativo() async {
     if (_navegou || !mounted) return;
     _navegou = true;
-    await _audio.stop();
+    try {
+      await _audio.stop();
+    } catch (_) {
+      // Mesma razão do `play`: a abertura do aplicativo não pode depender de o
+      // áudio estar disponível.
+    }
     if (!mounted) return;
+
+    final aviso = widget.onConcluida;
+    if (aviso != null) {
+      // A splash não navega neste modo: ela terminou, e quem decide o que vem
+      // depois é a raiz.
+      aviso();
+      return;
+    }
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 520),
-        pageBuilder: (_, __, ___) => widget.proximaTela,
+        pageBuilder: (_, __, ___) => widget.proximaTela!,
         transitionsBuilder: (_, animation, __, child) {
           return FadeTransition(
             opacity: CurvedAnimation(
