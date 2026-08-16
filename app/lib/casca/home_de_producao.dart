@@ -34,6 +34,7 @@ import 'package:flutter/material.dart';
 // um `MesaVM` pronto e não sabe jogar nada.
 import '../mesa.dart' show MesaScreen;
 import '../pages/perfil_page.dart';
+import '../ranking/estado_ranking.dart';
 import '../screens/como_jogar_screen.dart';
 import '../screens/inicio_screen.dart';
 import '../screens/perfil_screen.dart' show NavDestino;
@@ -95,9 +96,16 @@ class HomeDeProducao extends StatelessWidget {
         email: '',
         avatar: identidade?.avatarRef ?? '👑',
         moldura: null,
-        // Sem autoridade de economia e de ranking no cliente.
+        // Sem autoridade de economia no cliente.
         moedas: null,
-        liga: null,
+        // A liga vem do estado canônico de ranking, e não de um `null` escrito
+        // aqui. O valor final é o mesmo — hoje não há autoridade, e a Home
+        // omite a linha. O que muda é QUEM decide: a Home passa a ler a mesma
+        // constante que o `PerfilService`, em vez de as duas telas concluírem
+        // por conta própria o que significa "sem ranking". Era exatamente essa
+        // decisão duplicada que deixava a Home honesta e o Perfil inventando
+        // Bronze a partir do mesmo nada.
+        liga: rankingDaCascaPublicavel.liga,
       ),
       // Sem autoridade de temporada nem de saguão.
       temporada: null,

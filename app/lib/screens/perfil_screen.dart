@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../ranking/estado_ranking.dart';
+
+export '../ranking/estado_ranking.dart' show EstadoRanking, FaseRanking;
+
 enum PerfilEstado { carregando, normal, erro }
 
 enum NavDestino { inicio, ranking, loja, perfil }
@@ -89,8 +93,15 @@ class PerfilVM {
   final int xpProximo;
   final String titulo;
   final String tituloEmoji;
-  final String liga;
-  final int posicaoMundial;
+
+  /// O estado competitivo, como um valor só.
+  ///
+  /// ERA `String liga` + `int posicaoMundial`, e o preço eram dois campos
+  /// obrigatórios que o produtor tinha de preencher mesmo sem ter o dado — o
+  /// serviço preenchia com `'Bronze'` e `0`, e a tela desenhava os dois como se
+  /// fossem conquista e colocação. Um tipo que não sabe dizer "não sei" obriga
+  /// quem o constrói a mentir.
+  final EstadoRanking ranking;
   final PerfilStats stats;
   final UltimaConquista? ultimaConquista;
   final int presentesCount;
@@ -111,8 +122,7 @@ class PerfilVM {
     required this.xpProximo,
     required this.titulo,
     required this.tituloEmoji,
-    required this.liga,
-    required this.posicaoMundial,
+    required this.ranking,
     required this.stats,
     required this.ultimaConquista,
     required this.presentesCount,
@@ -135,8 +145,13 @@ class PerfilVM {
       xpProximo: 5000,
       titulo: 'Rainha da Canastra',
       tituloEmoji: '👑',
-      liga: 'Diamante',
-      posicaoMundial: 128,
+      // Maquete: liga e colocação são AFIRMADAS aqui porque este factory existe
+      // só para o protótipo visual. Nenhuma rota que nasça em `main()` o
+      // alcança — quem monta o Perfil publicável é o `PerfilService`.
+      ranking: const EstadoRanking.disponivel(
+        liga: 'Diamante',
+        posicaoMundial: 128,
+      ),
       stats: const PerfilStats(
         vitorias: 342,
         partidas: 1204,
@@ -614,6 +629,13 @@ class _PerfilScreenState extends State<PerfilScreen> {
             ),
           ),
           const SizedBox(height: 7),
+          // A LINHA COMPETITIVA.
+          //
+          // O rótulo e o valor da liga ficam sempre — sem liga, o valor é o
+          // travessão de [EstadoRanking.ligaParaExibicao], que é uma ausência
+          // admitida e não desloca o cabeçalho. Já a colocação SOME quando não
+          // existe: não há travessão que faça `#` parecer honesto, e o trecho
+          // é o último da linha, então tirá-lo não mexe em mais nada.
           Wrap(
             alignment: WrapAlignment.center,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -621,13 +643,14 @@ class _PerfilScreenState extends State<PerfilScreen> {
             children: [
               const Text('💎 Liga', style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12)),
               Text(
-                vm.liga,
+                vm.ranking.ligaParaExibicao,
                 style: const TextStyle(color: Color(0xFF9FDCFF), fontSize: 12, fontWeight: FontWeight.w700),
               ),
-              Text(
-                '· #${vm.posicaoMundial} no mundo',
-                style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
-              ),
+              if (vm.ranking.temPosicao)
+                Text(
+                  '· #${vm.ranking.posicaoMundial} no mundo',
+                  style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+                ),
             ],
           ),
         ],

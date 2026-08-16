@@ -1,3 +1,4 @@
+import '../ranking/estado_ranking.dart';
 import '../screens/perfil_screen.dart';
 import '../sessao/identidade_publica_sessao.dart';
 
@@ -109,9 +110,13 @@ class PerfilService {
   }
 
   /// VM mínimo para o estado "carregando" (a tela mostra skeleton; nada é exibido).
-  PerfilVM vmPlaceholder() => _montar(ehMeuPerfil: true, nome: '…', demo: false);
+  ///
+  /// O ranking aqui é [FaseRanking.carregando], e não `indisponivel`: são
+  /// estados diferentes, e este VM existe justamente durante a consulta.
+  PerfilVM vmPlaceholder() =>
+      _montar(ehMeuPerfil: true, nome: '…', demo: false, ranking: const EstadoRanking.carregando());
 
-  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required bool demo}) {
+  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required bool demo, EstadoRanking? ranking}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
       nome: nome,
@@ -125,8 +130,20 @@ class PerfilService {
       xpProximo: demo ? 5000 : 1000,
       titulo: demo ? 'Rainha da Canastra' : 'Novato(a)',
       tituloEmoji: demo ? '👑' : '🃏',
-      liga: demo ? 'Diamante' : 'Bronze',
-      posicaoMundial: demo ? 128 : 0,
+      // AQUI NASCIA O DEFEITO: `liga: demo ? 'Diamante' : 'Bronze'` e
+      // `posicaoMundial: demo ? 128 : 0`. Com a chave de demonstração desligada
+      // — que é o estado publicável — todo jogador recebia Liga Bronze e
+      // colocação zero, e a tela desenhava os dois. Não vinham de lugar nenhum:
+      // eram o valor que os tipos `String` e `int` exigiam de um produtor que
+      // não tinha o dado.
+      //
+      // Com a chave LIGADA, liga e colocação continuam sendo afirmadas, porque
+      // aí são fixture declarada de prévia. Desligada, o Perfil lê a MESMA
+      // constante que a Home: não há autoridade de ranking nesta casca.
+      ranking: ranking ??
+          (demo
+              ? const EstadoRanking.disponivel(liga: 'Diamante', posicaoMundial: 128)
+              : rankingDaCascaPublicavel),
       stats: demo
           ? const PerfilStats(vitorias: 342, partidas: 1204, canastras: 89, aproveitamento: 68)
           : const PerfilStats(vitorias: 0, partidas: 0, canastras: 0, aproveitamento: 0),
