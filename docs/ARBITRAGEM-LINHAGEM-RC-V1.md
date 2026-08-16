@@ -186,8 +186,13 @@ A RC já herda a Mesa aprovada pela folha 4 (`integracao/ranking-ligas-hall` con
 * **7 de 7 folhas funcionais posteriores publicadas**, com `local == remoto` conferido por
   `ls-remote` — inclusive a canonização da trava do lixo (`948f194`), que era o insumo
   funcional mais arriscado do precheck anterior.
-* **2 branches documentais continuam só locais** (`observabilidade`, `censo VIP legado`).
-  Não são insumo funcional, mas C1 já as consumiu por cherry-pick.
+* **As 2 branches documentais que faltavam foram publicadas** por autorização complementar,
+  depois desta arbitragem: `claude/observabilidade-buraco-vip-f3cd12 @ f3f9e53d4a9b298dcbe7783bb6ee49678feeaf09`
+  e `claude/legacy-vip-population-census-e784c2 @ c885effdeb731b9732c715cf64188cff6a3e0bb5`,
+  ambas com `local == remoto`. Com isso **não resta insumo apenas local**, e o critério que
+  reprovava a C1 por irreprodutibilidade passa a depender só do HEAD dela, não das fontes.
+  Verificações e a ressalva de exposição estão em
+  [`INSUMOS-PUBLICADOS-RC-V1.md`](INSUMOS-PUBLICADOS-RC-V1.md) §4.
 * **4 deltas documentais** classificados à parte.
 * **2 decisões de produto** seguem bloqueadas e registradas como tais, sem disfarce técnico.
 

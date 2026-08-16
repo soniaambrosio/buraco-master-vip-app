@@ -11,6 +11,8 @@ consulta. Nenhuma conclusão usa `refs/remotes/` como fonte.
 | --- | --- | --- | :-: | --- |
 | `claude/gate-automatizado-rc-v1-819647` | `836b0424edaca64d4c62d10edc4d3f57a86c6880` | idem | ✔ | Novo no remoto; sem force-push. Homologação na §3 |
 | `diagnostico/rc-v1-parada-precheck` | `c8ed349a6cf3db63acd0d32a6508a3e1a568225b` | idem | ✔ | Contém somente `docs/COMPOSICAO-HOMOLOGACAO-RC-V1.md` e `docs/RC-V1-MANIFESTO-PROVENIENCIA.md`; pai = `0cea0d6` |
+| `claude/observabilidade-buraco-vip-f3cd12` | `f3f9e53d4a9b298dcbe7783bb6ee49678feeaf09` | idem | ✔ | Publicada por autorização complementar; ver §4 |
+| `claude/legacy-vip-population-census-e784c2` | `c885effdeb731b9732c715cf64188cff6a3e0bb5` | idem | ✔ | Publicada por autorização complementar; ver §4 |
 
 ---
 
@@ -52,19 +54,51 @@ durante o precheck. Nenhuma depende de objeto local.
 
 ---
 
-## 4. Ainda apenas locais — documentais
+## 4. Folhas documentais — publicadas por autorização complementar
 
-Nenhum dos dois é insumo funcional; nenhum pode constar do manifesto futuro da RC enquanto
-não for publicado.
+Estavam apenas no disco e foram publicadas em 2026-08-16, 01:1x (-03), por autorização
+nominal e exclusiva. Nenhuma é insumo funcional; ambas já haviam sido consumidas por C1 via
+cherry-pick, e a publicação é o que permite que uma RC reproduza aquele roteiro a partir do
+servidor.
 
-| Branch | SHA local | Conteúdo | Situação |
-| --- | --- | --- | --- |
-| `claude/observabilidade-buraco-vip-f3cd12` | `f3f9e53d4a9b298dcbe7783bb6ee49678feeaf09` | Auditoria de observabilidade, operação e recuperação de produção (V1) | Só no disco. Já foi levada para C1 por cherry-pick (`9bc57d9`, `dd54251`) |
-| `claude/legacy-vip-population-census-e784c2` | `c885effdeb731b9732c715cf64188cff6a3e0bb5` | Censo da população legada VIP (resultado: zero) | Só no disco. Já foi levada para C1 por cherry-pick (`8ee179d`) |
+### 4.1 `claude/observabilidade-buraco-vip-f3cd12`
 
-Publicá-las é pré-requisito para que C1 — ou uma RC que replique o roteiro de C1 — seja
-reproduzível a partir do servidor. Esta OS não estava autorizada a publicá-las: a §5 e a §9
-autorizam nominalmente apenas o gate e o diagnóstico.
+| Verificação | Resultado |
+| --- | --- |
+| SHA local | `f3f9e53d4a9b298dcbe7783bb6ee49678feeaf09` |
+| SHA remoto | `f3f9e53d4a9b298dcbe7783bb6ee49678feeaf09` — **igual** |
+| Base / ancestralidade | Nasce de `main @ fb9edb5` (90 commits atrás de `0cea0d6`, 7 à frente). Merge-base com a base autorizada: `2ddadde` |
+| Commits próprios | 2 — `e6de8e8` (auditoria, 723 linhas) e `f3f9e53` (registra o próprio HEAD, 1 linha) |
+| Conteúdo | Exclusivamente `docs/OS-OBSERVABILIDADE-OPERACAO-RECUPERACAO-V1.md`. Nenhum arquivo de código |
+| Árvore limpa | ✔ (worktree em `f3f9e53`, `status --porcelain` vazio) |
+| Existia no remoto | Não — publicada como branch nova, sem force-push |
+| Secrets / artefatos temporários | Nenhum |
+| PII | **Uma ocorrência**: o endereço `soniia.ambrosio@gmail.com` na linha que registra qual credencial `firebase login` foi usada na auditoria. É o e-mail da proprietária do repositório, e o mesmo endereço **já estava publicado** em `origin/claude/production-state-audit-84542f`, em `docs/RECONCILIACAO-ESTADO-PRODUCAO-V1.md:58`. A publicação não expõe nada novo. Ver §4.3 |
+
+### 4.2 `claude/legacy-vip-population-census-e784c2`
+
+| Verificação | Resultado |
+| --- | --- |
+| SHA local | `c885effdeb731b9732c715cf64188cff6a3e0bb5` |
+| SHA remoto | `c885effdeb731b9732c715cf64188cff6a3e0bb5` — **igual** |
+| Base / ancestralidade | Descende da base autorizada `0cea0d6` (+59). Descende também de `claude/legacy-vip-population-diagnosis-fc64f7 @ e9c2aa1`, publicada |
+| Commits próprios | 1 — `c885eff` (censo: a população legada VIP é zero, e medida) |
+| Conteúdo | Exclusivamente `docs/DIAGNOSTICO-POPULACAO-LEGADA-VIP.md` (+368 / −5). Nenhum arquivo de código |
+| Árvore limpa | ✔ (worktree em `c885eff`, `status --porcelain` vazio) |
+| Existia no remoto | Não — publicada como branch nova, sem force-push |
+| Secrets / artefatos temporários | Nenhum |
+| PII | Nenhuma. O censo mediu população **zero**: não há uid, e-mail ou token de jogador no documento |
+
+### 4.3 Observação de exposição — o repositório é público
+
+Durante a varredura ficou registrado que `soniaambrosio/buraco-master-vip-app` é um
+repositório **público** (`"private": false`, `"visibility": "public"`). O e-mail da
+proprietária já constava de uma branch publicada anteriormente; a publicação da auditoria de
+observabilidade acrescenta uma segunda ocorrência do mesmo endereço.
+
+Remover a ocorrência exigiria reescrever histórico — proibido nesta OS e nas anteriores. Fica
+registrado como decisão para a Sônia: se o endereço não deve figurar nos documentos, o
+expurgo precisa de OS própria, e cobrindo as **duas** branches.
 
 ---
 
