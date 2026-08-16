@@ -109,9 +109,39 @@ Ordem de leitura, do mais barato ao mais caro:
    `appIniciado > telaInicio > telaMesa > onlineQueda`.
 4. **`stack`** — já redigido, com pacote, arquivo e linha preservados.
 
-Se o stack vier ofuscado, cruze com os símbolos do artefato
-`bmv-identidade-build` **do mesmo `versionCode`**. Símbolos de outra build
-produzem nomes plausíveis e errados — é pior que não ter símbolo nenhum.
+O stack no painel deve vir **legível**, com pacote, arquivo e linha:
+
+```
+#0  GatilhoHomologacao.armarSePedido.<anonymous closure>
+    (package:buraco_master_vip/observability/gatilho_homologacao.dart:81)
+```
+
+**Se ele vier VAZIO, o problema é de build, não do defeito.** A causa foi
+medida: `--split-debug-info` faz o stack chegar ao Crashlytics sem nenhuma
+linha. A build de homologação/produção com Crashlytics não usa a flag
+exatamente por isso (ver `docs/CRASHLYTICS-ANDROID-EVIDENCIA-V1.md` §6).
+Antes de investigar o defeito, confirme de qual workflow o artefato saiu.
+
+Para artefato antigo compilado com a flag, o stack tem endereços em vez de
+nomes e precisa de `flutter symbolize -i <stack> -d app.android-arm64.symbols`,
+com o arquivo de símbolo **do mesmo `versionCode`** — símbolo de outra build
+produz nomes plausíveis e errados, que é pior do que não ter símbolo nenhum.
+`firebase crashlytics:symbols:upload` **não** resolve isso: aquele comando trata
+símbolo nativo de NDK (breakpad), não os `.symbols` do Dart.
+
+### Para qual app Firebase este artefato reporta?
+
+O projeto tem quatro aplicativos Android e só um é o oficial. O APK responde
+sozinho:
+
+```bash
+aapt2 dump resources <apk> | grep -A1 'string/google_app_id'
+```
+
+Tem de ser `1:203886484007:android:b1cd95baa0b9e6e629cc02`
+(`io.github.soniaambrosio.buracomastervip`). Se for outro, os crashes daquele
+artefato estão indo para um painel que ninguém acompanha — e a ausência de
+eventos ali não significa ausência de falhas.
 
 ---
 

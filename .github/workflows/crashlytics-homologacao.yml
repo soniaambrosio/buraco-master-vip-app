@@ -140,7 +140,19 @@ jobs:
           echo "===== app/build.gradle.kts ====="; cat app_build/android/app/build.gradle.kts
 
       # ---------------------------------------------------------------- build
-      - name: Build release APK + símbolos
+      - name: Build release APK
+        # SEM `--split-debug-info`, e a razão foi MEDIDA num aparelho, não
+        # deduzida. Com a flag, o stack trace que chega ao Crashlytics vem
+        # VAZIO — a ocorrência aparece no painel sem uma linha de pilha, que é
+        # o mesmo que não aparecer. Sem a flag:
+        #
+        #   #0  GatilhoHomologacao.armarSePedido.<anonymous closure>
+        #       (package:buraco_master_vip/observability/gatilho_homologacao.dart:81)
+        #
+        # Os nomes ficam dentro do binário e o painel os mostra direto, sem
+        # etapa de simbolização e sem arquivo de símbolo para casar com a
+        # build. Vale o tamanho a mais: um painel legível é o produto inteiro
+        # desta OS. Ver docs/CRASHLYTICS-ANDROID-EVIDENCIA-V1.md.
         run: |
           cd app_build
           EXTRA=""
@@ -148,10 +160,7 @@ jobs:
             EXTRA="--dart-define=BMV_CRASH_HOMOLOGACAO=true"
             echo "::warning::build ARMADA para crash de homologação — não publicar"
           fi
-          flutter build apk --release \
-            --split-debug-info=build/simbolos \
-            ${BMV_DEFINES} ${EXTRA}
-          echo "--- símbolos ---"; ls -l build/simbolos/
+          flutter build apk --release ${BMV_DEFINES} ${EXTRA}
 
       - name: "VERIFICAÇÃO — o APK é o que dissemos que é"
         run: |
@@ -173,9 +182,22 @@ jobs:
           echo "OK: ${GITHUB_SHA} presente em $(basename $(dirname $SO))/libapp.so"
 
           echo "--- Crashlytics realmente empacotado ---"
-          unzip -l "$APK" | grep -qi "crashlytics" \
-            && echo "OK: recursos do Crashlytics dentro do APK" \
-            || { echo "::error::nenhum recurso do Crashlytics no APK"; exit 1; }
+          # Procurar 'crashlytics' na LISTAGEM do zip dá zero sempre: classe
+          # Java não é arquivo dentro do APK, vive dentro de classes*.dex. Um
+          # portão escrito assim reprovaria todo build, inclusive o correto.
+          unzip -o -q "$APK" 'classes*.dex' -d /tmp/dx
+          grep -a -q 'com/google/firebase/crashlytics' /tmp/dx/*.dex \
+            && echo "OK: classes do Crashlytics dentro do dex" \
+            || { echo "::error::Crashlytics não está no dex — o plugin Gradle não foi aplicado"; exit 1; }
+
+          echo "--- para QUAL app Firebase este APK reporta ---"
+          # Esta é a prova que fecha a cadeia: o plugin google-services compila
+          # o App ID como recurso. Se aqui vier outro, o APK manda crash para o
+          # painel de outro app e ninguém percebe.
+          APP_ID_NO_APK=$("$AAPT" dump resources "$APK" | grep -A1 'string/google_app_id' | tail -1 | tr -d ' ()"')
+          echo "google_app_id compilado: ${APP_ID_NO_APK}"
+          [ "${APP_ID_NO_APK}" = "${BMV_FIREBASE_APP_ID}" ] \
+            || { echo "::error::APK reporta para ${APP_ID_NO_APK}, não para ${BMV_FIREBASE_APP_ID}"; exit 1; }
 
           echo "--- gatilho de homologação ---"
           if grep -a -q "BMV-HOMOLOG-CRASH" "$SO"; then
@@ -189,18 +211,15 @@ jobs:
           dart run app/tool/gate_identidade_build.dart \
             --ambiente=homologacao \
             --artefato=app_build/build/app/outputs/flutter-apk/app-release.apk \
-            --simbolos=app_build/build/simbolos \
             --manifesto=app_build/MANIFESTO-BUILD.json
           cat app_build/MANIFESTO-BUILD.json
 
-      - name: Upload do APK, manifesto e símbolos
-        # Artifact do run, nunca Release pública: quem lê stack ofuscado
-        # precisa de acesso ao repositório.
+      - name: Upload do APK e do manifesto
+        # Artifact do run, nunca Release pública.
         uses: actions/upload-artifact@v4
         with:
           name: bmv-crashlytics-homologacao
           path: |
             app_build/build/app/outputs/flutter-apk/app-release.apk
-            app_build/build/simbolos/
             app_build/MANIFESTO-BUILD.json
           if-no-files-found: error
