@@ -1,0 +1,1010 @@
+rules_version = '2';
+
+// firestore.rules — ESPINHA UNICA DE REGRAS DO BURACO MASTER VIP.
+//
+// Este arquivo e a UNIAO de sete conjuntos que viviam em branches separadas, e
+// nao a escolha de um deles. Os blocos sao disjuntos em caminho, entao a uniao
+// nao perde nem afrouxa nenhuma regra:
+//
+//   * COLECOES / KIT PIONEIROS  <- claude/kit-pioneiros-2026-1b56ed
+//     config, campaigns, collections, users, audit
+//   * BILLING (legado)          <- feat/play-billing-aab-interno
+//     usuarios, compras, configuracao
+//   * TORNEIOS                  <- integracao/motores-torneios-partidas-v1
+//     tournaments, tournamentHistory, rewardGrants, annualQualifications,
+//     closingInvites, tournamentTasks, tournamentAudit
+//   * RASTREABILIDADE           <- claude/buraco-vip-game-traceability-3eb66c
+//     matches, matches/{id}/events, rankingLedger, fraudSignals
+//   * MODERACAO                 <- claude/moderation-reports-blocking-social-08ef72
+//     reports, sanctions, playerModeration, moderationAudit, moderationTasks,
+//     users/{uid}/reportReceipts, users/{uid}/blocks, users/{uid}/mutes
+//   * IDENTIDADE PUBLICA / SOCIAL  <- OS de Identidade Publica e Grafo Social
+//     playerIdentities, publicIdIndex, publicProfiles, friendships,
+//     playerSocial, users/{uid}/friends, users/{uid}/friendRequests
+//   * RANKING / LIGAS / TEMPORADAS <- claude/ranking-ligas-backend-auth
+//     rankingSeasons, rankingLadders, rankingStandings, rankingPlayers,
+//     rankingContributions, rankingBacklog, rankingAudit, rankingTasks,
+//     hallEntries
+//     (`rankingLedger` NAO entra nesta lista: ela e da RASTREABILIDADE, e o
+//      bloco de ranking escreve nela sem redefinir a regra dela.)
+//     (`rankingPublicIds` SAIU na OS de integracao de identidade: era o indice
+//      reverso PROPRIO do ranking, e existir dois indices reversos e o mesmo que
+//      existir duas identidades. O canonico e `publicIdIndex`, do bloco 6/7.
+//      Ver docs/AUTORIDADE-DE-IDENTIDADE-PUBLICA.md.)
+//
+// O BLOCO SOCIAL (6/7) e o unico que NAO veio de uma branch: ele nasceu direto
+// sobre esta uniao, e por isso e tambem o unico que ja pode ser lido como
+// definitivo em vez de "copia conferivel contra a origem". Ele acrescenta o
+// PRIMEIRO documento deliberadamente publico do banco — ver o cabecalho do
+// proprio bloco.
+//
+// Os blocos 4/7 e 5/7 foram unidos pela homologacao P0 integrada
+// (homologacao/p0-integrada-a90557): as branches de RASTREABILIDADE e MODERACAO
+// eram IRMAS sobre o mesmo pai e cada uma acrescentou o seu bloco no mesmo
+// ponto do arquivo, o que produziu um conflito de ANEXO, nao de conteudo.
+// A resolucao e a uniao literal dos dois blocos; nenhuma condicao foi tocada.
+//
+// NAMESPACES DE IDENTIDADE — LEIA ANTES DE ACRESCENTAR COLECAO:
+//
+//   `users/{uid}`    = IDENTIDADE CANONICA DO APLICATIVO. Inventario,
+//                      comprovantes de campanha e tudo que vier depois.
+//   `usuarios/{uid}` = NAMESPACE LEGADO, EXCLUSIVO DO BILLING. Escrito somente
+//                      pela Cloud Function de compra; o aplicativo nao le.
+//                      Sua eliminacao e uma MIGRACAO SEPARADA E TESTADA, com OS
+//                      propria. Ate la: nao ha dual-write, nao ha espelhamento,
+//                      e nada aqui replica um no outro.
+//
+//   `config/{doc}`         = feature flags (consumido por colecao_firebase.dart
+//                            e por claimPioneerKit, em `config/featureFlags`).
+//   `configuracao/{doc}`   = mapa de produtos do Billing (`configuracao/billing`).
+//                            Nomes parecidos, conteudos diferentes, CADA UM COM
+//                            CONSUMIDOR REAL — por isso NAO foram normalizados.
+//
+// PRINCIPIO COMUM aos tres blocos: as Cloud Functions usam o Admin SDK e ignoram
+// estas regras. Todo `allow write: if false` aqui fecha a porta do APLICATIVO,
+// nunca a do backend.
+//
+// CAMINHO NAO DECLARADO E CAMINHO NEGADO. O fecho explicito no fim do arquivo
+// torna isso visivel, mas ele nao e o que nega: quem nega e a ausencia de regra.
+// Colecao nova precisa do proprio bloco `match`.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------------
+    // Auxiliares — UNIFICADOS.
+    //
+    // Os conjuntos de origem traziam os mesmos tres predicados com nomes
+    // diferentes (`ehDono`/`souEu`, `ehAdmin`/`admin`) e ambos declaravam
+    // `autenticado()`. Declarar duas vezes nao compila. Os dois nomes de cada
+    // par sao mantidos como sinonimos, com corpo unico, para que os blocos
+    // abaixo continuem LITERALMENTE iguais aos de origem — o que torna a uniao
+    // conferivel linha a linha contra as branches.
+    // ---------------------------------------------------------------------
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function ehDono(uid) {
+      return autenticado() && request.auth.uid == uid;
+    }
+
+    function souEu(userId) {
+      return autenticado() && request.auth.uid == userId;
+    }
+
+    // Papel administrativo vem de custom claim, nao de documento: um documento
+    // de papel poderia ser lido (e, num descuido de regra, escrito) pelo proprio
+    // cliente. O claim so e emitido pelo backend, e nao existe caminho pelo qual
+    // o jogador se torne admin.
+    function ehAdmin() {
+      return autenticado() && request.auth.token.admin == true;
+    }
+
+    function admin() {
+      return autenticado() && request.auth.token.admin == true;
+    }
+
+    // Campos que o cliente enviou.
+    function campos() {
+      return request.resource.data.keys();
+    }
+
+    function apenasCampos(permitidos) {
+      return campos().hasOnly(permitidos);
+    }
+
+    // =====================================================================
+    // BLOCO 1/3 — COLECOES E KIT PIONEIROS
+    // origem: claude/kit-pioneiros-2026-1b56ed : firebase/firestore.rules
+    // =====================================================================
+
+    // ------------------------------------------------------------------
+    // Configuracao de campanha e feature flags.
+    // Leitura autenticada para a tela saber o que mostrar; escrita so admin.
+    // ------------------------------------------------------------------
+    match /config/{documento} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if autenticado();
+      allow write: if ehAdmin();
+
+      // Lista segura de elegiveis, em SUBCOLECAO: suporta lista grande sem
+      // empilhar milhares de UIDs num unico documento.
+      //
+      // O jogador le apenas o proprio documento — nao da para varrer a lista
+      // inteira nem descobrir quem mais foi convidado — e nao escreve nunca.
+      // E aqui que morreria a tentativa de "se marcar elegivel".
+      match /eligible/{uid} {
+        allow get: if ehDono(uid) || ehAdmin();
+        allow list: if ehAdmin();
+        allow write: if false;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Catalogo de colecoes: publico para quem esta autenticado, imutavel pelo
+    // cliente. Os precos nao sao "proibidos" aqui por acaso: o catalogo
+    // comemorativo simplesmente nao tem campo de preco (ver catalogo.seed.json).
+    // ------------------------------------------------------------------
+    match /collections/{collectionId} {
+      allow read: if autenticado();
+      allow write: if false;
+
+      match /items/{itemId} {
+        allow read: if autenticado();
+        allow write: if false;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Inventario e comprovantes do jogador.
+    //
+    // Leitura: so o dono (e o admin, para suporte).
+    // Escrita: NINGUEM pelo cliente. Sem esta linha, um aplicativo modificado
+    // poderia criar `inventory/pioneer_2026_crown` a mao, ou reescrever
+    // `source`/`campaignId` de um item legitimo para forjar procedencia.
+    // ------------------------------------------------------------------
+    match /users/{uid} {
+
+      match /inventory/{itemId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+
+        // Criar e apagar sao exclusividade da Cloud Function (Admin SDK, que
+        // ignora estas regras). Fechado aqui, nao existe caminho pelo qual o
+        // aplicativo invente `inventory/pioneer_2026_crown` a mao.
+        allow create, delete: if false;
+
+        // UNICA escrita permitida ao cliente: ligar ou desligar `equipped` num
+        // documento QUE JA EXISTE. `hasOnly` garante que nenhum outro campo
+        // muda junto — sem isso, uma atualizacao de equipagem poderia carregar
+        // `source`, `campaignId` ou `unlockedAt` adulterados no mesmo pedido e
+        // forjar a procedencia de um item legitimo.
+        //
+        // Equipar nao concede nada e nao tem valor economico: e escolha de
+        // vitrine. Por isso vale a pena permitir a escrita direta em vez de
+        // gastar uma Cloud Function em cada toque de botao.
+        allow update: if ehDono(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['equipped'])
+          && request.resource.data.equipped is bool;
+      }
+
+      match /campaign_claims/{campaignId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow create, update, delete: if false;
+      }
+
+      // ------------------------------------------------------------------
+      // Historico de partidas DO JOGADOR (OS Rastreabilidade secoes 11 e 15).
+      //
+      // Esta e a VISAO DO JOGADOR, e ela e uma projecao — nao e o registro
+      // tecnico. O registro tecnico vive em `matches/` e o jogador nao le.
+      // A separacao e a de secao 15: o que serve para ele conferir a propria
+      // partida NAO e o que serve para o suporte auditar a mesa.
+      //
+      // Escrita: NINGUEM pelo cliente. Sem esta linha, um aplicativo
+      // modificado inventaria vitorias no proprio historico — e §34 exige
+      // exatamente que "cliente nao cria historico competitivo falso" e
+      // "jogador nao edita proprio historico".
+      //
+      // Apagar tambem e negado: historico que o proprio interessado pode
+      // sumir nao serve a investigacao nenhuma.
+      match /matchHistory/{matchId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow create, update, delete: if false;
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // Auditoria de acoes administrativas (concessao manual e revogacao).
+    // Somente a Cloud Function grava; nem o admin apaga pelo cliente, para que
+    // a trilha nao possa ser limpa por quem a gerou.
+    // ------------------------------------------------------------------
+    match /audit/{registroId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // =====================================================================
+    // BLOCO 2/3 — BILLING (namespace legado `usuarios/`)
+    // origem: feat/play-billing-aab-interno : firestore.rules
+    // Funcionalmente congelado nesta OS: copiado sem alteracao semantica.
+    // =====================================================================
+
+    // Perfil do jogador. Ele le o proprio documento e edita seus campos
+    // cosmeticos; VIP, fichas e afins sao SOMENTE do servidor.
+    match /usuarios/{uid} {
+      // Campos que so a Cloud Function pode gravar.
+      function camposDeServidor() {
+        return [
+          'vip', 'vipExpiraEm', 'vipProdutoId', 'vipAtualizadoEm',
+          'fichas', 'fichasAtualizadoEm'
+        ];
+      }
+
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // No create nao existe `resource`, entao `diff` nao serve: basta exigir
+      // que nenhum campo de servidor venha no documento novo.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && !request.resource.data.keys().hasAny(camposDeServidor());
+
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data)
+             .affectedKeys()
+             .hasAny(camposDeServidor());
+
+      allow delete: if false;
+    }
+
+    // Registro de compras validadas. Leitura so do dono, escrita so do servidor.
+    // O cliente nao pode criar um documento aqui para simular uma compra ja
+    // aprovada.
+    match /compras/{chave} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Catalogo autoritativo (o que cada produto concede). Leitura publica para
+    // a vitrine; escrita apenas pelo console/admin.
+    match /configuracao/{doc} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // =====================================================================
+    // BLOCO 3/3 — TORNEIOS
+    // origem: integracao/motores-torneios-partidas-v1 : firebase/firestore.rules
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Catalogo de torneios (templates) — configuracao
+    // ---------------------------------------------------------------------
+    // Leitura publica: a central precisa listar os torneios.
+    // Escrita so administrativa: modalidade, formato, criterios de desempate e
+    // tabela de premiacao sao regra de competicao.
+    match /tournaments/{tournamentId} {
+      allow read: if autenticado();
+      allow write: if admin();
+
+      // -------------------------------------------------------------------
+      // Edicoes
+      // -------------------------------------------------------------------
+      // OS 02 secao 21: "status do torneio" e somente-leitura para o jogador.
+      // Nem o admin escreve daqui: transicoes passam por Cloud Function para que
+      // o grafo de tournament_lifecycle.dart seja sempre aplicado e o evento de
+      // auditoria seja sempre gravado junto.
+      match /editions/{editionId} {
+        allow read: if autenticado();
+        allow write: if false;
+
+        // -----------------------------------------------------------------
+        // Inscricoes — o unico ponto de escrita do jogador
+        // -----------------------------------------------------------------
+        match /registrations/{userId} {
+          allow read: if souEu(userId) || admin();
+
+          // Criar a PROPRIA inscricao, em estado inicial, sem se autoconceder
+          // vaga, posicao de espera nem status avancado. A elegibilidade, a
+          // lotacao e a janela sao revalidadas pela Function que reage a este
+          // documento — aqui so se garante a forma.
+          allow create: if souEu(userId)
+                        && request.resource.data.userId == userId
+                        && request.resource.data.tournamentId == tournamentId
+                        && request.resource.data.editionId == editionId
+                        && request.resource.data.status in ['inscrito', 'aguardando_dupla', 'dupla_confirmada']
+                        && !('posicaoEspera' in campos())
+                        // O cliente nao decide quanto foi debitado dele.
+                        && !('fichasDebitadas' in campos())
+                        && apenasCampos([
+                             'userId', 'tournamentId', 'editionId', 'parceiroId',
+                             'status', 'inscritoEm', 'atualizadoEm', 'chaveIdempotencia'
+                           ]);
+
+          // A UNICA mudanca que o jogador faz na propria inscricao e cancelar.
+          // Promover-se a `convocado_para_mesa` ou `checkin_realizado` mudaria a
+          // formacao de mesas — por isso o destino e travado em 'cancelado'.
+          // O check-in em si e Function: ele depende da janela de tempo.
+          allow update: if souEu(userId)
+                        && request.resource.data.status == 'cancelado'
+                        && resource.data.status != 'cancelado'
+                        // Nada alem do status e do carimbo pode mudar.
+                        && request.resource.data.diff(resource.data)
+                             .affectedKeys().hasOnly(['status', 'atualizadoEm']);
+
+          // Historico de inscricao nao se apaga: a auditoria da inscricao
+          // (OS 02 secao 5) depende dele existir depois do cancelamento.
+          allow delete: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Fases — OS 02 secao 21: "fase"
+        // -----------------------------------------------------------------
+        match /phases/{faseId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Mesas — a formacao e sorteio do servidor
+        // -----------------------------------------------------------------
+        match /tables/{mesaId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Resultados — OS 02 secao 21: "resultado"
+        // -----------------------------------------------------------------
+        // Escrito exclusivamente pela Function que recebe o Motor de Partidas.
+        // Deixar o cliente gravar aqui seria deixar o jogador digitar o proprio
+        // placar.
+        match /results/{matchId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Classificacao — OS 02 secao 21: "classificacao" e "posicao"
+        // -----------------------------------------------------------------
+        match /standings/{participanteId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+
+        // -----------------------------------------------------------------
+        // Conclusao / campeao — OS 02 secao 21: "vencedor"
+        // -----------------------------------------------------------------
+        match /conclusion/{docId} {
+          allow read: if autenticado();
+          allow write: if false;
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Historico (OS 02 secao 15)
+    // ---------------------------------------------------------------------
+    // Colecao de primeiro nivel, e nao subcolecao da edicao: o historico precisa
+    // sobreviver e ser consultavel por jogador e por temporada sem depender da
+    // edicao continuar nas colecoes operacionais.
+    match /tournamentHistory/{registroId} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Concessoes de recompensa — OS 02 secao 21: "premio" e "concessao de
+    // recompensa"
+    // ---------------------------------------------------------------------
+    // O jogador le as proprias; ninguem escreve pelo cliente. A chave do
+    // documento e a chave de idempotencia de reward_grants.dart, entao uma
+    // segunda gravacao do mesmo direito e a mesma escrita — a duplicidade e
+    // impossivel por construcao, nao por checagem.
+    match /rewardGrants/{chaveIdempotencia} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || admin());
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Encerramento anual (OS 02 secoes 16, 17 e 18)
+    // ---------------------------------------------------------------------
+
+    // O FATO: registro de classificacao. OS 02 secao 21: "elegibilidade".
+    match /annualQualifications/{registroId} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || admin());
+      allow write: if false;
+    }
+
+    // O DIREITO: convite. OS 02 secao 21: "convite especial".
+    match /closingInvites/{chaveIdempotencia} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || admin());
+
+      // O jogador ACEITA ou RECUSA o proprio convite, e nada mais. Gerar, enviar,
+      // confirmar presenca e marcar participacao sao do backend — deixar o
+      // cliente saltar para `participou` daria presenca a quem nao jogou.
+      allow update: if autenticado()
+                    && resource.data.userId == request.auth.uid
+                    && resource.data.status == 'convite_enviado'
+                    && request.resource.data.status in ['convite_aceito', 'convite_recusado']
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys().hasOnly(['status', 'atualizadoEm']);
+
+      allow create, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Idempotencia da automacao (OS 02 secao 19)
+    // ---------------------------------------------------------------------
+    // Uma linha por chave de tarefa executada. O id do documento E a chave, o que
+    // transforma "ja rodou?" numa leitura por id dentro da transacao.
+    match /tournamentTasks/{chaveTarefa} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Trilha de auditoria das transicoes (OS 02 secao 4)
+    // ---------------------------------------------------------------------
+    match /tournamentAudit/{eventoId} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    // =====================================================================
+    // BLOCO 4/5 — RASTREABILIDADE DE PARTIDAS
+    // origem: claude/buraco-vip-game-traceability (OS Rastreabilidade)
+    //
+    // PRINCIPIO DESTE BLOCO, EM UMA FRASE: o cliente NAO ESCREVE NADA AQUI.
+    // Nao ha um unico `allow write` verdadeiro em todo o bloco, e nao e
+    // descuido — e a resposta a secao 24 item por item:
+    //
+    //   criar partida finalizada falsa .... `matches` create negado
+    //   editar resultado ................. `matches` update negado
+    //   editar historico ................. `users/{uid}/matchHistory` negado
+    //   aumentar a propria pontuacao ..... `rankingLedger` write negado
+    //   diminuir a de terceiros .......... idem
+    //   alterar participantes ............ `matches` update negado
+    //   criar evento administrativo ...... `matches/{id}/events` negado
+    //   apagar partida ................... `matches` delete negado
+    //   apagar trilha competitiva ........ `rankingLedger` delete negado
+    //   marcar-se vencedor ............... `matches` write negado
+    //   consultar dado alheio ............ leitura restrita, ver abaixo
+    //
+    // Toda escrita passa pelo backend autorizado (Admin SDK, que ignora estas
+    // regras) — `registrarEncerramentoPartida` em functions/src/rastreabilidade.ts,
+    // que exige o claim `motorDePartidas` ou `admin`.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Registro tecnico da partida (secoes 5 e 14)
+    // ---------------------------------------------------------------------
+    // LEITURA SO ADMINISTRATIVA, e esta e a linha que responde a secao 14:
+    // "o jogador comum nao deve ganhar acesso administrativo so por conhecer
+    // um matchId". Conhecer o id nao abre nada — nem para quem jogou a
+    // partida. O que o jogador le e a projecao dele, em
+    // `users/{uid}/matchHistory/{matchId}`.
+    //
+    // A consulta de suporte (que ve menos que a de admin) NAO passa por
+    // regra: ela e uma Cloud Function chamavel, porque o recorte por nivel de
+    // acesso e logica, e regra do Firestore nao sabe projetar documento.
+    match /matches/{matchId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+
+      // -------------------------------------------------------------------
+      // Trilha de eventos auditaveis (secao 8)
+      // -------------------------------------------------------------------
+      // Subcolecao, e nao colecao de primeiro nivel: os eventos so fazem
+      // sentido dentro da partida, e assim uma consulta nunca precisa
+      // filtrar por matchId — ela ja esta no caminho.
+      //
+      // O id do documento E o `eventId`. Gravar duas vezes o mesmo evento e a
+      // MESMA escrita: a duplicidade fica impossivel por construcao, e nao
+      // por checagem — mesma disciplina de `rewardGrants` e `tournamentTasks`.
+      match /events/{eventId} {
+        allow read: if ehAdmin();
+        allow write: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // Ledger competitivo — antes/delta/depois (secoes 12 e 13)
+    // ---------------------------------------------------------------------
+    // O jogador le os PROPRIOS lancamentos: ele tem direito de saber por que a
+    // pontuacao dele mudou, e esconder isso so gera chamado de suporte.
+    // O que ele nao faz e escrever — nem para si, nem contra terceiros.
+    //
+    // O id do documento e `matchId|userId|motivo`, a chave de idempotencia do
+    // dominio. Uma segunda gravacao do mesmo lancamento e a mesma escrita, e e
+    // isso que impede ranking aplicado duas vezes no nivel do banco, alem da
+    // barreira que o dominio ja aplica.
+    match /rankingLedger/{chaveIdempotencia} {
+      allow read: if autenticado()
+                  && (resource.data.userId == request.auth.uid || ehAdmin());
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Sinais antifraude (secoes 16 e 17)
+    // ---------------------------------------------------------------------
+    // LEITURA SO ADMINISTRATIVA, e aqui a restricao protege o jogador, nao o
+    // sistema: um sinal e SUSPEITA, nao veredito (o proprio documento carrega
+    // `geraPunicao: false`), e expo-lo ao alvo ou a terceiros transformaria uma
+    // observacao estatistica em acusacao publica.
+    //
+    // Escrita negada tambem para o admin pelo cliente: a trilha de sinais nao
+    // pode ser plantada nem limpa por quem for investigado ou investigar.
+    // Secao 35: "jogador nao cria flag administrativa contra terceiros".
+    match /fraudSignals/{chaveIdempotencia} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // =====================================================================
+    // BLOCO 5/5 — MODERACAO
+    // origem: claude/moderation-reports-blocking-social-08ef72
+    //
+    // O PRINCIPIO DESTE BLOCO, e o que o diferencia dos tres acima: aqui a
+    // leitura e tao perigosa quanto a escrita. Nos outros blocos, negar escrita
+    // basta — ninguem se prejudica por ler o catalogo de torneios. Aqui, LER a
+    // denuncia errada revela quem denunciou quem, e isso e o dano.
+    //
+    // Por isso a postura padrao deste bloco nao e "todo autenticado le": e
+    // "somente o dono, e somente do proprio". Nenhuma colecao de moderacao tem
+    // `allow read: if autenticado()`.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Denuncias — o REGISTRO ADMINISTRATIVO
+    // ---------------------------------------------------------------------
+    // Somente admin le. Esta unica linha e o que protege a identidade do
+    // denunciante: o documento carrega `denuncianteUid`, e nao ha regra que o
+    // entregue ao denunciado, ao proprio denunciante ou a qualquer terceiro.
+    //
+    // O denunciante NAO le a propria denuncia aqui — ele le o comprovante em
+    // `users/{uid}/reportReceipts`, que e outro documento, com outros campos.
+    // A separacao existe porque as regras liberam ou negam o DOCUMENTO INTEIRO:
+    // nao ha como permitir ler quatro campos e esconder evidencia e status
+    // interno. Projetar campo a campo so e possivel gravando dois documentos.
+    //
+    // Escrita fechada para todos, inclusive admin: quem grava e a Cloud
+    // Function, com o `createdAt` do servidor e o denunciante tirado do contexto
+    // autenticado. Deixar o cliente criar aqui seria deixa-lo escolher em nome
+    // de quem denuncia e em que data.
+    match /reports/{reportId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Sancoes e estado disciplinar
+    // ---------------------------------------------------------------------
+    // Historico completo: so admin. Contem motivo, responsavel e a denuncia de
+    // origem — nada disso e do jogador sancionado.
+    match /sanctions/{sancaoId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // O EFEITO consolidado, este sim legivel pelo proprio: a tela precisa poder
+    // dizer "voce esta silenciado ate tal hora" em vez de falhar sem explicacao.
+    //
+    // Leitura restrita ao dono impede a enumeracao que a secao 18 da OS pede
+    // para evitar: sem isso, qualquer pessoa varreria a colecao para descobrir
+    // quem esta suspenso.
+    //
+    // Escrita fechada — inclusive para o dono. E o ponto exato onde morre a
+    // tentativa de "apagar a propria punicao".
+    match /playerModeration/{uid} {
+      allow read: if ehDono(uid) || ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Trilha e idempotencia da moderacao
+    // ---------------------------------------------------------------------
+    // Mesmo desenho de `audit/` e `tournamentAudit/`: nem o admin apaga pelo
+    // cliente, para que a trilha nao possa ser limpa por quem a gerou.
+    match /moderationAudit/{eventoId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /moderationTasks/{chaveTarefa} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Relacao social do jogador — subcolecoes de `users/{uid}`
+    // ---------------------------------------------------------------------
+    // Este e um SEGUNDO bloco `match /users/{uid}`, e nao um acrescimo ao do
+    // Bloco 1/3. A duplicacao e intencional: as regras do Firestore avaliam
+    // todos os blocos que casam com o caminho e concedem se QUALQUER um
+    // conceder, entao separar nao afrouxa nada — e mantem o bloco de origem
+    // conferivel linha a linha contra a branch do Kit Pioneiros, que e a
+    // propriedade que o cabecalho deste arquivo pediu para preservar.
+    match /users/{uid} {
+
+      // COMPROVANTE DE DENUNCIA. Protocolo, data, tipo, categoria e status
+      // generico — o que a secao 6 da OS autoriza o denunciante a ver. Nao tem
+      // denunciadoUid, comentario, evidencia nem status interno, porque quem
+      // grava e a Function e ela nao poe esses campos aqui.
+      match /reportReceipts/{reportId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow write: if false;
+      }
+
+      // BLOQUEIOS. Leitura so do dono; escrita so pela Function.
+      //
+      // Por que nao deixar o cliente gravar direto, como acontece com
+      // `equipped` no inventario: o teto de bloqueios (kLimiteBloqueios) e uma
+      // contagem, e regra do Firestore nao conta documentos de uma colecao. Sem
+      // a Function, o teto simplesmente nao existiria. Alem disso, bloqueio
+      // afeta o que OUTRA pessoa consegue fazer — e a secao 8 da OS exige que o
+      // servidor seja a fonte da verdade.
+      match /blocks/{alvoUid} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow write: if false;
+      }
+
+      // SILENCIO PESSOAL. Aqui o cliente ESCREVE, e a diferenca em relacao ao
+      // bloqueio e deliberada: mute nao afeta ninguem alem de quem o configurou
+      // — e uma preferencia de exibicao, sem teto a contar e sem efeito sobre
+      // terceiros. Gastar uma Cloud Function em cada toque seria custo sem
+      // ganho de seguranca.
+      //
+      // O que a regra ainda garante:
+      //   * so o dono escreve na propria lista (`ehDono`);
+      //   * auto-mute e recusado — `alvoUid != uid` compara os dois parametros
+      //     do caminho, sem precisar ler o documento;
+      //   * o documento tem forma fixa: `apenasCampos` impede pendurar campo
+      //     administrativo aqui e tentar que alguem o leia como se fosse
+      //     sancao;
+      //   * `alvoUid` no corpo tem que bater com o id do documento, senao a
+      //     lista teria um registro que aponta para outra pessoa.
+      match /mutes/{alvoUid} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+
+        allow create, update: if ehDono(uid)
+          && alvoUid != uid
+          && request.resource.data.alvoUid == alvoUid
+          && apenasCampos(['alvoUid', 'criadoEm']);
+
+        allow delete: if ehDono(uid);
+      }
+    }
+
+    // =====================================================================
+    // BLOCO 6/7 — IDENTIDADE PUBLICA E GRAFO SOCIAL
+    // origem: OS de Identidade Publica e Grafo Social
+    //
+    // O PRINCIPIO DESTE BLOCO, e o que o diferencia do de moderacao: aqui
+    // existe, pela primeira vez no banco, um documento DELIBERADAMENTE PUBLICO —
+    // `publicProfiles/{publicId}`. Todos os outros blocos partem de "so o dono
+    // le"; este declara um documento que qualquer autenticado le, porque perfil
+    // publico e exatamente isso.
+    //
+    // E por isso a disciplina do bloco e a INVERSA da dos outros. Nos demais, a
+    // pergunta e "quem pode ler este documento?". Aqui, a pergunta e "o que pode
+    // existir DENTRO deste documento?" — porque regra do Firestore libera ou nega
+    // o documento inteiro, e nao ha projecao de campo. A resposta esta em
+    // `camposPublicos`, em app/lib/social/apresentacao.dart, e a trava que a
+    // aplica roda no servidor (`exigirDocumentoPublicoLimpo`) antes de cada
+    // escrita. Uma regra nao conseguiria fazer isso; o codigo consegue.
+    //
+    // SAO TRES DOCUMENTOS DE IDENTIDADE, E NAO UM, pela mesma razao:
+    //
+    //   playerIdentities/{uid} ..... uid -> publicId. O dono le o proprio.
+    //   publicIdIndex/{publicId} ... publicId -> uid. CARREGA UID, portanto e
+    //                                negado a TODO cliente, inclusive ao dono.
+    //   publicProfiles/{publicId} .. apelido e avatar. Publico.
+    //
+    // Junta-los seria escolher entre publicar o UID e nao ter perfil publico.
+    //
+    // ESCRITA: NINGUEM, PELO CLIENTE, EM LUGAR NENHUM DESTE BLOCO. Nao ha um
+    // unico `allow write` verdadeiro, e nao e descuido — e a resposta a §33 item
+    // por item:
+    //
+    //   criar identidade para outro UID ..... `playerIdentities` write negado
+    //   mudar o proprio publicId ............ idem (a Function tambem nao atualiza)
+    //   adulterar amizade ................... `friendships` write negado
+    //   aceitar em nome de terceiro ......... idem
+    //   criar relacao bilateral direta ...... idem
+    //   remover amizade alheia .............. idem
+    //   forjar remetente .................... idem (`solicitanteUid` e do servidor)
+    //   ultrapassar bloqueio ................ a Function le `blocks` na transacao
+    //   ler dado privado pelo perfil ........ `publicProfiles` so tem campo publico
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Identidade interna do jogador — uid -> publicId
+    // ---------------------------------------------------------------------
+    // O dono le a PROPRIA: ele precisa saber qual e o seu codigo para
+    // compartilhar. Ler a de terceiro daria o mapa `uid -> publicId`, que e
+    // metade do que o publicId existe para esconder.
+    match /playerIdentities/{uid} {
+      allow get: if ehDono(uid) || ehAdmin();
+      // `list` negado ate para o dono: varrer a colecao entregaria a base
+      // inteira de identidades numa consulta so.
+      allow list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Mapa reverso — publicId -> uid
+    // ---------------------------------------------------------------------
+    // NEGADO A TODO CLIENTE, inclusive ao dono do proprio documento. Este e o
+    // unico lugar do banco onde o caminho de volta existe, e §31-D exige que ele
+    // seja "exclusivamente no backend". Um jogador que lesse aqui converteria
+    // qualquer publicId visto no ranking no UID correspondente — e o publicId
+    // deixaria de proteger coisa nenhuma.
+    //
+    // Admin le para suporte ("quem e o jogador P0123456789AB?"), que e uma
+    // pergunta legitima de quem investiga denuncia.
+    match /publicIdIndex/{publicId} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Perfil publico — a fonte UNICA de apelido e avatar (§31)
+    // ---------------------------------------------------------------------
+    // Leitura por qualquer autenticado: e o que permite `Ranking/Hall ->
+    // publicId -> Ver Perfil` sem que nenhuma dessas telas conheca UID.
+    //
+    // Escrita fechada, inclusive para o dono. Nao e desconfianca do jogador: e
+    // que a alteracao precisa normalizar o apelido (produzindo
+    // `apelidoOrdenacao`) e propagar a chave de ordenacao para as projecoes dos
+    // amigos. Regra do Firestore nao normaliza texto nem escreve em 200
+    // documentos — deixar o cliente gravar aqui daria um perfil com ordenacao
+    // incoerente e um apelido que nunca passou por validacao.
+    match /publicProfiles/{publicId} {
+      allow get, list: if autenticado();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // A relacao canonica de amizade — fonte de verdade (§20)
+    // ---------------------------------------------------------------------
+    // NEGADA AO CLIENTE ATE NA LEITURA, e a razao nao e sigilo da amizade: o
+    // documento carrega `membros`, `solicitanteUid` e `destinatarioUid`, que sao
+    // UIDs. Liberar a leitura para os proprios membros — que parece inofensivo,
+    // porque a amizade e deles — entregaria o UID do amigo a qualquer aplicativo
+    // modificado, e §21 e explicita: "Nao retornar UID simplesmente porque ele
+    // facilita implementacao."
+    //
+    // O jogador ve os amigos por `listarAmigos`, que devolve publicId, apelido e
+    // avatar — e nada mais.
+    match /friendships/{pairKey} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Contadores sociais
+    // ---------------------------------------------------------------------
+    // O dono le os proprios (a tela mostra "142 de 200 amigos"). Escrita
+    // fechada: e aqui que morreria a tentativa de zerar o contador para furar o
+    // teto de §25.
+    match /playerSocial/{uid} {
+      allow get: if ehDono(uid) || ehAdmin();
+      allow list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Projecoes sociais — subcolecoes de `users/{uid}`
+    // ---------------------------------------------------------------------
+    // TERCEIRO bloco `match /users/{uid}` do arquivo, pelo mesmo motivo que o
+    // segundo existe: as regras avaliam todos os blocos que casam e concedem se
+    // QUALQUER um conceder, entao separar nao afrouxa nada — e mantem os blocos
+    // anteriores conferiveis linha a linha contra as branches de origem.
+    match /users/{uid} {
+
+      // AMIGOS e SOLICITACOES, em projecao derivada.
+      //
+      // NEGADAS ATE AO DONO, e este e o detalhe que se perde numa leitura
+      // rapida: o ID DO DOCUMENTO E O UID DO OUTRO JOGADOR. Um `list` aqui
+      // devolveria a lista de UIDs dos amigos sem que nenhum CAMPO carregasse
+      // UID — o vazamento estaria na chave, nao no valor. Por isso a leitura
+      // passa obrigatoriamente pelas Functions, que projetam para publicId.
+      //
+      // A fonte de verdade e `friendships`; estas duas sao visoes derivadas,
+      // escritas na MESMA transacao, e reconstrutiveis por
+      // `reconciliarPerfilSocial`.
+      match /friends/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+
+      match /friendRequests/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+    }
+    // =====================================================================
+    // BLOCO 7/7 — RANKING, LIGAS E TEMPORADAS
+    // origem: claude/ranking-ligas-backend-auth (OS Backend Autoritativo de
+    // Ranking, Ligas e Temporadas)
+    //
+    // O PRINCIPIO DESTE BLOCO, e ele e o mesmo do Bloco 4/5: o cliente NAO
+    // ESCREVE NADA AQUI. Nao ha um unico `allow write` verdadeiro, e essa e a
+    // resposta a secao 20 da OS, item por item:
+    //
+    //   escrever a propria pontuacao ..... `rankingStandings` write negado
+    //   escrever a propria posicao ....... idem
+    //   escrever a propria Liga .......... idem
+    //   escolher a temporada ............. `rankingSeasons` write negado
+    //   se colocar no Hall ............... `hallEntries` write negado
+    //   marcar partida como processada ... `rankingContributions` write negado
+    //   alterar o resultado oficial ...... `matches` (Bloco 4/5) ja nega
+    //   inventar uma escada de ligas ..... `rankingLadders` write negado
+    //   apagar a propria derrota ......... delete negado em tudo
+    //
+    // A ESCRITA INTEIRA passa por `functions-ranking/`, que usa o Admin SDK e
+    // ignora estas regras.
+    //
+    // A POSTURA DE LEITURA E MAIS FECHADA QUE A DO RESTO DO ARQUIVO, e vale
+    // explicar por que, ja que ranking e uma lista publica por natureza.
+    //
+    // `rankingStandings` guarda o `uid` do jogador junto com a pontuacao. Regra
+    // do Firestore libera ou nega o DOCUMENTO INTEIRO — nao ha como permitir ler
+    // pontos e esconder o uid. Entao a leitura da lista NAO passa por regra: ela
+    // e a Cloud Function `abrirRanking`/`paginarRanking`, que projeta campo a
+    // campo e publica `publicPlayerId` no lugar do uid (secoes 16 e 17). E a
+    // mesma decisao, pelo mesmo motivo, que o Bloco 5/5 tomou para as denuncias:
+    // "projetar campo a campo so e possivel gravando dois documentos" — ou, como
+    // aqui, devolvendo por Function.
+    //
+    // O que fica legivel direto sao as duas colecoes de CONFIGURACAO, que nao
+    // tem dado de pessoa nenhuma: a temporada e a escada de ligas.
+    // =====================================================================
+
+    // ---------------------------------------------------------------------
+    // Temporada e escada de ligas — configuracao, sem dado pessoal
+    // ---------------------------------------------------------------------
+    // Leitura autenticada: a tela precisa saber qual temporada esta correndo e
+    // quais sao os degraus para desenhar a escada. Nenhum dos dois documentos
+    // contem uid, apelido ou pontuacao de ninguem.
+    //
+    // Escrita negada inclusive para o admin pelo cliente. Trocar a politica de
+    // uma temporada em andamento pelo console mudaria o significado dos
+    // lancamentos ja gravados; a transicao passa por Function para que a
+    // conferencia de "no maximo uma vigente" e a trilha de auditoria acontecam
+    // na mesma transacao.
+    match /rankingSeasons/{seasonId} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    match /rankingLadders/{ladderId} {
+      allow read: if autenticado();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Classificacao — a linha do jogador numa temporada
+    // ---------------------------------------------------------------------
+    // ESTA E A COLECAO QUE O JOGADOR MAIS QUERERIA ESCREVER, e a que mais
+    // precisa estar fechada: um `update` aqui e literalmente "escolher a propria
+    // pontuacao e a propria posicao".
+    //
+    // Leitura negada ate para o dono. Nao e desconfianca do dono — e que liberar
+    // `get` no proprio documento liberaria tambem a forma de descobrir o uid
+    // por tras de um id publico, bastando tentar `rankingStandings/{season}|{uid}`
+    // com uids conhecidos. O proprio jogador ve a propria linha pelo campo `eu`
+    // de `abrirRanking`, que a Function projeta.
+    match /rankingStandings/{chave} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Agregado de vida inteira
+    // ---------------------------------------------------------------------
+    // `rankingPlayers` e indexado por uid e guarda o agregado global (pontos e
+    // partidas de vida inteira) mais o `publicPlayerId` como PROJECAO da
+    // identidade canonica. Liberar a leitura para o dono seria inofensivo;
+    // liberar a LISTA permitiria varrer o mapeamento uid -> id publico inteiro.
+    // Como regra do Firestore nao distingue "meu documento" de "consulta que
+    // filtra pelo meu documento" sem cuidado, a colecao fica fechada — e o
+    // jogador ja obtem o proprio id publico pelo dominio dono dele, em
+    // `obterMinhaIdentidade` (bloco 6/7).
+    match /rankingPlayers/{uid} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // `rankingPublicIds` FOI REMOVIDA PELA OS DE INTEGRACAO DE IDENTIDADE, e a
+    // ausencia de bloco aqui e deliberada — nao e esquecimento.
+    //
+    // Ela era o indice reverso PROPRIO do ranking (`publicId -> uid`), gravado
+    // pelo gerador que este dominio mantinha. Com o gerador removido, a colecao
+    // deixou de ter quem a escrevesse; manter um `match` para uma colecao que
+    // ninguem cria seria descrever uma porta de uma parede que nao existe.
+    //
+    // O caminho de volta continua existindo, UMA VEZ, em `publicIdIndex` — bloco
+    // 6/7, com a mesma postura (negado a todo cliente, admin le para suporte).
+    // O fecho explicito no fim do arquivo nega `rankingPublicIds` como nega
+    // qualquer caminho nao declarado, entao a remocao do bloco APERTA a regra em
+    // um ponto (o admin perdeu um `read` que aqui tambem ja era `false`) e nao
+    // afrouxa nenhum.
+
+    // ---------------------------------------------------------------------
+    // Trilha: contribuicao, backlog e auditoria (secoes 6, 21 e 22)
+    // ---------------------------------------------------------------------
+    // A prova de que uma partida contribuiu para o ranking, com os deltas por
+    // jogador. So admin le: os deltas de terceiros nao sao do jogador.
+    //
+    // Escrita negada tambem para o admin, e este e o ponto: o id do documento E
+    // a chave de idempotencia. Quem conseguisse cria-lo a mao faria o sistema
+    // considerar uma partida "ja processada" sem que ela tivesse pontuado — ou,
+    // apagando-o, faria a mesma partida pontuar duas vezes.
+    match /rankingContributions/{chaveIdempotencia} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // Resultados oficiais que ainda nao viraram pontuacao (hoje: todos, porque
+    // nao ha formula registrada). E a lista de trabalho do reprocessamento.
+    match /rankingBacklog/{matchId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // Mesmo desenho de `audit/`, `tournamentAudit/` e `moderationAudit/`: nem o
+    // admin apaga pelo cliente, para que a trilha nao possa ser limpa por quem a
+    // gerou.
+    match /rankingAudit/{eventoId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /rankingTasks/{chaveTarefa} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Hall dos Imortais (secao 14)
+    // ---------------------------------------------------------------------
+    // Fechado para leitura direta pelo mesmo motivo dos standings: a entrada
+    // carrega o uid do homenageado ao lado do id publico. O quadro sai pela
+    // Function `consultarHall`, que projeta.
+    //
+    // Escrita negada para todos. A colecao esta VAZIA e vai continuar vazia ate
+    // que existam criterios de elegibilidade — e a linha abaixo e o que garante
+    // que ela nao seja preenchida por um cliente impaciente enquanto isso.
+    match /hallEntries/{chave} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
+    // ---------------------------------------------------------------------
+    // ATENCAO A QUEM FOR ACRESCENTAR OUTRAS COLECOES: esta regra nao vale so para
+    // torneios. Qualquer caminho nao declarado acima e negado, inclusive colecoes
+    // futuras de perfil, amigos ou loja. Cada uma precisara do proprio bloco
+    // `match` — o Bloco 7/7 e o exemplo mais recente de como isso e feito.
+    //
+    // Isso e seguro hoje porque este e o PRIMEIRO firestore.rules do projeto e
+    // nenhuma tela usa Firestore ainda — o app so consome firebase_auth. A
+    // negacao padrao e a postura correta para comecar: uma colecao que ninguem
+    // declarou nao deve ficar aberta so porque ninguem se lembrou dela.
+    match /{documento=**} {
+      allow read, write: if false;
+    }
+  }
+}

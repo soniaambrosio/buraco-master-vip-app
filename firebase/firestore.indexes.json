@@ -1,0 +1,615 @@
+{
+  "//": "firestore.indexes.json — UNIAO dos indices das codebases colecoes e torneios. Billing nao declara indice. Cada entrada guarda sua origem.",
+  "//identidade-publica": "A OS de integracao Identidade Publica x Ranking NAO ACRESCENTOU NENHUM INDICE, e a ausencia e conferida e nao presumida. Os quatro caminhos que ela criou ou trocou resolvem por ID DE DOCUMENTO, que o Firestore serve sem indice declarado: `playerIdentities/{uid}` (uid -> publicId, via getAll), `publicIdIndex/{publicId}` (o caminho de volta, que substituiu a leitura em rankingPublicIds), `publicProfiles/{publicId}` (apelido e avatar projetados na linha do ranking) e a varredura da auditoria dry-run, que le colecao inteira sem where nem orderBy. `rankingPublicIds` sumiu do codigo e nunca teve entrada aqui, pelo mesmo motivo. LEMBRETE QUE CONTINUA VALENDO: o emulador cria indice sozinho e NAO prova a necessidade de indice composto em producao — a conferencia e por leitura deste arquivo, e continua sendo portao de pre-deploy.",
+  "indexes": [
+    {
+      "//": "Vitrine/inventario: itens de uma colecao, mais recentes primeiro. Usado ao abrir a aba do Kit Pioneiros no inventario do jogador. [origem: colecoes/kit-pioneiros]",
+      "collectionGroup": "inventory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "collectionId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "unlockedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Perfil/mesa: o que o jogador tem equipado agora, por colecao. Consulta pequena e frequente. [origem: colecoes/kit-pioneiros]",
+      "collectionGroup": "inventory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "equipped",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "collectionId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Suporte/auditoria: quem resgatou uma campanha, em ordem cronologica. COLLECTION_GROUP porque campaign_claims vive sob cada usuario. [origem: colecoes/kit-pioneiros]",
+      "collectionGroup": "campaign_claims",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "campaignId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "claimedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Central de torneios: edicoes visiveis por status, mais proximas primeiro. [origem: torneios/v1]",
+      "collectionGroup": "editions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inicioPrevisto",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Agendador: edicoes cuja janela de inscricao ja abriu e que ainda nao abriram. [origem: torneios/v1]",
+      "collectionGroup": "editions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inscricoesAbremEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Agendador: edicoes cuja janela de inscricao venceu. [origem: torneios/v1]",
+      "collectionGroup": "editions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inscricoesFechamEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "'Meus torneios': onde este jogador esta inscrito, em qualquer edicao. [origem: torneios/v1]",
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inscritoEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Lista de participantes da edicao, em ordem de inscricao. [origem: torneios/v1]",
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inscritoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Convocacao da lista de espera, em ordem de fila. [origem: torneios/v1]",
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "posicaoEspera",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Mesas de uma fase, para saber se a fase pode ser apurada. [origem: torneios/v1]",
+      "collectionGroup": "tables",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "faseId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Resultados de uma fase, insumo da classificacao. [origem: torneios/v1]",
+      "collectionGroup": "results",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "faseId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Classificacao da edicao, ja ordenada por posicao. [origem: torneios/v1]",
+      "collectionGroup": "standings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "faseId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "posicao",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Historico de um jogador, do mais recente para o mais antigo. [origem: torneios/v1]",
+      "collectionGroup": "tournamentHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "participantesUserIds",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "encerramento",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Historico de um torneio por temporada (edicoes realizadas). [origem: torneios/v1]",
+      "collectionGroup": "tournamentHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "tournamentId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "temporada",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "numeroEdicao",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Recompensas ativas de um jogador (OS 02 secao 13). [origem: torneios/v1]",
+      "collectionGroup": "rewardGrants",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "grantedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Classificados ao encerramento anual, por temporada e por jogador. Sustenta a consolidacao de convites e a lista de excedentes (OS 02 secao 17). [origem: torneios/v1]",
+      "collectionGroup": "annualQualifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "temporada",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Painel administrativo dos convites da temporada. [origem: torneios/v1]",
+      "collectionGroup": "closingInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "temporada",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas de um jogador, mais recentes primeiro. E a consulta que sustenta a investigacao administrativa por jogador e a reconstrucao do historico dele quando a projecao precisar ser refeita. `userIdsCompetidores` e denormalizado no documento justamente porque `array-contains` nao alcanca campo dentro de objeto aninhado. [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userIdsCompetidores",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas de um jogador dentro de um tipo (so ranqueadas, so torneio). Sustenta a apuracao de 'ganho de ranking atipico' sem varrer a colecao. [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userIdsCompetidores",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "tipo",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas por status e periodo. Duas leituras: mesas presas em estado nao terminal (operacao) e volume por janela (investigacao). [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 27 — partidas encerradas por abandono num periodo. `motivoEncerramento` a frente de `encerradaEm` porque o filtro e por igualdade e a ordenacao por intervalo. [origem: rastreabilidade]",
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "motivoEncerramento",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "encerradaEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 12 — o ledger de um jogador, em ordem cronologica. E a consulta que responde 'por que este jogador esta com esta pontuacao?': lida na ordem, a sequencia antes/delta/depois se encadeia. ASCENDING de proposito — o extrato se le do comeco. [origem: rastreabilidade]",
+      "collectionGroup": "rankingLedger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 14 — lancamentos de UMA partida, para a visao administrativa dela. [origem: rastreabilidade]",
+      "collectionGroup": "rankingLedger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "matchId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 16 — fila de investigacao: sinais que citam uma conta, mais recentes primeiro. Sinal e SUSPEITA, nao veredito — esta consulta monta a fila de quem vai olhar, nunca uma lista de culpados. [origem: rastreabilidade]",
+      "collectionGroup": "fraudSignals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "alvos",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "observadoEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "RASTREABILIDADE secao 16 — sinais de um tipo, por intensidade e data. Sustenta a priorizacao do operador sem varrer a colecao. [origem: rastreabilidade]",
+      "collectionGroup": "fraudSignals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "suspectedPattern",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "intensidade",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "observadoEm",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Freio de abuso de denuncia: quantas o mesmo denunciante registrou na ultima hora. Igualdade + intervalo exige indice composto. Consultado por `registrarDenuncia` a CADA denuncia, entao precisa ser barato — por isso e `count()`, que nao baixa documento nenhum. [origem: moderacao]",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "denuncianteUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Fila de triagem: denuncias por status, mais antigas primeiro (quem esperou mais e atendido antes). Consumidor: ferramenta administrativa ainda nao construida — o indice acompanha a colecao para que a primeira consulta nao precise de um deploy separado. [origem: moderacao]",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Historico disciplinar de um jogador, mais recente primeiro. Consultado ao aplicar sancao (para consolidar o efeito vigente) e pela triagem. [origem: moderacao]",
+      "collectionGroup": "sanctions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inicio",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Denuncias recebidas sobre um mesmo jogador, para a triagem ver reincidencia. [origem: moderacao]",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "denunciadoUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §22 — lista de amigos de um jogador, por apelido normalizado, com o publicId como desempate tecnico. O desempate NAO e decorativo: apelido nao e unico (§7), e sem um segundo criterio a ordem entre dois homonimos seria indefinida entre paginas — a paginacao por cursor pularia ou repetiria itens. COLLECTION (e nao COLLECTION_GROUP) porque a consulta sempre parte de um dono conhecido: `users/{uid}/friends`. [origem: social]",
+      "collectionGroup": "friends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "apelidoOrdenacao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §23 e §24 — solicitacoes recebidas ou enviadas, mais recentes primeiro. Ordenadas por instante, e nao por apelido, porque §25 proibe teto de solicitacoes RECEBIDAS: essa lista e ilimitada por decisao antiabuso e nao caberia num carregamento unico como a de amigos cabe. `publicId` fecha o desempate para o cursor ser estavel quando duas solicitacoes chegam no mesmo milissegundo. [origem: social]",
+      "collectionGroup": "friendRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "direcao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "solicitadaEm",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SOCIAL §20 e §22 — as amizades ATIVAS de um jogador, na fonte de verdade. Sustenta duas coisas: o leque que propaga a chave de ordenacao quando o apelido muda, e a reconciliacao que reconstroi as projecoes a partir do canonico. `membros` e denormalizado como array justamente porque `array-contains` e a unica forma de perguntar 'as relacoes deste jogador' num documento cuja chave e o PAR. [origem: social]",
+      "collectionGroup": "friendships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "membros",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "A ORDEM OFICIAL DO RANKING DE UMA TEMPORADA. Serve as quatro consultas que produzem classificacao: a pagina (`abrirRanking`/`paginarRanking`), o podio, a varredura da apuracao e a da consolidacao. ATUALIZADO PELA POLITICA COMPETITIVA V1: ate ela, a ordem era `seasonId, pontos DESC, publicPlayerId ASC`, porque nao havia decisao de produto sobre desempate. A secao 17 decidiu CINCO criterios competitivos, e todos os cinco precisam estar aqui — um `orderBy` sem indice correspondente e recusado pelo Firestore em producao, e a lista simplesmente nao abre. Campo a campo: `seasonId` isola a temporada (sem ele, 2026-A misturaria com 2026-B); `pontos DESC` e o rating; `vitorias DESC`, `saldoPontos DESC`, `abandonos ASC` (o unico ascendente) e `ratingAtingidoEm ASC` (quem chegou ao rating primeiro) sao os criterios 2 a 5; `publicPlayerId ASC` e o desempate TECNICO que torna a ordem TOTAL — sem ele o `startAfter` do cursor nao aponta para um ponto unico da lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Ver o cabecalho de functions-ranking/src/ordenacao.ts. [origem: ranking]",
+      "collectionGroup": "rankingStandings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "seasonId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "pontos",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "vitorias",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "saldoPontos",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "abandonos",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ratingAtingidoEm",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "publicPlayerId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "A FILA DE REPROCESSAMENTO DO BACKLOG (secao 26). Le so os itens `pendente`, na ordem em que as partidas entraram na fila. A ordem cronologica NAO e cosmetica: o Elo nao e comutativo, e aplicar a partida de marco depois da de abril daria ao jogador um rating diferente — reprocessar na ordem de encerramento e o que faz o resultado do backlog ser o mesmo que teria saido se a politica existisse desde o inicio. `matchId ASC` fecha a ordem para que o cursor de retomada aponte para um ponto unico, pela mesma razao do `publicPlayerId` no indice acima. [origem: politica-competitiva-v1]",
+      "collectionGroup": "rankingBacklog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "situacao",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "matchId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "A mesma ordem, para o agregado de vida inteira (o escopo `global` das tres abas do cliente). Colecao diferente e campo de pontuacao diferente (`pontosTotais`), entao e um indice proprio e nao uma variacao do anterior. [origem: ranking]",
+      "collectionGroup": "rankingPlayers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "pontosTotais",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicPlayerId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Extrato competitivo por temporada: os lancamentos de UM jogador numa temporada, em ordem cronologica. E o que permite conferir a cadeia `antes+delta==depois` de uma temporada sem ler o ledger inteiro do jogador. A consulta equivalente sem `seasonId` (o extrato de vida inteira, em functions/src/rastreabilidade.ts) e servida pelo indice automatico de campo unico. [origem: ranking]",
+      "collectionGroup": "rankingLedger",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "seasonId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "registradoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "Reprocessamento (secao 22): as contribuicoes de uma temporada, na ordem em que foram aplicadas. E a consulta que permite recalcular uma temporada e comparar o resultado com o consolidado. [origem: ranking]",
+      "collectionGroup": "rankingContributions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "seasonId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "processadoEm",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "//fieldOverrides": "Vazio de proposito. As consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore. Declara-las aqui seria criar indice que o Firestore ja mantem. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",
+  "fieldOverrides": []
+}

@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../screens/perfil_screen.dart';
+import '../sessao/identidade_publica_sessao.dart';
 
 /// Origem dos dados do Perfil (camada de lógica — Claude).
 ///
@@ -59,16 +60,45 @@ class PerfilService {
     Presente(id: 'diamante', nome: 'Diamante', icone: 'assets/perfil/presente_diamante.webp', quantidade: 2),
   ];
 
-  String _nomeReal() {
-    final u = FirebaseAuth.instance.currentUser;
-    final n = u?.displayName?.trim();
-    return (n != null && n.isNotEmpty) ? n : 'Jogador(a)';
+  /// Nome do Firebase Auth — APRESENTAÇÃO, e só ela.
+  ///
+  /// Serve de último recurso VISUAL quando o jogador ainda não escolheu apelido.
+  /// Não é identidade e não substitui `publicId` em lugar nenhum.
+  ///
+  /// O `try` cobre o mesmo ambiente que `main()` já cobre: sem Firebase
+  /// inicializado (navegador de teste, teste de widget), o perfil abre com o
+  /// nome genérico em vez de explodir.
+  String _nomeDoAuth() {
+    try {
+      final n = FirebaseAuth.instance.currentUser?.displayName?.trim();
+      if (n != null && n.isNotEmpty) return n;
+    } catch (_) {
+      // Sem Firebase: segue com o nome genérico.
+    }
+    return 'Jogador(a)';
   }
 
   /// Carrega o perfil. FASE 2: substituir o corpo por leitura no Firestore.
-  Future<PerfilVM> carregar({bool ehMeuPerfil = true}) async {
+  ///
+  /// [identidade] é a identidade pública CANÔNICA da sessão, entregue por quem
+  /// chama (o [PerfilPage] a lê do `EscopoSessao`). Este serviço não a busca: se
+  /// buscasse, o Perfil viraria um segundo lugar que obtém identidade, e §12
+  /// existe justamente para que só haja um.
+  ///
+  /// O apelido de `publicProfiles` GANHA do `displayName` do Google, porque é o
+  /// nome que os outros jogadores veem — é a autoridade sobre como este jogador
+  /// se chama dentro do jogo.
+  Future<PerfilVM> carregar({
+    bool ehMeuPerfil = true,
+    IdentidadePublica? identidade,
+  }) async {
     await Future.delayed(const Duration(milliseconds: 350)); // simula I/O (Fase 2: await Firestore)
-    return _montar(ehMeuPerfil: ehMeuPerfil, nome: _nomeReal(), demo: statsDemo);
+    final apelido = identidade?.apelido.trim() ?? '';
+    return _montar(
+      ehMeuPerfil: ehMeuPerfil,
+      nome: apelido.isNotEmpty ? apelido : _nomeDoAuth(),
+      demo: statsDemo,
+    );
   }
 
   /// VM mínimo para o estado "carregando" (a tela mostra skeleton; nada é exibido).

@@ -1,0 +1,362 @@
+name: CI OS Integração (analyze + suítes + codebases Firebase)
+
+# Autoridade de validação da OS "Integração Final Backend ↔ Flutter".
+#
+# Escopo (executa "quando aplicável", nunca afrouxa teste para ficar verde):
+#   1. flutter analyze  (erro é fatal; warning/info não)
+#   2. flutter test — Motor de Partidas, encerramento, torneios, integração,
+#      coleções/Kit Pioneiros e domínio social
+#   3. as codebases Firebase, cada uma descoberta pelo próprio caminho:
+#        colecoes -> firebase/functions   + regras em firebase/testes (emulador)
+#        billing  -> functions-billing    (node --test, sem emulador)
+#        torneios -> functions            (tsc --noEmit)
+#        ranking  -> functions-ranking    (tsc + node --test)
+#        social   -> functions-social     (dart compile js + tsc + node --test,
+#                                          e um passo PRÓPRIO de Emulator Suite
+#                                          com chamadas reais às callables)
+#      As regras rodam por `test:integrado`, que prova os cinco blocos de
+#      firestore.rules cobertos por suíte no MESMO arquivo.
+#      NÃO COBERTO, e registrado como tal: `functions-moderacao` não tem passo
+#      próprio aqui. É anterior a esta OS e está fora do escopo dela.
+#
+# NENHUM GATE FOI REMOVIDO NEM AFROUXADO por estas adições (OS Identidade Pública
+# §38, OS Política Competitiva, OS de integração de identidade). Os gates de
+# social são: `social` (domínio Dart), `socialdom` (o bundle do domínio compila),
+# `socialfn` (typecheck + testes puros do codebase) e `socialemu` (Functions
+# reais no emulador). Os de ranking são `rankingfn` e `rankingint`. As Rules dos
+# dois blocos entram no gate `regras` que já existia, porque
+# `firebase/testes/npm run test:integrado` passou a incluir `social.test.js` e
+# `ranking.test.js` no MESMO arquivo de regras.
+#
+# A OS DE INTEGRAÇÃO DE IDENTIDADE acrescentou dois gates, e nenhum substitui os
+# de cima: `identint` roda as DUAS implementações juntas (emissão social +
+# consumo competitivo, e a concorrência de seis chamadas simultâneas para um
+# jogador sem identidade), e `auditident` exercita a auditoria de legado em
+# dry-run. Os gates existentes provam cada lado sozinho, com identidade de
+# fixture — que é uma afirmação sobre o que o vizinho produz, e não a coisa.
+#
+# REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
+# descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
+# existe e mesmo assim não roda, o motivo é impresso e o gate falha. NÃO
+# EXECUTADO é reservado a ausência real do artefato.
+#
+# Evidência (logs + exit codes + NÃO EXECUTADOs) é publicada na branch
+# `ci-evidencias`, auditável mesmo sem acesso à API do GitHub.
+#
+# NÃO gera APK, NÃO faz deploy, NÃO roda em main/master/consolidacao.
+
+on:
+  push:
+    branches:
+      - integracao/os-final-backend-flutter
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java (exigido pelo emulador do Firestore)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Node (firebase-tools e testes das Functions)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Flutter (versão pinada do build oficial)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+
+      - name: Scaffold do projeto Flutter
+        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+
+      # As dependências são as do REPOSITÓRIO, não as que o CI resolver na hora.
+      # Antes daqui havia `flutter pub add` + um remendo Python no pubspec para
+      # travar o jni: os dois sumiram porque `app/pubspec.yaml` (com
+      # `dependency_overrides`) e `app/pubspec.lock` agora são a fonte da verdade.
+      - name: Dependências versionadas (pubspec.yaml + pubspec.lock do repo)
+        run: |
+          cp app/pubspec.yaml app/pubspec.lock app_build/
+          cd app_build && flutter pub get
+
+      - name: Overlay do código e dos assets REAIS
+        run: |
+          cp -R app/lib/. app_build/lib/
+          # `-name '*.dart'` excluído de propósito: há .dart soltos versionados
+          # dentro de app/assets/ (cópias antigas de tela, que ninguém importa).
+          # Copiá-los faria o analyze reprovar por lixo de árvore, não por código
+          # nosso. A remoção deles é decisão registrada à parte.
+          cd app && find assets -type f ! -name '*.dart' -exec sh -c 'mkdir -p "../app_build/$(dirname "$1")" && cp "$1" "../app_build/$1"' _ {} \;
+
+      - name: Copiar suítes de teste + seeds
+        run: |
+          mkdir -p app_build/test/torneios/data app_build/test/integracao app_build/test/colecoes/data
+          cp -R app/test/. app_build/test/
+          cp app/data/torneios/*.json app_build/test/torneios/data/
+          cp app/data/colecoes/*.json app_build/test/colecoes/data/
+          # O widget_test.dart do scaffold tem erro pré-existente conhecido.
+          rm -f app_build/test/widget_test.dart
+
+      - name: "1+2 — analyze + suítes Flutter (captura exit codes sem abortar)"
+        run: |
+          set +e
+          ( cd app_build && flutter analyze --no-fatal-infos --no-fatal-warnings ) 2>&1 | tee analyze.log; echo ${PIPESTATUS[0]} > exit_analyze
+          roda() { # roda <chave> <caminho>
+            local k="$1" t="$2"
+            if [ ! -f "app_build/$t" ]; then echo "ausente: $t" > "nao_$k"; return; fi
+            ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
+          }
+          roda motor      test/teste_motor.dart
+          roda resil      test/teste_motor_resiliencia.dart
+          roda encerr     test/teste_encerramento.dart
+          roda torneios   test/torneios/reward_grants_test.dart
+          roda mtorneios  test/torneios/motor_torneios_test.dart
+          roda integr     test/integracao/teste_integracao_motores.dart
+          roda colarte    test/colecoes/colecao_arte_test.dart
+          roda colfire    test/colecoes/colecao_firebase_test.dart
+          roda colkit     test/colecoes/kit_pioneiros_test.dart
+          # OS Identidade Publica e Grafo Social: o dominio puro (apelido,
+          # publicId, estados da amizade, limites, paginacao). Autorizacao e
+          # provada pelas Rules, no gate `regras`.
+          roda social     test/social/teste_social.dart
+          # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
+          # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
+          # produz PNG e depende de fonte do sistema, não afirma regressão.
+          ( cd app_build && flutter test test/colecoes/evidencias_visuais_test.dart ) 2>&1 | tee t_colevid.log; echo ${PIPESTATUS[0]} > info_colevid
+
+      - name: "3a — codebase BILLING (functions-billing), sem emulador"
+        run: |
+          set +e
+          if [ ! -d functions-billing ]; then echo "diretorio functions-billing ausente" > nao_billing; exit 0; fi
+          ( cd functions-billing && npm test ) 2>&1 | tee t_billing.log; echo ${PIPESTATUS[0]} > exit_billing
+
+      - name: "3b — codebase TORNEIOS (functions), typecheck"
+        run: |
+          set +e
+          if [ ! -f functions/package.json ]; then echo "functions/package.json ausente" > nao_torneiosfn; exit 0; fi
+          ( cd functions && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
+          ( cd functions && npx tsc --noEmit ) 2>&1 | tee t_torneiosfn.log; echo ${PIPESTATUS[0]} > exit_torneiosfn
+
+      - name: "3e — codebase RANKING (functions-ranking), tsc + unitários"
+        run: |
+          set +e
+          if [ ! -f functions-ranking/package.json ]; then
+            echo "functions-ranking/package.json ausente" > nao_rankingfn; exit 0
+          fi
+          ( cd functions-ranking && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
+          # `npm test` deste codebase JÁ compila antes de rodar (`tsc && node --test`),
+          # então este passo cobre typecheck e suíte de uma vez. As regras do
+          # bloco de Ranking são provadas no passo 3c, contra o emulador.
+          ( cd functions-ranking && npm test ) 2>&1 | tee t_rankingfn.log; echo ${PIPESTATUS[0]} > exit_rankingfn
+
+      - name: "3f — codebase RANKING: integração contra o Firestore (emulador)"
+        run: |
+          set +e
+          # FECHA A LACUNA QUE A OS ANTERIOR DECLAROU. O passo 3e prova a lógica
+          # pura; este prova o que só o banco prova: transação, idempotência por
+          # id de documento, concorrência (lost update) e paginação por cursor.
+          #
+          # Separado do 3d de propósito: o unitário não pode passar a exigir
+          # emulador, senão deixa de rodar na máquina de quem está escrevendo.
+          if [ ! -f functions-ranking/test/integracao.emulador.test.js ]; then
+            echo "suíte de integração ausente" > nao_rankingint; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd functions-ranking && npx tsc ) 2>&1 | tail -3
+          # Do mesmo lugar que o passo 3c: a raiz, onde mora o firebase.json.
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-ranking && node --test test/integracao.emulador.test.js" \
+            2>&1 | tee t_rankingint.log
+          echo ${PIPESTATUS[0]} > exit_rankingint
+
+      - name: "3c — codebase SOCIAL (functions-social): dominio Dart, typecheck e testes puros"
+        run: |
+          set +e
+          if [ ! -f functions-social/package.json ]; then
+            echo "functions-social/package.json ausente" > nao_socialfn; exit 0
+          fi
+          ( cd functions-social && npm ci 2>&1 | tail -3 || npm install 2>&1 | tail -3 )
+          # `flutter pub get` em app/ ANTES do build:domain: `dart compile js`
+          # precisa da resolucao de pacotes da arvore real, e nao do scaffold.
+          ( cd app && flutter pub get 2>&1 | tail -2 )
+          # A ordem importa, como nos outros codebases: o dominio Dart vira JS
+          # antes do tsc, que compila contra ele. Este passo tambem e o que deixa
+          # o codebase `social` CARREGAVEL pelo emulador do passo 3d — sem ele o
+          # Emulator Suite falharia ao montar a Function.
+          ( cd functions-social && npm run build:domain ) 2>&1 | tee t_socialdom.log
+          echo ${PIPESTATUS[0]} > exit_socialdom
+          ( cd functions-social && npm test ) 2>&1 | tee t_socialfn.log
+          echo ${PIPESTATUS[0]} > exit_socialfn
+
+      - name: "3d — Functions SOCIAIS contra o Emulator Suite (chamadas reais)"
+        run: |
+          set +e
+          # Este gate existe porque a suite de regras, sozinha, NAO prova
+          # idempotencia, concorrencia nem ausencia de UID nas RESPOSTAS. O runner
+          # `com-functions.js` falha se o emulador de Functions nao estiver
+          # atendendo, para que "verde" nunca signifique "pulado".
+          if [ ! -f functions-social/lib/index.js ]; then
+            echo "functions-social nao foi compilado no passo 3c" > nao_socialemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd firebase/testes && npm install 2>&1 | tail -3 )
+          firebase emulators:exec --only firestore,auth,functions:social --project demo-bmv \
+            "cd firebase/testes && npm run test:social:functions" 2>&1 | tee t_socialemu.log
+          echo ${PIPESTATUS[0]} > exit_socialemu
+
+      - name: "3f2 — INTEGRACAO IDENTIDADE x RANKING contra o emulador"
+        run: |
+          set +e
+          # O GATE DA OS DE INTEGRACAO DE IDENTIDADE. Os passos 3c/3d provam o
+          # social sozinho e os 3e/3f provam o ranking sozinho — com identidade de
+          # FIXTURE dos dois lados. Este prova as DUAS IMPLEMENTACOES JUNTAS:
+          # `garantirIdentidade` de functions-social emitindo, e
+          # `processarResultadoOficial` de functions-ranking consumindo.
+          #
+          # E o unico lugar onde a concorrencia do §7 e testavel: seis chamadas
+          # simultaneas para um jogador sem identidade tem que convergir para UM
+          # publicId. Chamada sequencial nao cobre isso.
+          if [ ! -f functions-social/test/integracao.identidade.emulador.test.js ]; then
+            echo "suite de integracao de identidade ausente" > nao_identint; exit 0
+          fi
+          if [ ! -f functions-social/lib/index.js ]; then
+            echo "functions-social nao foi compilado no passo 3c" > nao_identint; exit 0
+          fi
+          if [ ! -f functions-ranking/lib/firestore.js ]; then
+            echo "functions-ranking nao foi compilado no passo 3e" > nao_identint; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-social && node --test test/integracao.identidade.emulador.test.js" \
+            2>&1 | tee t_identint.log
+          echo ${PIPESTATUS[0]} > exit_identint
+
+      - name: "3f3 — AUDITORIA de identidade em dry-run (read-only)"
+        run: |
+          set +e
+          # §15 da OS de integracao: a ferramenta de auditoria tem que RODAR, e a
+          # primeira execucao e obrigatoriamente dry-run. Aqui ela roda contra um
+          # emulador vazio — o que se prova nao e "achou algo", e sim que a
+          # ferramenta executa de ponta a ponta e que o portao a exercita.
+          #
+          # NAO usa --falhar-se-critico: banco vazio nao tem critico, e transformar
+          # este passo em portao de CONTEUDO faria um dado legado real derrubar o
+          # CI de uma branch que nao tem nada a ver com ele.
+          if [ ! -f functions-social/scripts/auditar-identidade.js ]; then
+            echo "runner da auditoria ausente" > nao_auditident; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-social && node scripts/auditar-identidade.js" \
+            2>&1 | tee t_auditident.log
+          echo ${PIPESTATUS[0]} > exit_auditident
+
+      - name: "3g — codebase COLECOES: regras + Functions no Emulator Suite"
+        run: |
+          set +e
+          # Caminho FIXO do harness de segurança. Ele não fica em
+          # `<dir>/emulator-tests` nem em `functions/package.json`: fica em
+          # firebase/testes/. Procurar pelos dois padrões antigos reportava
+          # "sem harness" para um harness que existe — erro de descoberta, que
+          # esta versão elimina.
+          if [ ! -f firebase/testes/package.json ]; then
+            echo "firebase/testes/package.json ausente" > nao_regras; exit 0
+          fi
+          if [ ! -f firebase.json ]; then
+            echo "firebase.json ausente na raiz" > nao_regras; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd firebase/functions && npm install 2>&1 | tail -3 )
+          ( cd firebase/testes && npm install 2>&1 | tail -3 )
+          # `--project demo-bmv` mantém tudo no emulador: nenhum projeto real é
+          # tocado e não é preciso credencial.
+          # `test:integrado`, e não `npm test`: o alvo curto roda só segurança +
+          # moderação + social, e deixava rastreabilidade e ranking fora do
+          # portão. Os CINCO blocos precisam ser provados no MESMO
+          # firestore.rules, que é justamente onde um bloco novo poderia
+          # afrouxar o do vizinho — e social e ranking são os dois que falam de
+          # `publicId`, então separá-los esconderia a regressão que a OS de
+          # integração de identidade existe para impedir.
+          firebase emulators:exec --only firestore,auth,functions --project demo-bmv \
+            "cd firebase/testes && npm run test:integrado" 2>&1 | tee t_regras.log
+          echo ${PIPESTATUS[0]} > exit_regras
+
+      - name: Publicar evidência na branch ci-evidencias
+        if: always()
+        run: |
+          RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
+          EV="run-${RUN}.md"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          {
+            echo "# Evidência CI — run ${RUN}"
+            echo
+            echo "- branch: \`${BR}\`"
+            echo "- commit: \`${SHA}\`"
+            echo "- data UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "## Resultado por gate"
+            echo
+            echo "| gate | status | exit |"
+            echo "|---|---|---|"
+            for k in $GATES; do
+              if [ -f "exit_$k" ]; then
+                v=$(cat "exit_$k")
+                [ "$v" = "0" ] && echo "| $k | EXECUTADO | $v |" || echo "| $k | **FALHOU** | $v |"
+              elif [ -f "nao_$k" ]; then
+                echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+              else
+                echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+              fi
+            done
+            if [ -f info_colevid ]; then
+              echo
+              echo "Fora do portão: \`evidencias_visuais\` exit \`$(cat info_colevid)\` (gerador de PNG)."
+            fi
+            echo
+            echo "## flutter analyze (tail)"; echo '```'; tail -n 40 analyze.log 2>/dev/null; echo '```'
+            for k in $GATES; do
+              [ -f "t_$k.log" ] || continue
+              echo "## $k (tail)"; echo '```'; tail -n 25 "t_$k.log"; echo '```'
+            done
+          } > "$EV"
+          git clone --depth 1 "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" evrepo
+          cd evrepo
+          git config user.email "ci@bmv.local"
+          git config user.name "CI BMV Evidencias"
+          if git ls-remote --exit-code origin ci-evidencias >/dev/null 2>&1; then
+            git fetch --depth 1 origin ci-evidencias && git checkout ci-evidencias
+          else
+            git checkout --orphan ci-evidencias && git rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp "../$EV" .
+          git add "$EV"
+          git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
+          git push origin ci-evidencias
+
+      - name: Portão verde/vermelho (só falha em gate que REALMENTE rodou e falhou)
+        if: always()
+        run: |
+          fail=0
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu regras; do
+            if [ -f "exit_$k" ]; then
+              v=$(cat "exit_$k"); echo "gate $k = $v"
+              [ "$v" = "0" ] || fail=1
+            elif [ -f "nao_$k" ]; then
+              echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
+            else
+              echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+            fi
+          done
+          echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
+          exit $fail

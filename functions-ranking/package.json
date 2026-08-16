@@ -1,0 +1,28 @@
+{
+  "name": "bmv-ranking-functions",
+  "private": true,
+  "description": "Cloud Functions da autoridade de Ranking, Ligas e Temporadas, com a Politica Competitiva v1 (Elo em dupla, sete Ligas, colocacao/revalidacao, soft reset) em src/elo.ts e src/competicao.ts.",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "//build:domain": "AUSENTE DE PROPOSITO. Os codebases de torneios e moderacao compilam um dominio Dart antes do tsc porque a REGRA COMPETITIVA deles mora em Dart. A regra competitiva do ranking nao existe ainda (ver src/politica.ts), entao nao ha dominio a compilar — e criar um bundle vazio so para imitar o vizinho seria cerimonia sem conteudo.",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "//test": "Mesmo desenho de functions-moderacao: compila primeiro porque o alvo do teste e o modulo JA compilado em lib/. Os alvos sao explicitos, e nao um glob: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
+    "test": "tsc && node --test test/politica.test.js test/ligas.test.js test/ordenacao.test.js test/ledger.test.js test/temporadas.test.js test/apuracao.test.js test/projecao.test.js test/resultado.test.js test/elo.test.js test/competicao.test.js test/elegibilidade.test.js test/ciclo.test.js test/identidade.test.js",
+    "//test:emulador": "INTEGRACAO CONTRA O FIRESTORE REAL. Fecha a lacuna que a OS anterior declarou (transacao, concorrencia e paginacao nao exercitadas). Fora do `npm test` porque exige emulador; roda a partir de firebase/ para achar firebase.json.",
+    "test:emulador": "tsc && cd ../firebase && firebase emulators:exec --only firestore \"cd ../functions-ranking && node --test test/integracao.emulador.test.js\"",
+    "serve": "npm run build && firebase emulators:start --only functions:ranking",
+    "deploy": "firebase deploy --only functions:ranking"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "typescript": "^5.6.0"
+  }
+}

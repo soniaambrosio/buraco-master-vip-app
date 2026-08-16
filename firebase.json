@@ -1,0 +1,80 @@
+{
+  "//": "firebase.json — MANIFESTO UNICO do projeto Firebase do Buraco Master VIP. Substitui as tres configuracoes que viviam em branches separadas (firebase/firebase.json do kit-pioneiros, firebase.json da raiz do billing e firebase.json da raiz do v1). Regras e indices vivem em firebase/; cada frente de Functions tem codebase e source PROPRIOS.",
+
+  "firestore": {
+    "//": "Arquivo unico, resultado da UNIAO dos tres conjuntos disjuntos. Ver o cabecalho de firebase/firestore.rules.",
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
+  },
+
+  "functions": [
+    {
+      "//": "COLECOES / KIT PIONEIROS — claimPioneerKit, grantPioneerEligibility, revokePioneerKit. Origem: claude/kit-pioneiros-2026-1b56ed (firebase/functions).",
+      "source": "firebase/functions",
+      "codebase": "colecoes",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "BILLING — validarCompraPlay. Origem: feat/play-billing-aab-interno (functions/ na raiz). O diretorio foi MOVIDO para functions-billing/ por uma unica razao: o codebase de torneios ja ocupa functions/. Os arquivos de logica (index.js, idempotencia.js, test/) sao byte a byte identicos a origem.",
+      "source": "functions-billing",
+      "codebase": "billing",
+      "runtime": "nodejs20",
+      "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log"]
+    },
+    {
+      "//": "TORNEIOS — inscreverEmTorneio, cancelarInscricaoTorneio, receberResultadoPartida, tickTorneios, aoConcluirEdicao, consolidarConvitesDaTemporada, responderConviteEncerramento. Origem: integracao/motores-torneios-partidas-v1 (functions/, TypeScript).",
+      "source": "functions",
+      "codebase": "torneios",
+      "runtime": "nodejs20",
+      "//predeploy": "A ordem importa: primeiro o dominio Dart vira JS, depois o TypeScript compila contra ele. Inverter faria o tsc rodar sem o bundle e falhar na carga de domain.ts.",
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build:domain",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "MODERACAO — registrarDenuncia, bloquearJogador, desbloquearJogador, consultarContato, aplicarSancao, revogarSancao. Codebase PROPRIO, e nao um acrescimo a torneios, pelo mesmo motivo que separa os outros tres: sao unidades de implantacao independentes, e um deploy de moderacao nao pode derrubar a inscricao em torneio nem a validacao de compra.",
+      "source": "functions-moderacao",
+      "codebase": "moderacao",
+      "runtime": "nodejs20",
+      "//predeploy": "Mesma ordem obrigatoria do codebase de torneios: o dominio Dart vira JS antes do tsc, que compila contra ele.",
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build:domain",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "RANKING / LIGAS / TEMPORADAS — aoRegistrarResultadoOficial, processarResultado, abrirTemporadaDeRanking, encerrarTemporadaDeRanking, apurarRanking, diagnosticarRanking, abrirRanking, paginarRanking, consultarJogadorPorIdPublico, garantirIdentidadePublica, consultarHall. Origem: claude/ranking-ligas-backend-auth (OS Backend Autoritativo de Ranking).",
+      "source": "functions-ranking",
+      "codebase": "ranking",
+      "runtime": "nodejs20",
+      "//codebase-proprio": "Pelo mesmo motivo que separa os outros quatro: sao unidades de implantacao independentes. Um deploy de ranking nao pode derrubar a inscricao em torneio, a validacao de compra nem a moderacao. E vale ao contrario tambem — este codebase reage a TODA escrita em `matches`, e um erro nele nao pode impedir a partida de ser registrada.",
+      "//sem-predeploy-de-dominio": "Torneios e moderacao compilam um dominio Dart antes do tsc porque a regra competitiva deles mora em Dart. A regra competitiva do ranking NAO EXISTE — nao ha formula de pontuacao decidida em lugar nenhum do projeto (ver functions-ranking/src/politica.ts). Nao ha dominio a compilar, e um bundle vazio so para imitar o vizinho seria cerimonia sem conteudo. Quando a formula existir, ela entra por politica.ts; se vier a morar em Dart, esta entrada ganha o mesmo par build:domain + build dos vizinhos.",
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "SOCIAL — obterMinhaIdentidade, atualizarPerfilPublico, verPerfilPublico, localizarJogadorPorIdentidade, enviarSolicitacaoAmizade, aceitarSolicitacaoAmizade, recusarSolicitacaoAmizade, cancelarSolicitacaoAmizade, removerAmizade, listarAmigos, listarSolicitacoesRecebidas, listarSolicitacoesEnviadas, aoBloquearJogador, reconciliarPerfilSocial. Origem: OS de Identidade Publica e Grafo Social.",
+      "//porque-codebase-proprio": "Pelo MESMO criterio que ja separa os quatro acima, e nao por comodidade: sao unidades de implantacao independentes. O caso decisivo e o gatilho `aoBloquearJogador`, que reage a `users/{uid}/blocks`. Se ele morasse no codebase de moderacao, um deploy quebrado da faxina social derrubaria junto a capacidade de BLOQUEAR alguem — a ferramenta de protecao mais urgente do aplicativo. A dependencia tem que apontar para o lado seguro: o social reage ao bloqueio, a moderacao nao espera pelo social.",
+      "source": "functions-social",
+      "codebase": "social",
+      "runtime": "nodejs20",
+      "//predeploy": "Mesma ordem obrigatoria: o dominio Dart vira JS antes do tsc. Aqui o bundle carrega TAMBEM o dominio de moderacao, porque js_bridge.dart importa `avaliarContato` de app/lib/moderacao/relacao_social.dart — §18 manda consumir o bloqueio existente, e a forma mais forte de consumir e compilar a mesma funcao.",
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build:domain",
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ],
+      "ignore": ["node_modules", ".git", "*.log"]
+    }
+  ],
+
+  "emulators": {
+    "firestore": { "port": 8080 },
+    "functions": { "port": 5001 },
+    "auth": { "port": 9099 },
+    "ui": { "enabled": true }
+  }
+}

@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../screens/perfil_screen.dart';
 import '../services/perfil_service.dart';
+import '../sessao/escopo_sessao.dart';
+import '../sessao/identidade_publica_sessao.dart';
 
 /// Controlador da tela de Perfil (camada de lógica — Claude).
 ///
@@ -31,19 +33,41 @@ class _PerfilPageState extends State<PerfilPage> {
   PerfilVM? _vm;
   String? _erro;
 
+  /// O `publicId` com que o VM atual foi montado. É o que permite distinguir
+  /// "a identidade mudou" de "o widget reconstruiu".
+  String? _publicIdCarregado;
+  bool _jaCarregou = false;
+
+  /// O Perfil não pede identidade — ele REAGE à identidade da sessão.
+  ///
+  /// A recarga acontece quando o `publicId` canônico MUDA (chegou, ou trocou
+  /// junto com o usuário), nunca a cada reconstrução. §20: um `build` não pode
+  /// virar consulta. No pior caso são duas cargas — uma antes de a identidade
+  /// chegar, outra quando ela chega — e nunca uma por frame.
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final sessao = EscopoSessao.identidadeDe(context);
+    if (_jaCarregou && sessao.publicId == _publicIdCarregado) return;
+    _jaCarregou = true;
+    _publicIdCarregado = sessao.publicId;
     _carregar();
   }
 
   Future<void> _carregar() async {
+    // Lido do escopo a cada carga: o Perfil consome o MESMO estado canônico que
+    // Ranking e Social — não existe `identidadeDoPerfil`.
+    final IdentidadePublica? identidade =
+        EscopoSessao.identidadeDe(context).identidade;
     setState(() {
       _estado = PerfilEstado.carregando;
       _erro = null;
     });
     try {
-      final vm = await _service.carregar(ehMeuPerfil: widget.ehMeuPerfil);
+      final vm = await _service.carregar(
+        ehMeuPerfil: widget.ehMeuPerfil,
+        identidade: identidade,
+      );
       if (!mounted) return;
       setState(() {
         _vm = vm;

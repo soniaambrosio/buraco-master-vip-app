@@ -1,3 +1,38 @@
 # Scaffold Flutter gerado localmente/CI (flutter create app_build).
 # Nunca versionar: e artefato de build, nao fonte.
 /app_build/
+
+# Resíduo de `flutter pub get` rodado direto em app/ (o pacote real). Útil para
+# rodar `flutter analyze` sobre a árvore de verdade, sem overlay; nada disso é
+# fonte.
+/app/.dart_tool/
+/app/.flutter-plugins-dependencies
+
+# Saida de `flutter test` rodado direto em app/. Mesmo caso do .dart_tool acima:
+# artefato de build, aparece assim que a suite roda na arvore de verdade.
+/app/build/
+
+# Log do emulador do Firestore.
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+
+# Dependencias e saida de build das Cloud Functions. Cada codebase tem as suas.
+# `functions/lib/` inclui o domain_bundle.js, que e GERADO pelo predeploy
+# (`dart compile js` sobre app/lib/torneios/js_bridge.dart) — versionar o bundle
+# faria conviver duas copias do dominio, uma delas silenciosamente velha.
+node_modules/
+/functions/lib/
+# Mesma razao para o codebase de moderacao: o bundle sai de
+# `app/lib/moderacao/js_bridge.dart` e nao pode ser versionado ao lado da fonte.
+/functions-moderacao/lib/
+# O codebase de ranking nao tem domain_bundle (nao ha dominio Dart de ranking —
+# ver functions-ranking/src/politica.ts), mas `lib/` continua sendo saida de
+# `tsc`. Versiona-la faria os testes rodarem contra um JS que pode nao
+# corresponder ao TypeScript ao lado.
+/functions-ranking/lib/
+# E para o codebase social: o bundle sai de `app/lib/social/js_bridge.dart` e
+# carrega junto o dominio de moderacao que ele importa (avaliarContato). Duas
+# copias compiladas do MESMO dominio, versionadas, seria a forma mais rapida de
+# uma delas ficar velha sem ninguem ver.
+/functions-social/lib/

@@ -1,0 +1,25 @@
+{
+  "name": "bmv-torneios-functions",
+  "version": "1.0.0",
+  "description": "Cloud Functions do Motor de Torneios do Buraco Master VIP (OS 02 secao 20). As regras NAO vivem aqui: elas vem do dominio Dart compilado para JS (functions/lib/domain_bundle.js).",
+  "private": true,
+  "engines": {
+    "node": "20"
+  },
+  "main": "lib/index.js",
+  "scripts": {
+    "build:domain": "cd .. && dart compile js -O2 -o functions/lib/domain_bundle.js app/lib/torneios/js_bridge.dart",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "serve": "npm run build && firebase emulators:start --only functions,firestore",
+    "deploy": "npm run build:domain && npm run build && firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^20.16.0"
+  }
+}
