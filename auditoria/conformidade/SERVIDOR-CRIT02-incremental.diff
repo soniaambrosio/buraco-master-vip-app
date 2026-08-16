@@ -1,0 +1,42 @@
+diff --git a/server.js b/server.js
+index 5ba892d..07cac04 100644
+--- a/server.js
++++ b/server.js
+@@ -1037,7 +1037,7 @@ function decidirBater({ mao, jogosMesaDupla = [], jaPegouMorto, permiteTrinca =
+     if (j.length < MIN_CARTAS_CANASTRA) return false;
+     const res = validarSequencia(j);
+     if (!res.valido) return false;
+-    if (res.tipo === "limpa" || res.tipo === "de_500") return true; // ás não forma canastra (só valor)
++    if (res.tipo === "limpa" || res.tipo === "de_500" || res.tipo === "as_a_as") return true; // [PATCH CRIT-02] estratégia do bot também reconhece as_a_as
+     return bateComSuja && res.tipo === "suja";
+   });
+   if (!temCanastraPraBater) {
+@@ -2004,7 +2004,9 @@ function comprarLixo(jogo, assento) {
+  *  ser vários jogos no mesmo turno) precisa somar o mínimo NO TOTAL — 75 no nível 1,
+  *  90 no nível 2. Se abrir ABAIXO disso, a abertura é ANULADA no fim do turno: as
+  *  cartas voltam pra mão de quem baixou e a vulnerabilidade escala pro nível 2 (90+).
+- *  Vale SÓ pro HUMANO (os bots já respeitam o mínimo via minimoAbertura). Quando a
++ *  [PATCH CRIT-03] Vale para HUMANO **e** BOT (mesma legalidade): o gate +75/+90 é
++ *  aplicado uniformemente. A estratégia do bot pode escolher não tentar abrir fraco,
++ *  mas o motor valida e recusa/anula a abertura ilegal de qualquer assento. Quando a
+  *  abertura é válida (ou a dupla não é vulnerável), marca `abriuValido` pra não
+  *  checar de novo nas baixadas seguintes da rodada. Retorna {total, min} no foul,
+  *  ou null se está tudo certo. */
+@@ -2207,7 +2209,7 @@ function valorCarta(c) {
+  *  batida (+100) − cartas na mão − morto não pego (−100). */
+ function pontuarDuplaJogo(jogo, dupla, { bateu, mortoPego, cartasNaMao, algumPegouMorto }) {
+   let pontosCanastras = 0, pontosCartas = 0;
+-  const detalhe = { de500: 0, limpas: 0, sujas: 0, baixadas: 0 };
++  const detalhe = { de500: 0, asas: 0, limpas: 0, sujas: 0, baixadas: 0 }; // [PATCH CRIT-02] asas próprio (não reclassifica de500)
+   for (const meld of jogo.jogosDupla[dupla]) {
+     if (meld.length >= 7) {
+       // TRINCA não forma canastra (regra Sônia 19/jul): usa validarSequencia, que RECUSA
+@@ -2215,7 +2217,7 @@ function pontuarDuplaJogo(jogo, dupla, { bateu, mortoPego, cartasNaMao, algumPeg
+       // pontos das cartas (contados no laço abaixo) entram. Canastra de sequência normal.
+       const res = validarSequencia(meld);
+       if (res.valido) {
+-        if (res.tipo === "as_a_as") { pontosCanastras += 1000; detalhe.de500++; } // [PATCH CRIT-02]
++        if (res.tipo === "as_a_as") { pontosCanastras += 1000; detalhe.asas++; } // [PATCH CRIT-02] contador próprio (não de500)
+         else if (res.tipo === "de_500") { pontosCanastras += 500; detalhe.de500++; }
+         else if (res.tipo === "limpa") { pontosCanastras += 200; detalhe.limpas++; }
+         else if (res.tipo === "suja") { pontosCanastras += 100; detalhe.sujas++; }

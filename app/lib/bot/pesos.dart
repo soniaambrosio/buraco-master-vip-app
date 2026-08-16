@@ -1,0 +1,282 @@
+// OS — INTELIGÊNCIA ESTRATÉGICA DO BOT V1.
+//
+// PESOS E REGRAS ESTRATÉGICAS — CENTRALIZADOS E VERSIONADOS.
+//
+// Nenhum número mágico de estratégia pode viver espalhado em `mesa.dart` (nem
+// em qualquer outro lugar): todo peso da função de utilidade e toda restrição
+// dura desta OS estão aqui, num objeto `const` com carimbo de versão.
+//
+// Duas coisas MUITO diferentes moram neste arquivo, e a separação é proposital:
+//
+//  1) `PesosHeuristicos` — os pesos da função de utilidade. Mudar um peso muda
+//     a PREFERÊNCIA do bot. Nada aqui torna uma jogada legal ou ilegal.
+//  2) `RegrasEstrategicas` — as RESTRIÇÕES DURAS aprovadas nesta OS (não
+//     descartar curinga, não sujar canastra limpa, etc.). São filtros sobre
+//     alternativas que a autoridade canônica já considera legais: o bot decide
+//     não usá-las. Continuam sem poder tornar legal o que o motor recusa.
+//
+// Cada flag de `RegrasEstrategicas` existe também como PONTO DE DESLIGAMENTO:
+// o relatório de não-vacuidade desliga uma por vez e mostra o teste
+// correspondente caindo. Uma regra que não pode ser desligada é uma regra que
+// não pode ser provada.
+library;
+
+/// Restrições estratégicas DURAS aprovadas nesta OS. Todas ligadas por padrão.
+///
+/// Desligar qualquer uma NÃO libera jogada ilegal — apenas devolve ao bot uma
+/// alternativa que a autoridade já aceitava e que a política desta OS proíbe.
+class RegrasEstrategicas {
+  /// §2 — proibido descartar "2" e Joker.
+  final bool proibeDescartarCuringa;
+
+  /// §3 — proibido sujar canastra limpa (ou forte potencial de limpa) com
+  /// curinga só para baixar mais cartas.
+  final bool protegeCanastraLimpa;
+
+  /// §3 — curinga só entra em jogo novo com ganho estratégico claro; uso
+  /// gratuito (a combinação fecharia naturalmente) é penalizado com força.
+  final bool preservaCuringa;
+
+  /// §2 — o descarte pondera o dano à própria estrutura.
+  final bool avaliaDanoEstrutural;
+
+  /// §1 — preservar cartas úteis aos jogos públicos da dupla tem valor.
+  final bool preservaCartaDoParceiro;
+
+  /// §2 — evitar entregar extensão/lixo aos jogos públicos adversários.
+  final bool evitaAlimentarAdversario;
+
+  /// §4/§5 — o plano de turno é comparado JÁ COM o descarte resultante; uma
+  /// baixada legal que obriga um descarte ruim perde para não baixar.
+  final bool planoIncluiDescarte;
+
+  /// §6 — não bater/fechar prematuramente prejudicando o parceiro sem ameaça.
+  final bool prudenciaBatida;
+
+  const RegrasEstrategicas({
+    this.proibeDescartarCuringa = true,
+    this.protegeCanastraLimpa = true,
+    this.preservaCuringa = true,
+    this.avaliaDanoEstrutural = true,
+    this.preservaCartaDoParceiro = true,
+    this.evitaAlimentarAdversario = true,
+    this.planoIncluiDescarte = true,
+    this.prudenciaBatida = true,
+  });
+
+  RegrasEstrategicas copyWith({
+    bool? proibeDescartarCuringa,
+    bool? protegeCanastraLimpa,
+    bool? preservaCuringa,
+    bool? avaliaDanoEstrutural,
+    bool? preservaCartaDoParceiro,
+    bool? evitaAlimentarAdversario,
+    bool? planoIncluiDescarte,
+    bool? prudenciaBatida,
+  }) =>
+      RegrasEstrategicas(
+        proibeDescartarCuringa:
+            proibeDescartarCuringa ?? this.proibeDescartarCuringa,
+        protegeCanastraLimpa: protegeCanastraLimpa ?? this.protegeCanastraLimpa,
+        preservaCuringa: preservaCuringa ?? this.preservaCuringa,
+        avaliaDanoEstrutural: avaliaDanoEstrutural ?? this.avaliaDanoEstrutural,
+        preservaCartaDoParceiro:
+            preservaCartaDoParceiro ?? this.preservaCartaDoParceiro,
+        evitaAlimentarAdversario:
+            evitaAlimentarAdversario ?? this.evitaAlimentarAdversario,
+        planoIncluiDescarte: planoIncluiDescarte ?? this.planoIncluiDescarte,
+        prudenciaBatida: prudenciaBatida ?? this.prudenciaBatida,
+      );
+}
+
+/// Pesos da função de utilidade DA DUPLA (não da mão do bot). Todos os valores
+/// são positivos; o sinal (prêmio ou custo) está na fórmula do avaliador.
+class PesosHeuristicos {
+  /// Carimbo de versão (entra no rastro de auditoria da decisão).
+  final String versao;
+
+  // ---------- objetivos de rodada ----------
+  /// Abrir o jogo da dupla nesta rodada (sem mínimo em disputa).
+  final double abertura;
+
+  /// Abrir cumprindo o mínimo de VULNERABILIDADE (o gargalo real da rodada).
+  final double aberturaVulneravel;
+
+  /// Zerar a mão pegando o MORTO.
+  final double morto;
+
+  /// Bater (encerrar a rodada).
+  final double batida;
+
+  /// Bater cedo demais, com o parceiro carregado e sem ameaça adversária.
+  /// Precisa superar `batida` — senão a prudência não muda decisão nenhuma.
+  final double batidaPrematura;
+
+  // ---------- mesa e mão: MESMA MOEDA (pontos) ----------
+  //
+  // Os três pesos abaixo existem para comparar coisas comparáveis. Mesa e mão
+  // são medidas em PONTOS: a mesa pelo que já vale (cartas + bônus de canastra)
+  // mais o potencial não realizado; a mão pelo MESMO potencial, descontado,
+  // mais o quanto ela está encaixada. Sem essa moeda única não dá para decidir
+  // se baixar compensa — e a primeira calibração, que misturava nível com
+  // delta, decidia errado nos dois sentidos (ora não baixava nada, ora parava
+  // uma carta antes da canastra).
+
+  /// Por ponto de valor dos jogos da dupla na mesa (cartas + bônus + potencial).
+  final double valorMesa;
+
+  /// Por ponto de POTENCIAL de canastra guardado na mão. Menor que `valorMesa`
+  /// de propósito: potencial na mão ainda precisa ser comprado E baixado, e na
+  /// mesa o parceiro também pode estender.
+  final double potencialMao;
+
+  /// Por ponto de LIGAÇÃO da mão (vizinhanças e reserva de curinga).
+  final double ligacoesMao;
+
+  /// Por carta de jogo NOVO exposta sem canastra/abertura/morto/batida no plano.
+  final double exposicaoSemGanho;
+
+  /// Ganho de comprar um topo que ESTENDE jogo público da dupla (Aberto).
+  final double topoUtilAoJogo;
+
+  /// Por ponto de carta morta (deadwood) que sobra na mão.
+  final double deadwood;
+
+  /// Por ponto de carta na mão (risco de virar desconto no fim da rodada).
+  final double maoResidual;
+
+  /// Tamanho de mão a partir do qual segurar carta passa a pesar contra.
+  final int limiarMaoConfortavel;
+
+  /// FOLGA aplicada ao limiar na hora da COMPRA.
+  ///
+  /// A compra acontece antes da fase de jogo: as cartas que acabaram de entrar
+  /// ainda vão passar pelo baixar/estender/descartar deste mesmo turno. Cobrar
+  /// o inchaço com o limiar cheio no momento da compra fazia o bot NUNCA pegar
+  /// o lixo — medido: o lixo chegou a 42 cartas sem ninguém recolher, e a dupla
+  /// morreu de fome de material. O custo continua existindo; ele só é cobrado
+  /// com a folga do que o turno ainda vai colocar na mesa.
+  final int folgaDeCompra;
+
+  /// Custo QUADRÁTICO por carta acima do limiar: `peso * excesso²`.
+  ///
+  /// É quadrático de propósito. O valor de estrutura cresce mais ou menos
+  /// linearmente com o tamanho da mão, então um custo linear nunca alcança:
+  /// o bot fica com 25+ cartas na mão, sem baixar nada, "preservando estrutura"
+  /// até o fim da rodada — que é uma forma de sabotagem tão real quanto baixar
+  /// tudo. Sendo quadrático, o custo é quase nulo numa mão normal e vira
+  /// dominante exatamente quando a mão incha.
+  final double excedenteMao;
+
+  // ---------- curinga ----------
+  /// Por curinga comprometido numa baixada SEM ganho decisivo.
+  final double custoCuringa;
+
+  /// Adicional por curinga GRATUITO — a combinação fecharia sem ele.
+  final double custoCuringaGratuito;
+
+  // ---------- descarte ----------
+  /// Por ponto de dano estrutural que o descarte causa à própria mão.
+  final double danoDescarte;
+
+  /// Por ponto de risco do descarte para os jogos públicos adversários.
+  final double riscoDescarte;
+
+  /// Descartar carta que serve aos jogos públicos da própria dupla.
+  final double descarteUtilAoParceiro;
+
+  /// Descartar carta ADJACENTE a jogo público da dupla (extensão natural).
+  final double descarteAdjacenteAoParceiro;
+
+  /// Plano que baixa e deixa o turno SEM descarte legal (beco sem saída do
+  /// motor). Pesado de propósito: só compensa quando o ganho é grande demais
+  /// para recusar — na prática, a abertura sob mínimo de vulnerabilidade.
+  final double turnoSemSaida;
+
+  // ---------- compra ----------
+  /// Valor neutro de comprar 1 carta desconhecida do monte (linha de base).
+  final double compraMonteBase;
+
+  /// Por carta ENTERRADA que vem junto na compra do lixo (volume ≠ qualidade).
+  final double compraLixoVolume;
+
+  /// Por ponto de carta enterrada esperado como peso morto na mão.
+  final double compraLixoLastro;
+
+  const PesosHeuristicos({
+    this.versao = 'bmv-bot-heuristico-v1',
+    this.abertura = 30,
+    this.aberturaVulneravel = 140,
+    this.morto = 220,
+    this.batida = 160,
+    this.batidaPrematura = 300,
+    this.valorMesa = 0.40,
+    this.potencialMao = 0.28,
+    this.ligacoesMao = 0.35,
+    this.exposicaoSemGanho = 0.4,
+    this.topoUtilAoJogo = 8,
+    this.deadwood = 0.35,
+    this.maoResidual = 0.10,
+    this.limiarMaoConfortavel = 15,
+    this.folgaDeCompra = 4,
+    this.excedenteMao = 4.0,
+    this.custoCuringa = 60,
+    this.custoCuringaGratuito = 110,
+    this.danoDescarte = 2.2,
+    this.riscoDescarte = 6.0,
+    this.descarteUtilAoParceiro = 34,
+    this.descarteAdjacenteAoParceiro = 12,
+    this.turnoSemSaida = 80,
+    this.compraMonteBase = 6,
+    this.compraLixoVolume = 3.0,
+    this.compraLixoLastro = 0.15,
+  });
+}
+
+/// Configuração completa da camada estratégica: pesos + restrições + limites de
+/// busca + semente determinística.
+class ConfiguracaoBot {
+  final PesosHeuristicos pesos;
+  final RegrasEstrategicas regras;
+
+  /// Semente. NÃO sorteia carta e NÃO altera legalidade: entra apenas no
+  /// desempate determinístico entre planos de score idêntico. Mesma mesa +
+  /// mesma configuração + mesma semente => mesma decisão, sempre.
+  final int seed;
+
+  /// Orçamento de nós da busca de planos. Estourar NÃO é silencioso: a decisão
+  /// carrega `Razao.buscaTruncada` no rastro.
+  final int orcamentoBusca;
+
+  /// Quantas baixadas candidatas seguem para a avaliação COMPLETA (com o
+  /// descarte simulado). O corte é por pré-score e também vira rastro.
+  final int maxBaixadasAvaliadas;
+
+  /// Quantos DESCARTES são expandidos por baixada candidata. Numa mão grande o
+  /// produto (baixadas × descartes) é o que domina o custo do turno: sem este
+  /// corte, um turno chegou a 2 segundos numa mão de 21 cartas. O ranking do
+  /// corte usa os MESMOS sinais da pontuação final (dano e risco), então o que
+  /// cai fora é a cauda, não o candidato certo — e o corte vira rastro.
+  final int maxDescartesPorBaixada;
+
+  const ConfiguracaoBot({
+    this.pesos = const PesosHeuristicos(),
+    this.regras = const RegrasEstrategicas(),
+    this.seed = 0,
+    this.orcamentoBusca = 6000,
+    this.maxBaixadasAvaliadas = 64,
+    this.maxDescartesPorBaixada = 10,
+  });
+
+  ConfiguracaoBot comRegras(RegrasEstrategicas r) => ConfiguracaoBot(
+        pesos: pesos,
+        regras: r,
+        seed: seed,
+        orcamentoBusca: orcamentoBusca,
+        maxBaixadasAvaliadas: maxBaixadasAvaliadas,
+        maxDescartesPorBaixada: maxDescartesPorBaixada,
+      );
+
+  /// Configuração aprovada desta OS.
+  static const v1 = ConfiguracaoBot();
+}

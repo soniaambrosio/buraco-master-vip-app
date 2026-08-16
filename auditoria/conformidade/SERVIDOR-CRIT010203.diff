@@ -1,0 +1,123 @@
+diff --git a/server.js b/server.js
+index 4773339..5ba892d 100644
+--- a/server.js
++++ b/server.js
+@@ -1,6 +1,22 @@
+ // GERADO por cliente/build_server_bundle.js — NÃO EDITAR À MÃO.
+ // Buraco Master VIP — servidor de salas (multiplayer) num único arquivo, Node puro.
+ // Deploy: node server.js  (porta via env PORT, padrão 8080). Health-check: /health.
++//
++// ===================================================================================
++// EXCEÇÃO DOCUMENTADA — PATCH CIRÚRGICO DE CONFORMIDADE (branch correcao/conformidade-canonica)
++// Este arquivo é GERADO e não deveria ser editado à mão. Porém a fonte `cliente/`
++// (`motor/*.js` + `build_server_bundle.js`) NÃO está versionada/localizada nos
++// repositórios disponíveis (buraco-servidor só tem este bundle). Por decisão da Sônia,
++// o bundle foi corrigido DIRETAMENTE, EXCLUSIVAMENTE para 3 divergências críticas do C8:
++//   • CRIT-01 (de_500 = 500): validarSequencia + finalizar (classifica A..K limpa 13);
++//   • CRIT-02 (as_a_as = 1000): validarSequencia + finalizar + pontuarDuplaJogo +
++//                               duplaTemCanastraLimpa + duplaPodeBater + baixadaTravaria;
++//   • CRIT-03 (vulnerabilidade uniforme bot=humano): checarAberturaVulneravel.
++// Todos os trechos alterados estão marcados com o comentário `// [PATCH CRIT-0x]`.
++// O server.js ANTERIOR está preservado no Git (main / commit be72bb6).
++// Se a pasta-fonte `cliente/` for recuperada, RETROPORTAR estas mudanças para a fonte
++// e REGERAR o bundle. Nenhuma outra regra/área foi tocada. Sem deploy.
++// ===================================================================================
+ (function () {
+   var __cache = {};
+   var __fabricas = {};
+@@ -153,6 +169,34 @@ function validarSequencia(cartas) {
+     return finalizar({ tipoBase: "de_as", qtdCuringas: 0, tamanho: cartas.length });
+   }
+ 
++  // [PATCH CRIT-01] de_500: A..K limpa (13 cartas, mesmo naipe, uma de cada valor,
++  // sem JOKER). Detecção estrutural fiel à regra canônica (o "2" entra natural).
++  if (cartas.length === 13 && !cartas.some((c) => c.valor === "JOKER")) {
++    const naipes500 = new Set(cartas.map((c) => c.naipe));
++    if (naipes500.size === 1 && !cartas.some((c) => c.naipe == null)) {
++      const vals500 = new Set(cartas.map((c) => c.valor));
++      const alvo500 = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
++      if (vals500.size === 13 && alvo500.every((v) => vals500.has(v))) {
++        return finalizar({ tipoBase: "de_500", qtdCuringas: 0, tamanho: 13 });
++      }
++    }
++  }
++  // [PATCH CRIT-02] as_a_as: A–2–…–K–A (14 cartas, mesmo naipe, 2 ases nas pontas,
++  // 2..K uma de cada, sem JOKER). Mesma forma canônica do motor Dart.
++  if (cartas.length === 14 && !cartas.some((c) => c.valor === "JOKER")) {
++    const naipesAA = new Set(cartas.map((c) => c.naipe));
++    if (naipesAA.size === 1 && !cartas.some((c) => c.naipe == null)) {
++      const asesAA = cartas.filter((c) => c.valor === "A");
++      const naoAsesAA = cartas.filter((c) => c.valor !== "A");
++      const valsAA = new Set(naoAsesAA.map((c) => c.valor));
++      const alvoAA = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
++      if (asesAA.length === 2 && naoAsesAA.length === 12 && valsAA.size === 12 &&
++          alvoAA.every((v) => valsAA.has(v))) {
++        return finalizar({ tipoBase: "as_a_as", qtdCuringas: 0, tamanho: 14 });
++      }
++    }
++  }
++
+   // --- Caso 3: Sequência normal (mesmo naipe, em ordem, até 1 curinga) ---
+   // Separa os "2" (ambíguos) dos Jokers (curinga puro) e das cartas comuns.
+   const jokers = cartas.filter((c) => c.valor === "JOKER");
+@@ -284,6 +328,10 @@ function finalizar({ tipoBase, qtdCuringas, tamanho }) {
+     tipo = "de_curinga";
+   } else if (tipoBase === "de_as") {
+     tipo = "de_as";
++  } else if (tipoBase === "de_500") { // [PATCH CRIT-01]
++    tipo = "de_500";
++  } else if (tipoBase === "as_a_as") { // [PATCH CRIT-02]
++    tipo = "as_a_as";
+   } else {
+     tipo = qtdCuringas > 0 ? "suja" : "limpa";
+   }
+@@ -1970,8 +2018,10 @@ function checarAberturaVulneravel(jogo, assento) {
+   const min = niv === 1 ? 75 : 90;
+   const total = melds.reduce((s, m) => s + m.reduce((t, c) => t + valorCarta(c), 0), 0);
+   if (total >= min) { jogo.abriuValido[dupla] = true; return null; } // abertura válida
+-  // FOUL — só o humano chega aqui (bot não abre fraco). Anula a abertura:
+-  if (jogo.assentos[assento].tipo !== "humano") { jogo.abriuValido[dupla] = true; return null; }
++  // [PATCH CRIT-03] Vulnerabilidade UNIFORME bot=humano: o gate +75/+90 vale para
++  // TODOS os assentos. (Antes o motor isentava bots: `if (tipo !== "humano") ...`.)
++  // A estratégia do bot decide o que TENTAR; o motor valida e recusa o ilegal.
++  // FOUL — anula a abertura fraca (bot ou humano):
+   // 1) tudo o que baixou volta pra mão
+   for (const meld of melds) jogo.maos[assento].push(...meld);
+   jogo.jogosDupla[dupla] = [];
+@@ -2056,7 +2106,7 @@ function duplaTemCanastraLimpa(jogo, dupla) {
+     const res = validarSequencia(meld);
+     // Ás NÃO forma canastra de ás na casa da Sônia (vale só valor de carta) — só
+     // canastra de SEQUÊNCIA limpa (ou a de 500/1000) libera a batida.
+-    return res.valido && (res.tipo === "limpa" || res.tipo === "de_500");
++    return res.valido && (res.tipo === "limpa" || res.tipo === "de_500" || res.tipo === "as_a_as"); // [PATCH CRIT-02]
+   });
+ }
+ 
+@@ -2074,7 +2124,7 @@ function duplaPodeBater(jogo, dupla) {
+     if (meld.length < 7) return false;
+     const res = validarSequencia(meld); // trinca de valor igual é RECUSADA aqui de propósito
+     if (!res.valido) return false;
+-    if (res.tipo === "limpa" || res.tipo === "de_500") return true; // ás não conta (só valor de carta)
++    if (res.tipo === "limpa" || res.tipo === "de_500" || res.tipo === "as_a_as") return true; // [PATCH CRIT-02] ás não conta (só valor de carta)
+     return aceitaSuja && res.tipo === "suja";
+   });
+ }
+@@ -2089,7 +2139,7 @@ function baixadaTravaria(jogo, dupla, maoRestante, meldsFuturos) {
+   const temLimpa = meldsFuturos.some((m) => {
+     if (m.length < 7) return false;
+     const r = validarSequencia(m);
+-    return r.valido && (r.tipo === "limpa" || r.tipo === "de_500");
++    return r.valido && (r.tipo === "limpa" || r.tipo === "de_500" || r.tipo === "as_a_as"); // [PATCH CRIT-02]
+   });
+   const mortoDisp = !jogo.mortoPego[dupla] && jogo.mortos.length > 0;
+   return !(temLimpa || mortoDisp);
+@@ -2165,7 +2215,8 @@ function pontuarDuplaJogo(jogo, dupla, { bateu, mortoPego, cartasNaMao, algumPeg
+       // pontos das cartas (contados no laço abaixo) entram. Canastra de sequência normal.
+       const res = validarSequencia(meld);
+       if (res.valido) {
+-        if (res.tipo === "de_500") { pontosCanastras += 500; detalhe.de500++; }
++        if (res.tipo === "as_a_as") { pontosCanastras += 1000; detalhe.de500++; } // [PATCH CRIT-02]
++        else if (res.tipo === "de_500") { pontosCanastras += 500; detalhe.de500++; }
+         else if (res.tipo === "limpa") { pontosCanastras += 200; detalhe.limpas++; }
+         else if (res.tipo === "suja") { pontosCanastras += 100; detalhe.sujas++; }
+       }

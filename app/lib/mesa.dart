@@ -17,6 +17,22 @@ import 'screens/resultado_partida_screen.dart';
 import 'screens/resultado_vitoria_adapter.dart';
 import 'screens/resultado_partida_celebrado.dart';
 import 'services/configuracoes_service.dart';
+// C9-D — camada de costura da AUTORIDADE canônica (atrás da flag; OFF por padrão).
+import 'motor/motor_config.dart';
+import 'motor/autoridade_canonica.dart';
+// C10 — costura da classificação/pontuação canônicas no consumidor real.
+import 'motor/pontuacao_costura.dart';
+import 'motor/projecao_estado.dart' show paraCanonico;
+// C10 (rev.1) — derivação combinatória FORA do isolate de UI.
+import 'motor/derivacao_fora_do_frame.dart';
+import 'rules/acoes.dart';
+import 'rules/estado.dart' show EstadoJogo;
+import 'rules/rule_spec.dart';
+// OS BOT-IA V1 — camada ESTRATÉGICA do robô. Ela observa, gera alternativas,
+// pontua e escolhe uma INTENÇÃO; quem valida e aplica continua sendo a
+// autoridade canônica, pelas mesmas entradas do humano. Ver `lib/bot/`.
+import 'bot/executor_bot.dart';
+import 'bot/pesos.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -40,6 +56,11 @@ bool _cartaVermelha(Carta c) => c.naipe == 'copas' || c.naipe == 'ouros';
 String _cartaSimb(Carta c) => c.ehCoringa && c.valor == 'JOKER' ? '★' : (_naipeSimb[c.naipe] ?? '');
 String _cartaRotulo(Carta c) => c.valor == 'JOKER' ? '★' : c.valor;
 
+// ===== AUDITORIA DE REGRAS (fase diagnóstica) — liga logs [AUD ...] no console.
+// Só instrumentação/observação; NÃO altera regras nem layout.
+// DESLIGADA por padrão; liga com --dart-define=AUD_REGRAS=true.
+const bool kAuditoriaRegras = bool.fromEnvironment('AUD_REGRAS');
+
 // imagem real da carta (baralho enviado pela Sônia). JOKER alterna entre os dois
 // desenhos de curinga (usando o id pra dar variedade); dorso do baralho pro monte/mortos.
 const String _dorsoAsset = 'assets/baralho/dorso.webp';
@@ -53,7 +74,7 @@ String _cartaAsset(Carta c) {
 
 // ---------- MOTOR ----------
 class Jogo {
-  final _rnd = Random();
+  final Random _rnd; // semeável p/ testes determinísticos (produção = sem seed)
   int _cont = 0;
   static const _naipes = ['copas', 'ouros', 'paus', 'espadas'];
   static const _valores = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
@@ -78,8 +99,9 @@ class Jogo {
   // §5.2 ABERTO: quem compra um lixo de UMA carta só não pode devolver essa
   // mesma carta como descarte no mesmo turno (anti "turno nulo").
   String? _lixoUnicoCompradoId;
-  // §8.1/§8.3: mortos convertidos em monte nesta rodada (isenta o -100 de
-  // "morto não pego" — o direito deixou de existir).
+  // §8.1: mortos convertidos em monte nesta rodada. É EVENTO DE BARALHO, e
+  // NÃO afeta a pontuação: a dupla que ficou sem morto paga o -100 assim mesmo
+  // (correção de regra da revisão do C10 parte 2 — antes isentava).
   int _mortosConvertidos = 0;
   // §3.2: quem inicia a rodada — sorteado na 1ª, rotaciona nas seguintes.
   int _iniciadorRodada = -1;
@@ -123,9 +145,162 @@ class Jogo {
   final List<String> apelidos;
   final List<String> avatares;
   final List<String> mascotes;
-  Jogo(this.apelidos, this.avatares, this.mascotes) {
+
+  // ===== C9-D — AUTORIDADE canônica atrás da flag =====
+  /// Flag de AUTORIDADE (e sombra). PADRÃO OFF => o fluxo permanece 100% legado,
+  /// sem alterar resultado observável, pontuação, turno, lixo, morto, jogos,
+  /// eventos ou sidecars. Só com `canonicoAtivo=true` o caminho canônico assume.
+  final MotorConfig motorConfig;
+
+  /// Injeção do projetor SÓ para exercitar a FALHA técnica de projeção nos
+  /// testes (null => a autoridade usa `paraCanonico`). Nunca setado em produção.
+  Projetor? projetorAutoridadeTest;
+
+  /// Telemetria/diagnóstico da última FALHA TÉCNICA (costura/projeção/
+  /// transporte). NÃO é game-state (fora da projeção/envelope); só registra
+  /// evidência quando a falha técnica ocorre. Null caso contrário.
+  ///
+  /// C10 — o nome antigo era `ultimoFallbackTecnico`: sob autoridade única NÃO
+  /// existe mais fallback nenhum, nem semântico nem técnico. A evidência
+  /// continua sendo registrada; o que sumiu é a rota para o legado.
+  Map<String, dynamic>? ultimaFalhaTecnica;
+
+  /// C10 (rev.2) — a mesa está OCUPADA por uma derivação combinatória em curso
+  /// ou por uma escolha humana pendente (o seletor de uso do topo / de partição
+  /// da seleção). Enquanto estiver ligada, NENHUMA jogada é aceita: o estado que
+  /// o jogador está vendo — e sobre o qual os candidatos foram derivados — não
+  /// pode mudar por baixo dele.
+  ///
+  /// A trava mora AQUI, e não só na tela, de propósito: uma guarda de UI depende
+  /// de todo ponto de entrada lembrar de checá-la (foi assim que `_estender`
+  /// ficou de fora na rev.1). No modelo, é invariante — vale para qualquer
+  /// consumidor, atual ou futuro.
+  ///
+  /// Quem deriva é responsável por LIBERAR antes de aplicar a jogada escolhida:
+  /// terminada a escolha, a janela de risco acabou e a transação é síncrona.
+  bool mesaOcupadaPorDerivacao = false;
+
+  /// Recusa padrão enquanto a mesa está ocupada (null = livre).
+  Map<String, dynamic>? get _recusaSeOcupada => mesaOcupadaPorDerivacao
+      ? const {
+          'ok': false,
+          'erro': 'aguarde: a mesa está conferindo as jogadas possíveis.',
+          'ocupada': true,
+        }
+      : null;
+
+  /// C10 (rev.3) — PAUSA TÉCNICA do fluxo AUTOMÁTICO. Ligada quando a jogada
+  /// automática por tempo esgotado aborta por falha técnica; a partir daí
+  /// nenhuma nova jogada automática começa.
+  ///
+  /// Existe porque `PARTIDA PAUSADA` era só um texto: o `Timer.periodic` seguia
+  /// vivo com `_turnSeconds == 0` e o tick seguinte tentava tudo de novo — nova
+  /// compra, novo descarte, nova falha técnica. A pausa precisava ser de ESTADO,
+  /// não de mensagem.
+  ///
+  /// Escopo deliberado: tranca só o caminho AUTOMÁTICO. O jogador continua livre
+  /// para agir — a falha foi do piloto automático, e decidir tentar de novo na
+  /// mão é escolha humana. Nada aqui avança turno nem inventa recuperação.
+  bool pausadaPorFalhaTecnica = false;
+
+  /// C10 (rev.1) — CONTADOR monotônico de falhas técnicas. `ultimaFalhaTecnica`
+  /// sozinha não distingue "falhou agora" de "falhou há três jogadas": quem
+  /// precisa reagir a uma falha NOVA compara este contador antes e depois. É o
+  /// que torna o fail-closed do robô verificável em vez de heurístico.
+  int falhasTecnicas = 0;
+
+  /// OS BOT-IA V1 — configuração da camada estratégica do robô (pesos +
+  /// restrições + semente). Trocá-la muda a PREFERÊNCIA do bot e nada mais: a
+  /// legalidade continua sendo decidida pela autoridade canônica. Existe para o
+  /// relatório de NÃO-VACUIDADE — desligar uma regra por vez e ver o teste
+  /// correspondente cair.
+  ConfiguracaoBot configuracaoBot = ConfiguracaoBot.v1;
+
+  /// OS BOT-IA V1 — rastro AUDITÁVEL da última decisão estratégica: candidatos
+  /// considerados, features, score e o reasonCode que venceu (§8).
+  Map<String, dynamic>? ultimaDecisaoBot;
+
+  /// OS BOT-IA V1 — IMPASSES estratégicos registrados nesta partida. Hoje só um
+  /// caso chega aqui: a mão em que TODA carta legalmente descartável é curinga,
+  /// contra a política do §2. Fica registrado de propósito — a OS proíbe criar
+  /// exceção silenciosa, e este campo é o que torna o caso visível.
+  final List<Map<String, dynamic>> impassesEstrategicos = [];
+
+  Jogo(this.apelidos, this.avatares, this.mascotes,
+      {int? seed, this.motorConfig = const MotorConfig()})
+      : _rnd = seed == null ? Random() : Random(seed) {
     _distribuir();
   }
+
+  /// Roteia a jogada pela autoridade canônica (fronteira atômica). Usa o
+  /// projetor injetado (testes) ou `paraCanonico` (produção).
+  ResultadoAutoridade _rodarAutoridade(int assento, List<Acao> acoes) =>
+      projetorAutoridadeTest == null
+          ? aplicarComAutoridade(this, assento, acoes)
+          : aplicarComAutoridade(this, assento, acoes,
+              projetar: projetorAutoridadeTest!);
+
+  /// C10 — FAIL-CLOSED. Registra a evidência da falha TÉCNICA e devolve a
+  /// mensagem de recusa. Sob autoridade única, falha técnica NÃO roteia para o
+  /// legado: a jogada é RECUSADA com o `Jogo` intacto (a autoridade só falha
+  /// antes de qualquer efeito observável) e a evidência fica em
+  /// `ultimaFalhaTecnica` para telemetria/Replay. Recusa de REGRA nunca passa
+  /// por aqui — ela tem o seu próprio desfecho.
+  String _falharFechado(String metodo, ResultadoAutoridade r) {
+    falhasTecnicas++;
+    ultimaFalhaTecnica = {
+      'metodo': metodo,
+      'motivo': r.motivo,
+      'evidencia': r.evidencia,
+    };
+    return 'falha técnica do motor em $metodo: a jogada foi recusada e nada '
+        'foi alterado (${r.motivo ?? 'sem motivo'}).';
+  }
+
+  // ===================================================================
+  // C9-B COSTURA (seam) — acesso MÍNIMO à projeção Jogo <-> EstadoJogo
+  // (motor/projecao_estado.dart). SÓ leitura/escrita direta de estado;
+  // NENHUMA regra aqui, NENHUM método existente alterado. Inventário desta
+  // costura (aditiva):
+  //   1) construtor `Jogo.paraCostura` — instância VAZIA (não distribui);
+  //   2) acessores dos 5 campos operacionais PRIVADOS (os demais campos do
+  //      envelope já são públicos). Autoridade OFF por padrão; comportamento
+  //      legado 100% preservado (nada abaixo é chamado no fluxo antigo).
+  // ===================================================================
+
+  /// Instância VAZIA (sem `_distribuir`) para a projeção/costura preencher o
+  /// estado a partir de um `EstadoJogo`. Não sorteia cartas; não roda regra.
+  Jogo.paraCostura(
+      {List<String>? apelidos,
+      List<String>? avatares,
+      List<String>? mascotes,
+      this.motorConfig = const MotorConfig()})
+      : apelidos = apelidos ?? const <String>[],
+        avatares = avatares ?? const <String>[],
+        mascotes = mascotes ?? const <String>[],
+        _rnd = Random(0);
+
+  int get costuraCont => _cont;
+  set costuraCont(int v) => _cont = v;
+  String? get costuraLixoUnicoCompradoId => _lixoUnicoCompradoId;
+  set costuraLixoUnicoCompradoId(String? v) => _lixoUnicoCompradoId = v;
+  int get costuraMortosConvertidos => _mortosConvertidos;
+  set costuraMortosConvertidos(int v) => _mortosConvertidos = v;
+  int get costuraIniciadorRodada => _iniciadorRodada;
+  set costuraIniciadorRodada(int v) => _iniciadorRodada = v;
+  bool get costuraRodadaContada => _rodadaContada;
+  set costuraRodadaContada(bool v) => _rodadaContada = v;
+
+  // C9-B-fix — ESTADO DE TRANSPORTE mínimo da FASE canônica (compra | jogo |
+  // mortoPendente). O legado só distingue 2 estados de turno (jaComprou), então
+  // `mortoPendente` (estado semântico real do RulesEngine, exigido por
+  // PegarMorto(viaDescarte)) seria perdido no round-trip. Este slot carrega a
+  // fase EXATA através da costura. NÃO é regra: nenhum método legado lê/escreve
+  // este campo; o fluxo OFF ignora-o por completo. `null` = sem transporte
+  // (snapshot legado puro; a projeção então deriva a fase de jaComprou).
+  String? _costuraFaseCanonica;
+  String? get costuraFaseCanonica => _costuraFaseCanonica;
+  set costuraFaseCanonica(String? v) => _costuraFaseCanonica = v;
 
   String _duplaKey(int a) => a % 2 == 0 ? 'nos' : 'eles';
   Carta? get lixoTopo => lixo.isEmpty ? null : lixo.last;
@@ -301,14 +476,103 @@ class Jogo {
     }
     det['baixadas'] = pontosCartas;
     final bonusBatida = bateu ? 100 : 0;
-    // §8.3: morto convertido em monte deixa de ser direito reclamável —
-    // NÃO aplica o -100 pra dupla que ficou sem morto por causa da conversão.
+    // C10 (rev.1): a conversão §8.1 NÃO isenta ninguém. Antes havia aqui um
+    // `_mortosConvertidos == 0` que suprimia a penalidade — mesmo defeito
+    // corrigido no canônico. O ramo legado passa a cobrar igual, para o
+    // rollback não aplicar uma regra que a direção já rejeitou.
     final penalidadeMorto =
-        (!mortoPegoDupla && algumPegouMorto && _mortosConvertidos == 0) ? -100 : 0;
+        (!mortoPegoDupla && algumPegouMorto) ? -100 : 0;
     final descontoMao = -cartasNaMao;
     final total = pontosCanastras + pontosCartas + bonusBatida + descontoMao + penalidadeMorto;
     return {'total': total, 'canastras': pontosCanastras, 'bonusBatida': bonusBatida,
       'penalidadeMorto': penalidadeMorto, 'descontoMao': descontoMao, 'detalhe': det};
+  }
+
+  // Placar em tempo real (somente exibição): pontos já garantidos na mesa nesta
+  // rodada = canastras + cartas baixadas da dupla. NÃO altera a contagem oficial
+  // de fim de rodada (bônus de batida, cartas na mão e morto entram só no final).
+  int pontosMesaAoVivo(String dupla) {
+    // C10 — mesma autoridade do fim de rodada: o número exibido durante a
+    // rodada não pode discordar do número que será contado no final.
+    if (motorConfig.canonicoAtivo) {
+      return pontosMesaCanonico(jogosDupla[dupla]!, specCanonica);
+    }
+    int p = 0;
+    for (final meld in jogosDupla[dupla]!) {
+      if (meld.length >= 7) {
+        final res = _validarJogoMesa(meld);
+        if (res['valido'] == true) {
+          switch (res['tipo']) {
+            case 'as_a_as': p += 1000; break;
+            case 'de_500': p += 500; break;
+            case 'limpa': p += 200; break;
+            case 'suja': p += 100; break;
+          }
+        }
+      }
+      for (final c in meld) p += _pontos(c);
+    }
+    return p;
+  }
+
+  // ===================== AUDITORIA / INSTRUMENTAÇÃO (só leitura) =====================
+  // Invariante P0: TODO meld ARMAZENADO na mesa precisa passar no validador oficial.
+  // Devolve a descrição de cada meld ilegal encontrado (vazio = mesa 100% legal).
+  // Não altera estado nem comportamento — serve para provar estado × render.
+  List<String> auditarMeldsArmazenados() {
+    final falhas = <String>[];
+    for (final dupla in const ['nos', 'eles']) {
+      final jogos = jogosDupla[dupla]!;
+      for (var i = 0; i < jogos.length; i++) {
+        final m = jogos[i];
+        final r = _validarJogoMesa(m);
+        if (r['valido'] != true) {
+          final desc = m
+              .map((c) => '${c.valor}${c.naipe == null ? '' : '/${c.naipe}'}#${c.id}')
+              .join(' ');
+          falhas.add('$dupla[$i] ILEGAL (${r['motivo']}): $desc');
+        }
+      }
+    }
+    return falhas;
+  }
+
+  // Descrição textual de um meld (para logs de auditoria: valor/naipe + id).
+  static String descreverMeld(List<Carta> m) => m
+      .map((c) => '${c.valor}${c.naipe == null ? '' : '/${c.naipe}'}#${c.id}')
+      .join(' ');
+
+  // Empacotamento FFD dos jogos por linha — MESMA lógica do _packedMelds, extraída
+  // pura para teste fiel da colagem visual. `larguras` = largura de cada jogo na ordem
+  // original; devolve as linhas como listas de índices originais (ordenados). Sem efeito
+  // colateral. Usada tanto pelo render (_packedMelds) quanto pelo teste AUD-02.
+  static List<List<int>> empacotarLinhasFFD(
+      List<double> larguras, double larguraUtil, double spacing) {
+    final ordem = [for (var i = 0; i < larguras.length; i++) i]
+      ..sort((a, b) => larguras[b].compareTo(larguras[a]));
+    final linhas = <List<int>>[];
+    final ocupado = <double>[];
+    for (final i in ordem) {
+      final w = larguras[i];
+      var alvo = -1;
+      for (var r = 0; r < linhas.length; r++) {
+        if (ocupado[r] + spacing + w <= larguraUtil) {
+          alvo = r;
+          break;
+        }
+      }
+      if (alvo == -1) {
+        linhas.add([i]);
+        ocupado.add(w);
+      } else {
+        linhas[alvo].add(i);
+        ocupado[alvo] += spacing + w;
+      }
+    }
+    for (final l in linhas) {
+      l.sort();
+    }
+    return linhas;
   }
 
   // Conta as duas duplas, soma no placar e marca a partida encerrada se bateu a meta.
@@ -318,14 +582,36 @@ class Jogo {
     _rodadaContada = true;
     final algumPegouMorto = mortoPego['nos']! || mortoPego['eles']!;
     final res = <String, dynamic>{};
+    // C10 — sob AUTORIDADE ÚNICA quem pontua é o motor canônico
+    // (`pontuacao_canonica` + `meld_validator`). Isso fecha a EXC-04: a
+    // classificação do grupo de ases (e de qualquer meld) deixa de ter dois
+    // donos na hora de contar. A tabela de pontos é a mesma; o que acaba é a
+    // segunda autoridade.
+    //
+    // A conversão §8.1 NÃO isenta o -100 de quem ficou sem morto (correção de
+    // regra da revisão do C10 parte 2). Ela segue registrada no envelope
+    // (`_mortosConvertidos`) como evento de baralho, sem efeito de pontuação.
+    final spec = motorConfig.canonicoAtivo ? specCanonica : null;
     for (final dupla in ['nos', 'eles']) {
       final assentos = dupla == 'nos' ? [0, 2] : [1, 3];
-      final cartasNaMao = assentos.fold<int>(0, (s, a) => s + maos[a].fold<int>(0, (t, c) => t + _pontos(c)));
-      final r = _pontuarDupla(dupla,
+      final Map<String, dynamic> r;
+      if (spec != null) {
+        r = pontuarDuplaCanonico(
+          melds: jogosDupla[dupla]!,
+          mao: [for (final a in assentos) ...maos[a]],
           bateu: duplaQueBateu == dupla,
-          mortoPegoDupla: mortoPego[dupla]!,
-          cartasNaMao: cartasNaMao,
-          algumPegouMorto: algumPegouMorto);
+          mortoPego: mortoPego[dupla]!,
+          algumPegouMorto: algumPegouMorto,
+          spec: spec,
+        );
+      } else {
+        final cartasNaMao = assentos.fold<int>(0, (s, a) => s + maos[a].fold<int>(0, (t, c) => t + _pontos(c)));
+        r = _pontuarDupla(dupla,
+            bateu: duplaQueBateu == dupla,
+            mortoPegoDupla: mortoPego[dupla]!,
+            cartasNaMao: cartasNaMao,
+            algumPegouMorto: algumPegouMorto);
+      }
       res[dupla] = r;
       placar[dupla] = placar[dupla]! + (r['total'] as int);
     }
@@ -481,42 +767,30 @@ class Jogo {
     return {'valido': false, 'motivo': motivoFalha};
   }
 
-  // §4.3 TRINCA/LAVADEIRA — permitida SÓ no Fechado: 3+ cartas do MESMO VALOR
-  // (naipes livres), no máximo 1 curinga substituto (Joker, ou um 2 de valor
-  // diferente do da trinca). Com 7+ vira canastra: limpa sem curinga, suja com.
+  // §4.3 TRINCA — SÓ no Fechado: 3+ cartas NATURAIS do MESMO VALOR (naipes livres).
+  // Spec canônica (Sônia + servidor): NÃO aceita curinga — nem JOKER, nem "2" usado
+  // como substituto de outro valor. Três "2" naturais formam trinca de 2 (válida).
+  // A trinca NUNCA vira canastra: sem bônus limpa/suja e NÃO libera a batida.
   Map<String, dynamic> _validarTrinca(List<Carta> cartas) {
     if (cartas.length < 3) {
       return {'valido': false, 'motivo': 'uma trinca tem no mínimo 3 cartas'};
     }
-    final jokers = cartas.where((c) => c.valor == 'JOKER').toList();
-    final naoJokers = cartas.where((c) => c.valor != 'JOKER').toList();
-    if (naoJokers.isEmpty) {
-      return {'valido': false, 'motivo': 'trinca precisa de cartas naturais'};
-    }
-    // valor da trinca = o valor mais frequente entre as cartas não-Joker
-    final cont = <String, int>{};
-    for (final c in naoJokers) {
-      cont[c.valor] = (cont[c.valor] ?? 0) + 1;
-    }
-    final valor = (cont.entries.toList()
-          ..sort((a, b) => b.value.compareTo(a.value)))
-        .first
-        .key;
-    final substitutos = naoJokers.where((c) => c.valor != valor).toList();
-    if (substitutos.any((c) => c.valor != '2')) {
+    if (cartas.any((c) => c.valor == 'JOKER')) {
       return {
         'valido': false,
-        'motivo': 'trinca: todas as cartas devem ter o mesmo valor (só 1 curinga pode substituir)'
+        'motivo': 'Joker não entra em trinca — só cartas naturais do mesmo valor'
       };
     }
-    final qtdCuringas = jokers.length + substitutos.length;
-    if (qtdCuringas > 1) {
-      return {'valido': false, 'motivo': 'trinca aceita no máximo 1 curinga'};
+    final valor = cartas.first.valor;
+    if (cartas.any((c) => c.valor != valor)) {
+      return {
+        'valido': false,
+        'motivo':
+            'trinca: todas as cartas devem ter o mesmo valor (naturais); 2 e Joker não entram como curinga'
+      };
     }
-    final tipo = cartas.length < 7
-        ? 'aberta'
-        : (qtdCuringas > 0 ? 'suja' : 'limpa');
-    return {'valido': true, 'tipo': tipo, 'qtd_curingas': qtdCuringas, 'trinca': true};
+    // Sempre tipo 'trinca' (nunca canastra), sem curinga.
+    return {'valido': true, 'tipo': 'trinca', 'qtd_curingas': 0, 'trinca': true};
   }
 
   // Validador OFICIAL por modalidade (§2/§10):
@@ -542,9 +816,10 @@ class Jogo {
 
   bool _canastraLiberaBatida(List<Carta> meld) {
     if (meld.length < 7) return false;
-    final r = _validarJogoMesa(meld); // inclui trinca-canastra no Fechado
+    final r = _validarJogoMesa(meld);
     if (r['valido'] != true) return false;
-    // Fechado: QUALQUER canastra (7+) libera a batida — suja basta (§6.4).
+    if (r['trinca'] == true) return false; // trinca NUNCA é canastra nem libera batida
+    // Fechado: QUALQUER canastra (7+) de sequência libera a batida — suja basta (§6.4).
     if (modalidade.toLowerCase() == 'fechado') return true;
     // Aberto/STBL: exige canastra LIMPA (limpa, 500 ou 1000).
     final t = r['tipo'];
@@ -579,8 +854,74 @@ class Jogo {
     return null;
   }
 
+  /// C10 — RuleSpec canônica desta partida (modalidade + meta). É a MESMA spec
+  /// que a autoridade deriva da projeção; aqui serve à classificação e à
+  /// pontuação do consumidor.
+  RuleSpec get specCanonica =>
+      specCanonicaDaPartida(modalidade, metaPontos);
+
+  /// Instantâneo mínimo (antes da transação) do que a UI aprovada precisa saber
+  /// depois: quantos jogos a dupla tinha, se já havia pego o morto e se a
+  /// rodada já estava encerrada.
+  (int, bool, bool) _instantaneoDupla(int assento) {
+    final dupla = _duplaKey(assento);
+    return (
+      jogosDupla[dupla]!.length,
+      mortoPego[dupla] ?? false,
+      rodadaEncerrada,
+    );
+  }
+
+  /// C10 — reconstrói, a partir do PÓS-ESTADO canônico já commitado, as três
+  /// chaves de FEEDBACK que a mesa aprovada consome (`tipo`, `pegouMorto`,
+  /// `bateu`). Não é regra: a regra já decidiu; isto é leitura do resultado.
+  ///
+  /// `tipo` = classificação canônica do ÚLTIMO meld tocado pela jogada (o jogo
+  /// novo mais recente ou, se a jogada só estendeu, o jogo estendido) — é o
+  /// meld que a tela celebra. `tipos` traz todos os melds tocados, para a
+  /// jogada composta (abertura múltipla).
+  Map<String, dynamic> _desfechoBaixada(
+    int assento,
+    (int, bool, bool) antes,
+    List<List<String>> jogosNovos,
+    List<Extensao> extensoes,
+  ) {
+    final dupla = _duplaKey(assento);
+    final melds = jogosDupla[dupla]!;
+    final spec = specCanonica;
+    final indices = <int>[
+      for (final e in extensoes)
+        if (e.indiceJogo >= 0 && e.indiceJogo < melds.length) e.indiceJogo,
+      for (var i = antes.$1; i < melds.length; i++) i,
+    ];
+    final tipos = <String>[];
+    for (final i in indices) {
+      final t = tipoCanonicoDeMeld(melds[i], spec);
+      if (t != null) tipos.add(t);
+    }
+    final pegouMorto = !antes.$2 && (mortoPego[dupla] ?? false);
+    final bateu =
+        !antes.$3 && rodadaEncerrada && duplaQueBateu == dupla;
+    return {
+      if (tipos.isNotEmpty) 'tipo': tipos.last,
+      if (tipos.isNotEmpty) 'tipos': tipos,
+      if (pegouMorto) 'pegouMorto': true,
+      if (bateu) 'bateu': true,
+    };
+  }
+
   // ---------- JOGADAS ----------
   bool comprarMonte(int assento) {
+    if (mesaOcupadaPorDerivacao) return false; // C10 (rev.2) — mesa ocupada
+    // C10 — AUTORIDADE ÚNICA: o canônico decide/aplica (transação atômica) e é
+    // o ÚNICO caminho. Recusa de regra recusa; falha técnica FALHA FECHADO.
+    if (motorConfig.canonicoAtivo) {
+      final r = _rodarAutoridade(assento, const [ComprarMonte()]);
+      if (r.aplicou) return true;
+      if (r.recusaCanonica) return false; // recusa de REGRA — sem legado
+      _falharFechado('comprarMonte', r); // falha TÉCNICA — sem legado
+      return false;
+    }
     if (integridadeErro != null) return false; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento || jaComprou) return false;
     if (monte.isEmpty) {
@@ -599,7 +940,88 @@ class Jogo {
   // - ABERTO: compra LIVRE, sem obrigação de usar o topo (regra confirmada).
   // - FECHADO/SBTL: só pode pegar se a carta do TOPO tiver USO IMEDIATO — formar
   //   um jogo novo com 2 cartas da mão OU estender um jogo já baixado da dupla.
+  /// C10 — TODOS os candidatos ATÔMICOS de compra do lixo Fechado/STBL para
+  /// `assento`, derivados pela autoridade canônica a partir do topo VISÍVEL +
+  /// mão + jogos já expostos da dupla (cartas enterradas ficam de fora).
+  ///
+  /// Auto-derivar ≠ auto-decidir: esta função ENUMERA; quem consome decide
+  /// (0 -> recusa, 1 -> executa, 2+ -> o jogador escolhe). No Aberto devolve
+  /// lista vazia — lá a compra é livre e não precisa justificar o topo.
+  List<ComprarLixo> candidatosCompraLixo(int assento, {DiagnosticoLixo? diag}) {
+    final spec = specCanonica;
+    if (!spec.exigeUsoDoTopoNoLixo) return const <ComprarLixo>[];
+    return derivarCandidatosCompraLixoFechado(
+        paraCanonico(this).canonico, assento, spec,
+        diag: diag);
+  }
+
+  /// C10 (rev.1) — mensagem de recusa da compra do lixo sem uso do topo.
+  /// Exposta para que o consumidor possa recusar SEM mandar derivar tudo de
+  /// novo só para descobrir que a lista está vazia.
+  String get erroLixoSemUsoDoTopo => lixo.isEmpty
+      ? 'o lixo está vazio'
+      : 'No fechado, só dá pra pegar o lixo se o topo '
+          '(${_cartaRotulo(lixo.last)}) tiver uso imediato: formar um '
+          'jogo novo com cartas da mão ou estender um jogo já baixado.';
+
+  /// C10 — executa UMA compra do lixo já escolhida, como transação ATÔMICA
+  /// (recolhe o lixo E baixa/estende o uso do topo no mesmo commit).
+  Map<String, dynamic> comprarLixoAtomico(int assento, ComprarLixo escolha) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
+    if (!motorConfig.canonicoAtivo) {
+      return {
+        'ok': false,
+        'erro': 'compra atômica do lixo só existe sob a autoridade canônica',
+      };
+    }
+    final antes = _instantaneoDupla(assento);
+    final qtd = lixo.length;
+    final r = _rodarAutoridade(assento, [escolha]);
+    if (r.aplicou) {
+      return {
+        'ok': true,
+        'qtd': qtd,
+        ..._desfechoBaixada(assento, antes, escolha.jogosNovos, escolha.extensoes),
+      };
+    }
+    if (r.recusaCanonica) {
+      return {
+        'ok': false,
+        'erro': r.motivo ?? 'compra do lixo recusada pelo motor canônico',
+      };
+    }
+    // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+    return {'ok': false, 'erro': _falharFechado('comprarLixo', r)};
+  }
+
+  /// Compra do lixo. O parâmetro `modalidade` é do contrato LEGADO; sob
+  /// autoridade canônica a modalidade vem da própria partida (fonte única).
+  ///
+  /// C10 — no Fechado/STBL aplica o contrato ATÔMICO derivando os candidatos:
+  /// 0 -> recusa; 1 -> executa; 2+ -> NÃO escolhe pelo jogador, devolve
+  /// `escolhaNecessaria` com os candidatos para o consumidor apresentar. É
+  /// PROIBIDO resolver a ambiguidade voltando ao comportamento diferido legado
+  /// (comprar agora e cobrar o uso do topo depois).
   Map<String, dynamic> comprarLixo(int assento, {String modalidade = 'ABERTO'}) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
+    if (motorConfig.canonicoAtivo) {
+      if (!specCanonica.exigeUsoDoTopoNoLixo) {
+        // Aberto: compra LIVRE, para a mão — sem uso obrigatório do topo.
+        return comprarLixoAtomico(assento, const ComprarLixo());
+      }
+      final cands = candidatosCompraLixo(assento);
+      if (cands.isEmpty) return {'ok': false, 'erro': erroLixoSemUsoDoTopo};
+      if (cands.length == 1) return comprarLixoAtomico(assento, cands.single);
+      return {
+        'ok': false,
+        'escolhaNecessaria': true,
+        'candidatos': cands,
+        'erro': 'há ${cands.length} formas legais de usar o topo '
+            '(${_cartaRotulo(lixo.last)}): escolha uma.',
+      };
+    }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || jaComprou) return {'ok': false, 'erro': 'não dá pra pegar o lixo agora'};
     if (lixo.isEmpty) return {'ok': false, 'erro': 'o lixo está vazio'};
@@ -802,7 +1224,63 @@ class Jogo {
     return out;
   }
 
+  /// C10 — BAIXADA ATÔMICA canônica: um ou mais jogos NOVOS + extensões numa
+  /// ÚNICA transação. É a forma pela qual a abertura MÚLTIPLA (EXC-02) e a
+  /// extensão existem sob a autoridade única — não há rota paralela.
+  /// Exige autoridade canônica (sob rollback legado, o legado não representa
+  /// jogada composta; ver `baixar`/`estender`).
+  Map<String, dynamic> baixarAtomico(
+    int assento, {
+    List<List<String>> jogosNovos = const [],
+    List<Extensao> extensoes = const [],
+    String rotulo = 'baixar',
+  }) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
+    if (!motorConfig.canonicoAtivo) {
+      return {
+        'ok': false,
+        'erro': 'baixada atômica só existe sob a autoridade canônica',
+      };
+    }
+    final antes = _instantaneoDupla(assento);
+    final r = _rodarAutoridade(
+        assento, [Baixar(jogosNovos: jogosNovos, extensoes: extensoes)]);
+    if (r.aplicou) {
+      return {
+        'ok': true,
+        ..._desfechoBaixada(assento, antes, jogosNovos, extensoes),
+      };
+    }
+    if (r.recusaCanonica) {
+      return {
+        'ok': false,
+        'erro': r.motivo ?? 'baixada recusada pelo motor canônico',
+      };
+    }
+    // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+    return {'ok': false, 'erro': _falharFechado(rotulo, r)};
+  }
+
+  /// C10 (rev.1) — PARTIÇÕES legais da seleção do jogador em jogos novos.
+  /// Enumera; não escolhe. Uma seleção que forma um único meld devolve
+  /// exatamente uma partição — o gesto de sempre segue igual.
+  List<Baixar> particoesDaSelecao(int assento, List<String> ids,
+      {DiagnosticoLixo? diag}) {
+    if (!motorConfig.canonicoAtivo) return const <Baixar>[];
+    return derivarParticoesAbertura(
+        paraCanonico(this).canonico, assento, specCanonica, ids,
+        diag: diag);
+  }
+
   Map<String, dynamic> baixar(int assento, List<String> ids) {
+    final ocupada = _recusaSeOcupada; // C10 (rev.2)
+    if (ocupada != null) return ocupada;
+    // C10 — AUTORIDADE ÚNICA: baixada é transação canônica atômica (com
+    // estabilização de morto direto/batida quando a baixada zera a mão).
+    if (motorConfig.canonicoAtivo) {
+      return baixarAtomico(assento, jogosNovos: [ids], rotulo: 'baixar');
+    }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes de baixar'};
     if (ids.length < 3) return {'ok': false, 'erro': 'um jogo tem no mínimo 3 cartas'};
@@ -814,6 +1292,11 @@ class Jogo {
       cartas.add(maos[assento][idx]);
     }
     final res = _validarJogoMesa(cartas);
+    if (kAuditoriaRegras) {
+      debugPrint('[AUD baixar] assento=$assento ids=$ids '
+          'cartas={${descreverMeld(cartas)}} -> '
+          '${res['valido'] == true ? 'OK tipo=${res['tipo']}' : 'REJEITADO: ${res['motivo']}'}');
+    }
     if (res['valido'] != true) return {'ok': false, 'erro': res['motivo'] ?? 'jogo inválido'};
     final dupla = _duplaKey(assento);
     // Gate de vulnerabilidade (seção 11): a PRIMEIRA baixada da dupla na rodada
@@ -832,6 +1315,12 @@ class Jogo {
     final idset = ids.toSet();
     maos[assento] = maos[assento].where((c) => !idset.contains(c.id)).toList();
     jogosDupla[dupla]!.add(cartas);
+    if (kAuditoriaRegras) {
+      final falhas = auditarMeldsArmazenados();
+      if (falhas.isNotEmpty) {
+        debugPrint('[AUD !!! MELD ILEGAL ARMAZENADO após baixar] ${falhas.join(' | ')}');
+      }
+    }
     if (lixoTopoObrigatorio != null && idset.contains(lixoTopoObrigatorio)) {
       lixoTopoObrigatorio = null; // topo do lixo usado numa baixada → obrigação cumprida
     }
@@ -842,6 +1331,18 @@ class Jogo {
   }
 
   Map<String, dynamic> estender(int assento, int indiceJogo, List<String> ids) {
+    // C10 (rev.2) — a rev.1 travou monte, lixo e baixada durante a derivação e
+    // ESQUECEU a extensão: dava para alterar a mesa por baixo de um seletor
+    // aberto. É esse buraco que a trava no MODELO fecha de uma vez.
+    final ocupada = _recusaSeOcupada;
+    if (ocupada != null) return ocupada;
+    // C10 — AUTORIDADE ÚNICA: estender NÃO é uma rota paralela; é uma baixada
+    // canônica com `extensoes`. Até o C9-D este método furava a autoridade
+    // (validava e mutava direto), o que deixava um buraco no corte canônico.
+    if (motorConfig.canonicoAtivo) {
+      return baixarAtomico(assento,
+          extensoes: [Extensao(indiceJogo, ids)], rotulo: 'estender');
+    }
     if (integridadeErro != null) return {'ok': false, 'erro': integridadeErro};
     if (rodadaEncerrada || vez != assento || !jaComprou) return {'ok': false, 'erro': 'compre uma carta antes'};
     final dupla = _duplaKey(assento);
@@ -857,6 +1358,11 @@ class Jogo {
       cartas.add(maos[assento][idx]);
     }
     final res = _validarJogoMesa([...alvo, ...cartas]);
+    if (kAuditoriaRegras) {
+      debugPrint('[AUD estender] assento=$assento jogo=$indiceJogo '
+          'alvo={${descreverMeld(alvo)}} +{${descreverMeld(cartas)}} -> '
+          '${res['valido'] == true ? 'OK tipo=${res['tipo']}' : 'REJEITADO: ${res['motivo']}'}');
+    }
     if (res['valido'] != true) return {'ok': false, 'erro': res['motivo'] ?? 'extensão inválida'};
     final maoRest = maos[assento].length - cartas.length;
     final futuros = [for (int i = 0; i < jogos.length; i++) i == indiceJogo ? [...alvo, ...cartas] : jogos[i]];
@@ -864,6 +1370,12 @@ class Jogo {
     final idset = ids.toSet();
     maos[assento] = maos[assento].where((c) => !idset.contains(c.id)).toList();
     jogos[indiceJogo] = [...alvo, ...cartas];
+    if (kAuditoriaRegras) {
+      final falhas = auditarMeldsArmazenados();
+      if (falhas.isNotEmpty) {
+        debugPrint('[AUD !!! MELD ILEGAL ARMAZENADO após estender] ${falhas.join(' | ')}');
+      }
+    }
     if (lixoTopoObrigatorio != null && idset.contains(lixoTopoObrigatorio)) {
       lixoTopoObrigatorio = null; // topo do lixo usado numa extensão → obrigação cumprida
     }
@@ -874,6 +1386,20 @@ class Jogo {
 
   // retorna null se ok; senão string de erro
   String? descartar(int assento, String idCarta) {
+    if (mesaOcupadaPorDerivacao) {
+      return 'aguarde: a mesa está conferindo as jogadas possíveis.';
+    }
+    // C9-D — AUTORIDADE ON: descarte como transação canônica ATÔMICA (com
+    // estabilização de morto INDIRETO/batida quando o descarte zera a mão).
+    if (motorConfig.canonicoAtivo) {
+      final r = _rodarAutoridade(assento, [Descartar(idCarta)]);
+      if (r.aplicou) return null;
+      if (r.recusaCanonica) {
+        return r.motivo ?? 'descarte recusado pelo motor canônico';
+      }
+      // C10 — falha TÉCNICA: recusa fechada, sem legado (o `Jogo` está intacto).
+      return _falharFechado('descartar', r);
+    }
     if (integridadeErro != null) return integridadeErro;
     if (rodadaEncerrada || vez != assento || !jaComprou) return 'não é sua vez';
     // Fechado/SBTL: pegou o lixo? tem que USAR o topo antes de descartar.
@@ -1124,11 +1650,256 @@ class Jogo {
     return finais.any(_canastraLiberaBatida);
   }
 
-  // ROBÔ (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos possíveis,
-  // ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e descarta com critério.
+  // OS BOT-IA V1 — a COMPRA, a ABERTURA COMPOSTA e a escolha entre candidatos
+  // de lixo saíram daqui. Eram três decisões gulosas independentes
+  // (`_botCompra`, `_botAbrir`, `_botEscolheCompraLixo`), cada uma parando no
+  // primeiro resultado legal. Agora são alternativas PONTUADAS pela camada
+  // estratégica (`lib/bot/`), comparadas pelo estado final do turno.
+  //
+  // O que NÃO mudou, e não pode mudar: a legalidade e a aplicação seguem sendo
+  // do canônico, e o robô só escolhe DENTRO dos candidatos que a autoridade
+  // derivou (`candidatosCompraLixo`).
+
+  /// C10 — INVARIANTE do robô sob autoridade única: mão vazia com a rodada
+  /// aberta e a vez ainda no assento é IMPOSSÍVEL (qualquer ação que zeraria a
+  /// mão é recusada ou estabilizada em morto/batida pela autoridade). Se
+  /// acontecer, é falha de costura: registra e PARA — jamais chama `_passarVez`,
+  /// que mutaria vez/morto/envelope por fora da autoridade.
+  bool _botMaoVaziaSemSaida(int assento) {
+    if (!motorConfig.canonicoAtivo) {
+      if (vez == assento) _passarVez();
+      return true;
+    }
+    falhasTecnicas++;
+    ultimaFalhaTecnica = {
+      'metodo': 'botJoga',
+      'motivo': 'mão vazia com a rodada aberta sob autoridade canônica',
+      'evidencia': {'assento': assento, 'vez': vez},
+    };
+    return true;
+  }
+
+  /// C10 (rev.1) — FAIL-CLOSED do robô. Uma falha TÉCNICA significa que a
+  /// costura/projeção/transporte quebrou; insistir com outra transação em cima
+  /// de um motor que acabou de falhar é justamente o que o fail-closed proíbe.
+  /// A partir da primeira falha técnica do turno, o robô PARA — não compra o
+  /// monte depois de falhar no lixo, não tenta outro grupo depois de falhar ao
+  /// baixar, não tenta outra extensão, não varre outros descartes.
+  ///
+  /// Recusa de REGRA não passa por aqui: essa o agente pode contornar com outra
+  /// jogada, que é decisão estratégica dele.
+  bool _botFalhouTecnicamente(int marca) => falhasTecnicas != marca;
+
+  /// C10 (rev.2) — JOGADA AUTOMÁTICA por tempo esgotado, com o MESMO
+  /// fail-closed do robô. Vive aqui, e não na tela, por duas razões: é lógica de
+  /// jogo (compra + descarte), e na tela ela era intestável — o portão de
+  /// qualidade não monta widget.
+  ///
+  /// C10 (rev.3) — CONTRATO do retorno, decidido pelo ESTADO EFETIVO:
+  ///   `true`  = o turno realmente terminou (a vez passou) OU a rodada encerrou
+  ///             legalmente;
+  ///   `false` = nenhuma ação conseguiu concluir o turno.
+  ///
+  /// A rev.2 devolvia `true` por ter chegado ao fim do laço: se TODAS as cartas
+  /// fossem recusadas por regra, a função dizia "concluí" sem descarte, sem
+  /// mudança de vez e sem fim de rodada — e a tela seguia como se o turno
+  /// automático tivesse acontecido. Agora o sucesso é medido, não presumido.
+  ///
+  /// Recusa de REGRA segue tentando a próxima carta (legítimo: a mão pode ter
+  /// cartas que não se pode descartar). Falha TÉCNICA encerra a tentativa na
+  /// hora. Nada de inventar descarte ou forçar `_passarVez`.
+  ///
+  /// Quem chama compara `falhasTecnicas` antes e depois para saber se a parada
+  /// foi por falha técnica ou por esgotamento das opções legais.
+  bool jogadaAutomatica(int assento) {
+    // C10 (rev.3) — PAUSA TÉCNICA: depois da primeira falha técnica automática,
+    // nenhuma nova tentativa começa. Sem isto a tela mostrava "PAUSADA" mas o
+    // relógio seguia vivo e o tick seguinte tentava tudo de novo.
+    if (pausadaPorFalhaTecnica) return false;
+    if (mesaOcupadaPorDerivacao) return false;
+    if (integridadeErro != null) return false;
+    if (rodadaEncerrada || vez != assento) return false;
+
+    final marca = falhasTecnicas;
+    final vezAntes = vez;
+
+    if (!jaComprou) {
+      comprarMonte(assento);
+      if (falhasTecnicas != marca) {
+        pausadaPorFalhaTecnica = true;
+        return false;
+      }
+      ordenar(assento);
+    }
+    if (jaComprou && !rodadaEncerrada) {
+      for (final c in List<Carta>.from(maos[assento])) {
+        final erro = descartar(assento, c.id);
+        if (falhasTecnicas != marca) {
+          pausadaPorFalhaTecnica = true; // sem segundo descarte, sem novo tick
+          return false;
+        }
+        if (erro == null) break; // descartou: o turno acabou
+      }
+    }
+    // SUCESSO medido pelo estado: a vez passou, ou a rodada encerrou legalmente
+    // (batida, morto indireto que devolve à compra, exaustão do baralho).
+    return rodadaEncerrada || vez != vezAntes;
+  }
+
+  /// OS BOT-IA V1 — PROJEÇÃO só-leitura para a camada estratégica.
+  ///
+  /// Usa `paraCanonico` diretamente (o mesmo caminho de `candidatosCompraLixo`),
+  /// e NÃO o projetor injetável da autoridade: quem exercita falha técnica de
+  /// projeção exercita a APLICAÇÃO, que é onde ela importa. Ainda assim vem
+  /// protegida — se projetar quebrar, isso é falha TÉCNICA e o robô para.
+  EstadoJogo? _projetarParaBot(String metodo) {
+    try {
+      return paraCanonico(this).canonico;
+    } catch (e) {
+      falhasTecnicas++;
+      ultimaFalhaTecnica = {
+        'metodo': metodo,
+        'motivo': 'projeção para a camada estratégica falhou: $e',
+        'evidencia': {'erro': '$e'},
+      };
+      return null;
+    }
+  }
+
+  /// OS BOT-IA V1 — registra o rastro da decisão e, se houver, o IMPASSE.
+  /// O impasse NUNCA é silencioso: fica no `Jogo`, observável e testável.
+  void _registrarDecisaoBot(DecisaoBot d) {
+    ultimaDecisaoBot = d.toJson();
+    if (d.impasse) {
+      impassesEstrategicos.add({
+        'razao': d.razao,
+        'diagnostico': d.diagnosticoImpasse,
+        'rodada': rodada,
+      });
+    }
+  }
+
+  // ROBÔ — sob AUTORIDADE CANÔNICA o turno é decidido pela camada estratégica
+  // (`lib/bot/`): observa por uma visão mascarada, gera PLANOS COMPLETOS de
+  // turno, pontua e escolhe UMA intenção. Sob rollback legado continua valendo
+  // o robô guloso de sempre (`_botJogaLegado`), que é o que o rollback existe
+  // para preservar.
   void botJoga(int assento) {
     if (integridadeErro != null) return; // partida bloqueada p/ auditoria
     if (rodadaEncerrada || vez != assento) return;
+    // C10 (rev.1) — marca de FAIL-CLOSED: qualquer falha técnica daqui em diante
+    // encerra o turno do robô na hora, sem segunda transação.
+    final marca = falhasTecnicas;
+    if (motorConfig.canonicoAtivo) {
+      _botJogaEstrategico(assento, marca);
+      return;
+    }
+    _botJogaLegado(assento, marca);
+  }
+
+  /// OS BOT-IA V1 — turno do robô sob a autoridade canônica.
+  ///
+  /// Estrutura: COMPRA decidida na visão pública (sem simular carta que ainda
+  /// não é conhecida), depois um laço de JOGO que aplica o plano vencedor e
+  /// REAVALIA do zero sempre que a mão troca — que é o caso do morto (§6/§11).
+  ///
+  /// O fail-closed do C10 continua inteiro: a primeira falha TÉCNICA encerra o
+  /// turno sem segunda transação, e nada aqui muta estado por fora do motor.
+  void _botJogaEstrategico(int assento, int marca) {
+    final executor = ExecutorBot(specCanonica, cfg: configuracaoBot);
+
+    // ---------- 1) COMPRA ----------
+    if (!jaComprou) {
+      final estado = _projetarParaBot('botJoga:compra');
+      if (estado == null) return;
+      final cands = specCanonica.exigeUsoDoTopoNoLixo
+          ? candidatosCompraLixo(assento)
+          : const <ComprarLixo>[];
+      final d = executor.decidirCompra(estado, assento, candidatosLixo: cands);
+      _registrarDecisaoBot(d);
+      final escolha = d.acoes.isEmpty ? const ComprarMonte() : d.acoes.first;
+      if (escolha is ComprarLixo) {
+        final r = (escolha.jogosNovos.isEmpty && escolha.extensoes.isEmpty)
+            ? comprarLixo(assento, modalidade: modalidade)
+            : comprarLixoAtomico(assento, escolha);
+        // C10 (rev.1) FAIL-CLOSED: falha técnica no lixo NÃO vira compra do
+        // monte. O motor quebrou; a segunda transação está proibida.
+        if (_botFalhouTecnicamente(marca)) return;
+        if (r['ok'] != true) {
+          // Recusa de REGRA: a intenção morreu, mas comprar é obrigatório para
+          // o turno existir. O monte é a outra alternativa legal, não um atalho.
+          comprarMonte(assento);
+          if (_botFalhouTecnicamente(marca)) return;
+        }
+      } else {
+        comprarMonte(assento);
+        if (_botFalhouTecnicamente(marca)) return;
+      }
+    }
+    if (rodadaEncerrada) return;
+
+    // ---------- 2) JOGO ----------
+    // O laço só dá outra volta quando a MÃO TROCA (morto pego) ou quando a
+    // autoridade recusa a intenção por regra — nos dois casos o certo é
+    // reavaliar, não insistir. O teto existe para o turno não girar.
+    const maxVoltas = 8;
+    for (var volta = 0; volta < maxVoltas; volta++) {
+      if (rodadaEncerrada || vez != assento) return;
+      if (maos[assento].isEmpty) {
+        _botMaoVaziaSemSaida(assento);
+        return;
+      }
+      final estado = _projetarParaBot('botJoga:jogo');
+      if (estado == null) return;
+      final d = executor.decidirJogo(estado, assento);
+      _registrarDecisaoBot(d);
+      if (d.vazia) return; // §9 fail-safe: sem plano, o robô não inventa jogada
+      final dupla = _duplaKey(assento);
+      final plano = d.plano;
+
+      if (plano?.baixada != null) {
+        final b = plano!.baixada!;
+        final mortoAntes = mortoPego[dupla] ?? false;
+        final r = baixarAtomico(
+          assento,
+          jogosNovos: [for (final j in b.jogosNovos) [...j]],
+          extensoes: b.extensoes,
+          rotulo: b.jogosNovos.isEmpty ? 'estender' : 'baixar',
+        );
+        if (_botFalhouTecnicamente(marca)) return;
+        if (r['ok'] != true) continue; // recusa de REGRA: reavalia, não insiste
+        if (rodadaEncerrada) return;
+        // §11 — a mão trocou pelo morto: o plano anterior não vale mais.
+        if ((mortoPego[dupla] ?? false) != mortoAntes) continue;
+        if (maos[assento].isEmpty) {
+          _botMaoVaziaSemSaida(assento);
+          return;
+        }
+      }
+
+      final descarte = plano?.descarte ?? _primeiroDescarteDe(d);
+      if (descarte == null) return;
+      final erro = descartar(assento, descarte.carta);
+      if (_botFalhouTecnicamente(marca)) return;
+      if (erro == null) return; // descartou: o turno acabou
+      // Recusa de REGRA no descarte: reavalia com o estado atual em vez de
+      // varrer a mão às cegas (era assim que o robô antigo "encontrava" carta).
+    }
+  }
+
+  /// Primeiro `Descartar` das ações da decisão (defesa; o plano já traz o seu).
+  Descartar? _primeiroDescarteDe(DecisaoBot d) {
+    for (final a in d.acoes) {
+      if (a is Descartar) return a;
+    }
+    return null;
+  }
+
+  // ROBÔ LEGADO (fatia 3): compra (lixo se valer, senão monte), BAIXA os jogos
+  // possíveis, ESTENDE cartas soltas, FECHA (morto/batida) quando vale, e
+  // descarta com critério. Alcançável SOMENTE por `MotorConfig.legadoRollback()`
+  // — é o robô que o rollback preserva, e por isso não recebeu a camada nova.
+  void _botJogaLegado(int assento, int marca) {
     if (!jaComprou) {
       // Compra inteligente: tenta o lixo quando o topo é útil; senão, o monte.
       // A LEGALIDADE (compra justificada no Fechado/SBTL, §5.3) é do motor:
@@ -1140,16 +1911,18 @@ class Jogo {
         comprarMonte(assento);
       }
     }
+    if (_botFalhouTecnicamente(marca)) return; // fail-closed: nem tenta o resto
     if (rodadaEncerrada) return;
     final dupla = _duplaKey(assento);
 
-    // 1) baixa os jogos que dá (baixar() já respeita a trava/validade)
+    // 1b) baixa os jogos que dá (baixar() já respeita a trava/validade)
     final grupos = _agruparMao(maos[assento], false)['jogos'] as List<List<Carta>>;
     for (final g in grupos) {
       if (rodadaEncerrada) break;
       if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue; // mão mudou (pegou morto)
       if (!_baixadaSeguraParaZerar(assento, g)) continue; // nunca zerar ilegal (mão vazia travada)
       baixar(assento, g.map((c) => c.id).toList());
+      if (_botFalhouTecnicamente(marca)) return; // não tenta outro grupo
     }
 
     // 2) estende cartas soltas nos jogos da dupla
@@ -1170,7 +1943,13 @@ class Jogo {
           achou = c;
           break;
         }
-        if (achou != null && estender(assento, i, [achou.id])['ok'] == true) { progrediu = true; break; }
+        if (achou == null) continue;
+        final r = estender(assento, i, [achou.id]);
+        if (_botFalhouTecnicamente(marca)) return; // não tenta outra extensão
+        if (r['ok'] == true) {
+          progrediu = true;
+          break;
+        }
       }
     }
 
@@ -1185,7 +1964,12 @@ class Jogo {
         for (final g in fecha) {
           if (!g.every((c) => maos[assento].any((m) => m.id == c.id))) continue;
           if (!_baixadaSeguraParaZerar(assento, g)) continue;
-          if (baixar(assento, g.map((c) => c.id).toList())['ok'] == true) { fechando = true; break; }
+          final r = baixar(assento, g.map((c) => c.id).toList());
+          if (_botFalhouTecnicamente(marca)) return; // não tenta outro grupo
+          if (r['ok'] == true) {
+            fechando = true;
+            break;
+          }
         }
       }
     }
@@ -1193,15 +1977,20 @@ class Jogo {
     if (rodadaEncerrada) return;
     if (maos[assento].isEmpty) {
       // Rede de segurança: mão vazia sem bater não deveria ocorrer (as travas
-      // acima evitam). Se ocorrer, passa a vez pra NUNCA travar o loop dos robôs.
-      if (vez == assento) _passarVez();
+      // acima evitam). No legado, passa a vez pra não travar o loop dos robôs;
+      // sob autoridade canônica isso é impossível — ver `_botMaoVaziaSemSaida`.
+      _botMaoVaziaSemSaida(assento);
       return;
     }
 
-    // 2.7) OBRIGAÇÃO DO TOPO (§5.3 Fechado/SBTL): se o robô pegou o lixo e o
-    // topo ainda está na mão, ele PRECISA usá-lo (estender ou baixar) antes de
-    // descartar — mesma regra dos humanos.
-    if (lixoTopoObrigatorio != null &&
+    // 2.7) OBRIGAÇÃO DO TOPO (§5.3 Fechado/SBTL) — bloco LEGADO.
+    // Sob autoridade canônica (C10) esta pendência NÃO nasce: a compra do lixo
+    // no Fechado/STBL é ATÔMICA, o topo já foi usado no mesmo commit e
+    // `lixoTopoObrigatorio` permanece nulo a rodada inteira. O bloco fica
+    // reservado ao rollback legado — sob o canônico ele burlaria a autoridade
+    // (a rede de segurança abaixo LIMPA a obrigação mutando o envelope direto).
+    if (!motorConfig.canonicoAtivo &&
+        lixoTopoObrigatorio != null &&
         maos[assento].any((c) => c.id == lixoTopoObrigatorio)) {
       final topoId = lixoTopoObrigatorio!;
       var usou = false;
@@ -1228,7 +2017,7 @@ class Jogo {
     }
     if (rodadaEncerrada) return;
     if (maos[assento].isEmpty) {
-      if (vez == assento) _passarVez();
+      _botMaoVaziaSemSaida(assento);
       return;
     }
 
@@ -1236,8 +2025,13 @@ class Jogo {
     final adv = jogosDupla[dupla == 'nos' ? 'eles' : 'nos']!;
     final alvo = _decidirDescarte(maos[assento], adv);
     if (descartar(assento, alvo.id) != null) {
+      // Falha TÉCNICA no descarte: não varre as outras cartas — o motor acabou
+      // de quebrar, e insistir é exatamente o que o fail-closed proíbe. Recusa
+      // de REGRA, sim, pode ser contornada com outra carta.
+      if (_botFalhouTecnicamente(marca)) return;
       for (final c in maos[assento].toList()) {
         if (descartar(assento, c.id) == null) return;
+        if (_botFalhouTecnicamente(marca)) return;
       }
     }
   }
@@ -1356,6 +2150,20 @@ class MesaScreen extends StatefulWidget {
   /// espectadores, codigo da sala), que sobrepoe os parametros soltos.
   final MesaRendererContract? renderer;
 
+  /// C10 — ROLLBACK explícito e PRÉ-TRANSAÇÃO do motor da partida LOCAL.
+  /// `null` (padrão) = a partida NASCE em `MotorConfig.producao()` (autoridade
+  /// canônica ON). O único caminho para o legado é passar aqui, ANTES da
+  /// partida, `MotorConfig.legadoRollback()` — nunca por jogada, nunca por
+  /// recusa de regra, nunca por falha técnica.
+  final MotorConfig? motorConfig;
+
+  /// Configuração EFETIVA do motor desta mesa — a MESMA expressão que o ROOT
+  /// usa para nascer. Pública para que o portão de qualidade prove o padrão
+  /// (produção) sem precisar montar a tela inteira: o teste de widget exigiria
+  /// os assets do baralho declarados no pubspec, o que no CI só acontece
+  /// DEPOIS do portão.
+  MotorConfig get configEfetivaDoMotor => motorConfig ?? MotorConfig.producao();
+
   const MesaScreen({
     super.key,
     this.variant = MesaVariant.vip,
@@ -1365,6 +2173,7 @@ class MesaScreen extends StatefulWidget {
     this.vulnerabilidadeNos,
     this.vulnerabilidadeEles,
     this.renderer,
+    this.motorConfig,
   });
 
   @override
@@ -1378,6 +2187,16 @@ class _MesaScreenState extends State<MesaScreen> {
   final ScrollController _discardScroll = ScrollController();
 
   bool _botsRodando = false;
+
+  /// C10 (rev.2) — a mesa está ocupada por uma derivação combinatória (uso do
+  /// topo do lixo OU partição da seleção) ou por uma escolha humana pendente.
+  /// O nome antigo (`_derivandoLixo`) descrevia só metade dos casos desde que a
+  /// abertura múltipla passou a derivar também.
+  ///
+  /// Espelha `Jogo.mesaOcupadaPorDerivacao`, que é a trava de verdade: esta aqui
+  /// serve para a tela reagir (desabilitar o toque, sinalizar espera). A recusa
+  /// não depende dela — depende do modelo.
+  bool _mesaOcupadaPorDerivacao = false;
   bool _soundEnabled = true;
   int _partidaSeq = 0;
   MesaOrientacaoPreferida _orientacao = MesaOrientationService.instance.atual;
@@ -1434,14 +2253,26 @@ class _MesaScreenState extends State<MesaScreen> {
     return dupla == 'nos' ? widget.vulnerabilidadeNos : widget.vulnerabilidadeEles;
   }
 
+  /// C10 (rev.2) — GUARDA ÚNICA das entradas humanas mutantes da mesa (monte,
+  /// lixo, baixar, estender) e da jogada automática. A rev.1 espalhava
+  /// `_derivandoLixo` por alguns pontos e esquecia outros; agora a condição de
+  /// "posso agir" mora num lugar só.
   bool get _minhaVezAtiva =>
-      _j.suaVez && !_j.rodadaEncerrada && !_botsRodando;
+      _j.suaVez &&
+      !_j.rodadaEncerrada &&
+      !_botsRodando &&
+      !_mesaOcupadaPorDerivacao;
 
+  /// C10 — ROOT da partida LOCAL. A partida NASCE canônica: a autoridade é do
+  /// `RulesEngine` desde a primeira jogada. O rollback é CONFIGURAÇÃO, escolhida
+  /// aqui (`widget.motorConfig = MotorConfig.legadoRollback()`) antes de existir
+  /// qualquer transação — jamais um fallback disparado no meio da partida.
   Jogo _novoJogo() {
     final jogo = Jogo(
       const ['você', 'Cláudia', 'Mateus', 'Sofia'],
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
+      motorConfig: widget.configEfetivaDoMotor,
     );
     jogo.metaPontos = _metaPontos;
     jogo.modalidade = _modalidade;
@@ -1562,6 +2393,11 @@ class _MesaScreenState extends State<MesaScreen> {
 
   void _startTurnClock() {
     _turnTimer?.cancel();
+    // C10 (rev.3) — depois de uma pausa técnica o relógio não volta a rodar.
+    if (_j.pausadaPorFalhaTecnica) {
+      _turnTimer = null;
+      return;
+    }
     _turnTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       if (_j.rodadaEncerrada) return;
@@ -1572,6 +2408,10 @@ class _MesaScreenState extends State<MesaScreen> {
         });
         return;
       }
+      // C10 (rev.3) — pausa TÉCNICA: o relógio não volta a disparar a jogada
+      // automática. A trava de estado é `_j.pausadaPorFalhaTecnica`; esta
+      // checagem só evita o tick inútil (o timer já foi cancelado na parada).
+      if (_j.pausadaPorFalhaTecnica) return;
       if (_turnSeconds > 0) {
         setState(() => _turnSeconds -= 1);
       } else {
@@ -1583,24 +2423,54 @@ class _MesaScreenState extends State<MesaScreen> {
     });
   }
 
-  // Jogada automática quando o cronômetro zera na vez do humano.
+  /// Jogada automática quando o cronômetro zera na vez do humano.
+  ///
+  /// C10 (rev.2) — FAIL-CLOSED, pela MESMA noção monotônica que o robô usa. A
+  /// rev.1 corrigiu o robô e esqueceu deste caminho: ele comprava o monte,
+  /// falhava tecnicamente e mesmo assim varria a mão inteira tentando descartar,
+  /// e no fim chamava `_rodarBots` como se o turno tivesse terminado normalmente.
+  ///
+  /// Agora, na primeira falha técnica: para na hora, NÃO tenta outra carta, NÃO
+  /// passa a vez para os robôs e diz o que aconteceu. A evidência
+  /// (`ultimaFalhaTecnica`) fica preservada para diagnóstico.
   void _autoJogarPorTempo() {
     if (_j.vez != 0 || _j.rodadaEncerrada || _botsRodando) return;
-    if (!_j.jaComprou) {
-      _j.comprarMonte(0);
-      _j.ordenar(0);
-    }
-    if (_j.jaComprou && !_j.rodadaEncerrada) {
-      for (final c in List<Carta>.from(_j.maos[0])) {
-        if (_j.descartar(0, c.id) == null) break;
-      }
-    }
+    // Não atropela derivação nem escolha humana em andamento.
+    if (_mesaOcupadaPorDerivacao) return;
+    // C10 (rev.3) — já pausada por falha técnica: nem tenta.
+    if (_j.pausadaPorFalhaTecnica) return;
+
+    final marca = _j.falhasTecnicas;
+    final concluiu = _j.jogadaAutomatica(0);
+    // Falha técnica: para aqui. Não passa a vez para os robôs e não finge que o
+    // turno automático terminou. A evidência está em `_j.ultimaFalhaTecnica`.
+    if (_j.falhasTecnicas != marca) return _pararPorFalhaTecnica();
+    if (!concluiu) return;
     _sel.clear();
     _msg = 'Tempo esgotado — jogada automática.';
     if (_j.rodadaEncerrada) _j.contarPontos();
     if (mounted) setState(() {});
     _scrollDiscardToEnd();
     _rodarBots();
+  }
+
+  /// C10 (rev.3) — parada EFETIVA da jogada automática por falha técnica.
+  ///
+  /// A rev.2 só exibia `PARTIDA PAUSADA`: o `Timer.periodic` continuava vivo com
+  /// `_turnSeconds == 0`, e o tick seguinte chamava tudo de novo — nova compra,
+  /// novo descarte, nova falha. A mensagem não correspondia ao estado do fluxo.
+  ///
+  /// Agora a pausa é real em duas camadas: `Jogo.pausadaPorFalhaTecnica` (a
+  /// trava de estado, que `jogadaAutomatica` respeita venha de onde vier) e o
+  /// cancelamento do relógio (que evita até o tick inútil). A vez continua onde
+  /// está, os robôs NÃO são acionados e `ultimaFalhaTecnica` é preservada.
+  void _pararPorFalhaTecnica() {
+    _j.pausadaPorFalhaTecnica = true; // redundante com o modelo, e explícito
+    _turnTimer?.cancel();
+    _turnTimer = null;
+    if (!mounted) return;
+    setState(() => _msg = 'PARTIDA PAUSADA · falha técnica do motor na jogada '
+        'automática; nada foi alterado.');
   }
 
   void _syncTurnClock({bool force = false}) {
@@ -1706,9 +2576,21 @@ class _MesaScreenState extends State<MesaScreen> {
   }
 
   void _tapMonte() {
-    if (!_minhaVezAtiva || _j.jaComprou) return;
+    if (!_minhaVezAtiva || _j.jaComprou) return; // guarda única
     final antes = _j.maos[0].map((c) => c.id).toSet();
-    if (!_j.comprarMonte(0)) return;
+    final ok = _j.comprarMonte(0);
+    // C10 — EXAUSTÃO (monte E mortos vazios): sob a autoridade canônica a
+    // compra é uma transição LEGAL que ENCERRA a rodada sem carta comprada.
+    // O consumidor precisa fechar a contagem, senão a rodada morre sem placar.
+    if (_j.rodadaEncerrada) {
+      _j.contarPontos();
+      setState(() {
+        _msg = 'Acabaram as cartas: a rodada encerrou.';
+        _syncTurnClock();
+      });
+      return;
+    }
+    if (!ok) return;
     _j.ordenar(0);
     final novos = _j.maos[0]
         .where((c) => !antes.contains(c.id))
@@ -1718,24 +2600,143 @@ class _MesaScreenState extends State<MesaScreen> {
     _somCompra();
   }
 
-  Future<void> _tapLixo() async {
-    if (!_minhaVezAtiva) return;
-    if (!_j.jaComprou) {
-      final antes = _j.maos[0].map((c) => c.id).toSet();
-      final resultado = _j.comprarLixo(0, modalidade: _modalidade);
-      if (resultado['ok'] != true) {
-        setState(() => _msg = resultado['erro'] as String?);
-        _somErro();
-        return;
+  /// C10 — COMPRA do lixo no consumidor real, sob o contrato ATÔMICO.
+  ///
+  /// Aberto: compra livre. Fechado/STBL: os candidatos vêm da autoridade
+  /// canônica e o consumidor aplica 0 -> recusa / 1 -> executa / 2+ -> o
+  /// JOGADOR escolhe. Nunca compra "para a mão" com a obrigação do topo
+  /// pendente — esse era o comportamento diferido do legado.
+  ///
+  /// RESPONSIVIDADE (rev.2): a derivação roda em OUTRO ISOLATE (`compute`) nas
+  /// plataformas nativas; na web cai no mesmo event loop, porque lá não existem
+  /// isolates. Nos dois casos o conjunto de candidatos LEGAIS é idêntico — não
+  /// há teto, amostragem nem corte semântico para "ficar rápido".
+  Future<void> _comprarLixoNoToque() async {
+    if (_mesaOcupadaPorDerivacao) return; // reentrância: um toque por vez
+    final antes = _j.maos[0].map((c) => c.id).toSet();
+
+    final Map<String, dynamic> resultado;
+    if (!_j.specCanonica.exigeUsoDoTopoNoLixo) {
+      resultado = _j.comprarLixo(0, modalidade: _modalidade);
+    } else {
+      try {
+        final cands = await _derivarForaDoFrame(
+          () => candidatosLixoForaDoFrame(ArgsCandidatosLixo(
+              paraCanonico(_j).canonico, 0, _j.specCanonica)),
+          aviso: 'Conferindo os usos do topo…',
+          manterOcupado: true,
+        );
+        if (!mounted) return;
+        if (cands.isEmpty) {
+          // C10 (rev.1): NÃO chama `comprarLixo`, que derivaria tudo de novo só
+          // para descobrir que não há candidato. A recusa é montada a partir do
+          // resultado que já temos.
+          resultado = {'ok': false, 'erro': _j.erroLixoSemUsoDoTopo};
+        } else if (cands.length == 1) {
+          _liberarMesa(); // libera ANTES de aplicar: a trava recusaria a jogada
+          resultado = _j.comprarLixoAtomico(0, cands.single);
+        } else {
+          // A mesa continua OCUPADA enquanto o seletor está aberto — é o que
+          // impede qualquer jogada (inclusive a automática do cronômetro) de
+          // mexer no estado por baixo da escolha do jogador.
+          final escolha = await _escolherCompraLixo(cands);
+          if (!mounted) return;
+          if (escolha == null) return; // desistiu: nada acontece
+          _liberarMesa();
+          resultado = _j.comprarLixoAtomico(0, escolha);
+        }
+      } finally {
+        _liberarMesa();
       }
-      _j.ordenar(0);
-      final novos = _j.maos[0]
-          .where((c) => !antes.contains(c.id))
-          .map((c) => c.id)
-          .toSet();
-      _sel.clear();
-      _mostrarCompra(novos, 'lixo');
+    }
+
+    if (resultado['ok'] != true) {
+      setState(() => _msg = resultado['erro'] as String?);
+      _somErro();
+      return;
+    }
+    _j.ordenar(0);
+    final novos = _j.maos[0]
+        .where((c) => !antes.contains(c.id))
+        .map((c) => c.id)
+        .toSet();
+    _sel.clear();
+    _mostrarCompra(novos, 'lixo');
+    // A compra ATÔMICA pode ter baixado/estendido, virado canastra, pego o
+    // morto ou até batido no mesmo commit — o feedback segue o desfecho real.
+    final tipo = resultado['tipo'] as String?;
+    final novaCanastra = tipo != null && tipo != 'aberta';
+    if (resultado['bateu'] == true ||
+        resultado['pegouMorto'] == true ||
+        novaCanastra) {
+      _somJogada(resultado, novaCanastra: novaCanastra);
+    } else {
       _somCompra();
+    }
+    if (_j.rodadaEncerrada) _j.contarPontos();
+    setState(() {
+      _msg = resultado['bateu'] == true
+          ? 'Você bateu!'
+          : (resultado['pegouMorto'] == true ? 'Você pegou o morto.' : null);
+      _syncTurnClock();
+    });
+  }
+
+  /// C10 (rev.2) — OCUPA a mesa (modelo + tela) e sinaliza a espera pelo canal
+  /// de mensagem que já existe — nenhum elemento novo entra no layout aprovado.
+  void _ocuparMesa(String aviso) {
+    _j.mesaOcupadaPorDerivacao = true; // trava de verdade: recusa no modelo
+    setState(() {
+      _mesaOcupadaPorDerivacao = true; // espelho: a tela reage
+      _msg = aviso;
+    });
+  }
+
+  /// LIBERA a mesa. Chamado no fim da derivação e, obrigatoriamente, ANTES de
+  /// aplicar a jogada escolhida — terminada a escolha, a janela de risco acabou
+  /// e a transação é síncrona.
+  void _liberarMesa({String? avisoAtual}) {
+    _j.mesaOcupadaPorDerivacao = false;
+    if (!mounted) return;
+    setState(() {
+      _mesaOcupadaPorDerivacao = false;
+      if (avisoAtual != null && _msg == avisoAtual) _msg = null;
+    });
+  }
+
+  /// C10 (rev.2) — roda uma derivação combinatória em OUTRO ISOLATE (`compute`,
+  /// ver `motor/derivacao_fora_do_frame.dart`) com a mesa ocupada.
+  ///
+  /// Em plataformas nativas a travessia roda mesmo fora do isolate de UI, e o
+  /// frame corre solto. Na WEB não há isolates: `compute` cai no mesmo event
+  /// loop e a espera aparece — degradação honesta, não contorno. Em nenhum dos
+  /// dois casos o conjunto de resultados muda: não há teto de cartas,
+  /// candidatos, melds nem tempo.
+  ///
+  /// `manterOcupado` deixa a mesa ocupada depois do retorno — usado quando um
+  /// seletor vai abrir em seguida e o estado não pode mudar por baixo dele;
+  /// nesse caso quem chama é responsável por chamar `_liberarMesa`.
+  Future<T> _derivarForaDoFrame<T>(
+    Future<T> Function() tarefa, {
+    required String aviso,
+    bool manterOcupado = false,
+  }) async {
+    _ocuparMesa(aviso);
+    try {
+      return await tarefa();
+    } finally {
+      if (!manterOcupado) {
+        _liberarMesa(avisoAtual: aviso);
+      } else if (mounted && _msg == aviso) {
+        setState(() => _msg = null);
+      }
+    }
+  }
+
+  Future<void> _tapLixo() async {
+    if (!_minhaVezAtiva) return; // guarda única
+    if (!_j.jaComprou) {
+      await _comprarLixoNoToque();
       return;
     }
 
@@ -1771,8 +2772,18 @@ class _MesaScreenState extends State<MesaScreen> {
     await _rodarBots();
   }
 
-  void _baixar() {
-    if (!_minhaVezAtiva || !_j.jaComprou) return;
+  /// C10 (rev.1) — BAIXAR pelo gesto aprovado, agora com abertura MÚLTIPLA.
+  ///
+  /// O gesto é o mesmo de sempre: seleciona as cartas, toca no feltro. O que
+  /// mudou é a interpretação — a autoridade deriva todas as maneiras legais de
+  /// repartir EXATAMENTE aquela seleção em jogos. 0 → recusa; 1 → executa;
+  /// 2+ → o jogador escolhe. Seleção de um meld só continua dando uma partição,
+  /// então o comportamento do gesto de sempre não mudou.
+  ///
+  /// É assim que a dupla vulnerável abre quando o mínimo depende da SOMA dos
+  /// jogos: ela seleciona as cartas dos dois (ou três) jogos de uma vez.
+  Future<void> _baixar() async {
+    if (!_minhaVezAtiva || !_j.jaComprou) return; // guarda única
     if (_sel.length < 3) {
       setState(() => _msg =
           'Selecione três ou mais cartas e toque no feltro para baixar.');
@@ -1780,7 +2791,38 @@ class _MesaScreenState extends State<MesaScreen> {
     }
     final novoIndice = _j.jogosDupla['nos']!.length;
     final ids = _sel.map((i) => _j.maos[0][i].id).toList();
-    final resultado = _j.baixar(0, ids);
+
+    final Map<String, dynamic> resultado;
+    try {
+      final particoes = await _derivarForaDoFrame(
+        () => particoesForaDoFrame(ArgsParticoes(
+            paraCanonico(_j).canonico, 0, _j.specCanonica, ids)),
+        aviso: 'Conferindo as formas de baixar…',
+        manterOcupado: true,
+      );
+      if (!mounted) return;
+      if (particoes.isEmpty) {
+        // Nenhuma partição legal. A MENSAGEM vem da autoridade, pela baixada
+        // simples — é ela que sabe dizer se o problema é o meld, o mínimo de
+        // vulnerabilidade ou a trava de esvaziar a mão. Isso NÃO regenera
+        // partições: `baixar` faz uma transação canônica direta.
+        _liberarMesa(); // libera ANTES de aplicar: a trava recusaria a jogada
+        resultado = _j.baixar(0, ids);
+      } else if (particoes.length == 1) {
+        _liberarMesa();
+        resultado = _j.baixarAtomico(0, jogosNovos: particoes.single.jogosNovos);
+      } else {
+        // Mesa OCUPADA enquanto o seletor está aberto.
+        final escolha = await _escolherParticao(particoes);
+        if (!mounted) return;
+        if (escolha == null) return; // desistiu: nada acontece
+        _liberarMesa();
+        resultado = _j.baixarAtomico(0, jogosNovos: escolha.jogosNovos);
+      }
+    } finally {
+      _liberarMesa();
+    }
+
     if (resultado['ok'] != true) {
       setState(() => _msg = resultado['erro'] as String?);
       _somErro();
@@ -1794,11 +2836,12 @@ class _MesaScreenState extends State<MesaScreen> {
     if (_j.rodadaEncerrada) _j.contarPontos();
     setState(() {
       _sel.clear();
+      final n = (resultado['tipos'] as List?)?.length ?? 1;
       _msg = resultado['bateu'] == true
           ? 'Você bateu!'
           : (resultado['pegouMorto'] == true
               ? 'Você pegou o morto.'
-              : 'Jogo baixado.');
+              : (n > 1 ? '$n jogos baixados.' : 'Jogo baixado.'));
     });
   }
 
@@ -1819,7 +2862,13 @@ class _MesaScreenState extends State<MesaScreen> {
       return;
     }
     _j.ordenar(0);
-    final sashDepois = _sashDeMeld(jogos[indiceJogo]);
+    // C10 — sob autoridade canônica o commit REATRIBUI `jogosDupla`; a lista
+    // capturada antes da jogada ficou obsoleta. Reler é obrigatório, senão a
+    // tarja/celebração leem o PRÉ-estado e nunca disparam.
+    final jogosPos = _j.jogosDupla['nos']!;
+    final sashDepois = indiceJogo < jogosPos.length
+        ? _sashDeMeld(jogosPos[indiceJogo])
+        : Sash.nenhuma;
     final novaCanastra =
         sashDepois != Sash.nenhuma && sashDepois != sashAntes;
     _somJogada(resultado, novaCanastra: novaCanastra);
@@ -1837,6 +2886,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Future<void> _rodarBots() async {
     _botsRodando = true;
+    String? travou;
     while (_j.vez != 0 && !_j.rodadaEncerrada && _j.integridadeErro == null) {
       await Future.delayed(const Duration(milliseconds: 650));
       // Sair da mesa encerra o turno dos robos. Sem esta saida o laco seguia
@@ -1846,13 +2896,27 @@ class _MesaScreenState extends State<MesaScreen> {
         _botsRodando = false;
         return;
       }
+      final vezAntes = _j.vez;
       _j.botJoga(_j.vez);
+      // C10 — GUARDA DE PROGRESSO. Sob autoridade única o robô não pode mais
+      // "destravar" o turno mutando o estado por fora (`_passarVez` direto);
+      // então, se um turno terminar sem a vez avançar nem a rodada encerrar, o
+      // laço PARA aqui em vez de girar para sempre. Não é um caminho de regra:
+      // é a rede que substitui a mutação ilegal por uma parada visível.
+      if (_j.vez == vezAntes && !_j.rodadaEncerrada) {
+        travou = 'o robô do assento $vezAntes não conseguiu concluir o turno';
+        break;
+      }
       _somCarta();
       _syncTurnClock();
       _scrollDiscardToEnd();
       if (mounted) setState(() {});
     }
     _botsRodando = false;
+    if (travou != null && mounted) {
+      setState(() => _msg = 'PARTIDA PAUSADA · $travou');
+      return;
+    }
     if (_j.integridadeErro != null && mounted) {
       // Integridade violada: preserva o estado, bloqueia a partida e mostra
       // o código auditável (nunca tenta "consertar" inventando carta).
@@ -1870,9 +2934,15 @@ class _MesaScreenState extends State<MesaScreen> {
   Sash _sashDeMeld(List<Carta> cartas) {
     if (cartas.length < 7) return Sash.nenhuma;
     // Validador por modalidade: no Fechado a trinca-canastra também ganha tarja.
-    final resultado = _j._validarJogoMesa(cartas);
-    if (resultado['valido'] != true) return Sash.nenhuma;
-    switch (resultado['tipo']) {
+    // C10 — sob autoridade canônica quem classifica é o motor canônico, o mesmo
+    // que pontua no fim da rodada: a tarja nunca discorda do placar.
+    final tipo = _j.motorConfig.canonicoAtivo
+        ? tipoCanonicoDeMeld(cartas, _j.specCanonica)
+        : (_j._validarJogoMesa(cartas)['valido'] == true
+            ? _j._validarJogoMesa(cartas)['tipo'] as String?
+            : null);
+    if (tipo == null) return Sash.nenhuma;
+    switch (tipo) {
       case 'limpa':
         return Sash.limpa;
       case 'suja':
@@ -2151,7 +3221,7 @@ class _MesaScreenState extends State<MesaScreen> {
                           style: TextStyle(color: _mPurpleHi),
                         ),
                         TextSpan(
-                          text: '${_j.placar['nos']}',
+                          text: '${_j.placar['nos']! + _j.pontosMesaAoVivo('nos')}',
                           style: const TextStyle(color: Colors.white),
                         ),
                         const TextSpan(
@@ -2159,7 +3229,7 @@ class _MesaScreenState extends State<MesaScreen> {
                           style: TextStyle(color: Color(0xFFF1C15B)),
                         ),
                         TextSpan(
-                          text: '${_j.placar['eles']}',
+                          text: '${_j.placar['eles']! + _j.pontosMesaAoVivo('eles')}',
                           style: const TextStyle(color: Colors.white),
                         ),
                       ],
@@ -2179,10 +3249,16 @@ class _MesaScreenState extends State<MesaScreen> {
       builder: (context, constraints) {
         // Núcleo central deliberadamente compacto. A altura economizada é
         // devolvida principalmente à área de jogos da dupla de baixo.
-        const centralHeight = 118.0;
+        // UNIÃO DE DUAS APROVAÇÕES VISUAIS, e vale dizer qual é qual: os
+        // valores de RETRATO (104/170) vêm do ajuste "lados iguais, centro
+        // menor, HUD compacto" da linhagem do motor canônico, que os mediu
+        // contra a base 118/180; a variante DEITADA (126) vem do Fluxo de
+        // Mesas, que a base não tinha. Nenhuma das duas foi inventada aqui —
+        // a composição só deixou de escolher uma e descartar a outra.
+        const centralHeight = 104.0; // núcleo mais compacto (centro menor)
         // Deitado o rodapé poe a identidade do jogador ao lado da mão em vez de
         // acima dela, e por isso precisa de menos altura que em retrato.
-        final double playerDockHeight = horizontal ? 126.0 : 180.0;
+        final double playerDockHeight = horizontal ? 126.0 : 170.0;
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
           padding: const EdgeInsets.all(2),
@@ -2218,8 +3294,11 @@ class _MesaScreenState extends State<MesaScreen> {
                         )
                       : Column(
                           children: [
+                            // `flex: 12` dos DOIS lados — o "lados iguais" da
+                            // linhagem do motor canônico. A base tinha 11 em
+                            // cima e 12 embaixo, e a assimetria era o defeito.
                             Expanded(
-                              flex: 11,
+                              flex: 12,
                               child: _meldArea('eles', top: true),
                             ),
                             SizedBox(
@@ -2263,11 +3342,11 @@ class _MesaScreenState extends State<MesaScreen> {
                   child: _playerDock(horizontal: horizontal),
                 ),
                 if (_msg != null)
-                  Positioned(
-                    left: 74,
-                    right: 74,
-                    bottom: playerDockHeight + 5,
-                    child: _feedbackToast(),
+                  Positioned.fill(
+                    child: Align(
+                      alignment: const Alignment(0, -0.12),
+                      child: _feedbackToast(),
+                    ),
                   ),
                 if (_j.rodadaEncerrada)
                   Positioned.fill(child: _overlayFimRodada()),
@@ -2351,8 +3430,9 @@ class _MesaScreenState extends State<MesaScreen> {
                           )
                         : const SizedBox.shrink())
                     : SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(0, 28, 0, 2),
+                        padding: const EdgeInsets.fromLTRB(0, 28, 0, 12),
                         physics: const BouncingScrollPhysics(),
+                        clipBehavior: Clip.hardEdge,
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
                             minWidth: larguraUtil,
@@ -2452,37 +3532,53 @@ class _MesaScreenState extends State<MesaScreen> {
   // reordena por índice original pra manter a leitura estável.
   Widget _packedMelds(String dupla, List<List<Carta>> jogos, double larguraUtil) {
     const double cardWidth = 66.0; // igual ao _meldWidget
-    const double step = 13.0;
-    const double spacing = 6.0;
+    const double step = 20.0; // desloc. horizontal maior: índice+naipe visíveis
+    const double spacing = 12.0; // P0-A: gap entre melds distintos (com divisor discreto)
     const double runSpacing = 6.0;
     double larguraJogo(List<Carta> m) =>
         cardWidth + (m.length - 1).clamp(0, 999) * step;
 
-    // índices ordenados por largura decrescente (FFD)
-    final ordem = [for (var i = 0; i < jogos.length; i++) i]
-      ..sort((a, b) => larguraJogo(jogos[b]).compareTo(larguraJogo(jogos[a])));
+    // índices por linha (FFD) — função pura, MESMA usada no teste AUD-02
+    final linhas = Jogo.empacotarLinhasFFD(
+        [for (final g in jogos) larguraJogo(g)], larguraUtil, spacing);
 
-    final linhas = <List<int>>[]; // cada linha = índices de jogos
-    final ocupado = <double>[]; // largura já usada por linha
-    for (final i in ordem) {
-      final w = larguraJogo(jogos[i]);
-      var alvo = -1;
+    if (kAuditoriaRegras) {
       for (var r = 0; r < linhas.length; r++) {
-        if (ocupado[r] + spacing + w <= larguraUtil) {
-          alvo = r;
-          break;
+        if (linhas[r].length < 2) continue;
+        // DOIS+ jogos DISTINTOS na MESMA linha: risco de "colagem" visual.
+        debugPrint('[AUD render/_packedMelds] dupla=$dupla linha=$r '
+            'jogos=${linhas[r].length} gap_entre_jogos=${spacing}px '
+            'sobreposicao_interna_step=${step}px '
+            '${spacing < step ? '(gap < step → PODEM PARECER 1 JOGO SÓ)' : ''}');
+        for (var p = 0; p < linhas[r].length; p++) {
+          final idx = linhas[r][p];
+          final m = jogos[idx];
+          debugPrint('    jogo[$idx] = {${Jogo.descreverMeld(m)}}');
+          if (p > 0) {
+            final ant = jogos[linhas[r][p - 1]];
+            final ultimaAnt = ant.isNotEmpty ? ant.last : null;
+            final primeiraAtual = m.isNotEmpty ? m.first : null;
+            debugPrint('      fronteira: ultima_do_jogo_${linhas[r][p - 1]}='
+                '${ultimaAnt == null ? '-' : Jogo.descreverMeld([ultimaAnt])} | '
+                'primeira_do_jogo_$idx='
+                '${primeiraAtual == null ? '-' : Jogo.descreverMeld([primeiraAtual])} | '
+                'gap=${spacing}px step=${step}px');
+          }
+          // Confirmação específica do caso A♥/A♦: ases de naipes DIFERENTES em
+          // jogos DISTINTOS colados na mesma linha (é render, não estado).
+          for (var q = 0; q < p; q++) {
+            final outro = jogos[linhas[r][q]];
+            for (final a in m.where((c) => c.valor == 'A')) {
+              for (final b in outro.where((c) => c.valor == 'A' && c.naipe != a.naipe)) {
+                debugPrint('[AUD A♥/A♦] ases de naipes DIFERENTES em MELDS DIFERENTES '
+                    'colados: jogo[$idx] tem ${a.valor}/${a.naipe}#${a.id} e '
+                    'jogo[${linhas[r][q]}] tem ${b.valor}/${b.naipe}#${b.id} '
+                    '→ são jogos SEPARADOS (render/colagem), NÃO um meld ilegal.');
+              }
+            }
+          }
         }
       }
-      if (alvo == -1) {
-        linhas.add([i]);
-        ocupado.add(w);
-      } else {
-        linhas[alvo].add(i);
-        ocupado[alvo] += spacing + w;
-      }
-    }
-    for (final l in linhas) {
-      l.sort(); // leitura estável dentro da linha
     }
 
     return Column(
@@ -2496,7 +3592,22 @@ class _MesaScreenState extends State<MesaScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               for (var k = 0; k < linhas[r].length; k++) ...[
-                if (k > 0) const SizedBox(width: spacing),
+                // P0-A: separador SÓ entre melds distintos — gap 12px com um
+                // divisor dourado discreto de 1px (não parece parte de carta).
+                if (k > 0)
+                  const SizedBox(
+                    width: spacing,
+                    height: 77,
+                    child: Center(
+                      child: SizedBox(
+                        width: 1,
+                        height: 48,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(color: Color(0x66E5B84F)),
+                        ),
+                      ),
+                    ),
+                  ),
                 _meldWidget(dupla, linhas[r][k], jogos[linhas[r][k]]),
               ],
             ],
@@ -2512,8 +3623,8 @@ class _MesaScreenState extends State<MesaScreen> {
     // #2: tamanho único da mesa (grande, boa visualização) — igual monte/lixo/mão.
     // Patch visual: sobreposição mais fechada (13) mantendo a carta no mesmo tamanho.
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
-    const step = 13.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
+    const step = 20.0; // igual ao _packedMelds: índice+naipe visíveis em cada carta
     final count = cartas.length;
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
@@ -2598,7 +3709,7 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _centralTray() {
     // #2: monte/lixo/mortos no MESMO tamanho da mesa e da mão (medida única).
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     final podeComprar = _minhaVezAtiva && !_j.jaComprou;
     final podeDescartar = _minhaVezAtiva && _j.jaComprou && _sel.length == 1;
     final monteGlow = podeComprar ||
@@ -2607,8 +3718,8 @@ class _MesaScreenState extends State<MesaScreen> {
         (_lastPurchaseSource == 'lixo' && _recentlyBoughtIds.isNotEmpty);
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(4, 1, 4, 1),
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+      margin: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
         color: _mPanel,
         borderRadius: BorderRadius.circular(15),
@@ -2727,7 +3838,7 @@ class _MesaScreenState extends State<MesaScreen> {
 
   Widget _discardPile({required bool glowing}) {
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     const step = 18.0;
     final aberto = _modalidade.toLowerCase() == 'aberto';
     final cards = aberto
@@ -2809,17 +3920,19 @@ class _MesaScreenState extends State<MesaScreen> {
     if (substituto == null) {
       return _frontCard(original, width: width, height: height);
     }
-    // Curinga baixado (aprovado pela Sônia): mostra a CARTA REAL que ele
-    // representa, na casa dela. Indicação DISCRETA de que ali mora um curinga:
-    // contorno violeta fino + badge mínima no canto — SEM tarja grande cobrindo
-    // a carta. A classificação limpa/suja continua no motor (validarSequencia).
-    final double selo = width * 0.20;
+    // Curinga baixado (aprovado pela Sônia, 03/08): a carta renderizada é
+    // SEMPRE o curinga REAL (joker.webp / o próprio 2) — NUNCA a carta
+    // substituída. O motor mantém internamente o valor substituído para validar
+    // a sequência; aqui ele aparece só como indicação DISCRETA "=X".
+    // Vale para os jogos na mesa E para o modal ampliado (mesma função).
+    final String repr = _cartaRotulo(substituto); // valor representado: '5','J'…
     final BorderRadius raio = BorderRadius.circular(width * 0.09);
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        _frontCard(substituto, width: width, height: height),
-        // contorno violeta fino sobre a carta (não altera a face nem o toque)
+        // arte REAL do curinga na casa que ele ocupa (joker.webp / o 2)
+        _frontCard(original, width: width, height: height),
+        // contorno violeta fino: sinal discreto de "aqui mora um curinga"
         Positioned.fill(
           child: IgnorePointer(
             child: Container(
@@ -2830,24 +3943,23 @@ class _MesaScreenState extends State<MesaScreen> {
             ),
           ),
         ),
-        // badge mínima e discreta: marca de curinga no canto
+        // indicação discreta do valor representado (=X), sem cobrir a arte
         Positioned(
-          top: width * 0.05,
-          right: width * 0.05,
+          left: width * 0.05,
+          bottom: width * 0.05,
           child: Container(
-            width: selo,
-            height: selo,
-            alignment: Alignment.center,
+            padding: EdgeInsets.symmetric(
+                horizontal: width * 0.07, vertical: width * 0.015),
             decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _mPurple,
-              border: Border.all(color: _mGoldHi, width: 0.7),
+              color: const Color(0xE64B2367),
+              borderRadius: BorderRadius.circular(width * 0.11),
+              border: Border.all(color: _mGoldHi, width: 0.6),
             ),
             child: Text(
-              '★',
+              '=$repr',
               style: TextStyle(
                 color: Colors.white,
-                fontSize: selo * 0.6,
+                fontSize: width * 0.19,
                 fontWeight: FontWeight.w900,
                 height: 1,
               ),
@@ -2874,7 +3986,7 @@ class _MesaScreenState extends State<MesaScreen> {
       clipBehavior: Clip.antiAlias,
       child: Image.asset(
         _cartaAsset(carta),
-        fit: BoxFit.fill,
+        fit: BoxFit.contain, // proporção 907/1058 sem deformar
         filterQuality: FilterQuality.high,
       ),
     );
@@ -2901,7 +4013,7 @@ class _MesaScreenState extends State<MesaScreen> {
         borderRadius: BorderRadius.circular(width * 0.08),
         child: Image.asset(
           _cardBackAsset,
-          fit: BoxFit.fill,
+          fit: BoxFit.contain, // proporção 907/1058 sem deformar
           filterQuality: FilterQuality.high,
         ),
       ),
@@ -3199,13 +4311,13 @@ class _MesaScreenState extends State<MesaScreen> {
     return Column(
       children: [
         SizedBox(
-          height: 52,
+          height: 42, // HUD do jogador mais baixo (libera altura p/ jogos)
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               GestureDetector(
                 onTap: () => setState(() => _expandedAvatarSeat = 0),
-                child: _avatarCircle(0, size: 50, active: active),
+                child: _avatarCircle(0, size: 40, active: active),
               ),
               const SizedBox(width: 7),
               Text(
@@ -3225,7 +4337,15 @@ class _MesaScreenState extends State<MesaScreen> {
             ],
           ),
         ),
-        Expanded(child: _hand()),
+        Expanded(
+          child: Padding(
+            // margem inferior segura em aparelhos com barra de navegação (#8)
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewPadding.bottom,
+            ),
+            child: _hand(),
+          ),
+        ),
       ],
     );
   }
@@ -3264,18 +4384,21 @@ class _MesaScreenState extends State<MesaScreen> {
 
     // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
     const cardWidth = 66.0;
-    const cardHeight = 100.0;
+    const cardHeight = 77.0; // proporção real do asset 907x1058 (66 * 1058/907)
     // Sobreposição compacta e AUTOMÁTICA conforme a quantidade: trecho visível
     // de cada carta entre 32% (poucas cartas) e 25% (muitas) da largura, sem
     // reduzir a carta. A última carta continua inteira (Stack) e a mão mantém
     // scroll horizontal. Ajuste SÓ visual — não altera estado, seleção nem regras.
+    // Mão do jogador com passo horizontal MAIOR (índice+naipe sempre visíveis):
+    // ~0.42 (poucas cartas → passo ~28px) reduzindo até ~0.33 (mãos grandes → ~22px).
+    // Carta mantida 66x77; scroll horizontal preservado.
     final double frac = count <= 12
-        ? 0.32
+        ? 0.42
         : count >= 24
-            ? 0.25
-            : 0.32 - (count - 12) * (0.07 / 12);
+            ? 0.33
+            : 0.42 - (count - 12) * (0.09 / 12);
     final double step = cardWidth * frac;
-    const selectedLift = 13.0;
+    const selectedLift = 8.0; // elevação da selecionada reduzida (P0-A/mão)
     final active = _minhaVezAtiva;
     final totalWidth = cardWidth + (count - 1) * step;
 
@@ -3376,7 +4499,7 @@ class _MesaScreenState extends State<MesaScreen> {
                 borderRadius: BorderRadius.circular(8),
                 child: Image.asset(
                   _cartaAsset(carta),
-                  fit: BoxFit.fill,
+                  fit: BoxFit.contain, // proporção 907/1058 sem deformar
                   filterQuality: FilterQuality.high,
                 ),
               ),
@@ -3410,25 +4533,165 @@ class _MesaScreenState extends State<MesaScreen> {
   Widget _feedbackToast() {
     final text = _msg ?? '';
     return IgnorePointer(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: const Color(0xF2140D16),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xAA9D43D8)),
-          boxShadow: const [
-            BoxShadow(color: Color(0x779D43D8), blurRadius: 11),
-          ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 230),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+          decoration: BoxDecoration(
+            color: const Color(0xF2140D16),
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: const Color(0xAA9D43D8)),
+            boxShadow: const [
+              BoxShadow(color: Color(0x559D43D8), blurRadius: 8),
+            ],
+          ),
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFF3E9FF),
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
-        child: Text(
-          text,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFFF3E9FF),
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+
+  /// C10 — rótulo legível de UM candidato de compra do lixo, para o seletor.
+  /// Descreve o que a transação faz; não decide nada.
+  String _rotuloCandidatoLixo(ComprarLixo c) {
+    final partes = <String>[];
+    final mesa = _j.jogosDupla['nos']!;
+    for (final ext in c.extensoes) {
+      final cartas = _cartasPorIds(ext.cartas).map(_cartaRotulo).join(' ');
+      partes.add('estender o jogo ${ext.indiceJogo + 1} com $cartas');
+    }
+    for (final jogo in c.jogosNovos) {
+      final cartas = _cartasPorIds(jogo).map(_cartaRotulo).join(' ');
+      partes.add('baixar $cartas');
+    }
+    if (partes.isEmpty) return 'pegar o lixo';
+    // Mostra o tamanho do jogo estendido para o jogador comparar alternativas.
+    if (c.jogosNovos.isEmpty && c.extensoes.length == 1) {
+      final i = c.extensoes.single.indiceJogo;
+      if (i >= 0 && i < mesa.length) {
+        partes[0] = '${partes[0]} (jogo de ${mesa[i].length} cartas)';
+      }
+    }
+    return partes.join(' + ');
+  }
+
+  List<Carta> _cartasPorIds(List<String> ids) {
+    final visiveis = <Carta>[..._j.maos[0], if (_j.lixo.isNotEmpty) _j.lixo.last];
+    return [
+      for (final id in ids)
+        ...visiveis.where((c) => c.id == id).take(1),
+    ];
+  }
+
+  /// C10 (rev.1) — SELETOR MÍNIMO das PARTIÇÕES da seleção. Mesma regra do
+  /// seletor do lixo: a autoridade enumera tudo, a folha só apresenta, e
+  /// cancelar não baixa nada.
+  Future<Baixar?> _escolherParticao(List<Baixar> particoes) {
+    String rotulo(Baixar b) => b.jogosNovos
+        .map((g) => _cartasPorIds(g).map(_cartaRotulo).join(' '))
+        .join('  +  ');
+    return _escolherNaFolha<Baixar>(
+      titulo: 'Como baixar estas ${_sel.length} cartas?',
+      subtitulo: 'Há mais de uma forma legal de repartir a seleção.',
+      itens: particoes,
+      rotulo: rotulo,
+    );
+  }
+
+  /// C10 — SELETOR MÍNIMO: quando há 2+ usos legais do topo, quem escolhe é o
+  /// jogador. A lista vem inteira da autoridade canônica (nenhum candidato é
+  /// omitido); a folha só apresenta. Cancelar não compra nada.
+  Future<ComprarLixo?> _escolherCompraLixo(List<ComprarLixo> cands) {
+    final topo = _j.lixo.isEmpty ? '' : _cartaRotulo(_j.lixo.last);
+    return _escolherNaFolha<ComprarLixo>(
+      titulo: 'Como usar o topo ($topo)?',
+      subtitulo: 'O lixo só vem junto com um destes usos.',
+      itens: cands,
+      rotulo: _rotuloCandidatoLixo,
+    );
+  }
+
+  /// Folha de escolha ÚNICA para os dois seletores mínimos (uso do topo e
+  /// partição da seleção). Só apresenta a lista que a autoridade produziu —
+  /// nada é omitido, ordenado por preferência nem pré-selecionado. Cancelar
+  /// devolve null e não executa nada.
+  Future<T?> _escolherNaFolha<T>({
+    required String titulo,
+    required String subtitulo,
+    required List<T> itens,
+    required String Function(T) rotulo,
+  }) {
+    return showModalBottomSheet<T>(
+      context: context,
+      backgroundColor: const Color(0xF4120D14),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        side: BorderSide(color: _mGold, width: 1.1),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                titulo,
+                style: const TextStyle(
+                  color: _mGoldHi,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitulo,
+                style: const TextStyle(color: Color(0xFFB6A8BE), fontSize: 10.5),
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: itens.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 6),
+                  itemBuilder: (_, i) => InkWell(
+                    onTap: () => Navigator.of(ctx).pop(itens[i]),
+                    borderRadius: BorderRadius.circular(11),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 11),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1220),
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(color: _mPurple, width: 1),
+                      ),
+                      child: Text(
+                        rotulo(itens[i]),
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12.2),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancelar',
+                    style: TextStyle(color: Color(0xFFB6A8BE))),
+              ),
+            ],
           ),
         ),
       ),
@@ -3449,7 +4712,7 @@ class _MesaScreenState extends State<MesaScreen> {
       transitionDuration: const Duration(milliseconds: 230),
       pageBuilder: (_, __, ___) {
         const width = 92.0;
-        const height = 138.0;
+        const height = 107.0; // proporção real 907/1058 (92 * 1058/907) — sem letterbox
         const step = 49.0;
         final total = width + (cards.length - 1) * step;
         return SafeArea(
