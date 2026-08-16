@@ -1,18 +1,19 @@
 // reward_grants_test.dart — cobertura do dominio de concessao de recompensas.
 //
 // Dart puro sobre flutter_test: nao sobe widget, nao toca Firebase e nao le
-// rede. Os seeds reais entram por arquivo (copiados para test/torneios/data/
-// pelo workflow), e os casos positivos usam uma fixture com a arte marcada como
+// rede. Os seeds reais entram por arquivo, localizados por
+// test/suporte/seeds.dart, e os casos positivos usam uma fixture com a arte marcada como
 // pronta — no seed de producao as quatro recompensas de encerramento anual
 // seguem em `pendingAsset`, entao a fixture mantem esses caminhos observaveis.
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:buraco_master_vip/torneios/assets_registry.dart';
 import 'package:buraco_master_vip/torneios/reward_grants.dart';
 import 'package:buraco_master_vip/torneios/reward_policies.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../suporte/seeds.dart';
 
 /// Coroas com arte oficial integrada ao bundle.
 const _coroasComArte = <String>{
@@ -45,13 +46,7 @@ const _recompensasSemArte = <String>{
   TorneioAssetIds.crownClosingChampion,
 };
 
-Map<String, dynamic> _lerSeed(String nome) {
-  final arquivo = File('test/torneios/data/$nome');
-  if (!arquivo.existsSync()) {
-    throw StateError('seed nao encontrado: ${arquivo.path}');
-  }
-  return jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
-}
+Map<String, dynamic> _lerSeed(String nome) => lerSeed('torneios', nome);
 
 /// Copia o seed de assets marcando toda arte pendente como pronta.
 Map<String, dynamic> _comArtesProntas(Map<String, dynamic> raiz) {

@@ -2,13 +2,14 @@
 // (OS 02 secao 22).
 //
 // Dart puro sobre flutter_test: nao sobe widget, nao toca Firebase e nao le rede.
-// Os seeds reais entram por arquivo (copiados para test/torneios/data/ pelo
-// workflow), como ja acontece em reward_grants_test.dart.
+// Os seeds reais entram por arquivo, localizados por test/suporte/seeds.dart —
+// que aceita tanto a arvore do repositorio (`app/data/torneios/`) quanto a copia
+// que o workflow faz para dentro do scaffold, como ja acontece em
+// reward_grants_test.dart.
 //
 // Os grupos seguem, na ordem, a lista da OS 02 secao 22, e os casos extras
 // identificados na auditoria vem no fim.
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:buraco_master_vip/screens/torneios_models.dart' as ui;
@@ -32,10 +33,9 @@ import 'package:buraco_master_vip/torneios/tournament_model.dart';
 import 'package:buraco_master_vip/torneios/ui_contracts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Map<String, dynamic> _seed(String nome) {
-  final arquivo = File('test/torneios/data/$nome');
-  return jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
-}
+import '../suporte/seeds.dart';
+
+Map<String, dynamic> _seed(String nome) => lerSeed('torneios', nome);
 
 final _agora = DateTime.utc(2026, 8, 7, 20);
 
