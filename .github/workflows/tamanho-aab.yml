@@ -1,0 +1,225 @@
+name: Tamanho do AAB (antes x depois)
+
+# Compila o AAB de release DUAS vezes — no merge-base e neste commit — e informa
+# o delta exato. Serve para responder, com numero medido e nao estimado, quanto
+# o Kit Pioneiros 2026 custa no artefato entregue a loja.
+#
+# Por que merge-base e nao "o HEAD da branch anterior": comparar com o topo de
+# outra branch mediria tambem tudo o que entrou nela em paralelo. O merge-base e
+# o ultimo ponto em comum, entao a diferenca isola o que ESTA branch acrescentou.
+
+on:
+  push:
+    branches:
+      - 'claude/**'
+      - 'feat/**'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Ref de comparacao (vale o merge-base dela com este commit)'
+        required: false
+        default: 'origin/consolidacao/apk-geral-bmv'
+
+permissions:
+  contents: read
+
+env:
+  BASE_REF: ${{ github.event.inputs.base_ref || 'origin/consolidacao/apk-geral-bmv' }}
+
+jobs:
+  tamanho:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (historico completo, para achar o merge-base)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+
+      - name: Resolver o merge-base
+        id: base
+        run: |
+          git fetch origin --no-tags "+refs/heads/*:refs/remotes/origin/*" || true
+          BASE=$(git merge-base "$BASE_REF" HEAD)
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          echo "================= PONTOS COMPARADOS ================="
+          echo "merge-base : $BASE"
+          git --no-pager log -1 --format='             %s' "$BASE"
+          echo "este commit: $GITHUB_SHA"
+          git --no-pager log -1 --format='             %s' HEAD
+          echo "===================================================="
+
+      # ---------------------------------------------------------------------
+      # Portoes. Rodam ANTES do build: se o commit nao esta saudavel, o numero
+      # de tamanho nao interessa.
+      # ---------------------------------------------------------------------
+
+      - name: "PORTÃO - integridade das artes (arquivo e pixels)"
+        run: |
+          echo "--- SHA-256 do arquivo, contra o manifesto ---"
+          node -e "
+            const fs=require('fs'),crypto=require('crypto');
+            const man=JSON.parse(fs.readFileSync('app/data/colecoes/pioneiros_2026.manifest.json','utf8'));
+            let falhas=0;
+            for(const it of man.items){
+              const b=fs.readFileSync('app/assets/colecoes/pioneiros_2026/'+it.file);
+              const h=crypto.createHash('sha256').update(b).digest('hex');
+              if(h!==it.sha256||b.length!==it.bytes){console.log('FALHOU',it.id);falhas++;}
+              else console.log('OK',it.id,b.length,'bytes');
+            }
+            if(falhas){console.log(falhas+' artes divergentes');process.exit(1);}
+          "
+          echo ""
+          echo "--- SHA-256 dos PIXELS decodificados ---"
+          node tools/verificar_equivalencia.js --contra-manifesto
+
+      - name: Montar o app (commit atual)
+        run: bash tools/ci/montar_app.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/app_depois"
+
+      - name: "PORTÃO - flutter analyze"
+        run: |
+          cd "$RUNNER_TEMP/app_depois"
+          # Falha apenas em ERRO. Os infos e warnings pre-existentes do aplicativo
+          # estao catalogados no relatorio e nao sao regressao desta entrega.
+          flutter analyze lib > /tmp/analyze.txt 2>&1 || true
+          cat /tmp/analyze.txt | tail -20
+          if grep -qE "^\s*error" /tmp/analyze.txt; then
+            echo "ERRO: flutter analyze encontrou erros."
+            exit 1
+          fi
+          echo "--- resumo por severidade ---"
+          grep -oE "^\s*(error|warning|info)" /tmp/analyze.txt | tr -d ' ' | sort | uniq -c || true
+
+      - name: "PORTÃO - testes do Kit Pioneiros"
+        run: |
+          cd "$RUNNER_TEMP/app_depois"
+          mkdir -p test/colecoes/data
+          cp "$GITHUB_WORKSPACE"/app/test/colecoes/kit_pioneiros_test.dart test/colecoes/
+          cp "$GITHUB_WORKSPACE"/app/test/colecoes/colecao_arte_test.dart test/colecoes/
+          cp "$GITHUB_WORKSPACE"/app/test/colecoes/colecao_firebase_test.dart test/colecoes/
+          cp "$GITHUB_WORKSPACE"/app/data/colecoes/*.json test/colecoes/data/
+          flutter test \
+            test/colecoes/kit_pioneiros_test.dart \
+            test/colecoes/colecao_arte_test.dart \
+            test/colecoes/colecao_firebase_test.dart \
+            --reporter expanded
+
+      # ---------------------------------------------------------------------
+      # Os dois AABs
+      # ---------------------------------------------------------------------
+
+      - name: Compilar AAB - este commit
+        run: |
+          cd "$RUNNER_TEMP/app_depois"
+          flutter build appbundle --release
+          cp build/app/outputs/bundle/release/app-release.aab "$RUNNER_TEMP/depois.aab"
+          ls -l "$RUNNER_TEMP/depois.aab"
+
+      - name: Montar e compilar AAB - merge-base
+        run: |
+          # Worktree separada: trocar de commit no diretorio principal apagaria o
+          # AAB recem-gerado e as fontes deste commit.
+          git worktree add "$RUNNER_TEMP/repo_antes" "${{ steps.base.outputs.sha }}"
+
+          if [ -f "$RUNNER_TEMP/repo_antes/tools/ci/montar_app.sh" ]; then
+            bash "$RUNNER_TEMP/repo_antes/tools/ci/montar_app.sh" \
+              "$RUNNER_TEMP/repo_antes" "$RUNNER_TEMP/app_antes"
+          else
+            # O merge-base e ANTERIOR ao pubspec versionado. Monta-se do jeito que
+            # era o procedimento daquele commit: usar o procedimento novo mediria
+            # a mudanca de pipeline, e nao a colecao.
+            echo "merge-base sem pubspec versionado: montando pelo procedimento antigo."
+            bash "$GITHUB_WORKSPACE/tools/ci/montar_app_legado.sh" \
+              "$RUNNER_TEMP/repo_antes" "$RUNNER_TEMP/app_antes"
+          fi
+
+          cd "$RUNNER_TEMP/app_antes"
+          flutter build appbundle --release
+          cp build/app/outputs/bundle/release/app-release.aab "$RUNNER_TEMP/antes.aab"
+          ls -l "$RUNNER_TEMP/antes.aab"
+
+      # ---------------------------------------------------------------------
+      # Comparacao
+      # ---------------------------------------------------------------------
+
+      - name: "RELATÓRIO DE TAMANHO"
+        run: |
+          ANTES=$(stat -c%s "$RUNNER_TEMP/antes.aab")
+          DEPOIS=$(stat -c%s "$RUNNER_TEMP/depois.aab")
+          DELTA=$((DEPOIS - ANTES))
+          BASE_CURTO=$(echo "${{ steps.base.outputs.sha }}" | cut -c1-8)
+          ATUAL_CURTO=$(echo "$GITHUB_SHA" | cut -c1-8)
+
+          mib() { awk -v b="$1" 'BEGIN{printf "%.2f", b/1048576}'; }
+
+          {
+            echo "## Tamanho do AAB de release"
+            echo ""
+            echo "| | bytes | MiB |"
+            echo "|---|---:|---:|"
+            echo "| merge-base \`$BASE_CURTO\` | $ANTES | $(mib $ANTES) |"
+            echo "| este commit \`$ATUAL_CURTO\` | $DEPOIS | $(mib $DEPOIS) |"
+            echo "| **delta** | **$DELTA** | **$(mib $DELTA)** |"
+            echo ""
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          echo "--- peso da colecao dentro do AAB ---"
+          PREFIXO='base/assets/flutter_assets/assets/colecoes/pioneiros_2026/'
+          N=$(unzip -l "$RUNNER_TEMP/depois.aab" | grep -c "$PREFIXO" || true)
+          echo "pecas empacotadas: $N"
+          if [ "$N" -ne 10 ]; then
+            echo "ERRO: esperava 10 peças no AAB, veio $N"
+            unzip -l "$RUNNER_TEMP/depois.aab" | grep colecoes || true
+            exit 1
+          fi
+          unzip -l "$RUNNER_TEMP/depois.aab" | grep "$PREFIXO"
+          COMPRIMIDO=$(unzip -lv "$RUNNER_TEMP/depois.aab" | grep "$PREFIXO" | awk '{s+=$2} END {print s+0}')
+          {
+            echo "Coleção dentro do AAB: 10 peças, $COMPRIMIDO bytes comprimidos ($(mib $COMPRIMIDO) MiB)."
+            echo ""
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "Estimativa do que chega ao aparelho (bundletool)"
+        # Best-effort. O numero que importa e o delta do AAB, ja medido acima;
+        # `get-size total` estima o DOWNLOAD por configuracao de aparelho, que e
+        # sempre menor que o AAB, porque cada aparelho baixa so a sua fatia.
+        continue-on-error: true
+        run: |
+          VERSAO=1.17.2
+          curl -sSL -o /tmp/bundletool.jar \
+            "https://github.com/google/bundletool/releases/download/$VERSAO/bundletool-all-$VERSAO.jar"
+          for QUAL in antes depois; do
+            java -jar /tmp/bundletool.jar build-apks \
+              --bundle="$RUNNER_TEMP/$QUAL.aab" --output="/tmp/$QUAL.apks" --mode=default
+            echo "--- $QUAL ---"
+            java -jar /tmp/bundletool.jar get-size total --apks="/tmp/$QUAL.apks" | tee "/tmp/$QUAL.size"
+          done
+          {
+            echo "### Estimativa de download por aparelho (bundletool $VERSAO)"
+            echo ""
+            echo '```'
+            echo "antes:";  cat /tmp/antes.size
+            echo "depois:"; cat /tmp/depois.size
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar os dois AABs como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab-comparacao
+          path: |
+            ${{ runner.temp }}/antes.aab
+            ${{ runner.temp }}/depois.aab
+          if-no-files-found: error
+          retention-days: 30
