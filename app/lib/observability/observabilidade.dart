@@ -30,6 +30,16 @@ import 'trilha_operacional.dart';
 /// Fachada única da observabilidade. O app inteiro fala só com
 /// `Observabilidade.instancia`.
 class Observabilidade {
+  // `prefer_initializing_formals` pede `required this._coletor` aqui. Não dá:
+  // parâmetro NOMEADO privado exige o experimento `private-named-parameters`,
+  // e sem ele o próprio compilador recusa —
+  //
+  //     Error: This requires the experimental 'private-named-parameters'
+  //     language feature to be enabled.
+  //
+  // Ou seja, a regra é um falso positivo para parâmetro nomeado neste SDK.
+  // O apontamento só aparece no Flutter do CI (3.44.8), não no local (3.41.4).
+  // ignore: prefer_initializing_formals
   Observabilidade._({
     required this.identidade,
     required ColetorDeFalhas coletor,
