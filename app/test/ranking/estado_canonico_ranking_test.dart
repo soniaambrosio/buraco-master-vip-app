@@ -182,6 +182,29 @@ String _codigo(File f) {
   return saida.toString();
 }
 
+/// Deixa o relógio do teste correr até a sessão responder e o [PerfilService]
+/// terminar os 350ms de I/O simulado.
+///
+/// `pumpAndSettle` SOZINHO NÃO BASTA, e a razão é instrutiva: ele para no
+/// primeiro quadro em que nada mais está agendado. O que mantinha o laço vivo
+/// nesta tela era o carregamento dos oito ícones de conquista e do baú de
+/// presentes — elementos que só existiam porque o Perfil desenhava dado sem
+/// fonte. Retirá-los é o objetivo desta linhagem, e o efeito colateral é que o
+/// tempo passou a ter de ser bombeado de propósito.
+///
+/// Nenhuma asserção mudou por causa disto: o que mudou é o teste parar de
+/// depender, sem saber, de um elemento de tela que não deveria estar lá.
+Future<void> _assentar(WidgetTester tester) async {
+  // São DUAS esperas encadeadas, e não uma: a fonte de identidade responde por
+  // `Future`, e só DEPOIS disso o Perfil descobre que o `publicId` mudou e
+  // começa os 350ms do serviço. Bombear em rodadas cobre a cadeia inteira sem
+  // depender da ordem exata em que os dois futuros se resolvem.
+  for (var i = 0; i < 4; i++) {
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+  await tester.pumpAndSettle();
+}
+
 String _barras(String caminho) => caminho.replaceAll(r'\', '/');
 
 String _resolver(String deQuem, String importado) {
@@ -598,7 +621,7 @@ void main() {
           child: const MaterialApp(home: PerfilPage()),
         ),
       );
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      await _assentar(tester);
     }
 
     PerfilVM vmNaTela(WidgetTester tester) =>
@@ -617,7 +640,7 @@ void main() {
 
       // Logout.
       auth.add(null);
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      await _assentar(tester);
 
       final depois = vmNaTela(tester);
       expect(depois.ranking.liga, isNull);
@@ -645,7 +668,7 @@ void main() {
           ..publicId = 'P9Z8Y7X6W5V4'
           ..apelido = 'Aurora';
         auth.add('uid-B');
-        await tester.pumpAndSettle(const Duration(milliseconds: 600));
+        await _assentar(tester);
 
         expect(sessao.geracao, greaterThan(geracaoA));
         final depois = vmNaTela(tester);
@@ -677,7 +700,7 @@ void main() {
         ..publicId = 'P9Z8Y7X6W5V4'
         ..apelido = 'Aurora';
       auth.add('uid-B');
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      await _assentar(tester);
 
       final texto = PerfilPage.textoDeCompartilhamento(vmNaTela(tester));
       expect(texto, contains('Aurora'));
