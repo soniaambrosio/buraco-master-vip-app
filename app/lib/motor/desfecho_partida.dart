@@ -297,6 +297,34 @@ class DesfechoCanonicoPartida {
   /// ("acabou com batida de quem?"), nunca para decidir competição.
   final String? duplaQueBateuUltimaRodada;
 
+  /// Assento 0..3 de QUEM bateu na última rodada apurada, ou `null` se a rodada
+  /// terminou sem batida (baralho esgotado, abandono, anulação).
+  ///
+  /// POR QUE ELE EXISTE, já havendo [duplaQueBateuUltimaRodada]: a dupla não
+  /// identifica a pessoa. Perguntas individuais — "foi você quem bateu?" — não
+  /// têm resposta a partir do lado, e respondê-las por dedução premiaria o
+  /// parceiro que não bateu. O motor já sabe o assento (`Jogo.assentoQueBateu`);
+  /// até aqui ele era descartado na captura, e este campo é o que para de
+  /// descartá-lo.
+  ///
+  /// É PROVA DE LEGALIDADE, e não só de autoria. `Jogo` só o preenche depois de
+  /// aprovar a batida pela regra da modalidade (`duplaPodeBater`, que exige
+  /// canastra — limpa no Aberto/STBL, qualquer uma no Fechado) e depois de
+  /// esgotado o morto da dupla. As rodadas que terminam sem batida legal —
+  /// baralho esgotado, monte e mortos vazios — deixam o campo nulo. Logo
+  /// `assentoQueBateuUltimaRodada != null` é, por construção, "houve batida
+  /// válida, e foi deste assento".
+  ///
+  /// CONTINUA FORA DA DECISÃO DE [ladoVencedor], pela mesma razão que o campo da
+  /// dupla: bater a última rodada não é vencer a partida. Quem quiser as duas
+  /// coisas juntas precisa checar as duas, e é exatamente isso que a conquista
+  /// `primeira_batida_real` faz.
+  ///
+  /// Nulo também em desfecho antigo, gravado antes deste campo existir. Quem
+  /// consome deve tratar ausência como "não sei", nunca como "não houve" — ver
+  /// o fail-closed em `app/lib/conquistas/primeira_batida_real.dart`.
+  final int? assentoQueBateuUltimaRodada;
+
   DesfechoCanonicoPartida({
     required this.partidaId,
     required this.estado,
@@ -310,6 +338,7 @@ class DesfechoCanonicoPartida {
     required this.modalidade,
     required this.rodada,
     this.duplaQueBateuUltimaRodada,
+    this.assentoQueBateuUltimaRodada,
     this.ordem,
   })  : lados = List.unmodifiable(lados),
         encerradaEm = encerradaEm.toUtc() {
@@ -322,6 +351,39 @@ class DesfechoCanonicoPartida {
     }
     if (lados[0].lado == lados[1].lado) {
       throw ArgumentError.value(lados, 'lados', 'lado repetido');
+    }
+    // Coerência do executor da batida. Vale em QUALQUER estado, inclusive em
+    // andamento: um assento incoerente já é envelope corrompido antes de virar
+    // resultado, e adiar a recusa só faria o erro aparecer mais longe da origem.
+    final assentoBatida = assentoQueBateuUltimaRodada;
+    if (assentoBatida != null) {
+      if (assentoBatida < 0 || assentoBatida > 3) {
+        throw ArgumentError.value(assentoBatida, 'assentoQueBateuUltimaRodada',
+            'assento fora de 0..3');
+      }
+      if (duplaQueBateuUltimaRodada == null) {
+        // Assento sem lado seria um executor que não pertence a dupla nenhuma —
+        // e é justamente o par (quem, por qual lado) que a conquista confere.
+        throw ArgumentError.value(
+            assentoBatida,
+            'assentoQueBateuUltimaRodada',
+            'há assento que bateu mas nenhuma dupla declarada');
+      }
+      final ladoDaBatida = porLado(duplaQueBateuUltimaRodada!);
+      if (ladoDaBatida == null) {
+        throw ArgumentError.value(duplaQueBateuUltimaRodada,
+            'duplaQueBateuUltimaRodada', 'não é um dos lados da mesa');
+      }
+      if (!ladoDaBatida.assentos.contains(assentoBatida)) {
+        // A incoerência mais cara que existe aqui: creditar a batida a alguém do
+        // lado adversário. Recusar é a única saída — não há como saber qual dos
+        // dois campos está errado.
+        throw ArgumentError.value(
+            assentoBatida,
+            'assentoQueBateuUltimaRodada',
+            'o assento $assentoBatida não pertence ao lado '
+                '${duplaQueBateuUltimaRodada!} (assentos ${ladoDaBatida.assentos})');
+      }
     }
     if (estado == EstadoEncerramento.emAndamento) {
       if (motivo != null) {
@@ -375,6 +437,7 @@ class DesfechoCanonicoPartida {
         'modalidade': modalidade,
         'rodada': rodada,
         'duplaQueBateuUltimaRodada': duplaQueBateuUltimaRodada,
+        'assentoQueBateuUltimaRodada': assentoQueBateuUltimaRodada,
         'ordem': ordem?.toJson(),
       };
 
@@ -444,6 +507,14 @@ class DesfechoCanonicoPartida {
     if (ladoVencedor != null && ladoVencedor is! String) {
       throw FormatException('desfecho $partidaId: ladoVencedor deve ser texto ou nulo.');
     }
+    // Ausente é aceito: desfecho gravado antes deste campo existir continua
+    // legível. Presente e não-inteiro é recusado — um assento "2" em texto ou
+    // um `true` são envelope corrompido, não campo opcional.
+    final assentoBatida = raw['assentoQueBateuUltimaRodada'];
+    if (assentoBatida != null && assentoBatida is! num) {
+      throw FormatException('desfecho $partidaId: assentoQueBateuUltimaRodada '
+          'deve ser numérico ou nulo (recebido: $assentoBatida).');
+    }
     try {
       return DesfechoCanonicoPartida(
         partidaId: partidaId,
@@ -458,6 +529,7 @@ class DesfechoCanonicoPartida {
         modalidade: modalidade,
         rodada: inteiro('rodada'),
         duplaQueBateuUltimaRodada: bateu as String?,
+        assentoQueBateuUltimaRodada: (assentoBatida as num?)?.toInt(),
         ordem: raw['ordem'] == null ? null : OrdemDeEncerramento.deJson(raw['ordem']),
       );
     } on ArgumentError catch (e) {
@@ -529,6 +601,11 @@ DesfechoCanonicoPartida capturarDesfecho(
         rodada: jogo.rodada,
         // Informativo. Note que ele NÃO participa de nenhuma decisão abaixo.
         duplaQueBateuUltimaRodada: jogo.duplaQueBateu,
+        // O assento vem do MESMO ponto do motor que a dupla, no MESMO instante,
+        // e por isso os dois não podem discordar: `Jogo` grava os dois juntos,
+        // numa atribuição só, nos dois únicos caminhos em que aprova batida.
+        // Copiar um e deduzir o outro é que criaria divergência.
+        assentoQueBateuUltimaRodada: jogo.assentoQueBateu,
         ordem: ordem,
       );
 
