@@ -172,6 +172,36 @@ jobs:
           du -sh app_build/assets/colecoes/pioneiros_2026
           ls -l app_build/assets/colecoes/pioneiros_2026/
 
+      - name: Deps de TESTE (só dev — não entram no APK)
+        # `stream_channel` e `fake_async` já vêm como dependências transitivas
+        # (de web_socket_channel e flutter_test), mas o portão de autenticação
+        # importa as duas diretamente: stream_channel para o canal WebSocket
+        # falso, fake_async para atravessar o backoff da reconexão sem esperar
+        # segundos de verdade. Declarar evita o aviso depend_on_referenced_packages.
+        run: cd app_build && flutter pub add dev:stream_channel dev:fake_async
+
+      - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
+        # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
+        # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
+        # "Could not find method kotlin()". O jni 1.0.0 tem build.gradle Groovy simples
+        # que compila, e a API é praticamente idêntica (só structs FFI internos mudaram).
+        # dependency_overrides força 1.0.0 independente de quem pede ^1.0.0.
+        run: |
+          cd app_build
+          python3 - <<'PY'
+          import re
+          p = 'pubspec.yaml'
+          s = open(p, encoding='utf-8').read()
+          if 'dependency_overrides:' not in s:
+              s = s.rstrip() + '\n\ndependency_overrides:\n  jni: 1.0.0\n'
+          elif 'jni:' not in s.split('dependency_overrides:')[1].split('\n\n')[0]:
+              s = s.replace('dependency_overrides:', 'dependency_overrides:\n  jni: 1.0.0', 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('pubspec.yaml com dependency_overrides jni 1.0.0:')
+          print(s[s.find('dependency_overrides:'):])
+          PY
+          flutter pub get
+
       - name: "PORTÃO DE INTEGRIDADE — SHA-256 das artes do Kit Pioneiros"
         # A ordem de servico define os PNGs originais como fonte da verdade e
         # proibe recorte, recolorizacao e achatamento do alpha. Um hash por
@@ -327,6 +357,21 @@ jobs:
             test/colecoes/colecao_firebase_test.dart \
             --reporter expanded
           echo "PORTÃO VERDE: Kit Pioneiros 2026 validado no commit ${GITHUB_SHA}."
+
+      - name: "PORTÃO DE SEGURANÇA — identidade da conexão online"
+        # Prova que o app NÃO declara quem é: pega a credencial antes de abrir o
+        # socket, manda a autenticação como primeira mensagem, segura a fila até
+        # o servidor aceitar, reautentica na reconexão e não vaza o token.
+        # É o portão que impede alguém reintroduzir `jogadorId` saindo do app.
+        run: |
+          if [ ! -f app/test/online_auth_test.dart ]; then
+            echo "ERRO: app/test/online_auth_test.dart não encontrado — o portão de identidade é OBRIGATÓRIO."
+            exit 1
+          fi
+          cp app/test/online_auth_test.dart app_build/test/
+          cd app_build
+          flutter test test/online_auth_test.dart --reporter expanded
+          echo "PORTÃO VERDE: identidade da conexão online validada no commit ${GITHUB_SHA}."
 
       - name: Bump minSdk to 23 (Firebase)
         run: |
