@@ -7,24 +7,47 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 #   2. flutter test — Motor de Partidas, encerramento, torneios, integração,
 #      coleções/Kit Pioneiros e domínio social
 #   3. as codebases Firebase, cada uma descoberta pelo próprio caminho:
-#        colecoes -> firebase/functions   + regras em firebase/testes (emulador)
-#        billing  -> functions-billing    (node --test, sem emulador)
-#        torneios -> functions            (tsc --noEmit)
-#        ranking  -> functions-ranking    (tsc + node --test)
-#        social   -> functions-social     (dart compile js + tsc + node --test,
-#                                          e um passo PRÓPRIO de Emulator Suite
-#                                          com chamadas reais às callables)
-#      As regras rodam por `test:integrado`, que prova os cinco blocos de
+#        colecoes  -> firebase/functions   + regras em firebase/testes (emulador)
+#        billing   -> functions-billing    (node --test, sem emulador)
+#        torneios  -> functions            (tsc --noEmit)
+#        ranking   -> functions-ranking    (tsc + node --test)
+#        social    -> functions-social     (dart compile js + tsc + node --test,
+#                                           e um passo PRÓPRIO de Emulator Suite
+#                                           com chamadas reais às callables)
+#        moderacao -> functions-moderacao  (passo PRÓPRIO de Emulator Suite, pelo
+#                                           wrapper `emulador:moderacao`, que faz
+#                                           o próprio build)
+#      As regras rodam por `test:integrado`, que prova os blocos de
 #      firestore.rules cobertos por suíte no MESMO arquivo.
-#      NÃO COBERTO, e registrado como tal: `functions-moderacao` não tem passo
-#      próprio aqui. É anterior a esta OS e está fora do escopo dela.
+#
+# TRÊS SUÍTES FIREBASE SÃO PROTEGIDAS PELO CI, cada uma com passo próprio e
+# bloqueante: SOCIAL (`socialemu`), MODERAÇÃO (`moderacaoemu`) e COLEÇÕES +
+# REGRAS (`colecoesemu`). Sequenciais de propósito — as três disputam as MESMAS
+# portas e o MESMO projectId `demo-bmv` do Emulator Suite, e duas execuções
+# sobrepostas não se revezam: sobem pela metade.
+#
+# ESSES TRÊS SÃO OS GATES OBRIGATÓRIOS, e desde a OS "CI fail-closed dos gates de
+# emulador" eles são FAIL-CLOSED: o portão final só fica VERDE se cada um dos três
+# tiver deixado um recibo válido de sucesso. Ausência de recibo, recibo vazio,
+# conteúdo que não seja um exit code, ou qualquer exit diferente de zero reprovam.
+# Ausência de evidência de sucesso NÃO é sucesso. A política mora inteira no passo
+# "Portão verde/vermelho", no fim deste arquivo.
+#
+# NOTA DE COMPOSIÇÃO DA RC. Este arquivo é a UNIÃO de duas linhagens que
+# evoluíram em paralelo sobre a mesma base: a de identidade/ranking, que
+# acrescentou os passos `rankingfn`, `rankingint`, `identint` e `auditident` e
+# trocou o alvo do gate de regras por `test:integrado`; e a do fail-closed, que
+# acrescentou o gate `moderacaoemu` e a política de recibo obrigatório. Nenhuma
+# das duas perdeu passo na união. O gate que se chamava `regras` passou a
+# chamar-se `colecoesemu` (mesmo passo, mesmo comando, mesma suíte) para que os
+# três obrigatórios se leiam como um conjunto no portão final.
 #
 # NENHUM GATE FOI REMOVIDO NEM AFROUXADO por estas adições (OS Identidade Pública
 # §38, OS Política Competitiva, OS de integração de identidade). Os gates de
 # social são: `social` (domínio Dart), `socialdom` (o bundle do domínio compila),
 # `socialfn` (typecheck + testes puros do codebase) e `socialemu` (Functions
 # reais no emulador). Os de ranking são `rankingfn` e `rankingint`. As Rules dos
-# dois blocos entram no gate `regras` que já existia, porque
+# dois blocos entram no gate `colecoesemu` que já existia, porque
 # `firebase/testes/npm run test:integrado` passou a incluir `social.test.js` e
 # `ranking.test.js` no MESMO arquivo de regras.
 #
@@ -128,7 +151,7 @@ jobs:
           roda colkit     test/colecoes/kit_pioneiros_test.dart
           # OS Identidade Publica e Grafo Social: o dominio puro (apelido,
           # publicId, estados da amizade, limites, paginacao). Autorizacao e
-          # provada pelas Rules, no gate `regras`.
+          # provada pelas Rules, no gate `colecoesemu`.
           roda social     test/social/teste_social.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
@@ -199,9 +222,12 @@ jobs:
           ( cd functions-social && npm test ) 2>&1 | tee t_socialfn.log
           echo ${PIPESTATUS[0]} > exit_socialfn
 
+      # GATE OBRIGATÓRIO 1/3 (fail-closed no portão final).
       - name: "3d — Functions SOCIAIS contra o Emulator Suite (chamadas reais)"
+        if: ${{ !cancelled() }}
         run: |
           set +e
+          echo "iniciado" > inicio_socialemu
           # Este gate existe porque a suite de regras, sozinha, NAO prova
           # idempotencia, concorrencia nem ausencia de UID nas RESPOSTAS. O runner
           # `com-functions.js` falha se o emulador de Functions nao estiver
@@ -262,19 +288,70 @@ jobs:
             2>&1 | tee t_auditident.log
           echo ${PIPESTATUS[0]} > exit_auditident
 
-      - name: "3g — codebase COLECOES: regras + Functions no Emulator Suite"
+      # GATE OBRIGATÓRIO 2/3 (fail-closed no portão final).
+      - name: "3h — codebase MODERACAO: Moderação com Firebase Emulator (chamadas reais)"
+        if: ${{ !cancelled() }}
         run: |
           set +e
+          echo "iniciado" > inicio_moderacaoemu
+          # POR QUE ESTE PASSO EXISTE, e o que ele NÃO é: até a OS do gate de
+          # moderação, Moderação só era exercida no CI de raspão, dentro do gate
+          # de coleções/regras do passo seguinte. Lá `moderacao.test.js` roda por
+          # `node --test` puro, sem `FUNCTIONS_EMULATOR_HOST`, e os dois describes
+          # de callable saem `# SKIP` — de propósito, porque aquele alvo prova
+          # REGRAS. A conclusão incômoda é a que motivou aquela OS: nenhuma
+          # chamada real às Functions de moderação jamais acontecia neste
+          # workflow, e a única rede contra uma regressão em
+          # `registrarDenuncia`/`bloquearJogador` era a memória de quem rodasse a
+          # suíte à mão.
+          #
+          # NOME PRÓPRIO, e não um comando genérico: quando este passo fica
+          # vermelho, o gate `moderacaoemu` diz QUAL suíte caiu.
+          #
+          # AQUI SE CHAMA O WRAPPER `emulador:moderacao`, e não o alvo interno
+          # `test:moderacao:functions` como faz o passo 3d do social. A troca é
+          # deliberada: o wrapper é AUTOCONTIDO (npm install + build:domain +
+          # build em functions-moderacao), confere `java`, a trava do ambiente e
+          # as portas antes de subir, dreno depois, e separa os desfechos em
+          # classes com exit codes próprios (0 OK · 1 FALHA-FUNCIONAL ·
+          # 3/4 INFRAESTRUTURA · 5 SUITE-INCOMPLETA · 6 CLEANUP-INCOMPLETO).
+          # Qualquer um diferente de 0 reprova este passo.
+          #
+          # O piso de casos (`--esperado=45`) mora no alvo interno, em
+          # firebase/testes/package.json, e é o wrapper que o aciona. Suíte que
+          # encolher, pular ou cancelar sai como SUITE-INCOMPLETA, não como verde.
+          if [ ! -f firebase/testes/package.json ]; then
+            echo "firebase/testes/package.json ausente" > nao_moderacaoemu; exit 0
+          fi
+          if [ ! -f functions-moderacao/package.json ]; then
+            echo "functions-moderacao/package.json ausente" > nao_moderacaoemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          # Dependências do HARNESS (`@firebase/rules-unit-testing`). Repetido
+          # aqui, e não herdado do passo 3d, porque aquele passo pode sair cedo
+          # quando o bundle social não existe — e Moderação não pode ficar refém.
+          ( cd firebase/testes && npm install 2>&1 | tail -3 )
+          ( cd firebase/testes && npm run emulador:moderacao ) 2>&1 | tee t_moderacaoemu.log
+          echo ${PIPESTATUS[0]} > exit_moderacaoemu
+
+      # GATE OBRIGATÓRIO 3/3 (fail-closed no portão final). Chamava-se `regras`;
+      # virou `colecoesemu` na OS do fail-closed. Nem o comando, nem a suíte, nem
+      # o que ele prova mudaram.
+      - name: "3g — codebase COLECOES: regras + Functions no Emulator Suite"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_colecoesemu
           # Caminho FIXO do harness de segurança. Ele não fica em
           # `<dir>/emulator-tests` nem em `functions/package.json`: fica em
           # firebase/testes/. Procurar pelos dois padrões antigos reportava
           # "sem harness" para um harness que existe — erro de descoberta, que
           # esta versão elimina.
           if [ ! -f firebase/testes/package.json ]; then
-            echo "firebase/testes/package.json ausente" > nao_regras; exit 0
+            echo "firebase/testes/package.json ausente" > nao_colecoesemu; exit 0
           fi
           if [ ! -f firebase.json ]; then
-            echo "firebase.json ausente na raiz" > nao_regras; exit 0
+            echo "firebase.json ausente na raiz" > nao_colecoesemu; exit 0
           fi
           npm i -g firebase-tools 2>&1 | tail -2
           ( cd firebase/functions && npm install 2>&1 | tail -3 )
@@ -282,22 +359,26 @@ jobs:
           # `--project demo-bmv` mantém tudo no emulador: nenhum projeto real é
           # tocado e não é preciso credencial.
           # `test:integrado`, e não `npm test`: o alvo curto roda só segurança +
-          # moderação + social, e deixava rastreabilidade e ranking fora do
-          # portão. Os CINCO blocos precisam ser provados no MESMO
+          # moderação + social + entitlement, e deixava rastreabilidade e ranking
+          # fora do portão. Os SEIS blocos precisam ser provados no MESMO
           # firestore.rules, que é justamente onde um bloco novo poderia
           # afrouxar o do vizinho — e social e ranking são os dois que falam de
           # `publicId`, então separá-los esconderia a regressão que a OS de
           # integração de identidade existe para impedir.
           firebase emulators:exec --only firestore,auth,functions --project demo-bmv \
-            "cd firebase/testes && npm run test:integrado" 2>&1 | tee t_regras.log
-          echo ${PIPESTATUS[0]} > exit_regras
+            "cd firebase/testes && npm run test:integrado" 2>&1 | tee t_colecoesemu.log
+          echo ${PIPESTATUS[0]} > exit_colecoesemu
 
       - name: Publicar evidência na branch ci-evidencias
         if: always()
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          # Os três obrigatórios (socialemu, moderacaoemu, colecoesemu) entram na
+          # MESMA tabela dos demais: uma evidência que dissesse "NÃO EXECUTADO"
+          # onde o portão diz VERMELHO seria um documento contradizendo o
+          # resultado que ele existe para justificar.
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident moderacaoemu colecoesemu"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -344,11 +425,90 @@ jobs:
           git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
           git push origin ci-evidencias
 
-      - name: Portão verde/vermelho (só falha em gate que REALMENTE rodou e falhou)
-        if: always()
+      - name: Portão verde/vermelho (fail-closed nos três gates obrigatórios)
+        if: ${{ !cancelled() }}
         run: |
+          # ------------------------------------------------------------------
+          # POLÍTICA — OS "CI fail-closed dos gates de emulador".
+          #
+          # ANTES: qualquer gate sem recibo saía como "NÃO EXECUTADO" e NÃO
+          # reprovava. Bastava um passo obrigatório ser pulado — por uma condição
+          # `if:`, por um guard de artefato, por um erro de fluxo — para o portão
+          # ficar VERDE sem que a suíte tivesse rodado. Ausência de prova era
+          # lida como aprovação.
+          #
+          # AGORA, para os TRÊS GATES OBRIGATÓRIOS, vale o contrário:
+          #
+          #     ausência de evidência de sucesso NÃO é sucesso.
+          #
+          # Só é SUCESSO um recibo que exista, não esteja vazio, contenha um
+          # exit code e esse exit code seja 0. Todo o resto — sem recibo, recibo
+          # vazio, `banana`, `1`, `3`, `4`, `5`, `6` — reprova. Não há default:
+          # nada aqui usa `${v:-0}` nem equivalente, porque um default de zero é
+          # exatamente a construção que transforma ausência em aprovação.
+          #
+          # Os DEMAIS gates mantêm a política anterior de propósito: são
+          # verificações auxiliares (analyze, suítes Flutter, typechecks), e
+          # torná-las fail-closed é decisão de outra ordem de serviço, não desta.
+          # `rankingfn`, `rankingint`, `identint` e `auditident` entram aqui como
+          # DEMAIS porque foi assim que a linhagem de identidade os entregou —
+          # promovê-los a obrigatórios nesta composição seria endurecer gate sem
+          # OS que autorize, e a regra desta RC é não mexer no rigor herdado em
+          # nenhuma das duas direções.
+          # ------------------------------------------------------------------
+          OBRIGATORIOS="socialemu moderacaoemu colecoesemu"
+          DEMAIS="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn rankingfn rankingint identint auditident"
+
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu regras; do
+
+          echo "== gates OBRIGATÓRIOS (fail-closed: sem prova de sucesso, reprova) =="
+          for k in $OBRIGATORIOS; do
+            # 1. Sem recibo. Reprova, e a marca de presença diz qual dos dois
+            #    casos aconteceu — o passo nem começou, ou começou e morreu.
+            if [ ! -f "exit_$k" ]; then
+              if [ -f "nao_$k" ]; then
+                echo "gate $k = NÃO EXECUTADO — o passo saiu antes de rodar a suíte: $(cat "nao_$k")"
+              elif [ -f "inicio_$k" ]; then
+                echo "gate $k = NÃO EXECUTADO — o passo COMEÇOU e não chegou a registrar resultado (morreu no meio); veja t_$k.log"
+              else
+                echo "gate $k = NÃO EXECUTADO — o passo NEM COMEÇOU (pulado por condição, ou abortado antes de chegar a vez dele)"
+              fi
+              fail=1
+              continue
+            fi
+
+            # 2. Recibo existe. `tr -d` remove espaços e a quebra de linha do
+            #    `echo`, e também um \r que venha de shell de outra plataforma.
+            v=$(tr -d '[:space:]' < "exit_$k")
+
+            if [ -z "$v" ]; then
+              echo "gate $k = RESULTADO INVÁLIDO — exit_$k existe mas está vazio; ninguém escreveu um exit code ali"
+              fail=1
+              continue
+            fi
+
+            # 3. Tem que ser um número. `banana`, `0 ; rm`, `ok` — nada disso é
+            #    um exit code, e nada disso pode ser lido como aprovação.
+            case "$v" in
+              *[!0-9]*)
+                echo "gate $k = RESULTADO INVÁLIDO — exit_$k contém '$v', que não é um exit code"
+                fail=1
+                continue
+                ;;
+            esac
+
+            # 4. Numérico. Só zero passa.
+            if [ "$v" = "0" ]; then
+              echo "gate $k = OK (exit 0)"
+            else
+              echo "gate $k = FALHOU (exit $v)"
+              fail=1
+            fi
+          done
+
+          echo
+          echo "== demais gates (política anterior: NÃO EXECUTADO reporta, não reprova) =="
+          for k in $DEMAIS; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
@@ -358,5 +518,7 @@ jobs:
               echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
             fi
           done
+
+          echo
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
           exit $fail

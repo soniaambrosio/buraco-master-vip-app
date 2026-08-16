@@ -317,6 +317,31 @@ executa**:
 - o codebase `functions-moderacao` (a palavra "moderacao" não aparece uma vez no
   workflow — `grep -c` devolve 0)
 
+> **Parcialmente fechado pela OS *Gate de Moderação no CI*.** O último item saiu:
+> o workflow ganhou o passo `3e — codebase MODERACAO`, gate `moderacaoemu`,
+> bloqueante, que roda `npm run emulador:moderacao` — regras **e** chamadas reais
+> às Cloud Functions de moderação, com piso de 45 casos. Com ele, o CI protege as
+> três suítes Firebase: **Social** (`socialemu`), **Moderação** (`moderacaoemu`) e
+> **Coleções** (`colecoesemu`, que até então se chamava `regras`).
+>
+> **O agravante do `NÃO EXECUTADO` foi RESOLVIDO pela OS *CI fail-closed dos gates
+> de emulador*.** Aqueles três gates passaram a ser fail-closed: o portão final só
+> fica VERDE se cada um deles tiver deixado um recibo que exista, não esteja
+> vazio, contenha um exit code e esse código seja `0`. Passo pulado, guard que
+> saiu cedo, passo que morreu antes de registrar, recibo vazio, recibo com
+> conteúdo que não é um exit code, e qualquer exit diferente de zero (`1`, `3`,
+> `4`, `5`, `6`) reprovam, cada um com mensagem própria dizendo qual gate e por
+> quê. A política está inteira no passo `Portão verde/vermelho`. Ausência de
+> evidência de sucesso deixou de ser lida como sucesso.
+>
+> Os **demais** gates (analyze, suítes Flutter, typechecks) mantêm a política
+> antiga — `NÃO EXECUTADO` é reportado e não reprova. Torná-los fail-closed é
+> decisão de outra ordem de serviço.
+>
+> Continuam abertos: os três primeiros itens da lista acima (suítes Flutter de
+> moderação, espectador e rastreabilidade não entram no portão) e o disparo apenas
+> por `workflow_dispatch`.
+
 Agravante de integridade: `NÃO EXECUTADO` **não reprova** o portão (*"só falha em
 gate que REALMENTE rodou e falhou"*). Um teste renomeado ou removido deixa o
 portão verde. O cabeçalho do próprio arquivo promete o contrário — *"REGRA DURA
