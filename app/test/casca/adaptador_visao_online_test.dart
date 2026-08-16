@@ -380,44 +380,40 @@ void main() {
   });
 
   // =========================================================================
-  // 6 — ordem entre visões
+  // 6 — a ordem não é decidida aqui
   // =========================================================================
-  group('ordem', () {
-    test('sem versão declarada, a mais nova é a última que chegou', () {
-      final a = aceita(visaoDeJogo(rodada: 1));
-      final b = aceita(visaoDeJogo(rodada: 2));
-      expect(b.substitui(a), isTrue);
-      expect(a.substitui(b), isTrue);
+  //
+  // Este arquivo tinha um grupo `ordem` exercitando `EstadoMesaOnline.substitui`
+  // e um campo `versaoEstado` lido de dentro da visão. Os dois foram removidos:
+  // pelo contrato do servidor (SHA `7e7572b`), o carimbo é IRMÃO de `visao` e
+  // nunca filho — o campo lido lá dentro era null em toda execução real, e o
+  // método respondia "pode substituir" para tudo.
+  //
+  // A ordem passou a ser decidida no ponto único onde o envelope entra
+  // (`services/ordem_da_visao.dart`), e a matriz dela é
+  // `test/casca/ordem_da_visao_test.dart`. O que resta a provar AQUI é que esta
+  // camada não voltou a ter opinião sobre ordem.
+  group('a ordem não mora nesta camada', () {
+    test('um versaoEstado plantado dentro da visão é ignorado', () {
+      // Um servidor mal-comportado, ou um teste antigo, podem pôr o número no
+      // lugar errado. O adaptador não o transporta e não o transforma em
+      // autoridade — ele lê a mesa, e a mesa continua legível.
+      final e = aceita(visaoDeJogo(carimboDentroDaVisao: 99, rodada: 4));
+      expect(e.rodada, 4);
+    });
+
+    test('a leitura é uma função pura da visão, sem memória entre chamadas', () {
+      // Se esta camada guardasse a última versão vista, ela seria uma segunda
+      // autoridade de ordem — e a errada, porque a visão atrasada já teria
+      // passado pelo estado canônico antes de chegar aqui.
+      final primeira = aceita(visaoDeJogo(rodada: 9));
+      final segunda = aceita(visaoDeJogo(rodada: 2));
+      expect(primeira.rodada, 9);
       expect(
-        a.versaoEstado,
-        isNull,
-        reason:
-            'o servidor de 16a692b não manda versaoEstado, e a ausência não '
-            'vira número inventado',
+        segunda.rodada,
+        2,
+        reason: 'o adaptador não recusa nada por ser "mais antigo"',
       );
-    });
-
-    test('com versão declarada, a maior substitui', () {
-      final v1 = aceita(visaoDeJogo(versaoEstado: 1));
-      final v2 = aceita(visaoDeJogo(versaoEstado: 2));
-      expect(v2.substitui(v1), isTrue);
-    });
-
-    test('com versão declarada, a menor é recusada', () {
-      final v1 = aceita(visaoDeJogo(versaoEstado: 1));
-      final v2 = aceita(visaoDeJogo(versaoEstado: 2));
-      expect(v1.substitui(v2), isFalse);
-    });
-
-    test('versão igual passa — é a retransmissão depois de reconectar', () {
-      final a = aceita(visaoDeJogo(versaoEstado: 7));
-      final b = aceita(visaoDeJogo(versaoEstado: 7));
-      expect(b.substitui(a), isTrue);
-    });
-
-    test('a primeira visão sempre entra', () {
-      final e = aceita(visaoDeJogo(versaoEstado: 99));
-      expect(e.substitui(null), isTrue);
     });
   });
 }

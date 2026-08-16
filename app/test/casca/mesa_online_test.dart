@@ -20,6 +20,7 @@ import 'package:buraco_master_vip/casca/login_de_producao.dart';
 import 'package:buraco_master_vip/casca/mesa_online/mesa_online_screen.dart';
 import 'package:buraco_master_vip/casca/onde_jogar_de_producao.dart';
 import 'package:buraco_master_vip/services/online_service.dart';
+import 'package:buraco_master_vip/sessao/comandos_de_autenticacao.dart';
 
 import 'bancada_online.dart';
 
@@ -66,12 +67,20 @@ Future<void> criarMesa(
 }
 
 /// O servidor transmite uma visão.
+///
+/// Sem [versaoEstado]/[eventoId] o envelope sai LEGADO — sem carimbo —, que é o
+/// que o servidor em produção emite hoje. Os casos de ordem passam o par
+/// explicitamente, e ele viaja como IRMÃO de `visao`, nunca dentro dela.
 Future<void> servidorManda(
   WidgetTester tester,
   Bancada b,
-  Map<String, dynamic> visao,
-) async {
-  b.canal.servidorEnvia({'tipo': 'estado', 'visao': visao});
+  Map<String, dynamic> visao, {
+  int? versaoEstado,
+  String? eventoId,
+}) async {
+  b.canal.servidorEnvia(
+    envelopeEstado(visao, versaoEstado: versaoEstado, eventoId: eventoId),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -324,10 +333,521 @@ void main() {
       await servidorManda(tester, b, v);
       await servidorManda(tester, b, v);
 
-      // Sem `eventoId` no protocolo, a garantia possível é esta: reprocessar o
-      // mesmo retrato produz o mesmo desenho.
+      // No modo legado (sem carimbo) a garantia possível é esta: reprocessar o
+      // mesmo retrato produz o mesmo desenho. Com carimbo, o reenvio nem chega
+      // a ser reaplicado — ver o grupo "ordem da visão versionada".
       expect(find.text('Sua mão · 3'), findsOneWidget);
       expect(find.byType(MesaOnlineScreen), findsOneWidget);
+    });
+  });
+
+  // =========================================================================
+  // Ordem da visão versionada — o carimbo do servidor chegando à mesa
+  // =========================================================================
+  //
+  // A matriz da POLÍTICA está em `ordem_da_visao_test.dart`. O que se prova
+  // aqui é que ela está no CAMINHO: transporte de produção, socket falso, tela
+  // montada, e o carimbo entrando pelo ponto único.
+  group('ordem da visão versionada', () {
+    testWidgets('a visão atrasada não desfaz o que a mesa já mostrou', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 10),
+        versaoEstado: 10,
+        eventoId: 'ev-10',
+      );
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 12),
+        versaoEstado: 12,
+        eventoId: 'ev-12',
+      );
+      expect(find.textContaining('Rodada 12'), findsOneWidget);
+
+      // A 11 chega DEPOIS da 12 — retomada atrasada. Aplicá-la faria a mesa
+      // voltar no tempo na frente da pessoa.
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 11),
+        versaoEstado: 11,
+        eventoId: 'ev-11',
+      );
+      expect(find.textContaining('Rodada 11'), findsNothing);
+      expect(find.textContaining('Rodada 12'), findsOneWidget);
+    });
+
+    testWidgets('o reenvio do mesmo carimbo não reconstrói a mesa', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 5),
+        versaoEstado: 5,
+        eventoId: 'ev-5',
+      );
+
+      var avisos = 0;
+      void contar() => avisos++;
+      b.online.addListener(contar);
+      addTearDown(() => b.online.removeListener(contar));
+
+      final antes = b.online.visao;
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 5),
+        versaoEstado: 5,
+        eventoId: 'ev-5',
+      );
+
+      expect(
+        avisos,
+        0,
+        reason: 'mensagem descartada não avisa ouvinte nem redesenha',
+      );
+      expect(
+        identical(b.online.visao, antes),
+        isTrue,
+        reason: 'o retrato na mão é o mesmo objeto — nada foi reaplicado',
+      );
+      expect(find.textContaining('Rodada 5'), findsOneWidget);
+    });
+
+    testWidgets('mesma versão com outro eventoId não substitui o estado', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 7),
+        versaoEstado: 7,
+        eventoId: 'ev-7',
+      );
+
+      // Duas emissões dizendo ser o mesmo estado. O contrato do servidor não
+      // permite isso; escolher uma delas seria o cliente inventando autoridade.
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 77),
+        versaoEstado: 7,
+        eventoId: 'outro',
+      );
+      expect(find.textContaining('Rodada 77'), findsNothing);
+      expect(find.textContaining('Rodada 7'), findsOneWidget);
+    });
+
+    testWidgets('envelope com carimbo quebrado é descartado inteiro', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 3),
+        versaoEstado: 3,
+        eventoId: 'ev-3',
+      );
+
+      // Uma recusa de regra deixa a explicação na tela. A mensagem malformada
+      // que vem depois não pode limpá-la — seria mutação parcial: o estado fica
+      // como estava e a explicação some.
+      b.canal.servidorEnvia({
+        'tipo': 'erro',
+        'motivo': 'você já comprou nesta jogada',
+      });
+      await tester.pumpAndSettle();
+      expect(b.online.erro, 'você já comprou nesta jogada');
+
+      b.canal.servidorEnvia({
+        'tipo': 'estado',
+        'visao': visaoDeJogo(rodada: 44),
+        'versaoEstado': 'quarenta e quatro',
+        'eventoId': 'ev-44',
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Rodada 44'), findsNothing);
+      expect(find.textContaining('Rodada 3'), findsOneWidget);
+      expect(
+        b.online.erro,
+        'você já comprou nesta jogada',
+        reason: 'o descarte é inteiro — nem estado, nem erro limpo',
+      );
+    });
+
+    testWidgets('visão sem carimbo depois de uma carimbada é recusada', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 6),
+        versaoEstado: 6,
+        eventoId: 'ev-6',
+      );
+      // Sem carimbo. Um servidor que carimba não deixa de carimbar no meio da
+      // partida: isto é anomalia, não compatibilidade.
+      await servidorManda(tester, b, visaoDeJogo(rodada: 66));
+
+      expect(find.textContaining('Rodada 66'), findsNothing);
+      expect(find.textContaining('Rodada 6'), findsOneWidget);
+    });
+
+    testWidgets('a retomada reenvia a versão vigente e a mesa volta', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 12),
+        versaoEstado: 12,
+        eventoId: 'ev-12',
+      );
+
+      // A conexão cai. Ao voltar, o `OnlineService` reentra na mesa e descarta a
+      // projeção anterior — e o servidor NÃO cria versão nova para quem volta
+      // (reconectar não muta a sala). Ele reenvia a 12.
+      b.canal.servidorDerruba();
+      await tester.pump(const Duration(seconds: 1));
+      b.online.tentarNovamente();
+      await tester.pumpAndSettle();
+      b.canal.servidorEnvia({'tipo': 'autenticado'});
+      await tester.pumpAndSettle();
+      b.canal.servidorEnvia({
+        'tipo': 'entrou',
+        'codigo': 'BURACO-0001',
+        'assento': 0,
+      });
+      await tester.pumpAndSettle();
+
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 12),
+        versaoEstado: 12,
+        eventoId: 'ev-12',
+      );
+
+      expect(
+        find.byType(MesaOnlineScreen),
+        findsOneWidget,
+        reason: 'com o marcador sobrevivendo à queda, o reenvio viraria '
+            'duplicata e a mesa ficaria em branco',
+      );
+      expect(find.textContaining('Rodada 12'), findsOneWidget);
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('callback tardio da conexão anterior não contamina a ordem', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 4),
+        versaoEstado: 4,
+        eventoId: 'ev-4',
+      );
+
+      final canalAntigo = b.canal;
+      b.online.desligar();
+      b.online.conectar();
+      await tester.pumpAndSettle();
+
+      // O socket velho fala, e fala ALTO: versão gigante. Se ela entrasse no
+      // marcador, tudo o que a conexão nova mandasse depois seria "atrasado" e
+      // a mesa nunca mais se mexeria.
+      canalAntigo.servidorEnvia({
+        'tipo': 'estado',
+        'visao': visaoDeJogo(rodada: 999),
+        'versaoEstado': 999999,
+        'eventoId': 'ev-do-socket-morto',
+      });
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Rodada 999'), findsNothing);
+
+      b.canal.servidorEnvia({'tipo': 'autenticado'});
+      await tester.pumpAndSettle();
+      b.canal.servidorEnvia({
+        'tipo': 'entrou',
+        'codigo': 'BURACO-0001',
+        'assento': 0,
+      });
+      await tester.pumpAndSettle();
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 5),
+        versaoEstado: 5,
+        eventoId: 'ev-5',
+      );
+
+      expect(
+        find.textContaining('Rodada 5'),
+        findsOneWidget,
+        reason: 'a conexão nova continua mandando na mesa',
+      );
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('outra mesa pode começar com versão menor', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 30),
+        versaoEstado: 50,
+        eventoId: 'sala-A-50',
+      );
+
+      // Sair da mesa e entrar em outra. A sala nova tem contador próprio, e o
+      // dela pode estar bem atrás — recusar por isso deixaria a pessoa numa
+      // mesa que nunca desenha.
+      await tester.tap(find.text('Sair'));
+      await tester.pumpAndSettle();
+      expect(find.byType(LobbyOnline), findsOneWidget);
+
+      await criarMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 1),
+        versaoEstado: 3,
+        eventoId: 'sala-B-3',
+      );
+
+      expect(find.byType(MesaOnlineScreen), findsOneWidget);
+      expect(find.textContaining('Rodada 1'), findsOneWidget);
+    });
+
+    testWidgets('logout e login novo começam a ordem do zero', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 20),
+        versaoEstado: 80,
+        eventoId: 'de-A-80',
+      );
+
+      b.autenticacao.uidQueVaiEntrar = 'uid-B';
+      await b.autenticacao.sair();
+      await tester.pumpAndSettle();
+      expect(b.online.visao, isNull);
+
+      // A pessoa nova percorre o caminho inteiro de novo — a pilha de rotas foi
+      // eliminada junto com a sessão anterior.
+      await b.autenticacao.entrar(ProvedorDeLogin.google);
+      await tester.pumpAndSettle();
+      await irAoLobby(tester, b);
+      await criarMesa(tester, b);
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(rodada: 1),
+        versaoEstado: 2,
+        eventoId: 'de-B-2',
+      );
+
+      expect(
+        find.byType(MesaOnlineScreen),
+        findsOneWidget,
+        reason: 'a ordem da conta anterior não pode barrar a mesa da nova',
+      );
+
+      await encerrarTransporte(tester, b);
+    });
+  });
+
+  // =========================================================================
+  // Efeito terminal — separado da aplicação do retrato
+  // =========================================================================
+  group('efeito terminal', () {
+    /// Assina o ponto de saída dos efeitos e devolve o que foi despachado.
+    List<EncerramentoAutoritativo> escutarEncerramento(Bancada b) {
+      final recebidos = <EncerramentoAutoritativo>[];
+      b.online.aoEncerrar = recebidos.add;
+      addTearDown(() => b.online.aoEncerrar = null);
+      return recebidos;
+    }
+
+    Map<String, dynamic> visaoTerminal() => visaoDeJogo(
+      encerrada: true,
+      rodadaEncerrada: true,
+      duplaQueBateu: 'nos',
+      suaVez: false,
+      placar: {'nos': 3010, 'eles': 1200},
+    );
+
+    testWidgets('o encerramento despacha uma vez e a mesa fica no estado', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      final avisos = escutarEncerramento(b);
+
+      await servidorManda(
+        tester,
+        b,
+        visaoTerminal(),
+        versaoEstado: 13,
+        eventoId: 'fim-13',
+      );
+
+      expect(avisos, hasLength(1));
+      expect(avisos.single.eventoId, 'fim-13');
+      expect(avisos.single.versaoEstado, 13);
+      expect(find.text('Partida encerrada'), findsOneWidget);
+    });
+
+    testWidgets('o encerramento retransmitido não despacha de novo', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      final avisos = escutarEncerramento(b);
+
+      for (var i = 0; i < 3; i++) {
+        await servidorManda(
+          tester,
+          b,
+          visaoTerminal(),
+          versaoEstado: 13,
+          eventoId: 'fim-13',
+        );
+      }
+
+      expect(
+        avisos,
+        hasLength(1),
+        reason: 'diálogo, navegação, som e registro acontecem uma vez só',
+      );
+    });
+
+    testWidgets('cair e voltar redesenha a mesa sem repetir o desfecho', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      final avisos = escutarEncerramento(b);
+
+      await servidorManda(
+        tester,
+        b,
+        visaoTerminal(),
+        versaoEstado: 13,
+        eventoId: 'fim-13',
+      );
+      expect(avisos, hasLength(1));
+
+      b.canal.servidorDerruba();
+      await tester.pump(const Duration(seconds: 1));
+      b.online.tentarNovamente();
+      await tester.pumpAndSettle();
+      b.canal.servidorEnvia({'tipo': 'autenticado'});
+      await tester.pumpAndSettle();
+      b.canal.servidorEnvia({
+        'tipo': 'entrou',
+        'codigo': 'BURACO-0001',
+        'assento': 0,
+      });
+      await tester.pumpAndSettle();
+
+      await servidorManda(
+        tester,
+        b,
+        visaoTerminal(),
+        versaoEstado: 13,
+        eventoId: 'fim-13',
+      );
+
+      expect(
+        find.text('Partida encerrada'),
+        findsOneWidget,
+        reason: 'o retrato terminal volta a ser desenhado — isso é o snapshot',
+      );
+      expect(
+        avisos,
+        hasLength(1),
+        reason: 'o efeito, não: quem só caiu e voltou já viu o resultado',
+      );
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('nenhum efeito terminal sem o servidor declarar o fim', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await irAMesa(tester, b);
+      final avisos = escutarEncerramento(b);
+
+      // Rodada encerrada NÃO é partida encerrada, e um placar alto não é o
+      // cliente concluindo nada.
+      await servidorManda(
+        tester,
+        b,
+        visaoDeJogo(
+          rodadaEncerrada: true,
+          duplaQueBateu: 'nos',
+          suaVez: false,
+          placar: {'nos': 9999, 'eles': 0},
+        ),
+        versaoEstado: 14,
+        eventoId: 'ev-14',
+      );
+
+      expect(avisos, isEmpty);
     });
   });
 

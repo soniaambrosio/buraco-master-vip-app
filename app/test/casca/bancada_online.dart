@@ -303,7 +303,7 @@ Map<String, dynamic> visaoDeJogo({
   String? precisaUsarTopo,
   Map<String, dynamic>? jogosDupla,
   List<Map<String, dynamic>>? assentos,
-  int? versaoEstado,
+  int? carimboDentroDaVisao,
 }) => {
   'voceAssento': voceAssento,
   'modalidade': 'aberto',
@@ -376,5 +376,25 @@ Map<String, dynamic> visaoDeJogo({
         ],
         'eles': <List<Map<String, dynamic>>>[],
       },
+  // O LUGAR ERRADO, DE PROPÓSITO. O servidor NUNCA põe o carimbo dentro da
+  // visão — ele é irmão de `visao` (SHA `7e7572b`, §"Onde os campos moram").
+  // Este parâmetro existe só para os casos que provam que um número plantado
+  // aqui não vira autoridade de ordem nenhuma.
+  if (carimboDentroDaVisao != null) 'versaoEstado': carimboDentroDaVisao,
+};
+
+/// O envelope `estado` como o servidor o emite, com o carimbo NO LUGAR CERTO.
+///
+/// `versaoEstado` e `eventoId` são irmãos de `visao`. Omitir os dois produz o
+/// envelope LEGADO — o do servidor que ainda não carimba, que é o que está em
+/// produção hoje.
+Map<String, dynamic> envelopeEstado(
+  Map<String, dynamic> visao, {
+  int? versaoEstado,
+  String? eventoId,
+}) => {
+  'tipo': 'estado',
+  'visao': visao,
   if (versaoEstado != null) 'versaoEstado': versaoEstado,
+  if (eventoId != null) 'eventoId': eventoId,
 };

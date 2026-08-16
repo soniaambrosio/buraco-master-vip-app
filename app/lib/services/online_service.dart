@@ -68,6 +68,24 @@
 // A sessão devolvendo `null` já barra a maior parte disso; esta geração fecha o
 // resto — o caso em que a credencial VOLTOU válida logo antes de o jogador sair,
 // e a continuação seguiria em frente com ela na mão.
+//
+// ---------------------------------------------------------------------------
+// ORDEM DA VISÃO — por que o `case 'estado'` deixou de ser uma atribuição
+// ---------------------------------------------------------------------------
+//
+// A geração acima resolve mensagem de CONEXÃO velha. Ela não resolve mensagem
+// velha da conexão ATUAL: reenvio, retransmissão pós-reconexão e corrida entre
+// emissões chegam pelo socket certo, com a geração certa, e substituíam o
+// estado do mesmo jeito — desfazendo na tela o que já tinha acontecido.
+//
+// O servidor passou a carimbar cada emissão (`versaoEstado` + `eventoId`,
+// irmãos de `visao`), e quem lê esse carimbo é a `OrdemDaVisao` deste objeto.
+// Ela é a ÚNICA autoridade de ordem do cliente: não existe segundo lugar onde
+// se decida se uma visão é nova, e a camada de apresentação não opina.
+//
+// O envelope entra por UM ponto — o `case 'estado'` de [_aoReceber] — e só há
+// UM escritor de `visao` em toda a classe. Essas duas coisas são o que faz a
+// regra valer; qualquer caminho paralelo a elas seria uma segunda autoridade.
 // ---------------------------------------------------------------------------
 
 import 'dart:async';
@@ -78,7 +96,10 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'endpoint_servidor.dart';
+import 'ordem_da_visao.dart';
 import 'redacao_segredos.dart';
+
+export 'ordem_da_visao.dart' show EncerramentoAutoritativo;
 
 enum OnlineStatus {
   desconectado,
@@ -238,6 +259,31 @@ class OnlineService extends ChangeNotifier {
 
   /// Geração do TRANSPORTE. Ver o cabeçalho do arquivo.
   int _geracaoTransporte = 0;
+
+  /// A ordem das visões desta conexão. Ver `ordem_da_visao.dart`.
+  ///
+  /// Não persiste: nasce com o objeto, morre com ele, e é reiniciada nas duas
+  /// fronteiras que o arquivo dela descreve — projeção descartada e mesa
+  /// encerrada.
+  final OrdemDaVisao _ordem = OrdemDaVisao();
+
+  /// Chamado UMA vez por encerramento autoritativo do servidor.
+  ///
+  /// É o ponto de saída dos EFEITOS terminais — diálogo de resultado,
+  /// navegação, som, registro local. Ele existe separado da aplicação do
+  /// snapshot porque as duas coisas têm idempotências diferentes: a visão do
+  /// encerramento pode ser reaplicada à vontade (reconectar exige isso), e o
+  /// efeito não pode acontecer duas vezes.
+  ///
+  /// UM slot, e não uma lista de ouvintes, de propósito: vários slots seriam
+  /// vários donos de "a partida acabou", cada um com sua noção de já ter
+  /// tratado. Quem precisar de mais de um efeito registra um consumidor que os
+  /// distribui.
+  ///
+  /// HOJE NINGUÉM ASSINA. Ligar um diálogo ou uma navegação aqui é trabalho de
+  /// interface, que a OS desta entrega proíbe — o que se entrega é o ponto de
+  /// saída com a garantia de disparo único.
+  void Function(EncerramentoAutoritativo)? aoEncerrar;
 
   bool get conectado => status == OnlineStatus.conectado;
   bool get autenticado => status == OnlineStatus.conectado;
@@ -457,7 +503,7 @@ class OnlineService extends ChangeNotifier {
 
   void sair() {
     _enviar({'tipo': 'sair'});
-    _limparProjecao();
+    _encerrarMesa();
     codigo = null;
     notifyListeners();
   }
@@ -506,7 +552,10 @@ class OnlineService extends ChangeNotifier {
     _meuApelido = 'Você';
     _tentativas = 0;
     _jaAutenticouNestaConexao = false;
-    _limparProjecao();
+    // A MESA inteira, e não só a projeção: quem entra depois é outra pessoa, e
+    // o encerramento da partida da anterior não pode continuar anotado como
+    // "já despachado" — nem servir de ordem para a mesa nova.
+    _encerrarMesa();
     desligar(); // sobe a geração, derruba tudo e notifica uma vez só
   }
 
@@ -520,9 +569,26 @@ class OnlineService extends ChangeNotifier {
 
   // ---------- Interno ----------
 
+  /// Descarta o retrato do assento. O marcador de ordem vai junto — ele
+  /// descrevia ESTE retrato, e sem retrato não descreve nada.
+  ///
+  /// O livro dos efeitos terminais NÃO vai junto, e essa assimetria é o ponto:
+  /// este método é chamado na reconexão, e a reconexão recebe de volta o mesmo
+  /// encerramento que já foi anunciado. Zerar o livro aqui faria o resultado
+  /// aparecer duas vezes para quem só caiu e voltou.
   void _limparProjecao() {
     meuAssento = null;
     visao = null;
+    _ordem.reiniciarProjecao();
+  }
+
+  /// A mesa acabou para esta pessoa. Aqui o livro dos efeitos também zera: a
+  /// próxima mesa é outra partida, com contador próprio — e um `versaoEstado`
+  /// numericamente menor que o da anterior é o caso NORMAL, não uma anomalia.
+  void _encerrarMesa() {
+    meuAssento = null;
+    visao = null;
+    _ordem.reiniciarMesa();
   }
 
   /// Comando de jogador: só sai depois de AUTENTICADO. Antes disso vai para a
@@ -588,9 +654,37 @@ class OnlineService extends ChangeNotifier {
         if (meuAssento == null) return;
         final bruta = msg['visao'];
         if (bruta is! Map) return;
-        visao = bruta.cast<String, dynamic>();
-        erro = null;
-        erroCodigo = null;
+        final nova = bruta.cast<String, dynamic>();
+
+        // A ORDEM É DECIDIDA ANTES DE QUALQUER MUTAÇÃO. O carimbo é lido do
+        // ENVELOPE (`msg`), não da visão: os campos são irmãos de `visao`, e um
+        // `versaoEstado` que aparecesse lá dentro não seria o carimbo.
+        final decisao = _ordem.avaliar(msg);
+
+        // Descarte é descarte inteiro: nada de estado, nada de erro limpo,
+        // nenhum `notifyListeners`. Uma mensagem atrasada que zerasse o erro na
+        // tela já seria uma mutação parcial — a explicação some e a mesa fica
+        // como estava, sem ninguém entender por quê.
+        if (!decisao.temAutoridade) return;
+
+        if (decisao.aplicaSnapshot) {
+          visao = nova;
+          erro = null;
+          erroCodigo = null;
+        }
+
+        // EFEITO TERMINAL, SEPARADO DO SNAPSHOT — e depois dele, para que quem
+        // for avisado encontre a mesa já no estado autoritativo.
+        //
+        // Roda TAMBÉM na duplicata: o reenvio do encerramento não reaplica o
+        // retrato (ele é o mesmo), mas continua sendo o servidor declarando o
+        // fim, e o livro de efeitos é quem sabe se aquilo já foi despachado.
+        final encerramento = _ordem.talvezEncerramento(decisao, nova);
+        if (encerramento != null) aoEncerrar?.call(encerramento);
+
+        // Duplicata pura não mexeu em nada: avisar os ouvintes reconstruiria a
+        // mesa inteira para desenhar o mesmo retrato.
+        if (!decisao.aplicaSnapshot) return;
         break;
       case 'erro':
         if (msg['codigo'] == 'ATUALIZACAO_OBRIGATORIA') {
