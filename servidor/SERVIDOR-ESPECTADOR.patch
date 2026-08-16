@@ -1,0 +1,1894 @@
+From 3c8b07ef6281ba2c986c1d391c90792a205fa73f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 11 Aug 2026 13:35:23 -0300
+Subject: [PATCH] enforcement de visao de espectador no servidor autoritativo
+ (P0)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O recorte publico ja existia e estava provado no repo do app
+(app/lib/motor/visao_espectador.dart), mas nao era consumido por servidor
+nenhum: quem serve estado de partida e este bundle, e ele nao tinha
+espectador nem fronteira de sigilo. Esta e a contraparte Node do mesmo
+contrato.
+
+O papel sai do assento CONCEDIDO pelo gerenciador de salas, nunca do
+payload: `papelDe` nao le `msg`, entao nenhum campo enviado pelo cliente
+(seat, viewerUid, role, souEspectador, debug...) promove uma conexao.
+
+A visao publica e construida por LISTA DE PERMISSAO, nao por remocao de
+campos da visao de assento — um campo secreto novo no assento nasce
+invisivel para quem assiste em vez de nascer exposto. Tudo e copia:
+nenhum objeto mutavel do jogo atravessa a fronteira.
+
+  motor/jogo         visaoDoEspectador, segredosDoEspectador,
+                     vazamentosNaVisao, minimoParaDescer
+  servidor/salas     porta unica visaoPara({codigo, papel, assento}) e
+                     tripwire que bloqueia o payload se um id secreto escapar
+  servidor/servidor  papelDe, assistirMesa, broadcast por papel, `fim` sem
+                     carteira para espectador, recusa generica sem detalhe
+
+Nenhuma regra de Buraco foi tocada: os hunks ficam fora da faixa de
+regras (carta/canastra/bot/jogadas/pontuacao).
+
+Testes: 38 verdes (`npm test`), incluindo os tres casos P0 da OS, ESPEC-01
+a ESPEC-10, prova estrutural de nao vazamento partida inteira e a
+regressao do jogador. Nao havia suite neste repo antes.
+
+Fonte `cliente/` continua ausente: patch no bundle como excecao
+documentada no cabecalho, no mesmo regime do patch CRIT-01/02/03.
+
+Sem deploy, sem merge.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ package.json            |   4 +-
+ server.js               | 382 ++++++++++++++++++++++++-
+ test/ajuda.js           | 225 +++++++++++++++
+ test/espectador.test.js | 608 ++++++++++++++++++++++++++++++++++++++++
+ test/regressao.test.js  | 297 ++++++++++++++++++++
+ test/ws.test.js         | 166 +++++++++++
+ 6 files changed, 1669 insertions(+), 13 deletions(-)
+ create mode 100644 test/ajuda.js
+ create mode 100644 test/espectador.test.js
+ create mode 100644 test/regressao.test.js
+ create mode 100644 test/ws.test.js
+
+diff --git a/package.json b/package.json
+index 783fb8d..6b56ac7 100644
+--- a/package.json
++++ b/package.json
+@@ -4,7 +4,9 @@
+   "private": true,
+   "description": "Servidor de salas (multiplayer) do Buraco Master VIP — Node puro, arquivo único.",
+   "scripts": {
+-    "start": "node server.js"
++    "start": "node server.js",
++    "test": "node --test \"test/*.test.js\"",
++    "check": "node --check server.js"
+   },
+   "engines": {
+     "node": ">=20"
+diff --git a/server.js b/server.js
+index 07cac04..1aeba9d 100644
+--- a/server.js
++++ b/server.js
+@@ -16,6 +16,24 @@
+ // O server.js ANTERIOR está preservado no Git (main / commit be72bb6).
+ // Se a pasta-fonte `cliente/` for recuperada, RETROPORTAR estas mudanças para a fonte
+ // e REGERAR o bundle. Nenhuma outra regra/área foi tocada. Sem deploy.
++//
++// -----------------------------------------------------------------------------------
++// EXCEÇÃO DOCUMENTADA #2 — ENFORCEMENT DE VISÃO DE ESPECTADOR (P0 de sigilo)
++// Mesma justificativa da exceção acima: a fonte `cliente/` continua AUSENTE — o repo
++// `buraco-servidor` guarda só este bundle (o `buraco-servidor.zip` versionado ao lado
++// contém apenas `server.js` + `package.json`, não a fonte). Verificado nesta OS.
++// Alterações, todas marcadas com `// [PATCH ESPECTADOR]`:
++//   • motor/jogo    — `visaoDoEspectador` (lista de permissão), `segredosDoEspectador`
++//                     (as 4 mãos + monte + mortos) e `vazamentosNaVisao` (varredura
++//                     recursiva). NENHUMA regra de Buraco foi tocada;
++//   • servidor/salas — porta única `visaoPara({codigo, papel, assento})` + tripwire
++//                     que bloqueia o payload se um id secreto escapar;
++//   • servidor/servidor — `papelDe` (papel decidido pelo SERVIDOR), mensagem
++//                     `assistirMesa`, broadcast por papel, `fim` sem carteira para
++//                     quem assiste e recusa genérica em ação de espectador.
++// Contrato de referência: `app/lib/motor/visao_espectador.dart` (repo do app).
++// Testes: `test/espectador.test.js` e `test/regressao.test.js` (`npm test`).
++// O server.js ANTERIOR está preservado no Git (main / commit 1828d42). Sem deploy.
+ // ===================================================================================
+ (function () {
+   var __cache = {};
+@@ -1798,6 +1816,178 @@ function visaoDoAssento(jogo, assento) {
+   };
+ }
+ 
++// ===========================================================================
++// [PATCH ESPECTADOR] VISÃO PÚBLICA — o que quem ASSISTE pode ver.
++//
++// Contrato: `app/lib/motor/visao_espectador.dart` no repo do app
++// (`VisaoEspectador.de` / `VisaoEspectador.segredos`). Esta é a contraparte
++// Node da MESMA regra; a estrutura interna difere, a SUPERFÍCIE não.
++//
++// Por que uma função separada de `visaoDoAssento`, e não um `if (espectador)`
++// lá dentro: o mapa abaixo é uma LISTA DE PERMISSÃO escrita à mão. Um campo
++// secreto novo acrescentado ao assento não vaza para cá por descuido — ele
++// simplesmente NÃO EXISTE nesta função. Num builder compartilhado com uma
++// bandeira, o padrão se inverteria: o campo novo nasceria visível para quem
++// assiste e alguém teria que lembrar de escondê-lo. Aqui, esquecer é omitir;
++// lá, esquecer seria expor.
++//
++// Também não se constrói a visão de assento para depois DELETAR campos: o
++// objeto do assento carrega referências vivas para `jogo.maos` e
++// `jogo.jogosDupla`. Tudo aqui é CÓPIA — nenhum objeto mutável do jogo
++// atravessa a fronteira.
++// ===========================================================================
++
++/** Carta em forma pública. Só é chamada sobre cartas JÁ à vista de todos
++ *  (lixo e jogos baixados) — nunca sobre mão, monte ou morto. */
++function cartaPublica(c) {
++  return { id: c.id, naipe: c.naipe, valor: c.valor, coringa: !!c.eh_coringa };
++}
++
++function cartasPublicas(cs) {
++  return cs.map(cartaPublica);
++}
++
++/** Mínimo que a dupla precisa somar para ABRIR (0 = não vulnerável ou já
++ *  abriu). Espelha `checarAberturaVulneravel`: nível 1 → 75, nível 2 → 90. */
++function minimoParaDescer(jogo, dupla) {
++  if (jogo.abriuValido && jogo.abriuValido[dupla]) return 0;
++  const niv = jogo.rodadasVulneravel[dupla];
++  if (niv <= 0) return 0;
++  return niv === 1 ? 75 : 90;
++}
++
++/**
++ * TUDO o que é secreto para quem assiste: as QUATRO mãos, o monte e os mortos.
++ *
++ * É a diferença exata em relação ao assento, onde a própria mão é legítima.
++ * Existe como função (e não só dentro do teste) porque é a definição que o
++ * despacho consulta antes de mandar qualquer payload a um espectador — uma
++ * segunda cópia dessa lista divergiria na primeira mudança de regra.
++ */
++function segredosDoEspectador(jogo) {
++  const s = new Set();
++  if (!jogo) return s;
++  for (const mao of jogo.maos || []) for (const c of mao) s.add(c.id);
++  for (const c of jogo.monte || []) s.add(c.id);
++  for (const morto of jogo.mortos || []) for (const c of morto) s.add(c.id);
++  return s;
++}
++
++/**
++ * Ids secretos que escaparam para `visao`. Vazio = sem vazamento.
++ *
++ * Varre a estrutura INTEIRA — chaves, strings, listas, objetos aninhados — em
++ * qualquer profundidade. Não procura por nomes de campo conhecidos (`mao` e
++ * companhia): procura pelos IDS. Assim o vazamento é detectado mesmo que o
++ * segredo apareça sob `dados.x.y.z.valor` ou sob uma chave inventada amanhã.
++ */
++function vazamentosNaVisao(visao, segredos) {
++  const achados = new Set();
++  const vistos = new Set();
++  (function varrer(no) {
++    if (no == null) return;
++    if (typeof no === "string") {
++      if (segredos.has(no)) achados.add(no);
++      return;
++    }
++    if (typeof no !== "object") return;
++    if (vistos.has(no)) return; // ciclos
++    vistos.add(no);
++    if (Array.isArray(no)) {
++      for (const item of no) varrer(item);
++      return;
++    }
++    for (const chave of Object.keys(no)) {
++      if (segredos.has(chave)) achados.add(chave); // segredo usado como CHAVE
++      varrer(no[chave]);
++    }
++  })(visao);
++  return achados;
++}
++
++/**
++ * Monta a visão de quem ASSISTE. Não recebe assento: espectador não ocupa
++ * nenhum, não tem mão, não tem parceiro e não tem vez.
++ *
++ * A regra é mais estreita que a do assento: vê SOMENTE o que está na mesa
++ * — lixo, jogos baixados, placar, de quem é a vez — e a CONTAGEM do que está
++ * oculto. A contagem não é vazamento pelo mesmo motivo que vale para o
++ * assento: quantas cartas cada um tem é o que qualquer pessoa em volta da
++ * mesa real conta com os olhos.
++ */
++function visaoDoEspectador(jogo) {
++  return {
++    // Marca o recorte. Cliente e servidor podem AFIRMAR qual visão receberam,
++    // em vez de inferir pela ausência de campos.
++    espectador: true,
++    voceAssento: null,
++
++    // ---- mesa ----
++    modalidade: jogo.modalidade,
++    metaPontos: jogo.metaPontos,
++    rodada: jogo.rodada,
++
++    // ---- turno (de quem é a vez é público; `suaVez` não existe: não há "você") ----
++    vez: jogo.vez,
++    jaComprou: jogo.jaComprou,
++    rodadaEncerrada: jogo.rodadaEncerrada,
++    encerrada: jogo.encerrada,
++
++    // ---- quem está na mesa (público: apelido, tipo, dupla, contagem) ----
++    assentos: jogo.assentos.map((a, i) => ({
++      apelido: a.apelido,
++      tipo: a.tipo,
++      dupla: a.dupla,
++      qtdCartas: jogo.maos[i].length,
++    })),
++
++    // ---- o que está na mesa, à vista de todos ----
++    // O lixo é pilha aberta no ABERTO (todo mundo leu o que passou por ela);
++    // nas outras modalidades só o TOPO é visível. Os jogos baixados são
++    // públicos em qualquer modalidade.
++    lixoTopo: jogo.lixo.length ? cartaPublica(jogo.lixo[jogo.lixo.length - 1]) : null,
++    lixoAberto: jogo.modalidade === "aberto" ? cartasPublicas(jogo.lixo) : null,
++    jogosNos: jogo.jogosDupla.nos.map(cartasPublicas),
++    jogosEles: jogo.jogosDupla.eles.map(cartasPublicas),
++
++    // ---- o que está oculto: SÓ A CONTAGEM ----
++    qtdCartasPorAssento: jogo.maos.map((m) => m.length),
++    monteQtd: jogo.monte.length,
++    lixoQtd: jogo.lixo.length,
++    mortosQtd: jogo.mortos.length,
++    mortosTamanhos: jogo.mortos.map((m) => m.length),
++    mortoPegoNos: !!jogo.mortoPego.nos,
++    mortoPegoEles: !!jogo.mortoPego.eles,
++
++    // ---- pendência do topo: o FATO, nunca o id ----
++    // Que alguém comprou o lixo e está devendo o topo é público — todo mundo
++    // viu. QUAL é a carta, não: ela está na mão de quem comprou. O assento
++    // dono recebe `precisaUsarTopo`; aqui esse campo não existe.
++    obrigacaoTopoPendente: !!jogo.deveUsarTopo,
++
++    // ---- placar e vulnerabilidade, pelas DUAS duplas ----
++    // No assento estes campos são relativos ("minha dupla"). Sem assento, a
++    // forma correta é nomear as duas.
++    placarNos: jogo.placar.nos,
++    placarEles: jogo.placar.eles,
++    rodadasVulneravelNos: jogo.rodadasVulneravel.nos,
++    rodadasVulneravelEles: jogo.rodadasVulneravel.eles,
++    minimoParaDescerNos: minimoParaDescer(jogo, "nos"),
++    minimoParaDescerEles: minimoParaDescer(jogo, "eles"),
++    vulneravelNos: minimoParaDescer(jogo, "nos") > 0,
++    vulneravelEles: minimoParaDescer(jogo, "eles") > 0,
++
++    // ---- desfecho ----
++    // `pontosRodada` só existe depois da rodada apurada e carrega AGREGADOS
++    // (total, bônus, desconto de mão como NÚMERO, contadores de canastra) —
++    // nenhum id de carta. Quem garante isso é o teste, não este comentário.
++    duplaQueBateu: jogo.duplaQueBateu,
++    pontosRodada: jogo.pontosRodada
++      ? JSON.parse(JSON.stringify(jogo.pontosRodada))
++      : null,
++  };
++}
++
+ // ===========================================================================
+ // JOGADAS — cada função valida e MUTA o jogo. Retorna { ok:true, ... } ou
+ // { ok:false, erro:"..." }. É a autoridade: o servidor confia só nisto.
+@@ -2274,6 +2464,11 @@ module.exports = {
+   distribuirRodada,
+   topoLixo,
+   visaoDoAssento,
++  // [PATCH ESPECTADOR] visão pública + definição de segredo + varredura
++  visaoDoEspectador,
++  segredosDoEspectador,
++  vazamentosNaVisao,
++  minimoParaDescer,
+   // jogadas
+   comprarMonte,
+   comprarLixo,
+@@ -3518,6 +3713,71 @@ function criarGerenciador(opts = {}) {
+     return { jogou: true, assento, resultado: r };
+   }
+ 
++  // =========================================================================
++  // [PATCH ESPECTADOR] PORTA ÚNICA DE SERIALIZAÇÃO
++  //
++  // Ninguém fora daqui monta payload de estado. `visaoPara` recebe o PAPEL já
++  // decidido pelo servidor (nunca declarado pelo cliente, ver servidor.js) e
++  // delega para um serializador dedicado. Os dois não compartilham objeto: a
++  // visão de espectador é construída do zero por lista de permissão, não é a
++  // visão de assento com campos removidos.
++  // =========================================================================
++
++  /** Papel → serializador. É a ÚNICA porta de estado da mesa. */
++  function visaoPara({ codigo, papel, assento } = {}) {
++    if (papel === "jogador" && Number.isInteger(assento)) return visao(codigo, assento);
++    if (papel === "espectador") return visaoEspectador(codigo);
++    // Sem papel reconhecido não existe payload de estado. Fail-closed.
++    return { erro: "sem acesso a esta mesa" };
++  }
++
++  /** Avatares são PÚBLICOS (a mesa inteira desenha a foto de quem joga). */
++  function injetarAvatares(sala, assentosDaVisao) {
++    if (!contas || !assentosDaVisao) return;
++    for (let i = 0; i < assentosDaVisao.length; i++) {
++      const sj = sala.assentos[i];
++      if (!sj || !sj.jogadorId) continue;
++      const c = contas.obter(sj.jogadorId);
++      if (!c) continue;
++      assentosDaVisao[i].jogadorId = sj.jogadorId;
++      assentosDaVisao[i].avatarTipo = c.avatarTipo || null;
++      assentosDaVisao[i].avatarId = c.avatarId || null;
++      assentosDaVisao[i].avatarVer = c.avatarVer || 0;
++    }
++  }
++
++  /** O que quem ASSISTE pode ver. Sem assento, sem mão, sem "você". */
++  function visaoEspectador(codigo) {
++    const sala = salas[codigo];
++    if (!sala) return { erro: "mesa não encontrada" };
++    if (!sala.jogo) {
++      // Lobby público: quem está sentado, sem `ehVoce` e sem `voceAssento`.
++      return {
++        lobby: true, espectador: true, codigo,
++        modalidade: sala.modalidade, metaPontos: sala.metaPontos,
++        voceAssento: null, criador: false,
++        assentos: sala.assentos.map((a) => a
++          ? { apelido: a.apelido, tipo: a.tipo }
++          : { vazio: true }),
++      };
++    }
++    const v = J.visaoDoEspectador(sala.jogo);
++    injetarAvatares(sala, v.assentos);
++
++    // TRIPWIRE. A lista de permissão acima já é a garantia; isto é a segunda
++    // tranca, para o caso de alguém um dia injetar campo novo por aqui (ou de
++    // um `injetarAvatares` futuro trazer junto algo que não devia). Se um id
++    // secreto aparecer, o payload NÃO sai: falha fechada e registra só a
++    // CONTAGEM — nunca o id, que é justamente o segredo.
++    const escapou = J.vazamentosNaVisao(v, J.segredosDoEspectador(sala.jogo));
++    if (escapou.size > 0) {
++      console.error("[salas] visaoEspectador BLOQUEADA: " + escapou.size +
++        " id(s) secreto(s) na visão pública · mesa=" + codigo + " rodada=" + sala.jogo.rodada);
++      return { erro: "estado indisponível" };
++    }
++    return v;
++  }
++
+   /** O que um assento PODE ver (lobby antes de iniciar, ou a visão do jogo). */
+   function visao(codigo, assento) {
+     const sala = salas[codigo];
+@@ -3568,7 +3828,7 @@ function criarGerenciador(opts = {}) {
+     return { ok: true };
+   }
+ 
+-  return { salas, criarMesa, entrarMesa, iniciarPartida, aplicarJogada, avancarBots, vezEhBot, jogarUmBot, visao, sair };
++  return { salas, criarMesa, entrarMesa, iniciarPartida, aplicarJogada, avancarBots, vezEhBot, jogarUmBot, visao, visaoEspectador, visaoPara, sair };
+ }
+ 
+ module.exports = { criarGerenciador, gerarCodigoPadrao, NOMES_BOT };
+@@ -3609,6 +3869,46 @@ function criarServidor(opts = {}) {
+     return id;
+   }
+ 
++  // =========================================================================
++  // [PATCH ESPECTADOR] QUEM É QUEM — decisão do SERVIDOR, nunca do cliente.
++  //
++  // O papel sai de UM lugar só: `conexoes[id].assento`. Esse campo é escrito
++  // exclusivamente com o que `ger.criarMesa`/`ger.entrarMesa` DEVOLVEM — isto
++  // é, com o assento que o gerenciador de salas concedeu. Nenhum caminho do
++  // protocolo copia assento de dentro de `msg`.
++  //
++  // Consequência prática: não existe campo de payload capaz de promover uma
++  // conexão. Mandar `souEspectador:false`, `viewerUid`, `playerUid`, `seat`,
++  // `assento`, `papel`, `role`, `modo`, `debug`, `owner` ou o que se inventar
++  // amanhã não muda nada, porque `papelDe` não lê `msg`. O cliente PEDE
++  // operações; o nível de sigilo quem decide é aqui.
++  //
++  // LIMITE CONHECIDO, e é anterior a este patch: o transporte não autentica.
++  // `c.jogadorId` é o que o cliente DISSE que é (`msg.jogadorId`), e o upgrade
++  // WebSocket não valida token nenhum. Isso não abre a visão de espectador
++  // (que depende de assento concedido, não de identidade alegada), mas afeta
++  // conta/carteira e está registrado no relatório desta OS como P0 separado.
++  // Por isso `papelDe` NÃO consulta `jogadorId`: identidade alegada não pode
++  // virar autorização nem por acidente.
++  // =========================================================================
++
++  /** "jogador" (ocupa assento nesta mesa), "espectador" (está na mesa sem
++   *  assento) ou "nenhum" (não está em mesa alguma). */
++  function papelDe(c) {
++    if (!c || c.codigo == null) return "nenhum";
++    return Number.isInteger(c.assento) ? "jogador" : "espectador";
++  }
++
++  /** Participante = pode AGIR na partida. Espectador nunca é. */
++  function ehParticipante(c) {
++    return papelDe(c) === "jogador";
++  }
++
++  /** Estado que ESTA conexão pode receber. Passa pela porta única de `salas`. */
++  function visaoDaConexao(c) {
++    return ger.visaoPara({ codigo: c.codigo, papel: papelDe(c), assento: c.assento });
++  }
++
+   function desconectar(id) {
+     const c = conexoes[id];
+     if (!c) return;
+@@ -3650,6 +3950,23 @@ function criarServidor(opts = {}) {
+         enviarPara(id, { tipo: "entrou", codigo: c.codigo, assento: r.assento });
+         return broadcastSala(c.codigo);
+       }
++      case "assistirMesa": {
++        // [PATCH ESPECTADOR] Entrada de quem só ASSISTE. Não pede assento e
++        // não recebe nenhum: `c.assento` continua null, e é isso — e só isso —
++        // que faz `papelDe` responder "espectador" daqui pra frente.
++        //
++        // Também é o caminho de RECONEXÃO de quem não tem assento na mesa: o
++        // papel é recalculado do zero a cada entrada, então token velho,
++        // versão de estado antiga ou `assento` guardado no cliente não
++        // devolvem privilégio nenhum.
++        const salaE = ger.salas[msg.codigo];
++        if (!salaE) return enviarPara(id, { tipo: "erro", motivo: "mesa não encontrada" });
++        c.jogadorId = msg.jogadorId || c.jogadorId || null;
++        c.codigo = msg.codigo;
++        c.assento = null; // explícito: assistir NUNCA concede assento
++        enviarPara(id, { tipo: "assistindo", codigo: c.codigo });
++        return enviarPara(id, { tipo: "estado", visao: visaoDaConexao(c) });
++      }
+       case "perfil": {
+         // dados REAIS da conta do jogador (pro Perfil/carteira do app)
+         const jid = msg.jogadorId || c.jogadorId;
+@@ -3680,12 +3997,18 @@ function criarServidor(opts = {}) {
+       }
+       case "iniciarPartida": {
+         if (c.codigo == null) return enviarPara(id, { tipo: "erro", motivo: "você não está numa mesa" });
++        if (!ehParticipante(c)) return recusarEspectador(id);
+         const r = ger.iniciarPartida({ codigo: c.codigo, assento: c.assento });
+         if (r.erro) return enviarPara(id, { tipo: "erro", motivo: r.erro });
+         return avancarComRespiro(c.codigo);
+       }
+       case "jogada": {
+         if (c.codigo == null) return enviarPara(id, { tipo: "erro", motivo: "você não está numa mesa" });
++        // [PATCH ESPECTADOR] Corta ANTES do motor. Não é só questão de
++        // permissão: o motor recusa citando a carta ("o topo é o X", "essa
++        // carta não tem mola"), e esse texto é informação privada. Quem
++        // assiste leva uma recusa genérica, sem detalhe nenhum do estado.
++        if (!ehParticipante(c)) return recusarEspectador(id);
+         const r = ger.aplicarJogada({ codigo: c.codigo, assento: c.assento, jogada: msg.jogada });
+         if (r && (r.erro || r.ok === false)) {
+           // rebroadcast ANTES do erro: uma jogada recusada PODE ter mudado o estado
+@@ -3702,6 +4025,7 @@ function criarServidor(opts = {}) {
+         // assume (joga por ele até ele voltar). É o que segura a mesa pública quando
+         // alguém dorme com o celular (pedido Sônia). Só marca o tipo e destrava o ritmo.
+         if (c.codigo == null) return;
++        if (!ehParticipante(c)) return recusarEspectador(id);
+         const salaB = ger.salas[c.codigo];
+         if (salaB && salaB.jogo && salaB.jogo.assentos[c.assento]) {
+           salaB.jogo.assentos[c.assento].tipo = "bot";
+@@ -3712,6 +4036,7 @@ function criarServidor(opts = {}) {
+         // o jogador voltou: o assento volta a ser HUMANO. O servidor para na vez dele
+         // (vezEhBot=false) e espera — ele reassume no próximo turno dele.
+         if (c.codigo == null) return;
++        if (!ehParticipante(c)) return recusarEspectador(id);
+         const salaV = ger.salas[c.codigo];
+         if (salaV && salaV.jogo && salaV.jogo.assentos[c.assento]) {
+           salaV.jogo.assentos[c.assento].tipo = "humano";
+@@ -3721,7 +4046,10 @@ function criarServidor(opts = {}) {
+       case "sair": {
+         if (c.codigo != null) {
+           const cod = c.codigo;
+-          ger.sair({ codigo: cod, assento: c.assento });
++          // [PATCH ESPECTADOR] Espectador não ocupa assento: não há assento a
++          // liberar, e chamar `ger.sair` com assento null mexeria na lista de
++          // assentos da mesa por engano. Ele só se desliga.
++          if (ehParticipante(c)) ger.sair({ codigo: cod, assento: c.assento });
+           c.codigo = null; c.assento = null;
+           broadcastSala(cod);
+         }
+@@ -3746,6 +4074,14 @@ function criarServidor(opts = {}) {
+     }
+   }
+ 
++  /** [PATCH ESPECTADOR] Recusa para quem assiste: SEM detalhe de estado.
++   *  Um texto do motor ("o topo é o 7 de copas", "essa carta não tem mola")
++   *  revelaria carta que o espectador não pode ver. Motivo genérico, sempre o
++   *  mesmo, independente do que foi pedido — o detalhe fica no log do servidor. */
++  function recusarEspectador(id) {
++    return enviarPara(id, { tipo: "erro", motivo: "você está assistindo a esta mesa" });
++  }
++
+   /** Quando a partida encerra, o cofre já liquidou (sala.resumoFinal). Aqui a
+    *  gente manda UMA vez pra todo mundo da mesa o "fim" com os ganhos — é o que
+    *  a tela usa pra mostrar "+X moedas / subiu de nível". */
+@@ -3756,25 +4092,36 @@ function criarServidor(opts = {}) {
+     const placar = sala.jogo && sala.jogo.placar;
+     for (const cid in conexoes) {
+       const c = conexoes[cid];
+-      if (c.codigo === codigo && c.assento != null) {
++      if (c.codigo !== codigo) continue;
++      if (ehParticipante(c)) {
+         c.enviar({ tipo: "fim", resumo: sala.resumoFinal, placar });
++      } else {
++        // [PATCH ESPECTADOR] `resumoFinal` é carteira: moedas, XP e nível POR
++        // JOGADOR. Não é estado de mesa e não é público. Quem assiste recebe
++        // só o desfecho que já estava à vista — o placar.
++        c.enviar({ tipo: "fim", placar });
+       }
+     }
+   }
+ 
+-  /** Manda pra cada conexão da sala a SUA visão (por assento). É o "tempo real":
+-   *  toda mudança (jogada humana, jogadas dos bots, entrada de gente) reflete em
+-   *  todos. Cada um vê só a própria mão — a dos outros é só contagem. */
++  /** Manda pra cada conexão da sala a visão QUE ELA PODE RECEBER. É o "tempo
++   *  real": toda mudança (jogada humana, jogadas dos bots, entrada de gente)
++   *  reflete em todos. Quem tem assento vê a própria mão — a dos outros é só
++   *  contagem; quem assiste não vê mão nenhuma.
++   *
++   *  [PATCH ESPECTADOR] O papel é recalculado A CADA envio, e é o mesmo
++   *  `papelDe` do snapshot inicial. Por isso não existe evento incremental que
++   *  escape: compra, descarte, batida, morto, nova rodada, encerramento e
++   *  ressincronização passam TODOS por aqui. */
+   function broadcastSala(codigo) {
+     for (const cid in conexoes) {
+       const c = conexoes[cid];
+-      if (c.codigo === codigo && c.assento != null) {
+-        c.enviar({ tipo: "estado", visao: ger.visao(codigo, c.assento) });
+-      }
++      if (c.codigo !== codigo) continue;
++      c.enviar({ tipo: "estado", visao: visaoDaConexao(c) });
+     }
+   }
+ 
+-  return { conectar, desconectar, processar, broadcastSala, ger, conexoes };
++  return { conectar, desconectar, processar, broadcastSala, papelDe, ger, conexoes };
+ }
+ 
+ module.exports = { criarServidor };
+@@ -3986,6 +4333,17 @@ module.exports = { iniciar, encodeFrame };
+   };
+ 
+ 
+-  // sobe o servidor WebSocket (usa a porta de PORT, padrão 8080)
+-  __require("ws_server").iniciar();
++  // [PATCH ESPECTADOR] Fronteira de teste.
++  // Executado como programa (`node server.js`, que é o comando do Railway) o
++  // comportamento é EXATAMENTE o de antes: sobe o WebSocket na porta de PORT.
++  // Carregado com `require(...)` — só os testes fazem isso — ele NÃO abre porta
++  // nenhuma e apenas expõe o registro interno de módulos, para que a suíte possa
++  // montar salas e conexões falsas sem subir rede. Sem esta saída, `require`
++  // deste arquivo iniciaria um listener e a suíte não teria como rodar.
++  if (require.main === module) {
++    // sobe o servidor WebSocket (usa a porta de PORT, padrão 8080)
++    __require("ws_server").iniciar();
++  } else {
++    module.exports = { require: __require };
++  }
+ })();
+diff --git a/test/ajuda.js b/test/ajuda.js
+new file mode 100644
+index 0000000..c3d4017
+--- /dev/null
++++ b/test/ajuda.js
+@@ -0,0 +1,225 @@
++// test/ajuda.js — utilidades das suítes de espectador e regressão.
++//
++// O bundle `server.js` é um programa: rodado com `node server.js` ele sobe o
++// WebSocket. Carregado com `require` ele devolve o registro interno de módulos
++// e NÃO abre porta (ver a fronteira de teste no fim do bundle). É por essa
++// porta que estas suítes montam mesas e conexões falsas, sem rede.
++
++const bundle = require("../server.js");
++
++const J = bundle.require("jogo");
++const { criarServidor } = bundle.require("servidor");
++const { criarContas } = bundle.require("contas");
++
++/**
++ * Servidor com código de mesa determinístico e bots em ritmo imediato.
++ *
++ * Usa o COFRE DE CONTAS de verdade, só que em memória (`persistir:false`): sem
++ * ele a partida encerra sem `resumoFinal` e o evento `fim` nunca sai — e é
++ * justamente esse evento que carrega carteira (moedas, XP, nível), que precisa
++ * ser provado ausente para quem assiste. Nada é escrito em disco.
++ */
++function novoServidor(opts = {}) {
++  let n = 0;
++  return criarServidor(
++    Object.assign(
++      {
++        gerarCodigo: () => "MESA-" + ++n,
++        agendar: (fn) => fn(), // sem respiro: os bots jogam já, síncrono
++        contas: criarContas({ persistir: false }),
++      },
++      opts
++    )
++  );
++}
++
++/** Cliente simulado: guarda tudo o que o servidor mandou para ele. */
++function cliente(srv) {
++  const recebidas = [];
++  const id = srv.conectar((msg) => recebidas.push(msg));
++  return {
++    id,
++    recebidas,
++    envia(msg) {
++      srv.processar(id, msg);
++      return this;
++    },
++    ultimo(tipo) {
++      for (let i = recebidas.length - 1; i >= 0; i--) {
++        if (recebidas[i].tipo === tipo) return recebidas[i];
++      }
++      return null;
++    },
++    todas(tipo) {
++      return recebidas.filter((m) => m.tipo === tipo);
++    },
++    /** Todo estado que este cliente já recebeu (snapshot inicial + incrementais). */
++    estados() {
++      return this.todas("estado").map((m) => m.visao);
++    },
++    limpar() {
++      recebidas.length = 0;
++      return this;
++    },
++  };
++}
++
++/**
++ * Mesa pronta com `humanos` pessoas sentadas (o resto vira bot ao iniciar).
++ * Devolve { srv, codigo, jogadores[], sala }.
++ */
++function mesaComPartida({ humanos = 4, modalidade = "sbtl", metaPontos = 3000 } = {}) {
++  const srv = novoServidor();
++  const jogadores = [];
++
++  const dono = cliente(srv);
++  dono.envia({
++    tipo: "criarMesa",
++    apelido: "Dono",
++    jogadorId: "uid-0",
++    modalidade,
++    metaPontos,
++  });
++  jogadores.push(dono);
++  const codigo = dono.ultimo("entrou").codigo;
++
++  for (let i = 1; i < humanos; i++) {
++    const c = cliente(srv);
++    c.envia({ tipo: "entrarMesa", codigo, apelido: "Jogador" + i, jogadorId: "uid-" + i });
++    jogadores.push(c);
++  }
++
++  dono.envia({ tipo: "iniciarPartida" });
++  return { srv, codigo, jogadores, sala: srv.ger.salas[codigo] };
++}
++
++/** Conexão que só ASSISTE a `codigo`. */
++function espectador(srv, codigo, extra = {}) {
++  const c = cliente(srv);
++  c.envia(Object.assign({ tipo: "assistirMesa", codigo, jogadorId: "uid-espectador" }, extra));
++  return c;
++}
++
++/**
++ * Espectador VIGIADO: confere cada mensagem NO INSTANTE do envio, contra os
++ * segredos vivos naquele momento.
++ *
++ * Por que no instante, e não no fim: ao longo da partida uma carta secreta
++ * LEGITIMAMENTE deixa de ser secreta — sai da mão para o lixo ou para um jogo
++ * baixado, e aí é pública. Varrer o histórico no fim acusaria essas cartas e o
++ * teste mentiria. O invariante correto é pontual: no momento em que o payload
++ * sai, nada que é secreto AGORA pode estar dentro dele.
++ */
++function espectadorVigiado(srv, codigo, obterJogo, extra = {}) {
++  const recebidas = [];
++  const violacoes = [];
++  const id = srv.conectar((msg) => {
++    recebidas.push(msg);
++    const jogo = obterJogo();
++    if (!jogo) return;
++    const achados = varrerSegredos(msg, J.segredosDoEspectador(jogo));
++    if (achados.length) violacoes.push({ tipo: msg.tipo, achados });
++  });
++  srv.processar(id, Object.assign({ tipo: "assistirMesa", codigo }, extra));
++  return {
++    id,
++    recebidas,
++    violacoes,
++    envia(msg) {
++      srv.processar(id, msg);
++      return this;
++    },
++    todas(tipo) {
++      return recebidas.filter((m) => m.tipo === tipo);
++    },
++    estados() {
++      return this.todas("estado").map((m) => m.visao);
++    },
++    ultimo(tipo) {
++      for (let i = recebidas.length - 1; i >= 0; i--) {
++        if (recebidas[i].tipo === tipo) return recebidas[i];
++      }
++      return null;
++    },
++  };
++}
++
++const PREFIXO_SEGREDO = "SEGREDO-";
++
++/**
++ * Carimba ids RECONHECÍVEIS em tudo o que é secreto para quem assiste: as
++ * quatro mãos, o monte e os mortos (§8 da OS: "partida de teste contendo IDs
++ * secretos conhecidos").
++ *
++ * Dois motivos para renomear em vez de só ler os ids que o baralho gerou:
++ * um id como `c37` apareceria por acidente numa varredura de substring, e um
++ * prefixo próprio deixa o vazamento óbvio no relatório do teste.
++ *
++ * Só é chamado LOGO APÓS iniciar a partida, quando ainda não há pendência de
++ * topo nem lixo comprado apontando para id nenhum.
++ */
++function marcarSegredos(jogo) {
++  const marcados = [];
++  const marcar = (carta, rotulo) => {
++    carta.id = PREFIXO_SEGREDO + rotulo;
++    marcados.push(carta.id);
++  };
++  jogo.maos.forEach((mao, a) => mao.forEach((c, i) => marcar(c, "MAO" + a + "-" + i)));
++  jogo.monte.forEach((c, i) => marcar(c, "MONTE-" + i));
++  jogo.mortos.forEach((m, k) => m.forEach((c, i) => marcar(c, "MORTO" + k + "-" + i)));
++  return marcados;
++}
++
++/**
++ * Varredura estrutural: ids secretos que escaparam para `payload`.
++ *
++ * Não confia na função do próprio bundle (seria o réu avaliando a prova):
++ * reimplementa a busca aqui, percorrendo chaves, strings, listas e objetos
++ * aninhados em qualquer profundidade. Pega o segredo mesmo sob
++ * `dados.x.y.z.valor` ou sob uma chave inventada.
++ */
++function varrerSegredos(payload, segredos) {
++  const achados = [];
++  const vistos = new Set();
++  (function varrer(no, caminho) {
++    if (no == null) return;
++    if (typeof no === "string") {
++      if (segredos.has(no)) achados.push(caminho + " = " + no);
++      // substring: pega o segredo embutido em texto (mensagem de erro, dica...)
++      for (const s of segredos) {
++        if (no !== s && no.includes(s)) achados.push(caminho + " contém " + s);
++      }
++      return;
++    }
++    if (typeof no !== "object") return;
++    if (vistos.has(no)) return;
++    vistos.add(no);
++    if (Array.isArray(no)) {
++      no.forEach((item, i) => varrer(item, caminho + "[" + i + "]"));
++      return;
++    }
++    for (const chave of Object.keys(no)) {
++      if (segredos.has(chave)) achados.push(caminho + " tem CHAVE secreta " + chave);
++      varrer(no[chave], caminho + "." + chave);
++    }
++  })(payload, "raiz");
++  return achados;
++}
++
++/** Conjunto de segredos VIVO no instante da chamada (as 4 mãos + monte + mortos). */
++function segredosAgora(jogo) {
++  return J.segredosDoEspectador(jogo);
++}
++
++module.exports = {
++  J,
++  novoServidor,
++  cliente,
++  mesaComPartida,
++  espectador,
++  espectadorVigiado,
++  marcarSegredos,
++  varrerSegredos,
++  segredosAgora,
++  PREFIXO_SEGREDO,
++};
+diff --git a/test/espectador.test.js b/test/espectador.test.js
+new file mode 100644
+index 0000000..57d8487
+--- /dev/null
++++ b/test/espectador.test.js
+@@ -0,0 +1,608 @@
++// test/espectador.test.js — ENFORCEMENT DE VISÃO DE ESPECTADOR (P0 de sigilo).
++//
++// O que esta suíte defende, em uma frase: um espectador pode adulterar payload,
++// chamar qualquer mensagem do protocolo, informar o UID ou o assento de outro
++// jogador e reconectar em qualquer estado; ainda assim o servidor nunca lhe
++// entrega carta nem qualquer informação privada fora da visão pública.
++//
++// Contrato de referência: `app/lib/motor/visao_espectador.dart` (repo do app).
++
++const { test, describe } = require("node:test");
++const assert = require("node:assert/strict");
++
++const {
++  J,
++  novoServidor,
++  cliente,
++  mesaComPartida,
++  espectador,
++  espectadorVigiado,
++  marcarSegredos,
++  varrerSegredos,
++  segredosAgora,
++  PREFIXO_SEGREDO,
++} = require("./ajuda.js");
++
++/** Campos que SÓ existem na visão de assento. Se um deles aparecer para quem
++ *  assiste, alguém devolveu snapshot de jogador — falha imediata. */
++const CAMPOS_DE_ASSENTO = ["suaMao", "suaVez", "precisaUsarTopo", "ehVoce"];
++
++/** Asserção central: `visao` é pública, íntegra e sem nenhum segredo. */
++function exigirVisaoPublica(visao, jogo, contexto) {
++  assert.ok(visao, contexto + ": veio visão vazia");
++  assert.equal(visao.espectador, true, contexto + ": visão não está marcada como de espectador");
++  assert.equal(visao.voceAssento, null, contexto + ": espectador não pode ter assento");
++
++  for (const campo of CAMPOS_DE_ASSENTO) {
++    assert.equal(
++      Object.prototype.hasOwnProperty.call(visao, campo),
++      false,
++      contexto + ": campo de assento `" + campo + "` vazou para o espectador"
++    );
++  }
++
++  const vazou = varrerSegredos(visao, segredosAgora(jogo));
++  assert.deepEqual(vazou, [], contexto + ": id(s) secreto(s) na visão pública");
++
++  // Rede de segurança independente do conjunto: nenhum id carimbado, em lugar
++  // nenhum do payload serializado.
++  const texto = JSON.stringify(visao);
++  assert.equal(
++    texto.includes(PREFIXO_SEGREDO),
++    false,
++    contexto + ": marcador de segredo encontrado no payload serializado"
++  );
++}
++
++/** Varre TUDO o que o espectador recebeu — snapshot inicial e incrementais. */
++function exigirTudoLimpo(esp, jogo, contexto) {
++  const segredos = segredosAgora(jogo);
++  assert.deepEqual(
++    varrerSegredos(esp.recebidas, segredos),
++    [],
++    contexto + ": segredo em alguma mensagem recebida pelo espectador"
++  );
++  const texto = JSON.stringify(esp.recebidas);
++  assert.equal(
++    texto.includes(PREFIXO_SEGREDO),
++    false,
++    contexto + ": marcador de segredo no fluxo de mensagens do espectador"
++  );
++  for (const visao of esp.estados()) exigirVisaoPublica(visao, jogo, contexto);
++}
++
++// ===========================================================================
++// P0-01 — ENDPOINT DIRETO
++// ===========================================================================
++describe("P0-01 — endpoint direto", () => {
++  test("P0-01: nenhuma mensagem do protocolo devolve visão de assento ao espectador", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    const segredosMarcados = marcarSegredos(sala.jogo);
++    assert.ok(segredosMarcados.length > 0, "a partida de teste precisa ter segredos");
++
++    const esp = espectador(srv, codigo);
++
++    // Todo `tipo` que o despachante conhece, incluindo os que existem para
++    // jogador. Nenhum pode virar porta dos fundos para o estado completo.
++    const mensagens = [
++      { tipo: "assistirMesa", codigo },
++      { tipo: "iniciarPartida" },
++      { tipo: "jogada", jogada: { tipo: "comprarMonte" } },
++      { tipo: "jogada", jogada: { tipo: "comprarLixo" } },
++      { tipo: "jogada", jogada: { tipo: "descartar", id: segredosMarcados[0] } },
++      { tipo: "jogada", jogada: { tipo: "baixar", ids: segredosMarcados.slice(0, 3) } },
++      { tipo: "jogada", jogada: { tipo: "estender", indiceJogo: 0, ids: segredosMarcados.slice(0, 2) } },
++      { tipo: "afkBot" },
++      { tipo: "afkVoltar" },
++      { tipo: "perfil" },
++      { tipo: "ranking" },
++      { tipo: "definirAvatar", galeria: 1 },
++      { tipo: "denunciarAvatar", alvo: "uid-1" },
++      { tipo: "entrarMesa", codigo },
++      { tipo: "tipoQueNaoExiste" },
++      {},
++    ];
++    for (const msg of mensagens) esp.envia(msg);
++
++    exigirTudoLimpo(esp, sala.jogo, "P0-01");
++  });
++
++  test("P0-01: abrir a própria mesa não dá acesso à mesa que ele assistia", () => {
++    // `criarMesa` é legítimo — qualquer um pode abrir mesa. O que não pode é
++    // isso virar porta dos fundos para a partida que ele estava assistindo.
++    const { srv, codigo, sala } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++
++    const esp = espectador(srv, codigo);
++    esp.envia({ tipo: "criarMesa", apelido: "Intruso", jogadorId: "uid-intruso" });
++
++    // Ele agora é dono de OUTRA mesa (vazia), e saiu da que assistia.
++    const nova = esp.ultimo("entrou").codigo;
++    assert.notEqual(nova, codigo, "criarMesa tem que abrir mesa nova, não tomar a existente");
++    assert.equal(srv.conexoes[esp.id].codigo, nova);
++
++    // E o broadcast da mesa antiga não o alcança mais.
++    srv.broadcastSala(codigo);
++    assert.deepEqual(
++      varrerSegredos(esp.recebidas, segredosAgora(sala.jogo)),
++      [],
++      "segredo da mesa assistida vazou pela criação de outra mesa"
++    );
++  });
++
++  test("P0-01: chamar a porta de serialização sem papel reconhecido não devolve estado", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++
++    // Fail-closed: sem papel válido a porta não monta payload nenhum.
++    for (const papel of [undefined, null, "", "admin", "jogador", "owner", "debug"]) {
++      const v = srv.ger.visaoPara({ codigo, papel, assento: undefined });
++      assert.ok(v.erro, "papel `" + papel + "` sem assento não podia render estado");
++      assert.equal(v.suaMao, undefined);
++    }
++  });
++});
++
++// ===========================================================================
++// P0-02 — UID DE TERCEIRO
++// ===========================================================================
++describe("P0-02 — UID de terceiro", () => {
++  test("P0-02: reivindicar UID e assento de participante real não eleva acesso", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++
++    // `uid-1` é um participante REAL, sentado. O espectador se apresenta como
++    // ele, e ainda pede o assento dele.
++    const esp = espectador(srv, codigo, {
++      jogadorId: "uid-1",
++      viewerUid: "uid-1",
++      playerUid: "uid-1",
++      uid: "uid-1",
++      assento: 2,
++      seat: 2,
++    });
++
++    const conexao = srv.conexoes[esp.id];
++    assert.equal(conexao.assento, null, "identidade reivindicada não pode conceder assento");
++    assert.equal(srv.papelDe(conexao), "espectador");
++
++    // E insistindo pelo caminho de estado e de jogada, com o UID do terceiro:
++    esp.envia({ tipo: "assistirMesa", codigo, jogadorId: "uid-1", assento: 2 });
++    esp.envia({ tipo: "jogada", jogadorId: "uid-1", assento: 2, jogada: { tipo: "comprarMonte" } });
++    esp.envia({ tipo: "entrarMesa", codigo, jogadorId: "uid-1", assento: 2 });
++
++    assert.equal(srv.conexoes[esp.id].assento, null);
++    exigirTudoLimpo(esp, sala.jogo, "P0-02");
++  });
++
++  test("P0-02: o assento pedido no payload é ignorado ao entrar na mesa", () => {
++    const srv = novoServidor();
++    const dono = cliente(srv);
++    dono.envia({ tipo: "criarMesa", apelido: "Dono", jogadorId: "uid-0" });
++    const codigo = dono.ultimo("entrou").codigo;
++
++    // O assento 0 é do dono. Pedir 0 no payload não o toma dele.
++    const outro = cliente(srv);
++    outro.envia({ tipo: "entrarMesa", codigo, apelido: "Outro", jogadorId: "uid-9", assento: 0 });
++
++    assert.notEqual(outro.ultimo("entrou").assento, 0, "assento do payload não pode ser honrado");
++    assert.equal(srv.conexoes[dono.id].assento, 0, "o dono não pode perder o assento");
++  });
++});
++
++// ===========================================================================
++// P0-03 — PARÂMETRO ADULTERADO
++// ===========================================================================
++describe("P0-03 — parâmetro adulterado", () => {
++  test("P0-03: nenhum parâmetro de payload muda o nível de acesso", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++
++    const adulteracoes = {
++      modo: "jogador",
++      modoVisao: "completa",
++      role: "player",
++      papel: "jogador",
++      viewerType: "participant",
++      seat: 0,
++      assento: 0,
++      voceAssento: 0,
++      reconnect: true,
++      reconectando: true,
++      spectator: false,
++      souEspectador: false,
++      espectador: false,
++      owner: true,
++      criador: true,
++      participant: true,
++      admin: true,
++      debug: true,
++      versaoEstado: 999,
++      token: "qualquer-coisa",
++    };
++
++    const esp = espectador(srv, codigo, adulteracoes);
++    assert.equal(srv.papelDe(srv.conexoes[esp.id]), "espectador");
++
++    // E repetindo a adulteração em cada mensagem do protocolo.
++    for (const tipo of ["assistirMesa", "jogada", "iniciarPartida", "afkBot", "afkVoltar", "entrarMesa"]) {
++      esp.envia(Object.assign({ tipo, codigo, jogada: { tipo: "comprarMonte" } }, adulteracoes));
++    }
++
++    assert.equal(srv.conexoes[esp.id].assento, null);
++    exigirTudoLimpo(esp, sala.jogo, "P0-03");
++  });
++
++  test("P0-03: o papel sai do assento concedido, não do que o cliente mandou", () => {
++    const { srv, codigo } = mesaComPartida();
++    const esp = espectador(srv, codigo);
++    const conexao = srv.conexoes[esp.id];
++
++    // Mesmo sujando a própria mensagem com um assento, o papel não muda —
++    // `papelDe` não lê `msg`, lê o assento que o gerenciador concedeu.
++    assert.equal(srv.papelDe(conexao), "espectador");
++    conexao.jogadorId = "uid-0"; // identidade alegada de um participante real
++    assert.equal(srv.papelDe(conexao), "espectador", "identidade não pode virar papel");
++  });
++});
++
++// ===========================================================================
++// COBERTURA ADICIONAL — ESPEC-01 .. ESPEC-10
++// ===========================================================================
++describe("ESPEC — cobertura adicional", () => {
++  test("ESPEC-01: espectador comum recebe somente a visão pública", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++    const esp = espectador(srv, codigo);
++
++    const visao = esp.ultimo("estado").visao;
++    exigirVisaoPublica(visao, sala.jogo, "ESPEC-01");
++
++    // O que ele PODE ver está lá (não basta não vazar: tem que servir).
++    assert.equal(typeof visao.vez, "number");
++    assert.equal(visao.monteQtd, sala.jogo.monte.length);
++    assert.deepEqual(visao.qtdCartasPorAssento, sala.jogo.maos.map((m) => m.length));
++    assert.equal(visao.placarNos, sala.jogo.placar.nos);
++    assert.equal(visao.assentos.length, 4);
++    for (const a of visao.assentos) assert.equal(typeof a.apelido, "string");
++  });
++
++  test("ESPEC-02: jogador sentado continua recebendo a própria visão, sem regressão", () => {
++    const { sala, jogadores } = mesaComPartida();
++    const visao = jogadores[0].ultimo("estado").visao;
++
++    assert.equal(visao.voceAssento, 0);
++    assert.equal(visao.espectador, undefined, "visão de assento não é de espectador");
++    assert.ok(Array.isArray(visao.suaMao), "o jogador precisa receber a própria mão");
++    assert.equal(visao.suaMao.length, sala.jogo.maos[0].length);
++    assert.deepEqual(
++      visao.suaMao.map((c) => c.id),
++      sala.jogo.maos[0].map((c) => c.id)
++    );
++    assert.equal(visao.suaVez, sala.jogo.vez === 0);
++  });
++
++  test("ESPEC-03: jogador A não recebe a mão de B, mesmo sendo participante", () => {
++    const { srv, sala, jogadores } = mesaComPartida();
++
++    // A ordem de chegada NÃO é a ordem dos assentos (o 2º humano senta no 2,
++    // parceiro do criador). Quem manda é o assento concedido pelo servidor.
++    const porAssento = [];
++    for (const j of jogadores) porAssento[srv.conexoes[j.id].assento] = j;
++    assert.equal(porAssento.filter(Boolean).length, 4, "os 4 assentos precisam estar ocupados");
++
++    for (let a = 0; a < 4; a++) {
++      const visao = porAssento[a].ultimo("estado").visao;
++      assert.equal(visao.voceAssento, a);
++      // segredo aqui = mãos ALHEIAS + monte + mortos (a própria mão é legítima)
++      const segredosDosOutros = new Set();
++      sala.jogo.maos.forEach((mao, i) => {
++        if (i !== a) mao.forEach((c) => segredosDosOutros.add(c.id));
++      });
++      sala.jogo.monte.forEach((c) => segredosDosOutros.add(c.id));
++      sala.jogo.mortos.forEach((m) => m.forEach((c) => segredosDosOutros.add(c.id)));
++
++      assert.deepEqual(
++        varrerSegredos(visao, segredosDosOutros),
++        [],
++        "assento " + a + " recebeu carta que não é dele"
++      );
++    }
++  });
++
++  test("ESPEC-04: reconexão não devolve mais do que a pessoa já podia ver", () => {
++    const { srv, codigo, sala, jogadores } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++
++    // O jogador do assento 2 cai. (Regra atual do servidor, fora do escopo
++    // desta OS: o assento vira BOT e não há retomada de assento.)
++    srv.desconectar(jogadores[2].id);
++
++    // Ele volta. Sem assento a retomar, volta como quem assiste — e é só isso
++    // que ele recebe. A autorização é RECALCULADA na reentrada; nada do
++    // cliente (código guardado, assento antigo, versão de estado) participa.
++    const devolta = espectador(srv, codigo, { assento: 2, seat: 2, reconnect: true, jogadorId: "uid-2" });
++    assert.equal(srv.papelDe(srv.conexoes[devolta.id]), "espectador");
++    exigirTudoLimpo(devolta, sala.jogo, "ESPEC-04");
++
++    // E o caminho de sentar de novo continua fechado pela regra da mesa.
++    const tentativa = cliente(srv);
++    tentativa.envia({ tipo: "entrarMesa", codigo, jogadorId: "uid-2", assento: 2 });
++    assert.ok(tentativa.ultimo("erro"), "não se senta numa partida já começada");
++    assert.equal(tentativa.ultimo("entrou"), null);
++    assert.equal(tentativa.todas("estado").length, 0, "quem não entrou não recebe estado");
++  });
++
++  test("ESPEC-05: espectador não ganha privilégio por reconectar", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    marcarSegredos(sala.jogo);
++
++    const esp = espectador(srv, codigo);
++    const visaoAntes = esp.ultimo("estado").visao;
++
++    // Cai e volta várias vezes, sempre alegando mais do que tem.
++    for (let i = 0; i < 3; i++) {
++      srv.desconectar(esp.id);
++      const volta = espectador(srv, codigo, {
++        assento: i % 4,
++        reconnect: true,
++        versaoEstado: 1,
++        papel: "jogador",
++        token: "token-anterior",
++      });
++      assert.equal(srv.papelDe(srv.conexoes[volta.id]), "espectador", "volta " + i);
++      exigirTudoLimpo(volta, sala.jogo, "ESPEC-05 volta " + i);
++    }
++
++    assert.equal(visaoAntes.espectador, true);
++  });
++
++  test("ESPEC-06: partida com robôs não expõe mão nem decisão dos bots", () => {
++    // 1 humano: os assentos 1, 2 e 3 viram bots ao iniciar.
++    const { srv, codigo, sala } = mesaComPartida({ humanos: 1, metaPontos: 200 });
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    const esp = espectador(srv, codigo);
++    const visao = esp.ultimo("estado").visao;
++
++    exigirVisaoPublica(visao, jogo, "ESPEC-06");
++    assert.ok(
++      visao.assentos.some((a) => a.tipo === "bot"),
++      "a mesa de teste precisa ter bot"
++    );
++    // Nada de estrutura interna do bot na visão pública.
++    for (const proibido of ["dificuldade", "substituto", "plano", "decisao", "log"]) {
++      assert.equal(
++        JSON.stringify(visao).includes('"' + proibido + '"'),
++        false,
++        "campo interno de bot `" + proibido + "` na visão pública"
++      );
++    }
++    // O log de jogadas dos bots vive na sala e nunca é transmitido.
++    assert.deepEqual(varrerSegredos(esp.recebidas, segredosAgora(jogo)), []);
++  });
++
++  test("ESPEC-07: os quatro assentos ficam ocultos para quem assiste", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    const esp = espectador(srv, codigo);
++    const visao = esp.ultimo("estado").visao;
++
++    for (let a = 0; a < 4; a++) {
++      const idsDaMao = new Set(jogo.maos[a].map((c) => c.id));
++      assert.deepEqual(
++        varrerSegredos(visao, idsDaMao),
++        [],
++        "mão do assento " + a + " vazou"
++      );
++      // A CONTAGEM, sim, é pública — é o que se vê em volta da mesa real.
++      assert.equal(visao.qtdCartasPorAssento[a], jogo.maos[a].length);
++      assert.equal(visao.assentos[a].qtdCartas, jogo.maos[a].length);
++    }
++  });
++
++  test("ESPEC-08: nenhum id do monte ou dos mortos aparece", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    const esp = espectador(srv, codigo);
++    const visao = esp.ultimo("estado").visao;
++
++    const ocultos = new Set();
++    jogo.monte.forEach((c) => ocultos.add(c.id));
++    jogo.mortos.forEach((m) => m.forEach((c) => ocultos.add(c.id)));
++    assert.deepEqual(varrerSegredos(visao, ocultos), [], "monte/morto vazou");
++
++    // Só a contagem.
++    assert.equal(visao.monteQtd, jogo.monte.length);
++    assert.equal(visao.mortosQtd, jogo.mortos.length);
++    assert.deepEqual(visao.mortosTamanhos, jogo.mortos.map((m) => m.length));
++  });
++
++  test("ESPEC-09: erro de regra não revela carta secreta ao espectador", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    const marcados = marcarSegredos(jogo);
++
++    const esp = espectador(srv, codigo);
++    esp.limpar();
++
++    // Pede jogadas ilegais citando cartas secretas de propósito. A recusa não
++    // pode devolver o detalhe — nem ecoar de volta o id que ele chutou.
++    for (const jogada of [
++      { tipo: "descartar", id: marcados[0] },
++      { tipo: "comprarLixo" },
++      { tipo: "baixar", ids: marcados.slice(0, 3) },
++      { tipo: "estender", indiceJogo: 0, ids: [marcados[1]] },
++      { tipo: "inventada" },
++    ]) {
++      esp.envia({ tipo: "jogada", jogada });
++    }
++
++    const erros = esp.todas("erro");
++    assert.ok(erros.length > 0, "as jogadas ilegais precisam ser recusadas");
++    for (const e of erros) {
++      assert.equal(
++        e.motivo.includes(PREFIXO_SEGREDO),
++        false,
++        "a mensagem de erro citou uma carta secreta: " + e.motivo
++      );
++    }
++    // Recusa genérica: sempre o mesmo texto, sem detalhe do estado da mesa.
++    assert.equal(new Set(erros.map((e) => e.motivo)).size, 1, "a recusa tem que ser genérica");
++    exigirTudoLimpo(esp, jogo, "ESPEC-09");
++  });
++
++  test("ESPEC-10: campo privado NOVO no modelo não vaza (lista de permissão)", () => {
++    const { srv, codigo, sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    // Simula a evolução futura do motor: alguém acrescenta estado privado ao
++    // jogo e aos assentos. Como a visão pública é construída por LISTA DE
++    // PERMISSÃO, o campo novo simplesmente não existe nela — sem ninguém
++    // precisar lembrar de escondê-lo.
++    jogo.segredoNovoDoMotor = { cartas: jogo.maos[0], seed: "rng-123" };
++    jogo.antiCheat = { impressaoDaMao: jogo.maos[1].map((c) => c.id) };
++    jogo.assentos.forEach((a, i) => {
++      a.segredoDoAssento = { mao: jogo.maos[i], plano: "baixar " + jogo.maos[i][0].id };
++    });
++
++    const esp = espectador(srv, codigo);
++    const visao = esp.ultimo("estado").visao;
++
++    exigirVisaoPublica(visao, jogo, "ESPEC-10");
++    for (const campo of ["segredoNovoDoMotor", "antiCheat", "segredoDoAssento", "seed", "impressaoDaMao"]) {
++      assert.equal(
++        JSON.stringify(visao).includes(campo),
++        false,
++        "campo privado novo `" + campo + "` vazou para a visão pública"
++      );
++    }
++  });
++});
++
++// ===========================================================================
++// §8 — PROVA ESTRUTURAL DE NÃO VAZAMENTO (partida inteira, evento a evento)
++// ===========================================================================
++describe("§8/§10 — prova estrutural ao longo da partida", () => {
++  test("nenhum segredo atravessa em NENHUM evento, do início ao fim da partida", () => {
++    // Meta baixa: a partida encerra DE VERDADE dentro do teste, passando por
++    // compra, descarte, morto, batida, nova rodada e encerramento.
++    const { srv, codigo, sala } = mesaComPartida({ humanos: 1, metaPontos: 100 });
++    const jogo = sala.jogo;
++
++    // O vigia confere cada payload no instante do envio (ver `ajuda.js`): é o
++    // único jeito honesto de varrer uma partida inteira, porque uma carta
++    // secreta vira pública ao ser descartada ou baixada.
++    const esp = espectadorVigiado(srv, codigo, () => sala.jogo);
++
++    // Deixa a mesa andar sozinha: os assentos 1..3 são bots e o 0 entra em
++    // AFK, então o servidor joga a partida inteira e emite a cadeia completa
++    // de eventos incrementais.
++    for (const cid in srv.conexoes) {
++      if (srv.conexoes[cid].assento === 0) srv.processar(cid, { tipo: "afkBot" });
++    }
++
++    assert.ok(esp.estados().length > 1, "o espectador precisa ter recebido eventos incrementais");
++    assert.ok(jogo.rodada >= 1, "a partida precisa ter andado");
++    assert.deepEqual(esp.violacoes, [], "segredo vivo dentro de um payload de espectador");
++
++    // Nenhum estado recebido carrega campo de assento, em nenhum momento.
++    for (const visao of esp.estados()) {
++      assert.equal(visao.espectador, true);
++      for (const campo of CAMPOS_DE_ASSENTO) {
++        assert.equal(Object.prototype.hasOwnProperty.call(visao, campo), false, "campo `" + campo + "` num evento incremental");
++      }
++    }
++
++    // Inclusive na mensagem de FIM: quem assiste vê placar, não carteira.
++    const fim = esp.ultimo("fim");
++    assert.ok(fim, "a partida precisa ter encerrado para provar o evento de fim");
++    assert.equal(fim.resumo, undefined, "carteira/ganhos não são públicos");
++    assert.ok(fim.placar, "o placar final é público");
++  });
++
++  test("a varredura do próprio bundle enxerga segredo em qualquer profundidade", () => {
++    // O tripwire de `salas` depende desta função; se ela for enfraquecida, a
++    // segunda tranca cai em silêncio. Aqui ela é testada de frente.
++    const segredos = new Set(["S1", "S2"]);
++    assert.deepEqual([...J.vazamentosNaVisao({ a: 1 }, segredos)], []);
++    assert.deepEqual([...J.vazamentosNaVisao({ x: { y: { z: ["S1"] } } }, segredos)], ["S1"]);
++    assert.deepEqual([...J.vazamentosNaVisao({ dados: { S2: true } }, segredos)], ["S2"], "segredo como CHAVE");
++    // Ciclo não trava a varredura.
++    const ciclico = { nome: "raiz" };
++    ciclico.eu = ciclico;
++    ciclico.lista = [{ v: "S1" }];
++    assert.deepEqual([...J.vazamentosNaVisao(ciclico, segredos)], ["S1"]);
++  });
++});
++
++// ===========================================================================
++// §21 — CRITÉRIO DE ACEITE DE SEGURANÇA
++// Testes que falhariam se alguém, no futuro, afrouxasse a fronteira.
++// ===========================================================================
++describe("§21 — a fronteira falha alto se for afrouxada", () => {
++  test("acrescentar a mão à visão de espectador quebra o teste", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    const visaoReal = J.visaoDoEspectador(jogo);
++    assert.deepEqual(varrerSegredos(visaoReal, segredosAgora(jogo)), []);
++
++    // A regressão que se quer impedir: alguém acrescenta `mao` ao recorte.
++    const visaoAdulterada = Object.assign({}, visaoReal, { mao: jogo.maos[0] });
++    assert.notDeepEqual(
++      varrerSegredos(visaoAdulterada, segredosAgora(jogo)),
++      [],
++      "a varredura TEM que acusar `mao` na visão pública"
++    );
++  });
++
++  test("devolver snapshot de jogador para espectador quebra o teste", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    const snapshotDeJogador = J.visaoDoAssento(jogo, 0);
++    assert.notDeepEqual(
++      varrerSegredos(snapshotDeJogador, segredosAgora(jogo)),
++      [],
++      "a varredura TEM que acusar o snapshot de assento"
++    );
++  });
++
++  test("reutilizar o objeto do assento com um campo privado novo quebra o teste", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++    marcarSegredos(jogo);
++
++    const reaproveitado = Object.assign({}, J.visaoDoAssento(jogo, 1), { espectador: true });
++    delete reaproveitado.suaMao; // a "limpeza" ingênua de sempre
++    // Mesmo assim `precisaUsarTopo` e afins continuam ali — e a varredura pega.
++    assert.equal(
++      Object.prototype.hasOwnProperty.call(reaproveitado, "precisaUsarTopo"),
++      true,
++      "remover campo conhecido não é proteção — é justamente o que a OS proíbe"
++    );
++  });
++
++  test("a visão de espectador não compartilha objeto mutável com o jogo", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    const visao = J.visaoDoEspectador(jogo);
++    assert.notEqual(visao.jogosNos, jogo.jogosDupla.nos, "não pode ser a MESMA lista");
++
++    // Mexer na visão não pode mexer no jogo (e vice-versa).
++    visao.qtdCartasPorAssento[0] = 999;
++    assert.notEqual(jogo.maos[0].length, 999);
++    jogo.placar.nos += 50;
++    assert.notEqual(visao.placarNos, jogo.placar.nos, "o placar da visão é cópia");
++  });
++});
+diff --git a/test/regressao.test.js b/test/regressao.test.js
+new file mode 100644
+index 0000000..780ea15
+--- /dev/null
++++ b/test/regressao.test.js
+@@ -0,0 +1,297 @@
++// test/regressao.test.js — O JOGADOR NORMAL CONTINUA IGUAL (§18 da OS).
++//
++// O enforcement de espectador só vale se não tiver custado nada a quem senta:
++// esta suíte exercita início, compra, descarte, turno, morto, batida, nova
++// rodada, reconexão, idempotência e finalização pelo protocolo de verdade.
++//
++// Não havia suíte no repositório do servidor antes desta OS — estes são também
++// o primeiro portão de regressão do bundle.
++
++const { test, describe } = require("node:test");
++const assert = require("node:assert/strict");
++
++const { J, novoServidor, cliente, mesaComPartida } = require("./ajuda.js");
++
++/** Índice do assento que uma conexão ocupa, segundo o SERVIDOR. */
++function assentoDe(srv, c) {
++  return srv.conexoes[c.id].assento;
++}
++
++/** A conexão sentada no assento pedido. */
++function porAssento(srv, jogadores, assento) {
++  return jogadores.find((j) => assentoDe(srv, j) === assento);
++}
++
++/** Sequência limpa de 7 cartas (canastra) — 3..9 do mesmo naipe, sem coringa. */
++function canastraLimpa(naipe = "copas", prefixo = "k") {
++  return ["3", "4", "5", "6", "7", "8", "9"].map((valor, i) => ({
++    id: prefixo + "-" + i,
++    naipe,
++    valor,
++    eh_coringa: false,
++  }));
++}
++
++describe("§18 — regressão do jogador", () => {
++  test("REG-01: início de partida distribui a mesa como sempre", () => {
++    const { sala, jogadores, srv } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    assert.equal(jogo.rodada, 1);
++    assert.equal(jogo.vez, 0);
++    assert.equal(jogo.jaComprou, false);
++    for (let a = 0; a < 4; a++) assert.equal(jogo.maos[a].length, J.CARTAS_POR_MAO);
++    assert.equal(jogo.mortos.length, 2);
++    for (const m of jogo.mortos) assert.equal(m.length, J.CARTAS_POR_MORTO);
++    assert.equal(jogo.lixo.length, 0);
++
++    // 108 cartas conservadas (2 baralhos + 4 coringas).
++    const total =
++      jogo.maos.reduce((s, m) => s + m.length, 0) +
++      jogo.mortos.reduce((s, m) => s + m.length, 0) +
++      jogo.monte.length +
++      jogo.lixo.length;
++    assert.equal(total, 108);
++
++    // E cada humano recebeu a SUA visão.
++    for (const j of jogadores) {
++      const v = j.ultimo("estado").visao;
++      assert.equal(v.voceAssento, assentoDe(srv, j));
++      assert.equal(v.suaMao.length, J.CARTAS_POR_MAO);
++    }
++  });
++
++  test("REG-02: compra do monte tira do monte e põe na mão", () => {
++    const { srv, sala, jogadores } = mesaComPartida();
++    const jogo = sala.jogo;
++    const daVez = porAssento(srv, jogadores, jogo.vez);
++
++    const monteAntes = jogo.monte.length;
++    const maoAntes = jogo.maos[jogo.vez].length;
++
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++
++    assert.equal(jogo.monte.length, monteAntes - 1);
++    assert.equal(jogo.maos[daVez.ultimo("estado").visao.voceAssento].length, maoAntes + 1);
++    assert.equal(jogo.jaComprou, true);
++    assert.equal(daVez.ultimo("erro"), null, "compra legítima não pode dar erro");
++  });
++
++  test("REG-03: descarte passa a vez e alimenta o lixo", () => {
++    const { srv, sala, jogadores } = mesaComPartida();
++    const jogo = sala.jogo;
++    const assento = jogo.vez;
++    const daVez = porAssento(srv, jogadores, assento);
++
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++    const carta = jogo.maos[assento][0];
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "descartar", id: carta.id } });
++
++    assert.equal(jogo.lixo.length, 1);
++    assert.equal(jogo.lixo[0].id, carta.id);
++    assert.notEqual(jogo.vez, assento, "a vez tem que passar");
++    assert.equal(jogo.jaComprou, false, "a vez nova começa sem compra");
++  });
++
++  test("REG-04: turno continua fechado (fora da vez, compra dupla, descarte sem compra)", () => {
++    const { srv, sala, jogadores } = mesaComPartida();
++    const jogo = sala.jogo;
++    const assento = jogo.vez;
++    const daVez = porAssento(srv, jogadores, assento);
++    const outro = porAssento(srv, jogadores, (assento + 1) % 4);
++
++    // fora da vez
++    outro.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++    assert.ok(outro.ultimo("erro"), "jogar fora da vez tem que ser recusado");
++    assert.equal(jogo.jaComprou, false);
++
++    // descarte antes de comprar
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "descartar", id: jogo.maos[assento][0].id } });
++    assert.ok(daVez.ultimo("erro"), "descartar sem comprar tem que ser recusado");
++
++    // compra dupla
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++    const monteDepois = jogo.monte.length;
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++    assert.equal(jogo.monte.length, monteDepois, "comprar duas vezes não pode tirar carta");
++  });
++
++  test("REG-05: zerar a mão com morto disponível pega o morto (batida indireta)", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    // Estado montado à mão: assento 0 já comprou e está com UMA carta.
++    const unica = jogo.maos[0][0];
++    jogo.maos[0] = [unica];
++    jogo.jaComprou = true;
++    jogo.mortoPego = { nos: false, eles: false };
++    const mortosAntes = jogo.mortos.length;
++
++    const r = J.descartar(jogo, 0, unica.id);
++
++    assert.equal(r.ok, true, r.erro);
++    assert.equal(r.pegouMorto, true);
++    assert.equal(jogo.mortos.length, mortosAntes - 1);
++    assert.equal(jogo.maos[0].length, J.CARTAS_POR_MORTO, "a mão vira o morto");
++    assert.equal(jogo.mortoPego.nos, true);
++    assert.equal(jogo.rodadaEncerrada, false, "pegar o morto não encerra a rodada");
++  });
++
++  test("REG-06: zerar a mão com canastra e sem morto é batida final", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    jogo.jogosDupla.nos = [canastraLimpa()];
++    jogo.abriuValido.nos = true;
++    jogo.mortoPego = { nos: true, eles: false };
++    const unica = jogo.maos[0][0];
++    jogo.maos[0] = [unica];
++    jogo.jaComprou = true;
++
++    const r = J.descartar(jogo, 0, unica.id);
++
++    assert.equal(r.ok, true, r.erro);
++    assert.equal(r.bateu, true);
++    assert.equal(jogo.rodadaEncerrada, true);
++    assert.equal(jogo.duplaQueBateu, "nos");
++    assert.ok(jogo.pontosRodada, "a rodada apurada tem que ter pontos");
++    assert.ok(jogo.placar.nos > 0, "quem bateu com canastra pontua");
++  });
++
++  test("REG-06b: zerar a mão SEM canastra continua ilegal", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    jogo.jogosDupla.nos = []; // mesa vazia: não pode bater
++    jogo.mortoPego = { nos: true, eles: false };
++    const unica = jogo.maos[0][0];
++    jogo.maos[0] = [unica];
++    jogo.jaComprou = true;
++
++    const r = J.descartar(jogo, 0, unica.id);
++
++    assert.equal(r.ok, false, "bater sem canastra tem que ser recusado");
++    assert.equal(jogo.maos[0].length, 1, "a carta fica na mão");
++    assert.equal(jogo.rodadaEncerrada, false);
++  });
++
++  test("REG-07: nova rodada redistribui e PRESERVA o placar", () => {
++    const { sala } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    jogo.placar = { nos: 320, eles: 145 };
++    const rodadaAntes = jogo.rodada;
++    J.distribuirRodada(jogo);
++
++    assert.equal(jogo.rodada, rodadaAntes + 1);
++    assert.deepEqual(jogo.placar, { nos: 320, eles: 145 }, "o placar não pode zerar");
++    for (let a = 0; a < 4; a++) assert.equal(jogo.maos[a].length, J.CARTAS_POR_MAO);
++    assert.equal(jogo.mortos.length, 2);
++    assert.equal(jogo.lixo.length, 0);
++    assert.equal(jogo.rodadaEncerrada, false);
++    assert.equal(jogo.vez, 0);
++  });
++
++  test("REG-08: queda de jogador entrega o assento ao bot (comportamento preservado)", () => {
++    const { srv, sala, jogadores } = mesaComPartida();
++    const jogo = sala.jogo;
++    const alvo = jogadores[1];
++    const assento = assentoDe(srv, alvo);
++
++    assert.equal(jogo.assentos[assento].tipo, "humano");
++    srv.desconectar(alvo.id);
++
++    assert.equal(jogo.assentos[assento].tipo, "bot", "o assento vira bot para a mesa não travar");
++    assert.equal(srv.conexoes[alvo.id], undefined, "a conexão sai do registro");
++  });
++
++  test("REG-09: liquidação e evento de fim são idempotentes", () => {
++    const { srv, codigo, sala, jogadores } = mesaComPartida({ humanos: 1, metaPontos: 100 });
++
++    // Deixa a partida rodar até o fim (assentos 1..3 são bots; o 0 vira bot).
++    jogadores[0].envia({ tipo: "afkBot" });
++    assert.equal(sala.jogo.encerrada, true, "a partida de teste precisa encerrar");
++
++    assert.equal(sala.liquidada, true);
++    assert.equal(sala.fimEmitido, true);
++    const resumoUma = sala.resumoFinal;
++
++    // Repetir o gatilho não pode contabilizar de novo nem reemitir o fim.
++    const fimAntes = jogadores[0].todas("fim").length;
++    srv.broadcastSala(codigo);
++    srv.ger.avancarBots(sala);
++    assert.equal(sala.resumoFinal, resumoUma, "o resumo não pode ser recalculado");
++    assert.equal(jogadores[0].todas("fim").length, fimAntes, "o fim sai UMA vez só");
++  });
++
++  test("REG-10: finalização entrega resumo de carteira a quem jogou", () => {
++    const { jogadores } = mesaComPartida({ humanos: 1, metaPontos: 100 });
++    jogadores[0].envia({ tipo: "afkBot" });
++
++    const fim = jogadores[0].ultimo("fim");
++    assert.ok(fim, "quem jogou recebe o fim");
++    assert.ok(fim.placar, "com placar");
++    assert.ok(fim.resumo, "e com o resumo de ganhos (é dele, é privado, e continua vindo)");
++  });
++
++  test("REG-11: o contrato da visão de assento não mudou", () => {
++    const { sala } = mesaComPartida();
++    const visao = J.visaoDoAssento(sala.jogo, 0);
++
++    // Lista congelada ANTES desta OS (bundle em 1828d42). Se alguém acrescentar
++    // ou remover campo da visão de assento, este teste acusa — inclusive se
++    // acrescentar por engano algo que só deveria existir do lado público.
++    const esperado = [
++      "voceAssento", "modalidade", "metaPontos", "rodada", "placar", "encerrada",
++      "rodadaEncerrada", "duplaQueBateu", "pontosRodada", "rodadasVulneravel",
++      "vez", "suaVez", "jaComprou", "precisaUsarTopo", "suaMao", "assentos",
++      "monteQtd", "lixoQtd", "lixoTopo", "lixoAberto", "mortosQtd", "mortoPego",
++      "jogosDupla",
++    ].sort();
++
++    assert.deepEqual(Object.keys(visao).sort(), esperado);
++    assert.equal(visao.espectador, undefined, "visão de assento não carrega a marca de espectador");
++  });
++
++  test("REG-12: jogador e espectador na mesma mesa não interferem um no outro", () => {
++    const { srv, codigo, sala, jogadores } = mesaComPartida();
++    const jogo = sala.jogo;
++
++    // Entra alguém para assistir NO MEIO da partida.
++    const esp = cliente(srv);
++    esp.envia({ tipo: "assistirMesa", codigo });
++
++    const assento = jogo.vez;
++    const daVez = porAssento(srv, jogadores, assento);
++    const monteAntes = jogo.monte.length;
++
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++
++    // A jogada aconteceu normalmente...
++    assert.equal(jogo.monte.length, monteAntes - 1);
++    assert.equal(daVez.ultimo("erro"), null);
++    // ...o jogador continua recebendo a mão dele...
++    assert.ok(daVez.ultimo("estado").visao.suaMao.length > 0);
++    // ...e o espectador foi avisado do evento, na visão pública.
++    assert.equal(esp.ultimo("estado").visao.espectador, true);
++    assert.equal(esp.ultimo("estado").visao.monteQtd, jogo.monte.length);
++  });
++
++  test("REG-13: o servidor é de uma thread só — não há corrida a cobrir", () => {
++    // A OS pede regressão de concorrência "se coberta pelo servidor". O bundle
++    // trata uma mensagem por vez no laço de eventos do Node, sem I/O no meio do
++    // despacho: duas jogadas chegando juntas são SERIALIZADAS. O que dá pra
++    // provar é que a segunda vê o efeito da primeira — e é o que se faz aqui.
++    const { srv, sala, jogadores } = mesaComPartida();
++    const jogo = sala.jogo;
++    const assento = jogo.vez;
++    const daVez = porAssento(srv, jogadores, assento);
++    const monteAntes = jogo.monte.length;
++
++    // duas compras "simultâneas": a segunda é recusada pela primeira
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++    daVez.envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++
++    assert.equal(jogo.monte.length, monteAntes - 1, "só UMA compra pode valer");
++  });
++});
+diff --git a/test/ws.test.js b/test/ws.test.js
+new file mode 100644
+index 0000000..5d3ccf9
+--- /dev/null
++++ b/test/ws.test.js
+@@ -0,0 +1,166 @@
++// test/ws.test.js — a fronteira vale no TRANSPORTE REAL (§10 da OS).
++//
++// As outras suítes falam com o despachante em processo. Esta sobe o servidor
++// WebSocket de verdade (o mesmo `iniciar()` que o Railway executa), conecta
++// clientes WebSocket reais e confere o que chega pelo fio. É o que fecha a
++// dúvida "e se o adaptador de transporte desfizer a proteção?".
++
++const { test, describe, before, after } = require("node:test");
++const assert = require("node:assert/strict");
++const os = require("node:os");
++const path = require("node:path");
++
++// O cofre de contas persiste em disco; num teste ele vai para uma pasta
++// descartável, nunca para `./dados`.
++process.env.DADOS_DIR = path.join(os.tmpdir(), "bmv-teste-ws-" + process.pid);
++
++const bundle = require("../server.js");
++const { iniciar } = bundle.require("ws_server");
++
++const PORTA = 8137;
++let servidorHttp = null;
++
++/** Cliente WebSocket real, com fila de mensagens e espera por tipo. */
++function conectar() {
++  const ws = new WebSocket("ws://127.0.0.1:" + PORTA);
++  const recebidas = [];
++  const esperando = [];
++
++  ws.addEventListener("message", (ev) => {
++    const msg = JSON.parse(ev.data);
++    recebidas.push(msg);
++    for (let i = esperando.length - 1; i >= 0; i--) {
++      if (esperando[i].tipo === msg.tipo) {
++        esperando[i].resolver(msg);
++        esperando.splice(i, 1);
++      }
++    }
++  });
++
++  return {
++    ws,
++    recebidas,
++    aberto: new Promise((r) => ws.addEventListener("open", r, { once: true })),
++    envia(msg) {
++      ws.send(JSON.stringify(msg));
++      return this;
++    },
++    /** Próxima (ou já recebida) mensagem daquele tipo. */
++    espera(tipo, timeoutMs = 4000) {
++      const jaVeio = recebidas.find((m) => m.tipo === tipo);
++      if (jaVeio) return Promise.resolve(jaVeio);
++      return new Promise((resolver, rejeitar) => {
++        const t = setTimeout(() => rejeitar(new Error("timeout esperando `" + tipo + "`")), timeoutMs);
++        esperando.push({ tipo, resolver: (m) => { clearTimeout(t); resolver(m); } });
++      });
++    },
++    ultimo(tipo) {
++      for (let i = recebidas.length - 1; i >= 0; i--) {
++        if (recebidas[i].tipo === tipo) return recebidas[i];
++      }
++      return null;
++    },
++    fecha() {
++      ws.close();
++    },
++  };
++}
++
++/** Deixa o laço de eventos respirar para os frames chegarem. */
++const respira = (ms = 120) => new Promise((r) => setTimeout(r, ms));
++
++describe("§10 — enforcement no transporte WebSocket real", () => {
++  before(() => {
++    servidorHttp = iniciar(PORTA).http_server;
++    // `unref` para o listener não segurar o laço de eventos depois do teste
++    // (o servidor de verdade roda como programa e deve segurar mesmo).
++    servidorHttp.unref();
++  });
++
++  after(() => {
++    if (servidorHttp) servidorHttp.close();
++  });
++
++  test("pelo fio, o espectador recebe visão pública e o jogador recebe a dele", async () => {
++    // Quatro humanos: a vez fica num humano e nada avança sozinho.
++    const jogadores = [];
++    for (let i = 0; i < 4; i++) {
++      const c = conectar();
++      await c.aberto;
++      jogadores.push(c);
++    }
++
++    jogadores[0].envia({ tipo: "criarMesa", apelido: "Dono", jogadorId: "ws-0", metaPontos: 3000 });
++    const entrou = await jogadores[0].espera("entrou");
++    const codigo = entrou.codigo;
++
++    for (let i = 1; i < 4; i++) {
++      jogadores[i].envia({ tipo: "entrarMesa", codigo, apelido: "J" + i, jogadorId: "ws-" + i });
++      await jogadores[i].espera("entrou");
++    }
++
++    jogadores[0].envia({ tipo: "iniciarPartida" });
++    await respira(200);
++
++    // Espectador entra pelo fio, alegando tudo o que dá para alegar.
++    const esp = conectar();
++    await esp.aberto;
++    esp.envia({
++      tipo: "assistirMesa",
++      codigo,
++      jogadorId: "ws-1",     // UID de um participante real
++      assento: 0,
++      seat: 0,
++      papel: "jogador",
++      role: "player",
++      souEspectador: false,
++      debug: true,
++      owner: true,
++    });
++    await esp.espera("assistindo");
++    const estadoEsp = await esp.espera("estado");
++    await respira(150);
++
++    // O jogador continua recebendo a própria mão...
++    const estadoJogador = jogadores[0].ultimo("estado");
++    assert.ok(estadoJogador, "o jogador precisa receber estado pelo fio");
++    assert.ok(Array.isArray(estadoJogador.visao.suaMao), "regressão: sumiu a mão do jogador");
++    assert.equal(estadoJogador.visao.suaMao.length, 11);
++
++    // ...e o espectador, só a visão pública.
++    assert.equal(estadoEsp.visao.espectador, true);
++    assert.equal(estadoEsp.visao.voceAssento, null);
++    assert.equal(estadoEsp.visao.suaMao, undefined, "mão vazou pelo WebSocket");
++    assert.equal(estadoEsp.visao.precisaUsarTopo, undefined);
++    assert.equal(estadoEsp.visao.suaVez, undefined);
++    assert.deepEqual(estadoEsp.visao.qtdCartasPorAssento, [11, 11, 11, 11]);
++
++    // Nenhum id de carta do jogador aparece no que o espectador recebeu.
++    const idsDoJogador = new Set(estadoJogador.visao.suaMao.map((c) => c.id));
++    const textoEsp = JSON.stringify(esp.recebidas);
++    for (const id of idsDoJogador) {
++      assert.equal(textoEsp.includes('"' + id + '"'), false, "id " + id + " vazou pelo fio");
++    }
++
++    // E um evento INCREMENTAL (a compra) também chega sanitizado.
++    const monteAntes = estadoEsp.visao.monteQtd;
++    assert.equal(monteAntes, 108 - 4 * 11 - 2 * 11, "monte inicial: 108 menos mãos e mortos");
++
++    jogadores[0].envia({ tipo: "jogada", jogada: { tipo: "comprarMonte" } });
++    await respira(250);
++
++    const ultimoEsp = esp.ultimo("estado");
++    assert.equal(ultimoEsp.visao.espectador, true);
++    assert.equal(ultimoEsp.visao.suaMao, undefined, "mão vazou num evento incremental");
++    assert.equal(ultimoEsp.visao.monteQtd, monteAntes - 1, "o espectador acompanha a compra pela contagem");
++
++    // A tentativa de jogar leva recusa genérica, sem detalhe de estado.
++    esp.envia({ tipo: "jogada", jogada: { tipo: "descartar", id: [...idsDoJogador][0] } });
++    const erro = await esp.espera("erro");
++    assert.equal(erro.motivo, "você está assistindo a esta mesa");
++
++    for (const c of jogadores) c.fecha();
++    esp.fecha();
++    await respira(120);
++  });
++});
+-- 
+2.55.0.windows.2
+
