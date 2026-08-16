@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'mesa_orientation_contract.dart';
+import 'mesa_orientation_widgets.dart';
+
 enum MaoDominante { destro, canhoto }
 
 enum Idioma { ptBR }
@@ -143,12 +146,22 @@ class ConfiguracoesScreen extends StatelessWidget {
   final ConfiguracoesCallbacks callbacks;
   final VoidCallback onVoltar;
 
+  /// Orientacao da Mesa (docs/OS-CLAUDE-ADENDO-ORIENTACAO-MESA §5).
+  ///
+  /// Vive fora de [Configuracoes] porque quem persiste e o
+  /// `MesaOrientationService`, com chave propria. Opcional para nao quebrar
+  /// quem ja constroi esta tela; sem o callback a linha nao aparece.
+  final MesaOrientacaoPreferida orientacaoMesa;
+  final ValueChanged<MesaOrientacaoPreferida>? onOrientacaoMesa;
+
   const ConfiguracoesScreen({
     super.key,
     required this.perfil,
     required this.config,
     required this.callbacks,
     required this.onVoltar,
+    this.orientacaoMesa = MesaOrientacaoPreferida.vertical,
+    this.onOrientacaoMesa,
   });
 
   @override
@@ -288,6 +301,8 @@ class ConfiguracoesScreen extends StatelessWidget {
                                   config.copyWith(maoDominante: v),
                                 ),
                               ),
+                              if (onOrientacaoMesa != null)
+                                _orientacaoMesaTile(),
                             ],
                           ),
                           _secao(
@@ -591,6 +606,55 @@ class ConfiguracoesScreen extends StatelessWidget {
                 ],
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Orientacao da mesa: as tres opcoes ficam a vista, sem abrir outra folha,
+  /// porque sao poucas e o jogador precisa reconhecer de imediato como a
+  /// partida vai abrir.
+  Widget _orientacaoMesaTile() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _iconeTile(Icons.screen_rotation_outlined),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Orientação da mesa',
+                      style: TextStyle(
+                        color: _texto,
+                        fontSize: 13.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Vale só para a Mesa de jogo',
+                      style: TextStyle(
+                        color: _textoSec,
+                        fontSize: 10.4,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          MesaOrientacaoSelector(
+            valor: orientacaoMesa,
+            onChanged: onOrientacaoMesa!,
           ),
         ],
       ),

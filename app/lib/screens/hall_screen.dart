@@ -1,11 +1,30 @@
 import 'package:flutter/material.dart';
 
-enum HallCategoria {
-  campeaoHoje,
-  melhorDupla,
-  maiorSequencia,
-  reiRainhaSemana,
-  lendaMes,
+import '../hall/hall_contract.dart';
+
+// As cinco categorias passaram a viver no contrato de dados (a fonte oficial
+// precisa nomeá-las), e a tela reexporta o enum para quem já a importava.
+export '../hall/hall_contract.dart' show HallCategoria;
+
+/// Situação do quadro, do ponto de vista de quem desenha.
+///
+/// Aditiva: o padrão de [HallScreen.estado] é [HallEstado.disponivel], que é
+/// exatamente o comportamento que a tela sempre teve.
+enum HallEstado {
+  /// Buscando o quadro na fonte.
+  carregando,
+
+  /// Quadro recebido e com homenageados.
+  disponivel,
+
+  /// A fonte respondeu, e ainda não há homenageado nenhum.
+  vazio,
+
+  /// A busca falhou (rede, resposta inválida).
+  erro,
+
+  /// A fonte oficial não publica o Hall no momento.
+  indisponivel,
 }
 
 class EstatHall {
@@ -33,52 +52,17 @@ class HonradoHall {
   });
 }
 
+/// View-model **visual** do Hall.
+///
+/// A `factory HallVM.mock()` que existia aqui foi retirada na integração: ela
+/// escolhia homenageados dentro do cliente e viajava no APK. Quem é imortal vem
+/// da fonte oficial (`lib/hall/hall_contract.dart`); dado de exemplo agora vive
+/// apenas nos testes.
 class HallVM {
   final List<HonradoHall> honrados;
   const HallVM({required this.honrados});
 
-  factory HallVM.mock() {
-    return const HallVM(
-      honrados: [
-        HonradoHall(
-          categoria: HallCategoria.campeaoHoje,
-          id: 'sonia',
-          nome: 'Sônia Rainha',
-          avatar: '👑',
-          stats: [EstatHall('342'), EstatHall('18'), EstatHall('68%')],
-        ),
-        HonradoHall(
-          categoria: HallCategoria.melhorDupla,
-          id: 'sonia-claudia',
-          nome: 'Sônia & Cláudia',
-          avatar: '👑',
-          avatar2: '🐰',
-          stats: [EstatHall('287'), EstatHall('71%'), EstatHall('94%')],
-        ),
-        HonradoHall(
-          categoria: HallCategoria.maiorSequencia,
-          id: 'beto',
-          nome: 'Beto',
-          avatar: '🦊',
-          stats: [EstatHall('27'), EstatHall('3'), EstatHall('Hoje')],
-        ),
-        HonradoHall(
-          categoria: HallCategoria.reiRainhaSemana,
-          id: 'marina',
-          nome: 'Marina',
-          avatar: '🐱',
-          stats: [EstatHall('156'), EstatHall('74%'), EstatHall('12')],
-        ),
-        HonradoHall(
-          categoria: HallCategoria.lendaMes,
-          id: 'ricardo',
-          nome: 'Ricardo',
-          avatar: '🐻',
-          stats: [EstatHall('892'), EstatHall('34'), EstatHall('77%')],
-        ),
-      ],
-    );
-  }
+  static const HallVM vazio = HallVM(honrados: []);
 }
 
 /// Hall dos Imortais guiado integralmente pela arte oficial.
@@ -96,6 +80,9 @@ class HallScreen extends StatefulWidget {
     required this.onPresentear,
     required this.onEnviarPresente,
     required this.onNav,
+    this.estado = HallEstado.disponivel,
+    this.mensagemErro,
+    this.onRecarregar,
   });
 
   final HallVM vm;
@@ -105,6 +92,15 @@ class HallScreen extends StatefulWidget {
   final ValueChanged<String> onPresentear;
   final void Function(String id, String presenteId) onEnviarPresente;
   final ValueChanged<String> onNav;
+
+  /// Situação do quadro. O padrão preserva a tela exatamente como era.
+  final HallEstado estado;
+
+  /// Mensagem a exibir em [HallEstado.erro] / [HallEstado.indisponivel].
+  final String? mensagemErro;
+
+  /// Tentar de novo. Sem ele, o aviso de erro sai sem botão.
+  final VoidCallback? onRecarregar;
 
   @override
   State<HallScreen> createState() => _HallScreenState();
@@ -140,6 +136,131 @@ class _HallScreenState extends State<HallScreen> {
     if (presente != null && mounted) {
       widget.onEnviarPresente(honrado.id, presente);
     }
+  }
+
+  /// Homenagear e abrir perfil só fazem sentido com quadro publicado. No vazio
+  /// as zonas somem para não haver toque que não leva a lugar nenhum.
+  bool get _interativo => widget.estado == HallEstado.disponivel;
+
+  /// Carregando, vazio, erro e indisponível — os quatro estados que a arte
+  /// sozinha não consegue comunicar.
+  Widget _camadaDeEstado() {
+    switch (widget.estado) {
+      case HallEstado.disponivel:
+        return const SizedBox.shrink();
+      case HallEstado.carregando:
+        return _veu(
+          const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 34,
+                height: 34,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.6,
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFEFB94A)),
+                ),
+              ),
+              SizedBox(height: 14),
+              Text(
+                'Consultando o Hall…',
+                style: TextStyle(color: Color(0xFFEFE3CC), fontSize: 13),
+              ),
+            ],
+          ),
+        );
+      case HallEstado.vazio:
+        return _veu(
+          _cartao(
+            icone: '🏛️',
+            titulo: 'Nenhum imortal ainda',
+            texto: 'Assim que houver homenageados, eles aparecem aqui.',
+          ),
+          opacidade: .58,
+        );
+      case HallEstado.erro:
+        return _veu(
+          _cartao(
+            icone: '📡',
+            titulo: 'Não consegui abrir o Hall',
+            texto: widget.mensagemErro ?? 'Tente novamente em alguns instantes.',
+            acao: 'Tentar de novo',
+          ),
+        );
+      case HallEstado.indisponivel:
+        return _veu(
+          _cartao(
+            icone: '⏳',
+            titulo: 'Hall indisponível agora',
+            texto: widget.mensagemErro ??
+                'O Hall dos Imortais ainda não está sendo publicado.',
+            acao: 'Tentar de novo',
+          ),
+        );
+    }
+  }
+
+  Widget _veu(Widget filho, {double opacidade = .82}) {
+    return ColoredBox(
+      color: Colors.black.withValues(alpha: opacidade),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+          child: filho,
+        ),
+      ),
+    );
+  }
+
+  Widget _cartao({
+    required String icone,
+    required String titulo,
+    required String texto,
+    String? acao,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF160F22),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xAAB98BFF), width: 1.4),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(icone, style: const TextStyle(fontSize: 34)),
+          const SizedBox(height: 10),
+          Text(
+            titulo,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFE6D0FF),
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            texto,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFFCDBFE8), fontSize: 12),
+          ),
+          if (acao != null && widget.onRecarregar != null) ...[
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: widget.onRecarregar,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB98BFF),
+                foregroundColor: const Color(0xFF1A1030),
+              ),
+              child: Text(acao,
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -226,26 +347,34 @@ class _HallScreenState extends State<HallScreen> {
                         _valor(mes, 1, width, height, 71.5, 81.7, 12),
                         _valor(mes, 2, width, height, 85.5, 81.7, 12),
 
+                        // Camada de estado: entra ENTRE a arte e as zonas de
+                        // toque, para que voltar e ver as regras continuem
+                        // funcionando mesmo com o quadro indisponível.
+                        if (widget.estado != HallEstado.disponivel)
+                          Positioned.fill(child: _camadaDeEstado()),
+
                         // Zonas de toque invisíveis, também copiadas do HTML.
                         _zona(width, height, 2.0, 1.5, 11, 6, widget.onVoltar),
                         _zona(width, height, 90.0, 1.5, 9, 6, _abrirRegras),
 
-                        _zona(width, height, 78.0, 27.5, 18, 6.5,
-                            () => _abrirPresentes(campeao)),
-                        _zona(width, height, 28.0, 50.5, 14, 6,
-                            () => _abrirPresentes(dupla)),
-                        _zona(width, height, 82.0, 50.5, 16, 6,
-                            () => _abrirPresentes(sequencia)),
-                        _zona(width, height, 28.0, 71.5, 14, 6,
-                            () => _abrirPresentes(semana)),
-                        _zona(width, height, 82.0, 71.5, 16, 6,
-                            () => _abrirPresentes(mes)),
+                        if (_interativo) ...[
+                          _zona(width, height, 78.0, 27.5, 18, 6.5,
+                              () => _abrirPresentes(campeao)),
+                          _zona(width, height, 28.0, 50.5, 14, 6,
+                              () => _abrirPresentes(dupla)),
+                          _zona(width, height, 82.0, 50.5, 16, 6,
+                              () => _abrirPresentes(sequencia)),
+                          _zona(width, height, 28.0, 71.5, 14, 6,
+                              () => _abrirPresentes(semana)),
+                          _zona(width, height, 82.0, 71.5, 16, 6,
+                              () => _abrirPresentes(mes)),
 
-                        _zonaPerfil(campeao, width, height, 78.0, 35.5, 18, 6.5),
-                        _zonaPerfil(dupla, width, height, 28.0, 58.5, 14, 6),
-                        _zonaPerfil(sequencia, width, height, 82.0, 58.5, 16, 6),
-                        _zonaPerfil(semana, width, height, 28.0, 79.5, 14, 6),
-                        _zonaPerfil(mes, width, height, 82.0, 79.5, 16, 6),
+                          _zonaPerfil(campeao, width, height, 78.0, 35.5, 18, 6.5),
+                          _zonaPerfil(dupla, width, height, 28.0, 58.5, 14, 6),
+                          _zonaPerfil(sequencia, width, height, 82.0, 58.5, 16, 6),
+                          _zonaPerfil(semana, width, height, 28.0, 79.5, 14, 6),
+                          _zonaPerfil(mes, width, height, 82.0, 79.5, 16, 6),
+                        ],
 
                         _zona(width, height, 58.0, 88.5, 34, 5, _abrirRegras),
                         _zona(width, height, 22.0, 91.5, 18, 7,

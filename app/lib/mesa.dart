@@ -7,7 +7,16 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'screens/configurar_mesa_screen.dart' show ChatMesa;
+import 'screens/mesa_launch_spec.dart';
+import 'screens/mesa_orientation_contract.dart';
+import 'screens/mesa_orientation_widgets.dart';
+import 'screens/mesa_renderer_contract.dart';
+import 'services/mesa_orientation_service.dart';
 import 'screens/resultado_partida_screen.dart';
+import 'screens/resultado_vitoria_adapter.dart';
+import 'screens/resultado_partida_celebrado.dart';
+import 'services/configuracoes_service.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -1336,6 +1345,17 @@ class MesaScreen extends StatefulWidget {
   final int? vulnerabilidadeNos;
   final int? vulnerabilidadeEles;
 
+  /// Escolhas completas feitas no configurador, atravessando a fronteira
+  /// Preparando -> Mesa sem perder nada pelo caminho.
+  ///
+  /// Aditivo e opcional: sem ele a Mesa se comporta exatamente como antes,
+  /// decidindo a pele por [variant]. Com ele, o contrato passa a ser a
+  /// autoridade de apresentacao — e o contexto continua vivo, entao uma Mesa
+  /// Privada usa a pele premium sem virar Mesa VIP. Ele carrega tambem o
+  /// [MesaLaunchSpec] (modalidade, meta, tempo, chat, aposta/pote,
+  /// espectadores, codigo da sala), que sobrepoe os parametros soltos.
+  final MesaRendererContract? renderer;
+
   const MesaScreen({
     super.key,
     this.variant = MesaVariant.vip,
@@ -1344,6 +1364,7 @@ class MesaScreen extends StatefulWidget {
     this.tempoSegundos = 45,
     this.vulnerabilidadeNos,
     this.vulnerabilidadeEles,
+    this.renderer,
   });
 
   @override
@@ -1358,6 +1379,9 @@ class _MesaScreenState extends State<MesaScreen> {
 
   bool _botsRodando = false;
   bool _soundEnabled = true;
+  int _partidaSeq = 0;
+  MesaOrientacaoPreferida _orientacao = MesaOrientationService.instance.atual;
+  bool _menuAberto = false;
   String? _msg;
   Set<String> _recentlyBoughtIds = <String>{};
   String? _lastPurchaseSource;
@@ -1382,8 +1406,23 @@ class _MesaScreenState extends State<MesaScreen> {
   AudioPlayer? _pCarta;
   AudioPlayer? _pEvento;
 
-  String get _modalidade => widget.modalidade;
-  bool get _mesaVip => widget.variant == MesaVariant.vip;
+  /// Parametros vindos do configurador. Ausente = chamada legada (padroes).
+  MesaLaunchSpec? get _launch => widget.renderer?.launch;
+
+  String get _modalidade => _launch?.modalidade ?? widget.modalidade;
+  int get _metaPontos => _launch?.metaPontos ?? widget.metaPontos;
+  int get _tempoSegundos => _launch?.tempoSegundos ?? widget.tempoSegundos;
+
+  /// Pele da mesa. Publica usa o feltro publico; VIP e Privada usam o premium.
+  bool get _mesaVip =>
+      widget.renderer?.usaPelePremium ?? (widget.variant == MesaVariant.vip);
+
+  /// Contexto da sala — diferente da pele. E ele que autoriza os controles
+  /// privados, entao compartilhar aparencia nunca transforma Privada em VIP.
+  bool get _contextoPrivado =>
+      widget.renderer?.habilitaContextoPrivado ?? false;
+
+  ChatMesa get _chatConfigurado => _launch?.chat ?? ChatMesa.completo;
   Color get _feltColor =>
       _mesaVip ? _mFelt : const Color(0xFF062719);
   String get _cardBackAsset => _mesaVip
@@ -1404,8 +1443,9 @@ class _MesaScreenState extends State<MesaScreen> {
       const ['👑', '🙂', '😎', 'RN'],
       const ['🐶', '🐰', '🦊', '🐱'],
     );
-    jogo.metaPontos = widget.metaPontos;
-    jogo.modalidade = widget.modalidade;
+    jogo.metaPontos = _metaPontos;
+    jogo.modalidade = _modalidade;
+    _partidaSeq++;
     return jogo;
   }
 
@@ -1413,7 +1453,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void initState() {
     super.initState();
     _j = _novoJogo();
-    _turnSeconds = widget.tempoSegundos;
+    _turnSeconds = _tempoSegundos;
     _clockSeat = _j.vez;
     try {
       _pCarta = AudioPlayer()..setReleaseMode(ReleaseMode.stop);
@@ -1422,6 +1462,7 @@ class _MesaScreenState extends State<MesaScreen> {
       // A mesa continua funcional mesmo quando o dispositivo não oferece áudio.
     }
     _startTurnClock();
+    _carregarOrientacao();
     // §3.2: o 1º jogador é SORTEADO — se caiu num robô, os robôs abrem a rodada.
     if (_j.vez != 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1442,6 +1483,83 @@ class _MesaScreenState extends State<MesaScreen> {
     super.dispose();
   }
 
+  /// Le a preferencia salva em Configuracoes -> JOGO. Sem armazenamento
+  /// disponivel a mesa continua no padrao Vertical, que e a mesa aprovada.
+  Future<void> _carregarOrientacao() async {
+    try {
+      final salva = await MesaOrientationService.instance.carregar();
+      if (mounted && salva != _orientacao) {
+        setState(() => _orientacao = salva);
+      }
+    } catch (_) {
+      // Preferencia e conforto, nunca motivo para a partida nao abrir.
+    }
+  }
+
+  /// Troca de orientacao pelo menu da propria Mesa, sem sair da partida.
+  ///
+  /// So mexe em `_orientacao`: a arvore de estado autoritativo fica acima do
+  /// guard, entao rodada, motor, relogio, mao, lixo, mortos, placar e conexao
+  /// atravessam a troca intactos (adendo §4).
+  Future<void> _trocarOrientacao(MesaOrientacaoPreferida preferencia) async {
+    if (preferencia == _orientacao) return;
+    setState(() => _orientacao = preferencia);
+    try {
+      await MesaOrientationService.instance.salvar(preferencia);
+    } catch (_) {
+      // A troca ja vale nesta partida mesmo se a persistencia falhar.
+    }
+  }
+
+  /// Menu da Mesa com a mesma escolha de orientacao das Configuracoes.
+  void _abrirMenuDaMesa() {
+    // Toque duplo no rail nao empilha duas folhas.
+    if (_menuAberto) return;
+    _menuAberto = true;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C130C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          // Deitado a folha tem pouca altura; sem rolagem o conteudo estoura.
+          padding: const EdgeInsets.fromLTRB(22, 18, 22, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Orientação da mesa',
+                style: TextStyle(
+                  color: _mGoldHi,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Vale só para a Mesa. A partida continua de onde parou.',
+                style: TextStyle(color: Color(0xFFC8BDB6), fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              StatefulBuilder(
+                builder: (context, setSheetState) => MesaOrientacaoSelector(
+                  valor: _orientacao,
+                  onChanged: (valor) {
+                    setSheetState(() {});
+                    _trocarOrientacao(valor);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).whenComplete(() => _menuAberto = false);
+  }
+
   void _startTurnClock() {
     _turnTimer?.cancel();
     _turnTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -1450,7 +1568,7 @@ class _MesaScreenState extends State<MesaScreen> {
       if (_clockSeat != _j.vez) {
         setState(() {
           _clockSeat = _j.vez;
-          _turnSeconds = widget.tempoSegundos;
+          _turnSeconds = _tempoSegundos;
         });
         return;
       }
@@ -1488,7 +1606,7 @@ class _MesaScreenState extends State<MesaScreen> {
   void _syncTurnClock({bool force = false}) {
     if (force || _clockSeat != _j.vez) {
       _clockSeat = _j.vez;
-      _turnSeconds = widget.tempoSegundos;
+      _turnSeconds = _tempoSegundos;
     }
   }
 
@@ -1721,6 +1839,13 @@ class _MesaScreenState extends State<MesaScreen> {
     _botsRodando = true;
     while (_j.vez != 0 && !_j.rodadaEncerrada && _j.integridadeErro == null) {
       await Future.delayed(const Duration(milliseconds: 650));
+      // Sair da mesa encerra o turno dos robos. Sem esta saida o laco seguia
+      // jogando depois do dispose: mexia no audio e nos ScrollController ja
+      // descartados, e a partida continuava andando numa tela que nao existe.
+      if (!mounted) {
+        _botsRodando = false;
+        return;
+      }
       _j.botJoga(_j.vez);
       _somCarta();
       _syncTurnClock();
@@ -1793,16 +1918,70 @@ class _MesaScreenState extends State<MesaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _header(),
-            Expanded(child: _board()),
-          ],
+    // O guard fica ABAIXO da camada de estado (docs/OS-CLAUDE-ADENDO-ORIENTACAO-MESA
+    // §4 e §7): girar troca so a composicao. `_j`, motor, relogio de turno,
+    // conexao, mao, lixo, mortos e placar nao passam por aqui.
+    return MesaOrientationGuard(
+      preferencia: _orientacao,
+      builder: (context, efetiva) => Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Pedir a rotacao nao garante que ela aconteca: rotacao travada
+              // no sistema, tablet em janela, desktop e web podem manter a tela
+              // estreita. A composicao deitada precisa de largura para as tres
+              // colunas, entao sem essa largura a mesa fica na composicao que
+              // cabe em vez de cortar carta.
+              final cabeDeitada =
+                  constraints.maxWidth >= _larguraMinimaDeitada;
+              return efetiva == MesaOrientacaoEfetiva.horizontal && cabeDeitada
+                  ? _buildMesaHorizontal()
+                  : _buildMesaVertical();
+            },
+          ),
         ),
       ),
+    );
+  }
+
+  /// Largura util minima da composicao deitada.
+  ///
+  /// O centro guarda monte + lixo + dois mortos em tamanho unico (272) e ocupa
+  /// 46/90 da largura do feltro; abaixo disso a bandeja central nao caberia e
+  /// as colunas de jogos ficariam mais estreitas que uma carta. Um telefone
+  /// comum deitado (640 x 360 em diante) passa com folga.
+  static const double _larguraMinimaDeitada = 560;
+
+  /// Composicao aprovada, em retrato: faixa de metricas no topo e o feltro
+  /// ocupando o resto da tela.
+  Widget _buildMesaVertical() {
+    return Column(
+      key: const ValueKey('mesa-vertical'),
+      children: [
+        _header(),
+        Expanded(child: _board()),
+      ],
+    );
+  }
+
+  /// Composicao propria para telefone deitado — nao e a arvore vertical girada.
+  ///
+  /// Deitado sobra largura e falta altura, entao as bandejas deixam de ser tres
+  /// faixas empilhadas e viram tres colunas (jogos deles | monte, lixo e mortos
+  /// | nossos jogos), e o rodape do jogador poe a identidade ao lado da mao em
+  /// vez de acima dela. Assim o feltro devolve altura para a mao continuar do
+  /// mesmo tamanho, sem encolher carta nem cortar jogo.
+  ///
+  /// A composicao de assentos aprovada e preservada: voce embaixo, o parceiro
+  /// na borda inferior esquerda e os oponentes nas bordas superiores.
+  Widget _buildMesaHorizontal() {
+    return Column(
+      key: const ValueKey('mesa-horizontal'),
+      children: [
+        _header(),
+        Expanded(child: _board(horizontal: true)),
+      ],
     );
   }
 
@@ -1851,7 +2030,30 @@ class _MesaScreenState extends State<MesaScreen> {
             flex: 32,
             child: _scoreMetric(),
           ),
+          _menuDaMesaNoCabecalho(),
         ],
+      ),
+    );
+  }
+
+  /// Acesso ao menu da Mesa, no canto do cabecalho.
+  ///
+  /// Trocar orientacao e configuracao, nao jogada: fica longe de chat,
+  /// expressoes e som, que sao os controles da partida. Discreto de proposito —
+  /// sem o circulo dos botoes do rail, so o icone na mesma paleta do cabecalho.
+  Widget _menuDaMesaNoCabecalho() {
+    return Tooltip(
+      message: 'Menu da mesa',
+      child: InkResponse(
+        onTap: _abrirMenuDaMesa,
+        radius: 22,
+        // Estreito para tirar o minimo do cabecalho, mas alto o bastante para
+        // o dedo acertar: a area de toque cresce na altura, que sobra.
+        child: const SizedBox(
+          width: 30,
+          height: 45,
+          child: Icon(Icons.tune_rounded, color: _mGold, size: 20),
+        ),
       ),
     );
   }
@@ -1972,13 +2174,15 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
-  Widget _board() {
+  Widget _board({bool horizontal = false}) {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Núcleo central deliberadamente compacto. A altura economizada é
         // devolvida principalmente à área de jogos da dupla de baixo.
         const centralHeight = 118.0;
-        const playerDockHeight = 180.0;
+        // Deitado o rodapé poe a identidade do jogador ao lado da mão em vez de
+        // acima dela, e por isso precisa de menos altura que em retrato.
+        final double playerDockHeight = horizontal ? 126.0 : 180.0;
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
           padding: const EdgeInsets.all(2),
@@ -2006,29 +2210,38 @@ class _MesaScreenState extends State<MesaScreen> {
                   ),
                 ),
                 Positioned.fill(
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 11,
-                        child: _meldArea('eles', top: true),
-                      ),
-                      SizedBox(height: centralHeight, child: _centralTray()),
-                      Expanded(
-                        flex: 12,
-                        child: _meldArea('nos', top: false),
-                      ),
-                      const SizedBox(height: playerDockHeight),
-                    ],
-                  ),
+                  child: horizontal
+                      ? Padding(
+                          padding:
+                              EdgeInsets.only(bottom: playerDockHeight),
+                          child: _bandejasEmColunas(),
+                        )
+                      : Column(
+                          children: [
+                            Expanded(
+                              flex: 11,
+                              child: _meldArea('eles', top: true),
+                            ),
+                            SizedBox(
+                              height: centralHeight,
+                              child: _centralTray(),
+                            ),
+                            Expanded(
+                              flex: 12,
+                              child: _meldArea('nos', top: false),
+                            ),
+                            SizedBox(height: playerDockHeight),
+                          ],
+                        ),
                 ),
                 Positioned(
                   left: 1,
-                  top: 56,
+                  top: horizontal ? 8 : 56,
                   child: _sidePlayer(1, left: true),
                 ),
                 Positioned(
                   right: 1,
-                  top: 56,
+                  top: horizontal ? 8 : 56,
                   child: _sidePlayer(3, left: false),
                 ),
                 Positioned(
@@ -2047,7 +2260,7 @@ class _MesaScreenState extends State<MesaScreen> {
                   right: 0,
                   bottom: 0,
                   height: playerDockHeight,
-                  child: _playerDock(),
+                  child: _playerDock(horizontal: horizontal),
                 ),
                 if (_msg != null)
                   Positioned(
@@ -2067,6 +2280,33 @@ class _MesaScreenState extends State<MesaScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// Bandejas do feltro deitado: as tres faixas do retrato viram tres colunas.
+  ///
+  /// A largura extra vai para os jogos das duas duplas, e a altura poupada
+  /// volta para a mao. O centro guarda a largura minima do conjunto
+  /// monte + lixo + dois mortos para nenhuma carta encolher.
+  Widget _bandejasEmColunas() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(flex: 22, child: _meldArea('eles', top: true)),
+        Expanded(
+          flex: 46,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                minWidth: 272,
+                maxHeight: 118,
+              ),
+              child: _centralTray(),
+            ),
+          ),
+        ),
+        Expanded(flex: 22, child: _meldArea('nos', top: false)),
+      ],
     );
   }
 
@@ -2877,9 +3117,12 @@ class _MesaScreenState extends State<MesaScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _railButton(Icons.chat_bubble_rounded, () {
-          setState(() => _msg = 'Chat — ligação final com o Claude.');
-        }),
+        _railButton(
+          _chatConfigurado == ChatMesa.desligado
+              ? Icons.speaker_notes_off_rounded
+              : Icons.chat_bubble_rounded,
+          () => setState(() => _msg = _avisoDoChat()),
+        ),
         const SizedBox(height: 7),
         _railButton(Icons.sentiment_satisfied_alt_rounded, () {
           setState(() => _msg = 'Expressões — ligação final com o Claude.');
@@ -2889,8 +3132,29 @@ class _MesaScreenState extends State<MesaScreen> {
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
         ),
+        // O menu da Mesa NAO entra aqui. Esta coluna e ancorada pela base, e um
+        // quarto botao empurrava chat, expressoes e som 45 px para cima — os
+        // controles da partida, ja aprovados, mudariam de lugar por causa de um
+        // acesso de configuracao. O menu vive no cabecalho.
       ],
     );
+  }
+
+  /// O chat foi escolhido no configurador e a mesa responde de acordo. A
+  /// conversa em si (transporte, moderacao, historico) continua sendo
+  /// integracao de backend — o que muda aqui e a mesa parar de ignorar a
+  /// escolha do jogador.
+  String _avisoDoChat() {
+    switch (_chatConfigurado) {
+      case ChatMesa.desligado:
+        return 'Chat desligado na configuração desta mesa.';
+      case ChatMesa.soBaloes:
+        return 'Só balões nesta mesa — texto livre está desligado.';
+      case ChatMesa.completo:
+        return _contextoPrivado
+            ? 'Chat livre da Mesa Privada — ligação final com o Claude.'
+            : 'Chat — ligação final com o Claude.';
+    }
   }
 
   Widget _railButton(IconData icon, VoidCallback onTap) {
@@ -2913,8 +3177,25 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
-  Widget _playerDock() {
+  Widget _playerDock({bool horizontal = false}) {
     final active = _j.vez == 0 && !_j.rodadaEncerrada;
+
+    // Deitado a identidade fica AO LADO da mão: a largura sobra e a altura nao,
+    // entao a mao continua no mesmo tamanho em vez de disputar espaco vertical.
+    if (horizontal) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 132,
+            child: Center(child: _identidadeEmColuna(active)),
+          ),
+          Expanded(child: _hand()),
+        ],
+      );
+    }
+
+    // Em retrato, a composicao aprovada fica como estava, linha por linha.
     return Column(
       children: [
         SizedBox(
@@ -2945,6 +3226,33 @@ class _MesaScreenState extends State<MesaScreen> {
           ),
         ),
         Expanded(child: _hand()),
+      ],
+    );
+  }
+
+  /// Identidade do jogador empilhada, para o rodape deitado.
+  Widget _identidadeEmColuna(bool active) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _expandedAvatarSeat = 0),
+          child: _avatarCircle(0, size: 50, active: active),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'VOCÊ  •  ${_j.maos[0].length} cartas',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: active ? _mPurpleHi : _mGoldHi,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        if (active) ...[
+          const SizedBox(height: 4),
+          _turnBadge(compact: true),
+        ],
       ],
     );
   }
@@ -3404,7 +3712,7 @@ class _MesaScreenState extends State<MesaScreen> {
       title = 'BARALHO ESGOTADO';
     }
 
-    return ResultadoPartidaScreen(
+    final resultado = ResultadoPartidaScreen(
       fimPartida: finalPartida,
       mesaVip: _mesaVip,
       rodada: _j.rodada,
@@ -3427,6 +3735,33 @@ class _MesaScreenState extends State<MesaScreen> {
       onAdicionarAmigo: _adicionarAmigo,
       onVerAnuncio: _verAnuncioRecompensado,
     );
+
+    // Celebração de vitória (docs/OS-CLAUDE-ADENDO-CELEBRACAO-VITORIA.md):
+    // camada additiva e IDEMPOTENTE por eventoId, dispara só no FIM da partida
+    // (fim de rodada intermediária não comemora). A fonte de verdade do runtime
+    // offline atual é o motor local (_j). Quando existir motor/servidor
+    // autoritativo, trocar SOMENTE a origem de eventoId + assentos vencedores.
+    final celebracao = celebracaoVitoriaDoResultado(
+      eventoId: 'fim-partida-$_partidaSeq',
+      fimPartida: finalPartida,
+      assentosVencedores: _assentosVencedores(),
+      jogadores: _jogadoresResultado(),
+      somHabilitado:
+          _soundEnabled && ConfiguracoesService.instance.atual.efeitosSonoros,
+    );
+    return ResultadoPartidaCelebrado(
+      resultado: resultado,
+      celebracao: celebracao,
+    );
+  }
+
+  /// Assentos da dupla vencedora, derivados do placar do motor local
+  /// (nós = {0,2}; eles = {1,3}, conforme Jogo._duplaKey e a apuração).
+  /// Não decide regra: só traduz o placar já apurado do motor.
+  Set<int> _assentosVencedores() {
+    if (!_j.encerrada) return const <int>{};
+    final nosVenceu = (_j.placar['nos'] ?? 0) >= (_j.placar['eles'] ?? 0);
+    return nosVenceu ? const <int>{0, 2} : const <int>{1, 3};
   }
 
 }

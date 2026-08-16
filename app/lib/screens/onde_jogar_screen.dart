@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 // ============================================================================
-// TELA ONDE JOGAR (seletor de mesa) — build do Claude.
-// Reproduz ondejogar-appnavegavel.html: 4 cards (Pública · VIP · Privada · Treino).
-// Abre pelo JOGAR do Início → onEscolher(id) → Configurar Mesa (ou Mesa, no Treino).
+// TELA ONDE JOGAR (seletor de mesa) — build visual.
+// O jogador escolhe o ambiente aqui; a tela seguinte configura apenas o tipo
+// escolhido. Treino continua abrindo diretamente a mesa.
 // ============================================================================
 
 enum CorBadge { verde, ouro, nenhuma }
@@ -13,7 +13,9 @@ class OndeJogarVM {
   final bool ehVip;
   const OndeJogarVM({required this.opcoes, this.ehVip = false});
 
-  factory OndeJogarVM.mock({bool ehVip = false}) => OndeJogarVM(
+  // O mock abre como VIP para a prévia conseguir navegar por todos os ambientes.
+  // Na integração real, Claude deve passar explicitamente o status da conta.
+  factory OndeJogarVM.mock({bool ehVip = true}) => OndeJogarVM(
         ehVip: ehVip,
         opcoes: const [
           OpcaoMesa(
@@ -38,14 +40,18 @@ class OndeJogarVM {
             bloqueado: true,
           ),
           OpcaoMesa(
-            id: 'privada',
+            // O host legado intercepta literalmente "privada" para abrir o
+            // lobby online antigo. Este id mantém a prévia no fluxo novo.
+            id: 'privada_config',
             icone: '🔑',
             titulo: 'Mesa Privada',
-            badge: 'VIP cria',
+            badge: 'VIP',
             corBadge: CorBadge.ouro,
             descricao:
-                'Você cria com um código e convida quem quiser. Trave as cadeiras pra jogar só com a família, ou libere pra completar com gente online.',
-            nota: '🔒 Só VIP cria · convidados entram com código',
+                'Monte sua própria mesa: escolha parceiro, adversários e quem pode completar as vagas. Todos os jogadores precisam ser VIP.',
+            nota:
+                '🔒 VIP para jogar · exceção: Passe Convidado VIP ocasional e válido',
+            bloqueado: true,
           ),
           OpcaoMesa(
             id: 'treino',
@@ -59,7 +65,7 @@ class OndeJogarVM {
 }
 
 class OpcaoMesa {
-  final String id; // 'publica' | 'vip' | 'privada' | 'treino'
+  final String id;
   final String icone;
   final String titulo;
   final String? badge;
@@ -93,12 +99,16 @@ class OndeJogarScreen extends StatelessWidget {
   final OndeJogarVM vm;
   final VoidCallback onVoltar;
   final ValueChanged<String> onEscolher;
+  final ValueChanged<String>? onBloqueado;
+  final VoidCallback? onEntrarCodigo;
 
   const OndeJogarScreen({
     super.key,
     required this.vm,
     required this.onVoltar,
     required this.onEscolher,
+    this.onBloqueado,
+    this.onEntrarCodigo,
   });
 
   @override
@@ -130,20 +140,28 @@ class OndeJogarScreen extends StatelessWidget {
                           icon: const Icon(Icons.chevron_left, color: _gold, size: 30),
                           splashRadius: 22,
                         ),
-                        const Text('Onde jogar',
-                            style: TextStyle(color: _goldHi, fontSize: 18, fontWeight: FontWeight.w800)),
+                        const Text(
+                          'Onde jogar',
+                          style: TextStyle(
+                            color: _goldHi,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   const Padding(
                     padding: EdgeInsets.fromLTRB(20, 2, 20, 8),
-                    child: Text('Escolha a mesa pra começar a partida 🃏',
-                        style: TextStyle(color: _mut, fontSize: 13)),
+                    child: Text(
+                      'Escolha a mesa pra começar a partida 🃏',
+                      style: TextStyle(color: _mut, fontSize: 13),
+                    ),
                   ),
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(14, 6, 14, 24),
-                      children: vm.opcoes.map(_cardOpcao).toList(),
+                      children: vm.opcoes.map((o) => _cardOpcao(context, o)).toList(),
                     ),
                   ),
                 ],
@@ -155,76 +173,241 @@ class OndeJogarScreen extends StatelessWidget {
     );
   }
 
-  Widget _cardOpcao(OpcaoMesa o) {
-    return GestureDetector(
-      onTap: () => onEscolher(o.id),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: o.destaque ? _gold : _borda,
-            width: o.destaque ? 1.8 : 1,
+  void _selecionar(BuildContext context, OpcaoMesa opcao) {
+    final bloqueadaParaUsuario = opcao.bloqueado && !vm.ehVip;
+    if (!bloqueadaParaUsuario) {
+      onEscolher(opcao.id);
+      return;
+    }
+
+    if (onBloqueado != null) {
+      onBloqueado!(opcao.id);
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            opcao.id == 'privada_config'
+                ? 'Criar Mesa Privada é um benefício VIP. Para jogar, cada participante precisa de VIP ativo ou Passe Convidado VIP válido.'
+                : 'Mesa VIP é exclusiva para assinantes VIP.',
           ),
-          boxShadow: o.destaque
-              ? [BoxShadow(color: _gold.withValues(alpha: 0.22), blurRadius: 16, spreadRadius: -2)]
-              : null,
+          duration: const Duration(milliseconds: 1900),
+          backgroundColor: const Color(0xFF2A1B0E),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A1C10),
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(color: const Color(0x55EFB94A)),
-              ),
-              alignment: Alignment.center,
-              child: Text(o.icone, style: const TextStyle(fontSize: 26)),
+      );
+  }
+
+  void _entrarComCodigo(BuildContext context) {
+    if (onEntrarCodigo != null) {
+      onEntrarCodigo!();
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(
+            'O código localiza a Mesa Privada. O servidor valida VIP ativo ou Passe Convidado VIP antes de liberar a cadeira.',
+          ),
+          duration: Duration(milliseconds: 1900),
+          backgroundColor: Color(0xFF2A1B0E),
+        ),
+      );
+  }
+
+  Widget _cardOpcao(BuildContext context, OpcaoMesa o) {
+    final bloqueadaParaUsuario = o.bloqueado && !vm.ehVip;
+    final privada = o.id == 'privada_config';
+    return GestureDetector(
+      onTap: () => _selecionar(context, o),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 160),
+        opacity: bloqueadaParaUsuario ? .78 : 1,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: o.destaque ? _gold : _borda,
+              width: o.destaque ? 1.8 : 1,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(o.titulo,
-                            style: const TextStyle(
-                                color: _goldHi, fontSize: 15.5, fontWeight: FontWeight.w800)),
+            boxShadow: o.destaque && !bloqueadaParaUsuario
+                ? [
+                    BoxShadow(
+                      color: _gold.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      spreadRadius: -2,
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A1C10),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: const Color(0x55EFB94A)),
+                ),
+                alignment: Alignment.center,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Text(o.icone, style: const TextStyle(fontSize: 26)),
+                    if (bloqueadaParaUsuario)
+                      Positioned(
+                        right: -1,
+                        bottom: -1,
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0D0906),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: _gold),
+                          ),
+                          child: const Icon(
+                            Icons.lock_rounded,
+                            color: _gold,
+                            size: 11,
+                          ),
+                        ),
                       ),
-                      if (o.badge != null) ...[
-                        const SizedBox(width: 8),
-                        _badge(o.badge!, o.corBadge),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(o.descricao,
-                      style: const TextStyle(color: _texto, fontSize: 12, height: 1.3)),
-                  if (o.nota != null) ...[
-                    const SizedBox(height: 6),
-                    Text(o.nota!,
-                        style: const TextStyle(color: _mut, fontSize: 10.5, fontWeight: FontWeight.w600)),
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            const Text('›', style: TextStyle(color: _mut, fontSize: 22, fontWeight: FontWeight.w900)),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            o.titulo,
+                            style: const TextStyle(
+                              color: _goldHi,
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (o.badge != null) ...[
+                          const SizedBox(width: 8),
+                          _badge(o.badge!, o.corBadge),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      o.descricao,
+                      style: const TextStyle(
+                        color: _texto,
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                    ),
+                    if (o.nota != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        o.nota!,
+                        style: const TextStyle(
+                          color: _mut,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (privada) ...[
+                      const SizedBox(height: 9),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            key: const ValueKey('entrar-com-codigo'),
+                            onTap: () => _entrarComCodigo(context),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10271E),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFF235D43)),
+                              ),
+                              child: const Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.vpn_key_rounded,
+                                        color: Color(0xFF78E6A7),
+                                        size: 15,
+                                      ),
+                                      SizedBox(width: 6),
+                                      Text(
+                                        'TENHO UM CÓDIGO',
+                                        style: TextStyle(
+                                          color: Color(0xFF78E6A7),
+                                          fontSize: 9.8,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: 3),
+                                  Text(
+                                    'VIP ativo ou Passe Convidado VIP válido',
+                                    style: TextStyle(
+                                      color: Color(0xFF9EAD9F),
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                bloqueadaParaUsuario
+                    ? Icons.lock_outline_rounded
+                    : Icons.chevron_right_rounded,
+                color: bloqueadaParaUsuario ? _gold : _mut,
+                size: 22,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _badge(String txt, CorBadge cor) {
-    late Color bg, fg;
+    late Color bg;
+    late Color fg;
     switch (cor) {
       case CorBadge.verde:
         bg = const Color(0x3327AE60);
@@ -241,8 +424,14 @@ class OndeJogarScreen extends StatelessWidget {
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
-      child: Text(txt, style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w800)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        txt,
+        style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.w800),
+      ),
     );
   }
 }

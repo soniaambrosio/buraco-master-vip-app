@@ -17,10 +17,10 @@ import 'billing/plano_vip.dart';
 import 'billing/servico_billing.dart';
 import 'elegibilidade/entitlement.dart';
 import 'pages/perfil_page.dart';
+import 'pages/ranking_page.dart';
 import 'pages/torneios_preview_page.dart';
 import 'screens/perfil_screen.dart' show NavDestino;
 import 'screens/inicio_screen.dart';
-import 'screens/ranking_screen.dart';
 import 'screens/recompensas_screen.dart';
 import 'screens/configurar_mesa_screen.dart';
 import 'screens/resultado_partida_screen.dart';
@@ -40,8 +40,10 @@ import 'sessao/sessao_do_jogador.dart';
 import 'sessao/sessao_firebase.dart';
 import 'screens/splash_oficial_screen.dart';
 import 'screens/preparando_partida_screen.dart';
-import 'screens/hall_screen.dart';
 import 'screens/onde_jogar_screen.dart';
+import 'screens/mesa_flow_preview_host.dart';
+import 'screens/mesa_orientation_contract.dart';
+import 'services/mesa_orientation_service.dart';
 import 'widgets/convite_vip.dart';
 import 'mesa.dart';
 
@@ -308,7 +310,7 @@ class _InicioPreviewHostState extends State<_InicioPreviewHost> {
 
   void _abrirRanking() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+      MaterialPageRoute(builder: (_) => const RankingPage()),
     );
   }
 
@@ -691,6 +693,9 @@ class _ConfiguracoesPreviewHostState
     extends State<_ConfiguracoesPreviewHost> {
   // Estado REAL: carrega do disco (SharedPreferences) e persiste cada mudança.
   Configuracoes _config = const Configuracoes(versaoApp: '1.0.0');
+  // A orientacao da Mesa tem servico e chave proprios, entao viaja separada.
+  MesaOrientacaoPreferida _orientacaoMesa =
+      MesaOrientationService.instance.atual;
 
   @override
   void initState() {
@@ -698,6 +703,14 @@ class _ConfiguracoesPreviewHostState
     ConfiguracoesService.instance.carregar(versaoApp: '1.0.0').then((c) {
       if (mounted) setState(() => _config = c);
     });
+    MesaOrientationService.instance.carregar().then((o) {
+      if (mounted) setState(() => _orientacaoMesa = o);
+    });
+  }
+
+  Future<void> _salvarOrientacao(MesaOrientacaoPreferida preferencia) async {
+    setState(() => _orientacaoMesa = preferencia);
+    await MesaOrientationService.instance.salvar(preferencia);
   }
 
   void _aviso(String texto) {
@@ -925,6 +938,8 @@ class _ConfiguracoesPreviewHostState
     return ConfiguracoesScreen(
       perfil: _montarPerfil(),
       config: _config,
+      orientacaoMesa: _orientacaoMesa,
+      onOrientacaoMesa: _salvarOrientacao,
       onVoltar: () => Navigator.of(context).maybePop(),
       callbacks: ConfiguracoesCallbacks(
         onAlterar: _salvar,
@@ -1103,7 +1118,7 @@ class _LojaPreviewHostState extends State<_LojaPreviewHost> {
 
   void _abrirRanking() {
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+      MaterialPageRoute(builder: (_) => const RankingPage()),
     );
   }
 
@@ -1195,7 +1210,7 @@ class _LojaCategoriaPreviewHost extends StatelessWidget {
         break;
       case NavDestino.ranking:
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
+          MaterialPageRoute(builder: (_) => const RankingPage()),
         );
         break;
       case NavDestino.perfil:
@@ -1230,126 +1245,50 @@ class _LojaCategoriaPreviewHost extends StatelessWidget {
 }
 
 
-// ===================== HALL DOS IMORTAIS (host) =====================
-class _HallPreviewHost extends StatelessWidget {
-  const _HallPreviewHost();
-
-  void _aviso(BuildContext context, String texto) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(texto),
-          duration: const Duration(milliseconds: 1500),
-          backgroundColor: const Color(0xFF2A1B0E),
-        ),
-      );
-  }
-
-  // Modal de "Regras do Hall" — explica as 5 categorias de glória (antes não abria nada).
-  void _mostrarRegras(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xF2160D08),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-          side: const BorderSide(color: Color(0x55EFB94A)),
-        ),
-        title: const Text('📜 Regras do Hall',
-            style: TextStyle(color: Color(0xFFF6E2A6), fontWeight: FontWeight.w900)),
-        content: const SingleChildScrollView(
-          child: Text(
-            'O Hall dos Imortais celebra os melhores por período:\n\n'
-            '🏆 Campeão de hoje — quem mais venceu no dia.\n'
-            '👑 Melhor dupla — a parceria mais afiada.\n'
-            '🔥 Maior sequência — o maior embalo de vitórias.\n'
-            '⭐ Rei/Rainha da semana — o destaque dos últimos 7 dias.\n'
-            '🌙 Lenda do mês — o nome que dominou o mês.\n\n'
-            'Tudo é automático pelos resultados das partidas. Jogue, vença e '
-            'entre para a história! 🃏',
-            style: TextStyle(color: Color(0xFFEFE3CC), fontSize: 13, height: 1.4),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Entendi',
-                style: TextStyle(color: Color(0xFFEFB94A), fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
-    );
-  }
+// ===================== ONDE JOGAR (host) =====================
+// Esta e a UNICA porta de entrada do fluxo de mesas: o tipo de mesa se escolhe
+// aqui e em lugar nenhum mais. O configurador nao repete o seletor de tipo — ele
+// so configura o ambiente que ja chegou decidido daqui.
+class _OndeJogarPreviewHost extends StatefulWidget {
+  const _OndeJogarPreviewHost();
 
   @override
-  Widget build(BuildContext context) {
-    return HallScreen(
-      vm: HallVM.mock(),
-      onVoltar: () => Navigator.of(context).maybePop(),
-      onVerRegras: () => _mostrarRegras(context),
-      onVerPerfil: (id) => _aviso(context, 'Abrir perfil: $id'),
-      onPresentear: (id) => _aviso(context, 'Escolha um presente para homenagear $id 👑'),
-      onEnviarPresente: (id, presenteId) =>
-          _aviso(context, 'Presente $presenteId enviado para $id'),
-      onNav: (destino) {
-        switch (destino) {
-          case 'ranking':
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const _RankingPreviewHost()),
-            );
-            break;
-          case 'perfil':
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const PerfilPage()),
-            );
-            break;
-          case 'estatisticas':
-            _aviso(context, 'Minhas estatísticas — integração fica com o Claude');
-            break;
-          case 'presentes':
-            _aviso(context, 'Inventário de presentes — integração fica com o Claude');
-            break;
-          default:
-            break;
-        }
-      },
-    );
-  }
+  State<_OndeJogarPreviewHost> createState() => _OndeJogarPreviewHostState();
 }
 
+class _OndeJogarPreviewHostState extends State<_OndeJogarPreviewHost> {
+  final OndeJogarVM _vm = OndeJogarVM.mock();
 
-// ===================== ONDE JOGAR (host) =====================
-class _OndeJogarPreviewHost extends StatelessWidget {
-  const _OndeJogarPreviewHost();
+  /// Um ambiente por vez: dois toques rapidos no mesmo cartao (ou em dois
+  /// cartoes seguidos) empilhavam duas telas.
+  bool _abrindo = false;
+
+  void _abrir(Widget destino) {
+    if (_abrindo) return;
+    setState(() => _abrindo = true);
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => destino))
+        .whenComplete(() {
+          if (mounted) setState(() => _abrindo = false);
+        });
+  }
 
   @override
   Widget build(BuildContext context) {
     return OndeJogarScreen(
-      vm: OndeJogarVM.mock(),
+      vm: _vm,
       onVoltar: () => Navigator.of(context).maybePop(),
       onEscolher: (id) {
         if (id == 'treino') {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const MesaScreen()),
-          );
+          _abrir(const MesaScreen());
           return;
         }
-        if (id == 'privada') {
-          // ONLINE de verdade (Trilha A): criar/entrar por código no servidor.
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const _OnlineLobbyHost()),
-          );
-          return;
-        }
-        final tipo = id == 'publica'
-            ? TipoMesa.publica
-            : id == 'vip'
-                ? TipoMesa.vip
-                : TipoMesa.privada;
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => _ConfigMesaPreviewHost(tipoInicial: tipo)),
-        );
+        final tipo = switch (id) {
+          'publica' => TipoMesa.publica,
+          'vip' => TipoMesa.vip,
+          _ => TipoMesa.privada,
+        };
+        _abrir(MesaFlowPreviewHost(tipoInicial: tipo, ehVip: _vm.ehVip));
       },
     );
   }
@@ -1359,6 +1298,11 @@ class _OndeJogarPreviewHost extends StatelessWidget {
 // Conecta no servidor real (Railway), cria/entra numa mesa por código e mostra o
 // estado que o servidor devolve. Prova a conexão ponta-a-ponta do app com o online.
 // A mesa visual completa (renderizar a partida do servidor) é a próxima fatia (A2).
+//
+// EM QUARENTENA (OS §17 — sem faxina destrutiva): prova de conexão, fora do
+// fluxo aprovado. Nenhuma tela navega mais para cá — a Privada passa pelo
+// configurador, como as demais. Entrar numa sala de verdade por código depende
+// de autoridade de backend e está registrada como integração futura.
 class _OnlineLobbyHost extends StatefulWidget {
   const _OnlineLobbyHost();
   @override
@@ -1675,8 +1619,22 @@ class _RecompensasPreviewHostState extends State<_RecompensasPreviewHost> {
 }
 
 // ===================== CONFIGURAR MESA — PRÉVIA VISUAL CODEX =====================
+// EM QUARENTENA (OS §17 — sem faxina destrutiva).
+//
+// Este host montava a configuracao a mao e perdia escolhas na fronteira:
+// abria a Mesa com `publica ? publica : vip` (o que transformava Privada em
+// VIP), entregava `PreparandoPartidaVM.mock` em vez da preparacao real e nao
+// levava modo, chat, aposta, espectadores, codigo nem cadeiras adiante. Ele
+// tambem repetia o seletor de tipo que pertence so a tela Onde jogar.
+//
+// O fluxo ativo agora e `MesaFlowPreviewHost`, que atravessa a mesma fronteira
+// por `MesaFlowPlan`. Nada mais navega para ca; o codigo fica preservado como
+// referencia do comportamento antigo ate a sessao de limpeza autorizada.
 class _ConfigMesaPreviewHost extends StatefulWidget {
   final TipoMesa tipoInicial;
+  // Ninguem mais passa este parametro porque ninguem mais navega para ca; ele
+  // fica como estava para a quarentena preservar o host intacto.
+  // ignore: unused_element_parameter
   const _ConfigMesaPreviewHost({this.tipoInicial = TipoMesa.privada});
 
   @override
@@ -1785,7 +1743,7 @@ class _ConfigMesaPreviewHostState extends State<_ConfigMesaPreviewHost> {
               SizedBox(height: 8),
               Text('Fechado — compra justificada e aceita trinca.'),
               SizedBox(height: 8),
-              Text('SBTL — sem trinca e bate somente com canastra limpa.'),
+              Text('STBL — sem trinca e bate somente com canastra limpa.'),
             ],
           ),
         ),
@@ -1879,11 +1837,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _abrirRanking() {
-    // Prévia visual do contrato RankingVM. O Claude substitui este host pelo
-    // RankingPage/RankingService quando conectar os dados reais.
+    // O host de prévia saiu na composição da RC: quem manda aqui é a
+    // RankingPage, que fala com o RankingService de verdade.
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const _RankingPreviewHost(),
+        builder: (_) => const RankingPage(),
       ),
     );
   }
@@ -2164,8 +2122,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _botaoJogar() {
     return GestureDetector(
+      // Jogar entra pela unica porta aprovada: Onde jogar decide o tipo de mesa.
+      // Antes esta rota caia direto no configurador legado, criando uma segunda
+      // escolha de tipo fora do fluxo.
       onTap: () => Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const _ConfigMesaPreviewHost())),
+          .push(MaterialPageRoute(builder: (_) => const _OndeJogarPreviewHost())),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 18),
@@ -2211,9 +2172,10 @@ class _HomeScreenState extends State<HomeScreen> {
               : label == 'Recompensas'
                   ? _abrirRecompensas
                   : label == 'Jogar'
+                      // Mesma porta unica do _botaoJogar: Onde jogar primeiro.
                       ? () => Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => const _ConfigMesaPreviewHost(),
+                              builder: (_) => const _OndeJogarPreviewHost(),
                             ),
                           )
                       : () => _breve(label),
@@ -2280,87 +2242,4 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ===================== RANKING — PRÉVIA VISUAL CODEX =====================
-class _RankingPreviewHost extends StatefulWidget {
-  const _RankingPreviewHost();
-
-  @override
-  State<_RankingPreviewHost> createState() => _RankingPreviewHostState();
-}
-
-/// Ranking é CONSUMIDOR da identidade pública, e só isso.
-///
-/// Não cria, não garante, não escolhe e não deriva `publicId`: lê o estado
-/// canônico da sessão e obedece à fase em que ele está. Abrir esta tela dez
-/// vezes não produz nenhuma chamada de identidade — o estado já foi resolvido
-/// no login, e `EscopoSessao.identidadeDe` é leitura pura.
-class _RankingPreviewHostState extends State<_RankingPreviewHost> {
-  RankingAba _aba = RankingAba.temporada;
-
-  void _aviso(String texto) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(texto),
-          duration: const Duration(milliseconds: 1400),
-          backgroundColor: const Color(0xFF2A1B0E),
-        ),
-      );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final vm = RankingVM.mock(aba: _aba);
-    final identidade = EscopoSessao.identidadeDe(context);
-
-    return RankingScreen(
-      vm: vm,
-      // A fase da identidade MANDA na tela (§11). Enquanto ela carrega, o
-      // Ranking espera; se falhou, o Ranking mostra erro e oferece retry. O que
-      // ele não faz em nenhuma das duas é seguir em frente com um identificador
-      // inventado para "não travar a tela".
-      estado: switch (identidade.fase) {
-        FaseIdentidade.carregando ||
-        FaseIdentidade.naoCarregada =>
-          RankingEstado.carregando,
-        FaseIdentidade.falha => RankingEstado.erro,
-        FaseIdentidade.naoAutenticado ||
-        FaseIdentidade.disponivel =>
-          RankingEstado.normal,
-      },
-      mensagemErro: identidade.fase == FaseIdentidade.falha
-          ? 'Não consegui carregar seu perfil de jogador agora. Tenta de novo?'
-          : null,
-      onVoltar: () => Navigator.of(context).maybePop(),
-      onTrocarAba: (aba) => setState(() => _aba = aba),
-      onAbrirHall: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const _HallPreviewHost()),
-      ),
-      onVerJogador: (posicao) => _aviso('Perfil da posição #$posicao'),
-      // RETRY EXPLÍCITO, nascido do gesto do jogador — nunca do `build`.
-      // `recarregar` é deduplicada, então apertar duas vezes não abre duas
-      // chamadas.
-      onRecarregar: () => EscopoSessao.talvezDe(context)?.recarregar(),
-      onCarregarMais: null,
-      onNavTap: (destino) {
-        switch (destino) {
-          case NavDestino.inicio:
-            Navigator.of(context).maybePop();
-            break;
-          case NavDestino.ranking:
-            break;
-          case NavDestino.loja:
-            _aviso('Loja VIP — chega nas próximas fatias 👍');
-            break;
-          case NavDestino.perfil:
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (_) => const PerfilPage()),
-            );
-            break;
-        }
-      },
-    );
-  }
-}
 

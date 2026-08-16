@@ -5,6 +5,7 @@ import '../screens/perfil_screen.dart';
 import '../services/perfil_service.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
+import 'ranking_page.dart';
 
 /// Controlador da tela de Perfil (camada de lógica — Claude).
 ///
@@ -16,11 +17,18 @@ import '../sessao/identidade_publica_sessao.dart';
 /// de demonstração (ver [PerfilService.statsDemo]). As ações que dependem de telas
 /// futuras (config, editar, loja, ranking) mostram um aviso "chega já já".
 class PerfilPage extends StatefulWidget {
-  const PerfilPage({super.key, this.ehMeuPerfil = true});
+  const PerfilPage({super.key, this.ehMeuPerfil = true, this.jogadorId});
 
   /// true = perfil do próprio dono (mostra editar/câmera/trocar vitrine).
   /// false = visitando outro jogador (a UI oculta os controles de dono).
   final bool ehMeuPerfil;
+
+  /// Identificador **público** (UID) de quem se quer ver. Vem do Ranking e do
+  /// Hall ao tocar num jogador. `null` = o próprio dono.
+  ///
+  /// O perfil continua sendo carregado pelo [PerfilService] — o Ranking não
+  /// duplica nada de perfil, só diz de quem é.
+  final String? jogadorId;
 
   @override
   State<PerfilPage> createState() => _PerfilPageState();
@@ -67,6 +75,7 @@ class _PerfilPageState extends State<PerfilPage> {
       final vm = await _service.carregar(
         ehMeuPerfil: widget.ehMeuPerfil,
         identidade: identidade,
+        jogadorId: widget.jogadorId,
       );
       if (!mounted) return;
       setState(() {
@@ -77,7 +86,9 @@ class _PerfilPageState extends State<PerfilPage> {
       if (!mounted) return;
       setState(() {
         _estado = PerfilEstado.erro;
-        _erro = 'Não consegui carregar seu perfil agora. Tenta de novo?';
+        _erro = e is PerfilIndisponivel
+            ? e.motivo
+            : 'Não consegui carregar seu perfil agora. Tenta de novo?';
       });
     }
   }
@@ -147,7 +158,9 @@ class _PerfilPageState extends State<PerfilPage> {
             Navigator.of(context).maybePop();
             break;
           case NavDestino.ranking:
-            _breve('Ranking');
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute<void>(builder: (_) => const RankingPage()),
+            );
             break;
           case NavDestino.loja:
             _breve('Loja VIP');
