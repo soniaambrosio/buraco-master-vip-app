@@ -22,6 +22,11 @@ env:
   BMV_STORE_PASSWORD: bmvtest2026
   BMV_KEY_PASSWORD: bmvtest2026
   BMV_APPLICATION_ID: com.buracomastervip.poc.buraco_master_vip
+  # Endereço do servidor online. NÃO é segredo (é um endpoint público), mas é
+  # CONFIGURAÇÃO: muda por ambiente, então não vive no código-fonte. O app
+  # recebe por --dart-define e recusa endereço local ou sem TLS num release.
+  # Para apontar outro host, defina a variável de repositório BMV_SERVIDOR_URL.
+  BMV_SERVIDOR_URL: ${{ vars.BMV_SERVIDOR_URL || 'wss://buraco-servidor-production.up.railway.app' }}
 
 jobs:
   build:
@@ -228,6 +233,45 @@ jobs:
           cd app_build
           flutter test test/online_auth_test.dart --reporter expanded
           echo "PORTÃO VERDE: identidade da conexão online validada no commit ${GITHUB_SHA}."
+
+      - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
+        # Prova o que falta para o app publicado manter a sessão real: endereço
+        # validado por perfil de build, protocolo 2 no handshake, renovação de
+        # credencial sem tempestade, reconexão com teto, socket sem órfão,
+        # mensagem de sessão antiga descartada e segredo nenhum vazando.
+        run: |
+          if [ ! -f app/test/conexao_producao_test.dart ]; then
+            echo "ERRO: app/test/conexao_producao_test.dart não encontrado — o portão da conexão é OBRIGATÓRIO."
+            exit 1
+          fi
+          cp app/test/conexao_producao_test.dart app_build/test/
+          cd app_build
+          flutter test test/conexao_producao_test.dart --reporter expanded
+          echo "PORTÃO VERDE: conexão publicável validada no commit ${GITHUB_SHA}."
+
+      - name: "PORTÃO DE CONFIGURAÇÃO — endereço do servidor deste build"
+        # O app recusa endereço ruim em tempo de execução, mas descobrir isso no
+        # celular de quem instalou é tarde demais. Aqui a mesma regra roda ANTES
+        # de gerar o APK, para o build quebrar em vez de sair um artefato que
+        # não consegue conectar.
+        run: |
+          URL="${BMV_SERVIDOR_URL}"
+          if [ -z "$URL" ]; then
+            echo "ERRO: BMV_SERVIDOR_URL está vazio — o APK sairia sem servidor."
+            exit 1
+          fi
+          case "$URL" in
+            wss://*|https://*) ;;
+            *) echo "ERRO: o endereço precisa ser wss:// ou https:// — veio '$URL'"; exit 1 ;;
+          esac
+          case "$URL" in
+            *localhost*|*127.0.0.1*|*0.0.0.0*|*10.0.2.2*|*10.0.3.2*|*.local|*.local/*)
+              echo "ERRO: '$URL' é endereço local — não existe fora da máquina de desenvolvimento"; exit 1 ;;
+          esac
+          case "$URL" in
+            *\?*|*@*) echo "ERRO: o endereço não pode carregar parâmetros nem credencial"; exit 1 ;;
+          esac
+          echo "endereço do servidor validado para este build: $URL"
 
       - name: Bump minSdk to 23 (Firebase)
         run: |
@@ -513,7 +557,13 @@ jobs:
           echo "baralho: $(find app_build/assets/baralho -maxdepth 1 -type f | wc -l) | sons: $(find app_build/assets/sons -maxdepth 1 -type f | wc -l) | perfil: $(find app_build/assets/perfil -maxdepth 1 -type f | wc -l) | ranking principais: $(find app_build/assets/ranking -maxdepth 1 -type f | wc -l) | selos: $(find app_build/assets/ranking/selos -maxdepth 1 -type f | wc -l) | hall: $(find app_build/assets/hall -maxdepth 1 -type f | wc -l) | inicio: $(find app_build/assets/inicio -maxdepth 1 -type f | wc -l) | configurar mesa: $(find app_build/assets/configurar_mesa -maxdepth 1 -type f | wc -l)"
 
       - name: Build release APK por ABI (menor; arm64 pro celular)
-        run: cd app_build && flutter build apk --release --split-per-abi
+        # O endereço do servidor entra AQUI, pela configuração do build. Sem
+        # este --dart-define o app sai sem endpoint e o online não sobe — de
+        # propósito: é melhor falhar claro do que embutir endereço no código.
+        run: |
+          cd app_build
+          flutter build apk --release --split-per-abi \
+            --dart-define=BMV_SERVIDOR_URL="${BMV_SERVIDOR_URL}"
 
       - name: Conferir baralho DENTRO do APK (prova de bundling)
         run: |
