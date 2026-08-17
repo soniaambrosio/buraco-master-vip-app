@@ -187,7 +187,14 @@ class AvaliadorHeuristico {
       //     contra ela. A situação ATUAL prevalece sobre o descarte histórico
       //     porque os termos da situação atual são maiores, não porque haja um
       //     `if` cancelando o histórico.
+      //
+      // O peso ZERO não emite feature. Não é detalhe cosmético: a OS exige que
+      // zerar o peso reproduza a V1 *bit a bit*, e um termo de valor 0,0 no
+      // rastro já é uma diferença — quem compara traços veria uma chave a mais
+      // e concluiria que a V2 decidiu outra coisa. Zerar o peso e desligar a
+      // flag passam a ser exatamente a mesma coisa, como devem ser.
       if (r.usaMemoriaDescarteParceiro &&
+          p.memoriaDescarteParceiro != 0 &&
           !ehCuringaEstrategico(carta) &&
           parceiro.parceiroDescartou(carta)) {
         f[featureMemoriaDescarteParceiro] = p.memoriaDescarteParceiro;

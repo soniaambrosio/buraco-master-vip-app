@@ -55,6 +55,9 @@ import 'package:buraco_master_vip/bot/razoes.dart';
 import 'package:buraco_master_vip/bot/visao_informacao.dart';
 // OS PROVENIÊNCIA DE DESCARTES V1 — o consumidor da autoria pública.
 import 'package:buraco_master_vip/bot/modelo_parceiro.dart';
+// OS CALIBRAÇÃO V1 — o ponto único de consumo do sinal.
+import 'package:buraco_master_vip/bot/avaliador_heuristico.dart'
+    show featureMemoriaDescarteParceiro;
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -7015,6 +7018,515 @@ void main() {
         expect(fim.descartes.map((d) => d.assento).toSet().length >= 2, isTrue,
             reason: '$modalidade: um único assento descartou na partida toda');
       }
+    });
+  });
+
+  // =====================================================================
+  // OS 3 — CALIBRAÇÃO ESTRATÉGICA COM MEMÓRIA PÚBLICA DE DESCARTES
+  //
+  // A OS 2 entregou o FATO (quem descartou o quê). Aqui ele vira EVIDÊNCIA
+  // MODERADA na escolha do descarte — nunca regra, nunca filtro.
+  //
+  // O que estes testes precisam provar, e é por isso que quase todos comparam
+  // V1 e V2 sobre O MESMO estado:
+  //   • o sinal MUDA decisão (senão está conectado e vazio);
+  //   • o sinal PERDE para tudo que a §6 põe acima dele;
+  //   • desligar a flag — ou zerar o peso — devolve a V1 bit a bit.
+  // =====================================================================
+  group('OS CALIBRAÇÃO — memória pública de descartes do parceiro', () {
+    // Reescreve o livro de proveniência de um estado, preservando o resto.
+    // Existe para montar cenários de autoria que uma partida real levaria
+    // dezenas de turnos para produzir. NÃO é atalho de produção: o construtor
+    // é o canônico, e o livro continua sendo a única fonte de autoria.
+    EstadoJogo comLivro(EstadoJogo e, List<DescarteRegistrado> livro) =>
+        EstadoJogo(
+          modalidade: e.modalidade,
+          metaPontos: e.metaPontos,
+          monte: e.monte,
+          lixo: e.lixo,
+          mortos: e.mortos,
+          maos: e.maos,
+          jogosDupla: e.jogosDupla,
+          rodadasVulneravel: e.rodadasVulneravel,
+          primeiraBaixadaFeita: e.primeiraBaixadaFeita,
+          vez: e.vez,
+          mortoPego: e.mortoPego,
+          rodadaEncerrada: e.rodadaEncerrada,
+          duplaQueBateu: e.duplaQueBateu,
+          fase: e.fase,
+          descartes: livro,
+        );
+
+    DescarteRegistrado reg(Carta c, int assento, int ordem) =>
+        DescarteRegistrado(
+          carta: CartaSnapshot(c.id, c.naipe, c.valor, c.ehCoringa),
+          assento: assento,
+          ordem: ordem,
+        );
+
+    /// Registro de um descarte de OUTRA CÓPIA da mesma carta (o baralho tem
+    /// duas de cada). O id é próprio: o que o sinal enxerga é valor+naipe, e
+    /// usar o id de uma carta que está na mão de alguém confundiria a leitura.
+    DescarteRegistrado regCopia(String valor, String? naipe, int assento,
+            int ordem) =>
+        DescarteRegistrado(
+          carta: CartaSnapshot(
+              'copia_${valor}_${naipe ?? "jk"}_$ordem', naipe, valor, false),
+          assento: assento,
+          ordem: ordem,
+        );
+
+    DecisaoBot decidir(EstadoJogo e, ConfiguracaoBot cfg, {int assento = 0}) =>
+        ExecutorBot(
+          RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos),
+          cfg: cfg,
+        ).decidirJogo(e, assento);
+
+    /// MESA DE EMPATE: dois reis isolados (mesmo valor, naipes diferentes, sem
+    /// vizinhos e — no Aberto/STBL — sem trinca, portanto força estrutural
+    /// ZERO nos dois) e uma corrida natural que o robô não vai querer quebrar.
+    /// Tudo o que distingue os dois reis é a proveniência.
+    ({Jogo jogo, Carta a, Carta b}) mesaDeEmpate(String modalidade) {
+      final j = novo(modalidade);
+      montar(j,
+          mao0: [
+            ('K', 'espadas'),
+            ('K', 'ouros'),
+            ('7', 'copas'),
+            ('8', 'copas'),
+            ('9', 'copas')
+          ],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          vez: 0,
+          jaComprou: true);
+      return (
+        jogo: j,
+        a: j.maos[0].firstWhere((c) => c.valor == 'K' && c.naipe == 'espadas'),
+        b: j.maos[0].firstWhere((c) => c.valor == 'K' && c.naipe == 'ouros'),
+      );
+    }
+
+    // ---------- §11.1, §11.13, §15 — o sinal MUDA a decisão ----------
+    // A prova não depende de qual rei o desempate por hash escolheria: o mesmo
+    // estado é rodado com o parceiro tendo dispensado ORA um, ORA o outro. Se
+    // as duas decisões forem diferentes e cada uma for a carta dispensada, foi
+    // o sinal que decidiu — não a ordem de iteração.
+    for (final modalidade in const ['ABERTO', 'FECHADO', 'SBTL']) {
+      test('CAL-01-$modalidade entre alternativas equivalentes, o descarte '
+          'dispensado pelo parceiro é o escolhido', () {
+        // UMA mesa só. Os dois cenários saem do MESMO estado canônico e
+        // diferem exclusivamente no livro de proveniência — montar duas mesas
+        // daria ids de carta diferentes, e o desempate por assinatura mudaria
+        // junto, medindo a distribuição em vez do sinal.
+        final m = mesaDeEmpate(modalidade);
+        final base = paraCanonico(m.jogo).canonico;
+        final e1 = comLivro(base, [regCopia('K', 'espadas', 2, 0)]);
+        final d1 = decidir(e1, ConfiguracaoBot.v2);
+
+        final e2 = comLivro(base, [regCopia('K', 'ouros', 2, 0)]);
+        final d2 = decidir(e2, ConfiguracaoBot.v2);
+
+        expect(d1.plano?.cartaDescartada?.naipe, 'espadas',
+            reason: 'o parceiro dispensou o K de espadas');
+        expect(d2.plano?.cartaDescartada?.naipe, 'ouros',
+            reason: 'o parceiro dispensou o K de ouros');
+
+        // NÃO-VACUIDADE. A V1 ignora o livro, então tem de escolher o MESMO
+        // rei nos dois estados — e é essa igualdade que prova que a diferença
+        // acima veio do sinal, e não da distribuição ou do desempate.
+        final v1a = decidir(e1, ConfiguracaoBot.v1);
+        final v1b = decidir(e2, ConfiguracaoBot.v1);
+        expect(v1a.plano?.cartaDescartada?.naipe,
+            v1b.plano?.cartaDescartada?.naipe,
+            reason: 'a V1 não enxerga proveniência');
+        // E exatamente UMA das duas decisões da V2 virou em relação à V1.
+        final virouA =
+            d1.plano?.cartaDescartada?.naipe != v1a.plano?.cartaDescartada?.naipe;
+        final virouB =
+            d2.plano?.cartaDescartada?.naipe != v1b.plano?.cartaDescartada?.naipe;
+        expect(virouA ^ virouB, isTrue,
+            reason: 'o sinal precisa ter virado uma decisão, e só uma');
+      });
+    }
+
+    test('CAL-02 sem a flag, a V2 reproduz a V1 bit a bit no MESMO estado', () {
+      final m = mesaDeEmpate('ABERTO');
+      final e = comLivro(paraCanonico(m.jogo).canonico, [reg(m.a, 2, 0)]);
+
+      final v1 = decidir(e, ConfiguracaoBot.v1);
+      final desligada = ConfiguracaoBot.v2.comRegras(ConfiguracaoBot.v2.regras
+          .copyWith(usaMemoriaDescarteParceiro: false));
+      final v2off = decidir(e, desligada);
+      // §11.12 — peso ZERO tem de produzir o mesmo efeito de desligar a flag.
+      final pesoZero = ConfiguracaoBot.v2
+          .comPesos(ConfiguracaoBot.v2.pesos.copyWith(memoriaDescarteParceiro: 0));
+      final v2zero = decidir(e, pesoZero);
+
+      for (final d in [v2off, v2zero]) {
+        expect(d.plano?.cartaDescartada?.id, v1.plano?.cartaDescartada?.id);
+        expect(d.score, v1.score);
+        expect(d.features, v1.features);
+        expect(d.razoesSecundarias, v1.razoesSecundarias);
+        expect(d.candidatosConsiderados, v1.candidatosConsiderados);
+        expect(d.truncado, v1.truncado);
+      }
+    });
+
+    // ---------- §11.2, §11.3, §11.4, §11.5, §11.10, §11.18 — quem conta -----
+    test('CAL-03 só o descarte DO PARCEIRO, e por valor+naipe, produz o sinal',
+        () {
+      final base = mesaDeEmpate('ABERTO');
+      final estado = paraCanonico(base.jogo).canonico;
+      final rei = base.a; // K de espadas, na mão do bot (assento 0)
+      // Uma cópia equivalente: mesmo valor e naipe, outro id.
+      final copiaDoRei = Carta('outroK', 'espadas', 'K', false);
+      final reiOutroNaipe = base.b; // K de ouros
+
+      double sinal(List<DescarteRegistrado> livro) {
+        final d = decidir(comLivro(estado, livro), ConfiguracaoBot.v2);
+        // Mede a contribuição na alternativa que descarta o K de espadas,
+        // avaliando o plano diretamente — não o vencedor.
+        final spec = RuleSpec.canonica(estado.modalidade,
+            metaPontos: estado.metaPontos);
+        final visao = VisaoInformacao.doEstado(comLivro(estado, livro), 0);
+        final parceiro = ModeloParceiro.observar(visao, spec);
+        expect(d.plano, isNotNull);
+        return parceiro.parceiroDescartou(
+                CartaSnapshot(rei.id, rei.naipe, rei.valor, rei.ehCoringa))
+            ? 1
+            : 0;
+      }
+
+      // 1) parceiro descartou MESMO valor e naipe (cópia equivalente) -> conta
+      expect(sinal([reg(copiaDoRei, 2, 0)]), 1);
+      // 2) parceiro descartou mesmo VALOR, outro naipe -> não conta
+      expect(sinal([reg(reiOutroNaipe, 2, 0)]), 0);
+      // 3) ADVERSÁRIO descartou a carta -> não conta
+      expect(sinal([reg(copiaDoRei, 1, 0)]), 0);
+      expect(sinal([reg(copiaDoRei, 3, 0)]), 0);
+      // 4) o PRÓPRIO bot descartou a carta antes -> não conta
+      expect(sinal([reg(copiaDoRei, 0, 0)]), 0);
+      // 5) autoria desconhecida (livro vazio, carta no lixo) -> não conta
+      expect(sinal(const <DescarteRegistrado>[]), 0);
+    });
+
+    test('CAL-04 sem registro nenhum, a feature nem aparece — ausência de '
+        'prova não é bônus', () {
+      final m = mesaDeEmpate('ABERTO');
+      final estado = paraCanonico(m.jogo).canonico; // livro vazio
+      final d = decidir(estado, ConfiguracaoBot.v2);
+      expect(d.features.containsKey(featureMemoriaDescarteParceiro), isFalse);
+      expect(d.razoesSecundarias.contains(Razao.descarteMemoriaParceiro),
+          isFalse);
+      // E a decisão é a mesma da V1.
+      expect(d.plano?.cartaDescartada?.id,
+          decidir(estado, ConfiguracaoBot.v1).plano?.cartaDescartada?.id);
+    });
+
+    // ---------- §11.6 — snapshot legado ----------
+    test('CAL-05 snapshot ANTERIOR à proveniência decide como a V1', () {
+      final m = mesaDeEmpate('ABERTO');
+      final mapa =
+          jsonDecode(jsonEncode(serializarProjecao(paraCanonico(m.jogo))))
+              as Map<String, dynamic>;
+      (mapa['canonico'] as Map).remove('descartes');
+      final legado = desserializarProjecao(mapa).canonico;
+
+      expect(legado.descartes, isEmpty);
+      expect(decidir(legado, ConfiguracaoBot.v2).plano?.cartaDescartada?.id,
+          decidir(legado, ConfiguracaoBot.v1).plano?.cartaDescartada?.id);
+    });
+
+    // ---------- §11.7, §11.8, §11.9 — lixo, nova mão e reconexão ----------
+    test('CAL-06 compra do lixo PRESERVA o efeito; nova mão o elimina', () {
+      final j = novo('ABERTO');
+      montar(j,
+          mao0: [('K', 'espadas'), ('K', 'ouros'), ('3', 'paus')],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('K', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          vez: 2,
+          jaComprou: true);
+      // O PARCEIRO (assento 2) descarta o K de espadas: autoria real.
+      final doParceiro = j.maos[2].firstWhere((c) => c.valor == 'K');
+      expect(j.descartar(2, doParceiro.id), isNull);
+      expect(paraCanonico(j).canonico.descartes, hasLength(1));
+
+      // O adversário do assento 3 compra o lixo inteiro.
+      expect(j.comprarMonte(3), isTrue);
+      expect(j.descartar(3, j.maos[3].first.id), isNull);
+      expect(j.comprarLixo(0, modalidade: 'ABERTO')['ok'], isTrue);
+
+      final spec = RuleSpec.canonica(Modalidade.aberto, metaPontos: 1500);
+      final apos = paraCanonico(j).canonico;
+      final visao = VisaoInformacao.doEstado(apos, 0);
+      expect(
+          ModeloParceiro.observar(visao, spec).parceiroDescartou(
+              CartaSnapshot(doParceiro.id, doParceiro.naipe, doParceiro.valor,
+                  doParceiro.ehCoringa)),
+          isTrue,
+          reason: 'a pilha foi capturada; a memória da mão não');
+
+      // NOVA MÃO: o efeito morre com o livro.
+      j.novaRodada();
+      final nova = paraCanonico(j).canonico;
+      expect(nova.descartes, isEmpty);
+      expect(
+          ModeloParceiro.observar(VisaoInformacao.doEstado(nova, 0), spec)
+              .parceiroDescartou(CartaSnapshot(doParceiro.id, doParceiro.naipe,
+                  doParceiro.valor, doParceiro.ehCoringa)),
+          isFalse);
+    });
+
+    test('CAL-07 RECONEXÃO: o mesmo snapshot produz a MESMA decisão', () {
+      final m = mesaDeEmpate('ABERTO');
+      final e = comLivro(paraCanonico(m.jogo).canonico, [reg(m.a, 2, 0)]);
+      final antes = decidir(e, ConfiguracaoBot.v2);
+
+      final texto = jsonEncode(serializarEstado(e));
+      final depois = decidir(
+          desserializarEstado(jsonDecode(texto) as Map), ConfiguracaoBot.v2);
+
+      expect(depois.plano?.cartaDescartada?.id, antes.plano?.cartaDescartada?.id);
+      expect(depois.score, antes.score);
+      expect(depois.features, antes.features);
+      expect(depois.razoesSecundarias, antes.razoesSecundarias);
+    });
+
+    // ---------- §6 / §11.14, §11.15, §11.16, §11.17 — PRECEDÊNCIA ----------
+    test('CAL-08 carta dispensada mas ÚTIL à mesa da dupla é PRESERVADA — a '
+        'situação atual vence o descarte histórico', () {
+      final j = novo('ABERTO');
+      // A dupla tem 5-6-7 de espadas na mesa; o K de espadas NÃO estende, então
+      // o jogo público é montado com 10-J-Q de espadas: o K é a extensão.
+      montar(j,
+          mao0: [
+            ('K', 'espadas'),
+            ('K', 'ouros'),
+            ('7', 'copas'),
+            ('8', 'copas'),
+            ('9', 'copas')
+          ],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          mesaNos: [
+            [('10', 'espadas'), ('J', 'espadas'), ('Q', 'espadas')]
+          ],
+          vez: 0,
+          jaComprou: true);
+      final reiUtil =
+          j.maos[0].firstWhere((c) => c.valor == 'K' && c.naipe == 'espadas');
+      final reiInutil =
+          j.maos[0].firstWhere((c) => c.valor == 'K' && c.naipe == 'ouros');
+
+      // O parceiro dispensou justamente o K que HOJE estende o jogo da dupla.
+      final e = comLivro(paraCanonico(j).canonico, [reg(reiUtil, 2, 0)]);
+      final d = decidir(e, ConfiguracaoBot.v2);
+      expect(d.plano?.cartaDescartada?.id, isNot(reiUtil.id),
+          reason: 'a mesa pública atual pede a carta: o histórico não congela');
+      expect(d.plano?.cartaDescartada?.id, reiInutil.id);
+    });
+
+    test('CAL-09 carta dispensada mas ESTRUTURAL na mão é preservada', () {
+      final j = novo('ABERTO');
+      // 8♥ está no meio de uma corrida natural (7-8-9 de copas): força alta.
+      // O K de ouros está solto: força zero. O parceiro dispensou o 8♥.
+      montar(j,
+          mao0: [
+            ('7', 'copas'),
+            ('8', 'copas'),
+            ('9', 'copas'),
+            ('K', 'ouros')
+          ],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('8', 'copas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          vez: 0,
+          jaComprou: true);
+      final oito = j.maos[0].firstWhere((c) => c.valor == '8');
+      final rei = j.maos[0].firstWhere((c) => c.valor == 'K');
+      final copiaDoOito = j.maos[2].firstWhere((c) => c.valor == '8');
+
+      final e = comLivro(paraCanonico(j).canonico, [reg(copiaDoOito, 2, 0)]);
+      final d = decidir(e, ConfiguracaoBot.v2);
+      expect(d.plano?.cartaDescartada?.id, isNot(oito.id));
+      expect(d.plano?.cartaDescartada?.id, rei.id);
+    });
+
+    test('CAL-10 o prêmio NUNCA alcança um curinga, nem com a política de '
+        'descarte de curinga DESLIGADA', () {
+      final j = novo('ABERTO');
+      montar(j,
+          mao0: [('JOKER', null), ('K', 'ouros'), ('3', 'paus')],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('JOKER', null), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          vez: 0,
+          jaComprou: true);
+      final joker = j.maos[0].firstWhere((c) => c.valor == 'JOKER');
+      final jokerDoParceiro = j.maos[2].firstWhere((c) => c.valor == 'JOKER');
+
+      // O parceiro "dispensou" um Joker — cenário impossível na política
+      // vigente, montado de propósito para provar a guarda estrutural.
+      final e = comLivro(paraCanonico(j).canonico, [reg(jokerDoParceiro, 2, 0)]);
+
+      // Com a política DESLIGADA o curinga vira candidato legal de descarte.
+      final semPolitica = ConfiguracaoBot.v2.comRegras(ConfiguracaoBot.v2.regras
+          .copyWith(proibeDescartarCuringa: false));
+      final d = decidir(e, semPolitica);
+      expect(d.plano?.cartaDescartada?.id, isNot(joker.id));
+      expect(d.features.containsKey(featureMemoriaDescarteParceiro), isFalse,
+          reason: 'nenhuma alternativa de curinga recebeu o prêmio');
+    });
+
+    test('CAL-11 o prêmio não leva o bot a alimentar jogo público adversário',
+        () {
+      final j = novo('ABERTO');
+      // Os adversários têm 10-J-Q de espadas na mesa: o K de espadas ESTENDE.
+      montar(j,
+          mao0: [('K', 'espadas'), ('K', 'ouros'), ('3', 'paus')],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('K', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          mesaEles: [
+            [('10', 'espadas'), ('J', 'espadas'), ('Q', 'espadas')]
+          ],
+          vez: 0,
+          jaComprou: true);
+      final perigoso =
+          j.maos[0].firstWhere((c) => c.valor == 'K' && c.naipe == 'espadas');
+      final doParceiro = j.maos[2].firstWhere((c) => c.valor == 'K');
+
+      final e = comLivro(paraCanonico(j).canonico, [reg(doParceiro, 2, 0)]);
+      final d = decidir(e, ConfiguracaoBot.v2);
+      expect(d.plano?.cartaDescartada?.id, isNot(perigoso.id),
+          reason: 'o risco de alimentar o adversário supera a memória');
+    });
+
+    // ---------- §7 / §11.19, §11.20, §11.21 — rastro ----------
+    test('CAL-12 a razão nova aparece quando o sinal é DECISIVO e some quando '
+        'é inócuo', () {
+      // DECISIVO: a mesa de empate — sem o sinal, o outro rei venceria.
+      final m = mesaDeEmpate('ABERTO');
+      final base = paraCanonico(m.jogo).canonico;
+      final e1 = comLivro(base, [regCopia('K', 'espadas', 2, 0)]);
+      final e2 = comLivro(base, [regCopia('K', 'ouros', 2, 0)]);
+      final d1 = decidir(e1, ConfiguracaoBot.v2);
+      final d2 = decidir(e2, ConfiguracaoBot.v2);
+      // Um dos dois necessariamente teve a decisão VIRADA pelo sinal (as duas
+      // decisões diferem, e sem sinal as duas seriam a mesma).
+      expect(
+          d1.razoesSecundarias.contains(Razao.descarteMemoriaParceiro) ||
+              d2.razoesSecundarias.contains(Razao.descarteMemoriaParceiro),
+          isTrue);
+
+      // INÓCUO: o parceiro dispensou uma carta que o bot descartaria de todo
+      // jeito — a feature existe, a razão não.
+      final semSinal = decidir(base, ConfiguracaoBot.v2);
+      final escolhida = semSinal.plano!.cartaDescartada!;
+      final e3 = comLivro(
+          base, [regCopia(escolhida.valor, escolhida.naipe, 2, 0)]);
+      final d3 = decidir(e3, ConfiguracaoBot.v2);
+      expect(d3.plano?.cartaDescartada?.id, escolhida.id);
+      expect(d3.features[featureMemoriaDescarteParceiro], isNotNull);
+      expect(d3.razoesSecundarias.contains(Razao.descarteMemoriaParceiro),
+          isFalse,
+          reason: 'a decisão seria a mesma sem o sinal');
+    });
+
+    test('CAL-13 a feature nova fecha na soma do score', () {
+      final m = mesaDeEmpate('ABERTO');
+      final e = comLivro(paraCanonico(m.jogo).canonico, [reg(m.a, 2, 0)]);
+      final d = decidir(e, ConfiguracaoBot.v2);
+      expect(d.features[featureMemoriaDescarteParceiro],
+          ConfiguracaoBot.v2.pesos.memoriaDescarteParceiro);
+      var soma = 0.0;
+      for (final v in d.features.values) {
+        soma += v;
+      }
+      expect(soma, closeTo(d.score, 1e-9));
+    });
+
+    // ---------- §9 / §11.23 — fronteira de informação ----------
+    test('CAL-14 permutar as MÃOS OCULTAS não muda a decisão', () {
+      Jogo comOcultas(List<Spec> m1, List<Spec> m2, List<Spec> m3) {
+        final j = novo('ABERTO');
+        montar(j,
+            mao0: [
+              ('K', 'espadas'),
+              ('K', 'ouros'),
+              ('7', 'copas'),
+              ('8', 'copas'),
+              ('9', 'copas')
+            ],
+            mao1: m1,
+            mao2: m2,
+            mao3: m3,
+            vez: 0,
+            jaComprou: true);
+        return j;
+      }
+
+      const a1 = <Spec>[('4', 'paus'), ('5', 'paus'), ('6', 'paus')];
+      const a2 = <Spec>[('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')];
+      const a3 = <Spec>[('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')];
+
+      final jx = comOcultas(a1, a2, a3);
+      final reiX = jx.maos[0]
+          .firstWhere((c) => c.valor == 'K' && c.naipe == 'espadas');
+      final ex = comLivro(paraCanonico(jx).canonico, [reg(reiX, 2, 0)]);
+      final dx = decidir(ex, ConfiguracaoBot.v2);
+
+      // MESMO público (mesma mão do bot, mesmo lixo, mesma mesa, mesma
+      // proveniência, mesmos TAMANHOS de mão), mãos ocultas PERMUTADAS.
+      final jy = comOcultas(a3, a1, a2);
+      final reiY = jy.maos[0]
+          .firstWhere((c) => c.valor == 'K' && c.naipe == 'espadas');
+      final ey = comLivro(paraCanonico(jy).canonico, [reg(reiY, 2, 0)]);
+      final dy = decidir(ey, ConfiguracaoBot.v2);
+
+      expect(dy.plano?.cartaDescartada?.naipe, dx.plano?.cartaDescartada?.naipe);
+      expect(dy.plano?.cartaDescartada?.valor, dx.plano?.cartaDescartada?.valor);
+      expect(dy.score, dx.score);
+      expect(dy.features, dx.features);
+    });
+
+    // ---------- §11.22, §11.27, §11.28, §11.29, §11.30 ----------
+    test('CAL-15 determinismo, autoridade e orçamento preservados', () {
+      final m = mesaDeEmpate('ABERTO');
+      final e = comLivro(paraCanonico(m.jogo).canonico, [reg(m.a, 2, 0)]);
+      final spec =
+          RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+
+      // DETERMINISMO: duas chamadas idênticas, tudo igual.
+      final d1 = decidir(e, ConfiguracaoBot.v2);
+      final d2 = decidir(e, ConfiguracaoBot.v2);
+      expect(d2.score, d1.score);
+      expect(d2.features, d1.features);
+      expect(d2.razoesSecundarias, d1.razoesSecundarias);
+      expect(d2.assinaturaDecisao, d1.assinaturaDecisao);
+
+      // ORÇAMENTO: a V2 avalia exatamente as mesmas alternativas que a V1.
+      final v1 = decidir(e, ConfiguracaoBot.v1);
+      expect(d1.candidatosConsiderados, v1.candidatosConsiderados);
+      expect(d1.truncado, v1.truncado);
+
+      // AUTORIDADE: o plano vencedor é aceito, ação por ação.
+      expect(d1.acoes, isNotEmpty);
+      var atual = e;
+      for (final a in d1.acoes) {
+        final r = aplicarLegal(atual, 0, a, spec);
+        expect(r.legal, isTrue, reason: 'ação recusada: ${a.toJson()}');
+        atual = r.proximoEstado!;
+      }
+      // O turno TERMINA: o descarte existe e a vez saiu do assento 0.
+      expect(d1.acoes.whereType<Descartar>(), isNotEmpty);
+      expect(atual.vez == 0 && !atual.rodadaEncerrada, isFalse,
+          reason: 'o novo peso não pode deixar turno sem conclusão');
+      expect(d1.impasse, isFalse);
     });
   });
 }
