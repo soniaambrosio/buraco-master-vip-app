@@ -28,6 +28,7 @@ const bootstrap = require('../scripts/bootstrap_credencial_motor.js');
 const {
   CLAIM,
   analisarArgumentos,
+  sondarDestino,
   validarDestino,
   avaliarClaim,
   decodificarPayload,
@@ -145,6 +146,21 @@ async function rodar(argv, opcoes = {}) {
 /// Diretório de trabalho FORA do repositório, para os casos que tocam disco.
 function pastaTemporaria() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'bmv-bootstrap-'));
+}
+
+/// Uma sonda de disco válida, para exercitar a DECISÃO sem tocar disco.
+///
+/// O padrão é o caso feliz: destino inexistente, pai existente, gravável e
+/// privado (0700). Cada caso quebra só o campo que está medindo — assim a falha
+/// aponta para uma barreira, e não para o arnês.
+function sondaBoa(extra = {}) {
+  return Object.assign(
+    {
+      existe: false,
+      pai: { caminho: '/fora', existe: true, ehDiretorio: true, gravavel: true, modo: 0o700 },
+    },
+    extra
+  );
 }
 
 function argsPadrao(saida, extras = []) {
@@ -431,10 +447,199 @@ describe('BOOT/DESTINO', () => {
     const raiz = path.resolve('/repo');
     // `..` que sai e volta continua dentro, e é a forma mais fácil de furar uma
     // checagem escrita com `startsWith` sobre a string crua.
-    const r = validarDestino('/repo/functions/../app/cred.env', raiz, false);
+    const r = validarDestino('/repo/functions/../app/cred.env', raiz, sondaBoa());
     assert.equal(r.ok, false);
-    const fora = validarDestino('/repo/../fora/cred.env', raiz, false);
+    assert.match(r.erro, /DENTRO do repositório/);
+    const fora = validarDestino('/repo/../fora/cred.env', raiz, sondaBoa());
     assert.equal(fora.ok, true);
+  });
+
+  test('BOOT-19c: a PRÓPRIA RAIZ do repositório é recusada, com motivo próprio', () => {
+    // `path.relative(raiz, raiz)` é a string vazia. A V1 exigia `relativo !== ''`
+    // para considerar "dentro", então a raiz escapava da primeira barreira e só
+    // era barrada pela segunda (o destino já existe). Defesa em profundidade que
+    // perde uma camada é defesa simples.
+    const raiz = path.resolve('/repo');
+    for (const forma of ['/repo', '/repo/', '/repo/functions/..']) {
+      const r = validarDestino(forma, raiz, sondaBoa({ existe: true }));
+      assert.equal(r.ok, false, forma);
+      assert.match(r.erro, /PRÓPRIA RAIZ/, forma);
+    }
+    // E a recusa não depende de a raiz existir no disco: é a primeira barreira.
+    const semExistir = validarDestino('/repo', raiz, sondaBoa({ existe: false }));
+    assert.equal(semExistir.ok, false);
+    assert.match(semExistir.erro, /PRÓPRIA RAIZ/);
+  });
+
+  test('BOOT-19d: a raiz do repositório é recusada pelo caminho completo, sem emitir', async () => {
+    const raiz = path.resolve(__dirname, '..', '..');
+    const r = await rodar(argsCommit(raiz), { raizRepo: raiz });
+    assert.equal(r.codigo, 1);
+    assert.match(r.erro, /PRÓPRIA RAIZ/);
+    assert.equal(r.admin.chamadas.createCustomToken, 0, 'não pode emitir para recusar a raiz');
+  });
+
+  test('BOOT-25: diretório-pai INEXISTENTE recusa ANTES de emitir', async () => {
+    // Medido na homologação: a V1 emitia o custom token, fazia a troca e só então
+    // falhava no `openSync`. Um erro de digitação no caminho materializava uma
+    // credencial de longa duração que ninguém guardou — e que ninguém sabe que
+    // precisa revogar.
+    const dir = pastaTemporaria();
+    const alvo = path.join(dir, 'nao-existe', 'ainda-menos', 'c.env');
+
+    const r = await rodar(argsCommit(alvo));
+
+    assert.equal(r.codigo, 1, 'tem de recusar, e com o código de "nada foi emitido"');
+    assert.match(r.erro, /diretório de destino não existe/);
+    assert.match(r.erro, /Nada foi emitido/);
+    assert.equal(r.admin.chamadas.createCustomToken, 0, 'NENHUM custom token pode ter sido emitido');
+    assert.equal(r.trocasFeitas.length, 0, 'NENHUMA troca REST pode ter acontecido');
+    assert.equal(fs.existsSync(path.dirname(alvo)), false, 'o script não pode criar o diretório');
+    assert.deepEqual(fs.readdirSync(dir), [], 'nada pode ter sido criado');
+  });
+
+  test('BOOT-25b: pai que NÃO é diretório é recusado, sem emitir', async () => {
+    const dir = pastaTemporaria();
+    const arquivo = path.join(dir, 'sou-um-arquivo');
+    fs.writeFileSync(arquivo, 'x');
+
+    const r = await rodar(argsCommit(path.join(arquivo, 'c.env')));
+
+    assert.equal(r.codigo, 1);
+    assert.equal(r.admin.chamadas.createCustomToken, 0);
+    // Alguns sistemas resolvem "arquivo/sub" como inexistente, outros como
+    // ENOTDIR; as duas leituras recusam, e é isso que importa.
+    assert.match(r.erro, /não existe|não é um diretório/);
+  });
+
+  test('BOOT-25c: pai não gravável é recusado (decisão pura)', () => {
+    const r = validarDestino('/fora/c.env', path.resolve('/repo'),
+      sondaBoa({ pai: { caminho: '/fora', existe: true, ehDiretorio: true, gravavel: false, modo: 0o700 } }));
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /não é gravável/);
+  });
+
+  test('BOOT-25d: sonda ausente ou incompleta recusa — o preflight falha FECHADO', () => {
+    // Um chamador futuro que esqueça de sondar o disco não pode obter "ok".
+    const raiz = path.resolve('/repo');
+    for (const sonda of [undefined, {}, { existe: false }, { pai: {} }]) {
+      const r = validarDestino('/fora/c.env', raiz, sonda);
+      assert.equal(r.ok, false, JSON.stringify(sonda));
+      assert.match(r.erro, /não existe/);
+    }
+  });
+
+  test('BOOT-26: POSIX — diretório gravável por outros é RECUSADO', () => {
+    const raiz = path.resolve('/repo');
+    for (const modo of [0o777, 0o770, 0o707, 0o1777]) {
+      const r = validarDestino('/fora/c.env', raiz,
+        sondaBoa({ pai: { caminho: '/fora', existe: true, ehDiretorio: true, gravavel: true, modo } }),
+        'linux');
+      assert.equal(r.ok, false, 'modo 0' + modo.toString(8));
+      assert.match(r.erro, /gravável por grupo ou por outros/);
+      // Inclusive com o bit sticky (0o1777, o modo do /tmp): sticky impede
+      // apagar arquivo alheio, e não impede nada quanto ao que ainda não existe.
+    }
+  });
+
+  test('BOOT-26b: POSIX — diretório apenas LEGÍVEL por outros AVISA, não recusa', () => {
+    // 0755 é o modo do `~` de quase toda máquina POSIX. Recusar ali empurraria o
+    // operador a improvisar. O que vaza é o NOME do arquivo: o conteúdo é 0600.
+    const r = validarDestino('/fora/c.env', path.resolve('/repo'),
+      sondaBoa({ pai: { caminho: '/fora', existe: true, ehDiretorio: true, gravavel: true, modo: 0o755 } }),
+      'linux');
+    assert.equal(r.ok, true);
+    assert.equal(r.avisos.length, 1);
+    assert.match(r.avisos[0], /legível por outros/);
+    assert.match(r.avisos[0], /o que vaza é o NOME/i);
+
+    const privado = validarDestino('/fora/c.env', path.resolve('/repo'),
+      sondaBoa({ pai: { caminho: '/fora', existe: true, ehDiretorio: true, gravavel: true, modo: 0o700 } }),
+      'linux');
+    assert.equal(privado.ok, true);
+    assert.deepEqual(privado.avisos, [], 'diretório privado não tem o que avisar');
+  });
+
+  test('BOOT-26c: Windows — a proteção é ACL, e 0700 NÃO é prometido', () => {
+    const r = validarDestino('C:/fora/c.env', path.resolve('/repo'),
+      sondaBoa({ pai: { caminho: 'C:/fora', existe: true, ehDiretorio: true, gravavel: true, modo: 0o666 } }),
+      'win32');
+    // O modo permissivo NÃO recusa no Windows: ele não quer dizer nada ali, e
+    // recusar por um número inventado seria teatro.
+    assert.equal(r.ok, true);
+    assert.equal(r.avisos.length, 1);
+    assert.match(r.avisos[0], /ACL/);
+    // O único jeito de "0700" aparecer aqui é dentro da NEGAÇÃO. Prometer o modo
+    // numa plataforma que o ignora é a mentira que a §6 proíbe.
+    assert.match(r.avisos[0], /NÃO promete 0700/);
+    assert.equal(/garante|assegura/.test(r.avisos[0]), false);
+    assert.equal(r.avisos[0].split('0700').length - 1, 1, '0700 só pode aparecer na negação');
+  });
+
+  test('BOOT-26d: no Windows a saída não afirma que 0600 valeu', async () => {
+    const dir = pastaTemporaria();
+    const r = await rodar(argsCommit(path.join(dir, 'c.env')), { plataforma: 'win32' });
+    assert.equal(r.codigo, 0, r.erro);
+    assert.match(r.log, /modo pedido/, 'no Windows o modo é PEDIDO, não obtido');
+    assert.match(r.log, /IGNORA O MODO POSIX/);
+    assert.equal(/^modo *: 0600$/m.test(r.log), false, 'não pode afirmar o modo seco');
+  });
+
+  test('BOOT-27: sondarDestino lê o disco e não julga nada', () => {
+    const dir = pastaTemporaria();
+    const alvo = path.join(dir, 'c.env');
+
+    const antes = sondarDestino({ saida: alvo });
+    assert.equal(antes.alvo, path.resolve(alvo));
+    assert.equal(antes.existe, false);
+    assert.equal(antes.pai.existe, true);
+    assert.equal(antes.pai.ehDiretorio, true);
+    assert.equal(antes.pai.gravavel, true);
+
+    fs.writeFileSync(alvo, 'x');
+    assert.equal(sondarDestino({ saida: alvo }).existe, true);
+
+    // Pai inexistente: sonda responde, não lança.
+    const orfao = sondarDestino({ saida: path.join(dir, 'nao-existe', 'c.env') });
+    assert.equal(orfao.pai.existe, false);
+    assert.equal(orfao.pai.gravavel, false);
+
+    // Um `fs` que explode em tudo também não derruba a sonda — e o resultado
+    // leva a recusa, que é o lado seguro.
+    const fsQueExplode = {
+      existsSync() { throw new Error('sem permissão'); },
+      statSync() { throw new Error('sem permissão'); },
+      accessSync() { throw new Error('sem permissão'); },
+    };
+    const cego = sondarDestino({ saida: alvo, fs: fsQueExplode });
+    assert.equal(cego.existe, false);
+    assert.equal(cego.pai.existe, false);
+    assert.equal(validarDestino(alvo, path.resolve('/repo'), cego).ok, false);
+  });
+
+  test('BOOT-28: TODA recusa de destino acontece antes de qualquer emissão', async () => {
+    // A garantia que junta os casos acima: nenhum motivo de recusa de destino
+    // pode ter custado um custom token. É o alvo direto da mutação "emitir a
+    // credencial antes do preflight".
+    const dir = pastaTemporaria();
+    const arquivoExistente = path.join(dir, 'ja-existe.env');
+    fs.writeFileSync(arquivoExistente, 'ANTERIOR\n');
+    const raiz = path.resolve(__dirname, '..', '..');
+
+    const recusas = [
+      ['raiz do repositório', raiz],
+      ['dentro do repositório', path.join(raiz, 'cred.env')],
+      ['pai inexistente', path.join(dir, 'nao-existe', 'c.env')],
+      ['destino já existe', arquivoExistente],
+    ];
+    for (const [nome, alvo] of recusas) {
+      const r = await rodar(argsCommit(alvo), { raizRepo: raiz });
+      assert.equal(r.codigo, 1, nome);
+      assert.equal(r.admin.chamadas.createCustomToken, 0, nome + ': emitiu antes de validar');
+      assert.equal(r.admin.chamadas.verifyIdToken, 0, nome);
+      assert.equal(r.trocasFeitas.length, 0, nome + ': trocou antes de validar');
+    }
+    assert.equal(fs.readFileSync(arquivoExistente, 'utf8'), 'ANTERIOR\n');
   });
 
   test('BOOT-20: destino já existente é recusado, sem emitir', async () => {
@@ -502,6 +707,118 @@ describe('BOOT/DESTINO', () => {
     // função de escrita, sozinha, não é a barreira — para ninguém remover a
     // validação achando que a escrita protege.
     assert.equal(fs.readdirSync(dir).length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RUNBOOK — os procedimentos operacionais são parte da entrega
+// ---------------------------------------------------------------------------
+//
+// A homologação independente reprovou com o runbook em 9 de 12: sem os itens 6,
+// 9 e 11, o operador ativa a credencial e não tem como saber se funcionou, nem
+// como confirmar que o corte de emergência de fato cortou.
+//
+// Um procedimento que só existe em Markdown pode ser apagado num commit de
+// "limpeza" sem nada ficar vermelho. Estes casos são a barreira contra isso.
+// Eles NÃO afirmam prosa: afirmam a presença dos elementos que tornam cada
+// procedimento executável — pré-requisito, passo, critério de sucesso, reversão.
+describe('BOOT/RUNBOOK', () => {
+  const RUNBOOK = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'docs', 'CREDENCIAL-MOTOR-BOOTSTRAP-E-REVOGACAO-V1.md'),
+    'utf8'
+  );
+
+  /// Recorta uma seção pelo título, até o próximo título de mesmo nível ou maior.
+  function secao(titulo) {
+    const i = RUNBOOK.indexOf(titulo);
+    assert.notEqual(i, -1, 'seção ausente do runbook: ' + titulo);
+    const resto = RUNBOOK.slice(i + titulo.length);
+    const fim = resto.search(/\n#{1,3} /);
+    return fim === -1 ? resto : resto.slice(0, fim);
+  }
+
+  test('BOOT-29: o SMOKE AUTENTICADO existe, e prova as cinco coisas exigidas', () => {
+    const s = secao('### 7.1 Smoke autenticado');
+    const exigencias = [
+      [/obterIdToken/, 'como o token é obtido'],
+      [/registrarEncerramentoPartida/, 'a chamada autorizada'],
+      [/UID do motor/, 'a identidade esperada no documento gravado'],
+      [/zero|\bZERO\b/i, 'o critério de "nenhum segredo no log"'],
+      [/refresh token, ID token, API key/i, 'o que se varre no log'],
+      [/smoke-<AAAAMMDD>/, 'a operação de teste identificável'],
+      [/Revers[ãa]o/i, 'a reversão'],
+      [/censo/i, 'a conferência de que a reversão de fato reverteu'],
+      [/Pré-requisitos/i, 'os pré-requisitos'],
+    ];
+    for (const [padrao, oQue] of exigencias) {
+      assert.match(s, padrao, 'o smoke perdeu ' + oQue);
+    }
+    // A reversão tem de listar as coleções, e não só dizer "apague".
+    for (const colecao of ['matches', 'rankingLedger', 'fraudSignals', 'matchHistory']) {
+      assert.ok(s.includes(colecao), 'a reversão do smoke não menciona ' + colecao);
+    }
+  });
+
+  test('BOOT-30: o corte com TOKEN CACHEADO existe, com os sete passos', () => {
+    const s = secao('### 8.2 Verificar que o token CACHEADO passa a ser recusado');
+    const exigencias = [
+      [/instante, NUNCA o token/i, 'registrar o instante sem registrar o token'],
+      [/revokeRefreshTokens/, 'a revogação das sessões'],
+      [/revoke --commit/, 'a remoção da claim'],
+      [/sem forçar renovação/i, 'a chamada com o token AINDA cacheado'],
+      [/recusa/i, 'a exigência de recusa'],
+      [/renovacoes/, 'a prova de que foi o token velho que passou'],
+      [/Forçar renovação/i, 'a renovação forçada'],
+      [/não.{0,3} carrega .motorDePartidas|também não tem autoridade/i,
+        'a exigência de que a emissão nova também não tenha autoridade'],
+      [/Restauração/i, 'como voltar'],
+    ];
+    for (const [padrao, oQue] of exigencias) {
+      assert.match(s, padrao, 'o procedimento do cache perdeu ' + oQue);
+    }
+  });
+
+  test('BOOT-31: ROTAÇÃO e RESPOSTA A VAZAMENTO existem, e são executáveis', () => {
+    const s = secao('### 8.3 Rotação periódica e resposta a vazamento');
+    const exigencias = [
+      [/Periodicidade/i, 'a periodicidade'],
+      [/90 dias/, 'o número da periodicidade'],
+      [/Responsável/i, 'o responsável'],
+      [/bootstrap_credencial_motor\.js/, 'a geração da credencial nova'],
+      [/SUBSTITUIR/, 'a substituição no Railway'],
+      [/VALIDAR/, 'a validação'],
+      [/REVOGAR A ANTERIOR/, 'a revogação da anterior'],
+      [/T\+0\s+CORTAR/, 'a resposta emergencial'],
+      [/INSPECIONAR/, 'a inspeção de logs'],
+      [/Cloud Logging/, 'onde inspecionar'],
+      [/Rollback/i, 'o rollback'],
+    ];
+    for (const [padrao, oQue] of exigencias) {
+      assert.match(s, padrao, 'a rotação/vazamento perdeu ' + oQue);
+    }
+    // O placeholder é obrigatório, e o valor real é proibido.
+    assert.ok(s.includes('<PROJETO>') && s.includes('<UID_DO_MOTOR>'), 'sumiram os placeholders');
+  });
+
+  test('BOOT-32: a prontidão operacional marca 12 de 12, sem item ausente', () => {
+    const s = secao('## 11. Prontidão operacional');
+    const linhas = s.split('\n').filter((l) => /^\| \d+ \|/.test(l));
+    assert.equal(linhas.length, 12, 'a tabela de prontidão tem de ter os doze itens');
+    for (const l of linhas) {
+      assert.match(l, /✅/, 'item não fechado: ' + l);
+      assert.equal(/❌|ausente/i.test(l), false, 'item ainda ausente: ' + l);
+    }
+    // E a limitação do emulador continua registrada como limitação — não pode
+    // virar "teste verde" nem sumir.
+    const lim = secao('## 10. Limitação do emulador');
+    assert.match(lim, /alg.{0,4}: ?.?none/i, 'sumiu o fato de o emulador não assinar');
+    assert.match(lim, /smoke com token real da §7\.1 é\s*\*\*obrigatório\*\*|obrigatório/i);
+  });
+
+  test('BOOT-33: o runbook não carrega valor real de segredo', () => {
+    for (const p of [/AIza[0-9A-Za-z_-]{10,}/, /eyJ[A-Za-z0-9_-]{20,}\./, /BEGIN [A-Z ]*PRIVATE KEY/]) {
+      assert.equal(p.test(RUNBOOK), false, 'o runbook casa com ' + p);
+    }
   });
 });
 

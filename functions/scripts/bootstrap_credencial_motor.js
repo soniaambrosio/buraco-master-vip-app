@@ -145,24 +145,100 @@ function analisarArgumentos(argv) {
   return { projectId, uid, saida, commit };
 }
 
+/// Olha o disco UMA vez e devolve os fatos de que a decisão precisa.
+///
+/// Separada de `validarDestino` de propósito: a decisão é pura e testável sem
+/// disco, e a leitura do sistema de arquivos fica num lugar só. Nada aqui julga.
+///
+/// Tudo é lido com `try`: um diretório que não existe, ou que o operador não pode
+/// nem inspecionar, produz "não existe / não gravável" — que são exatamente as
+/// respostas com que a validação recusa. Falhar para o lado seguro é a regra.
+function sondarDestino({ saida, fs = fsReal }) {
+  const alvo = pathReal.resolve(saida);
+  const caminhoPai = pathReal.dirname(alvo);
+
+  let existe = false;
+  try { existe = !!fs.existsSync(alvo); } catch (_) { existe = false; }
+
+  const pai = { caminho: caminhoPai, existe: false, ehDiretorio: false, gravavel: false, modo: null };
+  try {
+    const st = fs.statSync(caminhoPai);
+    pai.existe = true;
+    pai.ehDiretorio = typeof st.isDirectory === 'function' ? st.isDirectory() : false;
+    pai.modo = typeof st.mode === 'number' ? (st.mode & 0o7777) : null;
+  } catch (_) { /* não existe, ou nem dá para olhar: os dois recusam */ }
+
+  if (pai.existe) {
+    try {
+      // `W_OK | X_OK`: escrever o temporário exige os dois. Só `W_OK` passaria
+      // num diretório sem permissão de travessia, e a falha apareceria depois da
+      // emissão — que é exatamente o que este preflight existe para evitar.
+      fs.accessSync(caminhoPai, fsReal.constants.W_OK | fsReal.constants.X_OK);
+      pai.gravavel = true;
+    } catch (_) { pai.gravavel = false; }
+  }
+
+  return { alvo, existe, pai };
+}
+
 /// O destino é aceitável?
 ///
-/// Duas recusas, e as duas são categóricas:
+/// Roda ANTES de qualquer emissão, e recusa por sete motivos. Cada um existe
+/// porque a alternativa materializa uma credencial de longa duração que depois
+/// alguém precisa lembrar de revogar:
+///
+///   A PRÓPRIA RAIZ DO REPOSITÓRIO — `path.relative(raiz, raiz)` é a string
+///   vazia, e a checagem "está dentro?" da V1 exigia `relativo !== ''`: a raiz
+///   escapava da primeira barreira e só era barrada pela segunda (existe). Uma
+///   defesa em profundidade que perdeu uma camada é uma defesa simples.
 ///
 ///   DENTRO DO REPOSITÓRIO — um refresh token dentro da árvore de trabalho é um
 ///   `git add .` de distância de virar segredo versionado, e segredo versionado
 ///   não se apaga: fica no histórico. Nenhum `.gitignore` compensa isso, porque
 ///   quem escreve o arquivo não controla o `.gitignore` de quem o clona.
 ///
+///   DIRETÓRIO-PAI INEXISTENTE — medido na homologação: com `--saida
+///   <dir-inexistente>/c.env --commit`, a V1 emitia o custom token, fazia a troca
+///   e só então falhava no `openSync`. Um erro de digitação no caminho
+///   materializava uma credencial viva que ninguém guardou e ninguém sabe
+///   revogar. Este script NÃO cria o diretório: criar árvore de diretórios para
+///   guardar segredo é decisão do operador, não de uma ferramenta.
+///
+///   PAI QUE NÃO É DIRETÓRIO, OU NÃO GRAVÁVEL — mesmo acidente, mesma hora
+///   errada de descobrir.
+///
 ///   ARQUIVO JÁ EXISTENTE — sobrescrever apagaria uma credencial que talvez
 ///   esteja em uso no Railway neste instante, e ninguém descobriria antes de o
 ///   servidor parar de autenticar.
-function validarDestino(saida, raizRepo, existe) {
+///
+///   PAI GRAVÁVEL POR OUTROS (só POSIX) — num diretório onde grupo ou "outros"
+///   escrevem, qualquer usuário da máquina troca o arquivo por um link simbólico
+///   entre o `rename` e a leitura do operador. O modo 0600 do arquivo não protege
+///   nada quando o vizinho manda no diretório.
+///
+/// AVISO, e não recusa: pai apenas LEGÍVEL por outros. Ali vaza o *nome* do
+/// arquivo, nunca o conteúdo — o arquivo nasce 0600. Recusar seria recusar o
+/// `~` de quase toda máquina POSIX (0755) e empurrar o operador a improvisar.
+///
+/// NO WINDOWS nada disso é avaliado: `fs` não expõe modo POSIX útil ali, a
+/// proteção real vem das ACLs do sistema, e afirmar 0700 seria afirmar o que não
+/// é verdade. O script diz isso em voz alta em vez de fingir.
+function validarDestino(saida, raizRepo, sonda = {}, plataforma = process.platform) {
   const alvo = pathReal.resolve(saida);
   const raiz = pathReal.resolve(raizRepo);
   const relativo = pathReal.relative(raiz, alvo);
-  const dentro = relativo !== '' && !relativo.startsWith('..') && !pathReal.isAbsolute(relativo);
-  if (dentro) {
+  const pai = sonda.pai || { caminho: pathReal.dirname(alvo), existe: false, ehDiretorio: false, gravavel: false, modo: null };
+  const avisos = [];
+
+  if (relativo === '') {
+    return {
+      ok: false,
+      erro: 'o destino é a PRÓPRIA RAIZ do repositório (' + alvo + '). ' +
+        'Um segredo não se grava dentro da árvore de trabalho, e a raiz é o ' +
+        'lugar mais dentro que existe.',
+    };
+  }
+  if (!relativo.startsWith('..') && !pathReal.isAbsolute(relativo)) {
     return {
       ok: false,
       erro: 'o destino está DENTRO do repositório (' + relativo + '). ' +
@@ -170,14 +246,64 @@ function validarDestino(saida, raizRepo, existe) {
         'virar segredo versionado — e segredo versionado não se apaga do histórico.',
     };
   }
-  if (existe) {
+  if (!pai.existe) {
+    return {
+      ok: false,
+      erro: 'o diretório de destino não existe: ' + pai.caminho + '. ' +
+        'Este script NÃO o cria — crie-o você, com a permissão que quiser, e ' +
+        'rode de novo. Nada foi emitido: descobrir isto DEPOIS da emissão ' +
+        'deixaria uma credencial viva no projeto sem ninguém para guardá-la.',
+    };
+  }
+  if (!pai.ehDiretorio) {
+    return {
+      ok: false,
+      erro: 'o caminho de destino não é um diretório: ' + pai.caminho + '.',
+    };
+  }
+  if (!pai.gravavel) {
+    return {
+      ok: false,
+      erro: 'o diretório de destino não é gravável por este usuário: ' + pai.caminho + '. ' +
+        'Nada foi emitido.',
+    };
+  }
+  if (sonda.existe) {
     return {
       ok: false,
       erro: 'o destino já existe: ' + alvo + '. Este script nunca sobrescreve — ' +
         'o arquivo de lá pode ser a credencial em uso agora. Mova-o ou escolha outro nome.',
     };
   }
-  return { ok: true, alvo };
+
+  if (plataforma !== 'win32' && typeof pai.modo === 'number') {
+    if (pai.modo & 0o022) {
+      return {
+        ok: false,
+        erro: 'o diretório de destino é gravável por grupo ou por outros (modo 0' +
+          pai.modo.toString(8) + '): ' + pai.caminho + '. Qualquer usuário da ' +
+          'máquina pode trocar o arquivo por um link simbólico — o modo 0600 do ' +
+          'arquivo não protege nada aí. Use um diretório privado (chmod 700). ' +
+          'Nada foi emitido.',
+      };
+    }
+    if (pai.modo & 0o077) {
+      avisos.push(
+        'o diretório de destino é legível por outros (modo 0' + pai.modo.toString(8) +
+        '): ' + pai.caminho + '. O conteúdo do arquivo continua protegido (0600); ' +
+        'o que vaza é o NOME. `chmod 700` no diretório fecha também isso.'
+      );
+    }
+  } else if (plataforma === 'win32') {
+    avisos.push(
+      'esta plataforma (Windows) não sustenta modo POSIX: a proteção do ' +
+      'diretório e do arquivo depende inteiramente das ACLs do sistema. O ' +
+      'script NÃO promete 0700 nem 0600 aqui — restrinja por Propriedades → ' +
+      'Segurança / `icacls`, ou gere a credencial em máquina POSIX.'
+    );
+  }
+
+  return { ok: true, alvo, avisos };
 }
 
 /// O usuário tem autoridade para virar credencial do motor?
@@ -425,6 +551,10 @@ const USO = [
   'lista de processos da máquina.',
   '',
   'Sem --commit o script apenas ENSAIA: nenhum token é emitido e nada é escrito.',
+'',
+'O DIRETÓRIO de --saida tem de EXISTIR, ser gravável e ficar fora do',
+'repositório. Este script não cria diretório: em POSIX, prefira um privado',
+'(`mkdir -m 700`). Um diretório gravável por outros é RECUSADO.',
 ].join('\n');
 
 /// Raiz do repositório, procurando `.git` para cima. É o que `validarDestino`
@@ -467,14 +597,18 @@ async function main(argv, deps = {}) {
   log('destino         : ' + pathReal.resolve(saida));
   log('modo            : ' + (commit ? 'GRAVAÇÃO (--commit)' : 'ENSAIO (nenhum token será emitido)'));
 
-  // O destino é validado ANTES de qualquer emissão. Descobrir que o caminho é
-  // inválido depois de já ter materializado um refresh token deixaria uma
-  // credencial viva no projeto sem ninguém para guardá-la.
-  const destino = validarDestino(saida, raizRepo, fs.existsSync(pathReal.resolve(saida)));
+  // O destino é validado POR INTEIRO e ANTES de qualquer emissão — inclusive o
+  // diretório-pai, que na V1 só era exercitado no `openSync`, depois de a
+  // credencial já existir no projeto. Descobrir que o caminho é inválido depois
+  // de materializar um refresh token deixa uma credencial viva sem ninguém para
+  // guardá-la, e quem digitou errado nem sabe que precisa revogá-la.
+  const destino = validarDestino(saida, raizRepo, sondarDestino({ saida, fs }), plataforma);
   if (!destino.ok) {
     erro('\nERRO: ' + destino.erro);
+    erro('Nada foi emitido.');
     return 1;
   }
+  for (const aviso of destino.avisos || []) log('AVISO           : ' + aviso);
 
   const apiKey = env.FIREBASE_WEB_API_KEY;
   if (commit && (typeof apiKey !== 'string' || apiKey.length === 0)) {
@@ -595,10 +729,16 @@ async function main(argv, deps = {}) {
   }
 
   log('\ngravado         : ' + destino.alvo);
-  log('modo            : 0' + gravacao.modo.toString(8) +
-    (gravacao.restricaoSustentada ? '' : '  ⚠ ESTA PLATAFORMA (Windows) IGNORA O MODO POSIX'));
-  if (!gravacao.restricaoSustentada) {
-    log('                  restrinja o acesso pelo Explorer/icacls, ou gere em máquina POSIX.');
+  if (gravacao.restricaoSustentada) {
+    log('modo            : 0' + gravacao.modo.toString(8));
+  } else {
+    // Nunca dizer "0600" seco aqui: no Windows o número foi PEDIDO e ignorado, e
+    // um operador que lê "0600" conclui que o arquivo está protegido quando a
+    // proteção real depende da ACL herdada do diretório.
+    log('modo pedido     : 0' + gravacao.modo.toString(8) +
+      '  ⚠ ESTA PLATAFORMA (Windows) IGNORA O MODO POSIX — ele NÃO valeu');
+    log('                  a proteção efetiva aqui é a ACL do diretório. Restrinja');
+    log('                  por Propriedades → Segurança / `icacls`, ou gere em máquina POSIX.');
   }
   log('\nPRÓXIMO PASSO: copie as três variáveis para os segredos do Railway e');
   log('APAGUE o arquivo. Ele não tem por que sobreviver à cópia.');
@@ -614,6 +754,7 @@ module.exports = {
   LIMITE_RESPOSTA_BYTES,
   MODO_ARQUIVO,
   analisarArgumentos,
+  sondarDestino,
   validarDestino,
   avaliarClaim,
   decodificarPayload,
