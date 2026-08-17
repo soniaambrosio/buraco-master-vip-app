@@ -98,7 +98,7 @@ Firestore nem servidor nesta camada.
 | Reivindicação | `_drenar`, **antes** de esperar o quadro | Exclusiva. Uma segunda cutucada encontra o livro sem pendente. |
 | Apresentação | `_apresentar`, no `addPostFrameCallback` | Tudo reconferido: `mounted`, geração e transporte. |
 | Confirmação | `_apresentar`, **depois** do apresentador | Só com `ResultadoDaApresentacao.apresentado`. |
-| Devolução | `dispose`, troca de transporte, recusa, rota morta | `liberar` / `liberarTudoDe`. O efeito volta a pendente. |
+| Devolução | `dispose`, troca de transporte, recusa, **estouro**, rota morta | `liberar` / `liberarTudoDe`. O efeito volta a pendente. |
 
 O consumidor instalado no slot **ignora** o encerramento que recebe de parâmetro.
 Apresentar o que veio pela cutucada seria voltar a ter duas fontes para o mesmo
@@ -121,6 +121,30 @@ terminal é `duplicada`, e o transporte volta antes de notificar).
 | `apresentado` | O diálogo entrou na árvore | confirmado |
 | `recusado` | Não há navegador onde inserir | devolvido a pendente |
 | `cancelado` | O contexto já não estava montado | devolvido a pendente |
+| _(estouro)_ | O apresentador lançou exceção | devolvido a pendente, e o erro é relatado |
+
+### O estouro do apresentador
+
+Um apresentador pode quebrar de **duas** formas, e são caminhos diferentes de
+código para quem chama: um `throw` antes de o futuro existir acontece na
+**chamada**; um futuro que completa com erro acontece no **`await`**. O `try` de
+`_apresentar` envolve a chamada inteira justamente para não escolher entre os
+dois.
+
+Sem esse `catch`, a exceção sobe por um `addPostFrameCallback` — para um futuro
+que ninguém aguarda — e leva junto a reivindicação: o aviso fica travado em
+`reivindicado` por um dono vivo que já desistiu dele. Ninguém apresenta e
+ninguém libera. É a mesma perda silenciosa desta OS, por outra porta.
+
+A ordem importa: **devolve primeiro, relata depois**. Se o relato falhar (e
+`FlutterError.onError` é um gancho que a aplicação instala), o efeito já está de
+volta no livro.
+
+O relato usa `FlutterError.reportError`, e não log: por esta camada passam ids de
+carta e a auditoria proíbe log aqui com razão. `reportError` é o canal do próprio
+framework, vai para onde a aplicação mandar os erros e não escreve nada por conta
+própria. Engolir em silêncio esconderia um defeito do apresentador — exatamente a
+classe de falha muda que esta entrega existe para acabar.
 
 `DialogoDeEncerramento` confere `context.mounted` e
 `Navigator.maybeOf(context, rootNavigator: true)` antes de tentar, e **não espera**
@@ -151,8 +175,8 @@ continua saindo pela porta de comandos.
 | Portão | Antes | Depois |
 |---|---|---|
 | `flutter analyze` | 38 (28 info, 10 warning, 0 erro) | 38, lista idêntica |
-| Suíte da área (`test/casca`) | 218 | 252 |
-| Suíte completa | 571 +4 | 605 +4 |
+| Suíte da área (`test/casca`) | 218 | 255 |
+| Suíte completa | 571 +4 | 608 +4 |
 
 As quatro falhas da suíte completa são as preexistentes de carga por ausência de
 `assets_registry.seed.json`, nos mesmos quatro arquivos e com a mesma mensagem.
@@ -171,17 +195,24 @@ Cada defeito foi aplicado, medido e revertido; a árvore ficou limpa entre eles.
 | Modo legado sem tratamento pendente | 3 |
 | Assinatura movida para o `build` | 21 |
 | Efeito inferido da visão terminal | 26 |
+| `catch` do apresentador neutralizado | 3 |
+
+O último foi injetado trocando `catch (erro, pilha)` por `on OutOfMemoryError
+catch (erro, pilha)`: o bloco continua compilando e nunca casa. Os três casos do
+estouro caem, e a mensagem é o próprio invariante — esperado `pendente`, obtido
+`reivindicado`.
 
 ---
 
 ## 7. Riscos residuais
 
-1. **Recusa com a tela viva não tenta de novo sozinha.** Se o apresentador
-   recusar e a rota continuar montada, o efeito fica pendente até a próxima
-   entrada legítima na mesa (reentrada ou troca de transporte). Um repique
+1. **Recusa ou estouro com a tela viva não tenta de novo sozinho.** O efeito
+   fica pendente até a próxima entrada legítima na mesa (reentrada ou troca de
+   transporte) — há caso fixando que essa reentrada apresenta. Um repique
    automático foi descartado: ele giraria contra um apresentador que falhasse
    sempre. Em produção a recusa exige uma rota sem navegador, que a casca não
-   produz.
+   produz, e o estouro exige um defeito no apresentador, que passa a ser
+   relatado em vez de silencioso.
 2. **A dedup do modo legado continua sendo por mesa, não por fim.** É a
    identidade que o servidor antigo permite. Duas partidas seguidas na mesma
    mesa sem carimbo compartilhariam a mesma anotação — o que só se corrige no

@@ -102,9 +102,9 @@
 //                 diálogo para o mesmo fim enquanto o primeiro está a caminho.
 //   APRESENTAR    depois do quadro, com tudo reconferido.
 //   CONFIRMAR     só depois de o apresentador dizer que o aviso ENTROU na
-//                 árvore. Se ele recusar, ou se a rota morrer antes, a
-//                 reivindicação é devolvida e o efeito volta a ficar pendente:
-//                 adiado, não perdido.
+//                 árvore. Se ele recusar, se ESTOURAR, ou se a rota morrer
+//                 antes, a reivindicação é devolvida e o efeito volta a ficar
+//                 pendente: adiado, não perdido.
 
 import 'package:flutter/material.dart';
 
@@ -326,15 +326,50 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     }
 
     final porta = _porta;
-    final resultado = await _apresentador.apresentar(
-      context,
-      encerramento,
-      aoSairDaMesa: () {
-        // A saída também confere: o aviso pode ficar aberto enquanto a
-        // sessão vira por baixo dele.
-        if (_aindaSouEuOuvindo(dono, geracao)) porta?.sairDaMesa();
-      },
-    );
+    final ResultadoDaApresentacao resultado;
+    try {
+      resultado = await _apresentador.apresentar(
+        context,
+        encerramento,
+        aoSairDaMesa: () {
+          // A saída também confere: o aviso pode ficar aberto enquanto a
+          // sessão vira por baixo dele.
+          if (_aindaSouEuOuvindo(dono, geracao)) porta?.sairDaMesa();
+        },
+      );
+    } catch (erro, pilha) {
+      // UM APRESENTADOR QUE ESTOURA É UMA APRESENTAÇÃO QUE NÃO ACONTECEU, e o
+      // efeito não pode pagar por isso. Sem este `catch`, a exceção sobe por um
+      // `addPostFrameCallback` — para um futuro que ninguém aguarda — e leva
+      // junto a reivindicação: o aviso fica travado em `reivindicado` por um
+      // dono vivo que já desistiu dele. Ninguém apresenta e ninguém libera, que
+      // é a mesma perda silenciosa desta OS, só que por outra porta.
+      //
+      // As DUAS formas de estouro passam por aqui, e são caminhos diferentes de
+      // verdade: um `throw` antes de o futuro existir acontece na própria
+      // chamada, e um futuro que completa com erro acontece no `await`. O `try`
+      // envolve a chamada inteira justamente para não escolher entre os dois.
+      //
+      // A DEVOLUÇÃO VEM PRIMEIRO, e só depois o relato. Se o relato falhar — e
+      // `onError` é um gancho que a aplicação instala —, o efeito já está de
+      // volta no livro.
+      livro.liberar(posse, encerramento);
+      // RELATAR, E NÃO REGISTRAR EM LOG: por esta camada passam ids de carta, e
+      // a auditoria proíbe log aqui com razão. `reportError` é o canal do
+      // próprio framework, vai para onde a aplicação mandar os erros, e não
+      // escreve nada por conta própria. Engolir em silêncio seria esconder um
+      // defeito do apresentador — exatamente a classe de falha muda que esta
+      // entrega existe para acabar.
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: erro,
+          stack: pilha,
+          library: 'casca da mesa online',
+          context: ErrorDescription('ao apresentar o encerramento da partida'),
+        ),
+      );
+      return;
+    }
 
     if (resultado != ResultadoDaApresentacao.apresentado) {
       livro.liberar(posse, encerramento);

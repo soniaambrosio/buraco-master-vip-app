@@ -77,6 +77,49 @@ class ApresentadorControlado implements ApresentadorDeEncerramento {
   }
 }
 
+/// As duas formas de um apresentador estourar, e a de não estourar.
+///
+/// A distinção não é preciosismo: um `throw` antes de o futuro existir acontece
+/// na CHAMADA, e um futuro que completa com erro acontece no `await`. São dois
+/// pontos diferentes do código de quem chama, e um `try` mal posicionado pega um
+/// e deixa o outro passar.
+enum ModoDoApresentador { sincrona, assincrona, nenhuma }
+
+/// Um apresentador que quebra de propósito.
+class ApresentadorQueQuebra implements ApresentadorDeEncerramento {
+  ApresentadorQueQuebra(this.modo);
+
+  ModoDoApresentador modo;
+
+  /// Quantas vezes foi CHAMADO — inclusive as que estouraram.
+  int tentativas = 0;
+
+  /// O que efetivamente apresentou.
+  final List<EncerramentoAutoritativo> anuncios = [];
+
+  @override
+  // NÃO É `async` DE PROPÓSITO: um corpo `async` converte todo `throw` em erro
+  // de futuro, e aí a forma síncrona simplesmente não existiria neste arquivo.
+  Future<ResultadoDaApresentacao> apresentar(
+    BuildContext context,
+    EncerramentoAutoritativo encerramento, {
+    required VoidCallback aoSairDaMesa,
+  }) {
+    tentativas++;
+    switch (modo) {
+      case ModoDoApresentador.sincrona:
+        throw StateError('o apresentador estourou antes de devolver o futuro');
+      case ModoDoApresentador.assincrona:
+        return Future<ResultadoDaApresentacao>.error(
+          StateError('o apresentador estourou depois de devolver o futuro'),
+        );
+      case ModoDoApresentador.nenhuma:
+        anuncios.add(encerramento);
+        return Future.value(ResultadoDaApresentacao.apresentado);
+    }
+  }
+}
+
 /// Um transporte de produção com o socket falso.
 class Fio {
   Fio() {
@@ -646,6 +689,96 @@ void main() {
 
       expect(ap.quantos, 2, reason: 'uma recusa e uma apresentação');
       expect(f.livro.estadoDe('fim-7'), EstadoDoEfeito.apresentado);
+    });
+
+    testWidgets('o estouro SÍNCRONO do apresentador não consome o aviso', (
+      tester,
+    ) async {
+      final f = Fio();
+      addTearDown(f.fechar);
+      final ap = ApresentadorQueQuebra(ModoDoApresentador.sincrona);
+
+      await abrirAMesa(tester, f, ap);
+      await servidorManda(
+        tester,
+        f,
+        visaoTerminal(),
+        versaoEstado: 7,
+        eventoId: 'fim-7',
+      );
+
+      expect(ap.tentativas, 1, reason: 'tentou');
+      expect(ap.anuncios, isEmpty, reason: 'e não apresentou nada');
+      expect(
+        f.livro.estadoDe('fim-7'),
+        EstadoDoEfeito.pendente,
+        reason:
+            'sem o `catch`, a exceção sobe por um futuro que ninguém aguarda e '
+            'leva junto a reivindicação — o aviso fica travado em '
+            '`reivindicado` por um dono vivo que já desistiu dele',
+      );
+
+      // O estouro é RELATADO, e não engolido: um apresentador que quebra é
+      // defeito, e defeito mudo é a classe de falha que esta entrega combate.
+      expect(tester.takeException(), isA<StateError>());
+    });
+
+    testWidgets('o futuro com erro do apresentador não consome o aviso', (
+      tester,
+    ) async {
+      final f = Fio();
+      addTearDown(f.fechar);
+      final ap = ApresentadorQueQuebra(ModoDoApresentador.assincrona);
+
+      await abrirAMesa(tester, f, ap);
+      await servidorManda(
+        tester,
+        f,
+        visaoTerminal(),
+        versaoEstado: 7,
+        eventoId: 'fim-7',
+      );
+
+      expect(ap.tentativas, 1);
+      expect(ap.anuncios, isEmpty);
+      expect(f.livro.estadoDe('fim-7'), EstadoDoEfeito.pendente);
+      expect(tester.takeException(), isA<StateError>());
+    });
+
+    testWidgets('a reentrada depois do estouro apresenta o aviso', (
+      tester,
+    ) async {
+      final f = Fio();
+      addTearDown(f.fechar);
+      final ap = ApresentadorQueQuebra(ModoDoApresentador.assincrona);
+
+      await abrirAMesa(tester, f, ap);
+      await servidorManda(
+        tester,
+        f,
+        visaoTerminal(),
+        versaoEstado: 7,
+        eventoId: 'fim-7',
+      );
+      expect(f.livro.estadoDe('fim-7'), EstadoDoEfeito.pendente);
+      expect(tester.takeException(), isA<StateError>());
+
+      // O apresentador volta a funcionar e a pessoa reentra na mesa. Este é o
+      // ponto do `catch`: devolver ao livro só vale se alguém ainda puder pegar.
+      ap.modo = ModoDoApresentador.nenhuma;
+      await tester.pumpWidget(arvoreSemAMesa(f.online));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(arvore(f.online, ap));
+      await tester.pumpAndSettle();
+
+      expect(ap.tentativas, 2);
+      expect(ap.anuncios.single.eventoId, 'fim-7');
+      expect(f.livro.estadoDe('fim-7'), EstadoDoEfeito.apresentado);
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'a segunda tentativa não estourou',
+      );
     });
 
     // CASO 21
