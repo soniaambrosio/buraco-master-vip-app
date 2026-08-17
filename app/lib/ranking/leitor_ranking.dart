@@ -118,13 +118,21 @@ class LeitorDeRanking {
   final Map<_Chave, Future<EstadoRanking?>> _emVoo =
       <_Chave, Future<EstadoRanking?>>{};
 
+  /// O número do pedido dono do voo corrente de cada chave.
+  ///
+  /// Existe para que um voo que termina só retire do mapa o SEU voo. Depois de
+  /// [aoMudarSessao] — que esvazia `_emVoo` — pode haver dois voos vivos na
+  /// mesma chave: o velho, órfão, e o novo. Sem esta marca, o velho ao terminar
+  /// removia a entrada do NOVO, e o próximo toque abria uma chamada a mais.
+  final Map<_Chave, int> _donoDoVoo = <_Chave, int>{};
+
   /// A última fotografia boa de cada chave.
   final Map<_Chave, EstadoRanking> _cache = <_Chave, EstadoRanking>{};
 
   int _sequencia = 0;
 
-  /// A temporada que este leitor aceita como vigente, e o NÚMERO DO PEDIDO que
-  /// a estabeleceu.
+  /// A temporada que este leitor aceita como vigente, e a BARREIRA que protege
+  /// essa decisão.
   ///
   /// ---------------------------------------------------------------------
   /// POR QUE UM NÚMERO DE PEDIDO, E NÃO O `temporadaId` SOZINHO
@@ -137,14 +145,36 @@ class LeitorDeRanking {
   /// aceitar como mais nova a última resposta que CHEGOU é justamente o defeito:
   /// resposta atrasada chega por último e não é a mais nova.
   ///
-  /// O que o cliente sabe com certeza é a ordem em que ELE PERGUNTOU. Então a
-  /// comparação é entre pedidos, não entre temporadas: uma resposta de outra
-  /// temporada só troca a temporada aceita se nasceu de um pedido POSTERIOR ao
-  /// que estabeleceu a atual. Nascida antes, ela é notícia velha — mesmo que
-  /// tenha chegado depois, e mesmo que seja de outra chave, que é o caso que a
-  /// guarda de sequência por chave não via.
+  /// O que o cliente sabe com certeza é a ordem em que ELE PERGUNTOU.
+  ///
+  /// ---------------------------------------------------------------------
+  /// E POR QUE A BARREIRA NÃO É O PEDIDO QUE ESTABELECEU
+  /// ---------------------------------------------------------------------
+  ///
+  /// Foi, e vazava. Guardando o número do pedido que estabeleceu a temporada, a
+  /// barreira ficava presa lá atrás e QUALQUER pedido de número maior podia
+  /// derrubá-la — inclusive um que já estava em voo junto com ele. A ordem
+  /// inversa mostra o buraco: pedidos #1 e #2 nascem juntos, o servidor atende
+  /// #1 depois da virada (T2, barreira em 1) e #2 antes (T1); como `2 < 1` é
+  /// falso, a notícia velha passava.
+  ///
+  /// Pedidos contemporâneos não se ordenam entre si. O cliente sabe quando
+  /// EMITIU cada um, mas não em que ordem o servidor os atendeu — e supor que o
+  /// de número maior viu o mundo mais novo é a mesma classe de erro que supor
+  /// que o último a chegar é o mais recente.
+  ///
+  /// Então a barreira é `_sequencia` NO INSTANTE EM QUE A TEMPORADA FOI
+  /// APRENDIDA: todo pedido já emitido até ali é contemporâneo, e só um emitido
+  /// depois — cujo número é necessariamente maior que essa marca — tem o
+  /// direito de trocar a temporada aceita. Entre contemporâneos divergentes, o
+  /// leitor mantém o que sabe e espera a próxima pergunta, que é sequencialmente
+  /// posterior e resolve sozinha.
+  ///
+  /// "Aprendida" inclui CONFIRMADA. Uma resposta que repete a temporada vigente
+  /// é notícia tão fresca quanto uma que a troca, e não reancorar nela era o
+  /// segundo meio de a barreira ficar para trás.
   String? _temporadaAceita;
-  int _pedidoDaTemporada = 0;
+  int _barreiraTemporal = 0;
 
   /// Quantas chamadas de transporte foram realmente emitidas. Só diagnóstico de
   /// teste — nunca um número de produto.
@@ -167,9 +197,13 @@ class LeitorDeRanking {
     _geracao = geracao;
     _ultimoPedido.clear();
     _emVoo.clear();
+    // Junto com `_emVoo`, e não depois: os voos órfãos deixam de ser donos de
+    // coisa nenhuma, então o primeiro pedido da sessão nova é dono da chave
+    // desde o instante em que nasce.
+    _donoDoVoo.clear();
     _cache.clear();
     _temporadaAceita = null;
-    _pedidoDaTemporada = 0;
+    _barreiraTemporal = 0;
   }
 
   /// A fotografia guardada para esta conta e alvo, se houver.
@@ -214,6 +248,7 @@ class LeitorDeRanking {
 
     final voo = _executar(chave, numero, geracaoDoPedido, chamar);
     _emVoo[chave] = voo;
+    _donoDoVoo[chave] = numero;
     return voo;
   }
 
@@ -249,10 +284,15 @@ class LeitorDeRanking {
       // Sai do voo mesmo quando a resposta será descartada: o próximo "tentar
       // de novo" precisa poder emitir uma chamada nova.
       //
-      // Incondicional porque, por construção, só existe UM voo por chave: o
-      // dedupe acima devolve o voo corrente em vez de abrir outro, e
-      // [aoMudarSessao] esvazia o mapa inteiro. Não há voo alheio a preservar.
-      _emVoo.remove(chave);
+      // SÓ O PRÓPRIO VOO. Era incondicional, e a suposição por trás disso —
+      // "só existe um voo por chave" — é falsa depois de [aoMudarSessao]: ela
+      // esvazia `_emVoo` sem cancelar o que está no ar, então o voo velho
+      // continua vivo e, ao terminar, despejava do mapa o voo NOVO da mesma
+      // chave. O dedupe furava e o toque seguinte abria uma chamada a mais.
+      if (_donoDoVoo[chave] == numero) {
+        _emVoo.remove(chave);
+        _donoDoVoo.remove(chave);
+      }
     }
 
     // AS TRÊS GUARDAS, nesta ordem, e ANTES de qualquer escrita.
@@ -299,11 +339,24 @@ class LeitorDeRanking {
   ///     do cache.
   bool _aceitarTemporada(String? temporadaId, int numero) {
     if (temporadaId == null) return true;
-    if (temporadaId == _temporadaAceita) return true;
-    if (_temporadaAceita != null && numero < _pedidoDaTemporada) return false;
+
+    // CONFIRMAÇÃO. Nada muda no que se sabe, mas a barreira avança: esta
+    // resposta é notícia de agora, e tudo que estava em voo junto com ela passa
+    // a ser contemporâneo dela, não posterior. Sem esta linha a barreira ficava
+    // parada no primeiro estabelecimento, e era por onde a ordem inversa
+    // entrava.
+    if (temporadaId == _temporadaAceita) {
+      _ancorar();
+      return true;
+    }
+
+    // TROCA. Só quem foi emitido depois do último aprendizado pode fazê-la.
+    // Estritamente maior: empatar com a barreira é ser contemporâneo, e
+    // contemporâneo não é posterior.
+    if (_temporadaAceita != null && numero <= _barreiraTemporal) return false;
 
     _temporadaAceita = temporadaId;
-    _pedidoDaTemporada = numero;
+    _ancorar();
     // Fotografia SEM temporada fica: ela não afirma pertencer a nenhuma, então
     // não pode estar errada sobre esta.
     _cache.removeWhere(
@@ -311,5 +364,18 @@ class LeitorDeRanking {
           estado.temporadaId != null && estado.temporadaId != temporadaId,
     );
     return true;
+  }
+
+  /// Marca o instante em que a temporada foi aprendida.
+  ///
+  /// `_sequencia` é o número do ÚLTIMO pedido emitido até agora. Tudo com
+  /// número menor ou igual já estava em voo neste instante — contemporâneo — e
+  /// perde o direito de trocar a temporada. Quem vier depois terá número maior.
+  ///
+  /// `max` e não atribuição direta: uma resposta atrasada que apenas confirma a
+  /// temporada é notícia válida, mas não pode PUXAR A BARREIRA PARA TRÁS e
+  /// reabrir a janela que uma resposta mais nova já havia fechado.
+  void _ancorar() {
+    if (_sequencia > _barreiraTemporal) _barreiraTemporal = _sequencia;
   }
 }
