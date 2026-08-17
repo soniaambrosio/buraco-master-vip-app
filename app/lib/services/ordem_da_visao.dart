@@ -71,7 +71,7 @@
 //     sobrevivente trataria esse reenvio como duplicata — deixando a mesa em
 //     branco até a jogada seguinte.
 //
-//   LIVRO DOS EFEITOS TERMINAIS (eventoIds já despachados)
+//   LIVRO DOS EFEITOS TERMINAIS ([LivroDeEfeitosTerminais])
 //     Vive junto com a MESA. Ele NÃO pode morrer na reconexão, e pelo motivo
 //     exatamente inverso: o reenvio pós-reconexão traz o mesmo encerramento de
 //     novo, e um livro zerado dispararia o diálogo, a navegação e o som pela
@@ -81,9 +81,26 @@
 // o marcador vivo demais, a mesa congela na reconexão; com o livro curto
 // demais, o encerramento acontece duas vezes.
 //
+// O QUE O LIVRO ANOTA MUDOU, E É A ENTREGA DESTA OS. Ele já foi um conjunto de
+// `eventoId` DESPACHADOS, anotados no recebimento — e recebimento não é
+// apresentação: um fim que chegasse sem consumidor de interface montado era
+// anotado como resolvido sem que ninguém o visse. Hoje o livro guarda o ciclo
+// de vida inteiro (pendente → reivindicado → apresentado), e quem o descreve é
+// `livro_de_efeitos_terminais.dart`. Este arquivo continua sendo quem decide o
+// que É um encerramento; não é mais quem decide que ele acabou.
+//
 // NADA AQUI É PERSISTIDO. O par vive em memória, com a conexão — igual ao
 // servidor, que perde a sala inteira se o processo reiniciar. Uma versão
 // guardada em disco descreveria uma sala que já não existe.
+
+import 'livro_de_efeitos_terminais.dart';
+
+export 'livro_de_efeitos_terminais.dart'
+    show
+        EncerramentoAutoritativo,
+        EstadoDoEfeito,
+        LivroDeEfeitosTerminais,
+        PosseDoEfeito;
 
 /// O que uma emissão pode carregar de metadados, depois de lida.
 sealed class MetadadosDaVisao {
@@ -174,29 +191,6 @@ class DecisaoDaVisao {
       conduta == CondutaDaVisao.aceitar || conduta == CondutaDaVisao.duplicada;
 }
 
-/// O encerramento autoritativo, despachado UMA vez por emissão terminal.
-///
-/// Isto não é o desfecho calculado: o cliente não conta ponto, não concede
-/// conquista e não pontua ranking. É só o aviso de que o servidor declarou a
-/// partida encerrada, com o carimbo que permite a quem consome saber que já
-/// tratou deste.
-class EncerramentoAutoritativo {
-  const EncerramentoAutoritativo({
-    required this.versaoEstado,
-    required this.eventoId,
-    required this.visao,
-  });
-
-  /// O carimbo da emissão terminal. Nulos no modo legado — o servidor antigo
-  /// não carimba, e inventar um número aqui seria fingir autoridade.
-  final int? versaoEstado;
-  final String? eventoId;
-
-  /// A visão terminal, crua, como veio no envelope. Quem desenha continua
-  /// passando pelo adaptador; isto é só o conteúdo do aviso.
-  final Map<String, dynamic> visao;
-}
-
 /// O marcador de ordem de uma conexão. Ver o cabeçalho do arquivo.
 ///
 /// Não é `ChangeNotifier` e não avisa ninguém: ele responde perguntas, e quem
@@ -213,13 +207,14 @@ class OrdemDaVisao {
 
   // ---- Livro dos efeitos terminais: vive com a MESA ----------------------
 
-  final Set<String> _terminaisDespachados = <String>{};
-
-  /// O modo legado não tem chave de deduplicação — não há `eventoId` e é
-  /// proibido fabricar um. Sobra a única coisa verdadeira que se sabe: um
-  /// encerramento já foi despachado nesta mesa. É deduplicação mais fraca, e
-  /// está declarada como tal.
-  bool _terminalSemCarimboDespachado = false;
+  /// O ciclo de vida dos avisos de fim desta mesa.
+  ///
+  /// PÚBLICO de propósito: quem apresenta o efeito precisa reivindicá-lo e
+  /// confirmá-lo, e essas duas coisas acontecem fora daqui — a apresentação é
+  /// da interface, e esta classe não sabe o que é diálogo. O que ela não
+  /// delega é a pergunta de ordem: só ela decide o que é um encerramento, e o
+  /// livro só é escrito por [talvezEncerramento].
+  final LivroDeEfeitosTerminais efeitos = LivroDeEfeitosTerminais();
 
   /// A última versão aceita, ou nulo. Diagnóstico e teste.
   int? get versaoAceita => _versaoAceita;
@@ -243,8 +238,7 @@ class OrdemDaVisao {
   /// contador próprio, e um encerramento dela não pode ser confundido com este.
   void reiniciarMesa() {
     reiniciarProjecao();
-    _terminaisDespachados.clear();
-    _terminalSemCarimboDespachado = false;
+    efeitos.limpar();
   }
 
   /// Lê o carimbo de [envelope] — a mensagem INTEIRA, não a `visao`.
@@ -339,8 +333,13 @@ class OrdemDaVisao {
     );
   }
 
-  /// A emissão descrita por [decisao] carrega um encerramento que ainda não foi
-  /// despachado? Devolve o aviso a despachar, ou nulo.
+  /// A emissão descrita por [decisao] declara um encerramento que o livro ainda
+  /// não conhece? Anota-o como PENDENTE e devolve o aviso; ou devolve nulo.
+  ///
+  /// "PENDENTE", e não "despachado": este método não sabe se alguém vai
+  /// apresentar o aviso, e fingir que sabe é o defeito que a OS desta entrega
+  /// corrige. O retorno serve para CUTUCAR um consumidor que já esteja montado;
+  /// quem confirma o consumo é quem apresenta, pelo livro, depois de apresentar.
   ///
   /// ESTE MÉTODO NÃO CONSULTA O MARCADOR DE ORDEM, e a independência é o
   /// requisito. Perguntar ao marcador "já vi esta versão?" responderia SIM
@@ -361,22 +360,16 @@ class OrdemDaVisao {
     if (visao['encerrada'] != true) return null;
 
     final evento = decisao.eventoId;
-    if (evento == null) {
-      if (_terminalSemCarimboDespachado) return null;
-      _terminalSemCarimboDespachado = true;
-      return EncerramentoAutoritativo(
-        versaoEstado: null,
-        eventoId: null,
+    // O registro e a pergunta são o mesmo gesto: não há janela entre "conferi"
+    // e "anotei", e é o livro que devolve nulo quando o fim já era conhecido.
+    return efeitos.registrar(
+      EncerramentoAutoritativo(
+        // Nulos JUNTOS no modo legado: sem carimbo não há número, e pôr um
+        // aqui seria dar cara de autoridade a um palpite.
+        versaoEstado: evento == null ? null : decisao.versaoEstado,
+        eventoId: evento,
         visao: visao,
-      );
-    }
-    // `add` devolve falso se já estava lá: o registro e a pergunta são o mesmo
-    // gesto, e não há janela entre "conferi" e "anotei".
-    if (!_terminaisDespachados.add(evento)) return null;
-    return EncerramentoAutoritativo(
-      versaoEstado: decisao.versaoEstado,
-      eventoId: evento,
-      visao: visao,
+      ),
     );
   }
 }

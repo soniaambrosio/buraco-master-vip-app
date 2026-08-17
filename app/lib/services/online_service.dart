@@ -99,7 +99,12 @@ import 'endpoint_servidor.dart';
 import 'ordem_da_visao.dart';
 import 'redacao_segredos.dart';
 
-export 'ordem_da_visao.dart' show EncerramentoAutoritativo;
+export 'ordem_da_visao.dart'
+    show
+        EncerramentoAutoritativo,
+        EstadoDoEfeito,
+        LivroDeEfeitosTerminais,
+        PosseDoEfeito;
 
 enum OnlineStatus {
   desconectado,
@@ -280,10 +285,21 @@ class OnlineService extends ChangeNotifier {
   /// tratado. Quem precisar de mais de um efeito registra um consumidor que os
   /// distribui.
   ///
-  /// HOJE NINGUÉM ASSINA. Ligar um diálogo ou uma navegação aqui é trabalho de
-  /// interface, que a OS desta entrega proíbe — o que se entrega é o ponto de
-  /// saída com a garantia de disparo único.
+  /// ISTO É UMA CUTUCADA, E NÃO A ENTREGA DO EFEITO. Um slot vazio não perde
+  /// encerramento nenhum: o aviso já foi anotado como PENDENTE em
+  /// [efeitosTerminais] antes desta chamada, e continua lá esperando por
+  /// consumidor. Quem assina só ganha a notícia mais cedo — a autoridade sobre
+  /// o que ainda falta apresentar é do livro, e é de lá que se drena.
   void Function(EncerramentoAutoritativo)? aoEncerrar;
+
+  /// O ciclo de vida dos avisos de fim desta mesa.
+  ///
+  /// Quem apresenta o encerramento reivindica aqui antes de apresentar e
+  /// confirma aqui depois de ter apresentado. É público porque a apresentação
+  /// mora na interface e este objeto não sabe o que é diálogo; mas quem ESCREVE
+  /// encerramento no livro continua sendo um só ponto — o `case 'estado'` de
+  /// [_aoReceber], por [OrdemDaVisao.talvezEncerramento].
+  LivroDeEfeitosTerminais get efeitosTerminais => _ordem.efeitos;
 
   bool get conectado => status == OnlineStatus.conectado;
   bool get autenticado => status == OnlineStatus.conectado;
@@ -678,7 +694,13 @@ class OnlineService extends ChangeNotifier {
         //
         // Roda TAMBÉM na duplicata: o reenvio do encerramento não reaplica o
         // retrato (ele é o mesmo), mas continua sendo o servidor declarando o
-        // fim, e o livro de efeitos é quem sabe se aquilo já foi despachado.
+        // fim, e o livro de efeitos é quem sabe se aquilo já foi anotado.
+        //
+        // O `?.` NÃO PERDE NADA. `talvezEncerramento` já anotou o aviso como
+        // pendente no livro; a chamada abaixo só avisa quem estiver montado. Um
+        // encerramento que chegue com o slot vazio — a pessoa fora da rota da
+        // mesa, ou a janela entre um vínculo e o seguinte — fica esperando no
+        // livro e é apresentado quando a mesa voltar a ter dono.
         final encerramento = _ordem.talvezEncerramento(decisao, nova);
         if (encerramento != null) aoEncerrar?.call(encerramento);
 
