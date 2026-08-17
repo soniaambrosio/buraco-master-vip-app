@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../casca/ranking_de_producao.dart';
 import '../ranking/escopo_ranking.dart';
 import '../ranking/estado_ranking.dart';
 import '../screens/perfil_screen.dart';
@@ -19,7 +20,28 @@ import '../sessao/identidade_publica_sessao.dart';
 /// [PerfilService.statsDemo]). As ações que dependem de telas futuras (config,
 /// editar, loja, ranking) mostram um aviso "chega já já".
 class PerfilPage extends StatefulWidget {
-  const PerfilPage({super.key, this.ehMeuPerfil = true, this.publicIdVisitado});
+  /// [ehMeuPerfil] é DERIVADO de [publicIdVisitado] quando não vem escrito.
+  ///
+  /// -------------------------------------------------------------------------
+  /// O PADRÃO ERA `true`, E ERA UMA ARMADILHA
+  /// -------------------------------------------------------------------------
+  ///
+  /// Com `ehMeuPerfil = true` fixo, `PerfilPage(publicIdVisitado: 'PXXX…')`
+  /// compilava, abria e mostrava o perfil do DONO — com os controles de editar,
+  /// trocar avatar e trocar vitrine — enquanto carregava um id de terceiro que
+  /// ninguém consultava. Os dois campos precisavam concordar, e nada obrigava.
+  ///
+  /// Agora quem passa o id de um visitado já disse tudo o que precisava dizer.
+  /// Passar os dois continua possível, e o escrito vence — é o que mantém de pé
+  /// o caso legítimo de um perfil visitado de quem não se sabe o id
+  /// (`ehMeuPerfil: false` sem `publicIdVisitado`), que a tela desenha sem
+  /// afirmar ranking nenhum.
+  ///
+  /// `const PerfilPage()` continua constante: `??` e a comparação com `null`
+  /// são expressões potencialmente constantes, então a Home não perde o
+  /// construtor `const` que já usava.
+  const PerfilPage({super.key, bool? ehMeuPerfil, this.publicIdVisitado})
+    : ehMeuPerfil = ehMeuPerfil ?? (publicIdVisitado == null);
 
   /// true = perfil do próprio dono (mostra editar/câmera/trocar vitrine).
   /// false = visitando outro jogador (a UI oculta os controles de dono).
@@ -189,6 +211,21 @@ class _PerfilPageState extends State<PerfilPage> {
       );
   }
 
+  /// A PORTA PRODUTIVA PARA O RANKING REAL, e ela é uma só.
+  ///
+  /// A linha competitiva e o item "Ranking" da barra inferior chegam aqui — dois
+  /// gestos, um destino. O item da barra dizia "chega nas próximas fatias", que
+  /// deixou de ser verdade no instante em que a tabela passou a existir.
+  ///
+  /// Só empurra rota: não consulta nada. A tela aberta LÊ o `EscopoRanking` que
+  /// esta mesma página já consome no cabeçalho, então abrir o ranking não
+  /// acrescenta uma chamada — é a mesma resposta, vista inteira.
+  void _abrirRanking() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const RankingDeProducao()));
+  }
+
   Future<void> _compartilhar() async {
     final texto = PerfilPage.textoDeCompartilhamento(_vm);
     await Clipboard.setData(ClipboardData(text: texto));
@@ -230,6 +267,7 @@ class _PerfilPageState extends State<PerfilPage> {
       onVerUltimaConquista: () => _breve('Última conquista'),
       onTrocarVitrine: () => _breve('Trocar itens da vitrine'),
       onCompartilhar: _compartilhar,
+      onAbrirRanking: _abrirRanking,
       // O retry recarrega as DUAS coisas que podem ter falhado, e não só o
       // perfil: quem apertou o botão viu uma tela sem ranking, e recarregar só
       // a metade que já estava boa seria o botão não fazer o que promete. As
@@ -244,7 +282,7 @@ class _PerfilPageState extends State<PerfilPage> {
             Navigator.of(context).maybePop();
             break;
           case NavDestino.ranking:
-            _breve('Ranking');
+            _abrirRanking();
             break;
           case NavDestino.loja:
             _breve('Loja VIP');

@@ -102,6 +102,37 @@ enum FaseRanking {
   sessaoInvalida,
 }
 
+/// O que uma falha de leitura SIGNIFICA, decidido num lugar só.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE ISTO SAIU DE DENTRO DE `EstadoRanking.daFalha`
+/// ---------------------------------------------------------------------------
+///
+/// Porque passou a existir uma segunda coisa que falha junto: a TABELA. Quando
+/// `abrirRanking` recusa, o cabeçalho do jogador e a lista de jogadores estão
+/// recusados pelo MESMO motivo, na MESMA ida — e a única maneira de eles não
+/// discordarem é não haver duas leituras da palavra "recusado".
+///
+/// A regra em si não mudou uma vírgula, e continua valendo o que a homologação
+/// anterior fixou: `unauthenticated` cobre credencial recusada E App Check
+/// ausente, então com sessão local viva o estado é o neutro
+/// [FaseRanking.acessoRecusado]; sem ela, e só aí, [FaseRanking.sessaoInvalida].
+///
+/// [haSessaoLocal] continua sem valor padrão, pelo mesmo motivo de antes: um
+/// padrão faria a chamada esquecida escolher um lado sozinha.
+FaseRanking faseDaFalhaDeRanking(
+  MotivoFalhaRanking motivo, {
+  required bool haSessaoLocal,
+}) => switch (motivo) {
+  MotivoFalhaRanking.semTemporada ||
+  MotivoFalhaRanking.naoEncontrado => FaseRanking.indisponivel,
+  MotivoFalhaRanking.credencialOuAtestacao || MotivoFalhaRanking.recusado =>
+    haSessaoLocal ? FaseRanking.acessoRecusado : FaseRanking.sessaoInvalida,
+  MotivoFalhaRanking.indisponivel ||
+  MotivoFalhaRanking.respostaInvalida ||
+  MotivoFalhaRanking.desconhecida => FaseRanking.falha,
+};
+
 /// O estado competitivo do jogador tal como o cliente pode afirmá-lo.
 class EstadoRanking {
   /// Em que ponto está o conhecimento sobre o ranking.
@@ -210,16 +241,15 @@ class EstadoRanking {
   factory EstadoRanking.daFalha(
     MotivoFalhaRanking motivo, {
     required bool haSessaoLocal,
-  }) => switch (motivo) {
-    MotivoFalhaRanking.semTemporada ||
-    MotivoFalhaRanking.naoEncontrado => const EstadoRanking.indisponivel(),
-    MotivoFalhaRanking.credencialOuAtestacao || MotivoFalhaRanking.recusado =>
-      haSessaoLocal
-          ? const EstadoRanking.acessoRecusado()
-          : const EstadoRanking.sessaoInvalida(),
-    MotivoFalhaRanking.indisponivel ||
-    MotivoFalhaRanking.respostaInvalida ||
-    MotivoFalhaRanking.desconhecida => const EstadoRanking.falha(),
+  }) => switch (faseDaFalhaDeRanking(motivo, haSessaoLocal: haSessaoLocal)) {
+    FaseRanking.indisponivel => const EstadoRanking.indisponivel(),
+    FaseRanking.acessoRecusado => const EstadoRanking.acessoRecusado(),
+    FaseRanking.sessaoInvalida => const EstadoRanking.sessaoInvalida(),
+    FaseRanking.falha ||
+    // Nenhuma falha produz estes dois; o `switch` os lista porque exaustivo é
+    // melhor do que um `_` que engoliria uma fase nova em silêncio.
+    FaseRanking.carregando ||
+    FaseRanking.disponivel => const EstadoRanking.falha(),
   };
 
   /// A liga, quando existe uma para afirmar. `null` em qualquer outro caso.

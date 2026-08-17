@@ -345,6 +345,22 @@ class PerfilScreen extends StatefulWidget {
   final VoidCallback onRecarregar;
   final ValueChanged<NavDestino> onNavTap;
 
+  /// Abrir o ranking completo a partir da LINHA COMPETITIVA.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE É OPCIONAL
+  /// -------------------------------------------------------------------------
+  ///
+  /// Nulo é o estado honesto de quem monta esta tela sem casca — dezenas de
+  /// testes de widget e o catálogo visual. Sem autoridade de ranking alcançável
+  /// não há tabela para abrir, e uma linha tocável que não leva a lugar nenhum
+  /// é pior do que uma linha que não se oferece.
+  ///
+  /// Com o callback, e SÓ com ele, a linha vira alvo de toque: ganha área
+  /// mínima, um nó de acessibilidade de botão e a seta que diz que ali se
+  /// aperta. Sem ele, o desenho é byte a byte o que sempre foi.
+  final VoidCallback? onAbrirRanking;
+
   const PerfilScreen({
     super.key,
     required this.vm,
@@ -364,6 +380,7 @@ class PerfilScreen extends StatefulWidget {
     required this.onCompartilhar,
     required this.onRecarregar,
     required this.onNavTap,
+    this.onAbrirRanking,
   });
 
   @override
@@ -738,7 +755,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
   /// liga vazia: "carregando" não é ausência de liga, e "ainda não
   /// classificado" não é o mesmo que "não consegui carregar".
   Widget _linhaCompetitiva(EstadoRanking ranking) {
-    return Semantics(
+    final linha = Semantics(
       container: true,
       excludeSemantics: true,
       label: _anuncioCompetitivo(ranking),
@@ -766,6 +783,45 @@ class _PerfilScreenState extends State<PerfilScreen> {
               style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
             ),
         ],
+      ),
+    );
+
+    final abrir = widget.onAbrirRanking;
+    if (abrir == null) return linha;
+
+    // O NÓ DE DENTRO CONTINUA INTACTO, e isso não é detalhe de implementação: a
+    // frase que o leitor de tela anuncia sobre a classificação foi escrita para
+    // ser ouvida e está fixada por teste. O botão é um nó A MAIS, por fora, com
+    // o rótulo da AÇÃO — quem navega por acessibilidade ouve o que a linha diz e
+    // depois o que dá para fazer com ela, em vez de perder um dos dois.
+    return Semantics(
+      button: true,
+      label: 'Ver o ranking completo',
+      child: InkWell(
+        onTap: abrir,
+        borderRadius: BorderRadius.circular(10),
+        child: ConstrainedBox(
+          // A linha tem 15 pixels de texto. Sem este piso, o alvo de toque seria
+          // menor que um terço do mínimo das diretrizes — e num lugar onde o
+          // dedo erra para cima cai no apelido e para baixo na barra de XP.
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(child: linha),
+                const SizedBox(width: 2),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFCFC0A0),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

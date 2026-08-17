@@ -78,7 +78,10 @@ class _TransporteManual extends TransporteRanking {
   }
 
   @override
-  Future<FotografiaRanking> meuRanking() => _abrir('proprio');
+  Future<AberturaRanking> abrirRanking() async => AberturaRanking(
+    eu: await _abrir('proprio'),
+    tabela: const TabelaRanking(podio: [], primeiraPagina: []),
+  );
 
   @override
   Future<FotografiaRanking> rankingPorIdPublico(String publicId) =>
@@ -486,11 +489,28 @@ void main() {
       final b = leitor.meuRanking(contaPublicId: contaA);
       final c = leitor.meuRanking(contaPublicId: contaA);
       expect(t.emitidasDe('proprio'), 2, reason: 'três toques, uma chamada');
-      expect(identical(a, b), isTrue);
-      expect(identical(b, c), isTrue);
+
+      // A IDENTIDADE DO VOO É AFIRMADA EM `abrirRanking`, e não aqui.
+      //
+      // `meuRanking` passou a ser uma PROJEÇÃO de `abrirRanking` — ela pede a
+      // mesma chave, entra no mesmo voo e recebe a mesma resposta, mas devolve
+      // só o cabeçalho. Projetar cria um `Future` novo por chamada, então
+      // `identical` entre duas projeções é falso mesmo com um voo só.
+      //
+      // O que a suíte precisa garantir é que não houve DUAS CHAMADAS, e isso
+      // está afirmado acima, por `emitidasDe`. A identidade do objeto de voo
+      // continua afirmada — sobre `abrirRanking`, que é a superfície que
+      // realmente dedupa e a que a produção usa.
+      final x = leitor.abrirRanking(contaPublicId: contaA);
+      final y = leitor.abrirRanking(contaPublicId: contaA);
+      expect(t.emitidasDe('proprio'), 2, reason: 'o voo em curso foi reusado');
+      expect(identical(x, y), isTrue);
 
       t.responder('proprio', foto(temporadaId: 'T1', liga: 'Ouro'));
       expect((await a)!.liga, 'Ouro');
+      expect((await b)!.liga, 'Ouro');
+      expect((await c)!.liga, 'Ouro');
+      expect((await x)!.eu.liga, 'Ouro');
     });
   });
 
