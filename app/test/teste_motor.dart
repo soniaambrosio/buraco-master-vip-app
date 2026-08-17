@@ -56,8 +56,8 @@ import 'package:buraco_master_vip/bot/visao_informacao.dart';
 // OS PROVENIÊNCIA DE DESCARTES V1 — o consumidor da autoria pública.
 import 'package:buraco_master_vip/bot/modelo_parceiro.dart';
 // OS CALIBRAÇÃO V1 — o ponto único de consumo do sinal.
-import 'package:buraco_master_vip/bot/avaliador_heuristico.dart'
-    show featureMemoriaDescarteParceiro;
+import 'package:buraco_master_vip/bot/avaliador_heuristico.dart';
+import 'package:buraco_master_vip/bot/risco_descarte.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -7241,7 +7241,14 @@ void main() {
 
     // ---------- §11.7, §11.8, §11.9 — lixo, nova mão e reconexão ----------
     test('CAL-06 compra do lixo PRESERVA o efeito; nova mão o elimina', () {
-      final j = novo('ABERTO');
+      // AUTORIDADE CANÔNICA ligada: a compra do lixo tem de passar por
+      // `avaliarComprarLixo`, que é onde um "limpe o histórico junto com a
+      // pilha" se esconderia. Com o motor legado o teste exercitaria outro
+      // caminho e a prova valeria menos do que parece.
+      final j = Jogo(const ['você', 'B1', 'B2', 'B3'], const ['', '', '', ''],
+          const ['', '', '', ''],
+          motorConfig: MotorConfig.producao());
+      j.modalidade = 'ABERTO';
       montar(j,
           mao0: [('K', 'espadas'), ('K', 'ouros'), ('3', 'paus')],
           mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
@@ -7332,26 +7339,29 @@ void main() {
 
     test('CAL-09 carta dispensada mas ESTRUTURAL na mão é preservada', () {
       final j = novo('ABERTO');
-      // 8♥ está no meio de uma corrida natural (7-8-9 de copas): força alta.
-      // O K de ouros está solto: força zero. O parceiro dispensou o 8♥.
+      // Corrida de DUAS cartas (7-8 de copas), de propósito: com três o robô
+      // baixaria o jogo antes de descartar, o 8 sairia da mão e o teste
+      // passaria sem nunca comparar as alternativas. Aqui não há baixada
+      // possível — o turno é só a escolha do descarte.
+      //
+      // 8♥: vizinho direto + embrião de corrida => força 7.
+      // K♦: solto => força 0. Ambos valem 10 pontos, logo o RISCO empata e o
+      // que decide é a estrutura. O parceiro dispensou justamente o 8♥.
       montar(j,
-          mao0: [
-            ('7', 'copas'),
-            ('8', 'copas'),
-            ('9', 'copas'),
-            ('K', 'ouros')
-          ],
+          mao0: [('7', 'copas'), ('8', 'copas'), ('K', 'ouros')],
           mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
-          mao2: [('8', 'copas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao2: [('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
           mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
           vez: 0,
           jaComprou: true);
       final oito = j.maos[0].firstWhere((c) => c.valor == '8');
       final rei = j.maos[0].firstWhere((c) => c.valor == 'K');
-      final copiaDoOito = j.maos[2].firstWhere((c) => c.valor == '8');
 
-      final e = comLivro(paraCanonico(j).canonico, [reg(copiaDoOito, 2, 0)]);
+      final e =
+          comLivro(paraCanonico(j).canonico, [regCopia('8', 'copas', 2, 0)]);
       final d = decidir(e, ConfiguracaoBot.v2);
+      expect(d.plano?.baixada, isNull,
+          reason: 'o cenário não pode ter baixada — senão nada é comparado');
       expect(d.plano?.cartaDescartada?.id, isNot(oito.id));
       expect(d.plano?.cartaDescartada?.id, rei.id);
     });
@@ -7378,8 +7388,30 @@ void main() {
           .copyWith(proibeDescartarCuringa: false));
       final d = decidir(e, semPolitica);
       expect(d.plano?.cartaDescartada?.id, isNot(joker.id));
-      expect(d.features.containsKey(featureMemoriaDescarteParceiro), isFalse,
-          reason: 'nenhuma alternativa de curinga recebeu o prêmio');
+
+      // A asserção acima NÃO basta, e a prova por defeito injetado mostrou
+      // isso: o curinga custa −2200 de dano estrutural, então ele perde de
+      // qualquer jeito e o VENCEDOR nunca carregaria a feature. Olhar só o
+      // vencedor deixaria a guarda do curinga passar removida sem ninguém
+      // notar. Então a alternativa que descarta o JOKER é avaliada
+      // DIRETAMENTE: é ali que o prêmio apareceria.
+      final spec =
+          RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+      final ger = GeradorPlanos(spec, semPolitica).planosDeJogo(e, 0);
+      final planoDoJoker = ger.planos
+          .where((p) => p.cartaDescartada?.id == joker.id)
+          .toList();
+      expect(planoDoJoker, isNotEmpty,
+          reason: 'sem a política, descartar o curinga é alternativa legal');
+      final visao = VisaoInformacao.doEstado(e, 0);
+      final av = AvaliadorHeuristico(spec, semPolitica).avaliarPlano(
+        planoDoJoker.first,
+        visao,
+        ModeloParceiro.observar(visao, spec),
+        ModeloAdversario(visao, spec),
+      );
+      expect(av.features.containsKey(featureMemoriaDescarteParceiro), isFalse,
+          reason: 'o prêmio jamais alcança um curinga');
     });
 
     test('CAL-11 o prêmio não leva o bot a alimentar jogo público adversário',

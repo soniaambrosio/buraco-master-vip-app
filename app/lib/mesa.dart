@@ -214,7 +214,13 @@ class Jogo {
   /// legalidade continua sendo decidida pela autoridade canônica. Existe para o
   /// relatório de NÃO-VACUIDADE — desligar uma regra por vez e ver o teste
   /// correspondente cair.
-  ConfiguracaoBot configuracaoBot = ConfiguracaoBot.v1;
+  /// Configuração da camada estratégica. PADRÃO: V2 — a memória pública de
+  /// descartes do parceiro (OS 3), aprovada pelos gates desta OS.
+  ///
+  /// A V1 continua existindo e acessível (`ConfiguracaoBot.v1`) para
+  /// regressão, comparação e rollback: trocar este campo devolve o robô
+  /// aprovado na OS de Inteligência do Bot V1, sem recompilar nada.
+  ConfiguracaoBot configuracaoBot = ConfiguracaoBot.v2;
 
   /// OS BOT-IA V1 — rastro AUDITÁVEL da última decisão estratégica: candidatos
   /// considerados, features, score e o reasonCode que venceu (§8).
