@@ -339,7 +339,7 @@ clone e morre junto com ele quando a ação é recusada.
 
 ```
 base  (f41eea0): 118 issues, 3 errors
-final (a91dada): 118 issues, 3 errors
+final (a91dada): 118 issues, 3 errors   (o commit seguinte é só documentação)
 delta introduzido pela OS: 0
 ```
 
@@ -373,8 +373,8 @@ visão em que já era público.
 | ---- | ----- |
 | branch | `claude/proveniencia-descartes-v1-818916` |
 | base | `f41eea0` (HEAD PASS remoto da OS 1) |
-| HEAD final | `a91dada989d6f15d2a83cf44601fbaf38ace500a` |
-| local == remoto | **SIM** (ver §14) |
+| HEAD final | `22aa33c4e8455dcb3e401164e8b6d5272f26d202` (este relatório) |
+| local == remoto | **SIM** — `git ls-remote origin refs/heads/claude/proveniencia-descartes-v1-818916` responde `22aa33c` |
 | árvore | limpa |
 | merges | **0** (`git log --merges f41eea0..HEAD` = vazio) |
 | deploy | **nenhum** |
@@ -394,6 +394,7 @@ nome diferente. Registrado para não confundir quem procurar pelo nome sugerido.
 | `c2a3767` | feat: proveniência atravessa transporte, serialização e sombra |
 | `a2cdfe2` | feat: o modelo do parceiro passa a receber a autoria real |
 | `a91dada` | test: bateria da OS §19 — 15 provas e as regressões |
+| `22aa33c` | docs: este relatório |
 
 ### Arquivos
 
