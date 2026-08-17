@@ -43,6 +43,29 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 # Evidência (logs + exit codes + NÃO EXECUTADOs) é publicada na branch
 # `ci-evidencias`, auditável mesmo sem acesso à API do GitHub.
 #
+# A OS DE BLINDAGEM DO CI (composição Perfil + Mesa Online + Ranking Real V2)
+# corrigiu três defeitos deste arquivo, e nenhum gate foi removido ou afrouxado:
+#
+#   CI-01  Doze suítes Flutter verdes localmente não tinham gate: as seis de
+#          Mesa Online/Casca V2, as cinco de Ranking/Perfil Publicável e a da
+#          composição. Agora cada arquivo tem log e exit code próprios, e
+#          arquivo ausente vira `nao_<gate>`, que REPROVA.
+#   CI-02  `rankingfn`, `rankingint`, `identint` e `auditident` constavam da
+#          evidência, rodavam de verdade, e o agregador final não os percorria:
+#          podiam falhar com o portão verde. A causa era haver DUAS listas
+#          escritas à mão neste YAML — 23 gates na evidência, 19 no portão.
+#   CI-03  "NÃO EXECUTADO" contava como sucesso para gate obrigatório, e um
+#          exit code vazio ou ilegível também.
+#
+# A correção tirou a relação e a decisão de dentro do YAML:
+#   scripts/ci/gates_os_integracao.txt  — fonte ÚNICA dos gates obrigatórios,
+#                                          lida pela evidência E pelo portão.
+#   scripts/ci/portao_os_integracao.sh  — o agregador, que falha fechado.
+#   scripts/ci/teste_portao_os_integracao.sh — matriz do próprio agregador,
+#                                          registrada como o gate `portaoci`.
+# É PROIBIDO reintroduzir uma lista de gates neste arquivo: o caso I5 do teste
+# do portão reprova exatamente isso.
+#
 # NÃO gera APK, NÃO faz deploy, NÃO roda em main/master/consolidacao.
 
 on:
@@ -60,6 +83,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: "0 — teste do PRÓPRIO portão (agregador + fonte única)"
+        run: |
+          set +e
+          # O agregador era a única peça do CI que ninguém verificava — e era
+          # justamente onde moravam CI-02 e CI-03. Roda primeiro, antes de
+          # Flutter e de emulador: um portão quebrado tem que aparecer como
+          # portão quebrado, e não como "os testes passaram".
+          if [ ! -f scripts/ci/teste_portao_os_integracao.sh ]; then
+            echo "scripts/ci/teste_portao_os_integracao.sh ausente" > nao_portaoci; exit 0
+          fi
+          bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
+          echo ${PIPESTATUS[0]} > exit_portaoci
 
       - name: Setup Java (exigido pelo emulador do Firestore)
         uses: actions/setup-java@v4
@@ -136,6 +172,28 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS Mesa Online / Casca V2 (CI-01). Estas seis suítes eram verdes só
+          # na máquina de quem escreve: provam a porta ÚNICA de comandos, o
+          # adaptador da visão versionada, a caracterização da ligação
+          # motor↔casca e a homologação da própria Casca V2. Sem gate próprio,
+          # qualquer uma podia quebrar sem o CI dizer uma palavra.
+          roda cascavisao   test/casca/adaptador_visao_online_test.dart
+          roda cascamesaaud test/casca/auditoria_mesa_online_test.dart
+          roda cascav2      test/casca/homologacao_casca_v2_test.dart
+          roda cascaligacao test/casca/ligacao_mesa_caracterizacao_test.dart
+          roda cascamesa    test/casca/mesa_online_test.dart
+          roda cascaporta   test/casca/porta_de_comandos_online_test.dart
+          # OS Leitor Real de Ranking (barreira temporal V2) e Perfil
+          # Publicável (CI-01). `rkestado` é o que impede a volta do fallback
+          # Bronze / nível 1 / colocação #0 e #1; `rkbarreira` é a barreira
+          # temporal, que sem gate é a primeira coisa a apodrecer.
+          roda rkbarreira   test/ranking/barreira_temporal_ranking_test.dart
+          roda rkestado     test/ranking/estado_canonico_ranking_test.dart
+          roda rkperfil     test/ranking/homologacao_perfil_publicavel_test.dart
+          roda rkleitor     test/ranking/leitor_ranking_real_test.dart
+          roda rkregressao  test/ranking/regressao_leitor_ranking_test.dart
+          # A união dos três arquivos da interseção da composição.
+          roda composicao   test/composicao/composicao_perfil_ranking_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -303,7 +361,23 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          FONTE=scripts/ci/gates_os_integracao.txt
+          # A MESMA fonte que o agregador final lê. Era aqui que morava CI-02:
+          # esta lista estava escrita à mão no YAML e tinha quatro gates a mais
+          # do que a do portão, então `rankingfn`, `rankingint`, `identint` e
+          # `auditident` apareciam na evidência, podiam falhar, e o portão
+          # continuava verde. Copiar a relação para cá de novo é proibido.
+          if [ -f "$FONTE" ]; then
+            GATES="$(sed -e 's/\r$//' "$FONTE" \
+                     | awk '{ gsub(/^[ \t]+|[ \t]+$/, "") } NF && substr($0,1,1) != "#" { print }')"
+          else
+            GATES=""
+            echo "FONTE UNICA DE GATES AUSENTE: $FONTE" >&2
+          fi
+          # O veredito impresso na evidência é o do próprio agregador, executado
+          # aqui — e não uma segunda leitura que poderia discordar dele.
+          bash scripts/ci/portao_os_integracao.sh "$FONTE" . > portao.txt 2>&1
+          echo $? > portao_exit
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -311,18 +385,30 @@ jobs:
             echo "- commit: \`${SHA}\`"
             echo "- data UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo
+            echo "## Veredito do agregador (\`scripts/ci/portao_os_integracao.sh\`)"
+            echo
+            echo "Portão final: exit \`$(cat portao_exit 2>/dev/null || echo '?')\` — \
+NÃO EXECUTADO reprova, exit vazio ou não numérico reprova."
+            echo
+            echo '```'; cat portao.txt 2>/dev/null; echo '```'
+            echo
             echo "## Resultado por gate"
+            echo
+            echo "Gates obrigatórios lidos de \`$FONTE\` — a mesma fonte do agregador."
             echo
             echo "| gate | status | exit |"
             echo "|---|---|---|"
             for k in $GATES; do
-              if [ -f "exit_$k" ]; then
-                v=$(cat "exit_$k")
-                [ "$v" = "0" ] && echo "| $k | EXECUTADO | $v |" || echo "| $k | **FALHOU** | $v |"
-              elif [ -f "nao_$k" ]; then
-                echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+              if [ -f "nao_$k" ]; then
+                echo "| $k | **NÃO EXECUTADO (reprova)** | $(tr '\r\n' '  ' < "nao_$k") |"
+              elif [ -f "exit_$k" ]; then
+                v=$(tr -d ' \t\r\n' < "exit_$k")
+                if [ "$v" = "0" ]; then echo "| $k | EXECUTADO | $v |"
+                elif [ -z "$v" ]; then echo "| $k | **EXIT VAZIO (reprova)** | — |"
+                else echo "| $k | **FALHOU** | $v |"
+                fi
               else
-                echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+                echo "| $k | **NÃO EXECUTADO (reprova)** | passo não chegou a rodar |"
               fi
             done
             if [ -f info_colevid ]; then
@@ -350,19 +436,13 @@ jobs:
           git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
           git push origin ci-evidencias
 
-      - name: Portão verde/vermelho (só falha em gate que REALMENTE rodou e falhou)
+      - name: Portão verde/vermelho (fonte única; NÃO EXECUTADO reprova)
         if: always()
         run: |
-          fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud billing torneiosfn socialdom socialfn socialemu regras; do
-            if [ -f "exit_$k" ]; then
-              v=$(cat "exit_$k"); echo "gate $k = $v"
-              [ "$v" = "0" ] || fail=1
-            elif [ -f "nao_$k" ]; then
-              echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
-            else
-              echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
-            fi
-          done
-          echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
-          exit $fail
+          # Sem lista embutida e sem lógica embutida: os dois defeitos desta OS
+          # nasceram de a decisão morar dentro do YAML, onde não se testa.
+          # A relação está em scripts/ci/gates_os_integracao.txt e a decisão em
+          # scripts/ci/portao_os_integracao.sh, que tem matriz própria no gate
+          # `portaoci`. Se o agregador sumir, `bash` sai não-zero e o portão
+          # fica vermelho — falha fechada, que é o comportamento desejado.
+          bash scripts/ci/portao_os_integracao.sh scripts/ci/gates_os_integracao.txt .
