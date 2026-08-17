@@ -360,6 +360,11 @@ jobs:
       - name: Publicar evidência na branch ci-evidencias
         if: always()
         run: |
+          # ESTE PASSO RODA SOB `bash -e`. O agregador abaixo retorna 1 quando
+          # ha gate vermelho — que e o caso normal, nao um erro deste passo. Sem
+          # `set +e` o step aborta na primeira chamada e a evidencia NAO chega a
+          # ser escrita nem publicada, que foi o que aconteceu no run #13.
+          set +e
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
           FONTE=scripts/ci/gates_os_integracao.txt
