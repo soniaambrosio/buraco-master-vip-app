@@ -53,6 +53,8 @@ import 'package:buraco_master_vip/bot/gerador_candidatos.dart';
 import 'package:buraco_master_vip/bot/pesos.dart';
 import 'package:buraco_master_vip/bot/razoes.dart';
 import 'package:buraco_master_vip/bot/visao_informacao.dart';
+// OS PROVENIÊNCIA DE DESCARTES V1 — o consumidor da autoria pública.
+import 'package:buraco_master_vip/bot/modelo_parceiro.dart';
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -6500,6 +6502,70 @@ void main() {
       for (final a in oferecidas) {
         expect(acaoEhLegal(estado, 0, a, spec), isTrue);
       }
+    });
+  });
+
+  // =====================================================================
+  // OS 2 — PROVENIÊNCIA PÚBLICA CANÔNICA DE DESCARTES V1
+  //
+  // CONTRATO ATUAL (este bloco, no commit 1): a autoridade aplica descartes e
+  // empilha as cartas no lixo, mas NÃO registra quem descartou cada uma. A
+  // consequência é que `VisaoInformacao.descartesPublicos` — o campo que a OS
+  // de Bot IA V1 deixou preparado — chega SEMPRE vazio, e o modelo do parceiro
+  // não tem como responder "meu parceiro descartou esta carta".
+  //
+  // Estes testes documentam o buraco ANTES da correção. O commit seguinte
+  // (autoridade + modelo) os reescreve para o comportamento novo, preservando
+  // a forma histórica onde ela continua verdadeira (lixo sem proveniência).
+  // =====================================================================
+  group('OS PROVENIÊNCIA DE DESCARTES V1 — contrato ATUAL (pré-correção)', () {
+    test('PROV-00 descarte real acontece e o lixo cresce, mas ninguém registra '
+        'a autoria', () {
+      final j = novo('ABERTO');
+      montar(j,
+          mao0: [('7', 'copas'), ('8', 'copas'), ('9', 'copas')],
+          mao1: [('K', 'espadas'), ('Q', 'espadas')],
+          mao2: [('4', 'ouros'), ('5', 'ouros')],
+          mao3: [('J', 'paus'), ('10', 'paus')],
+          vez: 0,
+          jaComprou: true);
+      final alvo = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, alvo.id), isNull);
+
+      // O FATO público existe: a carta está no topo do lixo.
+      expect(j.lixo.last.id, alvo.id);
+
+      // A AUTORIA não existe em lugar nenhum da projeção canônica.
+      final estado = paraCanonico(j).canonico;
+      final visao = VisaoInformacao.doEstado(estado, 2); // parceiro do assento 0
+      expect(visao.lixoTopo!.id, alvo.id);
+      expect(visao.descartesPublicos, isEmpty,
+          reason: 'hoje a projeção não carrega autoria de descarte');
+    });
+
+    test('PROV-01 sem autoria, o modelo do parceiro não consegue afirmar nada',
+        () {
+      final j = novo('ABERTO');
+      montar(j,
+          mao0: [('7', 'copas'), ('8', 'copas'), ('9', 'copas')],
+          mao1: [('K', 'espadas'), ('Q', 'espadas')],
+          mao2: [('4', 'ouros'), ('5', 'ouros')],
+          mao3: [('J', 'paus'), ('10', 'paus')],
+          vez: 0,
+          jaComprou: true);
+      final alvo = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, alvo.id), isNull);
+
+      final estado = paraCanonico(j).canonico;
+      final spec = RuleSpec.canonica(estado.modalidade,
+          metaPontos: estado.metaPontos);
+      // Assento 2 pergunta pelo parceiro (assento 0), que ACABOU de descartar.
+      final modelo =
+          ModeloParceiro.observar(VisaoInformacao.doEstado(estado, 2), spec);
+      final descartada =
+          CartaSnapshot(alvo.id, alvo.naipe, alvo.valor, alvo.ehCoringa);
+      expect(modelo.parceiroDescartou(descartada), isFalse,
+          reason: 'o fato é verdadeiro na mesa, mas a autoridade não o publica');
     });
   });
 }
