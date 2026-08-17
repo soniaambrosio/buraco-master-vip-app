@@ -64,6 +64,15 @@ class Razao {
   /// Descartou preservando carta útil aos jogos públicos da dupla.
   static const descartePreservaParceiro = 'DESCARTE_PRESERVA_PARCEIRO';
 
+  /// OS 3 — descartou uma carta que o PARCEIRO já dispensou publicamente nesta
+  /// mão, e essa evidência foi DECISIVA: sem ela, outra alternativa venceria.
+  ///
+  /// A condição "decisiva" é verificada, não presumida: o executor refaz o
+  /// argmax descontando a contribuição da memória e compara os vencedores. Uma
+  /// razão emitida sempre que o sinal existisse seria ruído — diria "isto pesou"
+  /// nos casos em que o sinal não mudou nada.
+  static const descarteMemoriaParceiro = 'DESCARTE_MEMORIA_PARCEIRO';
+
   // ---------- IMPASSES (nunca silenciosos) ----------
   /// TODAS as cartas legais de descarte são curinga. A política desta OS proíbe
   /// descartar 2/Joker; o estado é excepcional e vai para decisão da Sônia.

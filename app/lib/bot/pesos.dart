@@ -53,6 +53,17 @@ class RegrasEstrategicas {
   /// §6 — não bater/fechar prematuramente prejudicando o parceiro sem ameaça.
   final bool prudenciaBatida;
 
+  /// OS 3 — usar a MEMÓRIA PÚBLICA de descartes do parceiro como evidência
+  /// ao escolher o descarte.
+  ///
+  /// Apesar de morar entre as "restrições duras", esta flag NÃO filtra nada:
+  /// ela liga um TERMO da função de utilidade. Está aqui, e não solta em outro
+  /// lugar, porque é o interruptor exigido pela OS — desligá-la tem de devolver
+  /// a decisão da V1 bit a bit, e é isso que os testes provam.
+  ///
+  /// DESLIGADA por padrão: a `RegrasEstrategicas()` sem argumentos é a V1.
+  final bool usaMemoriaDescarteParceiro;
+
   const RegrasEstrategicas({
     this.proibeDescartarCuringa = true,
     this.protegeCanastraLimpa = true,
@@ -62,6 +73,7 @@ class RegrasEstrategicas {
     this.evitaAlimentarAdversario = true,
     this.planoIncluiDescarte = true,
     this.prudenciaBatida = true,
+    this.usaMemoriaDescarteParceiro = false,
   });
 
   RegrasEstrategicas copyWith({
@@ -73,6 +85,7 @@ class RegrasEstrategicas {
     bool? evitaAlimentarAdversario,
     bool? planoIncluiDescarte,
     bool? prudenciaBatida,
+    bool? usaMemoriaDescarteParceiro,
   }) =>
       RegrasEstrategicas(
         proibeDescartarCuringa:
@@ -86,6 +99,8 @@ class RegrasEstrategicas {
             evitaAlimentarAdversario ?? this.evitaAlimentarAdversario,
         planoIncluiDescarte: planoIncluiDescarte ?? this.planoIncluiDescarte,
         prudenciaBatida: prudenciaBatida ?? this.prudenciaBatida,
+        usaMemoriaDescarteParceiro:
+            usaMemoriaDescarteParceiro ?? this.usaMemoriaDescarteParceiro,
       );
 }
 
@@ -188,6 +203,25 @@ class PesosHeuristicos {
   /// Descartar carta ADJACENTE a jogo público da dupla (extensão natural).
   final double descarteAdjacenteAoParceiro;
 
+  /// OS 3 — PRÊMIO por descartar carta que o PARCEIRO já dispensou publicamente
+  /// nesta mão (mesmo valor e naipe). É evidência negativa de interesse, não
+  /// certeza sobre a mão dele.
+  ///
+  /// TETO DE CALIBRAÇÃO, e a razão de o número ser pequeno: ele precisa perder
+  /// para TODO termo que a §6 põe acima dele. O menor passo não-nulo de
+  /// qualquer termo concorrente é `riscoDescarte * 1 = 6` (uma nota de risco
+  /// mínima — que qualquer carta de 10 pontos já tem). Um prêmio ≥ 6 seria
+  /// capaz de virar uma decisão em que a alternativa é ESTRITAMENTE mais
+  /// segura, e isso a OS proíbe. Por isso o valor fica abaixo de 6, e o
+  /// efeito é o de um desempate entre alternativas estruturalmente próximas.
+  ///
+  /// Para comparação, os vizinhos diretos deste termo:
+  ///   descarteUtilAoParceiro      34   (carta estende jogo público da dupla)
+  ///   descarteAdjacenteAoParceiro 12   (carta encosta em jogo público)
+  ///   riscoDescarte * nota        6+   (menor passo de risco)
+  ///   danoDescarte * força        2,2 por ponto de estrutura
+  final double memoriaDescarteParceiro;
+
   /// Plano que baixa e deixa o turno SEM descarte legal (beco sem saída do
   /// motor). Pesado de propósito: só compensa quando o ganho é grande demais
   /// para recusar — na prática, a abertura sob mínimo de vulnerabilidade.
@@ -226,11 +260,79 @@ class PesosHeuristicos {
     this.riscoDescarte = 6.0,
     this.descarteUtilAoParceiro = 34,
     this.descarteAdjacenteAoParceiro = 12,
+    this.memoriaDescarteParceiro = 0,
     this.turnoSemSaida = 80,
     this.compraMonteBase = 6,
     this.compraLixoVolume = 3.0,
     this.compraLixoLastro = 0.15,
   });
+
+  /// Cópia com pesos trocados. Existe para a comparação V1 × V2 e para as
+  /// provas de reprodução (peso zero tem de devolver a V1 bit a bit) — nunca
+  /// para espalhar número de estratégia fora deste arquivo.
+  PesosHeuristicos copyWith({
+    String? versao,
+    double? abertura,
+    double? aberturaVulneravel,
+    double? morto,
+    double? batida,
+    double? batidaPrematura,
+    double? valorMesa,
+    double? potencialMao,
+    double? ligacoesMao,
+    double? exposicaoSemGanho,
+    double? topoUtilAoJogo,
+    double? deadwood,
+    double? maoResidual,
+    int? limiarMaoConfortavel,
+    int? folgaDeCompra,
+    double? excedenteMao,
+    double? custoCuringa,
+    double? custoCuringaGratuito,
+    double? danoDescarte,
+    double? riscoDescarte,
+    double? descarteUtilAoParceiro,
+    double? descarteAdjacenteAoParceiro,
+    double? memoriaDescarteParceiro,
+    double? turnoSemSaida,
+    double? compraMonteBase,
+    double? compraLixoVolume,
+    double? compraLixoLastro,
+  }) =>
+      PesosHeuristicos(
+        versao: versao ?? this.versao,
+        abertura: abertura ?? this.abertura,
+        aberturaVulneravel: aberturaVulneravel ?? this.aberturaVulneravel,
+        morto: morto ?? this.morto,
+        batida: batida ?? this.batida,
+        batidaPrematura: batidaPrematura ?? this.batidaPrematura,
+        valorMesa: valorMesa ?? this.valorMesa,
+        potencialMao: potencialMao ?? this.potencialMao,
+        ligacoesMao: ligacoesMao ?? this.ligacoesMao,
+        exposicaoSemGanho: exposicaoSemGanho ?? this.exposicaoSemGanho,
+        topoUtilAoJogo: topoUtilAoJogo ?? this.topoUtilAoJogo,
+        deadwood: deadwood ?? this.deadwood,
+        maoResidual: maoResidual ?? this.maoResidual,
+        limiarMaoConfortavel:
+            limiarMaoConfortavel ?? this.limiarMaoConfortavel,
+        folgaDeCompra: folgaDeCompra ?? this.folgaDeCompra,
+        excedenteMao: excedenteMao ?? this.excedenteMao,
+        custoCuringa: custoCuringa ?? this.custoCuringa,
+        custoCuringaGratuito:
+            custoCuringaGratuito ?? this.custoCuringaGratuito,
+        danoDescarte: danoDescarte ?? this.danoDescarte,
+        riscoDescarte: riscoDescarte ?? this.riscoDescarte,
+        descarteUtilAoParceiro:
+            descarteUtilAoParceiro ?? this.descarteUtilAoParceiro,
+        descarteAdjacenteAoParceiro:
+            descarteAdjacenteAoParceiro ?? this.descarteAdjacenteAoParceiro,
+        memoriaDescarteParceiro:
+            memoriaDescarteParceiro ?? this.memoriaDescarteParceiro,
+        turnoSemSaida: turnoSemSaida ?? this.turnoSemSaida,
+        compraMonteBase: compraMonteBase ?? this.compraMonteBase,
+        compraLixoVolume: compraLixoVolume ?? this.compraLixoVolume,
+        compraLixoLastro: compraLixoLastro ?? this.compraLixoLastro,
+      );
 }
 
 /// Configuração completa da camada estratégica: pesos + restrições + limites de
@@ -277,6 +379,40 @@ class ConfiguracaoBot {
         maxDescartesPorBaixada: maxDescartesPorBaixada,
       );
 
-  /// Configuração aprovada desta OS.
+  /// Cópia com PESOS trocados (mesmas regras, mesma semente, mesmo orçamento).
+  ConfiguracaoBot comPesos(PesosHeuristicos ps) => ConfiguracaoBot(
+        pesos: ps,
+        regras: regras,
+        seed: seed,
+        orcamentoBusca: orcamentoBusca,
+        maxBaixadasAvaliadas: maxBaixadasAvaliadas,
+        maxDescartesPorBaixada: maxDescartesPorBaixada,
+      );
+
+  /// Configuração aprovada na OS de Inteligência do Bot V1.
+  ///
+  /// PRESERVADA INTACTA. Ela é a linha de base de toda comparação e o caminho
+  /// de rollback: nenhum peso e nenhuma regra dela mudaram nesta OS — o que a
+  /// V2 acrescenta vem de campos NOVOS, com padrão neutro (flag desligada,
+  /// peso zero), de modo que `v1` continua produzindo a mesma decisão de antes.
   static const v1 = ConfiguracaoBot();
+
+  /// OS 3 — configuração com a MEMÓRIA PÚBLICA DE DESCARTES ligada.
+  ///
+  /// Difere da V1 em exatamente duas coisas: a flag
+  /// `usaMemoriaDescarteParceiro` e o peso `memoriaDescarteParceiro`. Todo o
+  /// resto — pesos, orçamento, largura de busca, semente e política de
+  /// desempate — é literalmente o mesmo, para que a comparação meça o SINAL e
+  /// não uma segunda mudança embutida.
+  ///
+  /// O valor 4 é o resultado da calibração registrada no relatório: abaixo do
+  /// teto de 6 imposto pela precedência (§6) e alto o bastante para virar
+  /// decisões entre alternativas estruturalmente próximas.
+  static const v2 = ConfiguracaoBot(
+    pesos: PesosHeuristicos(
+      versao: 'bmv-bot-heuristico-v2-descartes-publicos',
+      memoriaDescarteParceiro: 4,
+    ),
+    regras: RegrasEstrategicas(usaMemoriaDescarteParceiro: true),
+  );
 }
