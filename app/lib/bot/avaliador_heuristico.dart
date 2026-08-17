@@ -46,6 +46,13 @@ class Avaliacao {
 /// carta está lá, o que seria informação oculta.
 const double _valorEsperadoCartaDesconhecida = 8.0;
 
+/// OS 3 — nome da feature da memória pública de descartes do parceiro.
+///
+/// Constante, e não literal espalhado: o executor precisa dela para refazer o
+/// argmax sem o sinal (é assim que ele decide se a razão nova é devida), e os
+/// testes precisam dela para provar que a soma das features fecha no score.
+const String featureMemoriaDescarteParceiro = 'memoriaDescarteParceiro';
+
 class AvaliadorHeuristico {
   final RuleSpec spec;
   final ConfiguracaoBot cfg;
@@ -158,6 +165,32 @@ class AvaliadorHeuristico {
         } else if (parceiro.adjacenteAosJogosDaDupla(carta)) {
           f['descarteAdjacenteAoParceiro'] = -p.descarteAdjacenteAoParceiro;
         }
+      }
+      // OS 3 — MEMÓRIA PÚBLICA DE DESCARTES DO PARCEIRO.
+      //
+      // PONTO ÚNICO DE CONSUMO do sinal em toda a camada estratégica. O fato
+      // continua sendo do `ModeloParceiro`; aqui ele vira um TERMO da soma —
+      // nunca um filtro, nunca uma proibição, nunca uma obrigação.
+      //
+      // TRÊS GUARDAS, e cada uma existe por um motivo:
+      //
+      //  1) a flag da configuração — desligada, a V2 é a V1 bit a bit;
+      //  2) o curinga NUNCA recebe o prêmio. Com a política de descarte de
+      //     curinga ligada ele nem chega a ser candidato, mas a política é
+      //     desligável (é um ponto de desligamento declarado), e um prêmio que
+      //     empurrasse o Joker para o lixo nesse cenário seria exatamente o que
+      //     a §6 proíbe. A guarda é estrutural, não confia no filtro de cima;
+      //  3) o prêmio é ADITIVO e pequeno. Ele soma com `danoDescarte`,
+      //     `riscoDescarte` e `descarteUtilAoParceiro`, que continuam entrando
+      //     com sinal negativo — se a carta dispensada passou a servir à mesa
+      //     da dupla, ou é estruturalmente cara, ou é perigosa, a soma decide
+      //     contra ela. A situação ATUAL prevalece sobre o descarte histórico
+      //     porque os termos da situação atual são maiores, não porque haja um
+      //     `if` cancelando o histórico.
+      if (r.usaMemoriaDescarteParceiro &&
+          !ehCuringaEstrategico(carta) &&
+          parceiro.parceiroDescartou(carta)) {
+        f[featureMemoriaDescarteParceiro] = p.memoriaDescarteParceiro;
       }
     }
 

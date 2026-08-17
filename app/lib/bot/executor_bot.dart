@@ -390,8 +390,48 @@ class ExecutorBot {
         out.add(Razao.descartePreservaParceiro);
       }
       if (!out.contains(Razao.descarteSeguro)) out.add(Razao.descarteMenorDano);
+      // OS 3 — a memória pública do parceiro só vira razão quando foi DECISIVA.
+      if (_memoriaFoiDecisiva(v, avaliados)) {
+        out.add(Razao.descarteMemoriaParceiro);
+      }
     }
     return out;
+  }
+
+  /// O sinal da memória pública MUDOU o vencedor?
+  ///
+  /// Refaz o argmax descontando de cada alternativa a contribuição da feature
+  /// e compara o vencedor contrafactual com o real. Usa o MESMO desempate
+  /// (`_vence` com a assinatura do plano e a semente), senão a comparação
+  /// mediria a ordem de iteração em vez do sinal.
+  ///
+  /// Custo: uma passada linear sobre alternativas já avaliadas. Sai cedo quando
+  /// nenhuma alternativa recebeu contribuição — que é o caso comum.
+  bool _memoriaFoiDecisiva(
+    PlanoTurno vencedor,
+    Map<PlanoTurno, Avaliacao> avaliados,
+  ) {
+    var houveSinal = false;
+    for (final a in avaliados.values) {
+      if ((a.features[featureMemoriaDescarteParceiro] ?? 0) != 0) {
+        houveSinal = true;
+        break;
+      }
+    }
+    if (!houveSinal) return false;
+
+    PlanoTurno? semSinal;
+    var melhorScore = 0.0;
+    for (final e in avaliados.entries) {
+      final s = e.value.score -
+          (e.value.features[featureMemoriaDescarteParceiro] ?? 0);
+      if (semSinal == null ||
+          _vence(s, melhorScore, e.key.assinatura, semSinal.assinatura)) {
+        semSinal = e.key;
+        melhorScore = s;
+      }
+    }
+    return semSinal != vencedor;
   }
 
   /// IMPASSE DOCUMENTADO (§2). Só restam curingas descartáveis: a política

@@ -83,6 +83,28 @@ class ModeloParceiro {
   final Map<String, bool> _cacheUtil = {};
   final Map<String, bool> _cacheAdjacente = {};
 
+  /// ÍNDICE da memória pública do parceiro: as chaves `valor|naipe` que ele
+  /// dispensou nesta mão.
+  ///
+  /// Construído SOB DEMANDA e derivado exclusivamente de
+  /// `visao.descartesPublicos` — a mesma fonte, sem atalho para o estado do
+  /// motor e sem estado global. Nasce e morre com o `ModeloParceiro`, isto é,
+  /// com a decisão: nada atravessa turnos.
+  ///
+  /// Existe por custo: o avaliador consulta o sinal uma vez POR PLANO, e a
+  /// busca chega a centenas de planos num turno. A varredura linear do
+  /// histórico multiplicava planos × descartes; o índice a torna uma consulta
+  /// de conjunto, sem mudar nem a semântica nem o contrato público.
+  Set<String>? _indiceParceiro;
+
+  static String _chaveEstrategica(CartaSnapshot c) =>
+      '${c.valor}|${c.naipe ?? "jk"}';
+
+  Set<String> get _memoriaDoParceiro => _indiceParceiro ??= {
+        for (final d in visao.descartesPublicos)
+          if (d.assento == visao.parceiro) _chaveEstrategica(d.carta)
+      };
+
   /// A carta ESTENDE um jogo público da dupla? (utilidade imediata)
   bool utilAosJogosDaDupla(CartaSnapshot c) => _cacheUtil.putIfAbsent(c.id, () {
         for (final m in visao.meldsProprios) {
@@ -109,16 +131,8 @@ class ModeloParceiro {
   ///
   /// `false` significa "não há registro de que ele tenha descartado", nunca
   /// "ele não descartou" deduzido de outra coisa.
-  bool parceiroDescartou(CartaSnapshot c) {
-    for (final d in visao.descartesPublicos) {
-      if (d.assento == visao.parceiro &&
-          d.carta.valor == c.valor &&
-          d.carta.naipe == c.naipe) {
-        return true;
-      }
-    }
-    return false;
-  }
+  bool parceiroDescartou(CartaSnapshot c) =>
+      _memoriaDoParceiro.contains(_chaveEstrategica(c));
 
   /// Bater AGORA prejudica a dupla sem necessidade? (§6 — prudência de batida)
   /// Verdadeiro quando o parceiro está carregado E nenhum adversário ameaça
