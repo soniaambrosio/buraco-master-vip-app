@@ -27,7 +27,7 @@ origin/auditoria/regras-bmv (88d12ac)          C10 rev.3, publicado
           └─ 5 commits da OS 1 (motor) + 2 de relatório
               └─ f41eea0                       ← BASE ADOTADA (HEAD PASS da OS 1)
                   └─ 5 commits desta OS
-                      └─ a91dada               ← HEAD final
+                      └─ a91dada               ← último commit de código
 ```
 
 Verificado que `89fca38` é ancestral de `f41eea0` (`git merge-base --is-ancestor`
@@ -373,8 +373,9 @@ visão em que já era público.
 | ---- | ----- |
 | branch | `claude/proveniencia-descartes-v1-818916` |
 | base | `f41eea0` (HEAD PASS remoto da OS 1) |
-| HEAD final | `22aa33c4e8455dcb3e401164e8b6d5272f26d202` (este relatório) |
-| local == remoto | **SIM** — `git ls-remote origin refs/heads/claude/proveniencia-descartes-v1-818916` responde `22aa33c` |
+| último commit de CÓDIGO | `a91dada989d6f15d2a83cf44601fbaf38ace500a` |
+| HEAD final | o commit deste relatório — um documento não consegue citar o próprio SHA; a igualdade com o remoto é verificada **depois** do push, por `git ls-remote origin refs/heads/claude/proveniencia-descartes-v1-818916` |
+| local == remoto | **SIM**, verificado por consulta ao servidor a cada push (`22aa33c` e o fechamento seguinte) |
 | árvore | limpa |
 | merges | **0** (`git log --merges f41eea0..HEAD` = vazio) |
 | deploy | **nenhum** |
@@ -394,7 +395,8 @@ nome diferente. Registrado para não confundir quem procurar pelo nome sugerido.
 | `c2a3767` | feat: proveniência atravessa transporte, serialização e sombra |
 | `a2cdfe2` | feat: o modelo do parceiro passa a receber a autoria real |
 | `a91dada` | test: bateria da OS §19 — 15 provas e as regressões |
-| `22aa33c` | docs: este relatório |
+| `22aa33c` | docs: relatório da OS |
+| (fechamento) | docs: SHA publicado e prova local == remoto |
 
 ### Arquivos
 
