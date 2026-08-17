@@ -437,6 +437,10 @@ Map<String, String> _campos(EstadoJogo e0) {
     'rodadaEncerrada': '${n.rodadaEncerrada}',
     'duplaQueBateu': '${n.duplaQueBateu}',
     'fase': n.fase.name,
+    // PARIDADE DE PROVENIÊNCIA: o sombra compara também quem descartou o quê.
+    // Legado e canônico chamam a mesma `registrarDescarte`, então divergir aqui
+    // é sinal de que um dos dois caminhos deixou de registrar.
+    'descartes': n.descartes.map((d) => d.chave).join(','),
   };
 }
 
@@ -478,6 +482,13 @@ Map<String, Object?> serializarEstado(EstadoJogo e) => {
       'rodadaEncerrada': e.rodadaEncerrada,
       'duplaQueBateu': e.duplaQueBateu,
       'fase': e.fase.name,
+      // Proveniência dos descartes da mão (OS 2). Cada registro carrega SÓ o
+      // que é público: a carta, o assento autor e a ordem. Nenhuma mão, nenhum
+      // uid, nenhum timestamp.
+      'descartes': [
+        for (final d in e.descartes)
+          {'carta': _cartaJ(d.carta), 'assento': d.assento, 'ordem': d.ordem}
+      ],
     };
 
 FaseTurno _faseDeName(String s) {
@@ -569,4 +580,15 @@ EstadoJogo desserializarEstado(Map m) => EstadoJogo(
       rodadaEncerrada: m['rodadaEncerrada'] as bool,
       duplaQueBateu: m['duplaQueBateu'] as String?,
       fase: _faseDeName(m['fase'] as String),
+      // ADITIVO e COMPATÍVEL: snapshot gravado antes da OS 2 não tem a chave —
+      // desserializa como livro VAZIO (autor desconhecido), nunca como autoria
+      // reconstruída. Ver §16 (evolução compatível, sem virada de versão).
+      descartes: [
+        for (final d in (m['descartes'] as List? ?? const []))
+          DescarteRegistrado(
+            carta: _cartaD((d as Map)['carta'] as Map),
+            assento: d['assento'] as int,
+            ordem: d['ordem'] as int,
+          )
+      ],
     );

@@ -13,11 +13,12 @@ import 'motor/motor_config.dart';
 import 'motor/autoridade_canonica.dart';
 // C10 — costura da classificação/pontuação canônicas no consumidor real.
 import 'motor/pontuacao_costura.dart';
-import 'motor/projecao_estado.dart' show paraCanonico;
+import 'motor/projecao_estado.dart' show paraCanonico, snapshotDeCarta;
 // C10 (rev.1) — derivação combinatória FORA do isolate de UI.
 import 'motor/derivacao_fora_do_frame.dart';
 import 'rules/acoes.dart';
-import 'rules/estado.dart' show EstadoJogo;
+import 'rules/estado.dart'
+    show EstadoJogo, DescarteRegistrado, registrarDescarte;
 import 'rules/rule_spec.dart';
 // OS BOT-IA V1 — camada ESTRATÉGICA do robô. Ela observa, gera alternativas,
 // pontua e escolhe uma INTENÇÃO; quem valida e aplica continua sendo a
@@ -79,6 +80,14 @@ class Jogo {
   List<Carta> monte = [];
   List<List<Carta>> mortos = [];
   List<Carta> lixo = [];
+  // OS PROVENIÊNCIA DE DESCARTES V1 — livro PÚBLICO de quem descartou o quê
+  // nesta MÃO, em ordem temporal. É estado CANÔNICO (`EstadoJogo.descartes`),
+  // não envelope de runtime: atravessa a projeção nos dois sentidos e sobrevive
+  // ao round-trip da autoridade. Zerado a cada distribuição (§9), preservado na
+  // compra do lixo (§8: a carta sai da pilha, o fato de ter sido descartada
+  // não). Pode ter menos entradas que o lixo tem cartas — lixo montado por
+  // fixture não tem autoria, e sem autoria registrada o autor é DESCONHECIDO.
+  List<DescarteRegistrado> descartes = [];
   Map<String, bool> mortoPego = {'nos': false, 'eles': false};
   Map<String, List<List<Carta>>> jogosDupla = {'nos': [], 'eles': []};
   int vez = 0;
@@ -334,6 +343,10 @@ class Jogo {
     mortos = [_tirar(pool, cartasPorMorto), _tirar(pool, cartasPorMorto)];
     monte = pool;
     lixo = [];
+    // NOVA MÃO (§9): o livro de proveniência morre com o lixo. Descarte da mão
+    // anterior NUNCA é atribuído à mão corrente — as cartas voltaram ao baralho
+    // e a memória do que passou pelo lixo perdeu o sentido estratégico.
+    descartes = [];
     mortoPego = {'nos': false, 'eles': false};
     jogosDupla = {'nos': [], 'eles': []};
     // §3.2: sorteia quem começa na 1ª rodada; nas seguintes, rotaciona.
@@ -1357,6 +1370,10 @@ class Jogo {
     }
     final c = maos[assento].removeAt(idx);
     lixo.add(c);
+    // PROVENIÊNCIA no caminho LEGADO (só alcançável por rollback explícito).
+    // Usa a MESMA função de registro do canônico, para que os dois motores não
+    // possam divergir na autoria nem na ordem — é o que o modo sombra compara.
+    registrarDescarte(descartes, snapshotDeCarta(c), assento);
     if (maos[assento].isEmpty) {
       if (!mortoPego[dupla]! && mortos.isNotEmpty) {
         maos[assento] = mortos.removeAt(0);

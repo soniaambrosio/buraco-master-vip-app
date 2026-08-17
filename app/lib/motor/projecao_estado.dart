@@ -22,6 +22,12 @@ class ProjecaoBMV {
 
 // ---- conversões de carta (CANÔNICO) ----
 CartaSnapshot _cs(Carta c) => CartaSnapshot(c.id, c.naipe, c.valor, c.ehCoringa);
+
+/// PÚBLICA: `Carta` legada -> `CartaSnapshot` canônico. O livro de proveniência
+/// do `Jogo` guarda SNAPSHOTS (o registro de um descarte é imutável por
+/// natureza), e o caminho legado precisa da MESMA conversão que a projeção usa
+/// — duplicá-la criaria uma segunda tradução, com risco de divergir.
+CartaSnapshot snapshotDeCarta(Carta c) => _cs(c);
 Carta _carta(CartaSnapshot s) => Carta(s.id, s.naipe, s.valor, s.curinga);
 
 List<CartaSnapshot> _lcs(List<Carta> l) => [for (final c in l) _cs(c)];
@@ -120,6 +126,11 @@ ProjecaoBMV paraCanonico(Jogo j) {
     duplaQueBateu: j.duplaQueBateu,
     // ----- DERIVADO + transporte: preserva as TRÊS fases -----
     fase: _faseCanonicaDe(j.costuraFaseCanonica, j.jaComprou),
+    // ----- CANÔNICO (1:1): proveniência pública dos descartes da mão -----
+    // Round-trip EXATO, como as demais zonas. Não é derivado de nada: se o
+    // `Jogo` não tem registro (lixo de fixture, snapshot antigo), a projeção
+    // sai vazia em vez de inventar autoria.
+    descartes: [for (final d in j.descartes) d.copia()],
   );
 
   final envelope = EnvelopeRuntime(
@@ -170,6 +181,7 @@ void aplicarEmJogo(Jogo alvo, EstadoJogo e, EnvelopeRuntime env) {
   alvo.mortoPego = {...e.mortoPego};
   alvo.rodadaEncerrada = e.rodadaEncerrada;
   alvo.duplaQueBateu = e.duplaQueBateu;
+  alvo.descartes = [for (final d in e.descartes) d.copia()];
   // ----- DERIVADO: fase -> jaComprou (jogo|mortoPendente => comprou) -----
   alvo.jaComprou = e.fase != FaseTurno.compra;
   // ----- TRANSPORTE: carrega a fase canônica EXATA (as três) na costura -----
