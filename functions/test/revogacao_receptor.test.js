@@ -188,6 +188,38 @@ describe('REC/VERIFICACAO', () => {
     assert.strictEqual(recebidos[0][1], true);
   });
 
+  test('REC-06c: a recusa por revogação NÃO tem plano B', async () => {
+    // ESTE TESTE NASCEU DE UM DEFEITO INJETADO QUE ESCAPOU.
+    //
+    // A mutação era um `catch` que, ao ver o token recusado com a flag, tentava
+    // de novo SEM ela — a "correção" que alguém escreveria depois de ver
+    // encerramentos falhando em produção. Nem esta suíte nem a do emulador a
+    // pegavam: REC-06 continua vendo o `true` da PRIMEIRA chamada, e no emulador
+    // a segunda chamada também recusa, então o resultado final não muda. Em
+    // produção mudaria: lá a chamada sem a flag ACEITA o token revogado, e o
+    // corte imediato deixaria de existir sem nenhum teste vermelho.
+    //
+    // A prova, então, não é sobre o resultado: é sobre a CONTAGEM. Uma segunda
+    // verificação do mesmo token é, por si, o defeito.
+    const chamadas = [];
+    const auth = {
+      async verifyIdToken(token, checkRevoked) {
+        chamadas.push(checkRevoked);
+        if (checkRevoked === true) {
+          throw Object.assign(new Error('revogado'), { code: 'auth/id-token-revoked' });
+        }
+        // O que o Firebase de PRODUÇÃO faz sem a flag: aceita.
+        return { uid: UID, [CLAIM_MOTOR_DE_PARTIDAS]: true };
+      },
+    };
+
+    const r = await conferir({ cabecalho: bearer('tok'), verificar: verificadorComRevogacao(auth) });
+
+    assert.equal(r.ok, false, 'token revogado não pode autorizar');
+    assert.equal(r.motivo, RECUSA.TOKEN_RECUSADO);
+    assert.deepEqual(chamadas, [true], 'o token só pode ser verificado UMA vez, e com a flag');
+  });
+
   test('REC-06b: os claims saem do token VERIFICADO, e não de outro lugar', async () => {
     // O Admin SDK entrega os custom claims no mesmo nível de `sub`/`aud`/`iss`.
     const auth = {
