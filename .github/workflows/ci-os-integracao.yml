@@ -432,7 +432,15 @@ jobs:
           git config user.email "ci@bmv.local"
           git config user.name "CI BMV Evidencias"
           if git ls-remote --exit-code origin ci-evidencias >/dev/null 2>&1; then
-            git fetch --depth 1 origin ci-evidencias && git checkout ci-evidencias
+            # `-B ... FETCH_HEAD`, e nao `checkout ci-evidencias`: `git fetch`
+            # com refspec avulso popula o FETCH_HEAD e NAO cria a branch local,
+            # entao o checkout simples falhava com "pathspec did not match", o
+            # commit caia na `main` do clone temporario e o push morria em "src
+            # refspec does not match any". A branch `ci-evidencias` so tinha o
+            # `run-1.md`, do unico run que passou pelo caminho do orphan: toda
+            # evidencia posterior foi perdida em silencio, porque o step aborta
+            # sob `bash -e` antes de imprimir a causa.
+            git fetch --depth 1 origin ci-evidencias && git checkout -B ci-evidencias FETCH_HEAD
           else
             git checkout --orphan ci-evidencias && git rm -rf . >/dev/null 2>&1 || true
           fi
