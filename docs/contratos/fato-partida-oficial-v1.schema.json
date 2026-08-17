@@ -1,0 +1,477 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buracomastervip.com/contratos/fato-partida-oficial-v1.schema.json",
+  "title": "FatoPartidaOficialV1",
+  "x-versaoContrato": 1,
+  "x-autoridade": "Este envelope é a ÚNICA entrada autorizada do futuro escritor das estatísticas oficiais do Perfil. Ele não liga nada: nesta versão não existe produtor nem consumidor em produção. A implementação de referência, e a autoridade em caso de divergência, é functions-ranking/src/estatisticas/contrato.ts.",
+  "x-vocabulario": "A enumeração de modalidade é FECHADA e não aceita os vocabulários existentes como equivalentes silenciosos. O servidor Node fala publica|privada|simulada e o envelope atual carrega tipoPartida:'publica', que não distingue casual de ranqueada; o domínio Dart fala publica_casual|publica_ranqueada|privada|torneio|treinamento|contra_robos. Traduzir é trabalho do PRODUTOR, na próxima OS. Símbolo desconhecido é recusado.",
+  "x-invariantesNaoExpressaveis": [
+    "Os quatro assentos devem ser exatamente 0, 1, 2 e 3, sem repetição.",
+    "uid e publicPlayerId não podem se repetir entre os quatro participantes.",
+    "houveSubstituicaoPorBot deve ser igual a 'algum participante tem substituidoPorBot true'.",
+    "Estes três são conferidos por functions-ranking/src/estatisticas/contrato.ts e por functions-ranking/test/estatisticas.test.js, e não por este arquivo."
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "versaoContrato",
+    "matchId",
+    "eventoId",
+    "encerradaEm",
+    "modalidade",
+    "estadoTerminal",
+    "encerramentoAutoritativo",
+    "ambienteCompetitivo",
+    "empate",
+    "ladoVencedor",
+    "equipes",
+    "participantes",
+    "houveSubstituicaoPorBot",
+    "origem"
+  ],
+  "properties": {
+    "versaoContrato": {
+      "description": "Versão explícita do contrato. Qualquer outro valor é recusado, e não lido na melhor das hipóteses.",
+      "const": 1
+    },
+    "matchId": {
+      "description": "Identidade ESTÁVEL da partida. Reconexão não a muda.",
+      "$ref": "#/$defs/identificador"
+    },
+    "eventoId": {
+      "description": "Identidade da AFIRMAÇÃO. Duas entregas do mesmo desfecho têm matchId igual e eventoId diferente.",
+      "$ref": "#/$defs/identificador"
+    },
+    "encerradaEm": {
+      "description": "Instante autoritativo do encerramento, ISO 8601 em UTC com Z explícito.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,3})?Z$"
+    },
+    "modalidade": {
+      "description": "Natureza da mesa. Enumeração fechada. Somente publica_casual e publica_ranqueada produzem estatística oficial na V1.",
+      "enum": ["publica_casual", "publica_ranqueada", "privada", "treino", "simulada"]
+    },
+    "estadoTerminal": {
+      "description": "Estado terminal da partida. Somente concluida produz estatística na V1; abandonada fica de fora porque o registro não identifica QUEM abandonou.",
+      "enum": ["concluida", "cancelada", "abandonada"]
+    },
+    "encerramentoAutoritativo": {
+      "description": "A partida foi encerrada pela autoridade da partida? Desfecho observado, remontado ou inferido é false, e não produz estatística.",
+      "type": "boolean"
+    },
+    "ambienteCompetitivo": {
+      "description": "Redundante com propósito: tem de ser exatamente (modalidade === 'publica_ranqueada'). A redundância é uma trava contra o produtor que marque mesa casual como competitiva.",
+      "type": "boolean"
+    },
+    "empate": {
+      "description": "true exatamente quando ladoVencedor é null.",
+      "type": "boolean"
+    },
+    "ladoVencedor": {
+      "description": "O lado que venceu, ou null no empate.",
+      "type": ["string", "null"],
+      "enum": ["nos", "eles", null]
+    },
+    "equipes": {
+      "description": "O que cada dupla fez. Canastra é fato DA DUPLA: não há autoria individual em lugar nenhum do sistema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nos", "eles"],
+      "properties": {
+        "nos": { "$ref": "#/$defs/resultadoDaEquipe" },
+        "eles": { "$ref": "#/$defs/resultadoDaEquipe" }
+      }
+    },
+    "participantes": {
+      "description": "Os quatro assentos da mesa. Buraco em dupla senta 0, 1, 2 e 3.",
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/participante" }
+    },
+    "houveSubstituicaoPorBot": {
+      "description": "Houve substituição definitiva por robô em algum assento? Torna a partida inelegível para as estatísticas públicas desta versão.",
+      "type": "boolean"
+    },
+    "origem": { "$ref": "#/$defs/origem" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "modalidade": { "const": "publica_ranqueada" } }, "required": ["modalidade"] },
+      "then": { "properties": { "ambienteCompetitivo": { "const": true } } },
+      "else": { "properties": { "ambienteCompetitivo": { "const": false } } }
+    },
+    {
+      "if": { "properties": { "empate": { "const": true } }, "required": ["empate"] },
+      "then": { "properties": { "ladoVencedor": { "const": null } } },
+      "else": { "properties": { "ladoVencedor": { "enum": ["nos", "eles"] } } }
+    }
+  ],
+  "$defs": {
+    "identificador": {
+      "description": "Identificador estável, sem marca de demonstração, teste ou fixture. A barreira pelo nome é grosseira de propósito: o alvo são os demo-... e teste-... de fixture, e não um adversário — contra esse quem vale é o claim motorDePartidas.",
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "not": {
+        "pattern": "^([Dd][Ee][Mm][Oo]|[Tt][Ee][Ss][Tt]|[Mm][Oo][Cc][Kk]|[Ee][Xx][Ee][Mm][Pp][Ll][Oo]|[Ss][Aa][Mm][Pp][Ll][Ee]|[Ff][Ii][Xx][Tt][Uu][Rr][Ee]|[Ff][Aa][Kk][Ee])"
+      }
+    },
+    "resultadoDaEquipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pontos", "canastrasLimpas", "canastrasSujas"],
+      "properties": {
+        "pontos": {
+          "description": "Pontos da dupla. Inteiro, podendo ser negativo — o Buraco pune.",
+          "type": "integer"
+        },
+        "canastrasLimpas": { "type": "integer", "minimum": 0 },
+        "canastrasSujas": {
+          "description": "Guardada SEPARADA da limpa; o total é derivado. A distinção já existe no motor (app/lib/mesa.dart:380 e :509) mas para no Jogo: LadoDaMesa só propaga canastrasLimpas. Passar a emiti-la é trabalho do produtor.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "participante": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uid", "publicPlayerId", "equipe", "assento", "classe", "substituidoPorBot"],
+      "properties": {
+        "uid": {
+          "description": "Identidade INTERNA. Só atravessa a fronteira protegida do backend; nunca é publicada. O delta produzido pelo redutor não a carrega.",
+          "type": "string",
+          "minLength": 1
+        },
+        "publicPlayerId": {
+          "description": "Identidade PÚBLICA, no formato canônico emitido por functions-social: prefixo P e 12 símbolos do base32 de Crockford sem I, L, O e U.",
+          "type": "string",
+          "pattern": "^P[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{12}$"
+        },
+        "equipe": { "enum": ["nos", "eles"] },
+        "assento": {
+          "description": "0 a 3. A lei da mesa liga assento e equipe e não é parametrizável: pares são nos, ímpares são eles.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "classe": { "enum": ["humano", "robo"] },
+        "substituidoPorBot": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "assento": { "enum": [0, 2] } }, "required": ["assento"] },
+          "then": { "properties": { "equipe": { "const": "nos" } } },
+          "else": { "properties": { "equipe": { "const": "eles" } } }
+        }
+      ]
+    },
+    "origem": {
+      "description": "Quem tem autoridade para afirmar este fato. Espelha o claim exigido por registrarEncerramentoPartida: motorDePartidas ou admin. Cliente autenticado comum não está na lista.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["autoridade", "instancia"],
+      "properties": {
+        "autoridade": { "enum": ["motorDePartidas", "admin"] },
+        "instancia": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "examples": [
+    {
+      "versaoContrato": 1,
+      "matchId": "mtc-2026-08-17-0007-9f3ac21b",
+      "eventoId": "evt-9f3ac21b-encerramento-1",
+      "encerradaEm": "2026-08-17T21:04:11Z",
+      "modalidade": "publica_ranqueada",
+      "estadoTerminal": "concluida",
+      "encerramentoAutoritativo": true,
+      "ambienteCompetitivo": true,
+      "empate": false,
+      "ladoVencedor": "nos",
+      "equipes": {
+        "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+        "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+      },
+      "participantes": [
+        { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+        { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+        { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+        { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+      ],
+      "houveSubstituicaoPorBot": false,
+      "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+    },
+    {
+      "versaoContrato": 1,
+      "matchId": "mtc-2026-08-17-0008-4be71cd0",
+      "eventoId": "evt-4be71cd0-encerramento-1",
+      "encerradaEm": "2026-08-17T22:19:57.240Z",
+      "modalidade": "publica_casual",
+      "estadoTerminal": "concluida",
+      "encerramentoAutoritativo": true,
+      "ambienteCompetitivo": false,
+      "empate": true,
+      "ladoVencedor": null,
+      "equipes": {
+        "nos": { "pontos": 3000, "canastrasLimpas": 3, "canastrasSujas": 0 },
+        "eles": { "pontos": 3000, "canastrasLimpas": 2, "canastrasSujas": 1 }
+      },
+      "participantes": [
+        { "uid": "uid-firebase-aaa", "publicPlayerId": "PN4K8Q2V6XZ3B", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+        { "uid": "uid-firebase-bbb", "publicPlayerId": "PT7M5W9J2H4RQ", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+        { "uid": "uid-firebase-ccc", "publicPlayerId": "PK2V8N6B3ZX5M", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+        { "uid": "uid-firebase-ddd", "publicPlayerId": "PW9Q4T7J3M2NK", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+      ],
+      "houveSubstituicaoPorBot": false,
+      "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+    }
+  ],
+  "x-exemplosInvalidos": [
+    {
+      "motivo": "versão desconhecida",
+      "envelope": {
+        "versaoContrato": 2,
+        "matchId": "mtc-2026-08-17-0009-1122aabb",
+        "eventoId": "evt-1122aabb-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_ranqueada",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": true,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "campo inesperado no envelope — aqui o identificador do aparelho, que é a chave do cofre local de contas.js",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0010-33ccddee",
+        "eventoId": "evt-33ccddee-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_ranqueada",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": true,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "deviceId": "aparelho-9f21",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "modalidade do vocabulário do servidor Node — 'publica' não é equivalente silencioso de 'publica_casual'",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0011-55ff6677",
+        "eventoId": "evt-55ff6677-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": false,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "identificador de demonstração",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "demo-partida-0001",
+        "eventoId": "evt-88aa99bb-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_casual",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": false,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "lei da mesa violada — assento 1 declarado na equipe nos",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0012-77bb8899",
+        "eventoId": "evt-77bb8899-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_casual",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": false,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "nos", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "mesa casual marcada como ambiente competitivo",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0013-99cc0011",
+        "eventoId": "evt-99cc0011-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_casual",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": true,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "empate declarado com lado vencedor",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0014-22dd3344",
+        "eventoId": "evt-22dd3344-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_casual",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": false,
+        "empate": true,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3000, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 3000, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "mesa com três assentos",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0015-44ee5566",
+        "eventoId": "evt-44ee5566-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_casual",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": false,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "motorDePartidas", "instancia": "railway-motor-01" }
+      }
+    },
+    {
+      "motivo": "origem sem autoridade reconhecida — cliente autenticado comum não afirma encerramento",
+      "envelope": {
+        "versaoContrato": 1,
+        "matchId": "mtc-2026-08-17-0016-66ff7788",
+        "eventoId": "evt-66ff7788-encerramento-1",
+        "encerradaEm": "2026-08-17T21:04:11Z",
+        "modalidade": "publica_casual",
+        "estadoTerminal": "concluida",
+        "encerramentoAutoritativo": true,
+        "ambienteCompetitivo": false,
+        "empate": false,
+        "ladoVencedor": "nos",
+        "equipes": {
+          "nos": { "pontos": 3010, "canastrasLimpas": 2, "canastrasSujas": 1 },
+          "eles": { "pontos": 2140, "canastrasLimpas": 1, "canastrasSujas": 2 }
+        },
+        "participantes": [
+          { "uid": "uid-firebase-aaa", "publicPlayerId": "PQ7R4M2N8K3VW", "equipe": "nos", "assento": 0, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-bbb", "publicPlayerId": "P3T9WXZ2H5JQB", "equipe": "eles", "assento": 1, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ccc", "publicPlayerId": "PB6N2K8M4RTVX", "equipe": "nos", "assento": 2, "classe": "humano", "substituidoPorBot": false },
+          { "uid": "uid-firebase-ddd", "publicPlayerId": "PZ5J7Q3W9NHKM", "equipe": "eles", "assento": 3, "classe": "humano", "substituidoPorBot": false }
+        ],
+        "houveSubstituicaoPorBot": false,
+        "origem": { "autoridade": "cliente", "instancia": "app-android" }
+      }
+    }
+  ]
+}
