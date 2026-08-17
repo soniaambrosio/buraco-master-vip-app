@@ -146,6 +146,23 @@ else
   nok "I6 — o YAML não referencia a fonte única e/ou o agregador"
 fi
 
+# O YAML tem que PARSEAR. Um workflow invalido nao roda gate nenhum — e o
+# GitHub ainda cria um run vermelho de ZERO jobs, que se parece com falha de
+# teste sem ser. Foi assim que esta OS perdeu dois runs: uma continuacao com
+# barra invertida deixou uma linha na coluna 0, e uma linha na coluna 0 encerra
+# o bloco escalar do `run:` e invalida o arquivo inteiro.
+#
+# Checagem sem rede e sem dependencia: fora as chaves de topo e os comentarios,
+# nenhuma linha do workflow pode comecar na coluna 0.
+intrusas="$(grep -nE '^[^ #]' "$YML" \
+  | grep -vE '^[0-9]+:(name|on|permissions|jobs|env|defaults|concurrency|run-name):' || true)"
+if [ -z "$intrusas" ]; then
+  ok "I7 — nenhuma linha na coluna 0 quebra um bloco do YAML"
+else
+  nok "I7 — linha na coluna 0 invalida o YAML (encerra o bloco de \`run:\`):"
+  printf '%s\n' "$intrusas" | sed 's/^/        | /'
+fi
+
 printf '\n== matriz do agregador ==\n'
 
 # 1 — todos os gates com exit 0 -> verde.

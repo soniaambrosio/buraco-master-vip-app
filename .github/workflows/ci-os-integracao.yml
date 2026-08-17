@@ -388,8 +388,7 @@ jobs:
             echo
             echo "## Veredito do agregador (\`scripts/ci/portao_os_integracao.sh\`)"
             echo
-            echo "Portão final: exit \`$(cat portao_exit 2>/dev/null || echo '?')\` — \
-NÃO EXECUTADO reprova, exit vazio ou não numérico reprova."
+            echo "Portão final: exit \`$(cat portao_exit 2>/dev/null || echo '?')\` — NÃO EXECUTADO reprova, exit vazio ou não numérico reprova."
             echo
             echo '```'; cat portao.txt 2>/dev/null; echo '```'
             echo
