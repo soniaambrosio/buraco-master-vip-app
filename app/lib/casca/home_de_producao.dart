@@ -34,6 +34,7 @@ import 'package:flutter/material.dart';
 // um `MesaVM` pronto e não sabe jogar nada.
 import '../mesa.dart' show MesaScreen;
 import '../pages/perfil_page.dart';
+import '../ranking/escopo_ranking.dart';
 import '../ranking/estado_ranking.dart';
 import '../screens/como_jogar_screen.dart';
 import '../screens/inicio_screen.dart';
@@ -49,9 +50,13 @@ class HomeDeProducao extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final identidade = EscopoSessao.identidadeDe(context);
+    // Lido do escopo, e não concluído aqui. Fora da casca não há autoridade e o
+    // valor é `rankingDaCascaPublicavel` — a Home continua omitindo a linha,
+    // como sempre fez.
+    final ranking = EscopoRanking.meuEstadoDe(context);
 
     return InicioScreen(
-      vm: _vmDaSessao(identidade),
+      vm: _vmDaSessao(identidade, ranking),
       // A fase da identidade MANDA na tela, do mesmo jeito que no Ranking:
       // enquanto ela carrega, a Home mostra o esqueleto; se falhou, mostra erro
       // com retry. O que ela não faz em nenhum dos dois é seguir em frente com
@@ -86,7 +91,7 @@ class HomeDeProducao extends StatelessWidget {
   // O VM
   // ---------------------------------------------------------------------------
 
-  InicioVM _vmDaSessao(EstadoIdentidadeSessao estado) {
+  InicioVM _vmDaSessao(EstadoIdentidadeSessao estado, EstadoRanking ranking) {
     final identidade = estado.identidade;
     return InicioVM(
       jogador: CabecalhoJogador(
@@ -99,13 +104,21 @@ class HomeDeProducao extends StatelessWidget {
         // Sem autoridade de economia no cliente.
         moedas: null,
         // A liga vem do estado canônico de ranking, e não de um `null` escrito
-        // aqui. O valor final é o mesmo — hoje não há autoridade, e a Home
-        // omite a linha. O que muda é QUEM decide: a Home passa a ler a mesma
-        // constante que o `PerfilService`, em vez de as duas telas concluírem
-        // por conta própria o que significa "sem ranking". Era exatamente essa
-        // decisão duplicada que deixava a Home honesta e o Perfil inventando
-        // Bronze a partir do mesmo nada.
-        liga: rankingDaCascaPublicavel.liga,
+        // aqui. O que muda é QUEM decide: a Home lê o MESMO objeto que o
+        // Perfil, em vez de as duas telas concluírem por conta própria o que
+        // significa "sem ranking". Era exatamente essa decisão duplicada que
+        // deixava a Home honesta e o Perfil inventando Bronze a partir do mesmo
+        // nada.
+        //
+        // `liga` e não `ligaParaExibicao`: aqui a linha inteira some quando não
+        // há o que afirmar, e o travessão do Perfil — que existe para não
+        // deslocar um cabeçalho de altura fixa — seria ruído nesta tela.
+        //
+        // Rótulo de qualificação ("Em colocacao") NÃO entra: o cabeçalho da Home
+        // mostra a liga ao lado do nome, sem prefixo, e ali um estado passaria
+        // por nome de liga. Quem quer ver o estado abre o Perfil, que tem
+        // espaço para dizê-lo por extenso.
+        liga: ranking.ehLigaDeVerdade ? ranking.liga : null,
       ),
       // Sem autoridade de temporada nem de saguão.
       temporada: null,

@@ -19,6 +19,7 @@
 //   ComandosDeAutenticacao — entrar e sair (só isso)
 //   OnlineService          — o transporte, desligado até alguém pedir
 //   PonteSessaoOnline      — traduz troca de sessão em transição do transporte
+//   RankingDaSessao        — a liga e a colocação reais de quem está logado
 //
 // A ORDEM IMPORTA: a ponte é montada aqui, e não na tela do lobby, porque um
 // logout disparado na tela de Ajustes precisa derrubar o socket mesmo que o
@@ -35,6 +36,11 @@
 
 import 'package:flutter/material.dart';
 
+import '../ranking/escopo_ranking.dart';
+import '../ranking/leitor_ranking.dart';
+import '../ranking/ranking_da_sessao.dart';
+import '../ranking/ranking_transporte.dart';
+import '../ranking/ranking_transporte_firebase.dart';
 import '../services/online_service.dart';
 import '../services/ponte_sessao_online.dart';
 import '../sessao/autenticacao_firebase.dart';
@@ -52,6 +58,7 @@ class RaizDoAplicativo extends StatefulWidget {
     this.sessao,
     this.autenticacao,
     this.online,
+    this.transporteRanking,
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
@@ -65,6 +72,13 @@ class RaizDoAplicativo extends StatefulWidget {
 
   /// O transporte. Nulo em produção — a raiz o monta amarrado à sessão.
   final OnlineService? online;
+
+  /// O transporte de ranking. Nulo em produção — a raiz monta o de Firebase.
+  ///
+  /// Injetável pela mesma razão dos outros três: sem isto, provar "a Home mostra
+  /// a liga que a autoridade devolveu" exigiria Firebase dentro do
+  /// `flutter test`, e o caso não seria testado.
+  final TransporteRanking? transporteRanking;
 
   /// Repassados à casca. Ver `casca_de_producao.dart`.
   final Duration? duracaoDaSplash;
@@ -80,6 +94,7 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
   late final ComandosDeAutenticacao _autenticacao;
   late final OnlineService _online;
   late final PonteSessaoOnline _ponte;
+  late final RankingDaSessao _ranking;
 
   // Só o que esta raiz criou é descartado por ela.
   late final bool _sessaoEhMinha;
@@ -111,19 +126,46 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
     // A ponte não conecta nada. Ela só garante que uma troca de sessão vire UMA
     // transição do transporte — inclusive quando a troca é um logout.
     _ponte = PonteSessaoOnline(sessao: _sessao, online: _online);
+
+    _ranking = RankingDaSessao(
+      leitor: LeitorDeRanking(
+        transporte: widget.transporteRanking ?? TransporteRankingFirebase(),
+      ),
+    );
+    // Mesmo desenho da ponte acima: a sessão manda, o ranking obedece. Um
+    // listener, e não uma chamada do `build`, porque `aoMudarSessao` publica
+    // "carregando" na hora — e notificar durante a construção da árvore é erro
+    // de framework, não detalhe de estilo.
+    _sessao.addListener(_sincronizarRanking);
+    // A primeira sincronização não pode esperar a próxima notificação: numa
+    // partida fria com sessão já resolvida, ela nunca viria.
+    _sincronizarRanking();
   }
 
   @override
   void dispose() {
+    _sessao.removeListener(_sincronizarRanking);
+    _ranking.dispose();
     _ponte.dispose();
     if (_onlineEhMeu) _online.dispose();
     if (_sessaoEhMinha) _sessao.dispose();
     super.dispose();
   }
 
+  /// Traduz o estado da sessão em "pergunte o ranking desta pessoa".
+  ///
+  /// [RankingDaSessao.aoMudarSessao] ignora repetição, então uma notificação
+  /// que só mudou a fase da identidade não vira consulta nova.
+  void _sincronizarRanking() {
+    _ranking.aoMudarSessao(
+      geracao: _sessao.geracao,
+      publicId: _sessao.estado.publicId,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Os três escopos ficam ACIMA do `MaterialApp` de propósito: as rotas
+    // Os quatro escopos ficam ACIMA do `MaterialApp` de propósito: as rotas
     // empurradas pelo `Navigator` herdam daqui, e é isso que permite a uma tela
     // aberta por `push` ler a sessão, sair da conta e usar o mesmo transporte.
     // Eles também ficam acima da chave abaixo, então sobrevivem à troca de
@@ -134,40 +176,46 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
         comandos: _autenticacao,
         child: EscopoTransporte(
           online: _online,
-          child: ListenableBuilder(
-            listenable: _sessao,
-            builder: (context, _) => MaterialApp(
-              // A CHAVE É O QUE APAGA A PILHA DE NAVEGAÇÃO NA TROCA DE SESSÃO.
-              //
-              // Trocar a tela de baixo não basta: `Navigator.push` empilha
-              // rotas SOBRE a `home`, e trocar a `home` deixa as de cima
-              // intactas. Sem isto, alguém que saísse da conta com a tela de
-              // Ajustes ou a do lobby abertas continuaria olhando para elas —
-              // telas privadas, de uma sessão que acabou.
-              //
-              // O jeito imperativo seria a tela de logout dar `popUntil`. Isso
-              // devolve a decisão de navegação para quem saiu, exige que TODA
-              // superfície futura de logout se lembre de fazer o mesmo, e não
-              // cobre a troca de conta sem logout — em que a pilha do jogador
-              // anterior também tem de morrer.
-              //
-              // A geração sobe uma vez por troca de sessão, e não quando só a
-              // fase da identidade muda: um Ranking carregando não derruba a
-              // navegação de ninguém.
-              key: ValueKey<int>(_sessao.geracao),
-              title: 'Buraco Master VIP',
-              debugShowCheckedModeBanner: false,
-              theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-              home: CascaDeProducao(
-                aberturaTerminou: _aberturaTerminou,
-                onAberturaConcluida: () {
-                  if (mounted && !_aberturaTerminou) {
-                    setState(() => _aberturaTerminou = true);
-                  }
-                },
-                duracaoDaSplash: widget.duracaoDaSplash,
-                somNaSplash: widget.somNaSplash,
-                limiteDeResolucao: widget.limiteDeResolucao,
+          child: EscopoRanking(
+            ranking: _ranking,
+            child: ListenableBuilder(
+              listenable: _sessao,
+              builder: (context, _) => MaterialApp(
+                // A CHAVE É O QUE APAGA A PILHA DE NAVEGAÇÃO NA TROCA DE SESSÃO.
+                //
+                // Trocar a tela de baixo não basta: `Navigator.push` empilha
+                // rotas SOBRE a `home`, e trocar a `home` deixa as de cima
+                // intactas. Sem isto, alguém que saísse da conta com a tela de
+                // Ajustes ou a do lobby abertas continuaria olhando para elas —
+                // telas privadas, de uma sessão que acabou.
+                //
+                // O jeito imperativo seria a tela de logout dar `popUntil`. Isso
+                // devolve a decisão de navegação para quem saiu, exige que TODA
+                // superfície futura de logout se lembre de fazer o mesmo, e não
+                // cobre a troca de conta sem logout — em que a pilha do jogador
+                // anterior também tem de morrer.
+                //
+                // A geração sobe uma vez por troca de sessão, e não quando só a
+                // fase da identidade muda: um Ranking carregando não derruba a
+                // navegação de ninguém.
+                key: ValueKey<int>(_sessao.geracao),
+                title: 'Buraco Master VIP',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  useMaterial3: true,
+                  brightness: Brightness.dark,
+                ),
+                home: CascaDeProducao(
+                  aberturaTerminou: _aberturaTerminou,
+                  onAberturaConcluida: () {
+                    if (mounted && !_aberturaTerminou) {
+                      setState(() => _aberturaTerminou = true);
+                    }
+                  },
+                  duracaoDaSplash: widget.duracaoDaSplash,
+                  somNaSplash: widget.somNaSplash,
+                  limiteDeResolucao: widget.limiteDeResolucao,
+                ),
               ),
             ),
           ),
