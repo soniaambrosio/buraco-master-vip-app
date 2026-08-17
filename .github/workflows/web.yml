@@ -31,8 +31,11 @@ jobs:
           # Mesma versão pinada do build de APK, pra manter a resolução idêntica.
           flutter-version: 3.44.8
 
+      # `--org` deixou de ser `com.buracomastervip.poc` na OS de App Check. Este
+      # workflow publica WEB e nem chega a montar o projeto Android, mas o
+      # identificador proibido não fica no repositório à espera de ser copiado.
       - name: Scaffold Flutter project
-        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+        run: flutter create --org io.github.soniaambrosio --project-name buraco_master_vip app_build
 
       - name: Overlay custom UI files
         run: cp -R app/lib/. app_build/lib/

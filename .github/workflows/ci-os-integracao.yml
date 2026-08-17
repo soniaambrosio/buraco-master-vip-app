@@ -78,8 +78,13 @@ jobs:
           channel: stable
           flutter-version: 3.44.8
 
+      # `--org` deixou de ser `com.buracomastervip.poc` na OS de App Check: o
+      # pacote de PoC não é identidade efetiva de nada, nem num pipeline que só
+      # roda testes. Este workflow não gera artefato Android, então o applicationId
+      # aqui é indiferente — o que não é indiferente é o identificador continuar
+      # existindo no repositório, pronto para ser copiado para onde importa.
       - name: Scaffold do projeto Flutter
-        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+        run: flutter create --org io.github.soniaambrosio --project-name buraco_master_vip app_build
 
       # As dependências são as do REPOSITÓRIO, não as que o CI resolver na hora.
       # Antes daqui havia `flutter pub add` + um remendo Python no pubspec para

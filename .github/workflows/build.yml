@@ -11,17 +11,43 @@ permissions:
 # ============================================================================
 # ASSINATURA FIXA DE TESTE (resolve INSTALL_FAILED_UPDATE_INCOMPATIBLE)
 # - Keystore permanente: keystore/buraco-master-vip-test.jks.b64  (alias: bmv-test)
-# - Mesma chave do debug fixo antigo -> MESMO SHA-1 -> login Google segue valendo.
 # - Senhas vêm por ENV (abaixo) e viram key.properties no CI. NUNCA ficam no gradle.
-# - applicationId de teste fixo: com.buracomastervip.poc.buraco_master_vip
 # - versionCode = número do run (incrementa a cada build).
-# Produção fica numa config SEPARADA (ver bloco comentado no fim do patch do gradle).
+#
+# ----------------------------------------------------------------------------
+# O applicationId DEIXOU DE SER `.poc` — OS de App Check
+# ----------------------------------------------------------------------------
+#
+# Este pipeline montava o APK com `com.buracomastervip.poc.buraco_master_vip`,
+# que casava com o registro Firebase "BMV Teste". Era internamente coerente e
+# por isso nada quebrava: Auth e Functions não conferem o pacote do binário.
+#
+# PLAY INTEGRITY CONFERE. Agora que `app/lib/main.dart` inicializa contra o app
+# Firebase OFICIAL (`…b1cd95ba…`), um artefato com pacote `.poc` declara uma
+# identidade que o registro não reconhece, e a atestação nunca fecharia. O
+# applicationId passa a ser o oficial, e o portão abaixo impede o de teste de
+# voltar.
+#
+# CONSEQUÊNCIA CONHECIDA, E ELA É DE CONSOLE, NÃO DE CÓDIGO. O APK continua
+# assinado com o keystore de TESTE, cujo SHA-1 está registrado no app "BMV
+# Teste" e NÃO no oficial. Enquanto essa impressão digital não for cadastrada no
+# app oficial (ou a trilha não passar a ser assinada pela chave da Play), valem
+# duas coisas neste artefato: o login Google não encontra cliente OAuth
+# correspondente, e a atestação do Play Integrity não pode ser homologada por
+# ele. As duas estão listadas no laudo como pendências de console.
 # ============================================================================
 env:
   BMV_KEY_ALIAS: bmv-test
   BMV_STORE_PASSWORD: bmvtest2026
   BMV_KEY_PASSWORD: bmvtest2026
-  BMV_APPLICATION_ID: com.buracomastervip.poc.buraco_master_vip
+  # O applicationId OFICIAL registrado na Play Console. IMUTÁVEL depois da
+  # primeira publicação — e é o mesmo pacote que o registro Firebase
+  # `1:203886484007:android:b1cd95baa0b9e6e629cc02` declara.
+  BMV_APPLICATION_ID: io.github.soniaambrosio.buracomastervip
+  # O appId de teste, nomeado aqui SÓ para o portão poder procurá-lo. Não é
+  # configuração: nenhum passo o usa para montar coisa nenhuma.
+  BMV_APP_ID_PROIBIDO: '1:203886484007:android:734aaa61ca5ca68b29cc02'
+  BMV_PACOTE_PROIBIDO: com.buracomastervip.poc
   # Endereço do servidor online. NÃO é segredo (é um endpoint público), mas é
   # CONFIGURAÇÃO: muda por ambiente, então não vive no código-fonte. O app
   # recebe por --dart-define e recusa endereço local ou sem TLS num release.
@@ -51,8 +77,36 @@ jobs:
           # mantém a resolução idêntica ao #24 e o build reprodutível.
           flutter-version: 3.44.8
 
+      # `--project-name` continua `buraco_master_vip` porque é o nome do PACOTE
+      # DART: todo `package:buraco_master_vip/...` do repositório depende dele.
+      # O `--org` só decide o pacote Android do scaffold, e por isso deixou de
+      # ser `com.buracomastervip.poc`.
       - name: Scaffold Flutter project
-        run: flutter create --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+        run: flutter create --org io.github.soniaambrosio --project-name buraco_master_vip app_build
+
+      - name: "IDENTIDADE ANDROID — applicationId oficial da Play"
+        # O scaffold gera `io.github.soniaambrosio.buraco_master_vip` (org +
+        # nome do pacote Dart), que NÃO é o pacote publicado. O publicado é
+        # `io.github.soniaambrosio.buracomastervip`, sem sublinhado — e é ele
+        # que precisa sair no artefato, porque é ele que o registro Firebase
+        # oficial declara e é contra ele que o Play Integrity atesta.
+        #
+        # O `namespace` NÃO é tocado de propósito: o Android aceita
+        # `namespace != applicationId`, e mexer nele obrigaria a mover a
+        # `MainActivity.kt` de pacote — um passo a mais que pode falhar em
+        # silêncio e produzir ClassNotFoundException só ao abrir o app. O
+        # namespace do scaffold já está livre de `.poc`, que é o que a OS pede.
+        run: |
+          f=app_build/android/app/build.gradle.kts
+          test -f "$f" || { echo "ERRO: $f não existe — o scaffold mudou de formato"; exit 1; }
+          sed -i "s/applicationId = \"[^\"]*\"/applicationId = \"${BMV_APPLICATION_ID}\"/" "$f"
+          echo "--- applicationId / namespace aplicados ---"
+          grep -nE 'applicationId|namespace' "$f"
+          # Confere o próprio resultado: um sed que erra o alvo e segue em
+          # frente produz um APK que compila, parece pronto e declara o pacote
+          # errado. Falhar aqui custa minutos; não falhar custa uma publicação.
+          grep -q "applicationId = \"${BMV_APPLICATION_ID}\"" "$f" \
+            || { echo "ERRO: applicationId não virou ${BMV_APPLICATION_ID}"; exit 1; }
 
       - name: Overlay custom UI files
         run: cp -R app/lib/. app_build/lib/
@@ -148,7 +202,14 @@ jobs:
           ls -l app_build/assets/torneios/premiacao/coroas/ app_build/assets/torneios/premiacao/selos/
 
       - name: Add Firebase + Google Sign-In + Audio deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+        # `cloud_functions` e `cloud_firestore` estavam FALTANDO nesta lista
+        # embora `lib/` os importe desde a OS de identidade — o analyze abaixo
+        # reprovaria por `uri_does_not_exist`. `firebase_app_check` entra agora,
+        # porque `lib/main.dart` passou a ativar a atestação no bootstrap.
+        #
+        # As faixas são as mesmas de `app/pubspec.yaml`, que continua sendo a
+        # fonte da verdade das versões (é o que `ci-os-integracao.yml` copia).
+        run: cd app_build && flutter pub add firebase_core firebase_auth "cloud_functions:^6.3.6" "cloud_firestore:^6.8.0" "firebase_app_check:^0.4.6" "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
 
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
@@ -345,6 +406,103 @@ jobs:
             *\?*|*@*) echo "ERRO: o endereço não pode carregar parâmetros nem credencial"; exit 1 ;;
           esac
           echo "endereço do servidor validado para este build: $URL"
+
+      - name: "PORTÃO DE IDENTIDADE — o pacote e o appId de teste não voltam"
+        # Este portão existe porque o desalinhamento que a OS de App Check
+        # fechou não foi escrito de uma vez: ele se acumulou em três pontas
+        # independentes (o `appId` do main.dart, o `--org` do scaffold, o pacote
+        # que a Play publica), e cada uma delas parecia inofensiva sozinha.
+        #
+        # Varre DUAS superfícies, e as duas importam por motivos diferentes:
+        #   * o código-fonte versionado — onde o identificador errado nasce;
+        #   * o projeto Android já montado — onde ele vira artefato.
+        #
+        # Comentário e documentação ficam de fora: este arquivo, o `main.dart` e
+        # o laudo EXPLICAM o pacote proibido, em prosa, e uma varredura ingênua
+        # acusaria a explicação como violação. O jeito de "consertar" seria
+        # apagar a documentação — que é exatamente como o defeito voltaria.
+        run: |
+          set -e
+          falhou=0
+
+          # Descarta linhas que são COMENTÁRIO (`//`, `///`, `*` de bloco). Sem
+          # isto o portão acusa a própria explicação: `main.dart` documenta, em
+          # prosa, qual era o pacote errado e por que ele foi embora. A varredura
+          # comentário-consciente de verdade é a do teste
+          # `casca/app_check_identidade_android_test.dart`, que despoja o código
+          # antes de ler; aqui basta não tropeçar na documentação.
+          sem_comentario() { grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(///?|\*|/\*)'; }
+
+          echo "=== 1. código Dart do cliente ==="
+          achados=$(grep -rn --include='*.dart' -e "${BMV_PACOTE_PROIBIDO}" -e '734aaa61' app/lib | sem_comentario || true)
+          if [ -n "$achados" ]; then
+            echo "$achados"
+            echo "ERRO: o pacote ou o appId de teste voltou ao código do cliente."
+            falhou=1
+          else
+            echo "OK: app/lib limpo."
+          fi
+
+          echo "=== 2. o appId configurado é o do app Firebase OFICIAL ==="
+          if ! grep -q 'b1cd95baa0b9e6e629cc02' app/lib/main.dart; then
+            echo "ERRO: main.dart não aponta para o app Firebase oficial."
+            falhou=1
+          else
+            echo "OK: main.dart aponta para 1:203886484007:android:b1cd95baa0b9e6e629cc02."
+          fi
+
+          echo "=== 3. nenhum workflow escora o scaffold no org de PoC ==="
+          if grep -rn -- "--org ${BMV_PACOTE_PROIBIDO}" .github/workflows; then
+            echo "ERRO: um workflow ainda monta o projeto sob o org de PoC."
+            falhou=1
+          else
+            echo "OK: nenhum --org de PoC nos workflows."
+          fi
+
+          echo "=== 4. o projeto Android montado declara o pacote oficial ==="
+          GRADLE=app_build/android/app/build.gradle.kts
+          if grep -rn "${BMV_PACOTE_PROIBIDO}" app_build/android; then
+            echo "ERRO: o pacote de PoC sobreviveu dentro do projeto Android."
+            falhou=1
+          else
+            echo "OK: projeto Android sem ${BMV_PACOTE_PROIBIDO}."
+          fi
+          if ! grep -q "applicationId = \"${BMV_APPLICATION_ID}\"" "$GRADLE"; then
+            echo "ERRO: o applicationId do build não é ${BMV_APPLICATION_ID}."
+            falhou=1
+          else
+            echo "OK: applicationId = ${BMV_APPLICATION_ID}."
+          fi
+
+          echo "=== 5. nenhuma cópia de workflow fora de .github/workflows ==="
+          # Havia um `build.yml` de 362 linhas na RAIZ do repositório, subido
+          # pela interface web e 463 linhas atrás do de verdade. O GitHub nunca
+          # o executou — workflows só rodam dentro de `.github/workflows/` —, e
+          # é justamente por isso que ele era perigoso: uma cópia morta que
+          # ninguém roda também é uma cópia que ninguém corrige, e era o caminho
+          # mais curto para o `--org` de PoC voltar por copiar-e-colar.
+          soltos=$(git ls-files '*.yml' '*.yaml' \
+            | grep -v '^\.github/workflows/' \
+            | grep -v '^docs/' \
+            | xargs -r grep -l -e "${BMV_PACOTE_PROIBIDO}" -e '734aaa61' || true)
+          if [ -n "$soltos" ]; then
+            echo "ERRO: YAML fora de .github/workflows carregando identificador proibido:"
+            echo "$soltos"
+            falhou=1
+          else
+            echo "OK: nenhuma cópia solta de workflow com identificador proibido."
+          fi
+
+          echo "=== 6. nenhum token de depuração de App Check versionado ==="
+          if grep -rn --include='*.dart' -e 'appCheckDebugToken' -e 'FIREBASE_APP_CHECK_DEBUG_TOKEN' app/lib; then
+            echo "ERRO: token de depuração de App Check no código."
+            falhou=1
+          else
+            echo "OK: nenhum token de depuração versionado."
+          fi
+
+          [ "$falhou" -eq 0 ] || exit 1
+          echo "PORTÃO VERDE: identidade Android oficial e única no commit ${GITHUB_SHA}."
 
       - name: "PORTÃO DE QUALIDADE — análise estática (erro é fatal)"
         # Roda DEPOIS dos portões de teste, porque são eles que copiam as suítes
