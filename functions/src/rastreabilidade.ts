@@ -28,6 +28,7 @@
 // `users/{uid}/matchHistory`. Este arquivo e a unica porta.
 
 import { getFirestore, Transaction } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
 
@@ -36,7 +37,21 @@ import { aplicarPlanoDeConquista, planejarPrimeiraBatidaReal } from "./conquista
 // NAO e reexportado por index.ts — logo continua sendo biblioteca, e nao
 // superficie de implantacao. `import` nao acrescenta export a este modulo, e o
 // contorno implantado deste arquivo segue identico.
-import { autorizaComoMotorDePartidas, type ClaimsDoToken } from "./autoridade";
+//
+// [CREDENCIAL] A conferencia de REVOGACAO entrou pelo mesmo endereco, e pelo
+// mesmo motivo: e regra de permissao, e regra de permissao que nenhum teste
+// alcanca e regra que so se descobre errada em producao.
+//
+// `autorizaComoMotorDePartidas` nao e mais importado aqui: ele continua sendo a
+// regra de papel, mas agora e chamado DE DENTRO de `conferirAutoridadeDePartida`,
+// sobre os claims do token VERIFICADO COM REVOGACAO. Importa-lo de volta seria o
+// caminho para alguem voltar a decidir por `req.auth.token`, que e exatamente o
+// defeito que esta entrega fecha.
+import {
+  conferirAutoridadeDePartida,
+  verificadorComRevogacao,
+  type ClaimsDoToken,
+} from "./autoridade";
 
 const db = () => getFirestore();
 
@@ -58,9 +73,40 @@ function exigirAutenticacao(req: CallableRequest): string {
   return uid;
 }
 
-function exigirAutoridadeDePartida(req: CallableRequest): string {
+// [CREDENCIAL] O cabecalho BRUTO da requisicao que o protocolo callable
+// embrulha. `rawRequest` e o `Request` do Express, e o Node normaliza nome de
+// cabecalho para minusculas — por isso `authorization`, e nao `Authorization`.
+//
+// Ler o bruto e o unico jeito de obter o token de novo: o protocolo callable
+// consome o cabecalho, verifica-o SEM checar revogacao e entrega so o resultado
+// decodificado em `req.auth`. O token em si ele nao devolve.
+function cabecalhoAuthorizationDe(req: CallableRequest): unknown {
+  return req.rawRequest?.headers?.authorization;
+}
+
+/// [CREDENCIAL] Agora ASSINCRONA: a conferencia de revogacao consulta o registro
+/// de sessoes do usuario, e isso e uma ida a rede.
+///
+/// O custo esta no lugar certo. Isto roda UMA vez por partida encerrada — nao
+/// por jogada e nao por leitura do aplicativo —, e e o que faz
+/// `revokeRefreshTokens` cortar o acesso NA HORA em vez de ate uma hora depois.
+async function exigirAutoridadeDePartida(req: CallableRequest): Promise<string> {
   const uid = exigirAutenticacao(req);
-  if (!autorizaComoMotorDePartidas(claimsDe(req))) {
+
+  const conferencia = await conferirAutoridadeDePartida({
+    cabecalhoAuthorization: cabecalhoAuthorizationDe(req),
+    uidDoProtocolo: uid,
+    verificar: verificadorComRevogacao(getAuth()),
+  });
+
+  if (!conferencia.ok) {
+    // O MOTIVO vai para o log do operador, e NAO para o chamador: a mensagem
+    // devolvida e a mesma de sempre, porque distinguir "sessao revogada" de
+    // "sem o claim" descreveria a defesa para quem a estivesse sondando.
+    logger.warn("autoridade de partida recusada", {
+      motivo: conferencia.motivo,
+      // Sem uid, sem token, sem cabecalho: o log diz o QUE aconteceu, nao QUEM.
+    });
     // A mesma recusa que o dominio devolve como `semAutoridade`. Deixar esta
     // porta aberta permitiria a qualquer cliente autenticado escrever o proprio
     // resultado — que e o item mais caro da secao 24.
@@ -69,7 +115,7 @@ function exigirAutoridadeDePartida(req: CallableRequest): string {
       "somente a autoridade da partida registra encerramento."
     );
   }
-  return uid;
+  return conferencia.uid;
 }
 
 function exigirAdmin(req: CallableRequest): string {
@@ -113,7 +159,7 @@ function nivelDe(req: CallableRequest): "jogador" | "suporte" | "administrador" 
 /// impossivel por construcao, e nao por checagem — a disciplina que
 /// `rewardGrants` ja usa neste projeto.
 export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) => {
-  const autor = exigirAutoridadeDePartida(req);
+  const autor = await exigirAutoridadeDePartida(req);
 
   const plano = req.data?.plano as Record<string, unknown> | undefined;
   if (!plano) {
