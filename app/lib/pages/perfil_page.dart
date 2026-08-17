@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../screens/perfil_screen.dart';
 import '../services/perfil_service.dart';
+import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
 
@@ -156,7 +157,22 @@ class _PerfilPageState extends State<PerfilPage> {
   @override
   Widget build(BuildContext context) {
     // Na carga usa o placeholder do serviço (a própria tela mostra skeleton).
-    final vm = _vm ?? _service.vmPlaceholder();
+    //
+    // O AVATAR É REAPLICADO AQUI, e não herdado da carga. A leitura é a mesma
+    // que a Home faz — `EscopoSessao` mais `avatarPublicoDaIdentidade` —, e é
+    // por isso que as duas telas não conseguem divergir: não há uma segunda
+    // regra, há a mesma função lida de dois lugares.
+    //
+    // Não é consulta nem assinatura nova: `identidadeDe` só lê o
+    // `InheritedNotifier` que a raiz já pendurou, e é a MESMA dependência que
+    // `didChangeDependencies` acima já estabelece. O efeito prático é que uma
+    // troca de `avatarRef` chega ao Perfil pelo rebuild que a sessão notifica,
+    // sem passar pela recarga (que só observa o `publicId`) e sem devolver a
+    // tela ao esqueleto.
+    final identidade = EscopoSessao.identidadeDe(context).identidade;
+    final vm = (_vm ?? _service.vmPlaceholder()).comAvatarPublico(
+      avatarPublicoDaIdentidade(identidade),
+    );
 
     return PerfilScreen(
       vm: vm,
