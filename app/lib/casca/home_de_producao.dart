@@ -38,6 +38,7 @@ import '../ranking/estado_ranking.dart';
 import '../screens/como_jogar_screen.dart';
 import '../screens/inicio_screen.dart';
 import '../screens/perfil_screen.dart' show NavDestino;
+import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
 import 'configuracoes_de_producao.dart';
@@ -94,7 +95,14 @@ class HomeDeProducao extends StatelessWidget {
         // O e-mail da conta NÃO é exibido. Ele não acrescenta nada a quem já
         // está logado e é dado pessoal numa tela que qualquer um do lado vê.
         email: '',
-        avatar: identidade?.avatarRef ?? '👑',
+        // O `?? '👑'` que morava aqui virou `avatarPublicoDaIdentidade`, e o
+        // ganho não é de estilo: o `??` só cobria o `avatarRef` NULO. Uma
+        // referência vazia desenhava um círculo em branco, uma com espaços nas
+        // bordas desenhava o espaço junto, e uma que começasse com `https://`
+        // fazia o renderizador da tela abrir `Image.network` para o endereço
+        // que estivesse gravado no perfil. As três agora caem na mesma regra —
+        // a mesma que o Perfil passou a consultar.
+        avatar: avatarPublicoDaIdentidade(identidade),
         moldura: null,
         // Sem autoridade de economia no cliente.
         moedas: null,
