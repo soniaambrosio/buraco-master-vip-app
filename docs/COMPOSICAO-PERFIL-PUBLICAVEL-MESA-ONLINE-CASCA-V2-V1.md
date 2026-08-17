@@ -7,6 +7,30 @@ criado por esta OS é este documento.
 
 Data: 2026-08-17.
 
+### Procedência deste documento — duas execuções independentes
+
+Esta OS foi executada **duas vezes, em paralelo, por duas sessões distintas no
+mesmo worktree**, sem que uma soubesse da outra. A primeira commitou seu laudo em
+`30f3803` e publicou a branch; a segunda produziu o laudo que você está lendo,
+sobre o mesmo merge (`5b979c0`).
+
+Isso não é acidente que enfraquece o resultado — é corroboração. As duas
+execuções mediram, cada uma por conta própria: os mesmos dois SHAs de entrada, o
+mesmo merge-base, a mesma árvore prevista por `merge-tree`
+(`10a0329…`), os mesmos 35/39/35/**39** arquivos alcançáveis, as mesmas contagens
+749/855/782/**888**, os mesmos 98/101/98/**101** diagnósticos com zero erro, os
+mesmos **549** casos fora do glob, os mesmos **212** das suítes sensíveis, a
+mesma ressalva do Flutter 3.41.4 contra o pin 3.44.8, e o mesmo veredito.
+Nenhuma divergência numérica entre as duas.
+
+Este documento é a **fusão** dos dois laudos: mantém o que só a primeira execução
+havia registrado (tamanho dos deltas de B, `substitui` sem chamador,
+`rodadasVulneravel`/`mortoPego` como omissões declaradas, a porta única de
+leitura) e acrescenta o que só a segunda registrou (contagem **por arquivo** das
+sete suítes `teste_*` e a passagem **sem** overlay de seeds — §7.2 e §7.4 da OS).
+O laudo original da primeira execução permanece íntegro no histórico, em
+`30f3803`.
+
 ---
 
 ## 1. Topologia
@@ -43,6 +67,14 @@ buscada explicitamente, não por `fetch --all`.
 | 11 | `merge-tree` contra os SHAs finais | ✅ exit 0, zero conflito, árvore `10a0329…` |
 | 12 | interseção de arquivos entre as entradas | ✅ **vazia** |
 | 13 | grafo alcançável | ✅ **39** |
+
+### Tamanho de cada entrada
+
+| Delta | Arquivos | Linhas |
+|---|---:|---|
+| Funcional de B (`bc74e30 → 4b3c460`, 5 commits) | 13 | `+5254 / −71` |
+| Bruto da entrada B homologada (`bc74e30 → cf8fe37`) | 14 | `+5422 / −71` |
+| Entrada A homologada (`bc74e30 → 4d24dbd`) | 9 | ver §1 abaixo |
 
 ### Delta de homologação de cada entrada
 
@@ -253,7 +285,13 @@ Executadas explicitamente sobre a composição:
 | `test/ranking/homologacao_perfil_publicavel_test.dart` (de `c97ffb3`) | 16 | ✅ |
 
 Todas exit 0, sem nenhuma marca de falha. A suíte independente introduzida por
-`c97ffb3` mede os **16 casos** que a OS declara.
+`c97ffb3` mede os **16 casos** que a OS declara. Somadas: **212 casos**.
+
+### Total
+
+```
+888 (suíte padrão) + 549 (fora do glob) = 1.437 casos verdes
+```
 
 ### 4.4 Seeds
 
@@ -394,9 +432,21 @@ comentário, e uma varredura ingênua acusa falso positivo.
 * `CapacidadesDaMesa` é definida uma vez em `estado_mesa_online.dart:213`,
   produzida por `capacidades({required bool conectado})` e consumida **só como
   campo de widget** — política de apresentação, não autoridade de legalidade. ✅
+* `AdaptadorVisaoOnline` é a **porta única de leitura**: definida uma vez
+  (`estado_mesa_online.dart:415`), e `.ler()` é chamado em **um só lugar**
+  (`lobby_online.dart:160`). Só o adaptador lê a visão crua. ✅
 * Nenhum motor de jogo cliente no caminho online: `auditoria_mesa_online_test`
   prova "nada no caminho online constrói um `Jogo`" e "a mesa online não importa
   o módulo da partida local". ✅
+* `EstadoMesaOnline.substitui` (`estado_mesa_online.dart:373`) segue **sem
+  chamador em produção** — verificado sobre o código sem comentários dos 39
+  alcançáveis: a única outra ocorrência do texto "substitui" é a palavra
+  portuguesa dentro de uma string em `lib/mesa.dart:500`. Permanece como estava
+  na Entrada B; a composição não lhe deu uso novo. ✅
+* `rodadasVulneravel` e `mortoPego` continuam **omissões declaradas** da mesa
+  online (declaradas no commit `8236091` da homologação de B). Existem apenas em
+  `lib/mesa.dart` — o motor local, do caminho Treino — e em nenhum arquivo do
+  caminho online. ✅
 
 **Ponto que exige leitura exata — `lib/mesa.dart` é alcançável (item 15).** Isso
 é verdade na composição, e é igualmente verdade na **base**, na Entrada A e na
@@ -458,6 +508,13 @@ exatamente como nas duas entradas aprovadas.
    medição, mas quebra scripts que confiem no código de saída.
 6. As duas branches homologadas continuam existindo e **não foram mescladas em
    branch protegida**; esta composição não as substitui.
+7. **Duas sessões rodaram esta OS em paralelo no mesmo worktree** (ver
+   Procedência, acima). O risco não é do resultado — que é concordante — e sim
+   de processo: duas sessões concorrentes no mesmo diretório de trabalho podem
+   sobrescrever arquivo uma da outra entre o `Read` e o `Write`. Aqui isso de
+   fato ocorreu com este documento, e foi resolvido por fusão, sem perda: o
+   laudo original está preservado em `30f3803`. Convém não despachar a mesma OS
+   para dois worktrees iguais.
 
 ---
 
