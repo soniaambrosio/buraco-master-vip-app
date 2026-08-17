@@ -75,12 +75,14 @@ class DescarteRegistrado {
   /// Chave canônica para assinatura/normalização determinística.
   String get chave => '$ordem@$assento:${carta.chave}';
 
+  // Parâmetro `other` (e não `o`, como no `CartaSnapshot` acima) porque é o
+  // nome do método sobrescrito — o analyzer cobra, e a OS não aceita issue nova.
   @override
-  bool operator ==(Object o) =>
-      o is DescarteRegistrado &&
-      o.carta == carta &&
-      o.assento == assento &&
-      o.ordem == ordem;
+  bool operator ==(Object other) =>
+      other is DescarteRegistrado &&
+      other.carta == carta &&
+      other.assento == assento &&
+      other.ordem == ordem;
 
   @override
   int get hashCode => Object.hash(carta, assento, ordem);

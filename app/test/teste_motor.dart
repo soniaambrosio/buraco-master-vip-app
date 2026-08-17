@@ -6604,6 +6604,418 @@ void main() {
             reason: 'ausência de prova nunca vira autoria deduzida');
       }
     });
+
+    // ---------- §19.2 — quatro jogadores descartando em ordem ----------
+    test('PROV-02 quatro assentos descartam: cada carta fica com o SEU autor',
+        () {
+      final j = mesaProv();
+      final descartados = <int, String>{};
+      for (var a = 0; a < 4; a++) {
+        if (a > 0) expect(j.comprarMonte(a), isTrue); // turno começa comprando
+        final carta = j.maos[a].first;
+        descartados[a] = carta.id;
+        expect(j.descartar(a, carta.id), isNull, reason: 'assento $a');
+      }
+
+      final estado = paraCanonico(j).canonico;
+      expect(estado.descartes, hasLength(4));
+      for (var a = 0; a < 4; a++) {
+        final reg = estado.descartes[a];
+        expect(reg.assento, a);
+        expect(reg.carta.id, descartados[a]);
+        expect(reg.ordem, a, reason: 'ordem temporal é 0,1,2,3');
+      }
+      // A ordem do livro acompanha a ordem da pilha do lixo (mesma sequência).
+      expect([for (final d in estado.descartes) d.carta.id],
+          [for (final c in estado.lixo) c.id]);
+    });
+
+    // ---------- §19.3 / §17 Caso 2 — cartas iguais, autores diferentes ------
+    test('PROV-03 duas cartas IGUAIS descartadas por autores diferentes não se '
+        'confundem', () {
+      final j = novo('ABERTO');
+      // Assento 0 (parceiro de 2) e assento 1 (adversário) têm cada um um 9♥.
+      montar(j,
+          mao0: [('9', 'copas'), ('7', 'copas'), ('8', 'copas')],
+          mao1: [('9', 'copas'), ('K', 'espadas'), ('Q', 'espadas')],
+          mao2: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          mao3: [('J', 'paus'), ('10', 'paus'), ('9', 'paus')],
+          vez: 0,
+          jaComprou: true);
+      final noveDoZero = j.maos[0].firstWhere((x) => x.valor == '9');
+      final noveDoUm = j.maos[1].firstWhere((x) => x.valor == '9');
+      expect(noveDoZero.id == noveDoUm.id, isFalse);
+
+      expect(j.descartar(0, noveDoZero.id), isNull);
+      expect(j.comprarMonte(1), isTrue);
+      expect(j.descartar(1, noveDoUm.id), isNull);
+
+      final estado = paraCanonico(j).canonico;
+      expect(estado.descartes, hasLength(2));
+      // Cada REGISTRO guarda o seu autor — as duas cópias não se misturam.
+      final porId = {for (final d in estado.descartes) d.carta.id: d.assento};
+      expect(porId[noveDoZero.id], 0);
+      expect(porId[noveDoUm.id], 1);
+
+      // §17 Caso 2 — só o adversário descartou o 9♠: não vira "do parceiro".
+      final noveDoTres = j.maos[3].firstWhere((x) => x.valor == '9');
+      final estadoDepois = paraCanonico(j).canonico;
+      final spec = RuleSpec.canonica(estadoDepois.modalidade,
+          metaPontos: estadoDepois.metaPontos);
+      final visao2 = VisaoInformacao.doEstado(estadoDepois, 2);
+      final modelo2 = ModeloParceiro.observar(visao2, spec);
+      expect(modelo2.parceiroDescartou(snap(noveDoZero)), isTrue,
+          reason: 'assento 0 É o parceiro do assento 2');
+      expect(modelo2.parceiroDescartou(snap(noveDoTres)), isFalse,
+          reason: 'ninguém descartou o 9♠');
+
+      // O adversário (assento 1) recebe o MESMO fato público, com o mesmo autor.
+      final visao1 = VisaoInformacao.doEstado(estadoDepois, 1);
+      expect([for (final d in visao1.descartesPublicos) d.assento],
+          [for (final d in visao2.descartesPublicos) d.assento]);
+    });
+
+    // ---------- §19.4 e §19.5 — compra do lixo e descarte depois dela -------
+    test('PROV-04 comprar o lixo esvazia a pilha e PRESERVA o histórico; o '
+        'descarte seguinte continua a mesma sequência', () {
+      final j = mesaProv();
+      final primeira = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, primeira.id), isNull);
+
+      // Assento 1 compra o lixo inteiro (ABERTO: sem exigência de uso do topo).
+      expect(j.comprarLixo(1, modalidade: 'ABERTO')['ok'], isTrue);
+      expect(j.lixo, isEmpty, reason: 'a pilha foi capturada');
+
+      final aposCompra = paraCanonico(j).canonico;
+      expect(aposCompra.lixo, isEmpty);
+      expect(aposCompra.descartes, hasLength(1),
+          reason: 'a carta saiu do lixo; o fato de ter sido descartada não sai');
+      expect(aposCompra.descartes.single.assento, 0);
+      expect(aposCompra.descartes.single.carta.id, primeira.id);
+
+      // §19.5 — novo descarte DEPOIS da compra: ordem continua de onde parou.
+      final segunda = j.maos[1].firstWhere((x) => x.id != primeira.id);
+      expect(j.descartar(1, segunda.id), isNull);
+      final aposDescarte = paraCanonico(j).canonico;
+      expect(aposDescarte.descartes, hasLength(2));
+      expect(aposDescarte.descartes[1].assento, 1);
+      expect(aposDescarte.descartes[1].ordem, 1);
+      // O lixo tem 1 carta, o livro tem 2: pilha e histórico são coisas
+      // diferentes, e é exatamente isso que a semântica acumulada quer dizer.
+      expect(aposDescarte.lixo, hasLength(1));
+
+      // O parceiro do assento 0 continua sabendo o que ele dispensou.
+      final spec = RuleSpec.canonica(aposDescarte.modalidade,
+          metaPontos: aposDescarte.metaPontos);
+      final modelo = ModeloParceiro.observar(
+          VisaoInformacao.doEstado(aposDescarte, 2), spec);
+      expect(modelo.parceiroDescartou(snap(primeira)), isTrue,
+          reason: 'lixo comprado não apaga a memória pública da mão');
+    });
+
+    // ---------- §19.6 / §9 — nova mão ----------
+    test('PROV-05 NOVA MÃO zera o livro: descarte de mão anterior não é '
+        'atribuído à mão corrente', () {
+      final j = mesaProv();
+      final carta = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, carta.id), isNull);
+      expect(paraCanonico(j).canonico.descartes, hasLength(1));
+
+      // Distribuir a mão seguinte é o mesmo caminho que o fim de rodada usa.
+      j.novaRodada();
+
+      expect(j.descartes, isEmpty);
+      expect(j.lixo, isEmpty);
+      final estado = paraCanonico(j).canonico;
+      expect(estado.descartes, isEmpty);
+
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final modelo =
+          ModeloParceiro.observar(VisaoInformacao.doEstado(estado, 2), spec);
+      expect(modelo.parceiroDescartou(snap(carta)), isFalse,
+          reason: 'a memória da mão anterior não atravessa a distribuição');
+    });
+
+    // ---------- §19.11, §19.12, §19.7 / §17 Caso 4 — serialização e volta ----
+    test('PROV-06 RECONEXÃO: o estado reconstruído do snapshot tem a MESMA '
+        'autoria', () {
+      final j = mesaProv();
+      final carta = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, carta.id), isNull);
+      expect(j.comprarMonte(1), isTrue);
+      final outra = j.maos[1].first;
+      expect(j.descartar(1, outra.id), isNull);
+
+      final original = paraCanonico(j);
+      // Serialização -> texto -> desserialização: o caminho que um jogador que
+      // reconecta percorre para receber o estado da mão em curso.
+      final texto = jsonEncode(serializarProjecao(original));
+      final reconstruida = desserializarProjecao(
+          jsonDecode(texto) as Map<String, dynamic>);
+
+      expect(reconstruida.canonico.descartes, hasLength(2));
+      expect(reconstruida.canonico.assinatura(), original.canonico.assinatura());
+      for (var i = 0; i < 2; i++) {
+        expect(reconstruida.canonico.descartes[i],
+            original.canonico.descartes[i]);
+      }
+
+      // E a visão do reconectado é IGUAL à de quem nunca caiu.
+      for (final observador in const [0, 1, 2, 3]) {
+        expect(
+            VisaoInformacao.doEstado(reconstruida.canonico, observador)
+                .assinaturaPublica(),
+            VisaoInformacao.doEstado(original.canonico, observador)
+                .assinaturaPublica());
+      }
+
+      // O snapshot continua servindo de Replay reproduzível (versão da spec).
+      final replay = Replay(
+        versaoSpec: RuleSpec.versaoCanonica,
+        modalidade: original.canonico.modalidade,
+        metaPontos: original.canonico.metaPontos,
+        acoes: const [ComprarMonte()],
+        estadoInicialSerializado: serializarProjecao(original),
+        faseInicial: original.canonico.fase,
+      );
+      expect(replay.reproduzivel, isTrue);
+      expect(replay.snapshotCompleto, isTrue);
+      final ida = Replay.fromJson(
+          jsonDecode(jsonEncode(replay.toJson())) as Map<String, dynamic>);
+      expect(
+          desserializarProjecao(ida.estadoInicialSerializado!)
+              .canonico
+              .descartes,
+          original.canonico.descartes);
+    });
+
+    test('PROV-07 snapshot ANTERIOR à OS (sem a chave) desserializa como '
+        'DESCONHECIDO, não como autoria reconstruída', () {
+      final j = mesaProv();
+      final carta = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, carta.id), isNull);
+
+      // Simula um snapshot gravado antes desta OS: mesma estrutura, sem a
+      // chave `descartes`. É a prova de compatibilidade ADITIVA do §16.
+      final mapa = jsonDecode(jsonEncode(serializarProjecao(paraCanonico(j))))
+          as Map<String, dynamic>;
+      (mapa['canonico'] as Map).remove('descartes');
+
+      final antigo = desserializarProjecao(mapa);
+      expect(antigo.canonico.lixo, hasLength(1), reason: 'o lixo veio inteiro');
+      expect(antigo.canonico.descartes, isEmpty,
+          reason: 'sem registro no snapshot, autor = desconhecido');
+    });
+
+    // ---------- §19.8, §19.9, §19.10 — as visões ----------
+    test('PROV-08 todas as visões recebem a MESMA verdade pública', () {
+      final j = mesaProv();
+      final doZero = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, doZero.id), isNull);
+      expect(j.comprarMonte(1), isTrue);
+      final doUm = j.maos[1].first;
+      expect(j.descartar(1, doUm.id), isNull);
+
+      final estado = paraCanonico(j).canonico;
+      final esperado = [
+        (0, doZero.id, 0),
+        (1, doUm.id, 1),
+      ];
+
+      // Próprio jogador, parceiro e adversários: um único conjunto de fatos.
+      for (final observador in const [0, 1, 2, 3]) {
+        final v = VisaoInformacao.doEstado(estado, observador);
+        expect([
+          for (final d in v.descartesPublicos) (d.assento, d.carta.id, d.ordem)
+        ], esperado, reason: 'visão do assento $observador');
+      }
+
+      // Recorte tipo ESPECTADOR — quem não tem mão nenhuma nesta visão: a
+      // autoria pública continua idêntica, sem ganhar nenhuma permissão nova.
+      final semMao = VisaoInformacao.doEstado(estado, 0, maoOculta: true);
+      expect(semMao.mao, isEmpty);
+      expect([
+        for (final d in semMao.descartesPublicos)
+          (d.assento, d.carta.id, d.ordem)
+      ], esperado);
+    });
+
+    test('PROV-09 o consumidor distingue parceiro de ADVERSÁRIO com o mesmo '
+        'fato canônico', () {
+      final j = mesaProv();
+      final doZero = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, doZero.id), isNull);
+      expect(j.comprarMonte(1), isTrue);
+      final doUm = j.maos[1].first;
+      expect(j.descartar(1, doUm.id), isNull);
+
+      final estado = paraCanonico(j).canonico;
+      final v2 = VisaoInformacao.doEstado(estado, 2);
+      // A visão NÃO pré-calcula "foi do parceiro": entrega o autor, e quem
+      // observa decide (§10). Aqui o consumidor faz a conta com o assento.
+      final doParceiro = [
+        for (final d in v2.descartesPublicos)
+          if (d.assento == v2.parceiro) d.carta.id
+      ];
+      final dosAdversarios = [
+        for (final d in v2.descartesPublicos)
+          if (v2.adversarios.contains(d.assento)) d.carta.id
+      ];
+      expect(doParceiro, [doZero.id]);
+      expect(dosAdversarios, [doUm.id]);
+    });
+
+    // ---------- §19.15 / §20 — nada privado atravessa ----------
+    test('PROV-10 o registro carrega SÓ carta, assento e ordem — nenhum dado '
+        'privado', () {
+      final j = mesaProv();
+      final carta = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, carta.id), isNull);
+
+      final serializado = serializarEstado(paraCanonico(j).canonico);
+      final registros = (serializado['descartes'] as List).cast<Map>();
+      expect(registros, hasLength(1));
+      expect(registros.single.keys.toSet(), {'carta', 'assento', 'ordem'});
+      // A carta é a MESMA forma pública que o lixo já usa — nada a mais.
+      expect((registros.single['carta'] as Map).keys.toSet(),
+          ((serializado['lixo'] as List).first as Map).keys.toSet());
+
+      // Nenhum resquício de mão, monte, morto, uid ou tempo no texto do livro.
+      final texto = jsonEncode(registros).toLowerCase();
+      for (final proibido in const [
+        'uid',
+        'mao',
+        'monte',
+        'morto',
+        'timestamp',
+        'razao',
+        'plano'
+      ]) {
+        expect(texto.contains(proibido), isFalse, reason: 'vazou "$proibido"');
+      }
+    });
+
+    test('PROV-11 a proveniência é PÚBLICA: estados que só diferem no OCULTO '
+        'seguem com a mesma assinatura pública', () {
+      Jogo comMaoAlheia(List<Spec> mao1) {
+        final j = novo('ABERTO');
+        montar(j,
+            mao0: [('7', 'copas'), ('8', 'copas'), ('9', 'copas')],
+            mao1: mao1,
+            mao2: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+            mao3: [('J', 'paus'), ('10', 'paus'), ('9', 'paus')],
+            vez: 0,
+            jaComprou: true);
+        final alvo = j.maos[0].firstWhere((x) => x.valor == '9');
+        expect(j.descartar(0, alvo.id), isNull);
+        return j;
+      }
+
+      final a = comMaoAlheia([('K', 'espadas'), ('Q', 'espadas'), ('J', 'espadas')]);
+      final b = comMaoAlheia([('3', 'espadas'), ('4', 'espadas'), ('5', 'espadas')]);
+      final va = VisaoInformacao.doEstado(paraCanonico(a).canonico, 2);
+      final vb = VisaoInformacao.doEstado(paraCanonico(b).canonico, 2);
+      // Mesmo público (inclusive a autoria do descarte), oculto diferente.
+      expect(va.descartesPublicos.single.assento,
+          vb.descartesPublicos.single.assento);
+      expect(va.assinaturaPublica().contains('desc=0@0:'), isTrue);
+
+      // E autorias DIFERENTES produzem assinaturas públicas diferentes — o
+      // campo participa de verdade, não é decoração.
+      final c1 = comMaoAlheia([('K', 'espadas'), ('Q', 'espadas'), ('J', 'espadas')]);
+      expect(c1.comprarMonte(1), isTrue);
+      expect(c1.descartar(1, c1.maos[1].first.id), isNull);
+      final vc = VisaoInformacao.doEstado(paraCanonico(c1).canonico, 2);
+      expect(vc.assinaturaPublica() == va.assinaturaPublica(), isFalse);
+    });
+
+    // ---------- §19.14 / §17 — os quatro casos, ponta a ponta ----------
+    test('PROV-12 os quatro casos do §17 numa partida com o ROBÔ canônico', () {
+      final j = mesaProv();
+      // Caso 1 — o parceiro descartou uma carta pública.
+      final doParceiro = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, doParceiro.id), isNull);
+      // Caso 2 — um adversário descartou outra.
+      expect(j.comprarMonte(1), isTrue);
+      final doAdversario = j.maos[1].first;
+      expect(j.descartar(1, doAdversario.id), isNull);
+
+      final estado = paraCanonico(j).canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final modelo =
+          ModeloParceiro.observar(VisaoInformacao.doEstado(estado, 2), spec);
+
+      expect(modelo.parceiroDescartou(snap(doParceiro)), isTrue); // 1
+      expect(modelo.parceiroDescartou(snap(doAdversario)), isFalse); // 2
+
+      // Caso 3 — carta que está no lixo mas não tem autoria provada.
+      final semProva = paraCanonico(j).canonico;
+      final forjado = EstadoJogo(
+        modalidade: semProva.modalidade,
+        metaPontos: semProva.metaPontos,
+        monte: semProva.monte,
+        lixo: semProva.lixo, // o lixo inteiro...
+        mortos: semProva.mortos,
+        maos: semProva.maos,
+        jogosDupla: semProva.jogosDupla,
+        rodadasVulneravel: semProva.rodadasVulneravel,
+        primeiraBaixadaFeita: semProva.primeiraBaixadaFeita,
+        vez: semProva.vez,
+        mortoPego: semProva.mortoPego,
+        fase: semProva.fase,
+        // ...e NENHUM registro de autoria.
+      );
+      final semAutor =
+          ModeloParceiro.observar(VisaoInformacao.doEstado(forjado, 2), spec);
+      expect(semAutor.parceiroDescartou(snap(doParceiro)), isFalse,
+          reason: 'sem registro o bot não inventa autor');
+
+      // Caso 4 — reconexão: o mesmo bot, a partir do snapshot, afirma o mesmo.
+      final reconectado = desserializarProjecao(jsonDecode(
+              jsonEncode(serializarProjecao(paraCanonico(j))))
+          as Map<String, dynamic>);
+      final aposQueda = ModeloParceiro.observar(
+          VisaoInformacao.doEstado(reconectado.canonico, 2), spec);
+      expect(aposQueda.parceiroDescartou(snap(doParceiro)), isTrue);
+      expect(aposQueda.parceiroDescartou(snap(doAdversario)), isFalse);
+    });
+
+    // ---------- §21/§22 — o motor e o robô continuam como estavam ----------
+    test('PROV-13 partida completa do ROBÔ canônico: o livro nunca mente e '
+        'nunca some', () {
+      for (final modalidade in const ['ABERTO', 'FECHADO']) {
+        final j = Jogo(const ['você', 'B1', 'B2', 'B3'], const ['', '', '', ''],
+            const ['', '', '', ''],
+            seed: 20260817, motorConfig: MotorConfig.producao());
+        j.modalidade = modalidade;
+        for (var turno = 0; turno < 40 && !j.rodadaEncerrada; turno++) {
+          final assento = j.vez;
+          j.botJoga(assento);
+          final estado = paraCanonico(j).canonico;
+          // INVARIANTE: todo registro aponta para um assento real, a ordem é
+          // estritamente crescente, e o livro nunca encolhe sem nova mão.
+          for (var i = 0; i < estado.descartes.length; i++) {
+            final d = estado.descartes[i];
+            expect(d.assento >= 0 && d.assento < 4, isTrue);
+            expect(d.ordem, i);
+          }
+          // O lixo NUNCA tem mais cartas do que o livro tem registros: toda
+          // carta na pilha chegou lá por um descarte registrado.
+          expect(estado.lixo.length <= estado.descartes.length, isTrue,
+              reason: '$modalidade turno $turno: lixo sem proveniência');
+        }
+        // NÃO-VACUIDADE: a partida precisa ter descartado de verdade, senão o
+        // invariante acima passaria por vazio.
+        final fim = paraCanonico(j).canonico;
+        expect(fim.descartes.length >= 10, isTrue,
+            reason: '$modalidade: só ${fim.descartes.length} descartes '
+                'registrados — o cenário não exercitou nada');
+        expect(fim.descartes.map((d) => d.assento).toSet().length >= 2, isTrue,
+            reason: '$modalidade: um único assento descartou na partida toda');
+      }
+    });
   });
 }
 
