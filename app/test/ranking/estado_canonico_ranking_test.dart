@@ -68,11 +68,50 @@ PerfilVM _vmCom(EstadoRanking ranking, {String nome = 'Sônia', int nivel = 7}) 
   );
 }
 
+/// Um [PerfilVM] EXATAMENTE como a casca publicável o produz: identidade real e
+/// todo o resto ausente.
+///
+/// Existe separado de [_vmCom] porque os dois provam coisas diferentes. O
+/// primeiro fixa liga e colocação e deixa o resto preenchido, para isolar o
+/// ranking; este aqui é o retrato do que a pessoa realmente recebe hoje, e é
+/// contra ele que os campos sem fonte são conferidos.
+PerfilVM _vmSemFonte({
+  String nome = 'Sônia',
+  EstadoRanking ranking = rankingDaCascaPublicavel,
+}) {
+  return PerfilVM(
+    ehMeuPerfil: true,
+    nome: nome,
+    avatar: '👑',
+    mascote: '🦊',
+    moldura: 'assets/perfil/vitrine_moldura.webp',
+    dorso: 'assets/perfil/vitrine_dorso.webp',
+    efeito: 'assets/perfil/vitrine_efeito.webp',
+    nivel: null,
+    xpAtual: null,
+    xpProximo: null,
+    titulo: null,
+    tituloEmoji: null,
+    ranking: ranking,
+    stats: null,
+    ultimaConquista: null,
+    presentesCount: null,
+    conquistas: null,
+    vitrine: const [],
+    presentes: const [],
+  );
+}
+
 /// Monta o [PerfilScreen] cru, sem sessão, numa superfície de telefone.
 ///
 /// SUPERFÍCIE DE TELEFONE: o padrão do `flutter_test` é 800x600, que é paisagem
 /// de desktop e faz uma tela desenhada para celular estourar em overflow.
-Future<void> _montarPerfil(WidgetTester tester, PerfilVM vm) async {
+Future<void> _montarPerfil(
+  WidgetTester tester,
+  PerfilVM vm, {
+  PerfilEstado estado = PerfilEstado.normal,
+  String? mensagemErro,
+}) async {
   tester.view.physicalSize = const Size(1080, 2340);
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
@@ -80,6 +119,8 @@ Future<void> _montarPerfil(WidgetTester tester, PerfilVM vm) async {
     MaterialApp(
       home: PerfilScreen(
         vm: vm,
+        estado: estado,
+        mensagemErro: mensagemErro,
         onVoltar: () {},
         onAbrirConfig: () {},
         onTrocarAvatar: () {},
@@ -180,6 +221,29 @@ String _codigo(File f) {
     i++;
   }
   return saida.toString();
+}
+
+/// Deixa o relógio do teste correr até a sessão responder e o [PerfilService]
+/// terminar os 350ms de I/O simulado.
+///
+/// `pumpAndSettle` SOZINHO NÃO BASTA, e a razão é instrutiva: ele para no
+/// primeiro quadro em que nada mais está agendado. O que mantinha o laço vivo
+/// nesta tela era o carregamento dos oito ícones de conquista e do baú de
+/// presentes — elementos que só existiam porque o Perfil desenhava dado sem
+/// fonte. Retirá-los é o objetivo desta linhagem, e o efeito colateral é que o
+/// tempo passou a ter de ser bombeado de propósito.
+///
+/// Nenhuma asserção mudou por causa disto: o que mudou é o teste parar de
+/// depender, sem saber, de um elemento de tela que não deveria estar lá.
+Future<void> _assentar(WidgetTester tester) async {
+  // São DUAS esperas encadeadas, e não uma: a fonte de identidade responde por
+  // `Future`, e só DEPOIS disso o Perfil descobre que o `publicId` mudou e
+  // começa os 350ms do serviço. Bombear em rodadas cobre a cadeia inteira sem
+  // depender da ordem exata em que os dois futuros se resolvem.
+  for (var i = 0; i < 4; i++) {
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+  await tester.pumpAndSettle();
 }
 
 String _barras(String caminho) => caminho.replaceAll(r'\', '/');
@@ -419,6 +483,195 @@ void main() {
   });
 
   // =========================================================================
+  // 12 — OS CAMPOS SEM FONTE. O mesmo defeito do Bronze, sem a palavra Bronze.
+  //
+  // Liga e colocação foram os dois que tinham nome próprio, mas o caminho
+  // "jogador novo" escrevia mais seis: nível 1, XP 0/1000, título 'Novato(a)',
+  // quatro zeros de estatística, zero presentes e oito conquistas travadas.
+  // Nenhum vem de autoridade nenhuma — não existe sistema de XP, título é
+  // concedido, nada grava resultado de partida no cliente e quem sabe o que foi
+  // desbloqueado é o backend de recompensas, que o cliente ainda não lê.
+  //
+  // Um zero desenhado é uma AFIRMAÇÃO: diz que a pessoa jogou e não ganhou, que
+  // foi avaliada e ficou na base. É a mesma mentira do `#0`, escrita em outro
+  // canto da tela.
+  // =========================================================================
+  group('campos sem fonte não são apresentados como dados reais', () {
+    testWidgets('progressão, estatísticas, presentes e conquistas somem', (
+      tester,
+    ) async {
+      await _montarPerfil(tester, _vmSemFonte());
+
+      final texto = _textoDaTela(tester);
+      // Progressão.
+      expect(texto, isNot(contains('XP')), reason: 'não há sistema de XP');
+      expect(texto, isNot(contains('Nível')));
+      expect(texto, isNot(contains('Novato')));
+      // Estatísticas.
+      expect(texto, isNot(contains('Vitórias')));
+      expect(texto, isNot(contains('Partidas')));
+      expect(texto, isNot(contains('Canastras')));
+      expect(texto, isNot(contains('Aproveit')));
+      // Presentes e conquistas.
+      expect(texto, isNot(contains('presentes que você recebeu')));
+      expect(texto, isNot(contains('CONQUISTAS')));
+      expect(texto, isNot(contains('Ainda sem conquistas')));
+      // E o que TEM fonte continua desenhado.
+      expect(find.text('Sônia'), findsOneWidget);
+    });
+
+    testWidgets('o zero não volta por dentro: nenhum "0" isolado na tela', (
+      tester,
+    ) async {
+      await _montarPerfil(tester, _vmSemFonte());
+
+      // A varredura é sobre os pedaços, e não sobre a string concatenada: um
+      // `0` dentro de outra palavra não é uma afirmação, um `Text('0')` é.
+      final pedacos = tester
+          .widgetList<Text>(find.byType(Text))
+          .map((t) => (t.data ?? t.textSpan?.toPlainText() ?? '').trim());
+      expect(
+        pedacos,
+        isNot(contains('0')),
+        reason: 'zero desenhado é afirmação, e ninguém mediu coisa nenhuma',
+      );
+      expect(pedacos, isNot(contains('0%')));
+      expect(pedacos, isNot(contains('1')), reason: 'nem o nível 1 do selo');
+    });
+
+    testWidgets('com fonte, tudo volta a ser desenhado sem a tela mudar', (
+      tester,
+    ) async {
+      // A prova de que a correção é AUSÊNCIA, e não remoção: o dia em que a
+      // Fase 2 trouxer os valores, eles aparecem sem ninguém tocar na tela.
+      await _montarPerfil(tester, PerfilVM.mock());
+
+      final texto = _textoDaTela(tester);
+      expect(texto, contains('Rainha da Canastra'));
+      expect(texto, contains('XP'));
+      expect(texto, contains('Vitórias'));
+      expect(texto, contains('CONQUISTAS'));
+      expect(texto, contains('presentes que você recebeu · 12'));
+      expect(find.text('Diamante'), findsOneWidget);
+      expect(find.text('· #128 no mundo'), findsOneWidget);
+    });
+
+    testWidgets('lista vazia de conquistas é resposta, e ganha o recado', (
+      tester,
+    ) async {
+      // `null` é "não perguntei"; `[]` é "perguntei, e a resposta foi nenhuma".
+      // Só a segunda autoriza o recado de estado vazio — e é o que a Fase 2 vai
+      // produzir para quem de fato ainda não conquistou nada.
+      final vm = PerfilVM(
+        ehMeuPerfil: true,
+        nome: 'Sônia',
+        avatar: '👑',
+        mascote: '🦊',
+        moldura: 'assets/perfil/vitrine_moldura.webp',
+        dorso: 'assets/perfil/vitrine_dorso.webp',
+        efeito: 'assets/perfil/vitrine_efeito.webp',
+        nivel: null,
+        xpAtual: null,
+        xpProximo: null,
+        titulo: null,
+        tituloEmoji: null,
+        ranking: rankingDaCascaPublicavel,
+        stats: null,
+        ultimaConquista: null,
+        presentesCount: null,
+        conquistas: const [],
+        vitrine: const [],
+        presentes: const [],
+      );
+      await _montarPerfil(tester, vm);
+
+      final texto = _textoDaTela(tester);
+      expect(texto, contains('CONQUISTAS'));
+      expect(texto, contains('Ainda sem conquistas'));
+    });
+  });
+
+  // =========================================================================
+  // 3 e 4 — CARREGAMENTO e ERRO. Três estados distintos, e nenhum deles inventa.
+  // =========================================================================
+  group('carregando e erro não viram dado', () {
+    testWidgets('em carregamento a tela mostra esqueleto, e nenhum número', (
+      tester,
+    ) async {
+      await _montarPerfil(
+        tester,
+        const PerfilService().vmPlaceholder(),
+        estado: PerfilEstado.carregando,
+      );
+
+      final texto = _textoDaTela(tester);
+      expect(texto, isNot(contains('Bronze')));
+      expect(texto, isNot(contains('no mundo')));
+      expect(texto, isNot(contains('XP')));
+      expect(texto, isNot(contains('Vitórias')));
+      expect(texto, isNot(contains('CONQUISTAS')));
+      // Nem o nome de quem quer que seja: o VM de carga não tem nome.
+      expect(texto, isNot(contains('Sônia')));
+    });
+
+    testWidgets('o VM de carga não carrega valor nenhum além do estado', (
+      tester,
+    ) async {
+      final placeholder = const PerfilService().vmPlaceholder();
+
+      expect(placeholder.ranking.fase, FaseRanking.carregando);
+      expect(placeholder.nivel, isNull);
+      expect(placeholder.xpAtual, isNull);
+      expect(placeholder.titulo, isNull);
+      expect(placeholder.stats, isNull);
+      expect(placeholder.presentesCount, isNull);
+      expect(placeholder.conquistas, isNull);
+    });
+
+    testWidgets('em erro a tela pede recarga, e não desenha o perfil', (
+      tester,
+    ) async {
+      // O VM ENTREGUE AO ERRO É O ANTERIOR, cheio de propósito: se a tela
+      // desenhasse o corpo do perfil no estado de erro, os valores da maquete
+      // vazariam. O caso prova que ela não desenha.
+      await _montarPerfil(
+        tester,
+        PerfilVM.mock(),
+        estado: PerfilEstado.erro,
+        mensagemErro: 'Não consegui carregar seu perfil agora. Tenta de novo?',
+      );
+
+      final texto = _textoDaTela(tester);
+      expect(texto, contains('Tenta de novo'));
+      expect(texto, isNot(contains('Diamante')));
+      expect(texto, isNot(contains('#128')));
+      expect(texto, isNot(contains('Rainha da Canastra')));
+      expect(texto, isNot(contains('Vitórias')));
+      expect(texto, isNot(contains('Aurora')));
+    });
+
+    testWidgets('erro depois de carregado não deixa resto do perfil na tela', (
+      tester,
+    ) async {
+      await _montarPerfil(
+        tester,
+        _vmCom(const EstadoRanking.disponivel(liga: 'Ouro', posicaoMundial: 9)),
+      );
+      expect(find.text('Ouro'), findsOneWidget);
+
+      await _montarPerfil(
+        tester,
+        _vmCom(const EstadoRanking.falha()),
+        estado: PerfilEstado.erro,
+      );
+
+      final texto = _textoDaTela(tester);
+      expect(texto, isNot(contains('Ouro')));
+      expect(texto, isNot(contains('#9')));
+    });
+  });
+
+  // =========================================================================
   // A ORIGEM — o serviço que produzia 'Bronze' e 0.
   // =========================================================================
   group('PerfilService — o produtor', () {
@@ -444,6 +697,24 @@ void main() {
       expect(vm.ranking.liga, isNull);
       expect(vm.ranking.posicaoMundial, isNull);
       expect(vm.ranking.ligaParaExibicao, isNot('Bronze'));
+    });
+
+    test('o perfil publicável não recebe progressão, placar nem troféu', () async {
+      final vm = await const PerfilService().carregar();
+
+      expect(vm.nivel, isNull, reason: 'não existe sistema de XP');
+      expect(vm.xpAtual, isNull);
+      expect(vm.xpProximo, isNull);
+      expect(vm.titulo, isNull, reason: 'título é concedido, não presumido');
+      expect(vm.tituloEmoji, isNull);
+      expect(vm.stats, isNull, reason: 'nada grava resultado de partida');
+      expect(vm.presentesCount, isNull, reason: 'não há inventário ligado');
+      expect(
+        vm.conquistas,
+        isNull,
+        reason: 'a autoridade de recompensas não é lida pelo cliente',
+      );
+      expect(vm.ultimaConquista, isNull);
     });
 
     test('o VM de carregamento diz carregando, e não indisponível', () {
@@ -507,6 +778,27 @@ void main() {
 
       expect(texto, isNot(contains('#0')));
       expect(texto, isNot(contains('#')));
+    });
+
+    test('sem nível, o convite também não cita nível', () {
+      // O `Nível` era o último fallback que ainda saía incondicionalmente do
+      // aparelho: a folha canônica já tinha condicionado liga e colocação, mas
+      // seguia interpolando `'Nível ${vm.nivel}'` — o que, com o campo ausente,
+      // mandaria a palavra `null` para a conversa de outra pessoa.
+      final texto = PerfilPage.textoDeCompartilhamento(
+        _vmSemFonte(nome: 'Sônia'),
+      );
+
+      expect(texto, contains('Sônia'), reason: 'o que TEM fonte continua');
+      expect(texto, contains('Buraco Master VIP'));
+      expect(texto, isNot(contains('Nível')));
+      expect(texto, isNot(contains('null')));
+      expect(texto, isNot(contains('Liga')));
+      expect(texto, isNot(contains('#')));
+      expect(texto, isNot(contains('—')));
+      // E o convite fecha limpo: nada de ponto solto depois da coroa.
+      expect(texto, isNot(endsWith(' .')));
+      expect(texto, isNot(endsWith('👑 .')));
     });
 
     test('sem VM carregado, o convite não afirma nem nome', () {
@@ -598,7 +890,7 @@ void main() {
           child: const MaterialApp(home: PerfilPage()),
         ),
       );
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      await _assentar(tester);
     }
 
     PerfilVM vmNaTela(WidgetTester tester) =>
@@ -617,7 +909,7 @@ void main() {
 
       // Logout.
       auth.add(null);
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      await _assentar(tester);
 
       final depois = vmNaTela(tester);
       expect(depois.ranking.liga, isNull);
@@ -645,7 +937,7 @@ void main() {
           ..publicId = 'P9Z8Y7X6W5V4'
           ..apelido = 'Aurora';
         auth.add('uid-B');
-        await tester.pumpAndSettle(const Duration(milliseconds: 600));
+        await _assentar(tester);
 
         expect(sessao.geracao, greaterThan(geracaoA));
         final depois = vmNaTela(tester);
@@ -677,7 +969,7 @@ void main() {
         ..publicId = 'P9Z8Y7X6W5V4'
         ..apelido = 'Aurora';
       auth.add('uid-B');
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+      await _assentar(tester);
 
       final texto = PerfilPage.textoDeCompartilhamento(vmNaTela(tester));
       expect(texto, contains('Aurora'));

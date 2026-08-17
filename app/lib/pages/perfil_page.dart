@@ -12,9 +12,10 @@ import '../sessao/identidade_publica_sessao.dart';
 /// estados (carregando/normal/erro) e ligar os 14 callbacks da UI a ações reais.
 /// NÃO altera o visual — a interface é 100% do [PerfilScreen] (Codex).
 ///
-/// FASE 1: identidade real (nome do Firebase) + arquitetura pronta; números ainda
-/// de demonstração (ver [PerfilService.statsDemo]). As ações que dependem de telas
-/// futuras (config, editar, loja, ranking) mostram um aviso "chega já já".
+/// FASE 1: identidade real (sessão canônica) + arquitetura pronta; os números
+/// chegam AUSENTES enquanto não há autoridade que os informe (ver
+/// [PerfilService.statsDemo]). As ações que dependem de telas futuras (config,
+/// editar, loja, ranking) mostram um aviso "chega já já".
 class PerfilPage extends StatefulWidget {
   const PerfilPage({super.key, this.ehMeuPerfil = true});
 
@@ -33,7 +34,9 @@ class PerfilPage extends StatefulWidget {
   /// Agora cada trecho competitivo só entra se houver o que afirmar, e quando
   /// não há, o convite continua sendo um convite — perde a linha, não a função.
   /// Público, e por isso o mais rigoroso de todos: aqui nem o travessão entra,
-  /// porque num texto solto ele não se lê como ausência, se lê como ruído.
+  /// porque num texto solto ele não se lê como ausência, se lê como ruído. E o
+  /// nível segue a mesma regra da liga: sem sistema de progressão ligado, não há
+  /// `Nível` nenhum para mandar para a conversa de outra pessoa.
   ///
   /// ESTÁTICO E PÚBLICO de propósito: o texto é a superfície que sai do
   /// aparelho, e um teste precisa poder conferi-lo sem encenar um toque e sem
@@ -43,12 +46,17 @@ class PerfilPage extends StatefulWidget {
     // Sem VM não há nada carregado: não existe nem nome para afirmar.
     if (vm == null) return '$convite 👑';
 
-    final partes = <String>['Nível ${vm.nivel}'];
+    final partes = <String>[];
+    final nivel = vm.nivel;
+    if (nivel != null) partes.add('Nível $nivel');
     final liga = vm.ranking.liga;
     if (liga != null) partes.add('Liga $liga');
     final posicao = vm.ranking.posicaoMundial;
     if (posicao != null) partes.add('#$posicao no mundo');
 
+    // Sem nenhum trecho competitivo, o convite fecha no nome: nada de um ponto
+    // solto depois da coroa, e nada de uma lista vazia virando espaço em branco.
+    if (partes.isEmpty) return '$convite Sou ${vm.nome} 👑';
     return '$convite Sou ${vm.nome} 👑 ${partes.join(' · ')}.';
   }
 

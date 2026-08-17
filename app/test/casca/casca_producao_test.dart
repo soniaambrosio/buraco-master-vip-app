@@ -27,7 +27,9 @@ import 'package:buraco_master_vip/casca/lobby_online.dart';
 import 'package:buraco_master_vip/casca/login_de_producao.dart';
 import 'package:buraco_master_vip/casca/onde_jogar_de_producao.dart';
 import 'package:buraco_master_vip/casca/raiz_do_aplicativo.dart';
+import 'package:buraco_master_vip/pages/perfil_page.dart';
 import 'package:buraco_master_vip/screens/inicio_screen.dart';
+import 'package:buraco_master_vip/screens/perfil_screen.dart';
 import 'package:buraco_master_vip/screens/splash_oficial_screen.dart';
 import 'package:buraco_master_vip/services/online_service.dart';
 import 'package:buraco_master_vip/services/ponte_sessao_online.dart';
@@ -631,6 +633,156 @@ void main() {
 
       expect(find.byType(HomeDeProducao), findsOneWidget);
       expect(find.textContaining('ainda não está disponível'), findsOneWidget);
+    });
+  });
+
+  // =========================================================================
+  // 5 e 10 — o Perfil ALCANÇÁVEL também só afirma o que tem fonte
+  //
+  // Absorvido de `casca-producao-auth-roteamento-v2-9c41ae @ b246c07`, e o
+  // motivo de estar aqui e não na suíte de ranking é o adjetivo: a suíte de
+  // ranking monta `PerfilScreen` e `PerfilPage` na mão, o que prova a TELA. O
+  // que estes casos provam é o Perfil que a pessoa realmente abre — pela grade
+  // da Home, com a raiz de produção, a sessão de verdade e a identidade real
+  // atravessando tudo. Um VM correto que ninguém alcança não protege ninguém.
+  //
+  // A liga é o único ponto em que a folha absorvida foi REJEITADA: ela apagava
+  // a linha inteira, e a linha canônica mantém `💎 Liga —`, que é uma ausência
+  // admitida e não desloca o cabeçalho. Os casos abaixo travam essa decisão nos
+  // dois sentidos — o travessão fica, `Bronze` e `#0` não voltam.
+  // =========================================================================
+  group('o Perfil alcançável só afirma o que tem fonte', () {
+    Future<void> abrirPerfil(WidgetTester tester, _Bancada b) async {
+      await _abrirAplicativo(tester, b);
+      await _passarAAbertura(tester);
+      // Pela GRADE da Home, e não construindo a página na mão.
+      //
+      // `warnIfMissed: false` porque o alvo do toque é o `InkWell` do item, e
+      // não o `Text` que o localiza — o aviso do `flutter_test` é sobre o
+      // widget encontrado, não sobre o gesto. A prova de que o toque funcionou
+      // é a asserção seguinte: o `PerfilPage` está na árvore.
+      await tester.tap(find.text('Perfil').first, warnIfMissed: false);
+      await tester.pump();
+      // O serviço simula 350ms de I/O antes de responder.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+    }
+
+    PerfilVM vmNaTela(WidgetTester tester) =>
+        tester.widget<PerfilScreen>(find.byType(PerfilScreen)).vm;
+
+    /// Todo o texto desenhado, concatenado — pega o literal mesmo quando ele foi
+    /// partido entre dois `Text` vizinhos.
+    String textoDaTela(WidgetTester tester) => tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data ?? t.textSpan?.toPlainText() ?? '')
+        .join(' | ');
+
+    testWidgets('o Perfil é alcançável a partir da Home', (tester) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      expect(find.byType(PerfilPage), findsOneWidget);
+      // E a identidade REAL da sessão chega até lá.
+      expect(find.text('Ana'), findsWidgets);
+    });
+
+    testWidgets('sem autoridade de ranking, nada de Bronze nem de #0', (
+      tester,
+    ) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      final vm = vmNaTela(tester);
+      expect(vm.ranking.liga, isNull, reason: 'não há autoridade de ranking');
+      expect(
+        vm.ranking.posicaoMundial,
+        isNull,
+        reason: 'ninguém classificou ninguém',
+      );
+
+      final texto = textoDaTela(tester);
+      expect(texto, isNot(contains('Bronze')));
+      expect(texto, isNot(contains('#0')));
+      expect(texto, isNot(contains('no mundo')));
+      // O rótulo fica, com a ausência admitida no lugar do valor — é o estado
+      // neutro aprovado na linha canônica, e não a linha apagada.
+      expect(find.text('💎 Liga'), findsOneWidget);
+      expect(find.text('—'), findsWidgets);
+    });
+
+    testWidgets('progressão, estatísticas e conquistas ficam ausentes', (
+      tester,
+    ) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      final vm = vmNaTela(tester);
+      expect(vm.nivel, isNull, reason: 'não há sistema de XP ligado');
+      expect(vm.xpAtual, isNull);
+      expect(vm.xpProximo, isNull);
+      expect(vm.titulo, isNull, reason: 'título é concedido, não presumido');
+      expect(vm.tituloEmoji, isNull);
+      expect(vm.stats, isNull, reason: 'nada grava resultado de partida');
+      expect(vm.presentesCount, isNull);
+      expect(
+        vm.conquistas,
+        isNull,
+        reason: 'quem sabe o que foi desbloqueado é o backend de recompensas',
+      );
+
+      // E nenhum deles vira um zero desenhado.
+      final texto = textoDaTela(tester);
+      expect(texto, isNot(contains('XP')));
+      expect(texto, isNot(contains('Novato')));
+      expect(texto, isNot(contains('CONQUISTAS')));
+      expect(texto, isNot(contains('Vitórias')));
+      expect(texto, isNot(contains('Partidas')));
+      expect(texto, isNot(contains('Canastras')));
+      expect(texto, isNot(contains('presentes que você recebeu')));
+      // Nem no recado de estado vazio: "ainda sem conquistas" é uma frase sobre
+      // a vida da pessoa, e ninguém conferiu.
+      expect(texto, isNot(contains('Ainda sem conquistas')));
+    });
+
+    testWidgets('o convite copiado do Perfil alcançável não inventa nada', (
+      tester,
+    ) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      final texto = PerfilPage.textoDeCompartilhamento(vmNaTela(tester));
+      expect(texto, contains('Ana'), reason: 'o dado que TEM fonte continua');
+      expect(texto, contains('Buraco Master VIP'));
+      expect(texto, isNot(contains('Nível')));
+      expect(texto, isNot(contains('Liga')));
+      expect(texto, isNot(contains('Bronze')));
+      expect(texto, isNot(contains('#')));
+      expect(texto, isNot(contains('—')), reason: 'nem o travessão vaza');
+    });
+
+    testWidgets('o VM do Perfil alcançável não é a maquete', (tester) async {
+      final b = _Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirPerfil(tester, b);
+
+      final vm = vmNaTela(tester);
+      final maquete = PerfilVM.mock();
+      expect(vm.nome, isNot(maquete.nome));
+      expect(vm.nivel, isNot(maquete.nivel));
+      expect(vm.ranking, isNot(maquete.ranking));
+      expect(vm.stats, isNot(maquete.stats));
+      expect(vm.conquistas, isNot(maquete.conquistas));
     });
   });
 

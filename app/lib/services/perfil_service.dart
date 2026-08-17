@@ -6,7 +6,8 @@ import '../sessao/identidade_publica_sessao.dart';
 ///
 /// FASE 1: identidade REAL (sessão canônica) + arquitetura pronta. Como ainda
 /// não existe persistência (sem Cloud Firestore, a mesa não grava resultados),
-/// os NÚMEROS do perfil ficam no estado honesto de jogador novo.
+/// os NÚMEROS do perfil chegam AUSENTES — nulos, e não zerados. O que não tem
+/// fonte não é desenhado, e é a mesma regra que a Home de produção segue.
 ///
 /// FASE 2: trocar a origem por Firestore (`usuarios/{uid}`) dentro de [carregar],
 /// SEM mudar a assinatura nem o visual. O nome já é real desde a Fase 1.
@@ -14,7 +15,7 @@ class PerfilService {
   const PerfilService();
 
   /// true  = mostra os números de exemplo (marketing/screenshots).
-  /// false = estado real de jogador novo (nível 1, stats 0, conquistas travadas).
+  /// false = estado publicável, em que TUDO o que não tem fonte chega ausente.
   ///
   /// DESLIGADO, e é decisão desta OS. Com ele ligado, qualquer pessoa que
   /// instalasse o aplicativo abria o próprio perfil e via nível 24, título
@@ -27,18 +28,12 @@ class PerfilService {
   /// aprovação visual. O que não pode é o aplicativo publicado usá-la.
   static const bool statsDemo = false;
 
-  /// Catálogo fixo de conquistas do jogo (definições). O `desbloqueada` real virá
-  /// dos dados na Fase 2. Aqui, tudo travado (jogador novo).
-  static const List<Conquista> _catalogoTravado = [
-    Conquista(id: 'primeiro_lugar', label: '1º lugar', icone: 'assets/perfil/conquista_1_lugar.webp', desbloqueada: false),
-    Conquista(id: 'sequencia_10', label: 'Sequência 10', icone: 'assets/perfil/conquista_sequencia_10.webp', desbloqueada: false),
-    Conquista(id: 'cem_canastras', label: '100 canastras', icone: 'assets/perfil/conquista_100_canastras.webp', desbloqueada: false),
-    Conquista(id: 'diamante', label: 'Chegou ao Diamante', icone: 'assets/perfil/conquista_diamante.webp', desbloqueada: false),
-    Conquista(id: 'campeao', label: 'Campeão', icone: 'assets/perfil/conquista_campeao.webp', desbloqueada: false),
-    Conquista(id: 'imortal', label: 'Imortal', icone: 'assets/perfil/conquista_imortal.webp', desbloqueada: false),
-    Conquista(id: 'lenda', label: 'Lenda', icone: 'assets/perfil/conquista_lenda.webp', desbloqueada: false),
-    Conquista(id: 'perfeito', label: 'Perfeito', icone: 'assets/perfil/conquista_perfeito.webp', desbloqueada: false),
-  ];
+  // O catálogo "tudo travado" que existia aqui foi retirado junto com o resto
+  // dos números sem fonte. Ele parecia inofensivo — oito troféus apagados —,
+  // mas afirmava que a pessoa não desbloqueou nenhum, e quem sabe isso é o
+  // backend de recompensas (`RecompensaConcessao`), que o cliente ainda não lê.
+  // A Fase 2 traz o catálogo com o `desbloqueada` de verdade; até lá a seção
+  // não é desenhada.
 
   static const List<Conquista> _catalogoDemo = [
     Conquista(id: 'primeiro_lugar', label: '1º lugar', icone: 'assets/perfil/conquista_1_lugar.webp', desbloqueada: true),
@@ -125,11 +120,18 @@ class PerfilService {
       moldura: 'assets/perfil/vitrine_moldura.webp',
       dorso: 'assets/perfil/vitrine_dorso.webp',
       efeito: 'assets/perfil/vitrine_efeito.webp',
-      nivel: demo ? 24 : 1,
-      xpAtual: demo ? 3240 : 0,
-      xpProximo: demo ? 5000 : 1000,
-      titulo: demo ? 'Rainha da Canastra' : 'Novato(a)',
-      tituloEmoji: demo ? '👑' : '🃏',
+      // NULO É A RESPOSTA CERTA AQUI, e não o zero.
+      //
+      // O caminho não-demo escrevia nível 1, XP 0/1000 e título 'Novato(a)'.
+      // Nenhum desses números veio de lugar nenhum: não existe sistema de XP e
+      // título é concedido, não presumido. Com nulo, a tela não desenha o
+      // elemento; quando a FASE 2 trouxer Firestore, é aqui que os valores
+      // passam a chegar, e a tela volta a mostrá-los sem precisar mudar.
+      nivel: demo ? 24 : null,
+      xpAtual: demo ? 3240 : null,
+      xpProximo: demo ? 5000 : null,
+      titulo: demo ? 'Rainha da Canastra' : null,
+      tituloEmoji: demo ? '👑' : null,
       // AQUI NASCIA O DEFEITO: `liga: demo ? 'Diamante' : 'Bronze'` e
       // `posicaoMundial: demo ? 128 : 0`. Com a chave de demonstração desligada
       // — que é o estado publicável — todo jogador recebia Liga Bronze e
@@ -144,9 +146,11 @@ class PerfilService {
           (demo
               ? const EstadoRanking.disponivel(liga: 'Diamante', posicaoMundial: 128)
               : rankingDaCascaPublicavel),
+      // Quatro zeros não são "o placar de quem ainda não jogou": são um placar
+      // sem placar nenhum atrás. Nada grava resultado de partida no cliente.
       stats: demo
           ? const PerfilStats(vitorias: 342, partidas: 1204, canastras: 89, aproveitamento: 68)
-          : const PerfilStats(vitorias: 0, partidas: 0, canastras: 0, aproveitamento: 0),
+          : null,
       ultimaConquista: demo
           ? const UltimaConquista(
               titulo: 'Primeira Batida Real',
@@ -155,8 +159,11 @@ class PerfilService {
               raridade: 'Comum Especial',
             )
           : null,
-      presentesCount: demo ? 12 : 0,
-      conquistas: demo ? _catalogoDemo : _catalogoTravado,
+      presentesCount: demo ? 12 : null,
+      // NULO, e não `const []`: nulo diz "não perguntei a ninguém", e a lista
+      // vazia diria "perguntei e a resposta foi nenhuma". Só a segunda autoriza
+      // o recado "ainda sem conquistas" — e ninguém perguntou nada.
+      conquistas: demo ? _catalogoDemo : null,
       vitrine: _vitrinePadrao,
       presentes: demo ? _presentesDemo : const [],
     );
