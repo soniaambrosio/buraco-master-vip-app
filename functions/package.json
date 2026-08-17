@@ -15,6 +15,12 @@
     "test:conquistas": "node --test test/conquista_idempotencia.test.js",
     "//emulador:conquistas": "So firestore: a suite chama as funcoes do modulo diretamente, dentro de transacoes; nao precisa do emulador de Functions.",
     "emulador:conquistas": "npm run build:domain && npm run build && cd .. && firebase emulators:exec --only firestore \"cd functions && npm run test:conquistas\"",
+    "//test:provisionador": "Decisao pura do provisionador do claim `motorDePartidas`: argumentos, plano, preservacao de claims alheios e redacao da saida. Nao toca rede nem SDK, entao roda sem emulador e sem build.",
+    "test:provisionador": "node --test test/provisionador_claim.test.js",
+    "//test:provisionador:integrado": "A cadeia inteira contra o emulador de AUTH: concessao -> token NOVO -> guarda de producao aceita -> revogacao -> guarda recusa. Exige `build`, porque a suite importa lib/autoridade.js, que e a guarda REAL e nao uma copia.",
+    "test:provisionador:integrado": "node --test test/provisionador_claim_integrado.test.js",
+    "//emulador:provisionador": "So auth: esta suite provisiona identidade e troca token; nao le Firestore e nao chama Function. Sem Firestore, tambem nao precisa de JVM instalada.",
+    "emulador:provisionador": "npm run build && cd .. && firebase emulators:exec --project bmv-prov-teste --only auth \"cd functions && npm run test:provisionador:integrado\"",
     "serve": "npm run build && firebase emulators:start --only functions,firestore",
     "deploy": "npm run build:domain && npm run build && firebase deploy --only functions"
   },
