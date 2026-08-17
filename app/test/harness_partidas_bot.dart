@@ -29,6 +29,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:buraco_master_vip/mesa.dart';
 import 'package:buraco_master_vip/motor/motor_config.dart';
 import 'package:buraco_master_vip/bot/pesos.dart';
+import 'package:buraco_master_vip/bot/executor_bot.dart';
+import 'package:buraco_master_vip/motor/projecao_estado.dart' show paraCanonico;
+import 'package:buraco_master_vip/rules/rule_spec.dart';
 
 /// Teto de segurança por rodada e por partida (o mesmo espírito do `AUD-01`).
 const int _maxSegmentosPorRodada = 3000;
@@ -306,5 +309,97 @@ void main() {
     // ignore: avoid_print
     print('[HARNESS] ${linhas.length} partidas em '
         '${relogio.elapsedMilliseconds}ms -> $saida');
+  });
+
+  // =====================================================================
+  // CUSTO DA DECISÃO — V1 × V2 SOBRE O MESMO ESTADO
+  //
+  // Por que não medir isso pelas partidas: a V2 joga partidas DIFERENTES, com
+  // mãos e mesas diferentes, e o custo de uma decisão depende do tamanho da
+  // mão e da quantidade de jogos expostos. Comparar o tempo médio por turno
+  // entre duas trajetórias mede as trajetórias, não o custo do sinal.
+  //
+  // Aqui as duas configurações decidem sobre o MESMO estado, com as MESMAS
+  // alternativas. A diferença é só o trabalho que a V2 acrescenta: montar o
+  // índice uma vez por decisão, consultar um conjunto por plano, e a passada
+  // linear do argmax contrafactual.
+  // =====================================================================
+  test('custo da decisão V1 x V2 no mesmo estado', () {
+    final repeticoes = _envInt('BENCH_REPS', 60);
+    final linhas = <String>[];
+
+    for (final mod in const ['ABERTO', 'FECHADO', 'SBTL']) {
+      // Estado de MEIO DE PARTIDA, construído por jogo real e determinístico:
+      // mãos cheias, jogos na mesa e livro de proveniência povoado — que é
+      // onde o índice tem mais trabalho a fazer.
+      final j = Jogo(const ['n0', 'e1', 'n2', 'e3'], const ['', '', '', ''],
+          const ['', '', '', ''],
+          seed: 4242, motorConfig: MotorConfig.producao());
+      j.modalidade = mod;
+      j.configuracaoBot = ConfiguracaoBot.v1;
+      for (var t = 0; t < 24 && !j.rodadaEncerrada; t++) {
+        j.botJoga(j.vez);
+      }
+      if (j.rodadaEncerrada) continue;
+      // O turno anterior TERMINOU, então o estado está na fase de COMPRA — e
+      // `decidirJogo` numa fase de compra não gera plano nenhum e nem chega ao
+      // avaliador. A primeira versão deste bench media exatamente isso (o
+      // rastro denunciou: `planos=0`) e concluía "sem custo" sem ter
+      // exercitado uma linha da V2. Comprar do monte põe o estado na fase de
+      // JOGO, que é onde o descarte — e o sinal — existem.
+      final assento = j.vez;
+      if (!j.comprarMonte(assento)) continue;
+      final estado = paraCanonico(j).canonico;
+      final spec = RuleSpec.canonica(estado.modalidade,
+          metaPontos: estado.metaPontos);
+
+      final ex1 = ExecutorBot(spec, cfg: ConfiguracaoBot.v1);
+      final ex2 = ExecutorBot(spec, cfg: ConfiguracaoBot.v2);
+      ex1.decidirJogo(estado, assento); // aquece o JIT
+      ex2.decidirJogo(estado, assento);
+
+      // INTERCALADO, e comparado por MEDIANA. Medir em blocos (60 chamadas da
+      // V1, depois 60 da V2) mede também a deriva da máquina no intervalo — a
+      // primeira versão deste bench chegou a acusar a V2 22% MAIS RÁPIDA no
+      // STBL, o que é impossível. Alternando chamada a chamada, a deriva incide
+      // igualmente sobre as duas, e a mediana descarta as caudas de GC.
+      final t1 = <int>[], t2 = <int>[];
+      final sw = Stopwatch();
+      for (var i = 0; i < repeticoes; i++) {
+        sw
+          ..reset()
+          ..start();
+        ex1.decidirJogo(estado, assento);
+        sw.stop();
+        t1.add(sw.elapsedMicroseconds);
+        sw
+          ..reset()
+          ..start();
+        ex2.decidirJogo(estado, assento);
+        sw.stop();
+        t2.add(sw.elapsedMicroseconds);
+      }
+      t1.sort();
+      t2.sort();
+      final v1 = t1[t1.length ~/ 2];
+      final v2 = t2[t2.length ~/ 2];
+      final p95_1 = t1[(0.95 * (t1.length - 1)).floor()];
+      final p95_2 = t2[(0.95 * (t2.length - 1)).floor()];
+      final sinal = ExecutorBot(spec, cfg: ConfiguracaoBot.v2)
+          .decidirJogo(estado, assento)
+          .features[kFeatureMemoria];
+      linhas.add('$mod: mediana V1=${v1}us V2=${v2}us '
+          'delta=${(100 * (v2 - v1) / v1).toStringAsFixed(1)}% | '
+          'p95 V1=${p95_1}us V2=${p95_2}us | '
+          'mao=${estado.maos[assento].length} '
+          'livro=${estado.descartes.length} '
+          'planos=${ex2.decidirJogo(estado, assento).candidatosConsiderados} '
+          'featureNoVencedor=${sinal ?? "-"}');
+    }
+    for (final l in linhas) {
+      // ignore: avoid_print
+      print('[BENCH] $l');
+    }
+    expect(linhas, isNotEmpty);
   });
 }
