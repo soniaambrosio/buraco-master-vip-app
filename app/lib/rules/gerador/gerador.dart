@@ -255,6 +255,15 @@ ResultadoJogada _aplicar(EstadoJogo estado, int assento, Acao acao,
     final idx = prox.maos[assento].indexWhere((c) => c.id == acao.carta);
     final carta = prox.maos[assento].removeAt(idx);
     prox.lixo.add(carta); // vai para o topo do lixo
+    // PROVENIÊNCIA (OS 2): a autoria é registrada AQUI, onde ela é inequívoca —
+    // a ação é `Descartar`, o autor é o `assento` que a autoridade acabou de
+    // validar, e a carta é esta. Depois deste ponto a informação já não existe:
+    // a pilha do lixo não diz quem pôs cada carta nela.
+    //
+    // Registrar ANTES de qualquer transição (vez/fase/batida/morto) mantém o
+    // registro atômico com a mutação: se a ação for recusada abaixo, o clone
+    // inteiro é descartado e nada foi registrado.
+    registrarDescarte(prox.descartes, carta, assento);
     if (prox.maos[assento].isNotEmpty) {
       // Descarte normal encerra o turno: próximo assento inicia em compra.
       return ResultadoJogada(
