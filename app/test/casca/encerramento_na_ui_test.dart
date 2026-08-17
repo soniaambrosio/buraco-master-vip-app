@@ -52,13 +52,18 @@ class ApresentadorFalso implements ApresentadorDeEncerramento {
   int get quantos => anuncios.length;
 
   @override
-  Future<void> apresentar(
+  Future<ResultadoDaApresentacao> apresentar(
     BuildContext context,
     EncerramentoAutoritativo encerramento, {
     required VoidCallback aoSairDaMesa,
   }) async {
     anuncios.add(encerramento);
     saidas.add(aoSairDaMesa);
+    // Adaptação mecânica à assinatura nova: este contador SEMPRE consegue
+    // apresentar, que é o que ele já fazia quando o retorno era `void`. Nenhuma
+    // asserção deste arquivo muda por causa disto — quem exercita recusa e
+    // cancelamento é a suíte do pendente, que traz o seu próprio apresentador.
+    return ResultadoDaApresentacao.apresentado;
   }
 }
 
@@ -518,10 +523,26 @@ void main() {
       final ap = ApresentadorFalso();
 
       await abrirAMesa(tester, f, ap);
-      final consumidor = f.online.aoEncerrar!;
 
-      consumidor(encerramentoAvulso('espera-montado'));
-      await tester.pumpAndSettle();
+      // A CUTUCADA VEM DO SERVIDOR, e não mais de um encerramento montado à
+      // mão. Quando este caso foi escrito, o aviso chegava PELO parâmetro do
+      // callback, e um objeto avulso bastava para exercitá-lo. Hoje o parâmetro
+      // é só um toque no ombro: o que se apresenta é o que está pendente no
+      // livro dos efeitos, e um encerramento que nunca passou pela autoridade
+      // da ordem não está lá — nem pode estar, senão qualquer chamador viraria
+      // uma segunda fonte do mesmo efeito, que é a porta pela qual o aviso
+      // duplicado voltaria.
+      //
+      // O que o caso MEDE não mudou, e as asserções são as mesmas: com o
+      // consumidor montado, a continuação assíncrona chega ao fim, uma vez, com
+      // a identidade certa.
+      await servidorManda(
+        tester,
+        f,
+        visaoTerminal(),
+        versaoEstado: 99,
+        eventoId: 'espera-montado',
+      );
 
       expect(ap.quantos, 1);
       expect(ap.anuncios.single.eventoId, 'espera-montado');
