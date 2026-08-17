@@ -32,6 +32,11 @@ import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https
 import { logger } from "firebase-functions";
 
 import { aplicarPlanoDeConquista, planejarPrimeiraBatidaReal } from "./conquistas";
+// [PROVISIONADOR] A regra de autoridade saiu daqui para `autoridade.ts`, que
+// NAO e reexportado por index.ts — logo continua sendo biblioteca, e nao
+// superficie de implantacao. `import` nao acrescenta export a este modulo, e o
+// contorno implantado deste arquivo segue identico.
+import { autorizaComoMotorDePartidas, type ClaimsDoToken } from "./autoridade";
 
 const db = () => getFirestore();
 
@@ -40,21 +45,6 @@ const db = () => getFirestore();
 
 const opcoesServidor = { region: "southamerica-east1" };
 const opcoesCliente = { enforceAppCheck: true, region: "southamerica-east1" };
-
-/// Papeis que podem escrever registro de partida.
-///
-/// Espelha `ChamadorAutorizado.papeisDeAutoridade` do dominio Dart. A
-/// duplicacao e inevitavel enquanto a ponte nao carregar a rastreabilidade, e
-/// esta anotada de propriosito para quem for unifica-las achar os dois pontos.
-const PAPEIS_DE_AUTORIDADE = ["motorDePartidas", "admin"] as const;
-
-/// Os claims do token, como este arquivo os le.
-///
-/// Tipado em vez de `any` para que um claim escrito errado (`Admin`, `sup0rte`)
-/// vire erro de compilacao e nao uma comparacao que sempre da `false` — o pior
-/// defeito possivel numa checagem de permissao, porque falha ABERTA em nenhum
-/// teste e FECHADA em producao.
-type ClaimsDoToken = Partial<Record<(typeof PAPEIS_DE_AUTORIDADE)[number] | "suporte", boolean>>;
 
 function claimsDe(req: CallableRequest): ClaimsDoToken {
   return (req.auth?.token ?? {}) as ClaimsDoToken;
@@ -70,9 +60,7 @@ function exigirAutenticacao(req: CallableRequest): string {
 
 function exigirAutoridadeDePartida(req: CallableRequest): string {
   const uid = exigirAutenticacao(req);
-  const token = claimsDe(req);
-  const temPapel = PAPEIS_DE_AUTORIDADE.some((p) => token[p] === true);
-  if (!temPapel) {
+  if (!autorizaComoMotorDePartidas(claimsDe(req))) {
     // A mesma recusa que o dominio devolve como `semAutoridade`. Deixar esta
     // porta aberta permitiria a qualquer cliente autenticado escrever o proprio
     // resultado — que e o item mais caro da secao 24.
