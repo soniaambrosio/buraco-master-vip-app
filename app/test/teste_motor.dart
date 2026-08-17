@@ -6508,64 +6508,101 @@ void main() {
   // =====================================================================
   // OS 2 — PROVENIÊNCIA PÚBLICA CANÔNICA DE DESCARTES V1
   //
-  // CONTRATO ATUAL (este bloco, no commit 1): a autoridade aplica descartes e
-  // empilha as cartas no lixo, mas NÃO registra quem descartou cada uma. A
-  // consequência é que `VisaoInformacao.descartesPublicos` — o campo que a OS
-  // de Bot IA V1 deixou preparado — chega SEMPRE vazio, e o modelo do parceiro
-  // não tem como responder "meu parceiro descartou esta carta".
-  //
-  // Estes testes documentam o buraco ANTES da correção. O commit seguinte
-  // (autoridade + modelo) os reescreve para o comportamento novo, preservando
-  // a forma histórica onde ela continua verdadeira (lixo sem proveniência).
+  // ANTES/DEPOIS. `PROV-00` nasceu no commit anterior provando o buraco: a
+  // autoridade empilhava a carta no lixo e não registrava quem a descartou, e
+  // por isso `ModeloParceiro.parceiroDescartou` respondia `false` a um fato
+  // verdadeiro. Aqui os dois testes viram o par:
+  //   • PROV-00 — descarte REAL agora carrega autoria até o consumidor;
+  //   • PROV-01 — a forma HISTÓRICA preservada: lixo SEM registro (montado por
+  //     fixture) continua sem autoria. Ausência de prova, nunca dedução.
   // =====================================================================
-  group('OS PROVENIÊNCIA DE DESCARTES V1 — contrato ATUAL (pré-correção)', () {
-    test('PROV-00 descarte real acontece e o lixo cresce, mas ninguém registra '
-        'a autoria', () {
-      final j = novo('ABERTO');
-      montar(j,
+  group('OS PROVENIÊNCIA DE DESCARTES V1 — autoria pública de descarte', () {
+    // Mesa de trabalho: quatro mãos com material suficiente para cada assento
+    // descartar sem esbarrar no invariante de conclusão de turno da OS 1.
+    Jogo mesaProv([String modalidade = 'ABERTO']) {
+      final j = novo(modalidade);
+      return montar(j,
           mao0: [('7', 'copas'), ('8', 'copas'), ('9', 'copas')],
-          mao1: [('K', 'espadas'), ('Q', 'espadas')],
-          mao2: [('4', 'ouros'), ('5', 'ouros')],
-          mao3: [('J', 'paus'), ('10', 'paus')],
+          mao1: [('K', 'espadas'), ('Q', 'espadas'), ('J', 'espadas')],
+          mao2: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          mao3: [('J', 'paus'), ('10', 'paus'), ('9', 'paus')],
           vez: 0,
           jaComprou: true);
+    }
+
+    CartaSnapshot snap(Carta x) =>
+        CartaSnapshot(x.id, x.naipe, x.valor, x.ehCoringa);
+
+    // ---------- §19.1 — descarte simples com autoria ----------
+    test('PROV-00 o descarte REAL chega ao consumidor com autor e ordem', () {
+      final j = mesaProv();
       final alvo = j.maos[0].firstWhere((x) => x.valor == '9');
       expect(j.descartar(0, alvo.id), isNull);
 
-      // O FATO público existe: a carta está no topo do lixo.
+      // O fato público continua sendo o mesmo: a carta está no topo do lixo.
       expect(j.lixo.last.id, alvo.id);
 
-      // A AUTORIA não existe em lugar nenhum da projeção canônica.
+      // E agora a AUTORIA acompanha a carta até a visão de qualquer assento.
       final estado = paraCanonico(j).canonico;
+      expect(estado.descartes, hasLength(1));
+      expect(estado.descartes.single.assento, 0);
+      expect(estado.descartes.single.carta.id, alvo.id);
+      expect(estado.descartes.single.ordem, 0);
+
       final visao = VisaoInformacao.doEstado(estado, 2); // parceiro do assento 0
       expect(visao.lixoTopo!.id, alvo.id);
-      expect(visao.descartesPublicos, isEmpty,
-          reason: 'hoje a projeção não carrega autoria de descarte');
+      expect(visao.descartesPublicos, hasLength(1));
+      expect(visao.descartesPublicos.single.assento, 0);
+      expect(visao.descartesPublicos.single.carta.id, alvo.id);
+      expect(visao.descartesPublicos.single.ordem, 0);
     });
 
-    test('PROV-01 sem autoria, o modelo do parceiro não consegue afirmar nada',
-        () {
+    // ---------- §17 Caso 1 — o bot afirma o fato ----------
+    test('PROV-00b o modelo do parceiro afirma "meu parceiro descartou esta '
+        'carta" porque a autoridade registrou', () {
+      final j = mesaProv();
+      final alvo = j.maos[0].firstWhere((x) => x.valor == '9');
+      expect(j.descartar(0, alvo.id), isNull);
+
+      final estado = paraCanonico(j).canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final modelo =
+          ModeloParceiro.observar(VisaoInformacao.doEstado(estado, 2), spec);
+      expect(modelo.parceiroDescartou(snap(alvo)), isTrue);
+    });
+
+    // ---------- §17 Caso 3 / §18 — sem registro, sem autor ----------
+    test('PROV-01 carta no lixo SEM registro não ganha autor inventado', () {
       final j = novo('ABERTO');
+      // Lixo montado por fixture: a carta está lá, ninguém a descartou dentro
+      // da autoridade. É a forma histórica do teste original desta OS.
       montar(j,
           mao0: [('7', 'copas'), ('8', 'copas'), ('9', 'copas')],
           mao1: [('K', 'espadas'), ('Q', 'espadas')],
           mao2: [('4', 'ouros'), ('5', 'ouros')],
           mao3: [('J', 'paus'), ('10', 'paus')],
+          lixo: [('3', 'espadas')],
           vez: 0,
           jaComprou: true);
-      final alvo = j.maos[0].firstWhere((x) => x.valor == '9');
-      expect(j.descartar(0, alvo.id), isNull);
+      final noLixo = j.lixo.single;
 
       final estado = paraCanonico(j).canonico;
-      final spec = RuleSpec.canonica(estado.modalidade,
-          metaPontos: estado.metaPontos);
-      // Assento 2 pergunta pelo parceiro (assento 0), que ACABOU de descartar.
-      final modelo =
-          ModeloParceiro.observar(VisaoInformacao.doEstado(estado, 2), spec);
-      final descartada =
-          CartaSnapshot(alvo.id, alvo.naipe, alvo.valor, alvo.ehCoringa);
-      expect(modelo.parceiroDescartou(descartada), isFalse,
-          reason: 'o fato é verdadeiro na mesa, mas a autoridade não o publica');
+      expect(estado.lixo, hasLength(1));
+      expect(estado.descartes, isEmpty,
+          reason: 'o lixo tem carta, a autoridade não tem prova de autoria');
+
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      for (final observador in const [0, 1, 2, 3]) {
+        final visao = VisaoInformacao.doEstado(estado, observador);
+        expect(visao.lixoTopo!.id, noLixo.id); // o topo continua público
+        expect(visao.descartesPublicos, isEmpty);
+        expect(
+            ModeloParceiro.observar(visao, spec).parceiroDescartou(snap(noLixo)),
+            isFalse,
+            reason: 'ausência de prova nunca vira autoria deduzida');
+      }
     });
   });
 }

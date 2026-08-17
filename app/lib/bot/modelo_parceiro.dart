@@ -10,11 +10,15 @@
 // É PROIBIDO inferir a mão oculta do parceiro. Nada aqui lê carta que não esteja
 // na mesa: a `VisaoInformacao` nem sequer carrega as mãos alheias.
 //
-// SINAL DE DESCARTE DO PARCEIRO: quando o consumidor souber informar a autoria
-// dos descartes (`VisaoInformacao.descartesPublicos`), o modelo usa. Hoje a
-// projeção canônica não carrega autoria — a pilha do lixo não diz quem pôs cada
-// carta lá — então o sinal chega vazio e o modelo simplesmente não o usa.
-// Deduzir autoria pela ordem da pilha seria fabricar informação (§7).
+// SINAL DE DESCARTE DO PARCEIRO: LIGADO na OS PROVENIÊNCIA DE DESCARTES V1.
+// A autoridade passou a registrar quem descartou cada carta no instante do
+// descarte, e `VisaoInformacao.descartesPublicos` transporta esse registro. O
+// modelo responde `parceiroDescartou` com o FATO, não com uma dedução: quando a
+// autoridade não tem registro (mão nova, lixo de fixture, snapshot antigo), a
+// resposta é `false` por AUSÊNCIA DE PROVA — nunca por posição na pilha.
+//
+// A OS não recalibrou nada. O sinal existe e responde a verdade; nenhum peso e
+// nenhum avaliador foram tocados para consumi-lo.
 import '../rules/estado.dart';
 import '../rules/morto/morto.dart' show duplaPodeBater;
 import '../rules/rule_spec.dart';
@@ -97,8 +101,14 @@ class ModeloParceiro {
         return false;
       });
 
-  /// O parceiro descartou esta carta publicamente? Sinal de que ele não a quer —
-  /// só disponível quando o consumidor informa a autoria dos descartes.
+  /// O parceiro descartou esta carta publicamente? Sinal de que ele não a quer.
+  ///
+  /// Compara por VALOR e NAIPE, não por id: para a estratégia, "o parceiro
+  /// dispensou um 8♥" vale para qualquer cópia do 8♥. Quem precisar da carta
+  /// exata lê `visao.descartesPublicos`, que preserva id, assento e ordem.
+  ///
+  /// `false` significa "não há registro de que ele tenha descartado", nunca
+  /// "ele não descartou" deduzido de outra coisa.
   bool parceiroDescartou(CartaSnapshot c) {
     for (final d in visao.descartesPublicos) {
       if (d.assento == visao.parceiro &&

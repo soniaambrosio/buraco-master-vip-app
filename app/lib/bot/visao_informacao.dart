@@ -2,9 +2,9 @@
 //
 // `VisaoInformacao` é a InformationView MASCARADA: a ÚNICA porta pela qual a
 // camada estratégica enxerga a mesa. O mascaramento é ESTRUTURAL, não uma
-// promessa: as mãos alheias, o conteúdo do monte, o conteúdo dos mortos e as
-// cartas ENTERRADAS do lixo simplesmente não têm campo aqui. Não existe getter
-// para elas, então nenhum avaliador futuro consegue lê-las por descuido.
+// promessa: as mãos alheias, o conteúdo do monte e o conteúdo dos mortos
+// simplesmente não têm campo aqui. Não existe getter para eles, então nenhum
+// avaliador futuro consegue lê-los por descuido.
 //
 // O que o assento PODE conhecer, e portanto entra:
 //   • a própria mão;
@@ -13,12 +13,33 @@
 //   • o TAMANHO da mão de cada assento (contagem é informação pública);
 //   • tamanho do monte, quantos mortos restam, quem já pegou morto;
 //   • quem já abriu, rodadas de vulnerabilidade, vez, fase, modalidade, meta;
-//   • o histórico de descartes PÚBLICOS, quando o consumidor souber informá-lo.
+//   • os descartes PÚBLICOS da mão, com AUTORIA (OS 2 — ver abaixo).
 //
 // O que NÃO entra, em hipótese alguma:
 //   • mão do parceiro e dos adversários (só a contagem);
-//   • monte, mortos e cartas enterradas do lixo;
+//   • monte e mortos;
 //   • qualquer estado oculto que o servidor tenha por conveniência técnica.
+//
+// LIXO ENTERRADO — mudança HONESTA de fronteira (OS PROVENIÊNCIA V1).
+// Até `89fca38` esta visão mascarava as cartas enterradas do lixo, e a lista de
+// descartes públicos era uma entrada opcional que ninguém preenchia. A OS 2
+// mudou isso: `descartesPublicos` traz agora a MEMÓRIA da mão — cada carta que
+// foi ao lixo e quem a pôs lá.
+//
+// Isso NÃO é informação privada: o lixo recebe carta por um único caminho, o
+// descarte, e todo descarte fica visível no TOPO da pilha no instante em que
+// acontece — em qualquer modalidade. Quem está na mesa viu. A visão passa a
+// lembrar o que a mesa mostrou, e nada além disso:
+//   • limitada à MÃO corrente (a distribuição zera o livro) — memória de mesa,
+//     não memória perfeita e ilimitada;
+//   • idêntica para todos os assentos e para quem assiste — ninguém recebe uma
+//     verdade pública diferente da do vizinho;
+//   • sem nenhuma carta que não tenha sido publicamente descartada: o monte, os
+//     mortos e as mãos continuam sem campo.
+//
+// A consequência estratégica está registrada e é deliberada: depois de alguém
+// comprar o lixo, o livro continua dizendo quais cartas passaram por ele. É a
+// mesma dedução que um humano com boa memória faz na mesa real.
 //
 // MÃO OCULTA: quando um plano do bot resulta em PEGAR O MORTO, as 11 cartas
 // novas são conhecidas só DEPOIS de a autoridade aplicar. Avaliar o plano lendo
@@ -36,15 +57,23 @@ String duplaOposta(String dupla) => dupla == 'nos' ? 'eles' : 'nos';
 
 /// Um descarte PÚBLICO já observado (quem descartou + a carta que foi ao lixo).
 ///
-/// A projeção canônica NÃO carrega autoria de descarte hoje — o `EstadoJogo` tem
-/// a pilha do lixo, não quem pôs cada carta lá. Por isso este histórico é uma
-/// ENTRADA OPCIONAL da visão: quem tiver a informação legítima passa; quem não
-/// tiver passa vazio, e o `ModeloParceiro` simplesmente não usa esse sinal.
-/// Inventar autoria a partir da ordem da pilha seria fabricar informação.
+/// OS PROVENIÊNCIA DE DESCARTES V1: deixou de ser entrada opcional. A autoridade
+/// registra a autoria no instante do descarte (`EstadoJogo.descartes`), e esta
+/// é a PROJEÇÃO desse registro — o tipo da visão, distinto do tipo da
+/// autoridade, porque projetar é filtrar, não apelidar.
+///
+/// A visão não tem construtor que aceite autoria vinda de fora: o único
+/// caminho é `VisaoInformacao.doEstado`, que copia o que a autoridade gravou.
+/// Sem registro na autoridade, não há entrada aqui — e a ausência significa
+/// autor DESCONHECIDO, jamais um autor deduzido da posição na pilha.
 class DescartePublico {
   final int assento;
   final CartaSnapshot carta;
-  const DescartePublico(this.assento, this.carta);
+
+  /// Ordem temporal dentro da MÃO (a mesma da autoridade).
+  final int ordem;
+
+  const DescartePublico(this.assento, this.carta, this.ordem);
 }
 
 /// Visão mascarada da mesa, do ponto de vista de UM assento.
@@ -89,7 +118,9 @@ class VisaoInformacao {
   final int rodadasVulneravelPropria;
   final int rodadasVulneravelAdversaria;
 
-  /// Descartes públicos observados (vazio quando o consumidor não tem a autoria).
+  /// Descartes PÚBLICOS da mão corrente, com autoria e ordem, como a autoridade
+  /// os registrou. Vazio quando a autoridade não tem registro (mão recém
+  /// distribuída, lixo montado por fixture, snapshot anterior à OS 2).
   final List<DescartePublico> descartesPublicos;
 
   const VisaoInformacao({
@@ -127,7 +158,6 @@ class VisaoInformacao {
   factory VisaoInformacao.doEstado(
     EstadoJogo estado,
     int assento, {
-    List<DescartePublico> descartesPublicos = const <DescartePublico>[],
     bool maoOculta = false,
   }) {
     final propria = duplaDoAssento(assento);
@@ -169,7 +199,15 @@ class VisaoInformacao {
       abriuAdversaria: estado.primeiraBaixadaFeita[adversaria] ?? false,
       rodadasVulneravelPropria: estado.rodadasVulneravel[propria] ?? 0,
       rodadasVulneravelAdversaria: estado.rodadasVulneravel[adversaria] ?? 0,
-      descartesPublicos: descartesPublicos,
+      // PROVENIÊNCIA: cópia fiel do livro da autoridade, IGUAL para todos os
+      // assentos — o mesmo fato público que qualquer um na mesa observou no
+      // instante do descarte. A visão não decide quem é parceiro nem quem é
+      // adversário: entrega "quem descartou o quê" e deixa a relação com o
+      // observador para o consumidor (§10/§11).
+      descartesPublicos: [
+        for (final d in estado.descartes)
+          DescartePublico(d.assento, d.carta.copia(), d.ordem)
+      ],
     );
   }
 
@@ -208,6 +246,11 @@ class VisaoInformacao {
       'rv=$rodadasVulneravelPropria/$rodadasVulneravelAdversaria',
       'nos=${matriz(meldsProprios)}',
       'eles=${matriz(meldsAdversarios)}',
+      // A proveniência é PÚBLICA, logo entra na assinatura pública: dois
+      // estados que diferem só em quem descartou o quê são estados públicos
+      // diferentes, e o teste de informação justa precisa enxergar isso.
+      'desc=${descartesPublicos.map((d) => '${d.ordem}@${d.assento}:'
+          '${d.carta.chave}').join(',')}',
     ].join('\n');
   }
 }
