@@ -734,17 +734,29 @@ void main() {
       expect(alcancaveis, contains('lib/casca/home_de_producao.dart'));
     });
 
-    test('C16 — main.dart permanece byte a byte o das duas entradas', () {
-      // O merge-base `bc74e30` e as duas entradas têm o MESMO blob para este
-      // arquivo. Se a composição o tivesse tocado, seria sinal de que a união
-      // extravasou para a raiz — que nenhuma das duas entradas mexeu.
+    test('C16 — main.dart só muda com quem tem autoridade para mudá-lo', () {
+      // ORIGEM DESTE PORTÃO. Na composição Perfil + Mesa Online + Ranking Real
+      // V2, o merge-base `bc74e30` e as duas entradas tinham o MESMO blob para
+      // este arquivo: fixar o hash provava que a união não extravasou para a
+      // raiz. O portão continua valendo com o mesmo propósito — mudar a porta
+      // de entrada é uma decisão, e uma decisão precisa de um commit que a
+      // declare.
+      //
+      // ATUALIZADO PELA OS DE APP CHECK, e por duas mudanças que só podiam
+      // acontecer aqui: o `appId` passou do registro de teste
+      // (`…734aaa61…`) para o app Android OFICIAL da Play
+      // (`…b1cd95ba…`), e a ativação do App Check entrou na única janela que
+      // precede toda callable do aplicativo — entre `Firebase.initializeApp` e
+      // `runApp`. Quem provar a forma dessas duas é
+      // `casca/app_check_identidade_android_test.dart`; este aqui só garante
+      // que elas não mudem de novo sem alguém assumir.
       final bytes = File('lib/main.dart').readAsBytesSync();
       final normalizado = utf8.decode(bytes).replaceAll('\r\n', '\n');
       final digest = sha256.convert(utf8.encode(normalizado)).toString();
       expect(
         digest,
-        '8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab',
-        reason: 'main.dart mudou na composição',
+        '8d38beb5e46ec47832327c737f9f90a97f3b9f966b28526b33f6217669ce9879',
+        reason: 'main.dart mudou sem a constante deste portão ser atualizada',
       );
     });
 

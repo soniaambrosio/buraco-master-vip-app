@@ -92,9 +92,33 @@ enum EstadoPerfil {
 /// A separação entre transitório e definitivo existe para a UI: só o primeiro
 /// justifica oferecer "tentar de novo".
 enum MotivoFalhaIdentidade {
-  /// O backend recusou por falta de autenticação. Não adianta repetir com a
-  /// mesma credencial.
-  naoAutenticado,
+  /// A autoridade recusou por CREDENCIAL OU ATESTAÇÃO, sem dizer qual das duas
+  /// (`unauthenticated`).
+  ///
+  /// -------------------------------------------------------------------------
+  /// O NOME É COMPRIDO PORQUE O CÓDIGO É AMBÍGUO
+  /// -------------------------------------------------------------------------
+  ///
+  /// Este motivo já se chamou `naoAutenticado`, e o nome era uma conclusão que
+  /// o código recebido não autoriza. Em `firebase-functions` 6.x — a faixa que
+  /// `functions-social/package.json` declara — uma callable que exige App Check
+  /// responde `unauthenticated` em TRÊS situações (`lib/common/providers/
+  /// https.js`):
+  ///
+  ///   - o token de autenticação é inválido;
+  ///   - o token de App Check é INVÁLIDO;
+  ///   - o token de App Check está AUSENTE.
+  ///
+  /// Nos dois últimos a sessão do jogador está viva e intacta, e repetir
+  /// RESOLVE — é o que acontece quando o Play Integrity tem um soluço. Traduzir
+  /// isso para "não autenticado" é afirmar um fato que ninguém provou, e o
+  /// preço é mandar a pessoa entrar de novo numa conta em que ela já está.
+  ///
+  /// O TRANSPORTE NÃO DESFAZ A AMBIGUIDADE, porque não tem como. Quem decide é
+  /// quem sabe se existe sessão local: ver [permiteNovaTentativa]. Mesma
+  /// separação que `ranking/ranking_transporte.dart` já faz com
+  /// `MotivoFalhaRanking.credencialOuAtestacao`.
+  credencialOuAtestacao,
 
   /// Rede, timeout, indisponibilidade, `aborted`. Repetir resolve.
   indisponivel,
@@ -110,9 +134,30 @@ enum MotivoFalhaIdentidade {
   /// um erro desconhecido deixaria o jogador preso sem saída.
   desconhecida;
 
+  /// O motivo é transitório POR SI SÓ, sem precisar saber mais nada.
+  ///
+  /// [credencialOuAtestacao] NÃO entra aqui de propósito: sozinho ele não diz
+  /// se repetir adianta. Quem responde isso é [permiteNovaTentativa], que exige
+  /// a prova que falta.
   bool get transitoria =>
       this == MotivoFalhaIdentidade.indisponivel ||
       this == MotivoFalhaIdentidade.desconhecida;
+
+  /// Repetir com esta mesma sessão pode dar outro resultado?
+  ///
+  /// [haSessaoLocal] É A PROVA, e é obrigatório. Com sessão local viva não há
+  /// como afirmar que a sessão acabou — a recusa cabe igualmente numa
+  /// atestação ausente —, e o desfecho honesto é oferecer insistir. Sem sessão
+  /// local, a afirmação passa a ser verificável, e negar o retry é correto:
+  /// quem não está logado não se conserta repetindo a mesma chamada, e o
+  /// caminho dele é o de sempre, [FaseIdentidade.naoAutenticado].
+  ///
+  /// O parâmetro é exigido em vez de ter valor padrão de propósito: um padrão
+  /// faria a chamada esquecida escolher um lado sozinha, e o lado que ela
+  /// escolheria em silêncio é justamente o que produziu o defeito.
+  bool permiteNovaTentativa({required bool haSessaoLocal}) =>
+      transitoria ||
+      (this == MotivoFalhaIdentidade.credencialOuAtestacao && haSessaoLocal);
 }
 
 /// Falha ao obter a identidade pública.
@@ -335,6 +380,17 @@ class EstadoIdentidadeSessao {
       fase == FaseIdentidade.disponivel ? identidade?.publicId : null;
 
   /// Vale a pena oferecer "tentar de novo"?
+  ///
+  /// A PROVA DE SESSÃO SAI DAQUI MESMO: [autenticado] é o `uid` que este estado
+  /// carrega, e é exatamente o "há sessão local viva" que
+  /// [MotivoFalhaIdentidade.permiteNovaTentativa] exige. Não há um segundo
+  /// lugar consultando outro sinal — é o mesmo desenho de
+  /// `EstadoRanking.daFalha`, com a diferença de que aqui a prova já estava
+  /// dentro do objeto e não precisa ser passada por parâmetro.
+  ///
+  /// Consequência que esta OS existe para garantir: uma recusa de App Check com
+  /// o jogador logado responde `true`, e não vira beco sem saída.
   bool get podeTentarDeNovo =>
-      fase == FaseIdentidade.falha && (falha?.transitoria ?? false);
+      fase == FaseIdentidade.falha &&
+      (falha?.motivo.permiteNovaTentativa(haSessaoLocal: autenticado) ?? false);
 }

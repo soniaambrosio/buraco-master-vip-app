@@ -74,8 +74,16 @@ class FonteDeIdentidadeFirebase implements FonteDeIdentidade {
   /// código que a Function devolve quando estoura uma exceção não tratada, e
   /// isso costuma ser transitório (cold start, contenção). Negar o retry
   /// deixaria o jogador sem identidade por um soluço do servidor.
+  ///
+  /// `unauthenticated` NÃO conclui "não autenticado", e este é o ponto mais
+  /// delicado da tradução. `obterMinhaIdentidade` exige App Check fora do
+  /// emulador (`functions-social/src/index.ts`), e o runtime devolve esse mesmo
+  /// código para credencial inválida, atestação inválida E atestação ausente —
+  /// nos dois últimos com a sessão viva. O motivo carrega a ambiguidade em vez
+  /// de escondê-la; quem a desfaz é [EstadoIdentidadeSessao.podeTentarDeNovo],
+  /// que sabe se há sessão local.
   static MotivoFalhaIdentidade _traduzir(String codigo) => switch (codigo) {
-    'unauthenticated' => MotivoFalhaIdentidade.naoAutenticado,
+    'unauthenticated' => MotivoFalhaIdentidade.credencialOuAtestacao,
     'permission-denied' => MotivoFalhaIdentidade.recusado,
     'unavailable' ||
     'deadline-exceeded' ||
