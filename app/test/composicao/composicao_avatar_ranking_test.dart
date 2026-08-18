@@ -144,10 +144,22 @@ class TransporteEspiao extends TransporteRanking {
   Object? respostaPropria = aberturaCom();
   Object? Function(String id) respostaPublica = (id) => publicoCom(id: id);
 
+  /// ADAPTADO NA COMPOSIÇÃO: era `meuRanking()` devolvendo só a fotografia.
+  ///
+  /// A folha da navegação renomeou o método para `abrirRanking()` e alargou o
+  /// retorno para [AberturaRanking] — cabeçalho MAIS tabela. A quebra foi
+  /// deliberada: um método novo com implementação padrão teria deixado este
+  /// fake "funcionando" enquanto jogava a tabela fora em silêncio, que é o
+  /// defeito que aquela folha veio fechar. Aqui a tabela vai vazia de
+  /// propósito: esta suíte fala do cabeçalho — avatar e liga —, e a tabela tem
+  /// as suas próprias, em `navegacao_perfil_publico_test.dart`.
   @override
-  Future<FotografiaRanking> meuRanking() {
+  Future<AberturaRanking> abrirRanking() async {
     chamadas.add('proprio');
-    return Future.value(FotografiaRanking.daAbertura(respostaPropria));
+    return AberturaRanking(
+      eu: FotografiaRanking.daAbertura(respostaPropria),
+      tabela: const TabelaRanking(podio: [], primeiraPagina: []),
+    );
   }
 
   @override

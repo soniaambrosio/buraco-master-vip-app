@@ -270,6 +270,59 @@ String _semMaquetes(String codigo) {
 /// `:`, e um padrão que exigisse `avatar:\s*'` não o veria. Contar parênteses e
 /// colchetes também é o que impede parar na vírgula de dentro de uma chamada
 /// (`f(a, b)`) em vez da vírgula que separa os argumentos.
+/// O valor DECIDE o avatar escrevendo um texto, em vez de delegar?
+///
+/// -------------------------------------------------------------------------
+/// POR QUE NÃO BASTA PROCURAR ASPAS
+/// -------------------------------------------------------------------------
+///
+/// A primeira versão desta prova reprovava qualquer valor que CONTIVESSE uma
+/// aspa, e isso funcionou enquanto o único jeito de aparecer uma aspa ali era
+/// alguém escrever `avatar: '👑'`. Ao compor a navegação ao Perfil público
+/// entrou um analisador de resposta do servidor com esta forma:
+///
+///     avatar: _texto(j['avatar'], '$onde.avatar')
+///
+/// Duas aspas, e nenhuma delas é um avatar: uma é a CHAVE do mapa que veio da
+/// rede, a outra é o caminho usado na mensagem de diagnóstico. O valor é uma
+/// chamada — quem decide o texto é a resposta do backend, não este arquivo.
+/// Reprovar isso seria a auditoria confundir "ler um campo chamado avatar" com
+/// "inventar um avatar", e o conserto óbvio — tirar `ranking_transporte.dart`
+/// da lista de arquivos vigiados — seria pior, porque abriria uma exceção
+/// permanente num arquivo de produção.
+///
+/// Então a regra passa a ser sobre a FORMA, que é o que o caso sempre quis
+/// dizer: um literal SOLTO, fora de qualquer chamada. Some-se as listas de
+/// argumentos e veja-se o que sobra.
+///
+///   `'👑'`                                    sobra `'👑'`        REPROVA
+///   `identidade?.avatarRef ?? '👑'`           sobra o mesmo       REPROVA
+///   `x ? '👑' : '🎩'`                          sobram os dois      REPROVA
+///   `_texto(j['avatar'], '$onde.avatar')`     sobra `_texto`      passa
+///   `avatarPublicoDaIdentidade(identidade)`   sobra o nome        passa
+///
+/// O ternário continua pego — foi por ele que a primeira versão deixou uma
+/// mutação escapar —, e o `??` também, que é a forma exata do defeito que toda
+/// esta matriz existe para manter fechado.
+bool _temLiteralSolto(String valor) {
+  final fora = StringBuffer();
+  var profundidade = 0;
+  for (var i = 0; i < valor.length; i++) {
+    final c = valor[i];
+    if (c == '(' || c == '[') {
+      profundidade++;
+      continue;
+    }
+    if (c == ')' || c == ']') {
+      if (profundidade > 0) profundidade--;
+      continue;
+    }
+    if (profundidade == 0) fora.write(c);
+  }
+  final resto = fora.toString();
+  return resto.contains("'") || resto.contains('"');
+}
+
 List<String> _valoresDeArgumento(String codigo, String nome) {
   final valores = <String>[];
   final marca = RegExp('\\b$nome\\s*:');
@@ -1535,9 +1588,7 @@ void main() {
       for (final f in arquivos) {
         final codigo = _semMaquetes(_semComentarios(_texto(f)));
         for (final valor in _valoresDeArgumento(codigo, 'avatar')) {
-          if (valor.contains("'") || valor.contains('"')) {
-            ofensores[f] = valor;
-          }
+          if (_temLiteralSolto(valor)) ofensores[f] = valor;
         }
       }
       expect(

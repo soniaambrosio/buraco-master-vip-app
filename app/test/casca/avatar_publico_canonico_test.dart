@@ -1147,7 +1147,32 @@ void main() {
               'alcançável a partir da raiz',
         );
       }
-      expect(alcancaveis, hasLength(40 + doRankingReal.length));
+
+      // 45 → 48 AO ENTRAR A NAVEGAÇÃO AO PERFIL PÚBLICO, e os três também têm
+      // nome. Mesma disciplina da rodada anterior, pelo mesmo motivo: o total é
+      // alarme de crescimento inesperado, e crescimento PREVISTO se declara.
+      //
+      // Estes três são o que a tabela de Ranking passou a precisar para existir
+      // como tela produtiva: o estado da tabela, a tela em si, e o único ponto
+      // do aplicativo autorizado a decidir de quem é o Perfil que abre.
+      const daNavegacaoPublica = [
+        'lib/ranking/estado_tabela_ranking.dart',
+        'lib/casca/ranking_de_producao.dart',
+        'lib/casca/navegacao_perfil_publico.dart',
+      ];
+      for (final caminho in daNavegacaoPublica) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — a navegação ao Perfil público '
+              'deixou de ser alcançável a partir da raiz',
+        );
+      }
+
+      expect(
+        alcancaveis,
+        hasLength(40 + doRankingReal.length + daNavegacaoPublica.length),
+      );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
       final resolvedor = _codigo(File('lib/sessao/avatar_publico.dart'));
       final importados = _reImport
