@@ -111,6 +111,12 @@ jobs:
         run: |
           set +e
           if [ ! -d functions-billing ]; then echo "diretorio functions-billing ausente" > nao_billing; exit 0; fi
+          # `npm ci` passou a ser necessario: `adversarial.test.js` carrega
+          # `index.js` com as portas trocadas no require.cache, e o pacote real
+          # precisa existir para ser trocado. Sem ele, 42 dos 86 casos daquela
+          # suite falham por modulo ausente — e o gate ficaria vermelho por
+          # ambiente, nao por regressao.
+          ( cd functions-billing && npm ci --no-audit --no-fund 2>&1 | tail -3 )
           ( cd functions-billing && npm test ) 2>&1 | tee t_billing.log; echo ${PIPESTATUS[0]} > exit_billing
 
       - name: "3b — codebase TORNEIOS (functions), typecheck"
