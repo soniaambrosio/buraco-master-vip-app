@@ -35,6 +35,7 @@ interface PonteTorneios {
   planejarTarefas: PonteJs;
   consolidarConvites: PonteJs;
   montarHistorico: PonteJs;
+  avaliarPrimeiraBatidaReal: PonteJs;
 }
 
 const ponte = (globalThis as unknown as { bmvTorneios?: PonteTorneios }).bmvTorneios;
@@ -164,6 +165,20 @@ export interface PerfilElegibilidade {
   suspenso: boolean;
 }
 
+/// O que o dominio responde sobre a conquista `primeira_batida_real`.
+///
+/// `elegivel: false` NAO e erro: e a resposta normal da imensa maioria dos
+/// encerramentos. `motivo` traz o codigo estavel da recusa, para o log.
+export interface VeredictoConquista {
+  elegivel: boolean;
+  userId: string | null;
+  assento: number | null;
+  motivo: string | null;
+  conquistaId: string;
+  versaoContrato: number;
+  origem: string;
+}
+
 export const dominio = {
   /// Monta o retrato de elegibilidade a partir dos documentos das FONTES REAIS
   /// (`playerModeration/{uid}` e `playerEntitlements/{uid}`).
@@ -203,6 +218,20 @@ export const dominio = {
   consolidarConvites: (e: unknown) => chamar<ResultadoConvites>(ponte.consolidarConvites, e),
 
   montarHistorico: (e: unknown) => chamar<Record<string, unknown>>(ponte.montarHistorico, e),
+
+  /// Decide quem — se alguem — ganhou a conquista `primeira_batida_real` num
+  /// encerramento de partida.
+  ///
+  /// Entrada: `{registro}`, o JSON INTEIRO de `RegistroDePartida.toJson()`. Nao
+  /// se escolhem campos aqui de proposito: escolher seria decidir o que importa,
+  /// e quem decide e o dominio.
+  ///
+  /// A regra vive em `app/lib/conquistas/primeira_batida_real.dart` e nao esta
+  /// reescrita nesta camada. Se algum dia aparecer um `if` de elegibilidade de
+  /// conquista neste arquivo, ele esta no lugar errado — pelo mesmo motivo que
+  /// o cabecalho deste modulo ja da para o Motor de Torneios.
+  avaliarPrimeiraBatidaReal: (e: unknown) =>
+    chamar<VeredictoConquista>(ponte.avaliarPrimeiraBatidaReal, e),
 };
 
 /// Instante atual no formato que o dominio exige: ISO-8601 com sufixo Z.

@@ -54,7 +54,8 @@
         "npm --prefix \"$RESOURCE_DIR\" run build:domain",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
-      "ignore": ["node_modules", ".git", "*.log"]
+      "//ignore": "`scripts` e `test` ficam FORA do pacote implantado. O provisionador do claim `motorDePartidas` mora em functions/scripts/ e chama setCustomUserClaims: e ferramenta administrativa, roda sob credencial controlada, e nao tem por que viajar junto com o codigo que atende requisicao. Isto NAO e o que impede o script de virar Cloud Function — disso cuidam o tsconfig (include: src) e o index.ts, que nao o reexporta —, e sim uma superficie a menos no artefato.",
+      "ignore": ["node_modules", ".git", "*.log", "scripts", "test"]
     },
     {
       "//": "ECONOMIA BASICA — garantirBonusDeBoasVindas, aoRegistrarPartida, reprocessarResultadoDaPartida. Codebase PROPRIO pelo mesmo criterio dos outros quatro: e unidade de implantacao independente. A carteira que ele move (`usuarios/{uid}.fichas`) e a MESMA que billing credita — nao existe carteira paralela —, mas o codigo que a move por vencer uma partida nao precisa subir junto com o que valida compra na Play. Sem `predeploy`: nao depende do dominio Dart compilado.",

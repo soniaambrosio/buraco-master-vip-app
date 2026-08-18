@@ -28,8 +28,30 @@
 // `users/{uid}/matchHistory`. Este arquivo e a unica porta.
 
 import { getFirestore, Transaction } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
+
+import { aplicarPlanoDeConquista, planejarPrimeiraBatidaReal } from "./conquistas";
+// [PROVISIONADOR] A regra de autoridade saiu daqui para `autoridade.ts`, que
+// NAO e reexportado por index.ts — logo continua sendo biblioteca, e nao
+// superficie de implantacao. `import` nao acrescenta export a este modulo, e o
+// contorno implantado deste arquivo segue identico.
+//
+// [CREDENCIAL] A conferencia de REVOGACAO entrou pelo mesmo endereco, e pelo
+// mesmo motivo: e regra de permissao, e regra de permissao que nenhum teste
+// alcanca e regra que so se descobre errada em producao.
+//
+// `autorizaComoMotorDePartidas` nao e mais importado aqui: ele continua sendo a
+// regra de papel, mas agora e chamado DE DENTRO de `conferirAutoridadeDePartida`,
+// sobre os claims do token VERIFICADO COM REVOGACAO. Importa-lo de volta seria o
+// caminho para alguem voltar a decidir por `req.auth.token`, que e exatamente o
+// defeito que esta entrega fecha.
+import {
+  conferirAutoridadeDePartida,
+  verificadorComRevogacao,
+  type ClaimsDoToken,
+} from "./autoridade";
 
 const db = () => getFirestore();
 
@@ -38,21 +60,6 @@ const db = () => getFirestore();
 
 const opcoesServidor = { region: "southamerica-east1" };
 const opcoesCliente = { enforceAppCheck: true, region: "southamerica-east1" };
-
-/// Papeis que podem escrever registro de partida.
-///
-/// Espelha `ChamadorAutorizado.papeisDeAutoridade` do dominio Dart. A
-/// duplicacao e inevitavel enquanto a ponte nao carregar a rastreabilidade, e
-/// esta anotada de propriosito para quem for unifica-las achar os dois pontos.
-const PAPEIS_DE_AUTORIDADE = ["motorDePartidas", "admin"] as const;
-
-/// Os claims do token, como este arquivo os le.
-///
-/// Tipado em vez de `any` para que um claim escrito errado (`Admin`, `sup0rte`)
-/// vire erro de compilacao e nao uma comparacao que sempre da `false` — o pior
-/// defeito possivel numa checagem de permissao, porque falha ABERTA em nenhum
-/// teste e FECHADA em producao.
-type ClaimsDoToken = Partial<Record<(typeof PAPEIS_DE_AUTORIDADE)[number] | "suporte", boolean>>;
 
 function claimsDe(req: CallableRequest): ClaimsDoToken {
   return (req.auth?.token ?? {}) as ClaimsDoToken;
@@ -66,11 +73,40 @@ function exigirAutenticacao(req: CallableRequest): string {
   return uid;
 }
 
-function exigirAutoridadeDePartida(req: CallableRequest): string {
+// [CREDENCIAL] O cabecalho BRUTO da requisicao que o protocolo callable
+// embrulha. `rawRequest` e o `Request` do Express, e o Node normaliza nome de
+// cabecalho para minusculas — por isso `authorization`, e nao `Authorization`.
+//
+// Ler o bruto e o unico jeito de obter o token de novo: o protocolo callable
+// consome o cabecalho, verifica-o SEM checar revogacao e entrega so o resultado
+// decodificado em `req.auth`. O token em si ele nao devolve.
+function cabecalhoAuthorizationDe(req: CallableRequest): unknown {
+  return req.rawRequest?.headers?.authorization;
+}
+
+/// [CREDENCIAL] Agora ASSINCRONA: a conferencia de revogacao consulta o registro
+/// de sessoes do usuario, e isso e uma ida a rede.
+///
+/// O custo esta no lugar certo. Isto roda UMA vez por partida encerrada — nao
+/// por jogada e nao por leitura do aplicativo —, e e o que faz
+/// `revokeRefreshTokens` cortar o acesso NA HORA em vez de ate uma hora depois.
+async function exigirAutoridadeDePartida(req: CallableRequest): Promise<string> {
   const uid = exigirAutenticacao(req);
-  const token = claimsDe(req);
-  const temPapel = PAPEIS_DE_AUTORIDADE.some((p) => token[p] === true);
-  if (!temPapel) {
+
+  const conferencia = await conferirAutoridadeDePartida({
+    cabecalhoAuthorization: cabecalhoAuthorizationDe(req),
+    uidDoProtocolo: uid,
+    verificar: verificadorComRevogacao(getAuth()),
+  });
+
+  if (!conferencia.ok) {
+    // O MOTIVO vai para o log do operador, e NAO para o chamador: a mensagem
+    // devolvida e a mesma de sempre, porque distinguir "sessao revogada" de
+    // "sem o claim" descreveria a defesa para quem a estivesse sondando.
+    logger.warn("autoridade de partida recusada", {
+      motivo: conferencia.motivo,
+      // Sem uid, sem token, sem cabecalho: o log diz o QUE aconteceu, nao QUEM.
+    });
     // A mesma recusa que o dominio devolve como `semAutoridade`. Deixar esta
     // porta aberta permitiria a qualquer cliente autenticado escrever o proprio
     // resultado — que e o item mais caro da secao 24.
@@ -79,7 +115,7 @@ function exigirAutoridadeDePartida(req: CallableRequest): string {
       "somente a autoridade da partida registra encerramento."
     );
   }
-  return uid;
+  return conferencia.uid;
 }
 
 function exigirAdmin(req: CallableRequest): string {
@@ -123,7 +159,7 @@ function nivelDe(req: CallableRequest): "jogador" | "suporte" | "administrador" 
 /// impossivel por construcao, e nao por checagem — a disciplina que
 /// `rewardGrants` ja usa neste projeto.
 export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) => {
-  const autor = exigirAutoridadeDePartida(req);
+  const autor = await exigirAutoridadeDePartida(req);
 
   const plano = req.data?.plano as Record<string, unknown> | undefined;
   if (!plano) {
@@ -170,8 +206,27 @@ export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) =
       }
       // Reenvio identico: sucesso, sem regravar. Este e o caminho do retry e do
       // callback repetido — reenvio nao e falha.
+      //
+      // A conquista e avaliada AQUI TAMBEM, e nao so no caminho novo. Duas
+      // razoes: o reenvio precisa convergir para o mesmo estado final (se a
+      // concessao da primeira vez se perdeu, esta a repara), e uma partida
+      // fechada antes desta funcionalidade existir passa a poder receber a
+      // conquista ao ser reenviada — sem nunca duplicar, porque o id do
+      // documento e fixo por jogador.
+      const conquistaReenvio = await planejarPrimeiraBatidaReal(tx, registro, matchId);
+      aplicarPlanoDeConquista(tx, conquistaReenvio);
+      logger.info("conquista avaliada em reenvio", {
+        matchId,
+        conquista: "primeira_batida_real",
+        resultado: conquistaReenvio.resultado,
+        motivo: conquistaReenvio.motivo,
+      });
       return { aceito: true, jaRegistrado: true, matchId };
     }
+
+    // ULTIMA LEITURA da transacao. Tudo abaixo e escrita, e o Firestore recusa
+    // uma leitura depois da primeira escrita.
+    const conquista = await planejarPrimeiraBatidaReal(tx, registro, matchId);
 
     tx.set(matchRef, { ...registro, registradoPor: autor });
 
@@ -210,12 +265,25 @@ export const registrarEncerramentoPartida = onCall(opcoesServidor, async (req) =
       );
     }
 
+    aplicarPlanoDeConquista(tx, conquista);
+
     logger.info("encerramento de partida registrado", {
       matchId,
       estado,
       eventos: eventos.length,
       lancamentos: lancamentos.length,
       sinais: sinais.length,
+    });
+    // Log proprio, e nao um campo no anterior: o operador precisa conseguir
+    // filtrar so a conquista. Sem uid, sem apelido, sem e-mail e sem carta —
+    // so o que responde "por que fulano nao recebeu?" quando alguem perguntar,
+    // e a partida ja e identificada pelo matchId da linha de cima.
+    logger.info("conquista avaliada no encerramento", {
+      matchId,
+      conquista: "primeira_batida_real",
+      versaoContrato: 1,
+      resultado: conquista.resultado,
+      motivo: conquista.motivo,
     });
     return { aceito: true, jaRegistrado: false, matchId };
   });

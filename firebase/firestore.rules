@@ -567,6 +567,43 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Conquistas permanentes do jogador
+    // ---------------------------------------------------------------------
+    // Escrita por `registrarEncerramentoPartida`, na MESMA transacao que fecha
+    // a partida. O aplicativo so LE, e so as proprias.
+    //
+    // POR QUE A ESCRITA E NEGADA ATE PARA O DONO: uma conquista que o titular
+    // pudesse criar nao seria conquista, seria um campo de perfil editavel. O
+    // caminho inteiro de autoridade — motor aprova a batida, desfecho carrega o
+    // assento, dominio decide, transacao grava — viraria enfeite se existisse um
+    // `create` do cliente ao lado dele.
+    //
+    // `update` e `delete` negados pelo mesmo motivo, e mais um: `obtidaEm` e a
+    // data do marco. Deixar o dono reescrever permitiria antedatar a propria
+    // conquista, e deixar apagar permitiria "zerar" para ganhar de novo — que e
+    // justamente o que o id fixo do documento existe para impedir.
+    //
+    // LEITURA: so o dono e o admin. Nao ha `list` de terceiro, entao a colecao
+    // de um jogador nao e varrivel por outro. A vitrine publica de conquistas,
+    // se um dia existir, e outra colecao — projetada de proposito —, e nao esta
+    // liberacao alargada.
+    match /playerAchievements/{uid} {
+      // O documento do jogador em si nao guarda nada hoje; os itens e que sao a
+      // colecao. Fechado mesmo assim, para nao virar espaco de escrita livre.
+      allow read: if ehDono(uid) || ehAdmin();
+      allow write: if false;
+
+      // O id do documento E o identificador da conquista
+      // (`primeira_batida_real`), e nao um id gerado. E o que torna a segunda
+      // concessao impossivel por construcao: nao existe segundo caminho onde
+      // gravar. Mesma disciplina de `rewardGrants` e `matches/{id}/events`.
+      match /items/{conquistaId} {
+        allow get, list: if ehDono(uid) || ehAdmin();
+        allow create, update, delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
     // Ledger competitivo — antes/delta/depois (secoes 12 e 13)
     // ---------------------------------------------------------------------
     // O jogador le os PROPRIOS lancamentos: ele tem direito de saber por que a

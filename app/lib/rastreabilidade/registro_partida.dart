@@ -367,6 +367,19 @@ class RegistroDePartida {
   /// reescrita.
   final String? impressaoEstado;
 
+  /// Assento 0..3 de quem executou a batida que encerrou a última rodada
+  /// apurada, copiado de `DesfechoCanonicoPartida.assentoQueBateuUltimaRodada`.
+  ///
+  /// `null` significa "não houve batida legal na última rodada" OU "o desfecho
+  /// não trouxe o campo" — e as duas coisas se leem igual de propósito: nenhuma
+  /// delas autoriza afirmar quem bateu. Quem decide conquista trata ausência
+  /// como recusa, nunca como permissão.
+  ///
+  /// Combinado com [ladoVencedor] e [estado], é o que distingue "bateu na
+  /// rodada que encerrou a partida e venceu" de "bateu numa rodada qualquer" e
+  /// de "a dupla venceu, mas quem bateu foi o parceiro".
+  final int? assentoQueBateuFinal;
+
   /// Vínculo com o torneio, quando houver. Só os identificadores.
   final String? tournamentId;
   final String? editionId;
@@ -391,6 +404,7 @@ class RegistroDePartida {
     required this.rodadas,
     required this.versaoEstadoFinal,
     required this.impressaoEstado,
+    required this.assentoQueBateuFinal,
     required this.tournamentId,
     required this.editionId,
     required this.faseId,
@@ -466,6 +480,8 @@ class RegistroDePartida {
       rodadas: 0,
       versaoEstadoFinal: 0,
       impressaoEstado: null,
+      // Partida recém-aberta não teve batida nenhuma.
+      assentoQueBateuFinal: null,
       tournamentId: tournamentId,
       editionId: editionId,
       faseId: faseId,
@@ -603,6 +619,7 @@ class RegistroDePartida {
       rodadas: desfecho.rodada,
       versaoEstadoFinal: desfecho.versaoEstado,
       impressaoEstado: desfecho.impressaoEstado,
+      assentoQueBateuFinal: desfecho.assentoQueBateuUltimaRodada,
     );
   }
 
@@ -617,6 +634,7 @@ class RegistroDePartida {
     int? rodadas,
     int? versaoEstadoFinal,
     String? impressaoEstado,
+    int? assentoQueBateuFinal,
   }) =>
       RegistroDePartida._(
         identidade: identidade,
@@ -634,6 +652,7 @@ class RegistroDePartida {
         rodadas: rodadas ?? this.rodadas,
         versaoEstadoFinal: versaoEstadoFinal ?? this.versaoEstadoFinal,
         impressaoEstado: impressaoEstado ?? this.impressaoEstado,
+        assentoQueBateuFinal: assentoQueBateuFinal ?? this.assentoQueBateuFinal,
         tournamentId: tournamentId,
         editionId: editionId,
         faseId: faseId,
@@ -671,6 +690,7 @@ class RegistroDePartida {
         'rodadas': rodadas,
         'versaoEstadoFinal': versaoEstadoFinal,
         'impressaoEstado': impressaoEstado,
+        'assentoQueBateuFinal': assentoQueBateuFinal,
         'temRobo': temRobo,
         'alteraRanking': alteraRanking,
         'tournamentId': tournamentId,
@@ -727,6 +747,14 @@ class RegistroDePartida {
       }
     }
     final placarBruto = raw['placar'];
+    // Sem `inteiro(...)`: ali "ausente" e "zero" viram a mesma coisa, e aqui
+    // zero é um assento REAL. Ausência precisa continuar sendo nula até a
+    // decisão, que é quem sabe o que fazer com "não sei".
+    final assentoBatida = raw['assentoQueBateuFinal'];
+    if (assentoBatida != null && assentoBatida is! num) {
+      throw FormatException('registro ${identidade.matchId}: '
+          'assentoQueBateuFinal deve ser numérico ou nulo (recebido: $assentoBatida).');
+    }
 
     return RegistroDePartida._(
       identidade: identidade,
@@ -746,6 +774,7 @@ class RegistroDePartida {
       rodadas: inteiro('rodadas', 0),
       versaoEstadoFinal: inteiro('versaoEstadoFinal', 0),
       impressaoEstado: raw['impressaoEstado'] as String?,
+      assentoQueBateuFinal: (assentoBatida as num?)?.toInt(),
       tournamentId: raw['tournamentId'] as String?,
       editionId: raw['editionId'] as String?,
       faseId: raw['faseId'] as String?,
