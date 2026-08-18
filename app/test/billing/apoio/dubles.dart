@@ -76,18 +76,28 @@ class LojaPlayFalsa implements LojaPlay {
         );
   }
 
+  /// Todo vinculo que chegou a Play, na ordem. E o registro do que o aplicativo
+  /// REALMENTE entregou — nao do que ele pretendia entregar.
+  final List<String> vinculosRecebidos = <String>[];
+
   @override
   Future<bool> comprarAssinatura(
     ProductDetails produto, {
     String? ofertaPlanoBase,
+    required String vinculoDaConta,
   }) async {
     assinaturasAbertas += 1;
+    vinculosRecebidos.add(vinculoDaConta);
     return true;
   }
 
   @override
-  Future<bool> comprarConsumivel(ProductDetails produto) async {
+  Future<bool> comprarConsumivel(
+    ProductDetails produto, {
+    required String vinculoDaConta,
+  }) async {
     consumiveisAbertos += 1;
+    vinculosRecebidos.add(vinculoDaConta);
     return true;
   }
 

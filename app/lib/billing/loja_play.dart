@@ -45,10 +45,21 @@ abstract class LojaPlay {
   /// trimestral, anual). Ele vem de
   /// `(produto as GooglePlayProductDetails).productDetails.subscriptionOfferDetails`.
   /// Sem ele a Play Store usa a oferta padrao do produto.
-  Future<bool> comprarAssinatura(ProductDetails produto, {String? ofertaPlanoBase});
+  ///
+  /// [vinculoDaConta] e o identificador opaco que o backend concedeu a conta
+  /// autenticada. E OBRIGATORIO: sem ele a Google nao tem como dizer, mais
+  /// tarde, de quem e a compra — e o backend recusa. Ver `vinculo.dart`.
+  Future<bool> comprarAssinatura(
+    ProductDetails produto, {
+    String? ofertaPlanoBase,
+    required String vinculoDaConta,
+  });
 
   /// Abre o fluxo de compra de um produto unico consumivel.
-  Future<bool> comprarConsumivel(ProductDetails produto);
+  Future<bool> comprarConsumivel(
+    ProductDetails produto, {
+    required String vinculoDaConta,
+  });
 
   /// Pede a Play Store para reentregar as compras ativas desta conta. Cada uma
   /// volta pelo [fluxoDeCompras] e e revalidada.
@@ -79,20 +90,40 @@ class LojaPlayReal implements LojaPlay {
   Future<bool> comprarAssinatura(
     ProductDetails produto, {
     String? ofertaPlanoBase,
+    required String vinculoDaConta,
   }) {
     // Assinatura usa `buyNonConsumable`: ela nao se "gasta". Quem controla o
     // ciclo de vida (renovacao, cancelamento, carencia, pausa) e a Play Store, e
     // quem o reflete aqui e a RTDN, nao o cliente.
+    //
+    // `applicationUserName` E A AMARRA DA CONTA, e o nome do parametro engana.
+    // Ele nao e um nome de usuario e nao pode conter nada legivel: na versao
+    // pinada (`in_app_purchase_android` 0.5.0) ele desce por
+    // `in_app_purchase_android_platform.dart:184` como `accountId:`, vira
+    // `PlatformBillingFlowParams.accountId` e termina em
+    // `MethodCallHandlerImpl.java:333` como
+    // `BillingFlowParams.setObfuscatedAccountId`. O proprio plugin avisa, na
+    // documentacao de `launchBillingFlow`, que passar dado em claro aqui faz a
+    // Google BLOQUEAR a compra — por isso o valor e um identificador opaco
+    // concedido pelo backend, e nunca uid, e-mail ou apelido.
+    //
+    // E o mesmo objeto que carrega `changeSubscriptionParam`, entao upgrade e
+    // downgrade passam por este mesmo caminho — nao ha um segundo lugar onde a
+    // amarra pudesse ser esquecida.
     return InAppPurchase.instance.buyNonConsumable(
       purchaseParam: GooglePlayPurchaseParam(
         productDetails: produto,
         offerToken: ofertaPlanoBase,
+        applicationUserName: vinculoDaConta,
       ),
     );
   }
 
   @override
-  Future<bool> comprarConsumivel(ProductDetails produto) {
+  Future<bool> comprarConsumivel(
+    ProductDetails produto, {
+    required String vinculoDaConta,
+  }) {
     // `autoConsume: false` e a decisao mais importante deste arquivo.
     //
     // Consumir e o que libera o token para ser comprado de novo. Se o cliente
@@ -102,8 +133,14 @@ class LojaPlayReal implements LojaPlay {
     // Quem consome e o backend, em `fecharComAGoogle`, via
     // `purchases.products.consume`, e so DEPOIS de creditar. Aqui o app apenas
     // abre o fluxo e, mais tarde, encerra a compra localmente quando ha veredito.
+    // O consumivel tambem leva a amarra: `ProductPurchase` devolve o
+    // identificador na RAIZ da resposta, e o backend o confere igual. Deixar o
+    // avulso de fora abriria a mesma porta em metade do catalogo.
     return InAppPurchase.instance.buyConsumable(
-      purchaseParam: PurchaseParam(productDetails: produto),
+      purchaseParam: PurchaseParam(
+        productDetails: produto,
+        applicationUserName: vinculoDaConta,
+      ),
       autoConsume: false,
     );
   }
