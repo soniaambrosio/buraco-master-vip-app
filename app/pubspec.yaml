@@ -45,6 +45,17 @@ dependencies:
 
   google_sign_in: 6.2.1
   audioplayers: ^6.7.1
+
+  # Rive: a abertura oficial do aplicativo. Ver `lib/casca/splash/`.
+  #
+  # O runtime desta versao e NATIVO (FFI). A biblioteca dinamica nao vem no
+  # pacote: ela e baixada no build por `dart run rive_native:setup`, disparado
+  # pelo proprio gradle do plugin. Isso significa que o BUILD precisa de rede;
+  # a EXECUCAO, nao — o `.riv` viaja dentro do APK e a abertura roda offline.
+  #
+  # `package:rive` e importado num arquivo so do repositorio
+  # (`lib/casca/splash/abertura_rive.dart`), e a suite afirma isso.
+  rive: ^0.14.11
   web_socket_channel: ^3.0.3
   shared_preferences: ^2.5.5
 
@@ -84,6 +95,10 @@ flutter:
   # propria linha. `assets/ranking/` nao arrasta `assets/ranking/selos/`.
   assets:
     - assets/splash/
+    # A arte da abertura. Binario autoritativo: SHA-256
+    # a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d,
+    # 2.298.957 bytes. Nao reexportar, nao recomprimir.
+    - assets/rive/
     - assets/sons/
     - assets/baralho/
     - assets/perfil/

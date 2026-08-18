@@ -1,0 +1,6 @@
+# O `.riv` da abertura e um BINARIO AUTORITATIVO: a OS exige que o arquivo
+# versionado seja identico, byte a byte, ao aprovado (SHA-256 registrado no
+# laudo). Este repositorio esta com `core.autocrlf=true`, e sem esta linha a
+# preservacao dependeria unicamente da heuristica de deteccao de binario do
+# git. Aqui ela deixa de ser heuristica.
+*.riv binary
