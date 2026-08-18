@@ -53,6 +53,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../services/meta_de_pontos.dart';
 import '../services/online_service.dart';
 import 'escopo_transporte.dart';
 import 'mesa_online/estado_mesa_online.dart';
@@ -79,6 +80,14 @@ class _LobbyOnlineState extends State<LobbyOnline> {
 
   final TextEditingController _codigo = TextEditingController();
   final TextEditingController _apelido = TextEditingController(text: 'Você');
+
+  /// A meta da partida que vai no comando de criação.
+  ///
+  /// Nasce no PADRÃO DECLARADO, e não "no primeiro botão da lista": se o valor
+  /// inicial saísse da ordem da vitrine, reordenar os botões trocaria a regra
+  /// sem ninguém notar. Só vale para a mesa que se CRIA — quem entra por código
+  /// entra na mesa que existe, e este campo não é consultado nesse caminho.
+  MetaDePontos _meta = MetaDePontos.padrao;
 
   static const _ouro = Color(0xFFEFB94A);
   static const _ouroClaro = Color(0xFFF6E2A6);
@@ -334,6 +343,39 @@ class _LobbyOnlineState extends State<LobbyOnline> {
         style: const TextStyle(color: _texto),
         decoration: _dec('Seu apelido'),
       ),
+      const SizedBox(height: 18),
+      const Text(
+        'Meta da partida',
+        style: TextStyle(color: _mut, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final m in MetaDePontos.values)
+            ChoiceChip(
+              label: Text('${m.rotulo} pontos'),
+              selected: _meta == m,
+              showCheckmark: false,
+              backgroundColor: const Color(0xFF1C130C),
+              selectedColor: _ouro,
+              side: BorderSide(
+                color: _meta == m ? _ouro : const Color(0x33EFB94A),
+              ),
+              labelStyle: TextStyle(
+                color: _meta == m ? const Color(0xFF1C130C) : _texto,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+              // SELEÇÃO ÚNICA, e o toque DEFINE em vez de alternar. Um
+              // `onSelected` que obedecesse ao booleano recebido deixaria
+              // apagar o botão aceso — e aí a mesa nasceria sem meta escolhida,
+              // que é um estado que não existe.
+              onSelected: (_) => setState(() => _meta = m),
+            ),
+        ],
+      ),
       const SizedBox(height: 16),
       ElevatedButton(
         style: ElevatedButton.styleFrom(
@@ -342,7 +384,7 @@ class _LobbyOnlineState extends State<LobbyOnline> {
           padding: const EdgeInsets.symmetric(vertical: 14),
         ),
         onPressed: pronto
-            ? () => srv.criarMesa(apelido: _apelidoEscolhido)
+            ? () => srv.criarMesa(apelido: _apelidoEscolhido, meta: _meta)
             : null,
         child: const Text(
           'Criar mesa',
@@ -390,6 +432,16 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     ];
   }
 
+  /// "Meta: 2.000 pontos", ou o silêncio honesto quando a mesa não disse.
+  ///
+  /// Meta fora do catálogo NÃO vira o padrão na tela. Se um dia a lista do
+  /// servidor andar sem a do cliente, o sintoma tem de ser um traço visível —
+  /// e não uma mesa de 5.000 exibida como 2.000 para caber na vitrine.
+  static String _textoDaMeta(Object? valor) {
+    final m = MetaDePontos.deValor(valor);
+    return m == null ? 'Meta: —' : 'Meta: ${m.rotulo} pontos';
+  }
+
   // Na sala, aguardando os jogadores.
   List<Widget> _lobby(OnlineService srv, Map<String, dynamic> v) {
     final assentos = (v['assentos'] as List?) ?? const [];
@@ -416,6 +468,20 @@ class _LobbyOnlineState extends State<LobbyOnline> {
         'Compartilhe o código com quem vai jogar 🃏',
         textAlign: TextAlign.center,
         style: TextStyle(color: _mut, fontSize: 12),
+      ),
+      const SizedBox(height: 12),
+      // A META VEM DA MESA, e é a mesma para todo mundo que está nela — quem
+      // criou e quem entrou por código leem o mesmo campo da visão. Aqui não
+      // há seletor: a mesa já existe, e mudá-la deste lado seria mentira, já
+      // que o servidor congela a meta no instante em que a sala nasce.
+      Text(
+        _textoDaMeta(v['metaPontos']),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: _ouroClaro,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
       ),
       const SizedBox(height: 18),
       ...List.generate(assentos.length, (i) {

@@ -78,6 +78,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'endpoint_servidor.dart';
+import 'meta_de_pontos.dart';
 import 'redacao_segredos.dart';
 
 enum OnlineStatus {
@@ -420,16 +421,22 @@ class OnlineService extends ChangeNotifier {
 
   // ---------- API pública (ações do jogador) ----------
 
+  /// Abre uma mesa nova.
+  ///
+  /// [meta] é uma [MetaDePontos] e não um `int` de propósito: o valor viaja na
+  /// mensagem, e um `int` deixaria "mandar 1.732" ser uma linha válida em
+  /// qualquer ponto do cliente. O servidor recusa o que não está na lista dele
+  /// — este tipo é o que impede o pedido de nascer.
   void criarMesa({
     required String apelido,
-    int metaPontos = 3000,
+    MetaDePontos meta = MetaDePontos.padrao,
     String modalidade = 'aberto',
   }) {
     _meuApelido = apelido;
     _enviar({
       'tipo': 'criarMesa',
       'apelido': apelido,
-      'metaPontos': metaPontos,
+      'metaPontos': meta.pontos,
       'modalidade': modalidade,
     });
   }

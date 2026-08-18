@@ -1169,9 +1169,28 @@ void main() {
         );
       }
 
+      // 48 → 49 COM A META CANÔNICA DA PARTIDA, e o arquivo tem nome. Mesma
+      // disciplina das duas rodadas acima: o lobby passou a oferecer a meta, e
+      // a lista das três metas é um tipo próprio — e não um `int` solto — para
+      // que valor fora do catálogo não compile do lado do cliente.
+      const daMetaCanonica = ['lib/services/meta_de_pontos.dart'];
+      for (final caminho in daMetaCanonica) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — a meta canônica deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+
       expect(
         alcancaveis,
-        hasLength(40 + doRankingReal.length + daNavegacaoPublica.length),
+        hasLength(
+          40 +
+              doRankingReal.length +
+              daNavegacaoPublica.length +
+              daMetaCanonica.length,
+        ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
       final resolvedor = _codigo(File('lib/sessao/avatar_publico.dart'));
