@@ -140,17 +140,25 @@ class TransporteFalso extends TransporteRanking {
   int chamadasProprio = 0;
   int chamadasPublico = 0;
 
+  /// Uma abertura sem tabela encenada: estas suítes provam as guardas sobre o
+  /// CABEÇALHO, e a tabela vazia é o que a autoridade devolve numa temporada
+  /// sem classificado — nada de inventar jogadores aqui.
+  static AberturaRanking _abertura(FotografiaRanking eu) => AberturaRanking(
+    eu: eu,
+    tabela: const TabelaRanking(podio: [], primeiraPagina: []),
+  );
+
   @override
-  Future<FotografiaRanking> meuRanking() {
+  Future<AberturaRanking> abrirRanking() async {
     chamadasProprio++;
     if (manual) {
       final c = Completer<FotografiaRanking>();
       pendentesProprio.add(c);
-      return c.future;
+      return _abertura(await c.future);
     }
     final falha = falhaPropria;
-    if (falha != null) return Future<FotografiaRanking>.error(falha);
-    return Future.value(FotografiaRanking.daAbertura(respostaPropria));
+    if (falha != null) return Future<AberturaRanking>.error(falha);
+    return _abertura(FotografiaRanking.daAbertura(respostaPropria));
   }
 
   @override

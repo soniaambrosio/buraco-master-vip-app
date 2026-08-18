@@ -46,6 +46,25 @@
 // (`POSICAO_NAO_APURADA` em `functions-ranking/src/projecao.ts`). O zero chega
 // aqui como zero, de propósito: quem o transforma em ausência é o
 // `EstadoRanking`, que já fazia isso antes de existir backend.
+//
+// ---------------------------------------------------------------------------
+// OS JOGADORES QUE ESTE ARQUIVO DEIXAVA CAIR
+// ---------------------------------------------------------------------------
+//
+// `abrirRanking` sempre devolveu `resumo.podio[]` e `primeiraPagina.itens[]` —
+// jogadores REAIS, cada um com `publicPlayerId`, `souEu`, apelido, posição e
+// liga. Até esta OS o cliente lia a resposta inteira e guardava um campo só:
+// `resumo.eu`. Todo o resto era descartado no parser, e a consequência não era
+// "falta uma tela": era que a única lista de gente de verdade que o backend
+// publica NÃO EXISTIA no aplicativo, e qualquer superfície que quisesse mostrar
+// ranking teria de inventar os jogadores — que é o defeito da família inteira.
+//
+// [JogadorPublicoRanking] é a projeção que faltava, e ela é deliberadamente
+// POBRE: espelha `JogadorPublicado` campo a campo e não acrescenta nenhum. Sem
+// uid — o backend não o publica (`projecao.ts` é lista branca) e o cliente não
+// tem de onde inventá-lo — e sem identificador derivado de apelido, posição ou
+// índice de lista. Quem quiser falar de um jogador fala pelo `publicPlayerId`
+// que a autoridade emitiu, ou não fala.
 
 /// Por que uma leitura de ranking falhou.
 ///
@@ -273,6 +292,339 @@ class FotografiaRanking {
       'ligaId: $ligaId, posicao: $posicao, classificado: $classificado)';
 }
 
+/// UM jogador da tabela, como a autoridade o publicou.
+///
+/// ---------------------------------------------------------------------------
+/// O QUE NÃO EXISTE AQUI, E POR QUÊ
+/// ---------------------------------------------------------------------------
+///
+/// Não há `uid`, e não há como haver: `projetarJogador` em
+/// `functions-ranking/src/projecao.ts` é uma LISTA BRANCA que troca o uid pelo
+/// `publicPlayerId` antes de a linha atravessar a fronteira, e `CAMPOS_PROIBIDOS`
+/// tem um teste que varre a resposta inteira atrás dele. O cliente não recebe
+/// uid e não deriva nenhum.
+///
+/// Também não há identificador INVENTADO. O índice na lista, a posição e o
+/// apelido são todos "quase identificadores" à mão, e usar qualquer um deles
+/// para dizer de quem é o perfil é a mesma classe de erro que inventar liga:
+/// funciona no caso comum e mente no caso que importa (dois jogadores com o
+/// mesmo apelido, uma lista reordenada entre o desenho e o toque).
+///
+/// ---------------------------------------------------------------------------
+/// `souEu` VEM DE FORA, E ISSO É O CONTRATO
+/// ---------------------------------------------------------------------------
+///
+/// A comparação acontece em UMA linha do sistema inteiro, e ela é do servidor:
+/// `souEu: uidDoLeitor !== null && linha.uid === uidDoLeitor`. O cliente não
+/// tem os dois lados dessa igualdade — o uid da linha não chega até aqui — e
+/// por isso não pode nem "conferir". Comparar apelido, posição ou o
+/// `publicPlayerId` com o da sessão seria trocar um fato do servidor por um
+/// palpite do cliente, e o palpite erra justamente quando a conta trocou no meio
+/// da consulta.
+class JogadorPublicoRanking {
+  const JogadorPublicoRanking({
+    required this.publicPlayerId,
+    required this.apelido,
+    required this.avatar,
+    required this.rotuloLiga,
+    required this.ligaId,
+    required this.pontos,
+    required this.posicao,
+    required this.direcao,
+    required this.delta,
+    required this.selo,
+    required this.souEu,
+    required this.estado,
+    required this.qualificacaoRestante,
+    required this.partidas,
+    required this.vitorias,
+    required this.derrotas,
+    required this.aproveitamento,
+  });
+
+  /// O identificador público do jogador — `JogadorPublicado.id`.
+  ///
+  /// O nome é `publicPlayerId` e não `id` de propósito: é o mesmo nome que a
+  /// callable `consultarJogadorPorIdPublico` recebe como parâmetro, e ler o
+  /// campo já diz para onde ele pode ir. Um campo chamado `id` num objeto de
+  /// jogador é exatamente o que alguém, um dia, passaria adiante achando que é
+  /// o uid.
+  final String publicPlayerId;
+
+
+  /// O apelido público. Pode ser VAZIO — o backend publica `''` quando não há
+  /// perfil de apresentação, e vazio não é um nome a completar aqui.
+  final String apelido;
+
+  /// A referência de avatar, como veio. Vazia é ausência.
+  final String avatar;
+
+  /// `JogadorPublicado.liga`: rótulo pronto, que tanto pode ser `'Ouro'` quanto
+  /// `'Em colocacao'` quanto `''`.
+  final String rotuloLiga;
+
+  /// O id estável da Liga, `null` durante colocação e revalidação.
+  final String? ligaId;
+
+  final int pontos;
+
+  /// A colocação, crua. `0` é "ainda não apurada" (`POSICAO_NAO_APURADA`).
+  final int posicao;
+
+  /// `subiu`, `desceu` ou `manteve`, como o servidor escreve.
+  final String direcao;
+  final int delta;
+  final String? selo;
+
+  /// A linha é do jogador autenticado. DECIDIDO PELO SERVIDOR.
+  final bool souEu;
+
+  /// `em_colocacao`, `em_revalidacao` ou `classificado`.
+  final String estado;
+  final int qualificacaoRestante;
+  final int partidas;
+  final int vitorias;
+  final int derrotas;
+  final double aproveitamento;
+
+  /// Dá para pedir o Perfil público DESTE jogador.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE A CHECAGEM PARA EM "NÃO ESTÁ VAZIO"
+  /// -------------------------------------------------------------------------
+  ///
+  /// Porque é onde ela PODE parar. O cliente trata `publicId` como string
+  /// OPACA, e isso não é frouxidão: `auditoria_identidade_test.dart` (CASO N)
+  /// varre `lib/` inteiro e reprova a presença do alfabeto, do comprimento e do
+  /// prefixo do id. A razão é que essas três constantes JUNTAS são a fórmula de
+  /// geração, e um cliente que a conhece é um cliente a uma linha de distância
+  /// de cunhar identidade — que foi exatamente o defeito de duas autoridades de
+  /// emissão que este projeto já pagou para fechar.
+  ///
+  /// Conferir a forma aqui seria, além de proibido, uma segunda opinião sobre
+  /// um julgamento que já existe e é do servidor: `idPublicoValido` em
+  /// `functions-ranking/src/identidade.ts` recusa o malformado com
+  /// `invalid-argument` antes de tocar o banco. O que o cliente ganha checando
+  /// o vazio é só não abrir uma tela para exibir um erro que ele já sabia que
+  /// viria.
+  ///
+  /// E o uid? Não entra por aqui porque não existe por aqui. `projecao.ts` é
+  /// uma lista branca que troca o uid pelo `publicPlayerId` antes de a linha
+  /// atravessar a fronteira, e este objeto não tem campo onde um uid caberia —
+  /// a garantia é estrutural, e não uma expressão regular que alguém possa
+  /// afrouxar.
+  bool get temIdPublicoUtilizavel => publicPlayerId.trim().isNotEmpty;
+
+  /// Lê uma linha de `podio[]` ou de `primeiraPagina.itens[]`.
+  ///
+  /// ESTRITO em todos os dezessete campos, e não só nos que a tela desenha
+  /// hoje: metade de um jogador é uma afirmação falsa sobre a outra metade, e
+  /// um campo que muda de tipo no servidor tem de aparecer como falha de
+  /// contrato — não como um valor padrão silencioso.
+  factory JogadorPublicoRanking.doMapa(Object? bruto, String onde) {
+    final j = FotografiaRanking._mapa(bruto, onde);
+    return JogadorPublicoRanking(
+      publicPlayerId: _texto(j['id'], '$onde.id'),
+      apelido: _texto(j['apelido'], '$onde.apelido'),
+      avatar: _texto(j['avatar'], '$onde.avatar'),
+      rotuloLiga: _texto(j['liga'], '$onde.liga'),
+      ligaId: FotografiaRanking._textoOpcional(j['ligaId']),
+      pontos: _inteiro(j['pontos'], '$onde.pontos'),
+      posicao: _inteiro(j['posicao'], '$onde.posicao'),
+      direcao: _texto(j['direcao'], '$onde.direcao'),
+      delta: _inteiro(j['delta'], '$onde.delta'),
+      selo: FotografiaRanking._textoOpcional(j['selo']),
+      souEu: _booleano(j['souEu'], '$onde.souEu'),
+      estado: _texto(j['estado'], '$onde.estado'),
+      qualificacaoRestante: _inteiro(
+        j['qualificacaoRestante'],
+        '$onde.qualificacaoRestante',
+      ),
+      partidas: _inteiro(j['partidas'], '$onde.partidas'),
+      vitorias: _inteiro(j['vitorias'], '$onde.vitorias'),
+      derrotas: _inteiro(j['derrotas'], '$onde.derrotas'),
+      aproveitamento: _numero(j['aproveitamento'], '$onde.aproveitamento'),
+    );
+  }
+
+  /// Lê uma lista inteira de jogadores.
+  ///
+  /// Uma linha malformada derruba a LISTA, e não só ela mesma: pular a linha
+  /// ruim mudaria silenciosamente quem está em cada posição, que é pior do que
+  /// não mostrar tabela nenhuma.
+  static List<JogadorPublicoRanking> daLista(Object? bruto, String onde) {
+    if (bruto is! List) {
+      throw FalhaRanking(
+        MotivoFalhaRanking.respostaInvalida,
+        '$onde não é uma lista',
+      );
+    }
+    return List<JogadorPublicoRanking>.unmodifiable([
+      for (var i = 0; i < bruto.length; i++)
+        JogadorPublicoRanking.doMapa(bruto[i], '$onde[$i]'),
+    ]);
+  }
+
+  @override
+  bool operator ==(Object outro) =>
+      identical(this, outro) ||
+      outro is JogadorPublicoRanking &&
+          outro.publicPlayerId == publicPlayerId &&
+          outro.apelido == apelido &&
+          outro.avatar == avatar &&
+          outro.rotuloLiga == rotuloLiga &&
+          outro.ligaId == ligaId &&
+          outro.pontos == pontos &&
+          outro.posicao == posicao &&
+          outro.direcao == direcao &&
+          outro.delta == delta &&
+          outro.selo == selo &&
+          outro.souEu == souEu &&
+          outro.estado == estado &&
+          outro.qualificacaoRestante == qualificacaoRestante &&
+          outro.partidas == partidas &&
+          outro.vitorias == vitorias &&
+          outro.derrotas == derrotas &&
+          outro.aproveitamento == aproveitamento;
+
+  @override
+  int get hashCode => Object.hash(
+    publicPlayerId,
+    apelido,
+    avatar,
+    rotuloLiga,
+    ligaId,
+    pontos,
+    posicao,
+    Object.hash(
+      direcao,
+      delta,
+      selo,
+      souEu,
+      estado,
+      qualificacaoRestante,
+      partidas,
+      vitorias,
+      derrotas,
+      aproveitamento,
+    ),
+  );
+
+  @override
+  String toString() =>
+      'JogadorPublicoRanking($publicPlayerId, posicao: $posicao, '
+      'liga: "$rotuloLiga", souEu: $souEu)';
+}
+
+/// O pódio e a primeira página, juntos.
+///
+/// Existe como valor separado — e não como dois campos soltos em
+/// [AberturaRanking] — porque os dois são a MESMA fotografia da tabela: vieram
+/// da mesma ida, da mesma temporada e da mesma apuração. Guardá-los juntos
+/// impede que um dia alguém atualize um e deixe o outro para trás.
+class TabelaRanking {
+  const TabelaRanking({required this.podio, required this.primeiraPagina});
+
+  /// `resumo.podio` — vazio quando o escopo não publica pódio.
+  final List<JogadorPublicoRanking> podio;
+
+  /// `primeiraPagina.itens`.
+  final List<JogadorPublicoRanking> primeiraPagina;
+
+  /// Não há ninguém a mostrar. Resposta LEGÍTIMA: uma temporada recém-aberta
+  /// não tem classificado nenhum, e isso não é erro nem ausência de autoridade.
+  bool get vazia => podio.isEmpty && primeiraPagina.isEmpty;
+
+  @override
+  String toString() =>
+      'TabelaRanking(podio: ${podio.length}, pagina: ${primeiraPagina.length})';
+}
+
+/// A resposta inteira de `abrirRanking`.
+///
+/// `eu` e `tabela` chegam JUNTOS por construção do backend — é uma ida só, por
+/// exigência do contrato do cliente ("para a tela não ter dois estados de erro
+/// concorrentes"). Preservar a união aqui é o que garante que o cabeçalho do
+/// Perfil e a lista nunca falem de leituras diferentes.
+class AberturaRanking {
+  const AberturaRanking({required this.eu, required this.tabela});
+
+  /// O jogador autenticado (`resumo.eu`), traduzido para fotografia.
+  final FotografiaRanking eu;
+
+  /// A tabela publicada nesta abertura.
+  ///
+  /// NULA quando a leitura NÃO foi uma abertura — `consultarJogadorPorIdPublico`
+  /// devolve um jogador e nenhuma tabela. Nulo e lista vazia dizem coisas
+  /// diferentes, e colapsá-los faria a consulta de um terceiro parecer um
+  /// ranking vazio.
+  final TabelaRanking? tabela;
+
+  /// Uma leitura que não pergunta tabela.
+  const AberturaRanking.semTabela(this.eu) : tabela = null;
+
+  /// Lê `abrirRanking` inteira: cabeçalho, pódio e primeira página.
+  factory AberturaRanking.daResposta(Object? bruto) {
+    final raiz = FotografiaRanking._mapa(bruto, 'resposta de abrirRanking');
+    final resumo = FotografiaRanking._mapa(raiz['resumo'], 'resumo');
+    final pagina = FotografiaRanking._mapa(
+      raiz['primeiraPagina'],
+      'primeiraPagina',
+    );
+    return AberturaRanking(
+      // O `eu` continua saindo de onde sempre saiu. Uma segunda leitura dele
+      // aqui seria uma segunda opinião sobre `eu: null`, que é o caso em que
+      // este app já errou uma vez.
+      eu: FotografiaRanking.daAbertura(bruto),
+      tabela: TabelaRanking(
+        podio: JogadorPublicoRanking.daLista(resumo['podio'], 'resumo.podio'),
+        primeiraPagina: JogadorPublicoRanking.daLista(
+          pagina['itens'],
+          'primeiraPagina.itens',
+        ),
+      ),
+    );
+  }
+
+  @override
+  String toString() => 'AberturaRanking(eu: $eu, tabela: $tabela)';
+}
+
+String _texto(Object? bruto, String onde) {
+  if (bruto is String) return bruto;
+  throw FalhaRanking(
+    MotivoFalhaRanking.respostaInvalida,
+    'campo $onde ausente ou de outro tipo',
+  );
+}
+
+int _inteiro(Object? bruto, String onde) {
+  if (bruto is int) return bruto;
+  throw FalhaRanking(
+    MotivoFalhaRanking.respostaInvalida,
+    'campo $onde ausente ou de outro tipo',
+  );
+}
+
+bool _booleano(Object? bruto, String onde) {
+  if (bruto is bool) return bruto;
+  throw FalhaRanking(
+    MotivoFalhaRanking.respostaInvalida,
+    'campo $onde ausente ou de outro tipo',
+  );
+}
+
+/// Aceita `int` E `double`: `aproveitamento` é porcentagem com uma casa, e o
+/// JSON entrega `0` (int) para quem não jogou e `60.0` (double) para quem jogou.
+/// Recusar o int transformaria um jogador novo em resposta inválida.
+double _numero(Object? bruto, String onde) {
+  if (bruto is num) return bruto.toDouble();
+  throw FalhaRanking(
+    MotivoFalhaRanking.respostaInvalida,
+    'campo $onde ausente ou de outro tipo',
+  );
+}
+
 /// A porta por onde o ranking real entra. Uma implementação fala com o
 /// Firebase; as dos testes falam com o que o caso precisar.
 ///
@@ -282,12 +634,19 @@ class FotografiaRanking {
 abstract class TransporteRanking {
   const TransporteRanking();
 
-  /// O ranking do JOGADOR AUTENTICADO (`abrirRanking`).
+  /// A abertura do escopo do JOGADOR AUTENTICADO (`abrirRanking`).
   ///
   /// Não recebe identificador: o servidor tira o uid do contexto autenticado, e
   /// é por isso que não há como o cliente pedir o ranking de outra pessoa por
   /// esta porta.
-  Future<FotografiaRanking> meuRanking();
+  ///
+  /// CHAMAVA-SE `meuRanking` e devolvia só a fotografia do próprio jogador. O
+  /// nome novo não é cosmético: quem implementa o transporte precisa parar de
+  /// compilar ao descobrir que a resposta tem mais coisa do que devolvia. Um
+  /// método acrescentado com implementação padrão teria deixado os fakes
+  /// antigos "funcionando" — jogando a tabela fora em silêncio, que é
+  /// exatamente o defeito que esta OS fecha.
+  Future<AberturaRanking> abrirRanking();
 
   /// O ranking de um jogador pelo id PÚBLICO
   /// (`consultarJogadorPorIdPublico`).

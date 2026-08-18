@@ -82,8 +82,14 @@ class _TransporteManual extends TransporteRanking {
     return c.future;
   }
 
+  // A fila continua sendo de fotografias: o que estas suítes encenam é a ORDEM
+  // das respostas, e a tabela não participa disso. Vazia, e não ausente, porque
+  // é o que a autoridade de verdade devolve numa abertura.
   @override
-  Future<FotografiaRanking> meuRanking() => _abrir('proprio');
+  Future<AberturaRanking> abrirRanking() async => AberturaRanking(
+    eu: await _abrir('proprio'),
+    tabela: const TabelaRanking(podio: [], primeiraPagina: []),
+  );
 
   @override
   Future<FotografiaRanking> rankingPorIdPublico(String publicId) =>

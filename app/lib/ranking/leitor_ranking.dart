@@ -54,7 +54,32 @@
 // jogador é vazamento com outro nome.
 
 import 'estado_ranking.dart';
+import 'estado_tabela_ranking.dart';
 import 'ranking_transporte.dart';
+
+/// O resultado de UMA abertura: o próprio jogador e a tabela, juntos.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE OS DOIS VOLTAM NO MESMO VALOR
+/// ---------------------------------------------------------------------------
+///
+/// Porque vieram da mesma ida, e as três guardas deste arquivo — geração,
+/// número de pedido e temporada — se aplicam à resposta INTEIRA. Devolver o
+/// cabeçalho por uma porta e a tabela por outra criaria a possibilidade de uma
+/// passar e a outra não; e o dia em que isso acontecesse a tela mostraria a
+/// liga de agora ao lado da tabela de antes, que é a versão em lista do defeito
+/// que a barreira temporal fechou.
+///
+/// Descarte continua sendo `null` — o valor inteiro, e não um dos dois campos.
+class LeituraDeAbertura {
+  const LeituraDeAbertura({required this.eu, required this.tabela});
+
+  /// O estado competitivo do jogador autenticado.
+  final EstadoRanking eu;
+
+  /// A tabela publicada na mesma resposta.
+  final EstadoTabelaRanking tabela;
+}
 
 /// De quem é a fotografia pedida.
 ///
@@ -115,8 +140,8 @@ class LeitorDeRanking {
 
   /// Pedidos em voo, para que apertar "tentar de novo" três vezes não abra três
   /// chamadas. O retry é idempotente por isto, e não por sorte de timing.
-  final Map<_Chave, Future<EstadoRanking?>> _emVoo =
-      <_Chave, Future<EstadoRanking?>>{};
+  final Map<_Chave, Future<LeituraDeAbertura?>> _emVoo =
+      <_Chave, Future<LeituraDeAbertura?>>{};
 
   /// O número do pedido dono do voo corrente de cada chave.
   ///
@@ -215,27 +240,48 @@ class LeitorDeRanking {
     String? alvoPublicId,
   }) => _cache[_chaveDe(contaPublicId, alvoPublicId)];
 
-  /// O ranking do jogador autenticado.
-  Future<EstadoRanking?> meuRanking({required String contaPublicId}) =>
-      _ler(_chaveDe(contaPublicId, null), () => _transporte.meuRanking());
+  /// A abertura do escopo do jogador autenticado: o cabeçalho E a tabela.
+  ///
+  /// É a leitura COMPLETA de `abrirRanking`, e a única porta por onde os
+  /// jogadores públicos entram no aplicativo.
+  Future<LeituraDeAbertura?> abrirRanking({required String contaPublicId}) =>
+      _ler(_chaveDe(contaPublicId, null), () => _transporte.abrirRanking());
+
+  /// O ranking do jogador autenticado, sem a tabela.
+  ///
+  /// É uma PROJEÇÃO de [abrirRanking], e não uma segunda leitura: mesma chave,
+  /// mesmo voo, mesmo cache, mesmas três guardas. Quem só quer a liga do dono
+  /// (o cabeçalho do Perfil, a Home) pede por aqui e não carrega uma lista de
+  /// jogadores que não vai desenhar; e ainda assim, se as duas coisas forem
+  /// pedidas ao mesmo tempo, o dedupe por chave garante UMA chamada.
+  Future<EstadoRanking?> meuRanking({required String contaPublicId}) async =>
+      (await abrirRanking(contaPublicId: contaPublicId))?.eu;
 
   /// O ranking de um jogador pelo id público.
+  ///
+  /// `consultarJogadorPorIdPublico` não publica tabela, então a leitura entra
+  /// aqui como [AberturaRanking.semTabela] e sai como [EstadoRanking]: um
+  /// terceiro nunca traz ranking geral junto, e fingir que traz encheria o
+  /// estado da tela com uma lista vazia que pareceria "o ranking está vazio".
   Future<EstadoRanking?> rankingPublico({
     required String contaPublicId,
     required String alvoPublicId,
-  }) => _ler(
-    _chaveDe(contaPublicId, alvoPublicId),
-    () => _transporte.rankingPorIdPublico(alvoPublicId),
-  );
+  }) async =>
+      (await _ler(
+        _chaveDe(contaPublicId, alvoPublicId),
+        () async => AberturaRanking.semTabela(
+          await _transporte.rankingPorIdPublico(alvoPublicId),
+        ),
+      ))?.eu;
 
   _Chave _chaveDe(String contaPublicId, String? alvoPublicId) =>
       alvoPublicId == null || alvoPublicId == contaPublicId
       ? _Chave(contaPublicId, _Alvo.proprio, contaPublicId)
       : _Chave(contaPublicId, _Alvo.publico, alvoPublicId);
 
-  Future<EstadoRanking?> _ler(
+  Future<LeituraDeAbertura?> _ler(
     _Chave chave,
-    Future<FotografiaRanking> Function() chamar,
+    Future<AberturaRanking> Function() chamar,
   ) {
     // Dedupe: um pedido igual já está em voo, e a resposta dele serve para os
     // dois chamadores. É isto que torna o retry idempotente.
@@ -252,18 +298,30 @@ class LeitorDeRanking {
     return voo;
   }
 
-  Future<EstadoRanking?> _executar(
+  Future<LeituraDeAbertura?> _executar(
     _Chave chave,
     int numero,
     int geracaoDoPedido,
-    Future<FotografiaRanking> Function() chamar,
+    Future<AberturaRanking> Function() chamar,
   ) async {
     _chamadas++;
-    EstadoRanking estado;
+    LeituraDeAbertura leitura;
     String? temporadaDaResposta;
     try {
-      final foto = await chamar();
-      estado = EstadoRanking.daFotografia(foto);
+      final abertura = await chamar();
+      final foto = abertura.eu;
+      final tabela = abertura.tabela;
+      leitura = LeituraDeAbertura(
+        eu: EstadoRanking.daFotografia(foto),
+        // Tabela nula não é tabela vazia: esta leitura não perguntou por
+        // tabela nenhuma, e `indisponivel` é a única resposta honesta.
+        tabela: tabela == null
+            ? const EstadoTabelaRanking.indisponivel()
+            : EstadoTabelaRanking.daTabela(
+                tabela,
+                temporadaId: foto.temporadaId,
+              ),
+      );
       temporadaDaResposta = foto.temporadaId;
     } on FalhaRanking catch (e) {
       // A PROVA DE SESSÃO VEM DA PRÓPRIA CHAVE. Este leitor só é consultado em
@@ -271,15 +329,26 @@ class LeitorDeRanking {
       // então "há sessão local" não é suposição, é o argumento recebido. Vazio
       // é o único caso em que não há conta a que pertencer, e é lá que
       // `sessaoInvalida` volta a ser uma afirmação verificável.
-      estado = EstadoRanking.daFalha(
-        e.motivo,
-        haSessaoLocal: chave.contaPublicId.trim().isNotEmpty,
+      //
+      // O CABEÇALHO E A TABELA CAEM JUNTOS, pela mesma função de tradução: é
+      // uma resposta só que falhou, e deixar uma das duas de pé mostraria
+      // metade de uma leitura que não existiu.
+      final haSessaoLocal = chave.contaPublicId.trim().isNotEmpty;
+      leitura = LeituraDeAbertura(
+        eu: EstadoRanking.daFalha(e.motivo, haSessaoLocal: haSessaoLocal),
+        tabela: EstadoTabelaRanking.daFalha(
+          e.motivo,
+          haSessaoLocal: haSessaoLocal,
+        ),
       );
     } catch (_) {
       // Exceção fora do vocabulário: é defeito, e defeito não vira ausência.
       // Sem `rethrow` de propósito — uma falha de ranking não pode derrubar a
       // tela que a pediu, e muito menos a casca em volta dela.
-      estado = const EstadoRanking.falha();
+      leitura = const LeituraDeAbertura(
+        eu: EstadoRanking.falha(),
+        tabela: EstadoTabelaRanking.falha(),
+      );
     } finally {
       // Sai do voo mesmo quando a resposta será descartada: o próximo "tentar
       // de novo" precisa poder emitir uma chamada nova.
@@ -311,10 +380,16 @@ class LeitorDeRanking {
 
     // Só fotografia boa entra no cache. Guardar falha faria o retry seguinte
     // mostrar o erro anterior como se fosse dado.
-    if (estado.fase == FaseRanking.disponivel) {
-      _cache[chave] = estado;
+    //
+    // O CACHE CONTINUA SENDO SÓ DO CABEÇALHO. A tabela não entra: ela é
+    // consumida por uma tela que morre quando fecha, e uma lista de jogadores
+    // guardada aqui voltaria a ser desenhada como "o ranking de agora" na
+    // próxima montagem — dado velho apresentado como atual, que é a coisa que
+    // este arquivo inteiro existe para impedir.
+    if (leitura.eu.fase == FaseRanking.disponivel) {
+      _cache[chave] = leitura.eu;
     }
-    return estado;
+    return leitura;
   }
 
   /// Decide se esta resposta ainda pertence ao presente.
