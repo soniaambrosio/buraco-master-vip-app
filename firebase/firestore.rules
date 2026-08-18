@@ -992,6 +992,49 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // BLOCO 8/8 — PASSE VIP QUINZENAL DE CORTESIA
+    // ---------------------------------------------------------------------
+    // A colecao mais fechada deste arquivo, e de proposito: ela guarda um
+    // DIREITO, e um direito que o proprio interessado pudesse escrever nao
+    // seria um direito, seria um formulario.
+    //
+    // NEGACAO TOTAL, INCLUSIVE LEITURA E INCLUSIVE PARA O DONO. E a unica
+    // colecao de jogador do arquivo em que nem `ehDono` abre a porta —
+    // `playerModeration` deixa o dono ler, `playerCourtesyPass` nao. A razao e
+    // que o documento interno carrega o que a projecao existe para esconder: o
+    // `tentativaEntradaId` e o `admissaoId` de cada ciclo, que sao a chave de
+    // idempotencia do consumo. Quem os enxerga sabe quando uma entrada foi
+    // aprovada e com qual identidade — e nao ha nada que o jogador precise
+    // fazer com isso.
+    //
+    // O QUE O JOGADOR VE, e por onde: a PROJECAO do proprietario
+    // (disponibilidade, validade, proxima elegibilidade), servida pelo
+    // backend. Projecao nao e documento, e e essa distincao que permite fechar
+    // o documento sem esconder do jogador o que e dele.
+    //
+    // A ESCRITA E DA AUTORIDADE, e o Admin SDK nao passa por Rules. Entao
+    // `allow write: if false` nao trava o servidor — trava o cliente, que e
+    // exatamente quem tem de ficar de fora. Sem esta linha, um app adulterado
+    // poderia se autoconceder um passe, prolongar a validade de um que expirou
+    // ou zerar `consumidoEm` para usar de novo: as tres coisas que o modelo
+    // inteiro existe para impedir.
+    //
+    // O `match` do controle NAO cobre a subcolecao sozinho — regra de Firestore
+    // nao desce por heranca. Por isso `cycles/{cicloId}` tem bloco proprio, e
+    // por isso ha teste que tenta ler e escrever NOS DOIS caminhos.
+    match /playerCourtesyPass/{uid} {
+      allow read: if false;
+      allow write: if false;
+
+      // O historico por ciclo. Fechado pelo mesmo motivo, e com mais razao:
+      // e aqui que vivem os recibos de admissao.
+      match /cycles/{cicloId} {
+        allow read: if false;
+        allow write: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------------
     // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
     // ---------------------------------------------------------------------
     // ATENCAO A QUEM FOR ACRESCENTAR OUTRAS COLECOES: esta regra nao vale so para

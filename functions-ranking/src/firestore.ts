@@ -44,6 +44,19 @@
 // varre o codebase para que continue assim.
 
 import { getFirestore, Firestore, Transaction, FieldValue } from "firebase-admin/firestore";
+import { idOpaco } from "./ids_opacos";
+
+import {
+  VERSAO_CONTRATO_PASSE,
+  CicloDePasse,
+  ControleDePasse,
+  MotivoDeFalha,
+  ProjecaoDoProprietario,
+  lerControle,
+  decidirMaterializacao,
+  projecaoDoProprietario,
+  isoDeInstante,
+} from "./passe";
 import { logger } from "firebase-functions";
 
 import {
@@ -1477,4 +1490,216 @@ export async function porIdPublico(
 /// limitado (o podio, por exemplo), nunca sobre a base inteira.
 export function ordenarOficial<T extends ChaveDeOrdem>(linhas: T[]): T[] {
   return [...linhas].sort(compararOficial);
+}
+
+// ---------------------------------------------------------------------------
+// PASSE VIP QUINZENAL DE CORTESIA
+//
+// A PORTA UNICA de materializacao. Nao existe segundo lugar que crie ciclo,
+// calcule data ou decida disponibilidade — a regra toda mora em `passe.ts`, e
+// este bloco so a aplica dentro de UMA transacao.
+//
+// AS DUAS COLECOES, e por que sao duas:
+//
+//   playerCourtesyPass/{uid} ............... o CONTROLE. Retrato do ciclo
+//                                            vigente, para que a decisao leia um
+//                                            documento so em vez de varrer o
+//                                            historico a cada entrada de mesa.
+//   playerCourtesyPass/{uid}/cycles/{id} ... o HISTORICO. Um documento por ciclo,
+//                                            e nenhum e apagado: e dele que sai a
+//                                            idempotencia do recibo, e apagar o
+//                                            passado abriria a porta para
+//                                            consumir duas vezes.
+//
+// As duas sao INTERNAS. O cliente nao le e nao escreve nenhuma das duas — as
+// Rules negam tudo, e `firebase/testes/passe.test.js` prova. O que o aplicativo
+// pode ver e a PROJECAO, e projecao nao e documento.
+//
+// NENHUMA DELAS E `playerEntitlements`, e isso e a decisao inteira: aquela e a
+// autoridade da ASSINATURA paga, esta e a da CORTESIA. Duas razoes diferentes
+// para alguem ser VIP, em dois documentos diferentes, com donos diferentes.
+// ---------------------------------------------------------------------------
+
+export const C_PASSE = "playerCourtesyPass";
+export const SUB_CICLOS = "cycles";
+
+/// O resultado de materializar. `disponivel` e o que a chamada precisa saber;
+/// o resto e para log, teste e para a OS de admissao.
+export interface EstadoDoPasse {
+  readonly acao: "criar_primeiro" | "reaproveitar" | "criar_novo" | "aguardar" | "falha_fechada";
+  readonly disponivel: boolean;
+  readonly cicloId: string | null;
+  readonly validoAte: string | null;
+  readonly proximaElegibilidadeEm: string | null;
+  readonly motivo: MotivoDeFalha | null;
+}
+
+/// Identificador OPACO de ciclo e de admissao.
+///
+/// `randomUUID` e nao algo derivado do uid, da data ou de um contador: os tres
+/// se deduzem de fora, e um identificador dedutivel deixa de identificar. E
+/// tambem nao e sequencial — sequencia conta quantos existem, que e informacao
+/// que ninguem pediu para publicar.
+function idOpacoDePasse(): string {
+  return idOpaco();
+}
+
+/// MATERIALIZA o passe deste jogador e devolve o estado atual.
+///
+/// Tudo numa transacao, e a transacao e o ponto: duas chamadas simultaneas do
+/// mesmo jogador — duas abas, dois cliques, duas conexoes — leem o mesmo
+/// controle, e o Firestore aborta e repete a segunda. O resultado e UM ciclo,
+/// nunca dois. Sem transacao, as duas leriam "nao ha passe" e as duas criariam.
+///
+/// IDEMPOTENTE: chamar de novo sem o tempo passar devolve o mesmo ciclo e nao
+/// escreve nada. Materializar NAO consome — quem consome e a admissao, na OS
+/// seguinte, e ela tem porta propria.
+///
+/// `agoraMs` e injetavel para que sete e quinze dias sejam provaveis sem
+/// esperar sete e quinze dias. Em producao ele nao vem do cliente: vem de
+/// `Date.now()` do servidor, e o cliente nao participa da conta.
+export async function materializarPasseDeCortesia(
+  uid: string,
+  agoraMs: number = Date.now()
+): Promise<EstadoDoPasse> {
+  const controleRef = db().collection(C_PASSE).doc(uid);
+
+  return db().runTransaction(async (tx) => {
+    const snap = await tx.get(controleRef);
+    const leitura = lerControle(snap.exists ? snap.data() : null);
+    const decisao = decidirMaterializacao(leitura, agoraMs);
+
+    if (decisao.acao === "falha_fechada") {
+      // NAO normaliza e NAO reescreve. Um documento que a autoridade nao
+      // reconhece e um direito de alguem escrito por outro codigo; consertar
+      // por conta propria seria decidir sozinho o que ele queria dizer.
+      logger.error("passe de cortesia: estado persistido recusado", {
+        motivo: decisao.motivo,
+      });
+      return {
+        acao: "falha_fechada" as const,
+        disponivel: false,
+        cicloId: null,
+        validoAte: null,
+        proximaElegibilidadeEm: null,
+        motivo: decisao.motivo,
+      };
+    }
+
+    if (decisao.acao === "reaproveitar") {
+      const c = (leitura as { estado: "valido"; controle: ControleDePasse }).controle;
+      // Nao escreve: reaproveitar e uma LEITURA. Gravar aqui faria toda consulta
+      // sujar o documento e transformaria idempotencia em ilusao.
+      return {
+        acao: "reaproveitar" as const,
+        disponivel: true,
+        cicloId: c.cicloAtualId,
+        validoAte: c.validoAte,
+        proximaElegibilidadeEm: null,
+        motivo: null,
+      };
+    }
+
+    if (decisao.acao === "aguardar") {
+      // O UNICO caminho de leitura que escreve, e ele escreve NO MAXIMO UMA VEZ
+      // por ciclo: quando a autoridade constata, pela primeira vez, que o ciclo
+      // acabou. `precisaEncerrar` ja e falso da segunda consulta em diante.
+      //
+      // Registrar isso e o que torna a regressao de relogio inofensiva. Sem
+      // esta escrita o encerramento seria RECALCULADO a cada consulta, e um
+      // relogio que voltasse atras encontraria o passe outra vez dentro da
+      // validade — que foi exatamente o defeito que a prova contra o banco
+      // pegou depois de a prova pura ter passado.
+      if (decisao.precisaEncerrar) {
+        const c = (leitura as { estado: "valido"; controle: ControleDePasse }).controle;
+        const encerradoEm = isoDeInstante(agoraMs);
+        tx.update(controleRef, { cicloEncerradoEm: encerradoEm });
+        if (c.cicloAtualId !== null) {
+          tx.update(controleRef.collection(SUB_CICLOS).doc(c.cicloAtualId), { encerradoEm });
+        }
+      }
+      return {
+        acao: "aguardar" as const,
+        disponivel: false,
+        cicloId: null,
+        validoAte: null,
+        proximaElegibilidadeEm: isoDeInstante(decisao.proximaElegibilidadeEmMs),
+        motivo: null,
+      };
+    }
+
+    // criar_primeiro | criar_novo — o unico caminho que escreve ciclo.
+    const plano = decisao.plano;
+    const cicloId = idOpacoDePasse();
+    const recebidoEm = isoDeInstante(plano.recebidoEmMs);
+    const validoAte = isoDeInstante(plano.validoAteMs);
+    const proximaElegibilidadeEm = isoDeInstante(plano.proximaElegibilidadeEmMs);
+
+    const ciclo: CicloDePasse = {
+      cicloId,
+      recebidoEm,
+      validoAte,
+      proximaElegibilidadeEm,
+      consumidoEm: null,
+      encerradoEm: null,
+      tentativaEntradaId: null,
+      admissaoId: null,
+      versaoContrato: VERSAO_CONTRATO_PASSE,
+    };
+
+    // O historico primeiro, o controle depois. A ordem nao muda nada dentro da
+    // transacao (ela e atomica), mas deixa a intencao legivel: o ciclo e o fato,
+    // e o controle e o retrato dele.
+    tx.create(controleRef.collection(SUB_CICLOS).doc(cicloId), ciclo);
+    tx.set(controleRef, {
+      versaoContrato: VERSAO_CONTRATO_PASSE,
+      cicloAtualId: cicloId,
+      recebidoEm,
+      validoAte,
+      proximaElegibilidadeEm,
+      consumidoEm: null,
+      // Ciclo NOVO nasce aberto. O campo vai explicito mesmo com `tx.set`
+      // sobrescrevendo o documento inteiro: um encerramento herdado do ciclo
+      // anterior faria o passe novo nascer morto.
+      cicloEncerradoEm: null,
+      ultimaMaterializacaoEm: isoDeInstante(agoraMs),
+    });
+
+    return {
+      acao: decisao.acao,
+      disponivel: true,
+      cicloId,
+      validoAte,
+      proximaElegibilidadeEm: null,
+      motivo: null,
+    };
+  });
+}
+
+/// A projecao do DONO, materializando antes de projetar.
+///
+/// Materializar aqui e o desenho: o estado do passe so existe quando alguem
+/// pergunta, e perguntar e o gatilho. Nao ha scheduler porque nao precisa haver.
+export async function projetarPasseParaODono(
+  uid: string,
+  agoraMs: number = Date.now()
+): Promise<ProjecaoDoProprietario> {
+  await materializarPasseDeCortesia(uid, agoraMs);
+  const snap = await db().collection(C_PASSE).doc(uid).get();
+  return projecaoDoProprietario(lerControle(snap.exists ? snap.data() : null), agoraMs);
+}
+
+/// O ciclo vigente deste jogador, ou `null`. Leitura pura, sem materializar.
+/// Existe para a OS de admissao e para as provas de recibo.
+export async function cicloVigente(uid: string): Promise<CicloDePasse | null> {
+  const controle = await db().collection(C_PASSE).doc(uid).get();
+  const leitura = lerControle(controle.exists ? controle.data() : null);
+  if (leitura.estado !== "valido" || leitura.controle.cicloAtualId === null) return null;
+  const doc = await db()
+    .collection(C_PASSE)
+    .doc(uid)
+    .collection(SUB_CICLOS)
+    .doc(leitura.controle.cicloAtualId)
+    .get();
+  return doc.exists ? (doc.data() as CicloDePasse) : null;
 }
