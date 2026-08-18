@@ -43,6 +43,10 @@ import '../sessao/escopo_sessao.dart';
 import '../sessao/sessao_do_jogador.dart';
 import 'home_de_producao.dart';
 import 'login_de_producao.dart';
+import 'splash/fonte_da_animacao_rive.dart';
+import 'splash/fonte_rive_real.dart';
+import 'splash/splash_rive_screen.dart';
+import 'splash/variante_de_splash.dart';
 
 /// Quanto a casca espera o fluxo de autenticação se pronunciar antes de
 /// desistir e oferecer uma saída.
@@ -56,6 +60,9 @@ class CascaDeProducao extends StatefulWidget {
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
+    this.varianteDaSplash = varianteDeSplashDoBuild,
+    this.fonteDaSplashRive,
+    this.onMedicaoDaSplash,
   });
 
   /// A abertura já tocou nesta execução.
@@ -73,6 +80,25 @@ class CascaDeProducao extends StatefulWidget {
   final bool somNaSplash;
 
   final Duration? limiteDeResolucao;
+
+  /// QUAL abertura mostrar. O padrão vem do build, e o padrão do build é a
+  /// oficial — ver `splash/variante_de_splash.dart`.
+  ///
+  /// Parâmetro, e não leitura direta da constante, porque as duas variantes
+  /// precisam ser exercitáveis lado a lado no mesmo `flutter test`: uma
+  /// comparação A/B em que cada lado exige um binário próprio não é uma
+  /// comparação que alguém vá fazer.
+  final VarianteDeSplash varianteDaSplash;
+
+  /// De onde a arte da Rive vem. Nula em produção — a casca monta a de verdade.
+  ///
+  /// Injetável pela mesma razão dos quatro objetos da raiz: sem isto, provar
+  /// "a arte falhou e o roteamento continuou" exigiria um runtime nativo
+  /// quebrado dentro do `flutter test`, e o caso não seria testado.
+  final FonteDaAnimacaoRive? fonteDaSplashRive;
+
+  /// Instrumentação opcional da abertura em Rive. Ver [MedicaoDaSplashRive].
+  final void Function(MedicaoDaSplashRive)? onMedicaoDaSplash;
 
   @override
   State<CascaDeProducao> createState() => _CascaDeProducaoState();
@@ -145,14 +171,42 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
     return const HomeDeProducao();
   }
 
-  Widget _splash() => SplashOficialScreen(
+  /// A abertura, na variante que este build pediu.
+  ///
+  /// AS DUAS RECEBEM `onConcluida`, E NENHUMA RECEBE `proximaTela`. É a
+  /// invariante que mantém a decisão de destino aqui: uma abertura que
+  /// navegasse sozinha decidiria para onde ir sem ler a sessão, e voltaríamos
+  /// a ter animação governando roteamento. Trocar a variante troca o que se vê,
+  /// e nada além disso.
+  Widget _splash() {
     // A chave amarra o estado da splash a ESTA instância: sem ela, sair do ramo
     // de espera e voltar recriaria a animação do zero.
-    key: const ValueKey('splash-da-casca'),
-    habilitarSom: widget.somNaSplash,
-    duracao: widget.duracaoDaSplash ?? const Duration(milliseconds: 3800),
-    onConcluida: widget.onAberturaConcluida,
-  );
+    const chave = ValueKey('splash-da-casca');
+    final duracao =
+        widget.duracaoDaSplash ?? const Duration(milliseconds: 3800);
+
+    switch (widget.varianteDaSplash) {
+      case VarianteDeSplash.rive:
+        return SplashRiveScreen(
+          key: chave,
+          habilitarSom: widget.somNaSplash,
+          duracao: duracao,
+          onConcluida: widget.onAberturaConcluida,
+          // A fonte de verdade só é construída no ramo que a usa. No build
+          // oficial, `FonteRiveReal` nunca é instanciada, e o runtime nativo da
+          // Rive nunca é inicializado.
+          fonte: widget.fonteDaSplashRive ?? const FonteRiveReal(),
+          onMedicao: widget.onMedicaoDaSplash,
+        );
+      case VarianteDeSplash.oficial:
+        return SplashOficialScreen(
+          key: chave,
+          habilitarSom: widget.somNaSplash,
+          duracao: duracao,
+          onConcluida: widget.onAberturaConcluida,
+        );
+    }
+  }
 }
 
 /// A sessão não se pronunciou dentro do teto.

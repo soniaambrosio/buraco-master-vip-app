@@ -45,6 +45,20 @@ dependencies:
 
   google_sign_in: 6.2.1
   audioplayers: ^6.7.1
+
+  # Rive: a SEGUNDA abertura, em avaliacao. Nao substitui a oficial — quem
+  # escolhe e `--dart-define=BMV_SPLASH=rive`, e o padrao continua sendo a
+  # abertura publicada. Ver `lib/casca/splash/variante_de_splash.dart`.
+  #
+  # A dependencia entra no binario dos dois lados; o que NAO e pago pelo build
+  # oficial e o custo de execucao, porque `FonteRiveReal` so e instanciada no
+  # ramo da variante rive e o runtime nativo so inicializa quando alguem o
+  # instancia. O efeito no TAMANHO do artefato nao foi medido nesta OS.
+  #
+  # Importada num arquivo so do repositorio (`splash/fonte_rive_real.dart`), e
+  # o portao afirma isso: se a decisao for nao ficar com a Rive, o que sai e
+  # aquele arquivo e estas linhas.
+  rive: ^0.14.11
   web_socket_channel: ^3.0.3
   shared_preferences: ^2.5.5
 

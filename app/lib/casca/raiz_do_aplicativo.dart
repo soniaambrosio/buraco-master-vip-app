@@ -51,6 +51,9 @@ import '../sessao/sessao_firebase.dart';
 import 'casca_de_producao.dart';
 import 'escopo_autenticacao.dart';
 import 'escopo_transporte.dart';
+import 'splash/fonte_da_animacao_rive.dart';
+import 'splash/splash_rive_screen.dart';
+import 'splash/variante_de_splash.dart';
 
 class RaizDoAplicativo extends StatefulWidget {
   const RaizDoAplicativo({
@@ -62,6 +65,9 @@ class RaizDoAplicativo extends StatefulWidget {
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
+    this.varianteDaSplash = varianteDeSplashDoBuild,
+    this.fonteDaSplashRive,
+    this.onMedicaoDaSplash,
   });
 
   /// A sessão canônica. Nula em produção — a raiz monta a de Firebase.
@@ -84,6 +90,15 @@ class RaizDoAplicativo extends StatefulWidget {
   final Duration? duracaoDaSplash;
   final bool somNaSplash;
   final Duration? limiteDeResolucao;
+
+  /// Qual das duas aberturas mostrar, e de onde a arte da alternativa vem.
+  ///
+  /// Atravessam a raiz sem que ela os leia: a escolha é da configuração de
+  /// build e o destino continua sendo da sessão. A raiz não decide tela — nem
+  /// esta.
+  final VarianteDeSplash varianteDaSplash;
+  final FonteDaAnimacaoRive? fonteDaSplashRive;
+  final void Function(MedicaoDaSplashRive)? onMedicaoDaSplash;
 
   @override
   State<RaizDoAplicativo> createState() => _RaizDoAplicativoState();
@@ -215,6 +230,9 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
                   duracaoDaSplash: widget.duracaoDaSplash,
                   somNaSplash: widget.somNaSplash,
                   limiteDeResolucao: widget.limiteDeResolucao,
+                  varianteDaSplash: widget.varianteDaSplash,
+                  fonteDaSplashRive: widget.fonteDaSplashRive,
+                  onMedicaoDaSplash: widget.onMedicaoDaSplash,
                 ),
               ),
             ),

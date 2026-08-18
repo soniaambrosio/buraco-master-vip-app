@@ -209,7 +209,15 @@ jobs:
         #
         # As faixas são as mesmas de `app/pubspec.yaml`, que continua sendo a
         # fonte da verdade das versões (é o que `ci-os-integracao.yml` copia).
-        run: cd app_build && flutter pub add firebase_core firebase_auth "cloud_functions:^6.3.6" "cloud_firestore:^6.8.0" "firebase_app_check:^0.4.6" "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+        #
+        # `rive` entra pelo MESMO motivo que `cloud_functions` entrou: esta
+        # lista não é derivada do `pubspec` — ela é digitada. Um import em
+        # `lib/` que não tenha o pacote correspondente AQUI reprova no analyze
+        # com `uri_does_not_exist`, e o APK não sai. A abertura alternativa é
+        # opcional para o jogador, mas a dependência dela não é opcional para o
+        # compilador: `lib/casca/splash/fonte_rive_real.dart` importa o pacote
+        # nos dois builds, e só INSTANCIA a fonte no build que pediu a variante.
+        run: cd app_build && flutter pub add firebase_core firebase_auth "cloud_functions:^6.3.6" "cloud_firestore:^6.8.0" "firebase_app_check:^0.4.6" "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences "rive:^0.14.11"
 
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
@@ -644,6 +652,35 @@ jobs:
           ls -lh app_build/assets/splash/
           test -s app_build/assets/splash/logo_splash_oficial.webp
           test -s app_build/assets/splash/splash_intro.mp3
+
+      - name: "Copy alternative Rive splash art (optional)"
+        # A SEGUNDA abertura, em avaliação. Ver
+        # `app/lib/casca/splash/variante_de_splash.dart`.
+        #
+        # OPCIONAL DE PROPÓSITO, e é a única parte deste arquivo que é: a arte
+        # ainda está sendo produzida, e o aplicativo tem de continuar sendo
+        # publicável sem ela. Quando `splash.riv` aparecer em
+        # `app/assets/splash/`, esta etapa passa a copiá-lo sozinha — sem
+        # alteração nenhuma no workflow.
+        #
+        # POR QUE NÃO BASTA A PASTA ESTAR DECLARADA NO `pubspec`. A declaração
+        # diz ao Flutter o que empacotar do diretório do BUILD; este passo é o
+        # que põe o arquivo lá. As etapas de asset acima copiam nome a nome, e
+        # um `.riv` novo simplesmente não chegaria ao APK — em silêncio, porque
+        # asset ausente não é erro de compilação. A abertura cairia no fallback
+        # para sempre e ninguém saberia por quê.
+        run: |
+          mkdir -p app_build/assets/splash
+          if [ -f app/assets/splash/splash.riv ]; then
+            cp app/assets/splash/splash.riv app_build/assets/splash/
+            test -s app_build/assets/splash/splash.riv
+            echo "arte da splash em Rive copiada:"
+            ls -lh app_build/assets/splash/splash.riv
+          else
+            echo "AVISO: app/assets/splash/splash.riv não existe nesta árvore."
+            echo "A variante BMV_SPLASH=rive vai abrir pelo fallback estático."
+            echo "Isso é esperado enquanto a arte não entrar no repositório."
+          fi
 
       - name: Configure dark native launch screen
         run: |
