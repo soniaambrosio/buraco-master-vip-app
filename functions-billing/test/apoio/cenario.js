@@ -75,6 +75,50 @@ const FUTURO_LONGE = '2026-10-16T10:00:00.000Z';
  * e um estado que a producao nao consegue criar e que faria o teste provar um
  * mundo que nao existe.
  */
+/**
+ * Da a Play falsa um PADRAO de propriedade: toda resposta programada passa a
+ * dizer que a compra e de U1, a menos que o teste diga outra coisa.
+ *
+ * POR QUE ISTO E DEFENSAVEL NUM HARNESS ADVERSARIAL. Sem o padrao, os quarenta
+ * testes que nao tratam de propriedade — prazo, estado, ordem, concorrencia,
+ * redacao — parariam todos em `vinculo_ausente` e passariam a provar a mesma
+ * coisa uma vez so. Com ele, cada teste continua provando o que se propos, e os
+ * que EXERCITAM propriedade (ausente, orfa, alheia, mal formada) informam o
+ * valor explicitamente e sobrescrevem o padrao.
+ *
+ * `definirCorpoBruto` recebe o mesmo tratamento, porem so em objeto simples que
+ * ainda nao traga identificador: corpo nulo, lista ou texto continua exatamente
+ * tao degenerado quanto o teste quis.
+ */
+function aplicarPadraoDeVinculo(play, contaOfuscada = VINCULO_U1) {
+  const assinatura = play.definirAssinatura;
+  play.definirAssinatura = (token, opcoes) =>
+    assinatura(token, { contaOfuscada, ...opcoes });
+
+  const bruto = play.definirCorpoBruto;
+  play.definirCorpoBruto = (token, valor, opcoes) => {
+    const simples = valor != null && typeof valor === 'object' && !Array.isArray(valor);
+    const jaTem = simples
+      && (valor.externalAccountIdentifiers || valor.obfuscatedExternalAccountId);
+    const corpo = simples && !jaTem
+      ? { ...valor, externalAccountIdentifiers: { obfuscatedExternalAccountId: contaOfuscada } }
+      : valor;
+    return bruto(token, corpo, opcoes);
+  };
+
+  // O corpo do "depois" de uma falha e uma resposta normal, e resposta normal
+  // carrega identificador.
+  const depois = play.definirFalhaSeguidaDeSucesso;
+  play.definirFalhaSeguidaDeSucesso = (token, erro, vezes, opcoes) =>
+    depois(token, erro, vezes, { contaOfuscada, ...opcoes });
+
+  const produto = play.definirProduto;
+  if (produto) {
+    play.definirProduto = (token, opcoes) => produto(token, { contaOfuscada, ...opcoes });
+  }
+  return play;
+}
+
 function semearVinculo(db, uid, contaOfuscada) {
   db.semear(`playerBillingIdentity/${uid}`, { uid, contaOfuscada });
   db.semear(`billingAccountIndex/${contaOfuscada}`, { uid, contaOfuscada });
@@ -139,11 +183,7 @@ function cenarioDeModulo({ inicio = T0, maxTentativas, vincular = true } = {}) {
   // `contaOfuscada` passa a ter um padrao: sem ele, toda programacao de resposta
   // teria de repetir o identificador e o ponto do teste se perderia no ruido.
   // Quem exercita propriedade — ausente, orfa, alheia — informa o valor.
-  const definirAssinatura = play.definirAssinatura;
-  play.definirAssinatura = (token, opcoes) => definirAssinatura(token, {
-    contaOfuscada: VINCULO_U1,
-    ...opcoes,
-  });
+  aplicarPadraoDeVinculo(play);
 
   const registros = [];
   const anotar = (nivel) => (...args) => registros.push({ nivel, args });
@@ -233,16 +273,7 @@ function cenarioDeIndex({ maxTentativas, catalogo, vincular = true } = {}) {
 
   // Mesmo padrao do cenario de modulo: sem ele, cada teste teria de repetir o
   // identificador em toda programacao de resposta.
-  const definirAssinatura = play.definirAssinatura;
-  play.definirAssinatura = (token, opcoes) => definirAssinatura(token, {
-    contaOfuscada: VINCULO_U1,
-    ...opcoes,
-  });
-  const definirProduto = play.definirProduto;
-  play.definirProduto = (token, opcoes) => definirProduto(token, {
-    contaOfuscada: VINCULO_U1,
-    ...opcoes,
-  });
+  aplicarPadraoDeVinculo(play);
 
   if (catalogo !== null) {
     db.semear('configuracao/billing', {

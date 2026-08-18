@@ -28,6 +28,7 @@ const assert = require('node:assert');
 
 const { ESTADO, NOTIFICACAO, interpretarNotificacao } = require('../entitlement');
 const { chaveDaCompra } = require('../entitlementStore');
+const { vinculoBemFormado } = require('../propriedade');
 const {
   PACOTE,
   PRODUTO,
@@ -38,6 +39,9 @@ const {
   TOKEN_A,
   TOKEN_B,
   TOKEN_C,
+  VINCULO_U1,
+  VINCULO_U2,
+  VINCULO_ORFAO,
   HASH_A,
   HASH_B,
   HASH_C,
@@ -75,7 +79,17 @@ const { armadilhaDeRede } = require('./apoio/armadilha_de_rede');
 const rede = armadilhaDeRede();
 
 /** Prefixos que este dominio pode escrever. Qualquer outro e invasao. */
-const DOMINIO = ['playerEntitlements/', 'billingEvents/', 'compras/', 'usuarios/', 'configuracao/'];
+const DOMINIO = [
+  'playerEntitlements/',
+  'billingEvents/',
+  'compras/',
+  'usuarios/',
+  'configuracao/',
+  // As duas pontas da vinculacao entre a conta e a compra da Google. Entraram no
+  // dominio do billing na correcao de propriedade, e sao fechadas ao cliente.
+  'playerBillingIdentity/',
+  'billingAccountIndex/',
+];
 
 function assertSoEscreveuNoDominio(db) {
   for (const caminho of db.caminhos()) {
@@ -84,6 +98,18 @@ function assertSoEscreveuNoDominio(db) {
       `escrita fora do dominio do Billing: ${caminho}`
     );
   }
+}
+
+/**
+ * "Nao concedeu" tem DUAS formas legitimas, e exigir so uma delas transformaria
+ * uma recusa mais dura numa falha de teste: ou o entitlement nem chegou a ser
+ * escrito (a resposta foi recusada antes da consolidacao), ou ele foi escrito
+ * dizendo que nao ha acesso. As duas sao ausencia de direito.
+ */
+function assertNaoConcedeu(c, uid, rotulo) {
+  const pub = c.publico(uid);
+  if (pub === null) return;
+  assert.equal(pub.vipAtivo, false, `${rotulo}: concedeu VIP`);
 }
 
 /** Nem o token nem o hash inteiro podem aparecer no texto dado. */
@@ -255,7 +281,7 @@ test('B2 duas entregas SIMULTANEAS do mesmo messageId: so uma atravessa', async 
 
 test('C reempacotar o MESMO desfecho terminal com outro messageId nao o aplica duas vezes', async () => {
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1 });
+  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO });
   c.semearEntitlement(U1, {
     estado: ESTADO.ATIVO,
     vipAtivo: true,
@@ -282,8 +308,10 @@ test('C reempacotar o MESMO desfecho terminal com outro messageId nao o aplica d
   assert.equal(c.db.escritasEm(publicoDe(U1)), 1, 'o estorno foi gravado duas vezes');
   assert.equal(c.interno(U1).terminalEm, terminalEm, 'o instante do estorno andou');
   assert.equal(c.publico(U1).vipAtivo, false);
-  // Terminal nao consulta a Google: o fato esta no payload.
-  assert.equal(c.play.total(TOKEN_A), 0);
+  // A consulta acontece — e dela que sai o dono —, mas so na entrega que teve
+  // efeito. A reentrega do mesmo fato para em `terminal_repetido` DEPOIS de
+  // resolver a propriedade, entao sao duas consultas e uma escrita.
+  assert.equal(c.play.total(TOKEN_A), 2);
   // A trilha registra os dois envelopes, e o segundo como sem efeito.
   assert.equal(c.evento('msg_C1').aplicado, true);
   assert.equal(c.evento('msg_C2').aplicado, false);
@@ -645,8 +673,12 @@ test('J2 a varredura por relogio fecha o vencido e NAO reescreve o prazo', async
 
 test('K revogacao encerra o beneficio sem afetar outro usuario nem outro produto', async () => {
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1, produtoId: PRODUTO });
-  c.registrarCompra(HASH_B, { uid: U2, produtoId: PRODUTO_ANUAL });
+  // A Play responde ATIVA: o estado terminal vem do evento, e a consulta so
+  // resolve o dono.
+  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO });
+  c.play.definirAssinatura(TOKEN_B, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_U2,
+  });
   c.semearEntitlement(U1, {
     estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
   });
@@ -670,22 +702,27 @@ test('K revogacao encerra o beneficio sem afetar outro usuario nem outro produto
 
   assert.equal(c.publico(U2).vipAtivo, true, 'a revogacao alcancou outro jogador');
   assert.equal(c.db.escritasEm(publicoDe(U2)), 0);
-  assert.equal(c.play.total(), 0, 'terminal nao precisa consultar a Google');
+  // Uma consulta, e so sobre o token revogado: e ela que diz de quem ele e. O
+  // token de U2 nao foi tocado, entao a Google nao foi perguntada sobre ele.
+  assert.equal(c.play.total(TOKEN_A), 1);
+  assert.equal(c.play.total(TOKEN_B), 0, 'consultou por uma compra que nao estava em jogo');
 });
 
 test('K2 reembolso e terminal mesmo com prazo futuro gravado, e nao volta atras', async () => {
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1 });
   c.semearEntitlement(U1, {
     estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO_LONGE, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
   });
+  // A Play responde ATIVA o tempo todo — inclusive durante o estorno. E de
+  // proposito: o estorno vem do EVENTO, e a consulta serve so para saber de
+  // quem e a compra. Se o estado viesse da consulta, este teste nao passaria.
+  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO_LONGE });
   c.relogio.fila(T1, T2);
 
   await c.rtdn.processarNotificacao(mensagem(corpoAnulacao({ token: TOKEN_A }), 'msg_K2'));
   assert.equal(c.publico(U1).estado, ESTADO.REEMBOLSADO);
 
   // Uma leitura atrasada que ainda diz ACTIVE nao ressuscita um estorno.
-  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO_LONGE });
   const volta = await c.rtdn.processarNotificacao(
     mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_K2b')
   );
@@ -743,10 +780,9 @@ test('L2 payload truncado no meio do token nao imprime o token em log nem no doc
 // M — consulta por token sem productId
 // ===========================================================================
 
-test('M sem productId no evento, o produto sai do registro de compra — nunca inventado', async () => {
+test('M sem productId no item, o produto sai da NOTIFICACAO — nunca inventado', async () => {
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1, produtoId: PRODUTO_ANUAL });
-  // A Play tambem nao devolve productId no item: sobra so o registro local.
+  // A Play nao devolve productId no item; a notificacao diz qual e a assinatura.
   c.play.definirCorpoBruto(TOKEN_A, {
     subscriptionState: c.play.ESTADOS.ATIVA,
     startTime: PASSADO,
@@ -755,7 +791,7 @@ test('M sem productId no evento, o produto sai do registro de compra — nunca i
   c.relogio.fila(T1);
 
   const r = await c.rtdn.processarNotificacao(
-    mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A, produtoId: null }), 'msg_M1')
+    mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A, produtoId: PRODUTO_ANUAL }), 'msg_M1')
   );
 
   assert.equal(r.aplicado, true);
@@ -830,19 +866,26 @@ test('N3 tipo divergente entre payload e catalogo e recusado', async () => {
   assert.equal(c.publico(U1), null);
 });
 
-test('N4 notificacao sobre token que nao e de assinatura nao produz entitlement', async () => {
+test('N4 notificacao de produto avulso nao produz entitlement VIP', async () => {
+  // O guarda mudou de lugar, e o comportamento nao. Antes, um token registrado
+  // como consumivel era barrado por `titularDoToken` (`nao_e_assinatura`) — um
+  // guarda que morava na autoridade de propriedade errada. Hoje o proprio tipo
+  // da notificacao encerra o caminho: produto avulso credita fichas na validacao
+  // e acaba ali, sem ciclo de vida para acompanhar.
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1, assinatura: false });
   c.relogio.fila(T1);
 
-  const r = await c.rtdn.processarNotificacao(
-    mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_N4')
-  );
+  const r = await c.rtdn.processarNotificacao(mensagem({
+    version: '1.0',
+    packageName: PACOTE,
+    eventTimeMillis: '1000',
+    oneTimeProductNotification: { notificationType: 1, purchaseToken: TOKEN_A, sku: PRODUTO_FICHAS },
+  }, 'msg_N4'));
 
-  assert.equal(r.decisao, 'nao_e_assinatura');
+  assert.equal(r.decisao, 'produto_avulso');
   assert.equal(r.aplicado, false);
   assert.equal(c.publico(U1), null);
-  assert.equal(c.play.total(), 0);
+  assert.equal(c.play.total(), 0, 'gastou consulta por um evento sem ciclo de vida');
 });
 
 // ===========================================================================
@@ -863,7 +906,6 @@ test('O prazo ausente, absurdo ou no passado nao concede nem estende', async () 
 
   for (const [rotulo, expiraEm] of casos) {
     const c = cenarioDeModulo();
-    c.registrarCompra(HASH_A, { uid: U1 });
     c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm });
     c.relogio.fila(T1);
 
@@ -871,8 +913,14 @@ test('O prazo ausente, absurdo ou no passado nao concede nem estende', async () 
       mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_O')
     );
 
-    assert.equal(c.publico(U1).vipAtivo, false, `${rotulo}: concedeu VIP`);
-    assert.equal(c.publico(U1).estado, ESTADO.EXPIRADO, `${rotulo}: estado errado`);
+    // Duas recusas legitimas: prazo que a Google mandou e que ja passou vira
+    // `expirado` gravado; prazo que nem e data e barrado na conferencia de forma
+    // e nao chega a virar documento. Nenhuma das duas concede.
+    assertNaoConcedeu(c, U1, rotulo);
+    const pub = c.publico(U1);
+    if (pub !== null) {
+      assert.equal(pub.estado, ESTADO.EXPIRADO, `${rotulo}: estado errado`);
+    }
   }
 });
 
@@ -890,33 +938,24 @@ test('O2 lineItems ausente, vazio ou de tipo errado nao concede', async () => {
     await c.rtdn.processarNotificacao(
       mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_O2')
     );
-    assert.equal(c.publico(U1).vipAtivo, false, `lineItems=${JSON.stringify(itens)} concedeu`);
+    assertNaoConcedeu(c, U1, `lineItems=${JSON.stringify(itens)}`);
   }
 });
 
-test('O2b DEFEITO REGISTRADO elemento nulo em lineItems derruba a consolidacao', async () => {
-  // ACHADO M-1 do laudo. `consolidarAssinatura` protege o item dentro do laco
-  // (`item && item.expiryTime`, entitlement.js:172) e NAO protege o mesmo item
-  // fora dele (`itens[0].productId`, entitlement.js:181). Um elemento nulo em
-  // `lineItems` vira TypeError nao tratado.
+test('O2b elemento nulo em lineItems e recusado, sem derrubar o processo', async () => {
+  // ESTE TESTE ERA O REGISTRO DE UM DEFEITO, E FOI INVERTIDO.
   //
-  // O QUE ISSO NAO E: nao concede VIP, nao muta documento, nao vaza segredo. A
-  // excecao sobe, `retry: true` reentrega — o estado fica preservado.
+  // Antes: `consolidarAssinatura` protegia o item dentro do laco e usava o mesmo
+  // item sem protecao fora dele (`itens[0].productId`), entao um elemento nulo
+  // virava TypeError nao tratado. A excecao subia, `retry: true` reentregava, e a
+  // mensagem virava pilula envenenada — reentregue ate a retencao do topico
+  // expirar, sem nunca produzir decisao auditavel.
   //
-  // O QUE ISSO E: a mensagem vira pilula envenenada. Ela nao melhora com
-  // reentrega, entao o Pub/Sub a redistribui ate a retencao do topico expirar, e
-  // o operador ve uma pilha de TypeError em vez de uma decisao auditavel. E uma
-  // inconsistencia defensiva de uma linha, nao um furo economico.
-  //
-  // PATCH RECOMENDADO (nao aplicado nesta OS — ver secao 11 da OS):
-  //   -  if (!produtoId && itens.length > 0) produtoId = itens[0].productId || null;
-  //   +  if (!produtoId && itens.length > 0) produtoId = (itens[0] && itens[0].productId) || null;
-  //
-  // QUANDO O PATCH ENTRAR, ESTE TESTE TEM DE SER INVERTIDO: passa a valer o
-  // ramo `nao concede`, igual ao O2 acima.
-  for (const itens of [[null], [undefined]]) {
+  // Agora sao duas defesas: `validarRespostaAssinatura` RECUSA a resposta inteira
+  // antes da consolidacao, e `consolidarAssinatura` filtra a colecao antes de
+  // percorre-la. A recusa e controlada, entra na trilha, e nao se repete.
+  for (const itens of [[null], [undefined], ['nao e objeto'], [[]], [{ expiryTime: 'nunca' }]]) {
     const c = cenarioDeModulo();
-    c.registrarCompra(HASH_A, { uid: U1 });
     c.semearEntitlement(U1, {
       estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
     });
@@ -928,18 +967,17 @@ test('O2b DEFEITO REGISTRADO elemento nulo em lineItems derruba a consolidacao',
     c.db.zerarDiario();
     c.relogio.fila(T1);
 
-    await assert.rejects(
-      () => c.rtdn.processarNotificacao(
-        mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_O2b')
-      ),
-      (e) => e instanceof TypeError,
-      `lineItems=${JSON.stringify(itens)} deixou de lancar — o patch entrou? inverta este teste`
+    const r = await c.rtdn.processarNotificacao(
+      mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_O2b')
     );
 
-    // O que importa para o veredito economico continua valendo: nada mudou.
-    assert.equal(c.db.escritasEm(publicoDe(U1)), 0, 'a falha mutou o entitlement');
-    assert.equal(c.publico(U1).vipAtivo, true);
-    assert.equal(c.evento('msg_O2b'), null, 'marcou concluido um evento que falhou');
+    const rotulo = JSON.stringify(itens);
+    assert.equal(r.aplicado, false, `${rotulo}: aplicou`);
+    assert.equal(r.decisao, 'resposta_play_invalida', rotulo);
+    // O direito anterior nao foi tocado, e a recusa ficou na trilha.
+    assert.equal(c.db.escritasEm(publicoDe(U1)), 0, `${rotulo}: mutou o entitlement`);
+    assert.equal(c.publico(U1).vipAtivo, true, rotulo);
+    assert.equal(c.evento('msg_O2b').decisao, 'resposta_play_invalida', rotulo);
     assertSemSegredo(c.textoDosLogs());
   }
 });
@@ -958,8 +996,17 @@ test('O3 estado que a plataforma ainda nao inventou vira desconhecido e NAO conc
     await c.rtdn.processarNotificacao(
       mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_O3')
     );
-    assert.equal(c.publico(U1).vipAtivo, false, `estado ${bruto} concedeu VIP`);
-    assert.equal(c.publico(U1).estado, ESTADO.DESCONHECIDO);
+    assertNaoConcedeu(c, U1, `estado ${bruto}`);
+    // Duas recusas legitimas, e as duas valem. Estado de TEXTO que a plataforma
+    // nao inventou ainda vira `desconhecido` e fica gravado como recusa
+    // investigavel; estado que nem e texto e barrado antes, na conferencia de
+    // forma, e nao chega a virar documento. O que nao pode e conceder.
+    const pub = c.publico(U1);
+    if (pub !== null) {
+      assert.equal(pub.estado, ESTADO.DESCONHECIDO, `estado ${bruto} virou outra coisa`);
+    } else {
+      assert.equal(typeof bruto === 'string', false, `estado ${bruto} devia ter virado documento`);
+    }
   }
 });
 
@@ -973,7 +1020,7 @@ test('O4 corpo de resposta vazio ou nulo nao concede', async () => {
     await c.rtdn.processarNotificacao(
       mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_O4')
     );
-    assert.equal(c.publico(U1).vipAtivo, false, `corpo ${JSON.stringify(corpo)} concedeu VIP`);
+    assertNaoConcedeu(c, U1, `corpo ${JSON.stringify(corpo)}`);
   }
 });
 
@@ -1031,6 +1078,9 @@ test('P2 a reentrega depois da falha converge, e o efeito acontece uma vez so', 
 test('P3 falha da Play na validacao nao concede e nao marca a compra como recusada', async () => {
   const c = cenarioDeIndex();
   c.play.definirFalha(TOKEN_A, new FalhaTransitoriaPlay('ETIMEDOUT'));
+  // O diario zera DEPOIS das sementes (catalogo e vinculos): o que se mede aqui
+  // e o que a chamada escreveu, e nao o que o cenario montou.
+  c.db.zerarDiario();
 
   await assert.rejects(
     () => c.chamar('validarCompraPlay', {
@@ -1040,8 +1090,13 @@ test('P3 falha da Play na validacao nao concede e nao marca a compra como recusa
   );
 
   assert.equal(c.publico(U1), null, 'concedeu sem confirmacao autoritativa');
-  // O registro fica pendente, e nao recusado: recusar travaria a retentativa.
-  assert.notEqual(c.compra(HASH_A).estado, 'recusada');
+  // INVERTIDO, e para um resultado MAIS forte. Antes o registro da compra ja
+  // existia neste ponto (criado antes da consulta) e o teste so podia exigir que
+  // ele nao estivesse marcado `recusada`. Agora nada e gravado enquanto a Google
+  // nao confirma, entao nao ha registro nenhum para ficar pendente — e nao ha
+  // documento para envenenar o caminho de ninguem.
+  assert.equal(c.compra(HASH_A), null, 'gravou a compra sem confirmacao da Google');
+  assert.equal(c.db.diario.length, 0, 'escreveu alguma coisa antes de confirmar');
 });
 
 // ===========================================================================
@@ -1188,10 +1243,13 @@ test('R2 tambem recusa quando o token esta registrado para outro PRODUTO ou outr
 
 test('R3 notificacao sobre token de outro dono nao encosta no entitlement alheio', async () => {
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1 });
-  c.registrarCompra(HASH_B, { uid: U2 });
   c.semearEntitlement(U1, {
     estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
+  });
+  // O TOKEN_B pertence a U2, e quem diz isso e a GOOGLE: o identificador que ela
+  // devolve e o de U2. Nao ha registro local que possa contradizer.
+  c.play.definirAssinatura(TOKEN_B, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_U2,
   });
   c.db.zerarDiario();
   c.relogio.fila(T1);
@@ -1201,75 +1259,101 @@ test('R3 notificacao sobre token de outro dono nao encosta no entitlement alheio
   assert.equal(r.uid, U2, 'a notificacao foi atribuida ao jogador errado');
   assert.equal(c.publico(U1).vipAtivo, true, 'o estorno alheio derrubou o VIP do titular');
   assert.equal(c.db.escritasEm(publicoDe(U1)), 0);
-  assert.equal(c.publico(U2).estado, ESTADO.REVOGADO === undefined ? undefined : ESTADO.REEMBOLSADO);
+  assert.equal(c.publico(U2).estado, ESTADO.REEMBOLSADO);
   assertSemSegredo(c.textoDosLogs());
 });
 
-test('R4 notificacao sobre token sem titular comprovavel e descartada, sem inventar dono', async () => {
+test('R4 vinculo que nao pertence a ninguem falha fechado, sem inventar dono', async () => {
   const c = cenarioDeModulo();
+  // Identificador BEM FORMADO, e registrado por ninguem. E o caso que separa
+  // "nao sei de quem e" de "e do primeiro que aparecer".
+  c.play.definirAssinatura(TOKEN_C, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_ORFAO,
+  });
   c.relogio.fila(T1);
 
   const r = await c.rtdn.processarNotificacao(
     mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_C }), 'msg_R4')
   );
 
-  assert.equal(r.decisao, 'compra_desconhecida');
+  assert.equal(r.decisao, 'vinculo_desconhecido');
   assert.equal(r.aplicado, false);
   assert.deepEqual(c.db.caminhos().filter((p) => p.startsWith('playerEntitlements/')), []);
-  assert.equal(c.play.total(), 0, 'consultou a Google por um token sem dono');
+  assert.equal(c.evento('msg_R4').decisao, 'vinculo_desconhecido');
   assertSemSegredo(c.textoDosLogs());
 });
 
-test('R6 DEFEITO REGISTRADO quem apresenta o token PRIMEIRO vira o dono dele', async () => {
-  // ACHADO A-1 do laudo. Nao ha vinculo entre a COMPRA da Google e a CONTA do
-  // aplicativo. A titularidade nasce em `compras/{hash}` no primeiro
-  // `validarCompraPlay` que chegar (index.js:271-285), com o uid de quem chamou.
-  // A resposta da Play e consultada DEPOIS, e ela nao e conferida contra
-  // identidade nenhuma: `consolidarAssinatura` le estado, prazo e produto, e
-  // ignora `externalAccountIdentifiers`.
+test('R6 quem apresenta o token de outra conta e recusado, e nao deixa rastro', async () => {
+  // ESTE TESTE ERA O REGISTRO DO ACHADO A-1, E FOI INVERTIDO. Ele e o motivo
+  // desta OS existir, entao vale dizer com precisao o que mudou.
   //
-  // Consequencia, encenada abaixo: quem tiver o `purchaseToken` de outra pessoa
-  // e chegar antes do dono fica com o VIP, e o dono passa a receber
-  // `permission-denied` para sempre — o mesmo guarda que protege o caso R
-  // trabalha, aqui, a favor do invasor.
+  // ANTES: `compras/{hash}` nascia com o uid de quem chamasse primeiro, ANTES de
+  // a Google ser consultada. Quem tivesse o purchaseToken da vitima e chegasse
+  // antes ficava com o VIP, e o pagante recebia `permission-denied` para sempre —
+  // o mesmo guarda que protege o caso R trabalhava a favor do invasor.
   //
-  // PRECONDICAO, dita sem maquiagem: e preciso JA possuir o token da vitima. Ele
-  // e credencial ao portador e so sai do aparelho dela. Isto nao e escalada
-  // anonima; e a ausencia da amarra que a Google documenta para exatamente este
-  // risco.
-  //
-  // PATCH RECOMENDADO (nao aplicado — ver secao 11 da OS), nas duas pontas:
-  //   1. cliente: passar `obfuscatedAccountId` = hash do uid no fluxo de compra;
-  //   2. servidor: recusar quando
-  //      `compra.externalAccountIdentifiers.obfuscatedExternalAccountId`
-  //      nao bater com o uid autenticado, ANTES de gravar `compras/{hash}`.
-  // Sem (1) a conferencia de (2) nao tem com o que comparar. Nesta base o
-  // cliente Flutter de Billing nao existe, entao as duas pontas estao abertas.
+  // AGORA: a propriedade sai do identificador que a Google devolve, e a
+  // igualdade com a conta autenticada e exigida ANTES de qualquer escrita.
   const c = cenarioDeIndex();
-  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO });
-
-  // U2 nao pagou nada: so tem o token de U1.
-  const invasor = await c.chamar('validarCompraPlay', {
-    uid: U2, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  // A compra e de U1: e o vinculo DELE que a Google devolve.
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_U1,
   });
+  c.db.zerarDiario();
 
-  assert.equal(invasor.aprovada, true, 'o comportamento mudou — o patch entrou? inverta este teste');
-  assert.equal(c.publico(U2).vipAtivo, true, 'idem');
-  assert.equal(c.compra(HASH_A).uid, U2);
-
-  // E o pagante fica de fora, definitivamente.
+  // U2 tem o token de U1 e chega primeiro.
   await assert.rejects(
     () => c.chamar('validarCompraPlay', {
-      uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+      uid: U2, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
     }),
-    (e) => e.code === 'permission-denied'
+    (e) => e.code === 'permission-denied' && e.details.motivo === 'vinculo_divergente'
   );
-  assert.equal(c.publico(U1), null);
 
-  // E a notificacao da Play sobre essa compra passa a alimentar o invasor.
+  // 3) NAO criou `compras/{hash}`.  4) NAO criou entitlement.
+  assert.equal(c.compra(HASH_A), null, 'o invasor gravou o registro da compra');
+  assert.equal(c.publico(U2), null, 'o invasor recebeu VIP');
+  assert.equal(c.publico(U1), null, 'o entitlement do dono foi mexido');
+  // Nenhum documento envenenado: a tentativa nao deixou rastro nenhum.
+  assert.equal(c.db.diario.length, 0, 'a tentativa escreveu no Firestore');
+
+  // 5) O ATAQUE NAO IMPEDE A VALIDACAO POSTERIOR PELO PROPRIETARIO. Esta e a
+  //    metade que faltava: recusar o invasor nao vale nada se a recusa deixar o
+  //    dono trancado do lado de fora.
+  const dono = await c.chamar('validarCompraPlay', {
+    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  });
+  assert.equal(dono.aprovada, true, 'o ataque trancou o proprietario legitimo');
+  assert.equal(c.publico(U1).vipAtivo, true);
+  assert.equal(c.compra(HASH_A).uid, U1);
+  assert.equal(c.publico(U2), null);
+
+  // 11) E a notificacao daquela compra alimenta o DONO, nunca quem pediu antes.
   await c.entregar(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_R6');
-  assert.equal(c.publico(U2).vipAtivo, true);
-  assert.equal(c.publico(U1), null);
+  assert.equal(c.publico(U1).vipAtivo, true);
+  assert.equal(c.publico(U2), null, 'a notificacao alimentou o invasor');
+});
+
+test('R6b invasor e proprietario apresentando o mesmo token AO MESMO TEMPO', async () => {
+  // O caso 2 da matriz da OS. A recusa do invasor nao pode depender de o dono ter
+  // chegado antes — se dependesse, seria de novo uma regra de ordem de chegada,
+  // so que invertida.
+  const c = cenarioDeIndex({ maxTentativas: 40 });
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_U1,
+  });
+
+  const tentativa = (uid) => c.chamar('validarCompraPlay', {
+    uid, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  }).then((r) => ({ uid, ok: true, r }), (e) => ({ uid, ok: false, code: e.code }));
+
+  const [invasor, dono] = await Promise.all([tentativa(U2), tentativa(U1)]);
+
+  assert.equal(invasor.ok, false, 'o invasor foi aprovado');
+  assert.equal(invasor.code, 'permission-denied');
+  assert.equal(dono.ok, true, 'o dono foi recusado por causa da corrida');
+  assert.equal(c.compra(HASH_A).uid, U1);
+  assert.equal(c.publico(U1).vipAtivo, true);
+  assert.equal(c.publico(U2), null);
 });
 
 test('R5 chamada sem autenticacao nao chega a tocar em nada', async () => {
@@ -1287,15 +1371,266 @@ test('R5 chamada sem autenticacao nao chega a tocar em nada', async () => {
 });
 
 // ===========================================================================
+// Y — A AUTORIDADE DA VINCULACAO
+// ===========================================================================
+//
+// Os casos que a correcao P0 acrescentou. Nao existiam na matriz A-W porque, ate
+// ela, nao existia autoridade nenhuma sobre a propriedade de uma compra.
+
+test('Y1 a preparacao e estavel: chamar de novo devolve o MESMO identificador', async () => {
+  const c = cenarioDeIndex({ vincular: false });
+
+  const um = await c.chamar('prepararCompraPlay', { uid: U1 });
+  const dois = await c.chamar('prepararCompraPlay', { uid: U1 });
+  const tres = await c.chamar('prepararCompraPlay', { uid: U1 });
+
+  assert.equal(um.contaOfuscada, dois.contaOfuscada);
+  assert.equal(dois.contaOfuscada, tres.contaOfuscada);
+  assert.ok(vinculoBemFormado(um.contaOfuscada), 'identificador mal formado');
+  assert.ok(um.contaOfuscada.length <= 64, 'passou do limite da Play Billing Library');
+  // Uma conta, um vinculo. A segunda e a terceira chamadas nao escrevem.
+  assert.equal(c.db.escritasEm(`playerBillingIdentity/${U1}`), 1);
+  assert.equal(c.db.escritasEm(`billingAccountIndex/${um.contaOfuscada}`), 1);
+});
+
+test('Y2 contas diferentes recebem identificadores diferentes', async () => {
+  const c = cenarioDeIndex({ vincular: false });
+  const a = await c.chamar('prepararCompraPlay', { uid: U1 });
+  const b = await c.chamar('prepararCompraPlay', { uid: U2 });
+
+  assert.notEqual(a.contaOfuscada, b.contaOfuscada);
+  assert.equal(c.db.ver(`billingAccountIndex/${a.contaOfuscada}`).uid, U1);
+  assert.equal(c.db.ver(`billingAccountIndex/${b.contaOfuscada}`).uid, U2);
+});
+
+test('Y3 criacao CONCORRENTE da vinculacao produz uma autoridade so', async () => {
+  // Dez preparacoes simultaneas da mesma conta. Cada uma gera um candidato
+  // diferente; a transacao garante que so um vira o vinculo e que as outras nove
+  // releem e devolvem esse mesmo. Sem isso, duas compras da mesma pessoa
+  // poderiam apontar para identificadores diferentes e uma delas ficaria orfa.
+  const c = cenarioDeIndex({ vincular: false, maxTentativas: 60 });
+
+  const respostas = await Promise.all(
+    Array.from({ length: 10 }, () => c.chamar('prepararCompraPlay', { uid: U1 }))
+  );
+
+  const distintos = new Set(respostas.map((r) => r.contaOfuscada));
+  assert.equal(distintos.size, 1, `nasceram ${distintos.size} vinculos para a mesma conta`);
+  const vinculo = respostas[0].contaOfuscada;
+  assert.equal(c.db.escritasEm(`playerBillingIdentity/${U1}`), 1);
+  assert.equal(c.db.ver(`billingAccountIndex/${vinculo}`).uid, U1);
+  // E nenhum indice orfao ficou para tras.
+  assert.deepEqual(
+    c.db.caminhos().filter((p) => p.startsWith('billingAccountIndex/')),
+    [`billingAccountIndex/${vinculo}`]
+  );
+});
+
+test('Y4 o cliente NAO escolhe a vinculacao', async () => {
+  const c = cenarioDeIndex({ vincular: false });
+  const escolhido = '33'.repeat(24);
+
+  const r = await c.chamar('prepararCompraPlay', {
+    uid: U1,
+    // O payload tenta ditar o identificador, de tres formas.
+    dados: { contaOfuscada: escolhido, obfuscatedAccountId: escolhido, vinculo: escolhido },
+  });
+
+  assert.notEqual(r.contaOfuscada, escolhido, 'o cliente escolheu o proprio vinculo');
+  assert.equal(c.db.ver(`billingAccountIndex/${escolhido}`), null);
+  assert.equal(c.db.ver(`billingAccountIndex/${r.contaOfuscada}`).uid, U1);
+});
+
+test('Y5 o identificador nao carrega uid, e-mail nem publicId', async () => {
+  const c = cenarioDeIndex({ vincular: false });
+  const r = await c.chamar('prepararCompraPlay', { uid: 'uid-de-sonia@exemplo.invalid' });
+
+  const v = r.contaOfuscada;
+  for (const agulha of ['uid', 'sonia', 'exemplo', 'invalid', '@', 'jogador', 'publicId']) {
+    assert.ok(!v.includes(agulha), `o identificador carrega "${agulha}" em claro`);
+  }
+  // So hexadecimal: nao ha onde esconder texto.
+  assert.match(v, /^[0-9a-f]+$/);
+});
+
+test('Y6 identificador MAL FORMADO nao vira sequer uma leitura', async () => {
+  const c = cenarioDeModulo({ vincular: false });
+  // `uidDoVinculo` recusa pela FORMA antes de consultar o Firestore: um id de
+  // documento arbitrario nao deve nem virar leitura.
+  c.db.semear('billingAccountIndex/alvo-arbitrario', { uid: U1 });
+  const antes = c.db.leiturasSoltas;
+
+  for (const torto of ['alvo-arbitrario', 'MAIUSCULAS'.repeat(4), 'z'.repeat(48), '', null, 'ab', 'f'.repeat(65)]) {
+    assert.equal(await c.store.uidDoVinculo(torto), null, `aceitou "${torto}"`);
+  }
+  assert.equal(c.db.leiturasSoltas, antes, 'um identificador mal formado virou leitura');
+});
+
+test('Y7 RTDN que chega ANTES da validacao encontra o proprietario certo', async () => {
+  // E a razao pela qual a vinculacao nasce na PREPARACAO e nao na validacao: a
+  // notificacao da Google pode chegar antes de o aplicativo voltar a falar com o
+  // backend. Se a propriedade dependesse de `validarCompraPlay` ter rodado, este
+  // evento nao teria dono — e a versao antiga resolvia isso escolhendo o
+  // primeiro solicitante.
+  const c = cenarioDeIndex({ vincular: false });
+  const { contaOfuscada } = await c.chamar('prepararCompraPlay', { uid: U1 });
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada,
+  });
+
+  // Nenhuma validacao aconteceu: nao ha `compras/{hash}`.
+  assert.equal(c.compra(HASH_A), null);
+
+  await c.entregar(corpoAssinatura(NOTIFICACAO.PURCHASED, { token: TOKEN_A }), 'msg_Y7');
+
+  assert.equal(c.publico(U1).vipAtivo, true, 'o RTDN nao achou o dono sem a validacao');
+  assert.equal(c.publico(U1).estado, ESTADO.ATIVO);
+  assert.equal(c.publico(U2), null);
+  // E continua sem registro de compra: o RTDN nao inventa um.
+  assert.equal(c.compra(HASH_A), null);
+});
+
+test('Y8 troca de plano: linkedPurchaseToken coerente mantem o proprietario', async () => {
+  // Sem ler `linkedPurchaseToken`, a proposta pararia em `token_superado` — o
+  // entitlement guarda o hash do token velho — e a troca so entraria quando
+  // alguem abrisse o aplicativo.
+  const c = cenarioDeModulo();
+  c.semearEntitlement(U1, {
+    estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
+  });
+  c.play.definirAssinatura(TOKEN_B, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: FUTURO_LONGE,
+    produtoId: PRODUTO_ANUAL,
+    contaOfuscada: VINCULO_U1,
+    tokenLigado: TOKEN_A,
+  });
+  c.relogio.fila(T1);
+
+  const r = await c.rtdn.processarNotificacao(
+    mensagem(corpoAssinatura(NOTIFICACAO.PURCHASED, { token: TOKEN_B, produtoId: PRODUTO_ANUAL }), 'msg_Y8')
+  );
+
+  assert.equal(r.aplicado, true, 'a troca de plano ficou parada em token_superado');
+  assert.equal(r.uid, U1);
+  assert.equal(c.publico(U1).produtoId, PRODUTO_ANUAL);
+  assert.equal(c.publico(U1).expiraEm, FUTURO_LONGE);
+  assert.equal(c.interno(U1).purchaseTokenHash, HASH_B, 'o token vigente nao avancou');
+});
+
+test('Y9 token ligado com vinculacao DIVERGENTE nao transfere o direito', async () => {
+  // A armadilha: o token novo aponta para o entitlement de U1 pelo
+  // `linkedPurchaseToken`, mas a Google diz que a compra e de U2. O elo do token
+  // NAO pode servir de atalho de propriedade.
+  const c = cenarioDeModulo();
+  c.semearEntitlement(U1, {
+    estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
+  });
+  c.play.definirAssinatura(TOKEN_B, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: FUTURO_LONGE,
+    contaOfuscada: VINCULO_U2,
+    tokenLigado: TOKEN_A,
+  });
+  c.db.zerarDiario();
+  c.relogio.fila(T1);
+
+  const r = await c.rtdn.processarNotificacao(
+    mensagem(corpoAssinatura(NOTIFICACAO.PURCHASED, { token: TOKEN_B }), 'msg_Y9')
+  );
+
+  // O direito vai para U2, que e de quem a compra e.
+  assert.equal(r.uid, U2);
+  assert.equal(c.publico(U2).vipAtivo, true);
+  // E o de U1 nao foi tocado, apesar de o token ligado apontar para ele.
+  assert.equal(c.publico(U1).vipAtivo, true);
+  assert.equal(c.publico(U1).expiraEm, FUTURO);
+  assert.equal(c.interno(U1).purchaseTokenHash, HASH_A);
+  assert.equal(c.db.escritasEm(publicoDe(U1)), 0, 'o token ligado moveu o direito de dono');
+});
+
+test('Y10 vinculo ausente na VALIDACAO falha fechado, sem gravar nada', async () => {
+  // A compra antiga chegando pela validacao: a Google confirma a assinatura, e a
+  // resposta nao traz identificador porque o aplicativo nunca preparou o vinculo.
+  // Secao 9 da OS — nao concede, nao transfere, nao cria associacao definitiva.
+  const c = cenarioDeIndex();
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: null,
+  });
+  c.db.zerarDiario();
+
+  await assert.rejects(
+    () => c.chamar('validarCompraPlay', {
+      uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+    }),
+    (e) => e.code === 'permission-denied' && e.details.motivo === 'vinculo_ausente'
+  );
+
+  assert.equal(c.publico(U1), null);
+  assert.equal(c.compra(HASH_A), null);
+  assert.equal(c.db.diario.length, 0, 'a compra sem vinculo escreveu no Firestore');
+});
+
+test('Y11 consumivel tambem tem dono: identificador na RAIZ da resposta', async () => {
+  // `ProductPurchase` traz `obfuscatedExternalAccountId` na raiz, e nao aninhado
+  // como a assinatura. Ler so um dos formatos deixaria o consumivel sem
+  // propriedade verificavel — metade do catalogo.
+  const c = cenarioDeIndex();
+  c.play.definirProduto(TOKEN_B, {
+    purchaseState: 0, produtoId: PRODUTO_FICHAS, contaOfuscada: VINCULO_U2,
+  });
+  c.db.zerarDiario();
+
+  await assert.rejects(
+    () => c.chamar('validarCompraPlay', {
+      uid: U1, dados: { produtoId: PRODUTO_FICHAS, tokenCompra: TOKEN_B, assinatura: false },
+    }),
+    (e) => e.code === 'permission-denied' && e.details.motivo === 'vinculo_divergente'
+  );
+
+  assert.equal(c.usuario(U1), null, 'creditou fichas de uma compra alheia');
+  assert.equal(c.db.diario.length, 0);
+});
+
+test('Y12 a reconciliacao administrativa nao troca o dono de um direito', async () => {
+  // O token guardado no documento de U1 responde, pela Google, que a compra e de
+  // U2 — divergencia que so pode existir por dado anterior a esta correcao. A
+  // saida de emergencia da administracao nao pode ser o caminho por onde o
+  // direito muda de dono.
+  const c = cenarioDeIndex();
+  c.db.semear(publicoDe(U1), {
+    uid: U1, vipAtivo: true, estado: ESTADO.ATIVO, produtoId: PRODUTO, origem: 'play',
+    expiraEm: FUTURO, renovacaoAutomatica: true, atualizadoEm: T0, esquema: 1,
+  });
+  c.db.semear(internoDe(U1), {
+    uid: U1, purchaseTokenHash: HASH_A, purchaseToken: TOKEN_A, produtoId: PRODUTO,
+    assinatura: true, fonte: 'rtdn', ultimaVerificacaoEm: T0, esquema: 1,
+  });
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO_LONGE, contaOfuscada: VINCULO_U2,
+  });
+  c.db.zerarDiario();
+
+  await assert.rejects(
+    () => c.chamar('reconciliarEntitlementDoJogador', { uid: 'op', admin: true, dados: { uid: U1 } }),
+    (e) => e.code === 'failed-precondition' && e.details.motivo === 'vinculo_divergente'
+  );
+
+  assert.equal(c.publico(U2), null, 'a reconciliacao concedeu a outra conta');
+  assert.equal(c.db.escritasEm(publicoDe(U1)), 0);
+});
+
+// ===========================================================================
 // S — redacao de segredo
 // ===========================================================================
 
 test('S o purchaseToken nao alcanca log, trilha nem documento que o cliente le', async () => {
   const c = cenarioDeModulo();
-  c.registrarCompra(HASH_A, { uid: U1 });
-  c.registrarCompra(HASH_B, { uid: U2 });
   c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO });
-  c.play.definirFalha(TOKEN_B, new FalhaPermanentePlay('400 invalid token'));
+  // Token orfao: bem formado, sem dono. Passa pela consulta e para na propriedade.
+  c.play.definirAssinatura(TOKEN_C, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_ORFAO,
+  });
   c.relogio.fila(T1, T2, T3, T4);
 
   await c.rtdn.processarNotificacao(mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 's1'));
@@ -1535,31 +1870,45 @@ test('U2 reconciliacao concorrendo com RTDN sobre o mesmo documento nao perde a 
 // V — usuario ou documento ausente
 // ===========================================================================
 
-test('V ausencia de pre-cadastro nao autoriza identidade ficticia nem usuario generico', async () => {
-  const c = cenarioDeModulo();
-  // Nenhum `compras/`, nenhum `usuarios/`, nenhum entitlement.
+test('V compra sem vinculo nenhum nao autoriza identidade ficticia nem usuario generico', async () => {
+  // A COMPRA ANTIGA, encenada: a Google responde, a assinatura e real, e a
+  // resposta nao traz identificador de conta porque o aplicativo nao preparou o
+  // vinculo. E o caso da secao 9 da OS — nao se concede, nao se transfere
+  // propriedade, e acima de tudo nao se escolhe o primeiro solicitante.
+  const c = cenarioDeModulo({ vincular: false });
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: null,
+  });
   c.relogio.fila(T1);
 
   const r = await c.rtdn.processarNotificacao(
     mensagem(corpoAssinatura(NOTIFICACAO.PURCHASED, { token: TOKEN_A }), 'msg_V1')
   );
 
-  assert.equal(r.decisao, 'compra_desconhecida');
+  assert.equal(r.decisao, 'vinculo_ausente');
+  assert.equal(r.aplicado, false);
   assert.equal(r.uid, undefined, 'inventou um titular');
   assert.deepEqual(c.db.caminhos().filter((p) => p.startsWith('playerEntitlements/')), []);
   assert.deepEqual(c.db.caminhos().filter((p) => p.startsWith('usuarios/')), []);
+  // A trilha guarda o codigo fechado, para que a operacao consiga separar
+  // "assinante antigo" de "tentativa de tomar compra alheia".
+  assert.equal(c.evento('msg_V1').decisao, 'vinculo_ausente');
 });
 
-test('V2 registro de compra sem uid nao produz direito para ninguem', async () => {
-  const c = cenarioDeModulo();
-  c.db.semear(compraDe(HASH_A), { produtoId: PRODUTO, assinatura: true, estado: 'concedida' });
+test('V2 indice de vinculo sem uid nao produz direito para ninguem', async () => {
+  // Meia relacao: o indice existe, mas nao aponta para conta nenhuma. A producao
+  // nao consegue criar isto (as duas pontas nascem na mesma transacao), e por
+  // isso mesmo o codigo tem de recusar em vez de deduzir.
+  const c = cenarioDeModulo({ vincular: false });
+  c.db.semear(`billingAccountIndex/${VINCULO_U1}`, { contaOfuscada: VINCULO_U1 });
+  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO });
   c.relogio.fila(T1);
 
   const r = await c.rtdn.processarNotificacao(
     mensagem(corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }), 'msg_V2')
   );
 
-  assert.equal(r.decisao, 'registro_sem_uid');
+  assert.equal(r.decisao, 'vinculo_desconhecido');
   assert.deepEqual(c.db.caminhos().filter((p) => p.startsWith('playerEntitlements/')), []);
 });
 
@@ -1690,6 +2039,8 @@ test('X1 o Billing nao escreve fora do proprio dominio em nenhum caminho exercit
 
   assertSoEscreveuNoDominio(c.db);
   // Em particular: nada de moderacao, torneio, ranking ou partida.
+  // A vinculacao entrou no dominio do billing nesta correcao.
+  assert.ok(c.db.caminhos().some((p) => p.startsWith('playerBillingIdentity/')));
   for (const proibido of ['playerModeration/', 'tournaments/', 'rankingLedger/', 'matches/', 'reports/']) {
     assert.ok(!c.db.caminhos().some((p) => p.startsWith(proibido)), `escreveu em ${proibido}`);
   }
@@ -1700,6 +2051,7 @@ test('X2 a superficie exportada e exatamente as cinco funcoes declaradas', () =>
   assert.deepEqual(Object.keys(c.modulo).sort(), [
     'migrarEntitlementsLegado',
     'notificacoesPlay',
+    'prepararCompraPlay',
     'reconciliarEntitlementDoJogador',
     'reconciliarEntitlements',
     'validarCompraPlay',
@@ -1725,25 +2077,49 @@ test('X2 a superficie exportada e exatamente as cinco funcoes declaradas', () =>
     'reconciliarEntitlementDoJogador',
     'validarCompraPlay',
   ]);
+  // `prepararCompraPlay` NAO pede o segredo da Play, e a ausencia e o ponto:
+  // preparar uma compra nao fala com a Google. Uma funcao que so gera um
+  // identificador nao precisa de credencial para faze-lo.
+  assert.deepEqual(
+    c.modulo.prepararCompraPlay.__endpoint.secretEnvironmentVariables || [],
+    []
+  );
 });
 
-test('X3 a origem da notificacao: pacote alheio e recusado', () => {
+test('X3 a origem da notificacao: so o pacote oficial passa', () => {
   const alheio = interpretarNotificacao(
     { packageName: 'com.outro.app', subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
     PACOTE
   );
   assert.equal(alheio.acao, 'ignorar');
-  assert.equal(alheio.motivo, 'pacote_alheio');
+  assert.equal(alheio.motivo, 'pacote_divergente');
 
-  // OBSERVACAO REGISTRADA: a mensagem SEM `packageName` nao e recusada — a
-  // condicao e `corpo.packageName && ...`. O controle primario e o IAM do topico
-  // (so a Google publica); esta e a defesa em profundidade, e ela e opcional por
-  // omissao. Anotado no laudo como achado Medio, com o patch recomendado.
+  // INVERTIDO: era o achado M-3. A condicao antiga (`corpo.packageName && ...`)
+  // recusava pacote alheio e deixava passar pacote AUSENTE — ou seja, a unica
+  // conferencia de origem ficava desligada justamente para a mensagem que nao
+  // declara de onde veio. Hoje ausencia e recusa.
   const semPacote = interpretarNotificacao(
     { subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
     PACOTE
   );
-  assert.equal(semPacote.acao, 'reconciliar');
+  assert.equal(semPacote.acao, 'ignorar');
+  assert.equal(semPacote.motivo, 'pacote_divergente');
+
+  // E sem applicationId CONFIGURADO nada e processado: configuracao faltando nao
+  // pode virar uma conferencia a menos.
+  const semConfiguracao = interpretarNotificacao(
+    { packageName: PACOTE, subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
+    ''
+  );
+  assert.equal(semConfiguracao.acao, 'ignorar');
+  assert.equal(semConfiguracao.motivo, 'pacote_divergente');
+
+  // O pacote oficial, esse, passa.
+  const oficial = interpretarNotificacao(
+    { packageName: PACOTE, subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
+    PACOTE
+  );
+  assert.equal(oficial.acao, 'reconciliar');
 
   // Notificacao de teste da Play Console: registrada e ignorada.
   const teste = interpretarNotificacao({ packageName: PACOTE, testNotification: { version: '1.0' } }, PACOTE);
