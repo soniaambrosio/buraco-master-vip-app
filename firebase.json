@@ -108,6 +108,24 @@
       "runtime": "nodejs20",
       "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
       "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "MESAS — admitirEmMesaVip, consultarPasseDeCortesia, registrarMesaPrivada, resolverConviteDeMesaPrivada. Origem: OS 2 — Arbitragem e canonizacao autoritativa dos tipos de mesa, permissoes VIP e passe de cortesia v1.",
+
+      "//porque-codebase-proprio": "PELO MESMO CRITERIO DOS SETE ACIMA: sao unidades de implantacao independentes. Aqui o argumento decisivo e o inverso do habitual — nao e que um erro daqui nao possa derrubar os outros, e que os outros nao possam derrubar ESTE. `admitirEmMesaVip` esta no caminho critico de alguem que clicou para sentar: enquanto ele nao responde, o assento nao e ocupado e a mesa nao enche. Hospeda-lo no billing faria um deploy de validacao de compra travar a entrada em mesa; hospeda-lo no ranking faria o mesmo por um gatilho de resultado.",
+
+      "//porque-nao-em-billing": "A OS proibe, e a auditoria do passe quinzenal explicou por que: o codebase `billing` e o TRADUTOR DA GOOGLE, e todo documento que ele escreve descreve uma compra real. Um passe de cortesia nao tem `purchaseToken`, nao passa pela Play e nao pode ser reconciliado contra uma compra inexistente. Este codebase LE `playerEntitlements` e nunca escreve nela — functions-mesas/test/elegibilidade.test.js varre o src/ inteiro para provar isso.",
+
+      "//porque-o-passe-mora-aqui-e-nao-num-codebase-beneficios": "A auditoria sugeriu `economia` ou um `beneficios` novo. A escolha foi outra, e o motivo e a ATOMICIDADE: o consumo do passe acontece na MESMA transacao que registra a admissao — e a secao 6.3 da OS ao pe da letra. Separar as duas coisas em dois codebases nao impediria a transacao (o Firestore e o mesmo), mas criaria duas unidades de implantacao que precisam subir juntas para o consumo continuar correto, que e exatamente o que a separacao por codebase existe para evitar.",
+
+      "source": "functions-mesas",
+      "codebase": "mesas",
+      "runtime": "nodejs20",
+
+      "//sem-predeploy-de-dominio": "Pelo mesmo criterio de ranking e conta: nao ha regra de jogo em Dart a compilar. A regra deste codebase — que tipos existem, quem pode sentar, quando o passe e consumido — mora em TypeScript, em src/, ao lado de quem a obedece. DUAS excecoes de leitura, ambas conferidas por teste contra o arquivo original: os valores de `TipoDePartida` (app/lib/rastreabilidade/identidade_partida.dart) e `ESTADOS_COM_ACESSO` (functions-billing/entitlement.js).",
+
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
 

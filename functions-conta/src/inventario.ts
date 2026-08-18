@@ -101,7 +101,8 @@ export type Dominio =
   | "ranking"
   | "torneios"
   | "billing"
-  | "colecoes";
+  | "colecoes"
+  | "mesas";
 
 // ===========================================================================
 // COMO SE ALCANCA O DADO
@@ -767,6 +768,100 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
     alcance: { modo: "docPorUid", colecao: "users" },
     porque:
       "O documento raiz. Nenhuma Function deste repositorio o escreve hoje — ele existe como PAI das oito subcolecoes — mas apaga-lo e barato e fecha a porta para um campo gravado por fora. ATENCAO: apagar o pai NAO apaga as subcolecoes no Firestore; e por isso que cada uma delas tem item proprio nesta matriz, e nao uma linha 'users e tudo abaixo'.",
+  },
+
+  // =========================================================================
+  // DOMINIO `economia` — a carteira e o livro-razao
+  // =========================================================================
+  //
+  // ACHADO PREEXISTENTE, FECHADO AQUI. `economiaLedger` esta declarada em
+  // `firebase/firestore.rules` desde a OS de Economia Basica e nunca foi
+  // classificada nesta matriz — o teste que cruza as duas fontes ja falhava na
+  // base desta OS. E exatamente o defeito que este arquivo existe para
+  // detectar: uma colecao nova, uma regra escrita, e ninguem lembrou do fluxo
+  // de exclusao. A correcao e a que o cabecalho manda — decidir o destino do
+  // dado, com justificativa — e nao acrescentar uma excecao ao teste.
+  {
+    id: "economia.economiaLedger",
+    caminho: "economiaLedger/{chaveIdempotencia}",
+    dominio: "conta",
+    classe: CLASSE.DESVINCULAR,
+    campos: ["uid"],
+    alcance: { modo: "consultaPorCampo", colecao: "economiaLedger", campo: "uid" },
+    porque:
+      "INTEGRIDADE FINANCEIRA, pela mesma doutrina de `compras` e `rankingLedger`. O livro-razao existe para provar a cadeia antes+delta==depois da carteira; apagar linhas dele porque um jogador saiu faria a cadeia parar de fechar para todo mundo, e a chave de idempotencia deixaria de barrar um reprocessamento do mesmo resultado. O FATO fica — houve um lancamento, com este valor, por esta partida — e o `uid` sai, que e o que corta o caminho de volta para a pessoa.",
+  },
+
+  // =========================================================================
+  // DOMINIO `mesas` — tipos de mesa, permissoes VIP e passe de cortesia
+  // origem: OS 2 — Arbitragem e canonizacao autoritativa dos tipos de mesa
+  // =========================================================================
+  //
+  // As seis colecoes do codebase `mesas`. Elas se dividem em duas naturezas, e
+  // a divisao explica as classes:
+  //
+  //   DIREITO DA CONTA ...... o passe. Morre com ela, como o entitlement.
+  //   FATO DA PARTIDA ....... a admissao, o assento, a sala e o convite.
+  //                           Descrevem algo que aconteceu numa mesa com outras
+  //                           tres pessoas, e por isso seguem a mesma doutrina
+  //                           de `matches` e `rankingLedger`: o fato fica, o
+  //                           vinculo com a identidade sai.
+  {
+    id: "mesas.passesVip",
+    caminho: "passesVip/{uid}",
+    dominio: "mesas",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "passesVip" },
+    porque:
+      "MESMA DOUTRINA DE `playerEntitlements`: o direito de entrada e da conta e morre com ela. Um passe utilizavel de uma conta inexistente so criaria estado que alguem teria de tratar para sempre. E, ao contrario da compra, aqui nao ha nada a preservar do outro lado — a cortesia nao passa pela Google e nao tem transacao a comprovar.",
+  },
+  {
+    id: "mesas.admissoesDeMesa",
+    caminho: "admissoesDeMesa/{tentativaEntradaId}",
+    dominio: "mesas",
+    classe: CLASSE.DESVINCULAR,
+    campos: ["uid"],
+    alcance: { modo: "consultaPorCampo", colecao: "admissoesDeMesa", campo: "uid" },
+    porque:
+      "INTEGRIDADE COMPETITIVA E BARREIRA DE IDEMPOTENCIA. O documento e a chave que impede a mesma `tentativaEntradaId` de ser decidida duas vezes; apaga-lo reabriria a janela de dupla admissao para uma tentativa que ainda pudesse ser repetida. O FATO fica — houve uma admissao, com este veredito, nesta mesa —, e o `uid` sai, que e o mesmo tratamento de `compras` e `matches`.",
+  },
+  {
+    id: "mesas.assentosAdmitidos",
+    caminho: "assentosAdmitidos/{codigoDaSala}__{uid}",
+    dominio: "mesas",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "consultaPorCampo", colecao: "assentosAdmitidos", campo: "uid" },
+    porque:
+      "A ANCORA DE RECONEXAO, e ela nao e historico: ela existe para responder 'este uid ja ocupa assento nesta sala AGORA'. Uma ancora orfa de conta apagada nao responde a ninguem, e mante-la seria guardar o vinculo uid-sala sem nenhum fato competitivo a proteger. O que houve de fato esta em `admissoesDeMesa`, que e retido desvinculado.",
+  },
+  {
+    id: "mesas.salasPrivadas",
+    caminho: "salasPrivadas/{codigoDaSala}",
+    dominio: "mesas",
+    classe: CLASSE.DESVINCULAR,
+    campos: ["proprietarioUid"],
+    alcance: { modo: "consultaPorCampo", colecao: "salasPrivadas", campo: "proprietarioUid" },
+    porque:
+      "A SALA PODE ESTAR EM ANDAMENTO COM OUTRAS TRES PESSOAS. Apaga-la porque o dono saiu derrubaria a mesa dos outros — e a mesma quebra que a doutrina desta matriz descreve para `matches`. Sai o `proprietarioUid`, e o efeito e exatamente o desejado: `podeControlarCadeiras` deixa de reconhecer dono, entao ninguem herda o controle das cadeiras de uma conta que nao existe mais.",
+  },
+  {
+    id: "mesas.codigosDeSala",
+    caminho: "codigosDeSala/{sha256(codigoConvite)}",
+    dominio: "mesas",
+    classe: CLASSE.DESVINCULAR,
+    campos: ["proprietarioUid"],
+    alcance: { modo: "consultaPorCampo", colecao: "codigosDeSala", campo: "proprietarioUid" },
+    porque:
+      "O CONVITE DE UMA SALA QUE PODE ESTAR EM ANDAMENTO. Apaga-lo trancaria do lado de fora quem ainda nao entrou numa mesa que continua de pe. O documento NAO carrega dado pessoal alem do dono — nem o codigo em claro, que so existe como impressao —, entao cortar `proprietarioUid` basta. O convite morre sozinho por `expiraEm`, em no maximo 12 horas.",
+  },
+  {
+    id: "mesas.tentativasDeCodigo",
+    caminho: "tentativasDeCodigo/{uid}",
+    dominio: "mesas",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "tentativasDeCodigo" },
+    porque:
+      "CONTADOR OPERACIONAL DE CURTISSIMO PRAZO — janela de dez minutos. Nao ha fato a preservar e nao ha integridade a proteger: um contador de uma conta inexistente nunca mais sera lido. Reter seria guardar 'quantas vezes esta pessoa errou um codigo' sem nenhuma finalidade.",
   },
 ] as const;
 
