@@ -102,11 +102,45 @@ typedef Projetor = ProjecaoBMV Function(Jogo);
 
 /// Diagnóstico estrutural da derivação (evidência de que NÃO houve enumeração
 /// materializada de 2^n): nós de DFS de meld/combinação visitados e nº de
-/// transações validadas. Sem tetos; só instrumentação.
+/// transações validadas.
+///
+/// OS 4 — TETO DE TRABALHO OPCIONAL. A derivação é lazy e podada, mas o espaço
+/// que ela varre cresce com a mão: uma mão de 19 cartas no STBL mediu **101.404
+/// transações validadas em 17 segundos**, e cada transação roda
+/// `avaliarComprarLixo` mais `acaoEhLegal` — dois clones profundos do estado.
+///
+/// `tetoTransacoes` deixa QUEM CHAMA declarar quanto trabalho aceita pagar.
+/// `null` (o padrão) mantém o comportamento histórico byte a byte: sem teto,
+/// enumeração exaustiva. É por isso que o caminho do JOGADOR não muda — ele
+/// não passa teto, e continua recebendo TODAS as formas legais de usar o topo,
+/// que é o que a escolha manual exige. Quem passa teto é o robô, e só ele.
+///
+/// O teto NÃO é regra: não torna legal o que era ilegal, nem ilegal o que era
+/// legal. Ele apenas interrompe a ENUMERAÇÃO — cada candidato devolvido
+/// continua tendo sido validado pela autoridade, um a um.
 class DiagnosticoLixo {
   int nosMeld = 0; // nós do DFS de geração de meld/extensão
   int nosCombo = 0; // nós do DFS de combinação atômica
   int transacoesValidadas = 0; // chamadas a avaliarComprarLixo
+
+  /// Teto de transações validadas. `null` = sem teto (comportamento histórico).
+  final int? tetoTransacoes;
+
+  /// A derivação parou por ter batido o teto (nunca silencioso).
+  bool estourou = false;
+
+  DiagnosticoLixo({this.tetoTransacoes});
+
+  /// Já não há orçamento para mais uma transação?
+  bool get semOrcamento {
+    final t = tetoTransacoes;
+    if (t == null) return false;
+    if (transacoesValidadas >= t) {
+      estourou = true;
+      return true;
+    }
+    return false;
+  }
 }
 
 /// Uma UNIDADE de baixada dentro da compra: um jogo novo OU uma extensão de um
@@ -235,6 +269,10 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
   final vistos = <String>{};
   final out = <ComprarLixo>[];
   void tentar(List<List<CartaId>> jogos, List<Extensao> exts) {
+    // TETO (OS 4): a transação é a unidade de trabalho cara. Verificar ANTES de
+    // gastá-la é o que faz o teto valer — e o corte acontece entre transações
+    // completas, nunca no meio de uma validação.
+    if (d.semOrcamento) return;
     d.transacoesValidadas++;
     final r = avaliarComprarLixo(estado, assento, spec,
         topoDeclarado: topoId, jogosNovos: jogos, extensoes: exts);
@@ -281,10 +319,15 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
   //      (nada de lista completa de combinações). Descarte precoce por carta E
   //      por índice de jogo estendido. avaliarComprarLixo é o verificador final.
   for (final tu in usosTopo) {
+    // Teto batido: para a travessia inteira. Sem esta saída o DFS continuaria
+    // andando pela árvore só para descobrir, em cada folha, que `tentar` já não
+    // faz nada — o teto cortaria o trabalho caro e deixaria o passeio.
+    if (d.estourou) break;
     final selec = <_UnidadeCompra>[];
     final cartas = <CartaId>{...tu.ids};
     final indices = <int>{if (tu.indiceExt != null) tu.indiceExt!};
     void rec(int start) {
+      if (d.estourou) return;
       d.nosCombo++;
       final jogos = <List<CartaId>>[
         if (tu.jogoNovo != null) tu.jogoNovo!,
@@ -308,6 +351,7 @@ List<ComprarLixo> derivarCandidatosCompraLixoFechado(
         if (u.indiceExt != null) indices.remove(u.indiceExt!);
         cartas.removeAll(u.ids);
         selec.removeLast();
+        if (d.estourou) return;
       }
     }
 

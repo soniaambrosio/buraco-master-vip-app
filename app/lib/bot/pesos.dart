@@ -19,7 +19,7 @@
 // o relatório de não-vacuidade desliga uma por vez e mostra o teste
 // correspondente caindo. Uma regra que não pode ser desligada é uma regra que
 // não pode ser provada.
-library;
+import 'orcamento_busca.dart';
 
 /// Restrições estratégicas DURAS aprovadas nesta OS. Todas ligadas por padrão.
 ///
@@ -361,6 +361,30 @@ class ConfiguracaoBot {
   /// cai fora é a cauda, não o candidato certo — e o corte vira rastro.
   final int maxDescartesPorBaixada;
 
+  /// OS 4 — TETO de transações da derivação de compra do lixo (Fechado/STBL).
+  ///
+  /// Era o buraco do orçamento: a fase de jogo tinha , a fase
+  /// de COMPRA não tinha nada. Medido no corpus (5 sementes x 3 modalidades),
+  /// o STBL faz p50=0, p90=31, p95=784, p99=3464 transações por decisão — e a
+  /// mão patológica de 19 cartas fez 101.404, em 17 segundos.
+  ///
+  /// 2000 preserva integralmente o p95 medido (784) e corta a explosão. O
+  /// p99 (3464) passa a ser cortado: foi a troca escolhida, porque o teto de
+  /// 2 s por decisão da OS não cabia junto com ele — medido, 4000 levava o pior
+  /// turno a 2,3 s e 2000 o deixa em 1,8 s.
+  final int tetoTransacoesCompraLixo;
+
+  /// OS 4 — TETO de planos completos efetivamente pontuados pelo avaliador.
+  /// A largura já limita a 64 baixadas x 10 descartes; este teto é a garantia
+  /// de que nenhuma combinação futura de larguras escape do orçamento.
+  final int tetoPlanosAvaliados;
+
+  /// OS 4 — FUSÍVEL temporal, em ms. Proteção SECUNDÁRIA contra defeito não
+  /// previsto no contador determinístico. Não desempata, não reordena e é
+  /// generoso o bastante para nunca governar uma decisão normal (o pior caso
+  /// medido do corpus fica uma ordem de grandeza abaixo). Zero desliga.
+  final int fusivelBuscaMs;
+
   const ConfiguracaoBot({
     this.pesos = const PesosHeuristicos(),
     this.regras = const RegrasEstrategicas(),
@@ -368,7 +392,18 @@ class ConfiguracaoBot {
     this.orcamentoBusca = 6000,
     this.maxBaixadasAvaliadas = 64,
     this.maxDescartesPorBaixada = 10,
+    this.tetoTransacoesCompraLixo = 2000,
+    this.tetoPlanosAvaliados = 4000,
+    this.fusivelBuscaMs = 5000,
   });
+
+  /// Limites desta configuração, no formato que o orçamento transporta.
+  LimitesBusca get limitesBusca => LimitesBusca(
+        nos: orcamentoBusca,
+        transacoesCompraLixo: tetoTransacoesCompraLixo,
+        planosAvaliados: tetoPlanosAvaliados,
+        fusivelMs: fusivelBuscaMs,
+      );
 
   ConfiguracaoBot comRegras(RegrasEstrategicas r) => ConfiguracaoBot(
         pesos: pesos,
@@ -408,6 +443,25 @@ class ConfiguracaoBot {
   /// O valor 4 é o resultado da calibração registrada no relatório: abaixo do
   /// teto de 6 imposto pela precedência (§6) e alto o bastante para virar
   /// decisões entre alternativas estruturalmente próximas.
+  /// OS 4 — a configuração da BASE desta OS, para comparação e rollback.
+  ///
+  /// É a V2 com os tetos novos DESLIGADOS: o gerador mantém os 6000 nós que
+  /// já existiam, a derivação de compra do lixo volta a ser exaustiva, não há
+  /// teto de planos avaliados e não há fusível. Reproduz o comportamento de
+  /// 6b028be — inclusive a explosão, que é o que a comparação precisa medir.
+  static const base = ConfiguracaoBot(
+    pesos: PesosHeuristicos(
+      versao: 'bmv-bot-heuristico-v2-descartes-publicos@sem-orcamento',
+      memoriaDescarteParceiro: 4,
+    ),
+    regras: RegrasEstrategicas(usaMemoriaDescarteParceiro: true),
+    // Tetos da OS 4 DESLIGADOS: derivação exaustiva, sem teto de planos e sem
+    // fusível. Os 6000 nós do gerador já existiam na base e continuam.
+    tetoTransacoesCompraLixo: 1 << 30,
+    tetoPlanosAvaliados: 1 << 30,
+    fusivelBuscaMs: 0,
+  );
+
   static const v2 = ConfiguracaoBot(
     pesos: PesosHeuristicos(
       versao: 'bmv-bot-heuristico-v2-descartes-publicos',

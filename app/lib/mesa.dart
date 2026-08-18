@@ -25,6 +25,7 @@ import 'rules/rule_spec.dart';
 // autoridade canônica, pelas mesmas entradas do humano. Ver `lib/bot/`.
 import 'bot/executor_bot.dart';
 import 'bot/pesos.dart';
+import 'bot/orcamento_busca.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
 // Visual: porte fiel de claude/mesa-verde-APROVADA.html (aprovado pela Sônia).
@@ -898,12 +899,27 @@ class Jogo {
   /// Auto-derivar ≠ auto-decidir: esta função ENUMERA; quem consome decide
   /// (0 -> recusa, 1 -> executa, 2+ -> o jogador escolhe). No Aberto devolve
   /// lista vazia — lá a compra é livre e não precisa justificar o topo.
-  List<ComprarLixo> candidatosCompraLixo(int assento, {DiagnosticoLixo? diag}) {
+  /// OS 4 — `orcamento` é OPCIONAL e existe só para o ROBÔ.
+  ///
+  /// Sem ele (o caminho do JOGADOR, em `comprarLixo`), a derivação continua
+  /// exaustiva e byte a byte igual à de antes: quem escolhe à mão precisa ver
+  /// TODAS as formas legais de usar o topo, e cortar essa lista mudaria o que
+  /// a pessoa pode jogar. Com ele, a derivação para ao bater o teto e o
+  /// trabalho gasto volta para o contador único da decisão — foi essa fase,
+  /// sem teto nenhum, que fez um turno do STBL levar 20 segundos.
+  List<ComprarLixo> candidatosCompraLixo(int assento,
+      {DiagnosticoLixo? diag, OrcamentoBuscaBot? orcamento}) {
     final spec = specCanonica;
     if (!spec.exigeUsoDoTopoNoLixo) return const <ComprarLixo>[];
-    return derivarCandidatosCompraLixoFechado(
+    final d = diag ??
+        DiagnosticoLixo(
+            tetoTransacoes: orcamento?.tetoTransacoesCompraLixo);
+    final out = derivarCandidatosCompraLixoFechado(
         paraCanonico(this).canonico, assento, spec,
-        diag: diag);
+        diag: d);
+    orcamento?.registrarTransacoesCompraLixo(d.transacoesValidadas,
+        estourou: d.estourou);
+    return out;
   }
 
   /// C10 (rev.1) — mensagem de recusa da compra do lixo sem uso do topo.
@@ -1763,14 +1779,31 @@ class Jogo {
   void _botJogaEstrategico(int assento, int marca) {
     final executor = ExecutorBot(specCanonica, cfg: configuracaoBot);
 
+    // ORCAMENTO POR DECISAO — uma cota para a COMPRA e outra para o JOGO.
+    //
+    // A primeira versão criava UM orçamento para o turno inteiro, e a medição
+    // mostrou por que isso não serve: a compra do STBL avaliava milhares de
+    // candidatos do lixo, esgotava a cota de planos, e a fase de jogo chegava
+    // sem poder pontuar NENHUM plano — 19 fallbacks em 185 turnos, por falta
+    // de orçamento e não por falta de jogada. Cada decisão passa a ter a sua,
+    // que é o que a OS pede: nasce por decisão, morre com ela, nunca atravessa
+    // turnos, e dois robôs decidindo têm objetos distintos.
+    OrcamentoBuscaBot novoOrcamento() =>
+        OrcamentoBuscaBot(configuracaoBot.limitesBusca);
+
     // ---------- 1) COMPRA ----------
     if (!jaComprou) {
       final estado = _projetarParaBot('botJoga:compra');
       if (estado == null) return;
+      // A derivação dos candidatos e a decisão de compra são a MESMA decisão,
+      // então dividem o mesmo orçamento: derivar 6000 transações e depois
+      // pontuar todas elas seria pagar o custo duas vezes.
+      final orcCompra = novoOrcamento();
       final cands = specCanonica.exigeUsoDoTopoNoLixo
-          ? candidatosCompraLixo(assento)
+          ? candidatosCompraLixo(assento, orcamento: orcCompra)
           : const <ComprarLixo>[];
-      final d = executor.decidirCompra(estado, assento, candidatosLixo: cands);
+      final d = executor.decidirCompra(estado, assento,
+          candidatosLixo: cands, orcamento: orcCompra);
       _registrarDecisaoBot(d);
       final escolha = d.acoes.isEmpty ? const ComprarMonte() : d.acoes.first;
       if (escolha is ComprarLixo) {
@@ -1806,7 +1839,8 @@ class Jogo {
       }
       final estado = _projetarParaBot('botJoga:jogo');
       if (estado == null) return;
-      final d = executor.decidirJogo(estado, assento);
+      final d = executor.decidirJogo(estado, assento,
+          orcamento: novoOrcamento());
       _registrarDecisaoBot(d);
       if (d.vazia) return; // §9 fail-safe: sem plano, o robô não inventa jogada
       final dupla = _duplaKey(assento);

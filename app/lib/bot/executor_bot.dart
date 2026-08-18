@@ -18,13 +18,14 @@
 // de regra para "resolver" o impasse, e não deve ganhar uma.
 import '../rules/acoes.dart';
 import '../rules/estado.dart';
-import '../rules/gerador/gerador.dart' show aplicarLegal;
+import '../rules/gerador/gerador.dart' show aplicarLegal, gerarAcoesLegais;
 import '../rules/pontuacao_canonica.dart' show valorCarta;
 import '../rules/rule_spec.dart';
 import 'analise_mao.dart';
 import 'avaliador_heuristico.dart';
 import 'gerador_candidatos.dart';
 import 'modelo_parceiro.dart';
+import 'orcamento_busca.dart';
 import 'pesos.dart';
 import 'razoes.dart';
 import 'risco_descarte.dart';
@@ -65,6 +66,11 @@ class DecisaoBot {
   /// É a prova de determinismo: mesma assinatura + mesma config => mesma saída.
   final String assinaturaDecisao;
 
+  /// OS 4 — telemetria do ORCAMENTO desta decisão: motivo do encerramento,
+  /// fase em que o limite bateu, trabalho consumido e se houve fallback.
+  /// Só números e enums: nenhuma carta, nenhum jogador, nada privado.
+  final Map<String, Object?>? orcamento;
+
   const DecisaoBot({
     required this.acoes,
     required this.razao,
@@ -77,6 +83,7 @@ class DecisaoBot {
     this.diagnosticoImpasse,
     this.plano,
     this.assinaturaDecisao = '',
+    this.orcamento,
   });
 
   bool get vazia => acoes.isEmpty;
@@ -90,6 +97,7 @@ class DecisaoBot {
         'candidatos': candidatosConsiderados,
         'truncado': truncado,
         if (impasse) 'impasse': diagnosticoImpasse,
+        if (orcamento != null) 'orcamento': orcamento,
         'acoes': [for (final a in acoes) a.toJson()],
       };
 }
@@ -128,7 +136,12 @@ class ExecutorBot {
     EstadoJogo estado,
     int assento, {
     List<ComprarLixo> candidatosLixo = const <ComprarLixo>[],
+    OrcamentoBuscaBot? orcamento,
   }) {
+    // O MESMO orçamento que a derivação dos candidatos já consumiu chega
+    // aqui. É o que impede a fase de compra de gastar um teto e a de jogo
+    // outro, que era o defeito de origem.
+    final orc = orcamento ?? OrcamentoBuscaBot(cfg.limitesBusca);
     final visao = VisaoInformacao.doEstado(estado, assento);
     final parceiro = ModeloParceiro.observar(visao, spec);
     final assinatura = '${visao.assinaturaPublica()}\npesos=${cfg.pesos.versao}';
@@ -154,6 +167,9 @@ class ExecutorBot {
         );
       }
       for (final cand in candidatosLixo) {
+        // Cada candidato pontuado é trabalho: com o teto da derivação a lista
+        // já vem limitada, mas quem garante o limite é este contador.
+        if (!orc.gastarPlanoAvaliado()) break;
         considerados++;
         final a = _avaliarCandidatoLixo(visao, cand);
         if (_vence(a.score, melhorScore,
@@ -182,7 +198,9 @@ class ExecutorBot {
       score: melhorScore,
       features: melhorFeatures,
       candidatosConsiderados: considerados,
+      truncado: orc.esgotado,
       assinaturaDecisao: assinatura,
+      orcamento: orc.toJson(),
     );
   }
 
@@ -255,23 +273,36 @@ class ExecutorBot {
   // =====================================================================
 
   /// Decide o resto do turno: baixar/estender (ou não) e o que descartar.
-  DecisaoBot decidirJogo(EstadoJogo estado, int assento) {
+  DecisaoBot decidirJogo(EstadoJogo estado, int assento,
+      {OrcamentoBuscaBot? orcamento}) {
+    // ORCAMENTO POR DECISAO. Nasce aqui quando ninguem passa um; quando a
+    // fase de compra ja gastou parte dele, o MESMO objeto chega por parametro
+    // e o turno inteiro divide um teto so. Nunca atravessa turnos: quem cria
+    // e sempre um decidir*, e nao existe estado estatico neste arquivo.
+    final orc = orcamento ?? OrcamentoBuscaBot(cfg.limitesBusca);
     final visao = VisaoInformacao.doEstado(estado, assento);
     final parceiro = ModeloParceiro.observar(visao, spec);
     final adversario = ModeloAdversario(visao, spec);
     final assinatura = '${visao.assinaturaPublica()}\npesos=${cfg.pesos.versao}';
 
-    final ger = GeradorPlanos(spec, cfg).planosDeJogo(estado, assento);
+    final ger = GeradorPlanos(spec, cfg, orcamento: orc)
+        .planosDeJogo(estado, assento);
 
     if (ger.planos.isEmpty) {
       if (ger.impasseDescarteSoCuringa) {
         return _impasseCuringa(estado, assento, assinatura, ger);
       }
+      // FALLBACK LEGAL: o orcamento acabou antes de existir UM plano completo.
+      // Sem isto o turno terminaria sem decisao, que e exatamente o travamento
+      // que esta OS existe para eliminar.
+      final fb = _fallbackLegal(estado, assento, spec, orc, assinatura, ger);
+      if (fb != null) return fb;
       return DecisaoBot(
         acoes: const <Acao>[],
         razao: Razao.semPlanoLegal,
         truncado: ger.truncado,
         assinaturaDecisao: assinatura,
+        orcamento: orc.toJson(),
       );
     }
 
@@ -279,6 +310,11 @@ class ExecutorBot {
     Avaliacao? melhorAv;
     final avaliados = <PlanoTurno, Avaliacao>{};
     for (final p in ger.planos) {
+      // CORTE NA AVALIACAO: quando o orcamento acaba aqui, o que ja foi
+      // pontuado continua valendo. A escolha e o MELHOR PLANO COMPLETO JA
+      // AVALIADO, pelo mesmo avaliador e o mesmo desempate — nao o primeiro
+      // da fila, e nao um plano parcial.
+      if (!orc.gastarPlanoAvaliado()) break;
       final a = _avaliador.avaliarPlano(p, visao, parceiro, adversario);
       avaliados[p] = a;
       if (melhor == null ||
@@ -286,6 +322,12 @@ class ExecutorBot {
         melhor = p;
         melhorAv = a;
       }
+    }
+
+    // O orcamento pode ter acabado ANTES do primeiro plano ser pontuado.
+    if (melhor == null) {
+      final fb = _fallbackLegal(estado, assento, spec, orc, assinatura, ger);
+      if (fb != null) return fb;
     }
 
     final vencedor = melhor!;
@@ -302,11 +344,81 @@ class ExecutorBot {
       razoesSecundarias: secundarias,
       score: av.score,
       features: av.features,
-      candidatosConsiderados: ger.planos.length,
-      truncado: ger.truncado,
+      // Quantos foram EFETIVAMENTE pontuados, nao quantos existiam: com corte
+      // na avaliacao os dois numeros deixam de coincidir, e informar o maior
+      // seria dizer que se olhou o que nao se olhou.
+      candidatosConsiderados: avaliados.length,
+      truncado: ger.truncado || orc.esgotado,
       plano: vencedor,
       assinaturaDecisao: assinatura,
+      orcamento: orc.toJson(),
     );
+  }
+
+  /// FALLBACK LEGAL DETERMINISTICO.
+  ///
+  /// Acionado SO quando a busca terminou sem nenhum plano completo avaliado.
+  /// Nao reimplementa regra nenhuma: pergunta ao motor quais acoes sao legais
+  /// AGORA (`gerarAcoesLegais`, a mesma autoridade que valida a jogada do
+  /// humano) e escolhe entre elas por uma chave estavel.
+  ///
+  /// A ordem de preferencia respeita a fase do turno e o que o Buraco exige:
+  /// primeiro o que CONCLUI o turno (descarte), depois o que o obriga a
+  /// continuar (morto, batida), e a compra quando a fase e de compra. Dentro
+  /// de cada classe, a assinatura JSON da acao desempata — determinismo sem
+  /// relogio, sem hash de objeto e sem sorteio.
+  DecisaoBot? _fallbackLegal(
+    EstadoJogo estado,
+    int assento,
+    RuleSpec spec,
+    OrcamentoBuscaBot orc,
+    String assinatura,
+    ResultadoGeracao ger,
+  ) {
+    final legais = gerarAcoesLegais(estado, assento, spec);
+    if (legais.isEmpty) return null;
+
+    // O curinga continua protegido: a politica do bot vale tambem aqui, senao
+    // o fallback viraria a porta dos fundos por onde o Joker vai ao lixo.
+    final maoPorId = {for (final c in estado.maos[assento]) c.id: c};
+    bool descarteDeCuringa(Acao a) =>
+        a is Descartar &&
+        cfg.regras.proibeDescartarCuringa &&
+        ehCuringaEstrategico(maoPorId[a.carta]!);
+
+    int classe(Acao a) {
+      if (a is Descartar) return descarteDeCuringa(a) ? 5 : 0;
+      if (a is PegarMorto) return 1;
+      if (a is Bater) return 2;
+      if (a is ComprarLixo) return 3;
+      if (a is ComprarMonte) return 4;
+      return 6;
+    }
+
+    final ordenadas = [...legais]..sort((a, b) {
+        final ca = classe(a), cb = classe(b);
+        if (ca != cb) return ca - cb;
+        return _sigAcao(a).compareTo(_sigAcao(b));
+      });
+    final escolhida = ordenadas.first;
+    orc.marcarFallback();
+    return DecisaoBot(
+      acoes: <Acao>[escolhida],
+      razao: Razao.fallbackOrcamento,
+      razoesSecundarias: const <String>[Razao.buscaTruncada],
+      candidatosConsiderados: 0,
+      truncado: true,
+      assinaturaDecisao: assinatura,
+      orcamento: orc.toJson(),
+    );
+  }
+
+  /// Chave estavel de uma acao (JSON canonico do contrato de acoes).
+  static String _sigAcao(Acao a) {
+    final j = a.toJson();
+    final chaves = j.keys.toList()..sort();
+    return [for (final k in chaves) k + String.fromCharCode(61) + j[k].toString()]
+        .join(String.fromCharCode(59));
   }
 
   /// Vitória por score, com desempate DETERMINÍSTICO pela assinatura + semente.

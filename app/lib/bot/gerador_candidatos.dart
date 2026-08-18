@@ -30,6 +30,7 @@ import '../rules/pontuacao_canonica.dart' show valorCarta;
 import '../rules/rule_spec.dart';
 import 'analise_mao.dart';
 import 'leitura_meld.dart';
+import 'orcamento_busca.dart';
 import 'pesos.dart';
 import 'risco_descarte.dart';
 import 'visao_informacao.dart';
@@ -166,22 +167,29 @@ class _Unidade {
 class GeradorPlanos {
   final RuleSpec spec;
   final ConfiguracaoBot cfg;
-  int _nos = 0;
+
+  /// OS 4 — CONTADOR ÚNICO da decisão, criado pelo `ExecutorBot` e passado
+  /// para cá. Antes o gerador guardava o seu próprio `_nos`, um contador
+  /// PARALELO: a fase de compra gastava trabalho que este número não via.
+  /// Quem não passa orçamento recebe um ilimitado — o comportamento histórico,
+  /// preservado para teste e para a comparação com a base.
+  final OrcamentoBuscaBot orcamento;
+
   bool _truncado = false;
 
-  GeradorPlanos(this.spec, this.cfg);
+  GeradorPlanos(this.spec, this.cfg, {OrcamentoBuscaBot? orcamento})
+      : orcamento = orcamento ?? OrcamentoBuscaBot(cfg.limitesBusca);
 
   /// Modelo de risco do turno corrente (memoizado), criado em `planosDeJogo`.
   /// Serve só ao corte de largura do descarte — a pontuação de verdade é do
   /// avaliador, que tem o seu próprio modelo.
   late ModeloAdversario _risco;
 
-  bool get _semOrcamento {
-    if (_nos >= cfg.orcamentoBusca) {
-      _truncado = true;
-      return true;
-    }
-    return false;
+  /// Gasta UM nó da fase indicada. `true` quando não há mais orçamento.
+  bool _semOrcamento(FaseBusca fase) {
+    if (orcamento.gastarNo(fase)) return false;
+    _truncado = true;
+    return true;
   }
 
   /// DFS STREAMING de subconjuntos que formam meld válido com `base`.
@@ -211,8 +219,7 @@ class GeradorPlanos {
     }
 
     void rec(int start, Set<String> naipes, Set<String> valores, int jokers) {
-      _nos++;
-      if (_semOrcamento) return;
+      if (_semOrcamento(FaseBusca.enumeracaoUnidades)) return;
       if (esc.length >= minSel) {
         final cartas = <CartaSnapshot>[...base, for (final i in esc) pool[i]];
         if (validarJogoMesa(cartas, spec).valido) onOk(List<int>.from(esc));
@@ -239,8 +246,11 @@ class GeradorPlanos {
 
   /// Gera os planos completos da FASE DE JOGO para `assento`.
   ResultadoGeracao planosDeJogo(EstadoJogo estado, int assento) {
-    _nos = 0;
-    _truncado = false;
+    // O orçamento NÃO é reiniciado aqui: ele nasce com a decisão, no executor,
+    // e atravessa compra e jogo. Zerá-lo por fase devolveria o defeito que
+    // esta OS corrige — cada fase gastando um teto próprio, sem ninguém
+    // olhando o total.
+    _truncado = orcamento.esgotado;
 
     final visaoInicial = VisaoInformacao.doEstado(estado, assento);
     _risco = ModeloAdversario(visaoInicial, spec);
@@ -279,8 +289,7 @@ class GeradorPlanos {
     final indicesUsados = <int>{};
 
     void combinar(int start) {
-      _nos++;
-      if (_semOrcamento) return;
+      if (_semOrcamento(FaseBusca.combinacaoBaixadas)) return;
       if (selec.isNotEmpty) {
         final b = Baixar(
           jogosNovos: [
@@ -328,6 +337,14 @@ class GeradorPlanos {
     final planos = <PlanoTurno>[];
     var impasse = false;
     for (final b in selecionadas) {
+      // A expansao NAO consome o orcamento de nos. Ela consome largura (o cap
+      // de baixadas) e, mais adiante, o orcamento de PLANOS AVALIADOS. Cobrar
+      // nos aqui fazia a enumeracao — que sempre gasta o teto primeiro numa
+      // mao grande — impedir que qualquer plano completo nascesse.
+      if (!orcamento.podeExpandir()) {
+        _truncado = true;
+        break;
+      }
       final r = _expandir(estado, assento, b, visaoInicial);
       planos.addAll(r.planos);
       impasse = impasse || r.impasse;
@@ -350,7 +367,7 @@ class GeradorPlanos {
     return ResultadoGeracao(
       planos: filtrados,
       truncado: _truncado,
-      nos: _nos,
+      nos: orcamento.nos,
       // Só é impasse de verdade se NENHUM plano legal sobrou.
       impasseDescarteSoCuringa: impasse && filtrados.isEmpty,
     );
@@ -372,9 +389,13 @@ class GeradorPlanos {
         ? 0
         : b.jogosNovos.fold<int>(0, (s, j) => s + j.length) +
             b.extensoes.fold<int>(0, (s, e) => s + e.cartas.length);
+    // O mapa da mao e construido UMA vez. Antes ele nascia dentro de
+    // pontosDe, isto e, a cada comparacao do sort: com milhares de baixadas
+    // isso multiplicava o custo da ordenacao por |mao| sem mudar o resultado.
+    final porIdMao = {for (final c in mao) c.id: c};
     int pontosDe(Baixar? b) {
       if (b == null) return 0;
-      final porId = {for (final c in mao) c.id: c};
+      final porId = porIdMao;
       var p = 0;
       void somar(String id) {
         final c = porId[id]!;

@@ -268,7 +268,14 @@ void main() {
 
     // A configuração "candidata" é resolvida por nome, para o harness compilar
     // igual na base (onde a V2 ainda não existe) e na entrega.
-    final candidata = modo == 'v1v1' ? ConfiguracaoBot.v1 : configuracaoCandidata();
+    // OS 4 — o LADO DE REFERENCIA passou a ser configuravel. Na OS 3 a
+    // referencia era a V1 (sem memoria de descartes); aqui ela e a
+    // ConfiguracaoBot.base — a V2 com os tetos de orcamento DESLIGADOS —,
+    // porque o que esta OS mede e o efeito do orcamento, nao o da memoria.
+    final refNome = Platform.environment['HARNESS_REF'] ?? 'v1';
+    final referencia =
+        refNome == 'base' ? ConfiguracaoBot.base : ConfiguracaoBot.v1;
+    final candidata = modo == 'v1v1' ? referencia : configuracaoCandidata();
 
     final linhas = <Map<String, Object?>>[];
     final relogio = Stopwatch()..start();
@@ -281,14 +288,14 @@ void main() {
           modalidade: mod,
           seed: seed,
           cfgNos: candidata,
-          cfgEles: ConfiguracaoBot.v1,
+          cfgEles: referencia,
           metaPontos: meta,
         ).toJson()
           ..['lado'] = 'candidata=nos');
         linhas.add(jogarPartida(
           modalidade: mod,
           seed: seed,
-          cfgNos: ConfiguracaoBot.v1,
+          cfgNos: referencia,
           cfgEles: candidata,
           metaPontos: meta,
         ).toJson()

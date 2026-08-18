@@ -85,4 +85,13 @@ class Razao {
 
   /// Nenhum plano legal foi encontrado nesta fase (a autoridade decide o resto).
   static const semPlanoLegal = 'SEM_PLANO_LEGAL';
+
+  /// OS 4 — o ORCAMENTO determinístico acabou antes de existir um plano
+  /// completo avaliado, e a decisão veio do fallback legal.
+  ///
+  /// É um código de PRIMEIRA classe, e não um detalhe escondido no rastro:
+  /// quem lê a decisão precisa saber que ela não foi escolhida por
+  /// preferência estratégica, e sim porque a busca foi cortada. Esconder isso
+  /// faria a telemetria dizer que o bot preferiu o que ele apenas aceitou.
+  static const fallbackOrcamento = 'FALLBACK_ORCAMENTO';
 }
