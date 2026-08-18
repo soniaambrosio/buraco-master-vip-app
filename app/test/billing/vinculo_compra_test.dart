@@ -102,7 +102,12 @@ class _Cenario {
 String _codigoDaLojaPlay() {
   final bruto = File('lib/billing/loja_play.dart').readAsStringSync();
   final linhas = const LineSplitter().convert(bruto);
-  return linhas.where((l) => !l.trimLeft().startsWith('//')).join(' ');
+  final semComentario =
+      linhas.where((l) => !l.trimLeft().startsWith('//')).join(' ');
+  // Espacos colapsados: uma chamada quebrada em duas linhas (`x.instance` numa,
+  // `.metodo(` na outra) viraria `x.instance .metodo(` e escaparia da busca. Ja
+  // aconteceu — foi assim que este teste ficou vermelho quando o seam entrou.
+  return semComentario.replaceAll(RegExp(r'[ ]+'), ' ').replaceAll(' .', '.');
 }
 
 void main() {
@@ -353,11 +358,20 @@ void main() {
     });
 
     test('4c-b. nenhuma compra e aberta sem o parametro', () {
+      // O ALVO DESTA CONTAGEM MUDOU COM O SEAM, e a mudanca vale registro.
+      //
+      // Antes, `LojaPlayReal` chamava `InAppPurchase.instance.buy*` direto, e a
+      // conta era contra o singleton. Hoje ela chama `_plugin.buy*`, e quem toca
+      // o singleton e `PluginDaPlayReal` — que nao monta parametro nenhum, so
+      // repassa. Contar o singleton passou a medir o transporte em vez da regra.
+      //
+      // A invariante nao mudou: toda abertura de compra em `LojaPlayReal` leva a
+      // amarra da conta.
       final codigo = _codigoDaLojaPlay();
-      // Cada chamada de `buy*` do plugin tem de ser acompanhada do vinculo.
-      final compras = RegExp(r'InAppPurchase.instance.buy').allMatches(codigo).length;
+      final compras = RegExp(r'_plugin.buy').allMatches(codigo).length;
       final vinculos =
           RegExp('applicationUserName: vinculoDaConta').allMatches(codigo).length;
+      expect(compras, 2, reason: 'assinatura e consumivel');
       expect(vinculos, compras,
           reason: 'ha compra aberta sem amarra de conta em loja_play.dart');
     });

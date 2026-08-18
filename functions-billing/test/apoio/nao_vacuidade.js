@@ -437,6 +437,126 @@ const PROVAS = [
     // nada. Desligar aqui tem de pagar a ativacao duas vezes.
     testes: ['^FI4 '],
   },
+  // =========================================================================
+  // AS DEZ PROVAS DO SEAM DA LOJA PLAY REAL
+  // =========================================================================
+  //
+  // Todas apontam para a bateria COMPORTAMENTAL, nunca para o teste estrutural.
+  // As duas de remocao do vinculo (S1 e S5) sao as que importam mais: antes do
+  // seam, apagar `applicationUserName` de `loja_play.dart` deixava os quinze
+  // testes de vinculo VERDES, e so `VINC-4c` — que le o codigo-fonte — acusava.
+  // Se S1 e S5 so ficassem vermelhas pelo estrutural, o seam nao teria fechado
+  // lacuna nenhuma.
+  {
+    caso: 'S1',
+    risco: 'remover applicationUserName da assinatura',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'o vinculo viaja no GooglePlayPurchaseParam',
+    de: ['        offerToken: ofertaPlanoBase,',
+         '        applicationUserName: vinculoDaConta,'].join(NOVA_LINHA),
+    para: '        offerToken: ofertaPlanoBase,',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S2',
+    risco: 'substituir o vinculo por uma string fixa',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'o valor entregue e o recebido, sem substituicao',
+    de: ['        offerToken: ofertaPlanoBase,',
+         '        applicationUserName: vinculoDaConta,'].join(NOVA_LINHA),
+    para: ['        offerToken: ofertaPlanoBase,',
+           "        applicationUserName: 'conta-fixa',"].join(NOVA_LINHA),
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S3',
+    risco: 'alterar um unico caractere do vinculo',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'o vinculo chega caractere a caractere',
+    de: ['        offerToken: ofertaPlanoBase,',
+         '        applicationUserName: vinculoDaConta,'].join(NOVA_LINHA),
+    para: ['        offerToken: ofertaPlanoBase,',
+           "        applicationUserName: 'x' + vinculoDaConta.substring(1),"].join(NOVA_LINHA),
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S4',
+    risco: 'remover o offerToken do plano-base escolhido',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'o plano-base escolhido chega a Play',
+    de: '        offerToken: ofertaPlanoBase,',
+    para: '        offerToken: null,',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S5',
+    risco: 'remover o vinculo do consumivel',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'o avulso tambem carrega a amarra da conta',
+    de: ['        productDetails: produto,',
+         '        applicationUserName: vinculoDaConta,',
+         '      ),',
+         '      autoConsume: false,'].join(NOVA_LINHA),
+    para: ['        productDetails: produto,',
+           '      ),',
+           '      autoConsume: false,'].join(NOVA_LINHA),
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S6',
+    risco: 'consumir antes de o backend creditar',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'autoConsume permanece false',
+    de: '      autoConsume: false,',
+    para: '      autoConsume: true,',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S7',
+    risco: 'a assinatura contornar o seam e ir direto ao singleton',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'as sete operacoes atravessam a porta',
+    de: '    return _plugin.buyNonConsumable(',
+    para: '    return InAppPurchase.instance.buyNonConsumable(',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S8',
+    risco: 'o consumivel contornar o seam',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'as sete operacoes atravessam a porta',
+    de: '    return _plugin.buyConsumable(',
+    para: '    return InAppPurchase.instance.buyConsumable(',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S9',
+    risco: 'finalizar completar uma compra diferente da recebida',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'a compra entregue e exatamente a recebida',
+    de: '      _plugin.completePurchase(compra);',
+    para: '      _plugin.completePurchase(PurchaseDetails(productID: compra.productID + Object().hashCode.toString(), verificationData: compra.verificationData, transactionDate: null, status: compra.status));',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
+  {
+    caso: 'S10',
+    risco: 'restaurar nao chamar a porta',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'restore acontece, e uma vez so',
+    de: '  Future<void> restaurar() => _plugin.restorePurchases();',
+    para: '  Future<void> restaurar() async {}',
+    flutter: 'test/billing/loja_play_real_test.dart',
+    testes: ['(comportamental)'],
+  },
 ];
 
 function git(...args) {

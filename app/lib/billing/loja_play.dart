@@ -71,20 +71,93 @@ abstract class LojaPlay {
   Future<void> finalizar(PurchaseDetails compra);
 }
 
-/// A implementacao real, sobre `package:in_app_purchase`.
-class LojaPlayReal implements LojaPlay {
-  const LojaPlayReal();
+/// O TRANSPORTE ate o plugin, e nada alem disso.
+///
+/// POR QUE ESTA SEGUNDA PORTA EXISTE, JA HAVENDO [LojaPlay]
+///
+/// [LojaPlay] tornou o SERVICO testavel: um duble no lugar dela prova tudo que
+/// `ServicoBilling` decide. O que ela nao alcanca e a ultima seta —
+/// `LojaPlayReal -> plugin` —, porque aquela classe chamava
+/// `InAppPurchase.instance` direto. A consequencia pratica foi medida: apagar
+/// `applicationUserName` de dentro dela deixava os quinze testes de vinculo
+/// VERDES, e so um teste que le o proprio codigo-fonte acusava.
+///
+/// Esta porta existe para tornar aquela seta observavel, e para mais nada. Ela
+/// NAO conhece uid, sessao, entitlement, vinculo nem propriedade da compra: os
+/// metodos tem os nomes do PLUGIN, de proposito, para que a leitura de
+/// [LojaPlayReal] mostre o mapeamento 1:1 e nao dissimule uma segunda camada de
+/// decisao onde so ha encanamento.
+abstract class PluginDaPlay {
+  Future<bool> isAvailable();
+  Stream<List<PurchaseDetails>> get purchaseStream;
+  Future<ProductDetailsResponse> queryProductDetails(Set<String> identifiers);
+  Future<bool> buyNonConsumable({required PurchaseParam purchaseParam});
+  Future<bool> buyConsumable({
+    required PurchaseParam purchaseParam,
+    required bool autoConsume,
+  });
+  Future<void> restorePurchases();
+  Future<void> completePurchase(PurchaseDetails purchase);
+}
+
+/// O plugin de verdade. `const`, e cada metodo resolve o singleton no momento da
+/// CHAMADA — construir esta classe nao registra nem exige plataforma nenhuma.
+class PluginDaPlayReal implements PluginDaPlay {
+  const PluginDaPlayReal();
 
   @override
-  Future<bool> disponivel() => InAppPurchase.instance.isAvailable();
+  Future<bool> isAvailable() => InAppPurchase.instance.isAvailable();
 
   @override
-  Stream<List<PurchaseDetails>> get fluxoDeCompras =>
+  Stream<List<PurchaseDetails>> get purchaseStream =>
       InAppPurchase.instance.purchaseStream;
 
   @override
+  Future<ProductDetailsResponse> queryProductDetails(Set<String> identifiers) =>
+      InAppPurchase.instance.queryProductDetails(identifiers);
+
+  @override
+  Future<bool> buyNonConsumable({required PurchaseParam purchaseParam}) =>
+      InAppPurchase.instance.buyNonConsumable(purchaseParam: purchaseParam);
+
+  @override
+  Future<bool> buyConsumable({
+    required PurchaseParam purchaseParam,
+    required bool autoConsume,
+  }) =>
+      InAppPurchase.instance
+          .buyConsumable(purchaseParam: purchaseParam, autoConsume: autoConsume);
+
+  @override
+  Future<void> restorePurchases() => InAppPurchase.instance.restorePurchases();
+
+  @override
+  Future<void> completePurchase(PurchaseDetails purchase) =>
+      InAppPurchase.instance.completePurchase(purchase);
+}
+
+/// A implementacao real, sobre `package:in_app_purchase`.
+///
+/// O parametro [plugin] tem valor padrao `const PluginDaPlayReal()`: producao
+/// continua indo ao `InAppPurchase.instance` de sempre, `const LojaPlayReal()`
+/// continua valendo, e `ServicoBilling(loja: null)` continua montando esta
+/// classe sem configuracao nenhuma. O parametro existe para o teste, e o teste e
+/// o unico que o informa.
+class LojaPlayReal implements LojaPlay {
+  const LojaPlayReal({PluginDaPlay plugin = const PluginDaPlayReal()})
+      : _plugin = plugin;
+
+  final PluginDaPlay _plugin;
+
+  @override
+  Future<bool> disponivel() => _plugin.isAvailable();
+
+  @override
+  Stream<List<PurchaseDetails>> get fluxoDeCompras => _plugin.purchaseStream;
+
+  @override
   Future<ProductDetailsResponse> consultarProdutos(Set<String> ids) =>
-      InAppPurchase.instance.queryProductDetails(ids);
+      _plugin.queryProductDetails(ids);
 
   @override
   Future<bool> comprarAssinatura(
@@ -110,7 +183,7 @@ class LojaPlayReal implements LojaPlay {
     // E o mesmo objeto que carrega `changeSubscriptionParam`, entao upgrade e
     // downgrade passam por este mesmo caminho — nao ha um segundo lugar onde a
     // amarra pudesse ser esquecida.
-    return InAppPurchase.instance.buyNonConsumable(
+    return _plugin.buyNonConsumable(
       purchaseParam: GooglePlayPurchaseParam(
         productDetails: produto,
         offerToken: ofertaPlanoBase,
@@ -136,7 +209,7 @@ class LojaPlayReal implements LojaPlay {
     // O consumivel tambem leva a amarra: `ProductPurchase` devolve o
     // identificador na RAIZ da resposta, e o backend o confere igual. Deixar o
     // avulso de fora abriria a mesma porta em metade do catalogo.
-    return InAppPurchase.instance.buyConsumable(
+    return _plugin.buyConsumable(
       purchaseParam: PurchaseParam(
         productDetails: produto,
         applicationUserName: vinculoDaConta,
@@ -146,9 +219,9 @@ class LojaPlayReal implements LojaPlay {
   }
 
   @override
-  Future<void> restaurar() => InAppPurchase.instance.restorePurchases();
+  Future<void> restaurar() => _plugin.restorePurchases();
 
   @override
   Future<void> finalizar(PurchaseDetails compra) =>
-      InAppPurchase.instance.completePurchase(compra);
+      _plugin.completePurchase(compra);
 }
