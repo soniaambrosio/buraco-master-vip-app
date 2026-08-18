@@ -995,9 +995,24 @@ void main() {
         'obterMinhaIdentidade',
         'recarregar()',
       ];
+      // A ÚNICA EXCEÇÃO, e ela é nominal de propósito.
+      //
+      // `recarregar()` entrou na lista como procuração para "o Perfil foi
+      // buscar identidade de novo". Depois que o Ranking Real passou a viver
+      // nesta tela, existe um `recarregar()` que NÃO é isso: o botão de tentar
+      // de novo pede à autoridade de RANKING que refaça a consulta dela. É
+      // ação do jogador sobre outro dado, e recusá-la deixaria o retry pela
+      // metade — o Perfil recarregaria e a liga continuaria falhada.
+      //
+      // A exceção é o texto exato da chamada, e não o termo solto: qualquer
+      // outro `recarregar()` nestes quatro arquivos continua reprovando, e a
+      // asserção seguinte prova que esta é a única que existe. O que a
+      // auditoria protege — identidade pública tem um dono só — segue intacto,
+      // porque `EscopoRanking` não é dono de identidade nenhuma.
+      const excecaoRanking = 'EscopoRanking.talvezDe(context)?.recarregar()';
       final achados = <String>[];
       for (final caminho in doPerfil) {
-        final conteudo = _codigo(File(caminho));
+        final conteudo = _codigo(File(caminho)).replaceAll(excecaoRanking, '');
         for (final termo in proibidos) {
           if (conteudo.contains(termo)) achados.add('$caminho: $termo');
         }
@@ -1009,6 +1024,31 @@ void main() {
             'o Perfil consome o estado que a sessão já carregou; buscar de '
             'novo faria dele um segundo dono da identidade pública',
       );
+
+      // E a exceção não é um buraco: ela vale UMA vez, num arquivo só.
+      //
+      // Sem esta contagem, a linha acima viraria autorização para espalhar
+      // `recarregar()` pelo Perfil — bastaria escrevê-lo na forma isenta. Aqui
+      // se prova que existe exatamente uma chamada, que ela está na página (e
+      // não na tela, no serviço ou no resolvedor) e que os outros três arquivos
+      // não têm nenhuma.
+      final naPagina = _codigo(File('lib/pages/perfil_page.dart'));
+      expect(
+        excecaoRanking.allMatches(naPagina).length,
+        1,
+        reason:
+            'o retry do Ranking é uma chamada só; mais de uma é o Perfil '
+            'assumindo o comando de uma autoridade que não é dele',
+      );
+      for (final caminho in doPerfil.where(
+        (c) => c != 'lib/pages/perfil_page.dart',
+      )) {
+        expect(
+          _codigo(File(caminho)),
+          isNot(contains('recarregar()')),
+          reason: '$caminho não recarrega nada — quem o faz é a página',
+        );
+      }
     });
 
     test('a autoridade do avatar é UMA, e mora no resolvedor', () {
@@ -1079,7 +1119,35 @@ void main() {
     test('o fecho cresceu só pelo componente previsto', () {
       // O único arquivo novo alcançável é o resolvedor.
       expect(alcancaveis, contains('lib/sessao/avatar_publico.dart'));
-      expect(alcancaveis, hasLength(40));
+
+      // 40 → 45 NA COMPOSIÇÃO COM O RANKING REAL V2, e os cinco têm nome.
+      //
+      // O 40 media uma árvore que não tinha Ranking: era o fecho de então mais
+      // o resolvedor. Compondo as duas linhagens, entra junto o componente de
+      // Ranking — e o número tinha de acompanhar, porque ele é um alarme de
+      // crescimento INESPERADO, não uma constante do produto.
+      //
+      // Trocar o número sozinho seria trocar um alarme por outro sem prova. Por
+      // isso os cinco arquivos estão listados abaixo: se amanhã o fecho crescer
+      // de novo, não basta ajustar o total — o que entrou tem de ser nomeado
+      // aqui, ou a lista denuncia. O alarme continua exato: qualquer arquivo
+      // fora do previsto quebra o teste do mesmo jeito que quebrava antes.
+      const doRankingReal = [
+        'lib/ranking/escopo_ranking.dart',
+        'lib/ranking/leitor_ranking.dart',
+        'lib/ranking/ranking_da_sessao.dart',
+        'lib/ranking/ranking_transporte.dart',
+        'lib/ranking/ranking_transporte_firebase.dart',
+      ];
+      for (final caminho in doRankingReal) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — o Ranking Real deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+      expect(alcancaveis, hasLength(40 + doRankingReal.length));
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
       final resolvedor = _codigo(File('lib/sessao/avatar_publico.dart'));
       final importados = _reImport
