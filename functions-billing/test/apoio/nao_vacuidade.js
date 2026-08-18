@@ -38,6 +38,22 @@ const RAIZ = path.resolve(__dirname, '..', '..');
 
 /** Quebra de linha, montada assim para nao existir escape dentro das ancoras. */
 const NOVA_LINHA = String.fromCharCode(10);
+const CRLF = String.fromCharCode(13) + NOVA_LINHA;
+
+/**
+ * Onde mora o arquivo de uma edicao.
+ *
+ * As provas do backend citam caminhos do codebase (`index.js`); as do cliente
+ * citam caminhos do REPOSITORIO (`app/lib/...`), porque o aplicativo nao esta
+ * dentro de functions-billing. Resolver os dois com a mesma raiz procuraria o
+ * Dart dentro do backend — que foi exatamente o que aconteceu na primeira
+ * tentativa.
+ */
+function caminhoDe(arquivo) {
+  return arquivo.startsWith('app/')
+    ? path.resolve(RAIZ, '..', arquivo)
+    : path.join(RAIZ, arquivo);
+}
 
 /**
  * Cada prova nomeia: o risco, o arquivo de producao, o trecho que implementa a
@@ -305,6 +321,122 @@ const PROVAS = [
     para: '    const uidResolvido = uidEsperado ? await uidDoVinculo(identificador) : null;',
     testes: ['^Y7 '],
   },
+  // =========================================================================
+  // AS SETE MUTACOES DA COMPOSICAO (secao 17 da OS)
+  // =========================================================================
+  //
+  // As cinco do backend ficam aqui. As duas do cliente Flutter (remover o
+  // identificador do parametro de compra, e comprar mesmo com a preparacao
+  // falhando) vivem em `app/test/billing/prova_negativa_vinculo.md`, porque este
+  // runner so alcanca `node --test` — declarado la e no laudo, para que a
+  // ausencia seja uma decisao registrada e nao um esquecimento.
+  {
+    caso: 'C1',
+    risco: 'creditar a parcela de fichas antes de a propriedade ser comprovada',
+    arquivo: 'index.js',
+    protecao: 'a parcela sai do dono RESOLVIDO, e nao do chamador',
+    // DUAS EDICOES, e a razao esta no resultado da primeira tentativa: com
+    // `uid` no lugar de `propriedade.uid` o teste passava, porque o passo 6 ja
+    // tinha recusado quem diverge — os dois valores sao iguais em toda execucao
+    // alcancavel. A mutacao sozinha era VACUA e nao contava.
+    //
+    // Desligar o passo 6 JUNTO e o que abre a unica janela em que a diferenca
+    // aparece: com a conferencia de propriedade fora, `uid` e do invasor e
+    // `propriedade.uid` continua sendo o do dono. Se a parcela seguisse o
+    // chamador, o livro-razao estaria decidindo propriedade por conta propria —
+    // que e exatamente a segunda autoridade que esta OS proibe.
+    edicoes: [
+      {
+        arquivo: 'propriedade.js',
+        de: '  if (uidEsperado != null && uidResolvido !== uidEsperado) {',
+        para: '  if (false && uidEsperado != null && uidResolvido !== uidEsperado) {',
+      },
+      {
+        arquivo: 'index.js',
+        de: [
+          '          const r = await dependencias().livroFichas.liquidarParcela({',
+          '            uid: propriedade.uid,',
+        ].join(NOVA_LINHA),
+        para: [
+          '          const r = await dependencias().livroFichas.liquidarParcela({',
+          '            uid,',
+        ].join(NOVA_LINHA),
+      },
+    ],
+    testes: ['^FI1 '],
+  },
+  {
+    caso: 'C2',
+    risco: 'voltar a creditar fichas a quem apresentou o token',
+    arquivo: 'propriedade.js',
+    protecao: 'igualdade exigida entre o dono resolvido e a conta autenticada',
+    de: '  if (uidEsperado != null && uidResolvido !== uidEsperado) {',
+    para: '  if (false && uidEsperado != null && uidResolvido !== uidEsperado) {',
+    testes: ['^FI1 ', '^R6 '],
+  },
+  {
+    caso: 'C3',
+    risco: 'ignorar o identificador que a Google devolve na assinatura',
+    arquivo: 'propriedade.js',
+    protecao: 'leitura do identificador aninhado em externalAccountIdentifiers',
+    de: '    const aninhado = externos.obfuscatedExternalAccountId;',
+    para: '    const aninhado = undefined;',
+    testes: ['^FI1 ', '^Y7 '],
+  },
+  {
+    caso: 'C4',
+    risco: 'associar o token ao uid antes da consulta a Google',
+    arquivo: 'index.js',
+    protecao: 'nenhuma persistencia antes da confirmacao autoritativa',
+    de: '    const consultadoEm = new Date().toISOString();',
+    para: [
+      '    await refCompra.set({ uid, produtoId, estado: ESTADO.EM_VALIDACAO }, { merge: true });',
+      '    const consultadoEm = new Date().toISOString();',
+    ].join(NOVA_LINHA),
+    testes: ['^FI1 ', '^R6 '],
+  },
+  {
+    caso: 'C6',
+    risco: 'remover o identificador do parametro de compra do Flutter',
+    arquivo: 'app/lib/billing/loja_play.dart',
+    protecao: 'o vinculo viaja como applicationUserName ate setObfuscatedAccountId',
+    de: '        applicationUserName: vinculoDaConta,' + NOVA_LINHA
+      + '      ),' + NOVA_LINHA
+      + '    );' + NOVA_LINHA
+      + '  }' + NOVA_LINHA + NOVA_LINHA
+      + '  @override' + NOVA_LINHA
+      + '  Future<bool> comprarConsumivel(',
+    para: '      ),' + NOVA_LINHA
+      + '    );' + NOVA_LINHA
+      + '  }' + NOVA_LINHA + NOVA_LINHA
+      + '  @override' + NOVA_LINHA
+      + '  Future<bool> comprarConsumivel(',
+    flutter: 'test/billing/vinculo_compra_test.dart',
+    testes: ['(flutter)'],
+  },
+  {
+    caso: 'C7',
+    risco: 'abrir a compra mesmo quando a preparacao falha',
+    arquivo: 'app/lib/billing/servico_billing.dart',
+    protecao: 'sem vinculo, o dialogo da Play nao abre',
+    de: '    final vinculo = await _vinculoDaSessao();' + NOVA_LINHA
+      + '    if (vinculo == null) return false;',
+    para: "    final vinculo = await _vinculoDaSessao() ?? 'a' * 48;",
+    flutter: 'test/billing/vinculo_compra_test.dart',
+    testes: ['(flutter)'],
+  },
+  {
+    caso: 'C5',
+    risco: 'a parcela de ativacao deixar de ser idempotente',
+    arquivo: 'fichasStore.js',
+    protecao: 'a linha ja existente do livro-razao barra o segundo credito',
+    de: "      if (snap.exists) return { creditado: 0, motivo: 'parcela_ja_paga' };",
+    para: "      if (false) return { creditado: 0, motivo: 'parcela_ja_paga' };",
+    // A barreira e do LIVRO-RAZAO, e nao de `compras/{hash}`: e por isso que a
+    // validacao e o agendador podem liquidar a mesma parcela sem combinarem
+    // nada. Desligar aqui tem de pagar a ativacao duas vezes.
+    testes: ['^FI4 '],
+  },
 ];
 
 function git(...args) {
@@ -313,6 +445,36 @@ function git(...args) {
 
 function arvoreLimpa() {
   return git('status', '--porcelain') === '';
+}
+
+/**
+ * A suite Flutter do cliente, para as provas que mutam Dart.
+ *
+ * Nao e luxo: duas das sete mutacoes da composicao vivem no aplicativo — tirar o
+ * identificador do parametro de compra, e deixar a compra abrir mesmo com a
+ * preparacao falhando. Deixa-las so descritas num documento seria descrever uma
+ * prova em vez de produzi-la, e o valor inteiro desta ferramenta esta em produzir.
+ */
+function rodarFlutter(alvo) {
+  const r = spawnSync(
+    'flutter',
+    ['test', alvo, '--no-pub', '--reporter', 'compact'],
+    { cwd: path.join(RAIZ, '..', 'app'), encoding: 'utf8', shell: true }
+  );
+  const saida = `${r.stdout || ''}${r.stderr || ''}`;
+  // Compilar e falhar CONTA como vermelho: uma mutacao que quebra o contrato a
+  // ponto de o Dart recusar tambem foi morta pelo teste.
+  const m = new RegExp('\\+(\\d+)(?: -(\\d+))?', 'g');
+  let ultimo = null;
+  for (const achado of saida.matchAll(m)) ultimo = achado;
+  const passou = ultimo ? Number(ultimo[1]) : 0;
+  const falhou = ultimo && ultimo[2] ? Number(ultimo[2]) : 0;
+  const quebrou = /Failed to load|Compilation failed|Error:/.test(saida);
+  return {
+    codigo: r.status,
+    tests: passou + falhou || (quebrou ? 1 : 0),
+    fail: falhou || (quebrou ? 1 : 0),
+  };
 }
 
 function rodar(padroes) {
@@ -342,31 +504,41 @@ function main() {
   let vacuos = 0;
 
   for (const prova of PROVAS) {
-    const alvo = path.join(RAIZ, prova.arquivo);
-    const original = fs.readFileSync(alvo, 'utf8');
-
-    // As ancoras sao escritas com `\n`; a arvore desta maquina esta em CRLF.
-    // Traduzir aqui e o que impede a prova de abortar por final de linha —
-    // falhar por isso seria falhar pelo motivo errado.
-    const eol = original.includes('\r\n') ? '\r\n' : '\n';
-    const de = prova.de.split('\n').join(eol);
-    const para = prova.para.split('\n').join(eol);
-
-    const ocorrencias = original.split(de).length - 1;
-    if (ocorrencias !== 1) {
-      console.error(
-        `ABORTADO: ancora ${ocorrencias === 0 ? 'nao encontrada' : 'ambigua'} em ${prova.arquivo} `
-        + `para o caso ${prova.caso} (${ocorrencias} ocorrencias).`
-      );
-      process.exit(2);
+    // Uma prova pode precisar de MAIS DE UMA edicao, e nao por conveniencia.
+    // Ha protecoes que so sao observaveis em conjunto: desligar uma sozinha nao
+    // muda nada porque a outra ja recusou antes. `edicoes` existe para esses
+    // casos — ver C1, onde a parcela so pode ir para a conta errada se a
+    // conferencia de propriedade tambem estiver desligada.
+    const edicoes = prova.edicoes
+      || [{ arquivo: prova.arquivo, de: prova.de, para: prova.para }];
+    const originais = new Map();
+    for (const e of edicoes) {
+      const cam = caminhoDe(e.arquivo);
+      if (!originais.has(cam)) originais.set(cam, fs.readFileSync(cam, "utf8"));
     }
+    const alvo = caminhoDe(edicoes[0].arquivo);
+    const original = originais.get(alvo);
 
     let resultado;
     try {
-      fs.writeFileSync(alvo, original.replace(de, para), 'utf8');
-      resultado = rodar(prova.testes);
+      for (const e of edicoes) {
+        const cam = caminhoDe(e.arquivo);
+        const atual = fs.readFileSync(cam, "utf8");
+        const eolA = atual.includes(CRLF) ? CRLF : NOVA_LINHA;
+        const norm = (t) => t.split(CRLF).join(NOVA_LINHA).split(NOVA_LINHA).join(eolA);
+        const dE = norm(e.de);
+        if (atual.split(dE).length - 1 !== 1) {
+          console.error(`ABORTADO: ancora de ${e.arquivo} nao e unica no caso ${prova.caso}.`);
+          for (const [c2, v2] of originais) fs.writeFileSync(c2, v2, "utf8");
+          process.exit(2);
+        }
+        fs.writeFileSync(cam, atual.replace(dE, norm(e.para)), "utf8");
+      }
+      resultado = prova.flutter
+        ? rodarFlutter(prova.flutter)
+        : rodar(prova.testes);
     } finally {
-      fs.writeFileSync(alvo, original, 'utf8');
+      for (const [cam, conteudo] of originais) fs.writeFileSync(cam, conteudo, 'utf8');
     }
 
     if (!arvoreLimpa()) {

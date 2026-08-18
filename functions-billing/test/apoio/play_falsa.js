@@ -83,6 +83,7 @@ function corpoAssinatura({
   itens = undefined,
   contaOfuscada = null,
   tokenLigado = null,
+  planoBase = null,
 }) {
   const corpo = { subscriptionState: estado };
   if (inicioEm !== undefined) corpo.startTime = inicioEm;
@@ -97,6 +98,10 @@ function corpoAssinatura({
         productId: produtoId,
         expiryTime: expiraEm,
         autoRenewingPlan: { autoRenewEnabled: autoRenovacao },
+        // Com UM produto carregando tres planos-base, `productId` e igual nas
+        // tres compras e so `basePlanId` diz qual foi. Quem precisa da distincao
+        // e a entrega mensal de fichas.
+        ...(planoBase ? { offerDetails: { basePlanId: planoBase } } : {}),
       },
     ];
   return corpo;

@@ -34,6 +34,7 @@ const {
   PRODUTO,
   PRODUTO_ANUAL,
   PRODUTO_FICHAS,
+  PLANO_MENSAL,
   U1,
   U2,
   TOKEN_A,
@@ -461,7 +462,7 @@ test('F cancelamento nao remove o VIP antes do fim do periodo pago', async () =>
   assert.equal(c.publico(U1).renovacaoAutomatica, false);
 });
 
-test('F2 cancelamento com o periodo JA vencido nao mantem acesso', async () => {
+test('FI2 cancelamento com o periodo JA vencido nao mantem acesso', async () => {
   const c = cenarioDeModulo();
   c.registrarCompra(HASH_A, { uid: U1 });
   c.play.definirAssinatura(TOKEN_A, {
@@ -1742,6 +1743,139 @@ test('Z1 mensagem de erro de terceiro nao chega ao Firestore nem ao cliente', as
   const tudoD = JSON.stringify(d.db.caminhos().map((p) => d.db.ver(p)));
   assert.ok(!tudoD.includes(AGULHA), 'o aviso de fechamento persistiu texto de terceiro');
   assert.equal(d.compra(HASH_A).avisoFechamento, 'falha_temporaria_play');
+});
+
+// ===========================================================================
+// F — AS FICHAS SEGUEM A PROPRIEDADE, E NAO O CHAMADOR
+// ===========================================================================
+//
+// Os casos que so existem DEPOIS da composicao. A linhagem comercial acrescentou
+// a entrega economica da assinatura — parcela de ativacao e parcelas mensais,
+// escrituradas num livro-razao idempotente. A linhagem P0 acrescentou a
+// autoridade de propriedade. Postas juntas, ha uma pergunta nova: para QUEM a
+// parcela e creditada?
+//
+// A resposta tem de ser a mesma da do VIP. Se divergisse, o livro-razao viraria
+// uma segunda autoridade de propriedade — e uma autoridade a mais e exatamente
+// o defeito que a correcao P0 desfez.
+
+test('FI1 invasor com token alheio nao recebe VIP nem ficha nenhuma', async () => {
+  const c = cenarioDeIndex();
+  // A compra e de U1: e o vinculo DELE que a Google devolve.
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: FUTURO,
+    contaOfuscada: VINCULO_U1,
+    planoBase: PLANO_MENSAL,
+  });
+  c.db.zerarDiario();
+
+  await assert.rejects(
+    () => c.chamar('validarCompraPlay', {
+      uid: U2, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+    }),
+    (e) => e.code === 'permission-denied'
+  );
+
+  // Zero VIP, zero fichas, zero rastro — nem para o invasor nem para o dono.
+  assert.equal(c.publico(U2), null, 'o invasor recebeu VIP');
+  assert.equal(c.usuario(U2), null, 'o invasor recebeu fichas');
+  assert.equal(c.publico(U1), null);
+  assert.equal(c.usuario(U1), null);
+  assert.equal(c.db.diario.length, 0, 'a tentativa escreveu no Firestore');
+});
+
+test('F2 depois do ataque, o dono valida e a parcela de ativacao e SO dele', async () => {
+  const c = cenarioDeIndex();
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: FUTURO,
+    contaOfuscada: VINCULO_U1,
+    planoBase: PLANO_MENSAL,
+  });
+
+  // O ataque acontece primeiro, e falha.
+  await c.chamar('validarCompraPlay', {
+    uid: U2, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  }).then(() => { throw new Error('o invasor foi aprovado'); }, () => {});
+
+  // E o pagante nao ficou trancado do lado de fora.
+  const dono = await c.chamar('validarCompraPlay', {
+    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  });
+
+  assert.equal(dono.aprovada, true, 'o ataque trancou o proprietario');
+  assert.equal(c.publico(U1).vipAtivo, true);
+  // A parcela de ativacao — indice 0, 2700 fichas — foi para U1.
+  assert.equal(c.usuario(U1).fichas, 2700, 'a parcela nao chegou ao dono');
+  // E U2 continua sem nada, nem direito nem carteira.
+  assert.equal(c.publico(U2), null);
+  assert.equal(c.usuario(U2), null, 'o invasor ficou com fichas');
+});
+
+test('FI3 a parcela e creditada ao dono RESOLVIDO, e nao a quem chamou', async () => {
+  // A prova estrutural do que F2 mostra pelo resultado: o livro-razao recebe o
+  // uid que a propriedade resolveu. Hoje os dois valores coincidem porque o
+  // passo 6 recusa quando divergem — e e justamente por coincidirem que o codigo
+  // precisa dizer QUAL dos dois ele quer, senao uma mudanca futura naquele passo
+  // transformaria a igualdade implicita numa parcela na conta errada.
+  const c = cenarioDeIndex();
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: FUTURO,
+    contaOfuscada: VINCULO_U1,
+    planoBase: PLANO_MENSAL,
+  });
+
+  await c.chamar('validarCompraPlay', {
+    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  });
+
+  // O livro-razao existe, e existe no nome do dono.
+  // So carteira e escrituracao entram na conta: `playerBillingIdentity/U2` e
+  // semente do cenario, e nao efeito desta compra.
+  const escriturado = (uid) => c.db.caminhos().filter(
+    (p) => p.startsWith(`usuarios/${uid}`) || (p.startsWith('fichas') && p.includes(uid))
+  );
+  assert.equal(c.usuario(U1).fichas, 2700);
+  assert.ok(escriturado(U1).length > 0, 'o dono nao foi escriturado');
+  assert.deepEqual(escriturado(U2), [], 'sobrou escrituracao no nome de quem nao comprou');
+});
+
+test('FI4 validacao e agendador liquidam a MESMA parcela uma vez so', async () => {
+  // A PRIMEIRA VERSAO DESTE TESTE ERA VACUA, e a prova negativa C5 foi quem
+  // mostrou. Ela reapresentava a mesma compra duas vezes e conferia o saldo — e
+  // passava mesmo com a barreira do livro-razao DESLIGADA, porque a segunda
+  // validacao volta cedo em `JA_CONCEDIDA` e nunca chega a liquidar nada. O
+  // teste media um retorno antecipado, e nao uma idempotencia.
+  //
+  // A corrida real e outra, e e a razao de o livro-razao existir: a VALIDACAO
+  // paga a parcela 0 assim que a compra fecha, e o AGENDADOR varre os
+  // assinantes ativos e paga o que estiver devendo. Os dois caminhos nao se
+  // combinam — o que os impede de pagar duas vezes e a linha ja escrita.
+  const c = cenarioDeIndex();
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: FUTURO,
+    // Assinatura RECEM-COMPRADA: so a parcela 0 e devida. Com `inicioEm` de um
+    // mes atras o agendador pagaria, corretamente, tambem a parcela mensal 1 —
+    // e o teste mediria a soma de duas coisas diferentes em vez da barreira.
+    inicioEm: T0,
+    contaOfuscada: VINCULO_U1,
+    planoBase: PLANO_MENSAL,
+  });
+
+  await c.chamar('validarCompraPlay', {
+    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  });
+  assert.equal(c.usuario(U1).fichas, 2700, 'a ativacao nao foi paga na validacao');
+
+  // O agendador passa por cima do mesmo jogador, encontra a parcela 0 devida
+  // pelo calendario, e tenta liquida-la de novo.
+  await c.modulo.concederFichasMensais.run({});
+
+  assert.equal(c.usuario(U1).fichas, 2700,
+    'a parcela de ativacao foi paga duas vezes — a barreira do livro-razao nao segurou');
 });
 
 // ===========================================================================

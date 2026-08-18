@@ -27,6 +27,9 @@ import 'package:buraco_master_vip/billing/vinculo.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'apoio/dubles.dart';
 
 const _catalogoDeTeste = CatalogoBilling(
@@ -88,6 +91,18 @@ class _Cenario {
   final _SessaoMutavel sessao;
   final List<String> diario = <String>[];
   late final ServicoBilling servico;
+}
+
+/// O codigo de `loja_play.dart`, SEM comentarios.
+///
+/// Varrer o arquivo inteiro faria a busca casar com a propria prosa — o
+/// cabecalho daquele arquivo cita `applicationUserName` tres vezes explicando o
+/// que ele faz. Um teste estrutural que se satisfaz com o proprio comentario nao
+/// prova nada.
+String _codigoDaLojaPlay() {
+  final bruto = File('lib/billing/loja_play.dart').readAsStringSync();
+  final linhas = const LineSplitter().convert(bruto);
+  return linhas.where((l) => !l.trimLeft().startsWith('//')).join(' ');
 }
 
 void main() {
@@ -305,6 +320,46 @@ void main() {
 
       expect(c.preparador.chamadas, 2);
       expect(c.loja.vinculosRecebidos, <String>[_vinculoA]);
+    });
+  });
+
+  // =========================================================================
+  group('VINC-4c — a implementacao REAL entrega o vinculo ao plugin', () {
+    // POR QUE ESTE TESTE E ESTRUTURAL, E POR QUE ISSO E UMA LIMITACAO ADMITIDA.
+    //
+    // Todos os outros testes desta suite passam pelo duble `LojaPlayFalsa`, que
+    // recebe `vinculoDaConta` como parametro e o registra. Isso prova que o
+    // SERVICO entrega o vinculo a porta — e nao prova nada sobre o que
+    // `LojaPlayReal` faz com ele, porque aquela classe chama
+    // `InAppPurchase.instance` direto e exige canal de plataforma.
+    //
+    // A prova negativa C6 encontrou exatamente essa lacuna: apagar
+    // `applicationUserName` de `loja_play.dart` deixava os quinze testes verdes.
+    // Enquanto `LojaPlayReal` nao receber o plugin por injecao, ler o codigo e a
+    // unica prova disponivel — e uma prova fraca e melhor que a ausencia dela.
+
+    test('4c. as duas compras passam o vinculo como applicationUserName', () {
+      final codigo = _codigoDaLojaPlay();
+
+      // O parametro precisa aparecer DUAS vezes: assinatura e consumivel.
+      final ocorrencias =
+          RegExp('applicationUserName: vinculoDaConta').allMatches(codigo).length;
+      expect(ocorrencias, 2,
+          reason: 'assinatura e consumivel precisam entregar o vinculo ao plugin');
+
+      // E precisa estar dentro dos dois construtores de parametro de compra.
+      expect(codigo.contains('GooglePlayPurchaseParam('), isTrue);
+      expect(codigo.contains('PurchaseParam('), isTrue);
+    });
+
+    test('4c-b. nenhuma compra e aberta sem o parametro', () {
+      final codigo = _codigoDaLojaPlay();
+      // Cada chamada de `buy*` do plugin tem de ser acompanhada do vinculo.
+      final compras = RegExp(r'InAppPurchase.instance.buy').allMatches(codigo).length;
+      final vinculos =
+          RegExp('applicationUserName: vinculoDaConta').allMatches(codigo).length;
+      expect(vinculos, compras,
+          reason: 'ha compra aberta sem amarra de conta em loja_play.dart');
     });
   });
 

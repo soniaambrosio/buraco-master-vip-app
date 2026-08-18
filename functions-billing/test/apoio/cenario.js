@@ -36,6 +36,8 @@ const PACOTE = 'io.github.soniaambrosio.buracomastervip';
 const PRODUTO = 'master_vip_mensal';
 const PRODUTO_ANUAL = 'master_vip_anual';
 const PRODUTO_FICHAS = 'pacote_fichas_1000';
+/** O plano-base que a Play devolve em `offerDetails.basePlanId`. */
+const PLANO_MENSAL = 'mensal';
 
 const U1 = 'jogador_sintetico_1';
 const U2 = 'jogador_sintetico_2';
@@ -278,7 +280,16 @@ function cenarioDeIndex({ maxTentativas, catalogo, vincular = true } = {}) {
   if (catalogo !== null) {
     db.semear('configuracao/billing', {
       produtos: catalogo || {
-        [PRODUTO]: { assinatura: true },
+        // `planos` e o que a linhagem comercial acrescentou: um produto de
+        // assinatura carrega tres planos-base, e a entrega de fichas le o plano
+        // que a Google devolveu. Sem isso, a parcela de ativacao nao teria
+        // quanto creditar e o caso de composicao nao existiria.
+        [PRODUTO]: {
+          assinatura: true,
+          planos: {
+            [PLANO_MENSAL]: { ativacao: 2700, mensal: 1200 },
+          },
+        },
         [PRODUTO_ANUAL]: { assinatura: true },
         [PRODUTO_FICHAS]: { assinatura: false, fichas: 1000 },
       },
@@ -318,6 +329,7 @@ module.exports = {
   PRODUTO,
   PRODUTO_ANUAL,
   PRODUTO_FICHAS,
+  PLANO_MENSAL,
   U1,
   U2,
   TOKEN_A,
