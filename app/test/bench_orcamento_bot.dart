@@ -196,4 +196,92 @@ void main() {
     }
     expect(corpus, isNotEmpty);
   });
+  // ===================================================================
+  // BENCHMARK DE PARTIDA — a CONFIGURAÇÃO ENTREGUE nos dois lados.
+  //
+  // A matriz de 384 partidas põe o bot novo contra o bot da BASE, que é o que
+  // mede qualidade. Ela NÃO responde "quanto tempo leva uma partida do jogo
+  // entregue", porque metade dos assentos ali roda de propósito a versão sem
+  // orçamento — a explosão que esta OS corrige. Este benchmark põe a
+  // configuração entregue nas quatro cadeiras, que é o que o jogador terá.
+  //
+  // Parâmetros: BENCH_MODS, BENCH_SEEDS, BENCH_RODADAS, BENCH_PARTIDA_OUT.
+  // ===================================================================
+  test('custo por partida com a configuracao entregue', () {
+    final seeds = (Platform.environment['BENCH_SEEDS'] ?? '29')
+        .split(',')
+        .map(int.parse)
+        .toList();
+    final maxRodadas = _env('BENCH_RODADAS', 60);
+    final registros = <Map<String, Object?>>[];
+
+    for (final mod in mods) {
+      for (final seed in seeds) {
+        final j = Jogo(const ['n0', 'e1', 'n2', 'e3'], const ['', '', '', ''],
+            const ['', '', '', ''],
+            seed: seed, motorConfig: MotorConfig.producao());
+        j.modalidade = mod;
+        j.metaPontos = 1500;
+        j.configuracaoBot = ConfiguracaoBot.v2;
+
+        final tempos = <int>[];
+        var cortes = 0, fallbacks = 0, turnos = 0;
+        final relogio = Stopwatch()..start();
+        final sw = Stopwatch();
+        for (var rod = 0; rod < maxRodadas && !j.encerrada; rod++) {
+          var seg = 0;
+          while (!j.rodadaEncerrada && seg < 3000) {
+            seg++;
+            turnos++;
+            sw
+              ..reset()
+              ..start();
+            j.botJoga(j.vez);
+            sw.stop();
+            tempos.add(sw.elapsedMilliseconds);
+            final o = j.ultimaDecisaoBot?['orcamento'];
+            if (o is Map) {
+              if (o['esgotado'] == true) cortes++;
+              if (o['fallback'] == true) fallbacks++;
+            }
+            if (j.integridadeErro != null) break;
+          }
+          if (seg >= 3000) break;
+          j.contarPontos();
+          if (!j.encerrada) j.novaRodada();
+        }
+        relogio.stop();
+        tempos.sort();
+        int q(double x) =>
+            tempos.isEmpty ? 0 : tempos[(x * (tempos.length - 1)).floor()];
+        registros.add({
+          'mod': mod,
+          'seed': seed,
+          'turnos': turnos,
+          'terminou': j.encerrada,
+          'integra': j.integridadeErro == null,
+          'partidaMs': relogio.elapsedMilliseconds,
+          'p50': q(0.5),
+          'p95': q(0.95),
+          'p99': q(0.99),
+          'max': tempos.isEmpty ? 0 : tempos.last,
+          'cortes': cortes,
+          'fallbacks': fallbacks,
+        });
+        // ignore: avoid_print
+        print('[PARTIDA] $mod/$seed turnos=$turnos '
+            'terminou=${j.encerrada} partida=${relogio.elapsedMilliseconds}ms '
+            'p50=${q(0.5)}ms p95=${q(0.95)}ms p99=${q(0.99)}ms '
+            'max=${tempos.isEmpty ? 0 : tempos.last}ms '
+            'cortes=$cortes fallbacks=$fallbacks');
+      }
+    }
+    final saida = Platform.environment['BENCH_PARTIDA_OUT'];
+    if (saida != null) File(saida).writeAsStringSync(jsonEncode(registros));
+    // TODA partida tem de terminar: e o criterio da OS, nao um detalhe.
+    for (final r in registros) {
+      expect(r['terminou'], isTrue, reason: '${r['mod']}/${r['seed']}');
+      expect(r['integra'], isTrue, reason: '${r['mod']}/${r['seed']}');
+    }
+  });
 }

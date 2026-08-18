@@ -7694,12 +7694,12 @@ void main() {
         expect(nova.orcamento!['esgotado'], isFalse,
             reason: '$modalidade: este estado tem de caber no orçamento');
         expect(nova.plano?.cartaDescartada?.id, base.plano?.cartaDescartada?.id,
-            reason: '$modalidade');
-        expect(nova.score, base.score, reason: '$modalidade');
-        expect(nova.features, base.features, reason: '$modalidade');
-        expect(nova.razao, base.razao, reason: '$modalidade');
+            reason: modalidade);
+        expect(nova.score, base.score, reason: modalidade);
+        expect(nova.features, base.features, reason: modalidade);
+        expect(nova.razao, base.razao, reason: modalidade);
         expect(nova.candidatosConsiderados, base.candidatosConsiderados,
-            reason: '$modalidade');
+            reason: modalidade);
       }
     });
 
