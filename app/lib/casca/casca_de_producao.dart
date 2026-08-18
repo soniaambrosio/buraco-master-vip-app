@@ -38,11 +38,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../screens/splash_oficial_screen.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/sessao_do_jogador.dart';
 import 'home_de_producao.dart';
 import 'login_de_producao.dart';
+import 'splash/contrato_da_abertura.dart';
+import 'splash/splash_constelacao_screen.dart';
 
 /// Quanto a casca espera o fluxo de autenticação se pronunciar antes de
 /// desistir e oferecer uma saída.
@@ -56,6 +57,7 @@ class CascaDeProducao extends StatefulWidget {
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
+    this.fonteDaAbertura,
   });
 
   /// A abertura já tocou nesta execução.
@@ -73,6 +75,15 @@ class CascaDeProducao extends StatefulWidget {
   final bool somNaSplash;
 
   final Duration? limiteDeResolucao;
+
+  /// De onde a arte da abertura vem. Nula em produção — a splash usa a fonte
+  /// real da Rive.
+  ///
+  /// Existe pelo mesmo motivo das outras costuras desta casca: o runtime da
+  /// Rive é nativo e não sobe dentro de `flutter test`, então sem esta injeção
+  /// o portão duplo (animação × bootstrap) só poderia ser provado no ramo em
+  /// que a arte FALHA — e o caso que mais importa é justamente o outro.
+  final FonteDaAbertura? fonteDaAbertura;
 
   @override
   State<CascaDeProducao> createState() => _CascaDeProducaoState();
@@ -145,12 +156,16 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
     return const HomeDeProducao();
   }
 
-  Widget _splash() => SplashOficialScreen(
+  Widget _splash() => SplashConstelacaoScreen(
     // A chave amarra o estado da splash a ESTA instância: sem ela, sair do ramo
     // de espera e voltar recriaria a animação do zero.
     key: const ValueKey('splash-da-casca'),
     habilitarSom: widget.somNaSplash,
-    duracao: widget.duracaoDaSplash ?? const Duration(milliseconds: 3800),
+    // A duração de autoria da timeline é o padrão. Ela não é a autoridade do
+    // fim — quem termina a animação é a própria arte —, e sim o horizonte do
+    // relógio de segurança da abertura.
+    duracao: widget.duracaoDaSplash ?? kDuracaoDaAbertura,
+    fonte: widget.fonteDaAbertura,
     onConcluida: widget.onAberturaConcluida,
   );
 }

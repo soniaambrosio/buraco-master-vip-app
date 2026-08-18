@@ -51,6 +51,7 @@ import '../sessao/sessao_firebase.dart';
 import 'casca_de_producao.dart';
 import 'escopo_autenticacao.dart';
 import 'escopo_transporte.dart';
+import 'splash/contrato_da_abertura.dart';
 
 class RaizDoAplicativo extends StatefulWidget {
   const RaizDoAplicativo({
@@ -62,6 +63,7 @@ class RaizDoAplicativo extends StatefulWidget {
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
+    this.fonteDaAbertura,
   });
 
   /// A sessão canônica. Nula em produção — a raiz monta a de Firebase.
@@ -84,6 +86,14 @@ class RaizDoAplicativo extends StatefulWidget {
   final Duration? duracaoDaSplash;
   final bool somNaSplash;
   final Duration? limiteDeResolucao;
+
+  /// A arte da abertura. Nula em produção — a splash usa a fonte real da Rive.
+  ///
+  /// Quinta costura, pela mesma razão das outras quatro: o runtime da Rive é
+  /// NATIVO e não sobe dentro de `flutter test`. Sem esta injeção, "a abertura
+  /// terminou antes do bootstrap" e "o bootstrap terminou antes da abertura" só
+  /// poderiam ser provados no ramo em que a arte falha ao carregar.
+  final FonteDaAbertura? fonteDaAbertura;
 
   @override
   State<RaizDoAplicativo> createState() => _RaizDoAplicativoState();
@@ -215,6 +225,7 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
                   duracaoDaSplash: widget.duracaoDaSplash,
                   somNaSplash: widget.somNaSplash,
                   limiteDeResolucao: widget.limiteDeResolucao,
+                  fonteDaAbertura: widget.fonteDaAbertura,
                 ),
               ),
             ),
