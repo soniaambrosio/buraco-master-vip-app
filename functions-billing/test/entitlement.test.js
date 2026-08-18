@@ -438,6 +438,11 @@ test('DOC-01 o documento do jogador nao carrega token nem metadado interno', () 
     'expiraEm',
     'inicioEm',
     'origem',
+    // `planoBase` e publico de proposito: com UM produto de assinatura
+    // carregando os tres planos, e o unico campo que diz se o jogador e mensal,
+    // trimestral ou anual — e a entrega mensal de fichas le daqui. Nao e
+    // credencial de coisa nenhuma, ao contrario do token.
+    'planoBase',
     'produtoId',
     'renovacaoAutomatica',
     'uid',
@@ -486,6 +491,28 @@ test('DOC-05 nao se herda token de um direito diferente', () => {
   assert.strictEqual(interno.purchaseToken, null);
 });
 
+test('DOC-07 o plano-base sobrevive a uma varredura por relogio', () => {
+  // A varredura nao consulta a Google e portanto nao traz `planoBase`. Perde-lo
+  // ali suspenderia as parcelas de fichas de um jogador ADIMPLENTE, sem nenhum
+  // erro aparecer: `concederFichasMensais` simplesmente nao acharia o plano e
+  // contaria o jogador em `semPlano`.
+  const { publico } = documentosDeEntitlement(
+    gravado({ planoBase: 'yearly_auto' }),
+    proposta({ fonte: 'relogio', planoBase: null, produtoId: null, verificadoEm: T2 })
+  );
+  assert.strictEqual(publico.planoBase, 'yearly_auto');
+});
+
+test('DOC-08 nao se herda plano-base de um direito diferente', () => {
+  // Mesma regra do token: herdar de outra compra faria o jogador receber as
+  // parcelas do plano de OUTRA pessoa.
+  const { publico } = documentosDeEntitlement(
+    gravado({ purchaseTokenHash: HASH_OUTRO, planoBase: 'yearly_auto' }),
+    proposta({ fonte: 'relogio', planoBase: null })
+  );
+  assert.strictEqual(publico.planoBase, null);
+});
+
 // ================================================ CONTRATO COM O CONSUMIDOR
 
 /**
@@ -512,13 +539,23 @@ const C_INICIO = '2026-08-06T20:00:00.000Z';
 const C_FUTURO = '2026-08-31T20:00:00.000Z';
 const C_PASSADO = '2026-08-06T20:00:00.000Z';
 const C_HASH = 'c'.repeat(64);
+const C_PLANO = 'monthly_auto';
 
 function respostaContrato(estado, expiryTime, autoRenew) {
   return {
     subscriptionState: estado,
     startTime: C_INICIO,
     lineItems: [
-      { productId: C_PRODUTO, expiryTime, autoRenewingPlan: { autoRenewEnabled: autoRenew } },
+      {
+        productId: C_PRODUTO,
+        expiryTime,
+        autoRenewingPlan: { autoRenewEnabled: autoRenew },
+        // O plano-base vem em `offerDetails`, e nao em `productId`: um unico
+        // produto de assinatura carrega mensal, trimestral e anual, e os tres
+        // chegam com o MESMO `productId`. Sem este campo a entrega mensal de
+        // fichas nao sabe quanto o jogador tem a receber.
+        offerDetails: { basePlanId: C_PLANO },
+      },
     ],
   };
 }
@@ -545,6 +582,7 @@ function esperado(extra) {
     vipAtivo: false,
     estado: null,
     produtoId: C_PRODUTO,
+    planoBase: C_PLANO,
     origem: 'play',
     inicioEm: C_INICIO,
     expiraEm: null,
@@ -604,9 +642,13 @@ test('CT-05 [Dart E/F] revogado e reembolsado', () => {
 
     // Sem `inicioEm`, e com o prazo encerrado no instante do evento: um
     // desfecho terminal descreve o fim, nao o periodo.
+    //
+    // `planoBase: null` porque o estado anterior tambem nao o tinha: um estorno
+    // diz QUE o direito acabou, nao qual plano era. Onde o campo existia, ele e
+    // herdado — a mesma regra do `produtoId`, provada em DOC-07 e DOC-08.
     assert.deepStrictEqual(
       publico,
-      esperado({ estado: alvo, expiraEm: C_AGORA, inicioEm: null }),
+      esperado({ estado: alvo, expiraEm: C_AGORA, inicioEm: null, planoBase: null }),
       alvo
     );
   }

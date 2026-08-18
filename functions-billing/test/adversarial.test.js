@@ -2170,9 +2170,14 @@ test('X1 o Billing nao escreve fora do proprio dominio em nenhum caminho exercit
   }
 });
 
-test('X2 a superficie exportada e exatamente as cinco funcoes declaradas', () => {
+test('X2 a superficie exportada e exatamente as sete funcoes declaradas', () => {
+  // SETE depois da composicao. `concederFichasMensais` veio da linhagem
+  // comercial, e este teste falhou no merge — que e o trabalho dele. Um export a
+  // mais e uma Cloud Function a mais implantada; a lista tem de ser decidida,
+  // nunca herdada em silencio de um merge.
   const c = cenarioDeIndex();
   assert.deepEqual(Object.keys(c.modulo).sort(), [
+    'concederFichasMensais',
     'migrarEntitlementsLegado',
     'notificacoesPlay',
     'prepararCompraPlay',

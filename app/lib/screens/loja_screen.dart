@@ -150,6 +150,31 @@ class LojaVM {
       ],
     );
   }
+
+  /// Troca so o que ja tem fonte real, preservando o resto da maquete.
+  ///
+  /// A vitrine de cosmeticos, os pacotes de moedas e a lista de amigos continuam
+  /// sendo `LojaVM.mock`: nao ha produto, catalogo nem backend por tras deles
+  /// ainda. O VIP tem — [ehVip] vem de `playerEntitlements/{uid}` e [planos] vem
+  /// do que a Play Store devolveu — e por isso so esses dois sao substituiveis
+  /// aqui. Misturar os dois numa fabrica so faria a maquete parecer dado real.
+  LojaVM copiarCom({
+    bool? ehVip,
+    List<PlanoVipLoja>? planos,
+    int? moedas,
+    int? gemas,
+  }) {
+    return LojaVM(
+      moedas: moedas ?? this.moedas,
+      gemas: gemas ?? this.gemas,
+      ehVip: ehVip ?? this.ehVip,
+      planos: planos ?? this.planos,
+      beneficiosVip: beneficiosVip,
+      pacotes: pacotes,
+      categorias: categorias,
+      amigos: amigos,
+    );
+  }
 }
 
 class PlanoVipLoja {
