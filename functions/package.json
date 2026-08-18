@@ -21,6 +21,8 @@
     "test:provisionador:integrado": "node --test test/provisionador_claim_integrado.test.js",
     "//emulador:provisionador": "So auth: esta suite provisiona identidade e troca token; nao le Firestore e nao chama Function. Sem Firestore, tambem nao precisa de JVM instalada.",
     "emulador:provisionador": "npm run build && cd .. && firebase emulators:exec --project bmv-prov-teste --only auth \"cd functions && npm run test:provisionador:integrado\"",
+    "//test:plano-ativacao": "Completude do PLANO-ATIVACAO-CONTROLADA-CREDENCIAL-MOTOR-V1.md. Nao prova codigo: impede que uma limpeza de documentacao apague rollback, smoke negativo ou resposta a vazamento sem ninguem perceber. Sem rede, sem emulador.",
+    "test:plano-ativacao": "node --test test/plano_ativacao_completude.test.js",
     "//test:bootstrap": "Matriz do bootstrap da credencial do motor: argumentos, claim, troca REST, destino, escrita atomica e redacao. Todas as bordas (Admin SDK, HTTP, disco, relogio) sao injetadas, entao roda sem emulador, sem rede e sem projeto.",
     "test:bootstrap": "node --test test/bootstrap_credencial.test.js",
     "//test:revogacao": "Matriz do receptor: bearer, verificacao com checkRevoked, conferencia das duas identidades e papel. Exige `build`, porque a suite importa lib/autoridade.js, que e a guarda REAL e nao uma copia.",
