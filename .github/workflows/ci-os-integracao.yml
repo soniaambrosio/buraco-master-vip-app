@@ -195,6 +195,12 @@ jobs:
           roda rkregressao  test/ranking/regressao_leitor_ranking_test.dart
           # A união dos três arquivos da interseção da composição.
           roda composicao   test/composicao/composicao_perfil_ranking_test.dart
+          # OS Chat Livre Seguro V1: a porta ÚNICA de envio de mensagem. Prova
+          # que autoria não vem do payload, que o `messageId` é derivado e opaco,
+          # que bloqueio é filtrado por PAR nas duas direções consumindo
+          # `avaliarContato`, que espectador não fala nem recebe, e que a projeção
+          # não carrega UID, token, socket nem estado administrativo.
+          roda chatdom      test/chat/chat_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -326,6 +332,57 @@ jobs:
             "cd functions-social && node scripts/auditar-identidade.js" \
             2>&1 | tee t_auditident.log
           echo ${PIPESTATUS[0]} > exit_auditident
+
+      - name: "3h — codebase MODERACAO (functions-moderacao): dominio Dart, typecheck e testes puros"
+        run: |
+          set +e
+          # POR QUE ESTE PASSO NASCE AGORA, e nao com a OS de Moderacao:
+          # `functions-moderacao` nunca teve gate. A codebase que hospeda denuncia,
+          # bloqueio, sancao e `consultarContato` podia deixar de compilar sem o CI
+          # dizer nada — o `npm test` dela existia e ninguem o chamava.
+          if [ ! -f functions-moderacao/package.json ]; then
+            echo "functions-moderacao/package.json ausente" > nao_moderacaofn; exit 0
+          fi
+          # `--include=dev` explicito: sem ele o `tsc` pode nao ser instalado, e a
+          # falha aparece como "tsc: not found", que se confunde com PATH quebrado.
+          ( cd functions-moderacao && npm ci --include=dev 2>&1 | tail -3 || npm install --include=dev 2>&1 | tail -3 )
+          ( cd app && flutter pub get 2>&1 | tail -2 )
+          # O dominio Dart vira JS ANTES do tsc, como nas outras codebases. Este
+          # passo tambem e o que deixa o codebase `moderacao` CARREGAVEL pelo
+          # emulador do passo 3i — sem ele o Emulator Suite falha ao montar a
+          # Function, porque `domain.ts` lanca no CARREGAMENTO quando o bundle
+          # falta (e isso e deliberado: bundle ausente tem que derrubar o deploy).
+          ( cd functions-moderacao && npm run build:domain ) 2>&1 | tee t_moderacaodom.log
+          dom=${PIPESTATUS[0]}
+          if [ "$dom" != "0" ]; then
+            echo "build:domain da moderacao falhou (exit $dom)" > nao_moderacaofn; exit 0
+          fi
+          ( cd functions-moderacao && npm test ) 2>&1 | tee t_moderacaofn.log
+          echo ${PIPESTATUS[0]} > exit_moderacaofn
+
+      - name: "3i — CHAT LIVRE contra o Emulator Suite (chamadas reais)"
+        run: |
+          set +e
+          # Este gate existe porque nem a suite de dominio nem a de regras provam
+          # o que a §15 da OS do Chat pede no limite real: anonimo recusado, retry
+          # que NAO duplica sob transacao, concorrencia que NAO duplica, bloqueio
+          # nas duas direcoes lido do Firestore, e denuncia recuperando a evidencia
+          # server-side. Dominio prova a DECISAO; regra prova a AUTORIZACAO; so
+          # este prova que a decisao chega ao banco.
+          if [ ! -f functions-moderacao/lib/index.js ]; then
+            echo "functions-moderacao nao foi compilado no passo 3h" > nao_chatemu; exit 0
+          fi
+          if [ ! -f functions-moderacao/test/integracao.chat.emulador.test.js ]; then
+            echo "suite de integracao do chat ausente" > nao_chatemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          # O emulador carrega a codebase inteira e o bundle do dominio e grande;
+          # 10s de descoberta padrao estouram e a falha aparece como se a suite
+          # estivesse quebrada.
+          export FUNCTIONS_DISCOVERY_TIMEOUT=120
+          firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \
+            "cd functions-moderacao && node --test test/integracao.chat.emulador.test.js" 2>&1 | tee t_chatemu.log
+          echo ${PIPESTATUS[0]} > exit_chatemu
 
       - name: "3g — codebase COLECOES: regras + Functions no Emulator Suite"
         run: |

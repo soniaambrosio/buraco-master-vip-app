@@ -21,6 +21,8 @@ interface PonteModeracao {
   avaliarContato: PonteJs;
   avaliarSancao: PonteJs;
   consolidarSancoes: PonteJs;
+  avaliarEnvioChat: PonteJs;
+  politicaDeSuperficies: PonteJs;
 }
 
 const ponte = (globalThis as unknown as { bmvModeracao?: PonteModeracao })
@@ -87,6 +89,45 @@ export interface EstadoModeracao {
   esquema: number;
 }
 
+// ------------------------------------------------------------------ chat (§4)
+
+/// Um participante do canal, como o documento autoritativo o descreve.
+export interface ParticipanteDoCanal {
+  uid: string;
+  /// `jogador_sentado` | `espectador` | `fora_do_canal`.
+  papel: string;
+}
+
+/// O CONTEXTO ESTAVEL da §10. Nada aqui e conexao, socket ou tentativa.
+export interface CanalDeChat {
+  canalId: string;
+  superficie: string;
+  aberto: boolean;
+  participantes: ParticipanteDoCanal[];
+}
+
+/// Bloqueio entre o autor e UM candidato, nas duas direcoes (§7).
+export interface ParDeContato {
+  uid: string;
+  autorBloqueou: boolean;
+  bloqueouOAutor: boolean;
+}
+
+export interface VereditoEnvioChat {
+  aceita: boolean;
+  recusa: string | null;
+  /// Vocabulario canonico de `MotivoContatoRecusado`, quando a recusa for de
+  /// contato. Nao e um segundo enum: e o mesmo, carregado.
+  motivoContato: string | null;
+  camposProibidos: string[];
+  /// So quando aceita.
+  messageId?: string;
+  impressao?: string;
+  conteudo?: string;
+  destinatarios?: string[];
+  esquema: number;
+}
+
 // ------------------------------------------------------------------ chamadas
 
 export const dominio = {
@@ -134,6 +175,39 @@ export const dominio = {
     agora: string;
     sancoes: unknown[];
   }): EstadoModeracao => chamar(ponte.consolidarSancoes, e),
+
+  /// A PORTA UNICA do chat. Ver app/lib/chat/porta.dart.
+  ///
+  /// `camposDoPayload` sao as CHAVES que o cliente mandou — nao os valores. A
+  /// presenca de um campo proibido recusa o pedido, e o valor nao muda a decisao,
+  /// entao serializar dado arbitrario do cliente para dentro do dominio seria
+  /// superficie sem proposito.
+  avaliarEnvioChat: (e: {
+    autorUid: string;
+    intentId: string;
+    conteudo: unknown;
+    superficie: unknown;
+    canal: CanalDeChat | null;
+    sancao: {
+      chatSilenciado?: boolean;
+      restricaoSocial?: boolean;
+      suspenso?: boolean;
+    };
+    contatos: ParDeContato[];
+    camposDoPayload: string[];
+    autorPublicId?: string | null;
+  }): VereditoEnvioChat => chamar(ponte.avaliarEnvioChat, e),
+
+  /// A classificacao da §11, lida do dominio em vez de recopiada aqui.
+  politicaDeSuperficies: (): {
+    superficies: {
+      superficie: string;
+      politica: string;
+      aceitaTextoLivre: boolean;
+    }[];
+    limiteMensagem: number;
+    esquema: number;
+  } => chamar(ponte.politicaDeSuperficies, {}),
 };
 
 /// Instante atual em ISO-8601 com fuso.

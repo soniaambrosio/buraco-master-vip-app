@@ -59,6 +59,13 @@ rkregressao
 # --- 5. suíte da composição (entra por esta OS) -----------------------------
 composicao
 
+# --- 5b. domínio do CHAT LIVRE (entra pela OS do Chat Livre Seguro V1) ------
+# A porta única de envio: conteúdo, superfície, assento, idempotência, filtro de
+# bloqueio por par e a trava de projeção. É a suíte que reprova se alguém tirar o
+# `avaliarContato` do caminho, aceitar autoria vinda do payload ou soltar o
+# `messageId` derivado.
+chatdom
+
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
 # Sem ele, o agregador é a única peça do CI que ninguém verifica.
 portaoci
@@ -78,3 +85,16 @@ rankingfn
 rankingint
 identint
 auditident
+
+# --- 9. codebase MODERAÇÃO (entra pela OS do Chat Livre Seguro V1) ----------
+# LACUNA QUE ESTA OS FECHOU, e que não era do chat: `functions-moderacao` NÃO
+# TINHA GATE NENHUM. A codebase que hospeda denúncia, bloqueio, sanção e
+# `consultarContato` podia deixar de compilar, ou ver a barreira de idempotência
+# quebrar, sem o CI dizer uma palavra — `npm test` dela existia e ninguém o
+# chamava. `moderacaofn` roda `tsc` + os testes puros (idempotência e chat).
+#
+# `chatemu` é a integração REAL contra o Emulator Suite: autenticação, anônimo
+# recusado, retry sob transação, concorrência, bloqueio nas duas direções e
+# sanção. É o único gate que prova que a decisão do domínio chega ao Firestore.
+moderacaofn
+chatemu

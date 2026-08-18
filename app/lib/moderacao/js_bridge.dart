@@ -22,6 +22,9 @@ import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import '../chat/mensagem.dart';
+import '../chat/porta.dart';
+import '../chat/superficie.dart';
 import 'denuncia.dart';
 import 'relacao_social.dart';
 import 'sancao.dart';
@@ -196,6 +199,117 @@ String consolidarSancoesJson(String json) {
       consolidar((e['userId'] as String?) ?? '', sancoes, agora).toJson());
 }
 
+// ---------------------------------------------------------------------- chat
+//
+// POR QUE O CHAT ATRAVESSA POR ESTE BUNDLE, e nao por um proprio: o bundle e por
+// CODEBASE de Functions, e a decisao de envio de mensagem e hospedada em
+// functions-moderacao — porque ela precisa consultar `avaliarContato`, bloqueio e
+// `playerModeration`, que ja moram ali. Um segundo bundle significaria um segundo
+// artefato de deploy carregando a MESMA copia do dominio de moderacao.
+//
+// A fronteira deste arquivo nao muda: aqui so entra conversao de tipo.
+
+/// Reconstroi o canal a partir do JSON.
+///
+/// Devolve `null` quando o TypeScript nao encontrou o documento do canal — e a
+/// porta trata `null` como [RecusaMensagem.canalDesconhecido]. Nao inventar canal
+/// aqui e o ponto: quem abre canal e o motor de partidas.
+CanalDeChat? _canal(Object? bruto) {
+  if (bruto is! Map) return null;
+  final m = bruto.cast<String, Object?>();
+
+  final superficie = SuperficieChat.porWire(m['superficie']);
+  if (superficie == null) return null;
+
+  final lista = (m['participantes'] as List?) ?? const [];
+  final participantes = <ParticipanteDoCanal>[];
+  for (final item in lista) {
+    if (item is! Map) continue;
+    final p = item.cast<String, Object?>();
+    final uid = p['uid'];
+    if (uid is! String) continue;
+    // Papel desconhecido vira `foraDoCanal`, e nao `jogadorSentado`: falhar
+    // fechado e o que impede um valor novo no documento do canal virar direito de
+    // fala por descuido.
+    final papel = PapelNoCanal.values.firstWhere(
+      (v) => v.wire == p['papel'],
+      orElse: () => PapelNoCanal.foraDoCanal,
+    );
+    participantes.add(ParticipanteDoCanal(uid: uid, papel: papel));
+  }
+
+  return CanalDeChat(
+    canalId: (m['canalId'] as String?) ?? '',
+    superficie: superficie,
+    participantes: participantes,
+    // Ausente vira FECHADO. Um documento de canal sem o campo nao autoriza fala.
+    aberto: m['aberto'] == true,
+  );
+}
+
+String avaliarEnvioChatJson(String json) {
+  final e = _entrada(json);
+
+  final contatos = <ParDeContato>[];
+  for (final item in (e['contatos'] as List?) ?? const []) {
+    if (item is! Map) continue;
+    final c = item.cast<String, Object?>();
+    final uid = c['uid'];
+    if (uid is! String) continue;
+    contatos.add(ParDeContato(
+      uid: uid,
+      autorBloqueou: c['autorBloqueou'] == true,
+      bloqueouOAutor: c['bloqueouOAutor'] == true,
+    ));
+  }
+
+  final s = (e['sancao'] as Map?)?.cast<String, Object?>() ?? const {};
+
+  // Só as CHAVES do payload atravessam. O valor nao interessa para a trava da
+  // §10/§13 — a presenca do campo e que recusa — e mandar os valores obrigaria a
+  // serializar dado arbitrario do cliente por dentro do dominio sem necessidade.
+  final campos = <String, Object?>{};
+  for (final k in (e['camposDoPayload'] as List?) ?? const []) {
+    if (k is String) campos[k] = null;
+  }
+
+  final veredito = avaliarEnvio(
+    autorUid: (e['autorUid'] as String?) ?? '',
+    intentId: (e['intentId'] as String?) ?? '',
+    conteudoBruto: e['conteudo'],
+    superficiePedida: e['superficie'],
+    canal: _canal(e['canal']),
+    sancao: SancaoDoAutor(
+      chatSilenciado: s['chatSilenciado'] == true,
+      restricaoSocial: s['restricaoSocial'] == true,
+      suspenso: s['suspenso'] == true,
+    ),
+    contatos: contatos,
+    payloadCru: campos,
+    autorPublicId: e['autorPublicId'] as String?,
+  );
+
+  return jsonEncode({
+    ...veredito.toJson(),
+    'esquema': kEsquemaChat,
+  });
+}
+
+/// A classificação da §11, exposta para que o laudo e o teste do TypeScript leiam
+/// a MESMA tabela que o dominio aplica — em vez de uma segunda copia em prosa.
+String politicaDeSuperficiesJson(String json) => jsonEncode({
+      'superficies': [
+        for (final s in SuperficieChat.values)
+          {
+            'superficie': s.wire,
+            'politica': politicaDe(s).wire,
+            'aceitaTextoLivre': superficieAceitaTextoLivre(s),
+          },
+      ],
+      'limiteMensagem': kLimiteMensagem,
+      'esquema': kEsquemaChat,
+    });
+
 void main() {
   final api = <String, _Ponte>{
     'avaliarDenuncia': avaliarDenunciaJson,
@@ -205,6 +319,8 @@ void main() {
     'avaliarContato': avaliarContatoJson,
     'avaliarSancao': avaliarSancaoJson,
     'consolidarSancoes': consolidarSancoesJson,
+    'avaliarEnvioChat': avaliarEnvioChatJson,
+    'politicaDeSuperficies': politicaDeSuperficiesJson,
   };
 
   final exportado = JSObject();
