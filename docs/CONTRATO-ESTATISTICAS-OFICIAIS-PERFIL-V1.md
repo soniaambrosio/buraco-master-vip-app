@@ -35,7 +35,7 @@ começarem a gravar ao mesmo tempo.
 |---|---|
 | **Período** | **Vitalício.** Temporada pertence ao Ranking e não redefine os contadores do Perfil. |
 | **Modalidades que contam** | Somente `publica_casual` e `publica_ranqueada`, concluídas autoritativamente. |
-| **Modalidades que não contam** | `privada`, `treino`, `simulada`; partida cancelada; partida sem encerramento autoritativo; partida com identificador de demonstração; partida com robô participante ou substituição definitiva por robô. |
+| **Modalidades que não contam** | `torneio`, `privada`, `treino`, `simulada` — todas **conhecidas e inelegíveis**, ver §4.1; partida cancelada; partida sem encerramento autoritativo; partida com identificador de demonstração; partida com robô participante ou substituição definitiva por robô. |
 | **Reconexão** | Não cria ocorrência nova. O `matchId` é estável e é ele — não o `eventoId` — que entra na chave de lançamento. |
 | **Abandono** | **Inelegível nesta versão.** Só produzirá estatística quando existir encerramento autoritativo **com responsabilidade identificável**. |
 | **Resultado** | Cada jogador elegível recebe exatamente **uma** partida. Vitória e derrota são da **dupla**: os dois integrantes do lado vencedor recebem vitória, os dois do outro recebem derrota. |
@@ -129,21 +129,44 @@ Existem hoje **três vocabulários incompatíveis**:
 | servidor Node | `publica`, `privada`, `simulada` — e o envelope emitido carrega `tipoPartida: "publica"`, que **não distingue casual de ranqueada** |
 | ranking | `AMBIENTE_COMPETITIVO = ["publica_ranqueada"]`, um único elemento |
 
-A enumeração deste contrato é **fechada** nos cinco símbolos aprovados
-(`publica_casual`, `publica_ranqueada`, `privada`, `treino`, `simulada`) e **não
-aceita nenhum dos outros como equivalente silencioso**. `"publica"` não vira
-`"publica_casual"` por adivinhação — adivinhar aqui é decidir, sem arbitragem, se
-a partida de alguém conta.
+A enumeração deste contrato é **fechada** em seis símbolos —
+`publica_casual`, `publica_ranqueada`, `torneio`, `privada`, `treino`,
+`simulada` — e **não aceita nenhum símbolo de fora como equivalente
+silencioso**. `"publica"` não vira `"publica_casual"` por adivinhação: adivinhar
+aqui é decidir, sem arbitragem, se a partida de alguém conta.
 
 **Consequência prática, e ela é intencional:** o envelope que o servidor produz
 hoje seria **recusado** por este contrato. A tradução é trabalho do **produtor**,
 na próxima OS, porque quem sabe se a mesa nasceu ranqueada é quem a abriu.
 
-**`torneio` não está na enumeração.** A decisão de produto diz "contam *somente*
-Mesa Pública casual e Mesa VIP/ranqueada", e partida de torneio não está na
-lista. Um envelope com `modalidade: "torneio"` é recusado como símbolo
-desconhecido. O efeito é o mesmo de inelegível — nenhuma estatística —, mas o
-diagnóstico é diferente, e isso está listado como risco residual na §10.
+### 4.1 Conhecida e inelegível ≠ desconhecida
+
+São **três** respostas, não duas, e o contrato as distingue:
+
+| resposta | exemplo | o que acontece | como ler |
+|---|---|---|---|
+| elegível | `publica_casual`, `publica_ranqueada` | envelope aceito, quatro deltas | funcionamento normal |
+| **conhecida e inelegível** | `torneio`, `privada`, `treino`, `simulada` | envelope **aceito**, zero delta, motivo `modalidade_nao_elegivel`, `chaveDoFato` preservada | funcionamento normal — a maior parte das mesas do aplicativo cai aqui, e **não merece alarme** |
+| desconhecida | `publica`, `treinamento`, `contra_robos` | envelope **recusado** inteiro | **defeito do produtor**, merece alarme |
+
+**`torneio` está na enumeração, e é explicitamente inelegível na V1.** A decisão
+de produto diz "contam *somente* Mesa Pública casual e Mesa VIP/ranqueada", e
+partida de torneio não está entre elas. Mas deixá-la **fora da enumeração** a
+transformaria num símbolo desconhecido — o produtor não conseguiria sequer
+relatar a partida, e um evento rotineiro dispararia o alarme reservado a envelope
+malformado. A `chaveDoFato` é devolvida mesmo no caso inelegível, para que o
+futuro escritor reconheça a entrega repetida de uma partida que não conta.
+
+**`ambienteCompetitivo` é `false` para torneio**, e isso não é descuido: a
+pergunta desse campo é a de `AMBIENTE_COMPETITIVO`
+(`functions-ranking/src/competicao.ts:106`) — *"esta mesa alimenta o rating de
+temporada?"* —, e a §6 da Política Competitiva v1 respondeu que não, ainda que
+torneio valha ledger. Um torneio marcado `true` **recusa o envelope**, e isso tem
+teste.
+
+São três recortes distintos sobre a mesma partida — `alteraRanking` no domínio
+Dart, `AMBIENTE_COMPETITIVO` no ranking, e `MODALIDADES_ELEGIVEIS` aqui —, cada
+um respondendo a uma pergunta diferente. Nenhum substitui o outro.
 
 ---
 
@@ -158,7 +181,7 @@ Artefato compartilhável: `docs/contratos/fato-partida-oficial-v1.schema.json`.
 | `matchId` | id estável | reconexão não o muda |
 | `eventoId` | id estável | identifica a **afirmação**, não a partida |
 | `encerradaEm` | ISO 8601 UTC com `Z` | instante autoritativo |
-| `modalidade` | enum fechada de 5 | §4 |
+| `modalidade` | enum fechada de 6 | §4 e §4.1 |
 | `estadoTerminal` | `concluida` \| `cancelada` \| `abandonada` | |
 | `encerramentoAutoritativo` | booleano | desfecho observado/remontado/inferido é `false` |
 | `ambienteCompetitivo` | booleano | **trava**: tem de ser exatamente `modalidade === "publica_ranqueada"` |
@@ -270,13 +293,16 @@ próxima OS.
 
 | | |
 |---|---|
-| **git blob (LF, como versionado)** | `9c23c651f7121efc9d3605f743b125810910d8de` |
-| **sha256 do conteúdo versionado** | `d4bf6dc6008ed711f5a507199f8683628693baac064341765b9ee9f893e53dfc` |
-| **bytes** | 24.569 |
+| **git blob (LF, como versionado)** | `89a43d5d37dd18b733a6708c05d4a10d2515c12c` |
+| **sha256 do conteúdo versionado** | `0ac6dd0dbbc7ff1c0e587f6526459cf172d73a43f2ef8b664f62c6ae82fa2e1b` |
+| **bytes** | 29.932 |
 
 Contém enumerações fechadas, campos obrigatórios, `additionalProperties: false`
 em **todos** os níveis, versão explícita (`x-versaoContrato`), **2 exemplos
-válidos** e **9 exemplos inválidos** com o motivo de cada um.
+válidos**, **2 exemplos válidos e inelegíveis** (`x-exemplosValidosInelegiveis`,
+com o caso do torneio e o da mesa privada) e **10 exemplos inválidos**, cada um
+com o seu motivo. As três seções cobrem as três respostas da §4.1 — o artefato
+compartilhável mostra o caso feliz, o caso rotineiro e o caso de alarme.
 
 **O schema e o código são conferidos um contra o outro por teste**, e não por
 boa vontade: os exemplos válidos têm de passar pelo analisador, os inválidos têm
@@ -299,7 +325,7 @@ artefato promete.
 
 ## 9. Matriz mínima — 30 casos, todos verdes
 
-Suíte: `functions-ranking/test/estatisticas.test.js` (**69 testes**, 0 falhas).
+Suíte: `functions-ranking/test/estatisticas.test.js` (**73 testes**, 0 falhas).
 
 | # | caso | resultado |
 |---|---|---|
@@ -308,6 +334,8 @@ Suíte: `functions-ranking/test/estatisticas.test.js` (**69 testes**, 0 falhas).
 | 3 | privada não conta | ✔ |
 | 4 | treino não conta | ✔ |
 | 5 | simulada não conta | ✔ |
+| 5b | torneio não conta, e a recusa é de ELEGIBILIDADE, não de envelope | ✔ |
+| 5c | torneio marcado como ambiente competitivo recusa o envelope | ✔ |
 | 6 | cancelada não conta | ✔ |
 | 7 | sem encerramento autoritativo não conta | ✔ |
 | 8 | robô participante torna inelegível | ✔ |
@@ -341,6 +369,14 @@ política de XP (28b), a lei da mesa, a coerência de ambiente competitivo e
 empate, instantes malformados, mesa incompleta, identidade repetida, e a
 coerência integral com o schema.
 
+E prova, em teste próprio, **a distinção das três respostas da §4.1**: as quatro
+modalidades conhecidas e inelegíveis (`torneio`, `privada`, `treino`, `simulada`)
+produzem envelope **válido** com zero delta e motivo nomeado; os três símbolos de
+outros vocabulários (`publica`, `treinamento`, `contra_robos`) **recusam o
+envelope inteiro**. Um teste separado confere que os exemplos
+`x-exemplosValidosInelegiveis` do schema caem no meio dessa tabela, e que o caso
+do torneio está entre eles.
+
 ### O caso 30, e por que ele é estrutural
 
 Nenhum teste de comportamento prova a **ausência** de um efeito que ninguém
@@ -354,17 +390,17 @@ chamou. A prova é sobre o texto: uma varredura do código-fonte dos três módu
 
 ---
 
-## 10. Provas negativas por mutação — 12 injetadas, 12 mortas
+## 10. Provas negativas por mutação — 13 injetadas, 13 mortas
 
 Cada mutação foi injetada, **conferida pelo `git diff --numstat`** (para provar
 que atingiu o arquivo certo), executada contra a suíte inteira e revertida. As
-doze **compilaram** — logo, cada morte é comportamental ou estrutural, e não um
+treze **compilaram** — logo, cada morte é comportamental ou estrutural, e não um
 erro de compilação disfarçado de cobertura.
 
 | # | mutação | arquivo (numstat) | caiu |
 |---|---|---|---|
-| M01 | contar Mesa Privada | `contrato.ts` (+1) | caso 3 |
-| M02 | contar Treino | `contrato.ts` (+1) | caso 4 |
+| M01 | contar Mesa Privada | `contrato.ts` (+1) | caso 3, a distinção da §4.1 e os exemplos inelegíveis do schema |
+| M02 | contar Treino | `contrato.ts` (+1) | caso 4 e a distinção da §4.1 |
 | M03 | transformar empate em vitória | `redutor.ts` (+1/−1) | caso 12 |
 | M04 | retirar empate do denominador | `agregado.ts` (+1/−1) | caso 22 |
 | M05 | creditar canastra a apenas um parceiro | `redutor.ts` (+1/−1) | casos 14 e 16 |
@@ -375,8 +411,9 @@ erro de compilação disfarçado de cobertura.
 | M10 | incorporar a fórmula local de XP | `agregado.ts` (+1/−4) | caso 28 |
 | M11 | exportar nova Cloud Function | `index.ts` (+3) | "nenhuma Cloud Function nova nasce" |
 | M12 | executar I/O no redutor | `redutor.ts` (+1) | a varredura estrutural do caso 30 |
+| M13 | **contar torneio** | `contrato.ts` (+1) | **caso 5b**, a distinção conhecida-inelegível vs desconhecida, e a coerência dos exemplos inelegíveis do schema |
 
-Árvore restaurada e suíte de volta a **399 passes, 0 falhas** depois da última
+Árvore restaurada e suíte de volta a **403 passes, 0 falhas** depois da última
 reversão.
 
 ---
@@ -385,8 +422,8 @@ reversão.
 
 | portão | antes | depois |
 |---|---|---|
-| `functions-ranking` — `npm test` (tsc + unitários) | 330 passes, 0 falhas | **399 passes, 0 falhas** |
-| suíte nova do domínio | não existia | **69 passes, 0 falhas** |
+| `functions-ranking` — `npm test` (tsc + unitários) | 330 passes, 0 falhas | **403 passes, 0 falhas** |
+| suíte nova do domínio | não existia | **73 passes, 0 falhas** |
 | `tsc --noEmit` (`npm run lint`) | limpo | **limpo** |
 | Rules — `emulador:integrado` (5 suítes, um `firestore.rules`) | — | **147 passes, 0 falhas** (1 SKIP: Functions sociais, que este alvo não sobe) |
 | Ranking — `test:emulador` (integração contra o Firestore) | — | **27 passes, 0 falhas** |
@@ -438,11 +475,12 @@ justificar unidade de implantação separada quando o escritor existir.
    (`app/lib/mesa.dart:380` e `:509`, contadas em `:278`), mas **para no `Jogo`**:
    `LadoDaMesa` só propaga `canastrasLimpas`. Propagá-la é trabalho de quem
    emitir o fato.
-4. **`torneio` é recusado como símbolo desconhecido**, e não como modalidade
-   conhecida e inelegível. O efeito prático é o mesmo (nenhuma estatística), mas
-   o diagnóstico difere e o produtor não consegue sequer relatar uma partida de
-   torneio. Se a resposta desejada for "torneio conta" ou "torneio é
-   explicitamente inelegível", isso é decisão de produto e muda a enumeração.
+4. **`torneio` conta zero para o Perfil**, por decisão, ainda que valha ledger
+   competitivo. O risco não é mais de diagnóstico — ele foi fechado ao pôr
+   `torneio` na enumeração como modalidade conhecida e inelegível (§4.1) —, e sim
+   de **expectativa**: quem joga só torneio verá `partidas: 0` no Perfil. Se o
+   produto quiser que torneio conte, é uma linha em `MODALIDADES_ELEGIVEIS`, e a
+   mutação M13 mostra exatamente quais testes precisam mudar junto.
 5. **Sem política de exclusão de conta.** A obrigação está formalizada (§7) e não
    implementada. Publicar estatística no Perfil visitado antes dela cria dado
    pessoal sem caminho de remoção.
@@ -458,13 +496,25 @@ justificar unidade de implantação separada quando o escritor existir.
 ## 14. Próximos passos, na ordem em que destravam
 
 1. **OS — Canonização da modalidade e do envelope de encerramento V1.** Fazer o
-   Railway emitir **exatamente** este contrato: vocabulário canônico, decisão de
-   onde a mesa nasce ranqueada, `canastrasSujas` propagada, e a tradução
-   `partidaId → matchId`. Ainda sem autoridade concorrente nova.
-2. **OS — Desligamento do cofre local.** Decidir o destino de `contas.json`
-   (descartar / arquivar), sabendo que ele guarda **totais sem eventos** e que seu
-   id **não é o UID** — não é migrável com fidelidade. Inclui o que acontece com
-   o cliente HTML, hoje seu único consumidor.
+   Railway emitir **exatamente** este contrato. A tradução é explícita, e as três
+   linhas são obrigatórias:
+
+   ```
+   publica        → publica_casual
+   partidaId      → matchId
+   canastrasSujas → valor autoritativo propagado pelo motor
+   ```
+
+   **Sem adivinhar, sem normalizar silenciosamente e sem ativar persistência.**
+   Inclui decidir onde a mesa nasce ranqueada — é decisão de abertura de mesa,
+   fora do codebase competitivo. Ainda sem autoridade concorrente nova.
+2. **OS — Desligamento do cofre local.** `contas.js` **permanece vivo até existir
+   substituto completo e homologado** — não se toca nele antes disso. Quando a
+   troca vier, ela é **corte único**: desativar a autoridade antiga e ativar a
+   nova **na mesma OS controlada**. Jamais manter as duas escrevendo. Decidir
+   também o destino de `contas.json` (descartar / arquivar), sabendo que ele
+   guarda **totais sem eventos** e que seu id **não é o UID** — não é migrável com
+   fidelidade —, e o que acontece com o cliente HTML, hoje seu único consumidor.
 3. **OS — Transporte autenticado Railway → Functions**, com o claim
    `motorDePartidas` e os estados que a outbox já reservou.
 4. **OS — Escritor e coleção**, com Rules e índice, usando `chaveDeLancamento`
