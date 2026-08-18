@@ -58,6 +58,8 @@ import 'package:buraco_master_vip/bot/modelo_parceiro.dart';
 // OS CALIBRAÇÃO V1 — o ponto único de consumo do sinal.
 import 'package:buraco_master_vip/bot/avaliador_heuristico.dart';
 import 'package:buraco_master_vip/bot/risco_descarte.dart';
+import 'package:buraco_master_vip/bot/orcamento_busca.dart';
+import 'package:buraco_master_vip/bot/analise_mao.dart' show ehCuringaEstrategico;
 
 int _seq = 0;
 Carta c(String valor, String? naipe) =>
@@ -7559,6 +7561,441 @@ void main() {
       expect(atual.vez == 0 && !atual.rodadaEncerrada, isFalse,
           reason: 'o novo peso não pode deixar turno sem conclusão');
       expect(d1.impasse, isFalse);
+    });
+  });
+
+  // =====================================================================
+  // OS 4 — ORÇAMENTO DETERMINÍSTICO DE BUSCA E FALLBACK LEGAL
+  //
+  // O que estes testes protegem, e por quê:
+  //  • o contador é ÚNICO e atravessa a recursão inteira — a versão anterior
+  //    tinha um contador que só via a fase de jogo, e a fase de compra
+  //    explodia sem ninguém contando;
+  //  • o esgotamento é POR DIMENSÃO — a primeira tentativa usou um único
+  //    interruptor absorvente e o gerador passou a devolver ZERO planos;
+  //  • cortar não pode virar jogada ilegal, nem decisão por relógio.
+  // =====================================================================
+  group('OS ORÇAMENTO DE BUSCA V1 — limite determinístico e fallback legal', () {
+    /// Mesa de STBL com mão grande: é o regime em que a derivação de compra do
+    /// lixo explode. Não é fixture artificial — é o formato do estado que a
+    /// semente 29 produz na prática.
+    Jogo mesaLarga(String modalidade) {
+      final j = Jogo(const ['você', 'B1', 'B2', 'B3'], const ['', '', '', ''],
+          const ['', '', '', ''],
+          seed: 4242, motorConfig: MotorConfig.producao());
+      j.modalidade = modalidade;
+      // Quem JOGA para chegar ao estado e a configuracao COM orcamento: montar
+      // o cenario nao pode custar a explosao que o cenario existe para provar.
+      // O que se mede depois e sempre explicito em cada teste.
+      j.configuracaoBot = ConfiguracaoBot.v2;
+      for (var t = 0; t < 24 && !j.rodadaEncerrada; t++) {
+        j.botJoga(j.vez);
+      }
+      return j;
+    }
+
+    EstadoJogo emFaseDeJogo(Jogo j) {
+      final e = paraCanonico(j).canonico;
+      if (e.fase != FaseTurno.compra) return e;
+      final spec = RuleSpec.canonica(e.modalidade, metaPontos: e.metaPontos);
+      final r = aplicarLegal(e, e.vez, const ComprarMonte(), spec);
+      return r.legal ? r.proximoEstado! : e;
+    }
+
+    // ---------- §13.1, §13.22, §13.23 — ciclo de vida do orçamento ----------
+    test('ORC-01 o orçamento nasce por DECISÃO e não atravessa turnos nem bots',
+        () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final ex = ExecutorBot(spec, cfg: ConfiguracaoBot.v2);
+
+      // Duas decisões seguidas, sem orçamento explícito: cada uma cria o seu.
+      final d1 = ex.decidirJogo(estado, estado.vez);
+      final d2 = ex.decidirJogo(estado, estado.vez);
+      expect(d1.orcamento, isNotNull);
+      expect(d2.orcamento, isNotNull);
+      expect(d2.orcamento!['nos'], d1.orcamento!['nos'],
+          reason: 'a segunda decisão não pode herdar consumo da primeira');
+      expect(d2.orcamento!['planosAvaliados'], d1.orcamento!['planosAvaliados']);
+
+      // Dois orçamentos distintos não compartilham contador.
+      final a = OrcamentoBuscaBot(ConfiguracaoBot.v2.limitesBusca);
+      final b = OrcamentoBuscaBot(ConfiguracaoBot.v2.limitesBusca);
+      a.gastarNo(FaseBusca.enumeracaoUnidades);
+      expect(a.nos, 1);
+      expect(b.nos, 0);
+    });
+
+    // ---------- §13.4 — o limite exato é respeitado ----------
+    test('ORC-02 o contador para EXATAMENTE no limite, e o esgotamento é '
+        'absorvente dentro da dimensão', () {
+      final orc = OrcamentoBuscaBot(const LimitesBusca(
+          nos: 3, transacoesCompraLixo: 2, planosAvaliados: 2, fusivelMs: 0));
+      expect(orc.gastarNo(FaseBusca.enumeracaoUnidades), isTrue); // 1
+      expect(orc.gastarNo(FaseBusca.enumeracaoUnidades), isTrue); // 2
+      expect(orc.gastarNo(FaseBusca.enumeracaoUnidades), isTrue); // 3
+      expect(orc.gastarNo(FaseBusca.enumeracaoUnidades), isFalse); // 4 > limite
+      expect(orc.nos, 4, reason: 'o nó que estourou é contado, não escondido');
+      expect(orc.nosRestantes, 0);
+      // Absorvente NA DIMENSÃO: continua recusando.
+      expect(orc.gastarNo(FaseBusca.enumeracaoUnidades), isFalse);
+      expect(orc.motivo, MotivoEncerramentoBusca.orcamentoDeterministico);
+      expect(orc.faseDoLimite, FaseBusca.enumeracaoUnidades);
+      // ...mas a AVALIAÇÃO continua disponível: é o defeito que a versão de
+      // esgotamento global tinha, e que fazia o gerador devolver zero planos.
+      expect(orc.podeExpandir(), isTrue);
+      expect(orc.gastarPlanoAvaliado(), isTrue);
+    });
+
+    // ---------- §13.2, §13.3, §13.10 — a recursão inteira conta ----------
+    test('ORC-03 o contador atravessa a recursão e NÃO reinicia por ramo', () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+
+      final orc = OrcamentoBuscaBot(ConfiguracaoBot.v2.limitesBusca);
+      final ger =
+          GeradorPlanos(spec, ConfiguracaoBot.v2, orcamento: orc)
+              .planosDeJogo(estado, estado.vez);
+
+      // O gerador não tem contador próprio: o número que ele reporta é o do
+      // orçamento, e ele cresceu de verdade (a mão é grande).
+      expect(ger.nos, orc.nos);
+      expect(orc.nos, greaterThan(100),
+          reason: 'a enumeração desta mão precisa gastar trabalho de verdade');
+      // Reiniciar por ramo apareceria como um total baixo demais para a mão.
+      expect(orc.nos, greaterThanOrEqualTo(ger.planos.length));
+    });
+
+    // ---------- §13.5, §13.19 — busca completa permanece idêntica ----------
+    test('ORC-04 quando a busca cabe no orçamento, a decisão é a MESMA da base',
+        () {
+      for (final modalidade in const ['ABERTO', 'FECHADO', 'SBTL']) {
+        final j = novo(modalidade);
+        montar(j,
+            mao0: [('7', 'copas'), ('8', 'copas'), ('K', 'ouros')],
+            mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+            mao2: [('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+            mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+            vez: 0,
+            jaComprou: true);
+        final estado = paraCanonico(j).canonico;
+        final spec =
+            RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+
+        final base =
+            ExecutorBot(spec, cfg: ConfiguracaoBot.base).decidirJogo(estado, 0);
+        final nova =
+            ExecutorBot(spec, cfg: ConfiguracaoBot.v2).decidirJogo(estado, 0);
+
+        expect(nova.orcamento!['esgotado'], isFalse,
+            reason: '$modalidade: este estado tem de caber no orçamento');
+        expect(nova.plano?.cartaDescartada?.id, base.plano?.cartaDescartada?.id,
+            reason: '$modalidade');
+        expect(nova.score, base.score, reason: '$modalidade');
+        expect(nova.features, base.features, reason: '$modalidade');
+        expect(nova.razao, base.razao, reason: '$modalidade');
+        expect(nova.candidatosConsiderados, base.candidatosConsiderados,
+            reason: '$modalidade');
+      }
+    });
+
+    // ---------- §13.6 — no corte vence o MELHOR já avaliado ----------
+    test('ORC-05 cortando na avaliação, vence o melhor plano completo JÁ '
+        'avaliado — não o primeiro da fila', () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      // Orçamento que permite enumerar, mas pontua só alguns planos.
+      final apertada = ConfiguracaoBot.v2.comLimites(
+          const LimitesBusca(
+              nos: 1 << 30,
+              transacoesCompraLixo: 1 << 30,
+              planosAvaliados: 5,
+              fusivelMs: 0));
+      final d = ExecutorBot(spec, cfg: apertada).decidirJogo(estado, estado.vez);
+
+      expect(d.acoes, isNotEmpty);
+      expect(d.razao, isNot(Razao.fallbackOrcamento),
+          reason: 'havia planos completos: o fallback não devia entrar');
+      expect(d.candidatosConsiderados, lessThanOrEqualTo(5));
+      expect(d.truncado, isTrue);
+      expect(d.orcamento!['esgotado'], isTrue);
+
+      // O vencedor é o melhor entre os 5 primeiros pontuados, na ORDEM ESTÁVEL
+      // do gerador — reproduzível, e não "o primeiro que apareceu".
+      final ger = GeradorPlanos(spec, apertada,
+              orcamento: OrcamentoBuscaBot(apertada.limitesBusca))
+          .planosDeJogo(estado, estado.vez);
+      final cincoPrimeiros = ger.planos.take(5).toList();
+      expect(
+          cincoPrimeiros.any(
+              (p) => p.cartaDescartada?.id == d.plano?.cartaDescartada?.id),
+          isTrue);
+    });
+
+    // ---------- §13.7, §13.8, §13.9, §13.10, §13.12 — o fallback ----------
+    test('ORC-06 sem NENHUM plano completo, o fallback é legal, determinístico '
+        'e conclui o turno', () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      // Orçamento que não deixa NENHUM plano ser pontuado.
+      final zerada = ConfiguracaoBot.v2.comLimites(const LimitesBusca(
+          nos: 1 << 30,
+          transacoesCompraLixo: 1 << 30,
+          planosAvaliados: 0,
+          fusivelMs: 0));
+
+      final d1 = ExecutorBot(spec, cfg: zerada).decidirJogo(estado, estado.vez);
+      final d2 = ExecutorBot(spec, cfg: zerada).decidirJogo(estado, estado.vez);
+
+      expect(d1.razao, Razao.fallbackOrcamento);
+      expect(d1.orcamento!['fallback'], isTrue);
+      expect(d1.acoes, hasLength(1));
+      // DETERMINÍSTICO: mesma entrada, mesma saída.
+      expect(d2.acoes.single.toJson(), d1.acoes.single.toJson());
+
+      // LEGAL pela autoridade, não por opinião do bot.
+      final acao = d1.acoes.single;
+      final r = aplicarLegal(estado, estado.vez, acao, spec);
+      expect(r.legal, isTrue, reason: 'fallback devolveu jogada ilegal');
+
+      // CONCLUI o turno: na fase de jogo o fallback escolhe o descarte.
+      expect(acao, isA<Descartar>());
+      expect(r.proximoEstado!.vez == estado.vez &&
+          !r.proximoEstado!.rodadaEncerrada, isFalse);
+    });
+
+    test('ORC-07 o fallback não descarta curinga', () {
+      final j = novo('ABERTO');
+      montar(j,
+          mao0: [('JOKER', null), ('2', 'copas'), ('K', 'ouros')],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          vez: 0,
+          jaComprou: true);
+      final estado = paraCanonico(j).canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final zerada = ConfiguracaoBot.v2.comLimites(const LimitesBusca(
+          nos: 1 << 30,
+          transacoesCompraLixo: 1 << 30,
+          planosAvaliados: 0,
+          fusivelMs: 0));
+      final d = ExecutorBot(spec, cfg: zerada).decidirJogo(estado, 0);
+      expect(d.razao, Razao.fallbackOrcamento);
+      final acao = d.acoes.single;
+      expect(acao, isA<Descartar>());
+      final id = (acao as Descartar).carta;
+      final carta = estado.maos[0].firstWhere((c) => c.id == id);
+      expect(ehCuringaEstrategico(carta), isFalse,
+          reason: 'o curinga tem de continuar protegido também no fallback');
+    });
+
+    // ---------- §13.11 — compra do lixo e devolução ilegal ----------
+    test('ORC-08 o teto da derivação não cria compra ilegal: todo candidato '
+        'devolvido continua sendo aceito pela autoridade', () {
+      final j = mesaLarga('SBTL');
+      final estado = paraCanonico(j).canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final diag = DiagnosticoLixo(tetoTransacoes: 50);
+      final cands = derivarCandidatosCompraLixoFechado(
+          estado, estado.vez, spec,
+          diag: diag);
+      expect(diag.transacoesValidadas, lessThanOrEqualTo(50));
+      for (final c in cands) {
+        expect(acaoEhLegal(estado, estado.vez, c, spec), isTrue,
+            reason: 'candidato oferecido tem de ser aceito pela autoridade');
+      }
+    });
+
+    test('ORC-09 SEM teto a derivação é byte a byte a de antes — é o caminho '
+        'do JOGADOR, e ele não pode ser cortado', () {
+      final j = mesaLarga('FECHADO');
+      final estado = paraCanonico(j).canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final semTeto = DiagnosticoLixo();
+      final a = derivarCandidatosCompraLixoFechado(estado, estado.vez, spec,
+          diag: semTeto);
+      final b = derivarCandidatosCompraLixoFechado(estado, estado.vez, spec);
+      expect(semTeto.estourou, isFalse);
+      expect(semTeto.tetoTransacoes, isNull);
+      expect(b.length, a.length);
+      for (var i = 0; i < a.length; i++) {
+        expect(b[i].toJson(), a[i].toJson());
+      }
+    });
+
+    // ---------- §13.13 — determinismo por construção ----------
+    test('ORC-10 mesma entrada, mesma configuração: mesma decisão, mesmo '
+        'rastro e mesmo consumo', () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final a = ExecutorBot(spec, cfg: ConfiguracaoBot.v2)
+          .decidirJogo(estado, estado.vez);
+      final b = ExecutorBot(spec, cfg: ConfiguracaoBot.v2)
+          .decidirJogo(estado, estado.vez);
+      expect(b.acoes.map((x) => x.toJson()).toList(),
+          a.acoes.map((x) => x.toJson()).toList());
+      expect(b.score, a.score);
+      expect(b.features, a.features);
+      expect(b.razoesSecundarias, a.razoesSecundarias);
+      expect(b.orcamento, a.orcamento,
+          reason: 'o consumo do orçamento também tem de ser reproduzível');
+    });
+
+    // ---------- §13.14 — a semente patológica termina ----------
+    test('ORC-11 o regime patológico do STBL decide dentro do teto', () {
+      // O estado é PROCURADO, não presumido: joga-se até achar uma decisão em
+      // que a derivação sem teto passa de mil transações. A primeira versão
+      // deste teste pegava o 24º turno de uma semente e o encontrou VAZIO
+      // (zero transações) — passava por não exercitar nada.
+      final j = Jogo(const ['você', 'B1', 'B2', 'B3'], const ['', '', '', ''],
+          const ['', '', '', ''],
+          seed: 29, motorConfig: MotorConfig.producao());
+      j.modalidade = 'SBTL';
+      // Quem JOGA e a configuracao com orcamento: chegar ao regime pesado nao
+      // precisa custar a explosao. Quem MEDE o regime e a sondagem abaixo.
+      j.configuracaoBot = ConfiguracaoBot.v2;
+      EstadoJogo? pesado;
+      for (var t = 0; t < 120 && !j.rodadaEncerrada; t++) {
+        final e = paraCanonico(j).canonico;
+        if (e.fase == FaseTurno.compra) {
+          // A SONDAGEM tambem tem teto. Sem ele, procurar o estado pesado
+          // custaria a propria explosao (101 mil transacoes) e o portao
+          // passaria de segundos a mais de um minuto — para descobrir algo
+          // que estourar um teto de 5000 ja prova.
+          final sondagem = DiagnosticoLixo(tetoTransacoes: 5000);
+          derivarCandidatosCompraLixoFechado(
+              e, e.vez, RuleSpec.canonica(e.modalidade,
+                  metaPontos: e.metaPontos),
+              diag: sondagem);
+          if (sondagem.estourou) {
+            pesado = e;
+            break;
+          }
+        }
+        j.botJoga(j.vez);
+      }
+      expect(pesado, isNotNull,
+          reason: 'nao achei o regime pesado: o teste seria vazio');
+      final estado = pesado!;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+
+      // A DERIVAÇÃO da compra, que é onde estava a explosão.
+      final orc = OrcamentoBuscaBot(ConfiguracaoBot.v2.limitesBusca);
+      final diag =
+          DiagnosticoLixo(tetoTransacoes: orc.tetoTransacoesCompraLixo);
+      derivarCandidatosCompraLixoFechado(estado, estado.vez, spec, diag: diag);
+      expect(diag.transacoesValidadas,
+          lessThanOrEqualTo(ConfiguracaoBot.v2.tetoTransacoesCompraLixo));
+
+      // E o MESMO estado com um teto MAIOR gasta mais: e a prova de que o teto
+      // aprovado esta de fato cortando, e nao decorando um caminho ja curto.
+      // Comparar contra a derivacao ILIMITADA provaria o mesmo e custaria a
+      // explosao inteira dentro do portao.
+      final tetoMaior = DiagnosticoLixo(tetoTransacoes: 20000);
+      derivarCandidatosCompraLixoFechado(estado, estado.vez, spec,
+          diag: tetoMaior);
+      expect(tetoMaior.transacoesValidadas,
+          greaterThan(diag.transacoesValidadas),
+          reason: 'com teto maior a derivacao varre mais — senao o teste e vazio');
+      expect(tetoMaior.estourou, isTrue,
+          reason: 'o estado escolhido tem de ser mesmo do regime pesado');
+    });
+
+    // ---------- §13.20 — o fusível não governa estado normal ----------
+    test('ORC-12 em estado normal quem encerra é a BUSCA COMPLETA, nunca o '
+        'fusível', () {
+      final j = novo('ABERTO');
+      montar(j,
+          mao0: [('7', 'copas'), ('8', 'copas'), ('K', 'ouros')],
+          mao1: [('4', 'paus'), ('5', 'paus'), ('6', 'paus')],
+          mao2: [('4', 'espadas'), ('5', 'espadas'), ('6', 'espadas')],
+          mao3: [('4', 'ouros'), ('5', 'ouros'), ('6', 'ouros')],
+          vez: 0,
+          jaComprou: true);
+      final estado = paraCanonico(j).canonico;
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final d = ExecutorBot(spec, cfg: ConfiguracaoBot.v2).decidirJogo(estado, 0);
+      expect(d.orcamento!['motivo'], MotivoEncerramentoBusca.buscaCompleta.name);
+      expect(d.orcamento!['fusivel'], isFalse);
+      expect(d.orcamento!['esgotado'], isFalse);
+    });
+
+    // ---------- §13.21 — telemetria sem nada privado ----------
+    test('ORC-13 a telemetria do orçamento não carrega carta nem jogador', () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final d = ExecutorBot(spec, cfg: ConfiguracaoBot.v2)
+          .decidirJogo(estado, estado.vez);
+      final orc = d.orcamento!;
+      // Só números, booleanos e nomes de enum.
+      for (final v in orc.values) {
+        expect(v is num || v is bool || v is String, isTrue);
+      }
+      final texto = jsonEncode(orc).toLowerCase();
+      // A lista NAO inclui 'lixo': `transacoesLixo` e o nome de um CONTADOR de
+      // fase, e nome de fase nao e dado privado. Confundir o nome com o dado
+      // foi o que fez a primeira versao deste teste falhar — e proibir a
+      // palavra teria escondido o contador em vez de proteger alguem.
+      for (final proibido in const [
+        'carta',
+        'naipe',
+        'joker',
+        'uid',
+        'apelido'
+      ]) {
+        expect(texto.contains(proibido), isFalse, reason: 'vazou "$proibido"');
+      }
+      // Nenhum id de carta da mão aparece no rastro.
+      for (final c in estado.maos[estado.vez]) {
+        expect(texto.contains(c.id.toLowerCase()), isFalse);
+      }
+    });
+
+    // ---------- §13.17, §13.18 — a memória pública continua intacta -------
+    test('ORC-14 o orçamento não mexeu na memória pública de descartes', () {
+      expect(ConfiguracaoBot.v2.pesos.memoriaDescarteParceiro, 4);
+      expect(ConfiguracaoBot.v2.regras.usaMemoriaDescarteParceiro, isTrue);
+      expect(ConfiguracaoBot.base.pesos.memoriaDescarteParceiro, 4,
+          reason: 'a base da comparação também tem de ter o peso 4');
+
+      final j = mesaLarga('ABERTO');
+      final estado = emFaseDeJogo(j);
+      final visao = VisaoInformacao.doEstado(estado, estado.vez);
+      expect(visao.descartesPublicos, isNotEmpty,
+          reason: 'o sinal público continua chegando ao bot');
+    });
+
+    // ---------- §13.24 — nem UI nem regra conhecem o orçamento ----------
+    test('ORC-15 a regra do motor não conhece o orçamento', () {
+      // A autoridade decide legalidade sem nenhum orçamento em jogo: a mesma
+      // ação é igualmente legal com e sem teto, porque o teto não é regra.
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final legais = gerarAcoesLegais(estado, estado.vez, spec);
+      expect(legais, isNotEmpty);
+      for (final a in legais) {
+        expect(acaoEhLegal(estado, estado.vez, a, spec), isTrue);
+      }
     });
   });
 }

@@ -414,6 +414,21 @@ class ConfiguracaoBot {
         maxDescartesPorBaixada: maxDescartesPorBaixada,
       );
 
+  /// Cópia com LIMITES DE BUSCA trocados. Existe para provar o comportamento
+  /// do orçamento em cada extremo — teto zero, teto apertado, teto infinito —
+  /// sem precisar de uma configuração paralela para cada caso.
+  ConfiguracaoBot comLimites(LimitesBusca l) => ConfiguracaoBot(
+        pesos: pesos,
+        regras: regras,
+        seed: seed,
+        orcamentoBusca: l.nos,
+        maxBaixadasAvaliadas: maxBaixadasAvaliadas,
+        maxDescartesPorBaixada: maxDescartesPorBaixada,
+        tetoTransacoesCompraLixo: l.transacoesCompraLixo,
+        tetoPlanosAvaliados: l.planosAvaliados,
+        fusivelBuscaMs: l.fusivelMs,
+      );
+
   /// Cópia com PESOS trocados (mesmas regras, mesma semente, mesmo orçamento).
   ConfiguracaoBot comPesos(PesosHeuristicos ps) => ConfiguracaoBot(
         pesos: ps,
