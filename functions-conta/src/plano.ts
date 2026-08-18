@@ -263,6 +263,20 @@ export const ETAPAS: readonly Etapa[] = [
       "Direito VIP e o documento interno com o token em claro sao apagados; compras e eventos da Play sao DESVINCULADOS (o fato fiscal fica, o titular sai). O interno antes do pai: `delete` no pai nao apaga subcolecao.",
   },
   {
+    id: "mesas",
+    itens: [
+      "mesas.tentativasDeCodigo",
+      "mesas.assentosAdmitidos",
+      "mesas.passesVip",
+      "mesas.codigosDeSala",
+      "mesas.salasPrivadas",
+      "mesas.admissoesDeMesa",
+      "economia.economiaLedger",
+    ],
+    resumo:
+      "Passe de cortesia, ancoras de assento e o contador de palpites sao apagados; sala privada, convite, admissoes e o livro-razao da economia sao DESVINCULADOS (o fato fica, o titular sai). A ORDEM importa: as ancoras e o contador saem primeiro porque nao respondem mais a ninguem, e a sala sai por ultimo entre as suas porque perder o `proprietarioUid` e o que impede alguem de herdar o controle das cadeiras.",
+  },
+  {
     id: "identidade",
     itens: [
       "identidade.publicProfiles",

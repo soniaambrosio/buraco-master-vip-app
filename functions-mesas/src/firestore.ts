@@ -350,7 +350,16 @@ export function criarStore({ db, agora }: { db: Firestore; agora: () => string }
             assento: pedido.assento,
             fonteElegibilidade: veredito.fonteElegibilidade,
           };
-          tx.set(ref.assento(pedido.codigoDaSala, pedido.uidAutenticado), ancora);
+          // `uid` viaja no documento embora ele ja esteja no ID. Nao e
+          // redundancia: a matriz de retencao alcanca esta colecao por
+          // CONSULTA POR CAMPO (`where uid ==`), e o Firestore nao consulta
+          // por fragmento de id. Sem o campo, a exclusao de conta deixaria a
+          // ancora para tras — e o teste da matriz nao pegaria, porque ele
+          // confere a CLASSIFICACAO, nao o alcance.
+          tx.set(ref.assento(pedido.codigoDaSala, pedido.uidAutenticado), {
+            ...ancora,
+            uid: pedido.uidAutenticado,
+          });
         }
 
         return {

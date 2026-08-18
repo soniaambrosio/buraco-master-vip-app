@@ -1139,6 +1139,93 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // =====================================================================
+    // BLOCO — MESAS: TIPOS, PERMISSOES VIP E PASSE DE CORTESIA
+    // origem: OS 2 — Arbitragem e canonizacao autoritativa dos tipos de mesa
+    // =====================================================================
+    //
+    // TODA escrita deste bloco e do codebase `mesas`, com o Admin SDK, que
+    // ignora estas regras. `allow write: if false` fecha a porta do
+    // APLICATIVO, nunca a do backend — e e aqui que morre a tentativa de se
+    // autoconceder um passe, esticar `expiraEm`, forjar uma admissao ou virar
+    // dono de uma sala alheia.
+    //
+    // O `list` e negado em TODAS elas, e isso nao e excesso de zelo. Este
+    // projeto ja pagou por um `list` liberado: uma colecao com
+    // `allow read: if ... || ehAdmin()` ficou VARRIVEL, porque no `list` o
+    // predicado roda documento a documento e `ehAdmin()` nao depende de
+    // documento. Separar `get` de `list` e a licao, e ela esta aplicada aqui.
+
+    // ---------------------------------------------------------------------
+    // O passe quinzenal de cortesia
+    // ---------------------------------------------------------------------
+    // O dono LE o proprio passe — a tela precisa mostrar se ha entrada
+    // disponivel, quando ela vence e quando vem a proxima. Ela mostra FATOS; o
+    // veredito de entrada e de `admitirEmMesaVip`, do outro lado do fio.
+    //
+    // `list` negado: uma varredura aqui seria o censo de quem NAO assina.
+    match /passesVip/{uid} {
+      allow get: if ehDono(uid);
+      allow list: if false;
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // As admissoes decididas — auditoria e barreira de idempotencia
+    // ---------------------------------------------------------------------
+    // FECHADA ATE PARA O DONO, e por dois motivos independentes.
+    //
+    // IDEMPOTENCIA: criar um documento aqui faria a admissao seguinte com a
+    // mesma `tentativaEntradaId` ser respondida como "ja decidida" — um
+    // caminho para fabricar aprovacao sem passar pela decisao.
+    //
+    // ORACULO: o documento guarda o `codigoRecusa` REAL, que o fio nunca
+    // devolve. Ler daqui seria ler exatamente o que a recusa unica existe para
+    // esconder.
+    match /admissoesDeMesa/{tentativaEntradaId} {
+      allow read, write: if false;
+    }
+
+    // A ancora de reconexao: quem ja ocupa assento em qual sala. Fechada pela
+    // mesma razao — escrever aqui seria declarar-se sentado.
+    match /assentosAdmitidos/{chave} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // A Mesa Privada
+    // ---------------------------------------------------------------------
+    // O dono le a propria sala. `list` negado: varrer daria a lista de salas
+    // privadas em andamento, que e informacao sobre quem joga com quem.
+    //
+    // Escrita fechada INCLUSIVE PARA O DONO: `proprietarioUid` e o estado das
+    // cadeiras sao decisao autoritativa. Se o dono pudesse escrever, "so o
+    // proprietario controla as cadeiras" viraria "quem conseguir escrever
+    // `proprietarioUid` controla as cadeiras".
+    match /salasPrivadas/{codigoDaSala} {
+      allow get: if autenticado() && resource.data.proprietarioUid == request.auth.uid;
+      allow list: if false;
+      allow write: if false;
+    }
+
+    // O convite. FECHADO PARA LEITURA, inclusive para o dono, e este e o item
+    // mais importante do bloco.
+    //
+    // O id do documento e a IMPRESSAO SHA-256 do codigo. Se o `get` fosse
+    // liberado, quem tivesse um palpite poderia testa-lo lendo o documento
+    // direto — e o LIMITADOR DE TENTATIVAS, que vive na callable, seria
+    // contornado sem que ninguem percebesse. A unica porta e
+    // `resolverConviteDeMesaPrivada`.
+    match /codigosDeSala/{impressao} {
+      allow read, write: if false;
+    }
+
+    // O contador do limitador. Fechado ate para o dono: ler o proprio contador
+    // e saber quantos palpites ainda cabem, e escrever nele e zera-lo.
+    match /tentativasDeCodigo/{uid} {
+      allow read, write: if false;
+    }
+
     // ---------------------------------------------------------------------
     // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
     // ---------------------------------------------------------------------
