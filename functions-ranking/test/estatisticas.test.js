@@ -184,7 +184,54 @@ describe("elegibilidade: o que conta e o que nao conta", () => {
     assert.equal(r.motivo, "participacao_de_robo");
   });
 
-  test("as cinco modalidades do contrato sao classificadas sem excecao", () => {
+  test("5b. torneio NAO conta, e e RECUSA DE ELEGIBILIDADE, nao de envelope", () => {
+    const f = baseCasual();
+    f.modalidade = "torneio";
+    // O envelope e ACEITO: torneio e modalidade conhecida.
+    const analise = analisarFatoPartidaOficial(f);
+    assert.equal(analise.ok, true, JSON.stringify(analise.erros));
+    // E nao produz nada.
+    const r = reduzir(f);
+    assert.equal(r.elegivel, false);
+    assert.equal(r.motivo, "modalidade_nao_elegivel");
+    assert.deepEqual(r.deltas, []);
+    // E a chave do fato existe mesmo assim — o escritor precisa dela para
+    // reconhecer a entrega repetida de uma partida que nao conta.
+    assert.equal(r.chaveDoFato, `${f.matchId}|${f.eventoId}`);
+  });
+
+  test("5c. torneio marcado como ambiente competitivo RECUSA o envelope", () => {
+    const f = baseCasual();
+    f.modalidade = "torneio";
+    f.ambienteCompetitivo = true;
+    const r = reduzirEnvelope(f);
+    assert.equal(r.ok, false);
+    assert.ok(r.erros.some((e) => e.startsWith("ambienteCompetitivo")));
+  });
+
+  test("modalidade CONHECIDA e inelegivel e simbolo DESCONHECIDO tem respostas diferentes", () => {
+    // Conhecida e inelegivel: envelope valido, zero delta, motivo nomeado.
+    for (const conhecida of ["torneio", "privada", "treino", "simulada"]) {
+      const f = baseCasual();
+      f.modalidade = conhecida;
+      const r = reduzirEnvelope(f);
+      assert.equal(r.ok, true, `${conhecida} deveria ser envelope valido`);
+      assert.equal(r.reducao.elegivel, false);
+      assert.equal(r.reducao.motivo, "modalidade_nao_elegivel");
+      assert.deepEqual(r.reducao.deltas, []);
+    }
+    // Desconhecida: nao ha reducao nenhuma — o envelope inteiro e recusado, e
+    // isso e defeito do produtor, nao dia a dia.
+    for (const desconhecida of ["publica", "treinamento", "contra_robos"]) {
+      const f = baseCasual();
+      f.modalidade = desconhecida;
+      const r = reduzirEnvelope(f);
+      assert.equal(r.ok, false, `${desconhecida} deveria recusar o envelope`);
+      assert.equal(r.reducao, undefined);
+    }
+  });
+
+  test("as seis modalidades do contrato sao classificadas sem excecao", () => {
     for (const modalidade of MODALIDADES) {
       const f = baseCasual();
       f.modalidade = modalidade;
@@ -550,8 +597,10 @@ describe("envelope: recusa e nao normalizacao", () => {
   });
 
   test("modalidade desconhecida e RECUSADA — nada de equivalente silencioso", () => {
-    // Os tres vocabularios que existem hoje e nao sao este.
-    for (const alheia of ["publica", "torneio", "treinamento", "contra_robos", "PUBLICA_CASUAL"]) {
+    // Os simbolos dos outros vocabularios que NAO tem correspondente neste.
+    // `torneio` saiu desta lista de proposito: ele agora e conhecido, e a
+    // diferenca entre conhecido-inelegivel e desconhecido tem teste proprio.
+    for (const alheia of ["publica", "treinamento", "contra_robos", "PUBLICA_CASUAL", "ranqueada"]) {
       const f = baseCasual();
       f.modalidade = alheia;
       const r = reduzirEnvelope(f);
@@ -813,6 +862,23 @@ describe("schema: o artefato compartilhavel diz a mesma coisa que o codigo", () 
       const r = analisarFatoPartidaOficial(caso.envelope);
       assert.equal(r.ok, false, `exemplo invalido foi aceito: ${caso.motivo}`);
     }
+  });
+
+  test("os exemplos VALIDOS E INELEGIVEIS do schema sao aceitos e nao geram delta", () => {
+    const inelegiveis = SCHEMA["x-exemplosValidosInelegiveis"];
+    assert.ok(inelegiveis.length >= 2);
+    const modalidades = new Set();
+    for (const caso of inelegiveis) {
+      const analise = analisarFatoPartidaOficial(caso.envelope);
+      assert.equal(analise.ok, true, `recusado: ${caso.motivo}`);
+      const r = reduzirFatoPartidaOficial(analise.fato);
+      assert.equal(r.elegivel, false, `elegivel indevidamente: ${caso.motivo}`);
+      assert.equal(r.motivo, "modalidade_nao_elegivel");
+      assert.deepEqual(r.deltas, []);
+      modalidades.add(caso.envelope.modalidade);
+    }
+    // O artefato tem de mostrar o caso do torneio, que e o menos obvio.
+    assert.equal(modalidades.has("torneio"), true);
   });
 
   test("os exemplos validos do schema sao ELEGIVEIS — o artefato mostra o caso feliz", () => {

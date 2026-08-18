@@ -65,9 +65,17 @@ export const VERSAO_CONTRATO_FATO_PARTIDA = 1;
 // ---------------------------------------------------------------------------
 
 /// A natureza da mesa, no vocabulario DESTE contrato.
+///
+/// `torneio` esta na lista, e nao entre os inelegiveis por omissao, por uma
+/// razao pratica: partida de torneio EXISTE e o produtor tem de conseguir
+/// relata-la. Deixa-la de fora transformaria uma mesa real num simbolo
+/// DESCONHECIDO, e as duas respostas nao sao a mesma coisa — desconhecido recusa
+/// o envelope inteiro e merece alarme; conhecida e inelegivel e funcionamento
+/// normal e nao gera delta. Ver `MODALIDADES_ELEGIVEIS`.
 export type ModalidadeOficial =
   | "publica_casual"
   | "publica_ranqueada"
+  | "torneio"
   | "privada"
   | "treino"
   | "simulada";
@@ -75,6 +83,7 @@ export type ModalidadeOficial =
 export const MODALIDADES: ReadonlyArray<ModalidadeOficial> = [
   "publica_casual",
   "publica_ranqueada",
+  "torneio",
   "privada",
   "treino",
   "simulada",
@@ -84,9 +93,18 @@ export const MODALIDADES: ReadonlyArray<ModalidadeOficial> = [
 ///
 /// Decisao de produto, registrada em docs/CONTRATO-ESTATISTICAS-OFICIAIS-PERFIL-V1.md
 /// secao "Modalidade": contam SOMENTE as partidas online publicas concluidas
-/// autoritativamente — Mesa Publica casual e Mesa VIP/ranqueada. As outras tres
-/// sao modalidades CONHECIDAS e INELEGIVEIS, o que e diferente de desconhecidas:
-/// um envelope de mesa privada e valido, e simplesmente nao gera delta.
+/// autoritativamente — Mesa Publica casual e Mesa VIP/ranqueada. As outras
+/// QUATRO sao modalidades CONHECIDAS e INELEGIVEIS, o que e diferente de
+/// desconhecidas: um envelope de mesa privada, ou de torneio, e VALIDO, e
+/// simplesmente nao gera delta.
+///
+/// `torneio` fica de fora da estatistica de Perfil na V1 porque a decisao diz
+/// "contam somente" as duas publicas, e torneio nao esta entre elas. Isso NAO
+/// contradiz o ranking: la, `alteraRanking` e verdadeiro para torneio
+/// (app/lib/rastreabilidade/identidade_partida.dart:98-99) e mesmo assim ele
+/// fica fora do rating de temporada, porque `AMBIENTE_COMPETITIVO` tem um unico
+/// elemento (functions-ranking/src/competicao.ts:106). Sao tres recortes
+/// distintos sobre a mesma partida, e cada um responde a uma pergunta diferente.
 export const MODALIDADES_ELEGIVEIS: ReadonlyArray<ModalidadeOficial> = [
   "publica_casual",
   "publica_ranqueada",
@@ -207,6 +225,12 @@ export interface FatoPartidaOficialV1 {
   /// `modalidade === "publica_ranqueada"`. A redundancia e uma trava, nao um
   /// dado — ela impede que um produtor marque uma mesa casual como competitiva
   /// (ou o contrario) sem que o envelope inteiro seja recusado.
+  ///
+  /// TORNEIO E `false` AQUI, e isso nao e descuido. A pergunta deste campo e a
+  /// de `AMBIENTE_COMPETITIVO` (functions-ranking/src/competicao.ts:106), que
+  /// tem um unico elemento: "esta mesa alimenta o RATING DE TEMPORADA?". A §6 da
+  /// Politica Competitiva v1 respondeu que torneio nao alimenta, ainda que valha
+  /// ledger. Um torneio marcado `true` recusa o envelope.
   readonly ambienteCompetitivo: boolean;
   readonly empate: boolean;
   /// `null` exatamente quando `empate` e `true`.
