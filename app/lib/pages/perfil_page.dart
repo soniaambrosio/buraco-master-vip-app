@@ -5,6 +5,7 @@ import '../ranking/escopo_ranking.dart';
 import '../ranking/estado_ranking.dart';
 import '../screens/perfil_screen.dart';
 import '../services/perfil_service.dart';
+import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
 
@@ -201,6 +202,17 @@ class _PerfilPageState extends State<PerfilPage> {
     // Na carga usa o placeholder do serviço (a própria tela mostra skeleton).
     final base = _vm ?? _service.vmPlaceholder();
 
+    // UM VM SÓ, ENRIQUECIDO DUAS VEZES — e é isto que a composição precisava
+    // preservar. Ranking e avatar chegaram por correções diferentes, cada uma
+    // reescrevendo esta mesma linha na sua linhagem. Ficar com uma delas
+    // apagaria a outra em silêncio, e mantê-las em dois VMs paralelos (um para
+    // quem vem da Home, outro para quem vem do Ranking) recriaria a divergência
+    // de telas que as DUAS vieram fechar. Então é um encadeamento, e o mesmo
+    // Perfil passa pelos dois.
+    //
+    // A ordem não importa para o resultado: `comRanking` escreve só `ranking`,
+    // `comAvatarPublico` escreve só `avatar`, e nenhum lê o campo do outro.
+    //
     // O RANKING PRÓPRIO É LIDO AQUI, e não guardado no VM da carga.
     //
     // Ler no `build` faz duas coisas de uma vez. Primeiro, amarra esta tela ao
@@ -209,9 +221,36 @@ class _PerfilPageState extends State<PerfilPage> {
     // "carregando" e passa para o resultado sozinho, sem recarregar a tela
     // inteira. Congelar o valor no instante da carga deixaria o Perfil eterno
     // em "carregando" para quem o abrisse rápido demais.
-    final vm = widget.ehMeuPerfil
+    //
+    // O perfil VISITADO não passa por aqui: o ranking dele veio de `_carregar`,
+    // consultado pelo `publicIdVisitado`, e sobrescrevê-lo com o estado da
+    // sessão mostraria a liga de quem está olhando no perfil de quem é olhado.
+    final comRanking = widget.ehMeuPerfil
         ? base.comRanking(EscopoRanking.meuEstadoDe(context))
         : base;
+
+    // O AVATAR É REAPLICADO AQUI, e não herdado da carga. A leitura é a mesma
+    // que a Home faz — `EscopoSessao` mais `avatarPublicoDaIdentidade` —, e é
+    // por isso que as duas telas não conseguem divergir: não há uma segunda
+    // regra, há a mesma função lida de dois lugares.
+    //
+    // Não é consulta nem assinatura nova: `identidadeDe` só lê o
+    // `InheritedNotifier` que a raiz já pendurou, e é a MESMA dependência que
+    // `didChangeDependencies` acima já estabelece. O efeito prático é que uma
+    // troca de `avatarRef` chega ao Perfil pelo rebuild que a sessão notifica,
+    // sem passar pela recarga (que só observa o `publicId`) e sem devolver a
+    // tela ao esqueleto.
+    //
+    // SEM GUARDA DE `ehMeuPerfil`, ao contrário do ranking, e a assimetria é
+    // deliberada: não há de onde tirar o avatar de terceiro nesta árvore. O
+    // `PerfilService` monta o VM visitado a partir da identidade da SESSÃO —
+    // nome inclusive —, então o campo já chegaria aqui com este mesmo valor.
+    // Guardar a reaplicação daria a impressão de proteger um dado de terceiro
+    // que ninguém buscou, e só tiraria a reatividade do próprio perfil.
+    final identidade = EscopoSessao.identidadeDe(context).identidade;
+    final vm = comRanking.comAvatarPublico(
+      avatarPublicoDaIdentidade(identidade),
+    );
 
     return PerfilScreen(
       vm: vm,

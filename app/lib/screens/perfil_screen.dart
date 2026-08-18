@@ -156,6 +156,21 @@ class PerfilVM {
     required this.presentes,
   });
 
+  // Os DOIS enriquecimentos abaixo vivem lado a lado de propósito, e o merge
+  // que os juntou é a razão deste comentário existir: o Git empilhou os dois
+  // corpos num método só, e a resolução preguiçosa — ficar com um — apagaria em
+  // silêncio metade de uma correção já homologada.
+  //
+  // Eles não competem porque não escrevem no mesmo campo: `comRanking` só toca
+  // `ranking`, `comAvatarPublico` só toca `avatar`. Encadeá-los em qualquer
+  // ordem dá o mesmo VM, e é por isso que a página pode aplicá-los em sequência
+  // sem que um desfaça o outro.
+  //
+  // Nenhum dos dois é um `copyWith` genérico, e a recusa é a mesma nos dois
+  // casos: os outros campos têm um produtor só, e abrir a porta para remendá-los
+  // na tela é exatamente como nasce a segunda autoridade que as duas correções
+  // vieram fechar.
+
   /// O mesmo perfil, com outro estado competitivo.
   ///
   /// Existe porque o ranking é a única parte do VM que muda SOZINHA depois da
@@ -177,6 +192,37 @@ class PerfilVM {
     titulo: titulo,
     tituloEmoji: tituloEmoji,
     ranking: outro,
+    stats: stats,
+    ultimaConquista: ultimaConquista,
+    presentesCount: presentesCount,
+    conquistas: conquistas,
+    vitrine: vitrine,
+    presentes: presentes,
+  );
+
+  /// O mesmo perfil, com o avatar substituído pelo valor canônico da sessão.
+  ///
+  /// EXISTE POR CAUSA DA REATIVIDADE, e é o único campo que ganha este
+  /// tratamento. O `PerfilVM` é montado por uma carga assíncrona, e a carga só
+  /// se repete quando o `publicId` muda; um `avatarRef` trocado DENTRO da mesma
+  /// identidade não moveria aquele gatilho, e o Perfil ficaria com o avatar
+  /// velho até o jogador sair e entrar de novo. Reaplicando a resolução a cada
+  /// `build`, o avatar exibido passa a ser função direta do estado vivo — sem
+  /// recarga, sem esqueleto piscando e sem uma segunda consulta.
+  PerfilVM comAvatarPublico(String avatarCanonico) => PerfilVM(
+    ehMeuPerfil: ehMeuPerfil,
+    nome: nome,
+    avatar: avatarCanonico,
+    mascote: mascote,
+    moldura: moldura,
+    dorso: dorso,
+    efeito: efeito,
+    nivel: nivel,
+    xpAtual: xpAtual,
+    xpProximo: xpProximo,
+    titulo: titulo,
+    tituloEmoji: tituloEmoji,
+    ranking: ranking,
     stats: stats,
     ultimaConquista: ultimaConquista,
     presentesCount: presentesCount,

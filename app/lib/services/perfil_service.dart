@@ -1,5 +1,6 @@
 import '../ranking/estado_ranking.dart';
 import '../screens/perfil_screen.dart';
+import '../sessao/avatar_publico.dart';
 import '../sessao/identidade_publica_sessao.dart';
 
 /// Origem dos dados do Perfil (camada de lógica — Claude).
@@ -112,6 +113,11 @@ class PerfilService {
       nome: apelido.isNotEmpty
           ? apelido
           : (publico.isNotEmpty ? publico : _rotuloSemApelido),
+      // O avatar segue a MESMA autoridade que o nome: o que veio de
+      // `publicProfiles` dentro da identidade canônica. Antes desta linha o
+      // serviço escrevia `avatar: '👑'` fixo — o apelido real ao lado de uma
+      // coroa que ignorava o avatar escolhido.
+      avatar: avatarPublicoDaIdentidade(identidade),
       demo: statsDemo,
       ranking: ranking,
     );
@@ -121,14 +127,23 @@ class PerfilService {
   ///
   /// O ranking aqui é [FaseRanking.carregando], e não `indisponivel`: são
   /// estados diferentes, e este VM existe justamente durante a consulta.
-  PerfilVM vmPlaceholder() =>
-      _montar(ehMeuPerfil: true, nome: '…', demo: false, ranking: const EstadoRanking.carregando());
+  /// O avatar do placeholder é o FALLBACK, e não um avatar inventado: durante a
+  /// carga não há identidade resolvida para consultar. Quem já tem identidade
+  /// não fica preso a ele — o [PerfilPage] reaplica a resolução canônica a cada
+  /// `build`, com o estado vivo da sessão.
+  PerfilVM vmPlaceholder() => _montar(
+    ehMeuPerfil: true,
+    nome: '…',
+    avatar: avatarPublicoDaIdentidade(null),
+    demo: false,
+    ranking: const EstadoRanking.carregando(),
+  );
 
-  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required bool demo, EstadoRanking? ranking}) {
+  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required String avatar, required bool demo, EstadoRanking? ranking}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
       nome: nome,
-      avatar: '👑',
+      avatar: avatar,
       mascote: '🦊',
       moldura: 'assets/perfil/vitrine_moldura.webp',
       dorso: 'assets/perfil/vitrine_dorso.webp',
