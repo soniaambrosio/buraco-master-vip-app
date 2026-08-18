@@ -1620,6 +1620,130 @@ test('Y12 a reconciliacao administrativa nao troca o dono de um direito', async 
   assert.equal(c.db.escritasEm(publicoDe(U1)), 0);
 });
 
+test('Y14 vinculo DESCONHECIDO na validacao falha fechado, mesmo com sessao valida', async () => {
+  // A lacuna que a prova negativa N3 revelou. Y10 cobre vinculo AUSENTE e R4
+  // cobre vinculo desconhecido SEM sessao; faltava o caso do meio — sessao
+  // valida, identificador bem formado, e ninguem dono dele. E o cenario de uma
+  // conta apagada e recriada, ou de um identificador de outro ambiente.
+  //
+  // A tentacao aqui e obvia: ha um usuario autenticado na frente, entao "deve
+  // ser dele". E exatamente essa deducao que devolveria o defeito A-1 por outra
+  // porta.
+  const c = cenarioDeIndex();
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_ORFAO,
+  });
+  c.db.zerarDiario();
+
+  await assert.rejects(
+    () => c.chamar('validarCompraPlay', {
+      uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+    }),
+    (e) => e.code === 'permission-denied' && e.details.motivo === 'vinculo_desconhecido'
+  );
+
+  assert.equal(c.publico(U1), null, 'concedeu a quem estava autenticado');
+  assert.equal(c.compra(HASH_A), null);
+  assert.equal(c.db.diario.length, 0);
+});
+
+test('Y15 a sucessao por token ligado e ESTREITA: so o token que a Google declara', async () => {
+  // O complemento de Y8. La se prova que a troca de plano entra; aqui, que ela
+  // nao vira uma porta larga: um token que a resposta NAO declara como sucessor
+  // continua sendo token superado, e nao derruba a assinatura vigente.
+  //
+  // Sem isso, `linkedPurchaseToken` viraria "qualquer token substitui qualquer
+  // entitlement do mesmo dono" — e a expiracao de uma assinatura velha passaria
+  // a derrubar a nova.
+  const c = cenarioDeModulo();
+  c.semearEntitlement(U1, {
+    estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO_LONGE, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
+  });
+  // TOKEN_B e do mesmo dono, e a resposta NAO declara token ligado nenhum.
+  c.play.definirAssinatura(TOKEN_B, {
+    estado: c.play.ESTADOS.EXPIRADA, expiraEm: PASSADO, contaOfuscada: VINCULO_U1,
+  });
+  c.db.zerarDiario();
+  c.relogio.fila(T1);
+
+  const r = await c.rtdn.processarNotificacao(
+    mensagem(corpoAssinatura(NOTIFICACAO.EXPIRED, { token: TOKEN_B }), 'msg_Y15')
+  );
+
+  assert.equal(r.aplicado, false, 'um token nao declarado como sucessor passou');
+  assert.equal(r.decisao, 'token_superado');
+  assert.equal(c.publico(U1).vipAtivo, true, 'a assinatura vigente foi derrubada');
+  assert.equal(c.publico(U1).expiraEm, FUTURO_LONGE);
+  assert.equal(c.interno(U1).purchaseTokenHash, HASH_A);
+  assert.equal(c.db.escritasEm(publicoDe(U1)), 0);
+});
+
+test('Y13 registro de compra com dono divergente do vinculo nao concede', async () => {
+  // DEFESA EM PROFUNDIDADE. Este estado nao pode nascer do codigo corrigido: o
+  // `compras/{hash}` so e escrito depois de a propriedade bater. Ele PODE ter
+  // sobrado de antes da correcao, quando o registro nascia com o uid de quem
+  // chamasse primeiro. `conferirTitularidade` continua na transacao final
+  // exatamente para esse caso.
+  const c = cenarioDeIndex();
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO, contaOfuscada: VINCULO_U1,
+  });
+  // Residuo do regime antigo: o invasor gravou o registro em nome dele.
+  c.db.semear(compraDe(HASH_A), {
+    uid: U2, produtoId: PRODUTO, assinatura: true, estado: 'em_validacao',
+  });
+  c.db.zerarDiario();
+
+  // U1 e o dono comprovado pela Google, e mesmo assim a transacao final recusa:
+  // o registro descreve outra compra, e sobrescreve-lo apagaria a evidencia.
+  await assert.rejects(
+    () => c.chamar('validarCompraPlay', {
+      uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+    }),
+    (e) => e.code === 'permission-denied'
+  );
+  assert.equal(c.compra(HASH_A).uid, U2, 'o registro residual foi sobrescrito');
+});
+
+test('Z1 mensagem de erro de terceiro nao chega ao Firestore nem ao cliente', async () => {
+  // O achado M-2. `index.js` gravava `e.message` da googleapis em
+  // `compras/{hash}` — documento que o dono le — e o imprimia em log. A garantia
+  // de que nao havia token ali era circunstancial: dependia do que uma
+  // dependencia de terceiro resolvia colocar num campo livre.
+  //
+  // A agulha abaixo e o que uma mensagem de terceiro poderia carregar no pior
+  // caso. Ela nao pode aparecer em lugar nenhum.
+  const AGULHA = 'SEGREDO-DE-TERCEIRO-QUE-NAO-PODE-VAZAR';
+  const c = cenarioDeIndex();
+  c.play.definirFalha(TOKEN_A, new FalhaTransitoriaPlay(`503 ${AGULHA}`));
+
+  let capturado = null;
+  await c.chamar('validarCompraPlay', {
+    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  }).catch((e) => { capturado = e; });
+
+  assert.ok(capturado, 'a falha da Play devia ter recusado a chamada');
+  // Nem na mensagem, nem nos detalhes que voltam ao cliente.
+  assert.ok(!JSON.stringify(capturado.message).includes(AGULHA), 'vazou na mensagem');
+  assert.ok(!JSON.stringify(capturado.details || {}).includes(AGULHA), 'vazou nos detalhes');
+  assert.equal(capturado.details.motivo, 'falha_temporaria_play');
+  // Nem em documento nenhum.
+  const tudo = JSON.stringify(c.db.caminhos().map((p) => c.db.ver(p)));
+  assert.ok(!tudo.includes(AGULHA), 'a mensagem de terceiro foi persistida');
+
+  // Mesmo teste para o fechamento junto a Google, que falha DEPOIS do credito.
+  const d = cenarioDeIndex();
+  d.play.definirAssinatura(TOKEN_A, { estado: d.play.ESTADOS.ATIVA, expiraEm: FUTURO });
+  d.play.definirFalhaDeFechamento(new FalhaTransitoriaPlay(`acknowledge ${AGULHA}`));
+  const r = await d.chamar('validarCompraPlay', {
+    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  });
+  assert.equal(r.aprovada, true);
+  const tudoD = JSON.stringify(d.db.caminhos().map((p) => d.db.ver(p)));
+  assert.ok(!tudoD.includes(AGULHA), 'o aviso de fechamento persistiu texto de terceiro');
+  assert.equal(d.compra(HASH_A).avisoFechamento, 'falha_temporaria_play');
+});
+
 // ===========================================================================
 // S — redacao de segredo
 // ===========================================================================

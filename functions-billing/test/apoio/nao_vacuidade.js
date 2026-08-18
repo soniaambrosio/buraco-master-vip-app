@@ -36,6 +36,9 @@ const { execFileSync, spawnSync } = require('node:child_process');
 
 const RAIZ = path.resolve(__dirname, '..', '..');
 
+/** Quebra de linha, montada assim para nao existir escape dentro das ancoras. */
+const NOVA_LINHA = String.fromCharCode(10);
+
 /**
  * Cada prova nomeia: o risco, o arquivo de producao, o trecho que implementa a
  * protecao, o trecho que a desliga, e os testes que TEM de ficar vermelhos.
@@ -118,12 +121,18 @@ const PROVAS = [
   },
   {
     caso: 'R',
-    risco: 'token registrado para outro jogador devolve concessao alheia',
+    risco: 'registro de compra residual com dono divergente devolve concessao alheia',
     arquivo: 'idempotencia.js',
     protecao: 'conferencia de titularidade antes do estado',
     de: 'if (registro.uid !== ctx.uid) {',
     para: 'if (false && registro.uid !== ctx.uid) {',
-    testes: ['^R '],
+    // REPONTADA na correcao P0, e a mudanca vale registro. Com `^R ` esta prova
+    // ficou VACUA: a conferencia de propriedade (passo 6 de `validarCompraPlay`)
+    // recusa o invasor ANTES de a transacao ser alcancada, entao desligar este
+    // guarda nao quebra mais o caso R. Ele deixou de ser a defesa primaria e
+    // virou defesa em profundidade — e o unico cenario que ainda depende dele e
+    // um `compras/{hash}` residual do regime antigo, que Y13 encena.
+    testes: ['^Y13 '],
   },
   {
     caso: 'S',
@@ -153,6 +162,148 @@ const PROVAS = [
     para: `        await publico.set(docs.publico);
         await interno.set(docs.interno);`,
     testes: ['^W ', '^W2 '],
+  },
+  // =========================================================================
+  // AS DOZE PROVAS NEGATIVAS DA CORRECAO DE PROPRIEDADE (secao 14 da OS)
+  // =========================================================================
+  //
+  // Cada uma reintroduz, em codigo de PRODUCAO, a decisao errada que a correcao
+  // desfez, e exige que um teste COMPORTAMENTAL a mate. A ordem e a da OS.
+  {
+    caso: 'N1',
+    risco: 'voltar a gravar a compra ANTES da consulta a Google',
+    arquivo: 'index.js',
+    protecao: 'nenhuma persistencia antes da confirmacao autoritativa',
+    de: '    const consultadoEm = new Date().toISOString();',
+    para: [
+      '    await refCompra.set({ uid, produtoId, estado: ESTADO.EM_VALIDACAO }, { merge: true });',
+      '    const consultadoEm = new Date().toISOString();',
+    ].join(NOVA_LINHA),
+    testes: ['^R6 ', '^P3 ', '^Y10 '],
+  },
+  {
+    caso: 'N2',
+    risco: 'ignorar o identificador que a Google devolve na raiz da resposta',
+    arquivo: 'propriedade.js',
+    protecao: 'leitura do obfuscatedExternalAccountId nos DOIS formatos',
+    de: '  const raiz = resposta.obfuscatedExternalAccountId;',
+    para: '  const raiz = undefined;',
+    testes: ['^Y11 '],
+  },
+  {
+    caso: 'N3',
+    risco: 'confiar no uid de quem chamou quando o vinculo nao resolve',
+    arquivo: 'propriedade.js',
+    protecao: 'vinculo desconhecido falha fechado, mesmo com sessao valida',
+    de: '    return { ok: false, motivo: MOTIVO.VINCULO_DESCONHECIDO };',
+    para: '    return uidEsperado ? { ok: true, uid: uidEsperado } : { ok: false, motivo: MOTIVO.VINCULO_DESCONHECIDO };',
+    // `^R4 ` nao serve: la nao ha sessao, entao a deducao "e de quem chamou" nao
+    // tem de quem deduzir. Y14 e o caso do meio, e foi escrito porque ESTA prova
+    // negativa mostrou que ele faltava na matriz.
+    testes: ['^Y14 '],
+  },
+  {
+    caso: 'N4',
+    risco: 'deixar o cliente escolher a propria vinculacao',
+    arquivo: 'index.js',
+    protecao: 'o identificador e gerado no servidor; o payload nao e lido',
+    de: '    const { contaOfuscada, criado } = await dependencias().store.garantirVinculo(uid);',
+    para: [
+      '    const escolhido = request.data && request.data.contaOfuscada;',
+      '    const { contaOfuscada, criado } = escolhido',
+      '      ? { contaOfuscada: escolhido, criado: false }',
+      '      : await dependencias().store.garantirVinculo(uid);',
+    ].join(NOVA_LINHA),
+    testes: ['^Y4 '],
+  },
+  {
+    caso: 'N5',
+    risco: 'aceitar compra sem vinculacao nenhuma',
+    arquivo: 'propriedade.js',
+    protecao: 'identificador ausente ou mal formado e recusa',
+    de: '  if (!vinculoBemFormado(identificador)) {',
+    para: '  if (false && !vinculoBemFormado(identificador)) {',
+    testes: ['^Y10 ', '^V '],
+  },
+  {
+    caso: 'N6',
+    risco: 'tornar packageName opcional de novo',
+    arquivo: 'entitlement.js',
+    protecao: 'a mensagem tem de DIZER de qual pacote veio',
+    de: '  if (corpo.packageName !== pacote) {',
+    para: '  if (corpo.packageName && corpo.packageName !== pacote) {',
+    testes: ['^X3 '],
+  },
+  {
+    caso: 'N7',
+    risco: 'aceitar notificacao de pacote divergente',
+    arquivo: 'entitlement.js',
+    protecao: 'so o applicationId oficial passa',
+    de: "    return { acao: 'ignorar', motivo: MOTIVO.PACOTE_DIVERGENTE };",
+    para: "    return { acao: 'reconciliar', motivo: MOTIVO.PACOTE_DIVERGENTE };",
+    testes: ['^X3 '],
+  },
+  {
+    caso: 'N8',
+    risco: 'ignorar item malformado dentro de lineItems',
+    arquivo: 'propriedade.js',
+    protecao: 'a resposta inteira e recusada antes da consolidacao',
+    de: '  for (let i = 0; i < itens.length; i += 1) {',
+    para: '  for (let i = 0; i < 0; i += 1) {',
+    testes: ['^O2b '],
+  },
+  {
+    caso: 'N9',
+    risco: 'persistir a mensagem de erro de terceiro',
+    arquivo: 'index.js',
+    protecao: 'so codigo fechado sai do fechamento junto a Google',
+    de: '    return { ok: false, motivo: MOTIVO.FALHA_TEMPORARIA_PLAY };',
+    para: '    return { ok: false, motivo: e && e.message };',
+    testes: ['^Z1 '],
+  },
+  {
+    caso: 'N10',
+    risco: 'expor o token bruto em log',
+    arquivo: 'rtdn.js',
+    protecao: 'rotulo curto do hash, nunca o token',
+    de: [
+      "    registro.warn('[billing] RTDN sem propriedade comprovavel', {",
+      '      messageId,',
+      '      motivo,',
+      '      token: rotuloToken(hash),',
+    ].join(NOVA_LINHA),
+    para: [
+      "    registro.warn('[billing] RTDN sem propriedade comprovavel', {",
+      '      messageId,',
+      '      motivo,',
+      '      token: hash,',
+    ].join(NOVA_LINHA),
+    testes: ['^S '],
+  },
+  {
+    caso: 'N11',
+    risco: 'herdar o dono do token ligado, sem conferir propriedade',
+    arquivo: 'entitlementStore.js',
+    arquivo: 'entitlement.js',
+    protecao: 'a sucessao vale so para o token que a Google declara como ligado',
+    de: '    atual.purchaseTokenHash === proposta.purchaseTokenHashLigado;',
+    para: '    true;',
+    // A MUTACAO MUDOU DE LUGAR, e a razao esta no laudo. "Herdar o dono do token
+    // ligado" nao e representavel como mutacao local em `entitlementStore.js`: os
+    // documentos sao escolhidos por `proposta.uid` ANTES da transacao, entao
+    // nenhuma logica de dentro dela consegue redirecionar a escrita para outra
+    // conta. O que E representavel — e o risco de verdade — e a sucessao virar
+    // larga: qualquer token substituindo qualquer entitlement do mesmo dono.
+    testes: ['^Y15 '],
+  },
+  {
+    caso: 'N12',
+    risco: 'fazer o RTDN depender de validacao anterior pelo aplicativo',
+    arquivo: 'reconciliacao.js',
+    protecao: 'a propriedade e resolvida sem sessao, so pelo vinculo',
+    de: '    const uidResolvido = await uidDoVinculo(identificador);',
+    para: '    const uidResolvido = uidEsperado ? await uidDoVinculo(identificador) : null;',
+    testes: ['^Y7 '],
   },
 ];
 
