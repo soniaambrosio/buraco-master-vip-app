@@ -245,6 +245,29 @@ jobs:
             2>&1 | tee t_rankingint.log
           echo ${PIPESTATUS[0]} > exit_rankingint
 
+      - name: "3f3 — PASSE VIP DE CORTESIA: transacao e concorrencia (emulador)"
+        run: |
+          set +e
+          # A SUITE TRANSACIONAL DO PASSE. O passo 3e (`rankingfn`) ja roda a
+          # regra pura junto com o resto do codebase; este prova o que teste
+          # puro nao alcanca: transacao, concorrencia, persistencia e a
+          # recusa sobre documento corrompido.
+          #
+          # PROVA DE AUSENCIA. Se o arquivo sumir, este passo escreve
+          # `nao_passeint` — e o agregador REPROVA em `nao_<gate>`, como o
+          # cabecalho da fonte unica manda. Apagar a suite nao deixa o portao
+          # verde; deixa vermelho, que e a unica resposta honesta.
+          if [ ! -f functions-ranking/test/integracao.passe.emulador.test.js ]; then
+            echo "suite transacional do passe ausente" > nao_passeint; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd functions-ranking && npx tsc ) 2>&1 | tail -3
+          # Da raiz, onde mora o firebase.json — igual ao passo 3f.
+          firebase emulators:exec --only firestore --project demo-bmv \
+            "cd functions-ranking && node --test test/integracao.passe.emulador.test.js" \
+            2>&1 | tee t_passeint.log
+          echo ${PIPESTATUS[0]} > exit_passeint
+
       - name: "3c — codebase SOCIAL (functions-social): dominio Dart, typecheck e testes puros"
         run: |
           set +e

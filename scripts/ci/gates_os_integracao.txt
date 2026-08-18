@@ -71,7 +71,19 @@ socialfn
 socialemu
 regras
 
-# --- 8. codebases que EXECUTAVAM e eram ignorados pelo agregador (CI-02) ----
+# --- 8. suite TRANSACIONAL do Passe VIP de Cortesia --------------------------
+# O `rankingfn` prova a REGRA do passe (as duas fronteiras, o acumulo, o
+# recibo) e roda sem emulador. Este prova o que so o banco prova: transacao,
+# concorrencia (oito chamadas simultaneas => UM ciclo), persistencia campo a
+# campo e falha fechada sobre documento corrompido.
+#
+# Ele entra como OBRIGATORIO, e nao informativo, pelo mesmo criterio do
+# CI-02: uma suite que roda e nao e percorrida pelo agregador e uma suite que
+# pode ficar vermelha sem ninguem saber. As Rules do bloco 8/8 ja entram pelo
+# gate `regras`, que roda `test:integrado`.
+passeint
+
+# --- 9. codebases que EXECUTAVAM e eram ignorados pelo agregador (CI-02) ----
 # Estes quatro constavam da evidência desde a OS de integração de identidade,
 # rodavam de verdade, e o portão final não os percorria. Agora são fatais.
 rankingfn

@@ -325,6 +325,29 @@ describe("PASSE-EMU/PROJECAO — o que o dono recebe", () => {
     assert.equal(p.proximaElegibilidadeEm, isoDeInstante(T0 + MS_DE_CICLO));
   });
 
+  test("PEP-04: o ciclo nasce SEM recibo e SEM contexto — e o campo existe", async () => {
+    // A idempotência do consumo é "mesma tentativa NO MESMO contexto", e o
+    // contexto mora no documento. Aqui se prova que o campo nasce presente e
+    // nulo: nascer AUSENTE faria uma comparação frouxa achar que "não há
+    // divergência" e recuperar um recibo que ninguém pode conferir.
+    const uid = novoUid("contexto");
+    await materializarPasseDeCortesia(uid, T0);
+    const [ciclo] = await ciclosDe(uid);
+
+    assert.ok("contextoDoRecibo" in ciclo, "o campo existe no documento gravado");
+    assert.equal(ciclo.contextoDoRecibo, null, "e nasce nulo — ainda não houve consumo");
+    assert.equal(ciclo.tentativaEntradaId, null);
+    assert.equal(ciclo.admissaoId, null);
+
+    // E o par (recibo, contexto) é indivisível: não existe estado gravado com
+    // `admissaoId` preenchido e contexto nulo.
+    assert.equal(
+      ciclo.admissaoId === null && ciclo.contextoDoRecibo === null,
+      true,
+      "recibo e contexto nascem juntos, e juntos vazios"
+    );
+  });
+
   test("PEP-03: `cicloVigente` lê sem materializar", async () => {
     // A porta que a OS de admissão vai usar para achar o ciclo. Ela LÊ: um
     // jogador sem passe não ganha um só por alguém ter perguntado por ele.

@@ -40,6 +40,8 @@ const {
   projecaoPublica,
   planejarRecibo,
   aplicarConsumo,
+  contextoEstavelDe,
+  contextosCoincidem,
 } = require("../lib/passe");
 
 // ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ function controleCom({ recebidoEmMs = T0, consumidoEmMs = null, cicloId = "ciclo
   };
 }
 
-function cicloCom({ recebidoEmMs = T0, consumidoEmMs = null, encerradoEmMs = null, tentativaEntradaId = null, admissaoId = null, cicloId = "ciclo-1" } = {}) {
+function cicloCom({ recebidoEmMs = T0, consumidoEmMs = null, encerradoEmMs = null, tentativaEntradaId = null, admissaoId = null, cicloId = "ciclo-1", contextoDoRecibo = undefined } = {}) {
   return {
     cicloId,
     recebidoEm: isoDeInstante(recebidoEmMs),
@@ -76,15 +78,26 @@ function cicloCom({ recebidoEmMs = T0, consumidoEmMs = null, encerradoEmMs = nul
     encerradoEm: encerradoEmMs === null ? null : isoDeInstante(encerradoEmMs),
     tentativaEntradaId,
     admissaoId,
+    // Por padrão, um ciclo consumido carrega o contexto do próprio `contexto()`
+    // — que é o caso normal. Passar `null` explicitamente simula o documento
+    // antigo/incompleto, que NÃO pode recuperar.
+    contextoDoRecibo:
+      contextoDoRecibo === undefined
+        ? (consumidoEmMs === null ? null : contextoEstavelDe(contexto()))
+        : contextoDoRecibo,
     versaoContrato: VERSAO_CONTRATO_PASSE,
   };
 }
 
+/// O contexto como o gate do servidor o entrega — os cinco campos estáveis mais
+/// a identidade da tentativa. Ver `admissao-vip-v1` em `buraco-servidor@e4bad52`.
 const contexto = (extra = {}) => Object.assign({
   uid: UID,
   tentativaEntradaId: "te_1111",
   codigoDaSala: "BURACO-4821",
   identidadeDaPartida: null,
+  assento: 2,
+  categoriaCompetitiva: "vip_ranqueada",
 }, extra);
 
 // ===========================================================================
@@ -435,6 +448,114 @@ describe("PASSE/RECIBO — a idempotência que a admissão vai consumir", () => 
     assert.equal(plano.admissaoId, "adm-999", "o MESMO admissaoId, não um novo");
   });
 
+  test("PR-02b: a MESMA tentativa em CONTEXTO DIFERENTE é recusada", () => {
+    // A LACUNA QUE ESTA CORREÇÃO FECHA. `tentativaEntradaId` sozinha era uma
+    // chave SOLTA: quem reapresentasse aquela string de outra sala, de outra
+    // partida ou para outro assento receberia de volta o mesmo `admissaoId` e
+    // entraria numa mesa que ninguém autorizou. Idempotência é "mesma tentativa
+    // NO MESMO contexto"; "mesma string" é portão aberto.
+    const consumido = cicloCom({
+      consumidoEmMs: T0 + DIA,
+      tentativaEntradaId: "te_1111",
+      admissaoId: "adm-999",
+    });
+    const divergentes = [
+      ["sala", { codigoDaSala: "BURACO-9999" }],
+      ["partida", { identidadeDaPartida: "partida-outra" }],
+      ["assento", { assento: 0 }],
+      ["categoria", { categoriaCompetitiva: "casual" }],
+    ];
+    for (const [oQue, mudanca] of divergentes) {
+      const plano = planejarRecibo(consumido, contexto(mudanca), UID, T0 + 2 * DIA);
+      assert.equal(plano.acao, "recusar", oQue + " divergente");
+      assert.equal(plano.motivo, "contexto_divergente", oQue);
+      assert.ok(!JSON.stringify(plano).includes("adm-999"),
+        oQue + ": a recusa não pode devolver o recibo alheio");
+    }
+  });
+
+  test("PR-02c: JOGADOR divergente é recusado antes de qualquer contexto", () => {
+    // O dono do passe é conferido primeiro, e com motivo próprio: a resposta
+    // "contexto divergente" para outra pessoa contaria que existe um recibo ali.
+    const consumido = cicloCom({
+      consumidoEmMs: T0 + DIA,
+      tentativaEntradaId: "te_1111",
+      admissaoId: "adm-999",
+    });
+    const plano = planejarRecibo(consumido, contexto({ uid: "uid-invasor" }), UID, T0 + 2 * DIA);
+    assert.equal(plano.acao, "recusar");
+    assert.equal(plano.motivo, "tentativa_de_outro_jogador");
+  });
+
+  test("PR-02d: mudança só de RECONEXÃO ou de transporte continua recuperando", () => {
+    // O caso que a conferência NÃO pode quebrar, e que é a razão de existir do
+    // recibo: a conexão caiu e o jogador voltou. A segunda chegada quase sempre
+    // vem classificada como reconexão e por outro caminho de transporte — e
+    // nada disso é contexto estável.
+    const consumido = cicloCom({
+      consumidoEmMs: T0 + DIA,
+      tentativaEntradaId: "te_1111",
+      admissaoId: "adm-999",
+    });
+    const reapresentacoes = [
+      ["classificada como reconexão", { reconexao: true, classificacao: "reconexao_ao_proprio_assento" }],
+      ["por outra conexão", { conexaoId: "c-42", socketId: "s-99" }],
+      ["com apelido novo", { apelido: "Sônia (2)" }],
+      ["com carimbo de tempo novo", { enviadoEm: "2026-09-01T00:00:00.000Z" }],
+    ];
+    for (const [oQue, ruido] of reapresentacoes) {
+      const plano = planejarRecibo(consumido, contexto(ruido), UID, T0 + 3 * DIA);
+      assert.equal(plano.acao, "recuperar", oQue);
+      assert.equal(plano.admissaoId, "adm-999", oQue + ": o MESMO recibo");
+    }
+  });
+
+  test("PR-02e: recibo SEM contexto guardado não recupera", () => {
+    // Documento antigo, escrita incompleta, migração pela metade: quem não pode
+    // ser conferido não é recuperado. O contrário — recuperar na dúvida — é o
+    // mesmo buraco por outro caminho.
+    const semContexto = cicloCom({
+      consumidoEmMs: T0 + DIA,
+      tentativaEntradaId: "te_1111",
+      admissaoId: "adm-999",
+      contextoDoRecibo: null,
+    });
+    const plano = planejarRecibo(semContexto, contexto(), UID, T0 + 2 * DIA);
+    assert.equal(plano.acao, "recusar");
+    assert.equal(plano.motivo, "contexto_divergente");
+  });
+
+  test("PR-02f: a comparação de contexto é estrita, campo a campo", () => {
+    // Na primitiva, para que a regra não dependa de como o caso acima monta o
+    // fixture. `null` e ausência coincidem entre si; valor diferente, nunca.
+    const base = contextoEstavelDe(contexto());
+    assert.equal(contextosCoincidem(base, base), true);
+    assert.equal(contextosCoincidem(null, base), false, "ausente não coincide com nada");
+    assert.equal(contextosCoincidem(undefined, base), false);
+    for (const campo of ["uid", "codigoDaSala", "identidadeDaPartida", "assento", "categoriaCompetitiva"]) {
+      const mexido = Object.assign({}, base, { [campo]: campo === "assento" ? 3 : "outro-valor" });
+      assert.equal(contextosCoincidem(mexido, base), false, campo + " diferente tem de divergir");
+    }
+    // `null` guardado x `null` atual coincidem — é o caso da sala em lobby.
+    const semPartida = Object.assign({}, base, { identidadeDaPartida: null });
+    assert.equal(contextosCoincidem(semPartida, semPartida), true);
+  });
+
+  test("PR-02g: o contexto estável carrega os CINCO campos, e só eles", () => {
+    // Se um campo instável entrar aqui, a recuperação passa a falhar no caso
+    // legítimo; se um estável sair, a chave volta a ficar solta. A lista é
+    // fixada de propósito.
+    const estavel = contextoEstavelDe(contexto({
+      reconexao: true, classificacao: "reconexao_ao_proprio_assento",
+      apelido: "Sônia", tentativaEntradaId: "te_1111", conexaoId: "c-1",
+    }));
+    assert.deepEqual(Object.keys(estavel).sort(), [
+      "assento", "categoriaCompetitiva", "codigoDaSala", "identidadeDaPartida", "uid",
+    ]);
+    assert.ok(!("tentativaEntradaId" in estavel), "a tentativa é a chave, não o contexto");
+    assert.ok(!("reconexao" in estavel), "reconexão é o que muda entre reapresentações");
+  });
+
   test("PR-03: tentativas diferentes NÃO compartilham recibo", () => {
     // §11.23. Duas partidas, dois passes — e como só há um por quinzena, a
     // segunda é recusada.
@@ -497,6 +618,9 @@ describe("PASSE/RECIBO — a idempotência que a admissão vai consumir", () => 
     assert.equal(depois.consumidoEm, isoDeInstante(T0 + DIA));
     assert.equal(depois.tentativaEntradaId, "te_1111");
     assert.equal(depois.admissaoId, "adm-777");
+    // E o contexto estável é gravado JUNTO com o recibo, na mesma transição —
+    // não existe instante em que haja `admissaoId` sem contexto para conferi-lo.
+    assert.deepEqual(depois.contextoDoRecibo, contextoEstavelDe(contexto()));
   });
 
   test("PR-09: consumir e reapresentar converge — a transição é idempotente", () => {

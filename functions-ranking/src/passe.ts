@@ -90,6 +90,14 @@ export interface CicloDePasse {
   /// Preenchidos SO no consumo, pela OS de admissao. Nunca saem em projecao.
   readonly tentativaEntradaId: string | null;
   readonly admissaoId: string | null;
+  /// O CONTEXTO ESTAVEL em que este passe foi consumido.
+  ///
+  /// Sem ele, `tentativaEntradaId` sozinha seria uma chave de idempotencia
+  /// SOLTA: qualquer pedido que reapresentasse aquela string — de outra sala, de
+  /// outra partida, de outro assento — receberia de volta o mesmo `admissaoId` e
+  /// entraria numa mesa em que ninguem autorizou. A idempotencia tem de ser
+  /// "mesma tentativa NO MESMO contexto", e nao "mesma string".
+  readonly contextoDoRecibo: ContextoEstavelDoRecibo | null;
   readonly versaoContrato: number;
 }
 
@@ -465,6 +473,72 @@ export interface ContextoDaTentativa {
   readonly tentativaEntradaId: string;
   readonly codigoDaSala: string;
   readonly identidadeDaPartida: string | null;
+  readonly assento: number | null;
+  readonly categoriaCompetitiva: string | null;
+}
+
+/// A parte ESTAVEL do contexto — a que, para uma mesma `tentativaEntradaId`,
+/// tem de ser sempre a mesma.
+///
+/// O CRITERIO DE ESTABILIDADE, campo a campo, porque escolher errado aqui e o
+/// jeito de o recibo virar decorativo:
+///
+///   uid ..................... o dono do passe. Muda? Entao nao e a mesma pessoa.
+///   codigoDaSala ............ a tentativa nasce depois de a sala ser escolhida.
+///   identidadeDaPartida ..... `partidaId`, congelado em `iniciarPartida`. Pode
+///                             ser `null` (sala em lobby), e `null` E um valor:
+///                             `null` -> id significa que a partida comecou no
+///                             meio, e ai a admissao nao e mais a mesma.
+///   assento ................. o gate cunha a tentativa DEPOIS de resolver o
+///                             assento alvo. Assento diferente, entrada diferente.
+///   categoriaCompetitiva .... imutavel na sala, por construcao do gate.
+///
+/// O QUE FICA DE FORA, e por que isso importa tanto quanto o que fica dentro:
+/// `reconexao` (a classificacao) e tudo que e de TRANSPORTE. Uma reapresentacao
+/// da mesma tentativa quase sempre chega classificada de outro jeito — foi a
+/// conexao que caiu, e a segunda chegada e uma reconexao. Se a classificacao
+/// entrasse no contexto estavel, a recuperacao falharia exatamente no caso que
+/// ela existe para atender, e o jogador perderia o passe por causa de um cabo.
+export interface ContextoEstavelDoRecibo {
+  readonly uid: string;
+  readonly codigoDaSala: string;
+  readonly identidadeDaPartida: string | null;
+  readonly assento: number | null;
+  readonly categoriaCompetitiva: string | null;
+}
+
+/// Extrai a parte estavel. Campo ausente vira `null` — nunca `undefined`, que
+/// no Firestore nao se grava e faria o documento voltar sem o campo, o que
+/// depois passaria por "contexto igual" numa comparacao frouxa.
+export function contextoEstavelDe(c: ContextoDaTentativa): ContextoEstavelDoRecibo {
+  const texto = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  return {
+    uid: `${c.uid}`,
+    codigoDaSala: texto(c.codigoDaSala) ?? "",
+    identidadeDaPartida: texto(c.identidadeDaPartida),
+    assento: typeof c.assento === "number" && Number.isInteger(c.assento) ? c.assento : null,
+    categoriaCompetitiva: texto(c.categoriaCompetitiva),
+  };
+}
+
+/// Os dois contextos sao o MESMO?
+///
+/// Comparacao campo a campo e estrita. Nao ha tolerancia, nao ha "quase igual"
+/// e nao ha campo que possa faltar dos dois lados e por isso combinar: um
+/// contexto guardado como `null` (documento antigo, escrita incompleta) NAO
+/// coincide com nada — quem nao pode ser conferido nao e recuperado.
+export function contextosCoincidem(
+  guardado: ContextoEstavelDoRecibo | null | undefined,
+  atual: ContextoEstavelDoRecibo
+): boolean {
+  if (guardado === null || guardado === undefined) return false;
+  return (
+    guardado.uid === atual.uid &&
+    guardado.codigoDaSala === atual.codigoDaSala &&
+    (guardado.identidadeDaPartida ?? null) === (atual.identidadeDaPartida ?? null) &&
+    (guardado.assento ?? null) === (atual.assento ?? null) &&
+    (guardado.categoriaCompetitiva ?? null) === (atual.categoriaCompetitiva ?? null)
+  );
 }
 
 export type PlanoDeRecibo =
@@ -519,15 +593,27 @@ export function planejarRecibo(
   }
 
   if (ciclo.consumidoEm !== null) {
-    // Ja consumido. So ha um caminho de volta: ser a MESMA tentativa.
+    // Ja consumido. So ha um caminho de volta: ser a MESMA tentativa NO MESMO
+    // CONTEXTO — e as duas condicoes valem juntas.
     if (ciclo.tentativaEntradaId !== null && ciclo.tentativaEntradaId === contexto.tentativaEntradaId) {
-      if (typeof ciclo.admissaoId === "string" && ciclo.admissaoId.length > 0) {
-        return { acao: "recuperar", admissaoId: ciclo.admissaoId, cicloId: ciclo.cicloId };
+      if (typeof ciclo.admissaoId !== "string" || ciclo.admissaoId.length === 0) {
+        // Consumido pela mesma tentativa mas sem recibo gravado: estado
+        // impossivel. Nao se inventa um `admissaoId` novo aqui — inventar seria
+        // fabricar a prova de uma admissao que ninguem pode conferir.
+        return { acao: "recusar", motivo: "ja_consumido_por_outra_tentativa" };
       }
-      // Consumido pela mesma tentativa mas sem recibo gravado: estado
-      // impossivel. Nao se inventa um `admissaoId` novo aqui — inventar seria
-      // fabricar a prova de uma admissao que ninguem pode conferir.
-      return { acao: "recusar", motivo: "ja_consumido_por_outra_tentativa" };
+      // A CONFERENCIA DE CONTEXTO. Sem ela, `tentativaEntradaId` seria uma chave
+      // SOLTA: quem reapresentasse aquela string de outra sala, de outra partida
+      // ou para outro assento receberia de volta o mesmo `admissaoId` e entraria
+      // numa mesa que ninguem autorizou. A idempotencia e "mesma tentativa NO
+      // MESMO contexto"; "mesma string" nao e idempotencia, e um portao aberto.
+      //
+      // Contexto guardado ausente tambem NAO recupera: quem nao pode ser
+      // conferido nao e recuperado.
+      if (!contextosCoincidem(ciclo.contextoDoRecibo, contextoEstavelDe(contexto))) {
+        return { acao: "recusar", motivo: "contexto_divergente" };
+      }
+      return { acao: "recuperar", admissaoId: ciclo.admissaoId, cicloId: ciclo.cicloId };
     }
     return { acao: "recusar", motivo: "ja_consumido_por_outra_tentativa" };
   }
@@ -557,5 +643,9 @@ export function aplicarConsumo(
     consumidoEm: isoDeInstante(agoraMs),
     tentativaEntradaId: contexto.tentativaEntradaId,
     admissaoId,
+    // O contexto e gravado JUNTO com o recibo, na mesma transicao. Gravar em
+    // dois passos deixaria uma janela em que existe `admissaoId` sem contexto —
+    // e um recibo que nao se pode conferir e um recibo que nao recupera.
+    contextoDoRecibo: contextoEstavelDe(contexto),
   };
 }

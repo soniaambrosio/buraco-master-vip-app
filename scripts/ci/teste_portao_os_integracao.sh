@@ -122,6 +122,21 @@ else
   nok "I3 — suíte nova fora da fonte única:$faltando"
 fi
 
+# A suíte TRANSACIONAL do passe de cortesia. Obrigatória, e com produtor no
+# YAML: sem uma das duas coisas ela é uma suíte que roda sem ninguém ler, que
+# é exatamente o defeito CI-02.
+if contem_gate passeint; then
+  ok "I4a — passeint (transação do passe) é obrigatório na fonte única"
+else
+  nok "I4a — passeint saiu da fonte única; a suíte transacional do passe ficou sem portão"
+fi
+
+if grep -q "exit_passeint" "$YML" && grep -q "nao_passeint" "$YML"; then
+  ok "I4b — o YAML produz exit_passeint e prova a ausência com nao_passeint"
+else
+  nok "I4b — o YAML não produz exit_passeint e/ou não escreve nao_passeint quando a suíte some"
+fi
+
 # O gerador de PNG continua FORA do portão, como decidido antes desta OS.
 if contem_gate colevid; then
   nok "I4 — colevid entrou no portão; ele é informativo por decisão registrada"

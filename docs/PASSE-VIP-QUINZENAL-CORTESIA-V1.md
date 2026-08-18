@@ -10,7 +10,7 @@
 > produção**.
 >
 > **Zero Cloud Function nova · zero scheduler · zero deploy · zero segredo ·
-> zero delta em Flutter e no servidor Railway · 14/14 mutações detectadas.**
+> zero delta em Flutter e no servidor Railway · 18/18 mutações detectadas.**
 
 | | |
 | --- | --- |
@@ -62,7 +62,7 @@ Controle: `versaoContrato`, `cicloAtualId`, `recebidoEm`, `validoAte`,
 `proximaElegibilidadeEm`, `consumidoEm`, `cicloEncerradoEm`,
 `ultimaMaterializacaoEm`.
 
-Ciclo: o mesmo par de datas, mais `consumidoEm`, `encerradoEm`,
+Ciclo: o mesmo par de datas, mais `consumidoEm`, `encerradoEm`, `contextoDoRecibo`,
 `tentativaEntradaId`, `admissaoId`, `versaoContrato`.
 
 O `cicloId` é **opaco e não derivado** (`randomUUID`): não é o uid, não é a
@@ -164,6 +164,39 @@ mesma tentativa — porque é o gate de `buraco-servidor@e4bad52` que a cunha e 
 conserva. Consumir de novo custaria quinze dias por causa de um cabo; recusar
 tiraria a entrada que ele já ganhou. A resposta certa é a terceira.
 
+### A idempotência é vinculada ao CONTEXTO ESTÁVEL
+
+A primeira versão deixava `tentativaEntradaId` como chave **solta**: qualquer
+pedido que reapresentasse aquela string — de outra sala, de outra partida, para
+outro assento — receberia de volta o mesmo `admissaoId` e entraria numa mesa que
+ninguém autorizou. Idempotência é *"mesma tentativa **no mesmo contexto**"*;
+"mesma string" não é idempotência, é portão aberto.
+
+O ciclo passou a persistir `contextoDoRecibo`, gravado **na mesma transição** que
+o recibo — não existe instante com `admissaoId` sem contexto para conferi-lo:
+
+| Campo | Por que é estável |
+| --- | --- |
+| `uid` | o dono do passe |
+| `codigoDaSala` | a tentativa nasce depois de a sala ser escolhida |
+| `identidadeDaPartida` | `partidaId`, congelado em `iniciarPartida`; `null` **é** um valor |
+| `assento` | o gate cunha a tentativa depois de resolver o assento alvo |
+| `categoriaCompetitiva` | imutável na sala, por construção do gate |
+
+**O que fica de fora importa tanto quanto o que fica dentro:** `reconexao` (a
+classificação) e tudo que é de transporte. Uma reapresentação quase sempre chega
+classificada como reconexão — foi a conexão que caiu. Se isso entrasse no
+contexto estável, a recuperação falharia exatamente no caso que ela existe para
+atender.
+
+| Situação | Resposta |
+| --- | --- |
+| mesma tentativa + mesmo contexto | `recuperar` — o mesmo `admissaoId` |
+| mesma tentativa + sala/partida/assento/categoria diferentes | `contexto_divergente` |
+| mesma tentativa + só `reconexao`/transporte diferentes | `recuperar` |
+| mesma tentativa + contexto **ausente** no documento | `contexto_divergente` — quem não pode ser conferido não é recuperado |
+| jogador diferente | `tentativa_de_outro_jogador`, antes de qualquer contexto |
+
 `aplicarConsumo` é a única forma de produzir um ciclo consumido, e ela **não**
 recalcula `proximaElegibilidadeEm`.
 
@@ -188,10 +221,10 @@ por Rules — e é essa a única porta.
 
 | Suíte | Antes | Depois |
 | --- | --- | --- |
-| `rankingfn` (`functions-ranking npm test`) | 330 | **379** |
+| `rankingfn` (`functions-ranking npm test`) | 330 | **385** |
 | `rankingint` (emulador) | 27 | **27** |
 | `regras` (`test:integrado`, agora 8 blocos) | 147 | **161** |
-| `passe` (emulador, nova) | — | **17** |
+| `passeint` (emulador, nova — GATE OBRIGATÓRIO) | — | **18** |
 | `billing` | 13 | 13 |
 | `socialfn` | 45 | 45 |
 | `socialdom` · `torneiosfn` | verde | verde |
@@ -200,6 +233,27 @@ Alvos novos, seguindo a regra da casa de listas explícitas (nunca glob):
 `functions-ranking` → `test/passe.test.js` no `npm test` e
 `npm run test:emulador:passe`; `firebase/testes` → `npm run test:passe`, e
 `passe.test.js` entrou no `test:integrado`.
+
+### A suíte transacional é GATE OBRIGATÓRIO, nas três pontas
+
+Ela rodava e não era portão — o mesmo defeito CI-02 que esta composição existe
+para não repetir. Agora:
+
+1. **fonte única** — `passeint` em `scripts/ci/gates_os_integracao.txt`
+   (36 → **37 gates**);
+2. **workflow** — passo `3f3` em `ci-os-integracao.yml`, que produz
+   `exit_passeint`;
+3. **prova de ausência** — se a suíte sumir, o passo escreve `nao_passeint`, e o
+   agregador reprova em `nao_<gate>` por contrato do cabeçalho da fonte única.
+   Apagar a suíte não deixa o portão verde: deixa vermelho.
+
+Provado localmente contra o agregador real: todos os gates em `exit 0` → VERDE;
+`exit_passeint` = 1 → **VERMELHO**; `nao_passeint` → **VERMELHO**
+(`obrigatórios: 37 | verdes: 36`).
+
+E dois invariantes novos no `portaoci`, para que remover qualquer uma das duas
+pontas fique vermelho: `I4a` (o gate está na fonte única) e `I4b` (o YAML produz
+`exit_passeint` **e** escreve `nao_passeint`).
 
 ### Um guarda que foi estreitado, e não afrouxado
 
@@ -216,7 +270,7 @@ exceção atrás de `publicId`, `publicPlayerId`, `playerIdentities`,
 `publicIdIndex`, `uid` e `firestore`, além de exigir que ela continue com no
 máximo oito linhas de código. Uma exceção que cresce deixa de ser exceção.
 
-## Provas negativas (§12) — 14/14
+## Provas negativas — 18/18
 
 Cada mutação foi aplicada, o delta em bytes medido, a matriz rodada, e o arquivo
 revertido e conferido por `sha256`.
@@ -237,6 +291,14 @@ revertido e conferido por `sha256`.
 | 12 | export acidental de endpoint | +94 | `PF-01` |
 | 13 | malformado normalizado em silêncio | +8 | `PE-07` |
 | 14 | encerramento não registrado | −29 | `PC-10c` |
+| **15** | **remove a conferência de contexto** (chave volta a ser solta) | −131 | `PR-02b`, `PR-02e` |
+| **16** | aceita recibo **sem contexto** guardado | −1 | `PR-02e`, `PR-02f` |
+| **17** | tira `passeint` da fonte única | −10 | `portaoci` (`I4a`) |
+| **18** | tira o passo produtor de `exit_passeint` do workflow | +7 | `portaoci` (`I4b`) |
+
+As quatro últimas entraram com a correção do veredito FAIL, junto com a
+reexecução da #11 — que agora é morta por **três** casos em vez de dois, porque
+`PR-02d` (reapresentação por reconexão) também exige a recuperação.
 
 A #7 tem delta zero porque `playerCourtesyPass` e `playerEntitlements` têm o
 mesmo comprimento; a aplicação foi confirmada pelo próprio roteiro, que aborta se
@@ -254,9 +316,23 @@ estruturalmente por `PEF-02`, que prova que materializar não escreve em
 Não houve **deploy**, **ativação**, **PR** nem **merge em `main`**. Nenhum
 scheduler foi criado. Nenhuma Cloud Function produtiva nova foi exportada — a
 contagem por codebase (7 / 6 / 11 / 14) é fixada por teste, e o `index.ts` do
-ranking não importa o módulo do passe. Nenhum segredo entrou. `playerEntitlements`
-não foi lida, escrita nem mencionada. Delta **zero** em `app/` (Flutter) e no
-servidor Railway.
+ranking não importa o módulo do passe. Nenhum segredo entrou. Delta **zero** em
+`app/` (Flutter) e no servidor Railway.
+
+**Sobre `playerEntitlements`, com precisão.** A frase anterior deste laudo dizia
+que ela "não foi lida, escrita nem mencionada", e isso era **falso** — a suíte
+de emulador escreve nela. O correto:
+
+* **`playerEntitlements` não foi reutilizada como autoridade.** Nenhum código de
+  produção a lê, escreve ou menciona: `PF-03` varre `passe.ts` e `firestore.ts`
+  e reprova se o nome aparecer;
+* **a suíte de emulador escreve nela de propósito, como fixture.** `PEF-01`
+  semeia `{vip:true, origem:"assinatura-paga"}`, roda três materializações e
+  confere por `updateTime` que o documento **não foi tocado nem uma vez**. É o
+  contrário de reutilizar: é a prova, contra o banco, de que a cortesia e a
+  assinatura não se encostam;
+* nas **Rules**, ela continua negada pelo fecho padrão do arquivo, e `PRF-01`
+  afirma isso para os quatro papéis — o bloco 8/8 não abriu porta para ela.
 
 ## Riscos residuais
 

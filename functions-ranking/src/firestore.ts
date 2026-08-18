@@ -1644,6 +1644,7 @@ export async function materializarPasseDeCortesia(
       encerradoEm: null,
       tentativaEntradaId: null,
       admissaoId: null,
+      contextoDoRecibo: null,
       versaoContrato: VERSAO_CONTRATO_PASSE,
     };
 
