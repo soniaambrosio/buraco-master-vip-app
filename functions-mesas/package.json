@@ -11,7 +11,7 @@
     "build": "tsc",
     "lint": "tsc --noEmit",
     "//test": "Compila primeiro porque o alvo do teste e o modulo JA compilado em lib/, como em ranking, moderacao e conta. Alvos explicitos, nunca glob: um arquivo novo passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
-    "test": "tsc && node --test test/tipos.test.js test/politica.test.js test/passe.test.js test/salas.test.js test/espelho.test.js",
+    "test": "tsc && node --test test/tipos.test.js test/politica.test.js test/passe.test.js test/salas.test.js test/decisao.test.js test/elegibilidade.test.js test/espelho.test.js",
     "//test:emulador": "INTEGRACAO CONTRA O FIRESTORE E O AUTH REAIS. E onde a atomicidade do consumo, a idempotencia por `tentativaEntradaId` e a concorrencia de duas tentativas simultaneas sao provadas — nenhuma das tres se prova com dobre de memoria. Roda a partir da RAIZ, que e onde firebase.json mora.",
     "test:emulador": "tsc && cd .. && firebase emulators:exec --only firestore,auth --project demo-bmv \"cd functions-mesas && node --test test/integracao.emulador.test.js\"",
     "serve": "npm run build && firebase emulators:start --only functions:mesas",
