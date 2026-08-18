@@ -55,6 +55,8 @@ import 'package:buraco_master_vip/sessao/fonte_identidade.dart';
 import 'package:buraco_master_vip/sessao/identidade_publica_sessao.dart';
 import 'package:buraco_master_vip/sessao/sessao_do_jogador.dart';
 
+import 'abertura_falsa.dart';
+
 // ===========================================================================
 // As pontas do mundo
 // ===========================================================================
@@ -227,6 +229,11 @@ class Bancada {
     autenticacao: autenticacao,
     online: online,
     duracaoDaSplash: const Duration(milliseconds: 20),
+    // A arte da abertura entra pelo dublê: o runtime da Rive é nativo e
+    // não sobe dentro de `flutter test`. Ver `abertura_falsa.dart`.
+    fonteDaAbertura: AberturaFalsa(
+      duracaoDaTimeline: const Duration(milliseconds: 10),
+    ),
     somNaSplash: false,
     limiteDeResolucao: const Duration(seconds: 8),
   );

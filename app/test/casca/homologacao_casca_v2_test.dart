@@ -33,6 +33,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'abertura_falsa.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -199,6 +201,11 @@ class _Bancada {
     autenticacao: autenticacao,
     online: online,
     duracaoDaSplash: const Duration(milliseconds: 20),
+    // A arte da abertura entra pelo dublê: o runtime da Rive é nativo e
+    // não sobe dentro de `flutter test`. Ver `abertura_falsa.dart`.
+    fonteDaAbertura: AberturaFalsa(
+      duracaoDaTimeline: const Duration(milliseconds: 10),
+    ),
     somNaSplash: false,
     limiteDeResolucao: const Duration(seconds: 8),
   );

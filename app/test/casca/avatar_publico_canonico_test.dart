@@ -1169,9 +1169,50 @@ void main() {
         );
       }
 
+      // 48 → 50 AO ENTRAR A ABERTURA EM RIVE, e a conta tem os dois sinais.
+      //
+      // ENTRARAM três, com nome: o contrato (os nomes do artboard e da
+      // timeline, num lugar só), a tela da abertura e a única porta do
+      // aplicativo para o runtime da Rive.
+      //
+      // SAIU um, e ele também tem nome: `screens/splash_oficial_screen.dart`
+      // deixou de ser alcançável quando a casca trocou de abertura. A tela
+      // continua no repositório como catálogo visual — o que acabou foi o
+      // CAMINHO até ela, e é exatamente isso que este fecho mede.
+      //
+      // Mesma disciplina das rodadas anteriores: o total é alarme de
+      // crescimento inesperado, e tanto entrada quanto saída se declaram.
+      const daAberturaConstelacao = [
+        'lib/casca/splash/contrato_da_abertura.dart',
+        'lib/casca/splash/splash_constelacao_screen.dart',
+        'lib/casca/splash/abertura_rive.dart',
+      ];
+      for (final caminho in daAberturaConstelacao) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — a abertura em Rive deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
       expect(
         alcancaveis,
-        hasLength(40 + doRankingReal.length + daNavegacaoPublica.length),
+        isNot(contains('lib/screens/splash_oficial_screen.dart')),
+        reason:
+            'a abertura anterior voltou ao caminho que nasce em main(): duas '
+            'aberturas alcançáveis são duas inicializações concorrentes',
+      );
+
+      expect(
+        alcancaveis,
+        hasLength(
+          40 +
+              doRankingReal.length +
+              daNavegacaoPublica.length +
+              daAberturaConstelacao.length -
+              1,
+        ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
       final resolvedor = _codigo(File('lib/sessao/avatar_publico.dart'));

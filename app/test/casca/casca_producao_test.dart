@@ -17,6 +17,8 @@ import 'dart:convert';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'abertura_falsa.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -30,7 +32,7 @@ import 'package:buraco_master_vip/casca/raiz_do_aplicativo.dart';
 import 'package:buraco_master_vip/pages/perfil_page.dart';
 import 'package:buraco_master_vip/screens/inicio_screen.dart';
 import 'package:buraco_master_vip/screens/perfil_screen.dart';
-import 'package:buraco_master_vip/screens/splash_oficial_screen.dart';
+import 'package:buraco_master_vip/casca/splash/splash_constelacao_screen.dart';
 import 'package:buraco_master_vip/services/online_service.dart';
 import 'package:buraco_master_vip/services/ponte_sessao_online.dart';
 import 'package:buraco_master_vip/sessao/comandos_de_autenticacao.dart';
@@ -230,6 +232,11 @@ class _Bancada {
     // Abertura curta e muda: o teste não tem plugin de áudio, e esperar 3,8s
     // de animação em cada caso multiplicaria o tempo da suíte por nada.
     duracaoDaSplash: const Duration(milliseconds: 20),
+    // A arte da abertura entra pelo dublê: o runtime da Rive é nativo e não
+    // sobe dentro de `flutter test`. Ver `abertura_falsa.dart`.
+    fonteDaAbertura: AberturaFalsa(
+      duracaoDaTimeline: const Duration(milliseconds: 10),
+    ),
     somNaSplash: false,
     limiteDeResolucao: const Duration(seconds: 8),
   );
@@ -266,7 +273,7 @@ void main() {
       addTearDown(b.fechar);
 
       await _abrirAplicativo(tester, b);
-      expect(find.byType(SplashOficialScreen), findsOneWidget);
+      expect(find.byType(SplashConstelacaoScreen), findsOneWidget);
       expect(find.byType(LoginDeProducao), findsNothing);
 
       // O fluxo se pronuncia: não há ninguém.
@@ -275,7 +282,7 @@ void main() {
 
       expect(find.byType(LoginDeProducao), findsOneWidget);
       expect(find.byType(HomeDeProducao), findsNothing);
-      expect(find.byType(SplashOficialScreen), findsNothing);
+      expect(find.byType(SplashConstelacaoScreen), findsNothing);
     });
 
     testWidgets('com sessão válida: Splash e depois Home', (tester) async {
@@ -285,7 +292,7 @@ void main() {
       addTearDown(b.fechar);
 
       await _abrirAplicativo(tester, b);
-      expect(find.byType(SplashOficialScreen), findsOneWidget);
+      expect(find.byType(SplashConstelacaoScreen), findsOneWidget);
 
       await _passarAAbertura(tester);
 
@@ -306,7 +313,7 @@ void main() {
 
       // ...e a splash continua, porque a sessão ainda não respondeu. É a prova
       // de que a espera é pela SESSÃO, e não pelo relógio da abertura.
-      expect(find.byType(SplashOficialScreen), findsOneWidget);
+      expect(find.byType(SplashConstelacaoScreen), findsOneWidget);
       expect(find.byType(LoginDeProducao), findsNothing);
 
       b.fluxo.add(null);
