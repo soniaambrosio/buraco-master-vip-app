@@ -317,7 +317,7 @@ antigo — que `Y13` encena.
 | Varredura de rede | `X4` — 0 tentativas em 82 testes |
 | Varredura de segredos | nenhum padrão de credencial no diff; apenas `token_sintetico_A/B/C` |
 | Skips, `catch` vazio, retry infinito | nenhum |
-| Regras do Firestore | quatro testes novos escritos (`ENT-23`…`ENT-26`); execução — ver limitações |
+| Regras do Firestore | **97/97**, 0 skip, no emulador — inclui os quatro novos (`ENT-23`…`ENT-26`) |
 | TypeScript (`functions/`) | o diff **não toca** `functions/` — verificável por `git diff --name-only` |
 | Flutter analyze | o diff **não toca** `app/` — zero arquivo Dart alterado |
 | Testes Flutter do Billing | **não existem**: não há cliente de Billing nesta base |
@@ -332,14 +332,15 @@ antigo — que `Y13` encena.
    compra é aprovada hoje**. É falha fechada e é o comportamento que a seção 17
    exige, mas é uma porta fechada.
 
-2. **As regras não foram executadas nesta sessão.** Os quatro testes novos estão
-   escritos e versionados; rodá-los exige `npm install` em `firebase/testes` mais o
-   emulador do Firestore com Java 21. O ambiente desta máquina apresentou lentidão
-   patológica de I/O durante a OS — a mesma carga de módulo variou entre 24 s e
-   3 min 8 s, e um `require('firebase-functions')` chegou a não completar em cinco
-   minutos —, o que torna a execução não confiável como evidência. **A afirmação de
-   que as duas coleções estão fechadas vem da leitura do arquivo de regras, não de
-   execução.**
+2. **As regras foram executadas, com duas ressalvas de ambiente.** `97/97` no
+   emulador do Firestore, incluindo `ENT-23`…`ENT-26`. A porta 8080 estava ocupada
+   por outra sessão nesta máquina, então o portão rodou em 8099 por um
+   `firebase.json` temporário, criado e apagado no mesmo comando — a árvore ficou
+   limpa. E o ambiente apresentou lentidão patológica de I/O durante a OS (a mesma
+   carga de módulo variou entre 24 s e 3 min 8 s, e um `require('firebase-functions')`
+   chegou a não completar em cinco minutos), o que produziu uma primeira execução
+   falsamente vermelha: as três suítes falharam porque o `npm install` do harness
+   ainda estava em voo. Registrado porque a mesma armadilha vai reaparecer.
 
 3. **`tsc` e `flutter analyze` não foram executados como comparação.** Os dois
    diretórios estão provadamente intocados pelo diff, então o diff de diagnósticos
