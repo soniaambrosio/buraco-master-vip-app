@@ -7983,6 +7983,101 @@ void main() {
           reason: 'o sinal público continua chegando ao bot');
     });
 
+    // ---------- §13.4 (reforço) — a enumeração PARA, não só conta ----------
+    //
+    // Este teste existe porque a prova por defeito injetado mostrou o buraco:
+    // trocar `if (semOrcamento(...)) return;` por um `gastarNo(...)` solto —
+    // isto é, CONTAR sem PARAR — não derrubava nenhum teste. Contar sem parar
+    // é exatamente o defeito que esta OS existe para eliminar: o contador
+    // enche, o relatório fica bonito, e a busca varre tudo assim mesmo.
+    test('ORC-16 com teto apertado a enumeração PARA no limite, nas duas fases',
+        () {
+      final j = mesaLarga('SBTL');
+      final estado = emFaseDeJogo(j);
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+
+      // Os tetos varrem uma FAIXA de propósito: com teto baixo quem fecha o
+      // orçamento é o DFS de unidades e a combinação nem chega a rodar; com
+      // teto alto o DFS termina e quem fecha é a combinação. Testar só a
+      // faixa baixa deixou passar a mutação que tirou a parada do laço de
+      // combinação — ele nunca era exercitado depois do fechamento.
+      final fasesVistas = <FaseBusca>{};
+      for (final teto in const [10, 50, 200, 800, 2000, 4000]) {
+        final cfg = ConfiguracaoBot.v2.comLimites(LimitesBusca(
+            nos: teto,
+            transacoesCompraLixo: 1 << 30,
+            planosAvaliados: 1 << 30,
+            fusivelMs: 0));
+        final orc = OrcamentoBuscaBot(cfg.limitesBusca);
+        final ger =
+            GeradorPlanos(spec, cfg, orcamento: orc).planosDeJogo(estado, estado.vez);
+
+        // No MÁXIMO um nó além do teto: o que estoura é contado e encerra.
+        expect(orc.nos, lessThanOrEqualTo(teto + 1),
+            reason: 'teto=$teto: a enumeração passou do limite em vez de parar');
+        // O CONTADOR sozinho nao prova nada: gastarNo recusa antes de
+        // incrementar, entao o total fica preso no teto mesmo que a varredura
+        // continue. Quem prova que a busca PAROU e o numero de nos tentados
+        // depois do fechamento — foi assim que a mutacao 'conta mas nao para'
+        // deixou de passar despercebida.
+        expect(orc.tentativasAposEsgotar, lessThan(50),
+            reason: 'teto=$teto: a busca continuou depois de o orcamento fechar');
+        // Um teto grande pode simplesmente CABER: aí não há o que provar
+        // sobre parada, e exigir esgotamento seria exigir que a busca falhe.
+        if (orc.esgotado) {
+          expect(ger.truncado, isTrue, reason: 'teto=$teto');
+          expect(orc.motivo, MotivoEncerramentoBusca.orcamentoDeterministico,
+              reason: 'teto=$teto');
+        }
+        // E mesmo cortando cedo, ainda sai plano completo: cortar não é apagar.
+        expect(ger.planos, isNotEmpty, reason: 'teto=$teto');
+        if (orc.faseDoLimite != null) fasesVistas.add(orc.faseDoLimite!);
+      }
+
+      // As DUAS fases de enumeração precisam ter sido exercitadas depois do
+      // fechamento — senão metade da garantia fica sem prova.
+      expect(fasesVistas, contains(FaseBusca.enumeracaoUnidades));
+      expect(fasesVistas, contains(FaseBusca.combinacaoBaixadas),
+          reason: 'nenhum teto fez o limite cair na COMBINAÇÃO: o laço de\n'
+              'combinação ficaria sem prova de que respeita o orçamento');
+
+      // Sem teto, a MESMA mão gasta muito mais — senão o teste acima seria
+      // vazio por a enumeração já ser curta.
+      final solto = OrcamentoBuscaBot.ilimitado();
+      GeradorPlanos(spec, ConfiguracaoBot.base, orcamento: solto)
+          .planosDeJogo(estado, estado.vez);
+      expect(solto.nos, greaterThan(200));
+    });
+
+    // ---------- §8 — o fallback respeita a FASE do turno ----------
+    //
+    // A prova por defeito injetado também pegou este vazio: trocar
+    // `gerarAcoesLegais` por "qualquer descarte da mão" não derrubava nada,
+    // porque no estado testado todo descarte era mesmo legal. Na fase de
+    // COMPRA não é: descartar antes de comprar é ilegal, e é aí que um
+    // fallback que inventa ação se denuncia.
+    test('ORC-17 na fase de COMPRA o fallback compra — não descarta', () {
+      final j = mesaLarga('SBTL');
+      final estado = paraCanonico(j).canonico;
+      expect(estado.fase, FaseTurno.compra,
+          reason: 'o cenário precisa estar mesmo na fase de compra');
+      final spec =
+          RuleSpec.canonica(estado.modalidade, metaPontos: estado.metaPontos);
+      final zerada = ConfiguracaoBot.v2.comLimites(const LimitesBusca(
+          nos: 1 << 30,
+          transacoesCompraLixo: 1 << 30,
+          planosAvaliados: 0,
+          fusivelMs: 0));
+
+      final d = ExecutorBot(spec, cfg: zerada).decidirJogo(estado, estado.vez);
+      expect(d.razao, Razao.fallbackOrcamento);
+      final acao = d.acoes.single;
+      expect(acao is Descartar, isFalse,
+          reason: 'descartar antes de comprar é ilegal — o fallback não pode');
+      expect(aplicarLegal(estado, estado.vez, acao, spec).legal, isTrue);
+    });
+
     // ---------- §13.24 — nem UI nem regra conhecem o orçamento ----------
     test('ORC-15 a regra do motor não conhece o orçamento', () {
       // A autoridade decide legalidade sem nenhum orçamento em jogo: a mesma

@@ -112,6 +112,19 @@ class OrcamentoBuscaBot {
   FaseBusca? _faseDoLimite;
   bool _houveFallback = false;
 
+  /// Nós TENTADOS depois de o orçamento já ter fechado.
+  ///
+  /// Num código são isto fica em zero ou perto: quem consulta o orçamento
+  /// obedece e para. Um número grande aqui significa que alguém está CONTANDO
+  /// sem PARAR — a busca varre tudo assim mesmo e o relatório finge que não.
+  ///
+  /// Existe porque a prova por defeito injetado mostrou que o contador sozinho
+  /// não denuncia esse defeito: como `gastarNo` recusa antes de incrementar, o
+  /// total fica preso no teto mesmo quando a varredura continua. O contador
+  /// media a si mesmo; este mede o mundo.
+  int _tentativasAposEsgotar = 0;
+  int get tentativasAposEsgotar => _tentativasAposEsgotar;
+
   /// Relógio do FUSÍVEL. Só é consultado em pontos seguros da expansão, e só
   /// para abortar — nunca para escolher, ordenar ou desempatar.
   final Stopwatch _relogio = Stopwatch();
@@ -191,7 +204,10 @@ class OrcamentoBuscaBot {
   /// Gasta UM nó de enumeração. Devolve `false` quando não há mais orçamento —
   /// e, a partir daí, sempre `false`.
   bool gastarNo(FaseBusca fase) {
-    if (_nosEsgotados || _fusivelQueimou) return false;
+    if (_nosEsgotados || _fusivelQueimou) {
+      _tentativasAposEsgotar++;
+      return false;
+    }
     _nos++;
     if (_nos > limites.nos) {
       _nosEsgotados = true;
@@ -251,5 +267,7 @@ class OrcamentoBuscaBot {
         'planosEsgotados': _planosEsgotados,
         'fusivel': _fusivelQueimou,
         'fallback': _houveFallback,
+        if (_tentativasAposEsgotar > 0)
+          'tentativasAposEsgotar': _tentativasAposEsgotar,
       };
 }
