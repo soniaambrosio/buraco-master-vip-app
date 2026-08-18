@@ -61,7 +61,6 @@ const {
 
 const {
   ESTADO: ESTADO_VIP,
-  consolidarAssinatura,
   instante,
   anteriorA,
   rotuloToken,
@@ -72,6 +71,13 @@ const {
   chaveDaCompra,
   criarStore,
 } = require('./entitlementStore');
+const {
+  MOTIVO,
+  identificadorDaResposta,
+  validarRespostaAssinatura,
+  validarRespostaProduto,
+  decidirPropriedade,
+} = require('./propriedade');
 const { criarReconciliador } = require('./reconciliacao');
 const { criarProcessadorRtdn } = require('./rtdn');
 
@@ -95,6 +101,18 @@ const PACOTE = 'io.github.soniaambrosio.buracomastervip';
  * um applicationId apontando para o mesmo topico entregaria evento alheio aqui.
  */
 const TOPICO_RTDN = 'play-billing-rtdn';
+
+/**
+ * Recusas de PROPRIEDADE, e nao de estado economico. Separadas porque exigem
+ * resposta diferente: um VIP expirado e um resultado normal; uma compra sem dono
+ * comprovavel e um caso para a operacao olhar.
+ */
+const MOTIVOS_DE_PROPRIEDADE = new Set([
+  MOTIVO.VINCULO_AUSENTE,
+  MOTIVO.VINCULO_DESCONHECIDO,
+  MOTIVO.VINCULO_DIVERGENTE,
+  MOTIVO.RESPOSTA_PLAY_INVALIDA,
+]);
 
 /** Estados de assinatura que valem como "jogador tem VIP agora". */
 const ASSINATURA_VALIDA = new Set([
@@ -140,6 +158,10 @@ function dependencias() {
 
   const reconciliador = criarReconciliador({
     consultarAssinatura,
+    // A AUTORIDADE DE PROPRIEDADE, ligada aqui. Sem esta porta o reconciliador
+    // se recusa a nascer: ele nao teria como saber de quem e a compra, e a unica
+    // alternativa seria adivinhar — que e o defeito que esta correcao fecha.
+    uidDoVinculo: store.uidDoVinculo,
     aplicarProposta: store.aplicarProposta,
   });
 
@@ -213,8 +235,15 @@ async function fecharComAGoogle(ehAssinatura, produtoId, tokenCompra) {
     }
     return { ok: true };
   } catch (e) {
-    console.warn('[billing] fechamento junto a Google falhou:', e.message);
-    return { ok: false, erro: e.message };
+    // Nem a mensagem no log, nem a mensagem de volta. O chamador so precisa
+    // saber QUE o fechamento falhou; o que a `googleapis` escreveu num campo
+    // livre nao acrescenta diagnostico e ja custou um achado (M-2).
+    console.warn('[billing] fechamento junto a Google falhou', {
+      erro: e && e.name,
+      produtoId,
+      assinatura: ehAssinatura,
+    });
+    return { ok: false, motivo: MOTIVO.FALHA_TEMPORARIA_PLAY };
   }
 }
 
@@ -227,6 +256,56 @@ async function fecharComAGoogle(ehAssinatura, produtoId, tokenCompra) {
 // injetado — o que as tornou alcancaveis por `node --test`, que este codebase
 // roda sem `node_modules`. O CORPO delas nao mudou; mudou de onde vem o `db`.
 // Ver o cabecalho daqueles dois arquivos.
+
+/**
+ * prepararCompraPlay — a PRIMEIRA metade da propriedade da compra.
+ *
+ * POR QUE UMA PORTA NOVA, E NAO UM CAMPO A MAIS NUMA EXISTENTE
+ *
+ * Esta funcao roda ANTES de o dialogo da Play abrir. Nenhuma porta existente
+ * comporta isso: `validarCompraPlay` roda DEPOIS da compra e por definicao nao
+ * pode prepara-la; `reconciliarEntitlementDoJogador` e `migrarEntitlementsLegado`
+ * sao administrativas e exigem `admin`; e as outras frentes (colecoes, torneios,
+ * moderacao) sao codebases de implantacao independente. Somar a preparacao a
+ * qualquer uma delas misturaria "quem sou eu para comprar" com "o que eu ganhei",
+ * que sao perguntas de momentos opostos do fluxo.
+ *
+ * O QUE ELA DEVOLVE
+ *
+ * Um identificador opaco, estavel para a conta, que o aplicativo entrega a Play
+ * Billing Library como `obfuscatedAccountId`. Quando a compra acontecer, a Google
+ * o devolvera dentro da resposta autoritativa, e e por ele — e so por ele — que o
+ * backend descobrira de quem e a compra.
+ *
+ * O QUE ELA **NAO** E
+ *
+ * Nao e credencial: sozinho, o identificador nao concede nada e nao autentica
+ * ninguem. Quem tentar validar uma compra ainda precisa da sessao Firebase, e a
+ * conferencia e de IGUALDADE entre o dono resolvido e o uid autenticado.
+ *
+ * Nao e escolhivel pelo cliente: o valor e gerado aqui, com bytes aleatorios, e o
+ * payload da chamada nao e lido. Aceitar um valor vindo do aplicativo seria
+ * devolver ao portador do token exatamente o poder que esta correcao tirou dele.
+ *
+ * Nao pede o segredo da Play: preparar uma compra nao fala com a Google.
+ */
+exports.prepararCompraPlay = onCall(
+  { region: 'us-central1' },
+  async (request) => {
+    const uid = request.auth && request.auth.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Entre na sua conta para comprar.');
+    }
+
+    const { contaOfuscada, criado } = await dependencias().store.garantirVinculo(uid);
+
+    console.info('[billing] vinculo de compra preparado', { uid, criado });
+
+    // O identificador vai para o cliente porque e ele que precisa entrega-lo a
+    // Play. Nao ha segredo nisso: ele nao abre porta nenhuma sozinho.
+    return { contaOfuscada };
+  }
+);
 
 exports.validarCompraPlay = onCall(
   { secrets: [CONTA_SERVICO_PLAY], region: 'us-central1' },
@@ -266,7 +345,96 @@ exports.validarCompraPlay = onCall(
     const db = getFirestore();
     const refCompra = db.doc(`compras/${chaveDaCompra(tokenCompra)}`);
 
-    // 4) Registro do token. Se ja existir, decide olhando titularidade ANTES do
+    // ======================================================================
+    // 4) PERGUNTA A GOOGLE — E SO DEPOIS QUALQUER PERSISTENCIA
+    // ======================================================================
+    //
+    // Aqui estava o achado A-1, e a correcao e de ORDEM antes de ser de regra.
+    //
+    // O que existia neste ponto era a criacao de `compras/{hash}` com o uid de
+    // QUEM CHAMOU, antes de a Google ser consultada. Isso fazia duas coisas
+    // ruins de uma vez: dava a compra a quem apresentasse o token primeiro, e
+    // envenenava o documento contra o dono legitimo, que dali em diante recebia
+    // `permission-denied` para sempre.
+    //
+    // Agora nada e gravado ate a Google confirmar TRES coisas: que a compra
+    // existe, que forma ela tem, e DE QUEM ela e. Uma tentativa de tomar compra
+    // alheia termina sem deixar rastro no Firestore — nem no proprio invasor,
+    // nem no caminho do dono.
+    //
+    // O instante e capturado ANTES da chamada: a resposta descreve o mundo de
+    // quando a pergunta saiu, nao de quando ela voltou.
+    const consultadoEm = new Date().toISOString();
+    let compra;
+    try {
+      compra = ehAssinatura
+        ? await consultarAssinatura(tokenCompra)
+        : await consultarProduto(produtoId, tokenCompra);
+    } catch (e) {
+      // Instabilidade da API nao vira recusa, e nao vira escrita: sem confirmacao
+      // nao ha o que registrar. O aplicativo tenta de novo.
+      //
+      // `e.message` NAO e propagado nem persistido — era o achado M-2. O que sai
+      // daqui e um codigo fechado, e o que entra no log e o nome do erro.
+      console.error('[billing] Play Developer API falhou', {
+        uid,
+        erro: e && e.name,
+        motivo: MOTIVO.FALHA_TEMPORARIA_PLAY,
+        token: rotuloToken(chaveDaCompra(tokenCompra)),
+      });
+      throw new HttpsError(
+        'unavailable',
+        'Nao consegui confirmar a compra agora. Tente em instantes.',
+        { motivo: MOTIVO.FALHA_TEMPORARIA_PLAY }
+      );
+    }
+
+    // 5) A resposta tem a forma do contrato? Conferir antes de ler campo e o que
+    //    impede um corpo malformado de virar excecao no meio da consolidacao.
+    const forma = ehAssinatura
+      ? validarRespostaAssinatura(compra)
+      : validarRespostaProduto(compra);
+    if (!forma.ok) {
+      console.error('[billing] resposta da Play invalida', {
+        uid,
+        motivo: forma.motivo,
+        detalhe: forma.detalhe,
+        token: rotuloToken(chaveDaCompra(tokenCompra)),
+      });
+      throw new HttpsError('failed-precondition', 'Compra invalida.', { motivo: forma.motivo });
+    }
+
+    // 6) DE QUEM E ESTA COMPRA?
+    //
+    //    O identificador foi entregue a Play por `prepararCompraPlay`, com o uid
+    //    ja autenticado, ANTES de o dialogo abrir. A Google o devolve aqui. A
+    //    conferencia e de IGUALDADE com a sessao: nao basta a compra ter dono,
+    //    ela tem de ser DESTE dono.
+    const identificador = identificadorDaResposta(compra);
+    const uidDono = await dependencias().store.uidDoVinculo(identificador);
+    const propriedade = decidirPropriedade({
+      identificador,
+      uidResolvido: uidDono,
+      uidEsperado: uid,
+    });
+    if (!propriedade.ok) {
+      console.error('[billing] compra recusada por propriedade', {
+        uid,
+        motivo: propriedade.motivo,
+        token: rotuloToken(chaveDaCompra(tokenCompra)),
+      });
+      throw new HttpsError(
+        'permission-denied',
+        'Esta compra nao pertence a esta conta.',
+        { motivo: propriedade.motivo }
+      );
+    }
+
+    // ======================================================================
+    // A PARTIR DAQUI a compra esta confirmada e o dono e esta conta.
+    // ======================================================================
+
+    // 7) Registro do token. Se ja existir, decide olhando titularidade ANTES do
     //    estado — um token de outro jogador nao pode devolver concessao alheia.
     const decisao = await db.runTransaction(async (tx) => {
       const snap = await tx.get(refCompra);
@@ -285,7 +453,11 @@ exports.validarCompraPlay = onCall(
     });
 
     if (decisao.acao === ACAO.CONFLITO) {
-      console.error('[billing] conflito de titularidade de token:', decisao.motivo, { uid, produtoId });
+      console.error('[billing] conflito de titularidade de token', {
+        uid,
+        produtoId,
+        decisao: decisao.motivo,
+      });
       throw new HttpsError('permission-denied', 'Esta compra nao pertence a esta conta.');
     }
     if (decisao.acao === ACAO.JA_CONCEDIDA) {
@@ -300,63 +472,37 @@ exports.validarCompraPlay = onCall(
       if (!ehAssinatura) {
         return { aprovada: true, jaProcessada: true, detalhes: decisao.concessao };
       }
-      try {
-        const refresco = await dependencias().reconciliador.reconsultarEAplicar({
-          uid,
-          produtoId,
-          tokenCompra,
-          fonte: 'validacao',
-        });
-        return {
-          aprovada: refresco.vipAtivo,
-          jaProcessada: true,
-          detalhes: decisao.concessao,
-          entitlement: { estado: refresco.estado, vipAtivo: refresco.vipAtivo },
-        };
-      } catch (e) {
-        console.error('[billing] refresco de assinatura falhou:', e.message, {
-          uid,
-          token: rotuloToken(chaveDaCompra(tokenCompra)),
-        });
-        throw new HttpsError(
-          'unavailable',
-          'Nao consegui confirmar sua assinatura agora. Tente em instantes.'
-        );
-      }
+      // A reconsulta que existia aqui SUMIU, e nao por corte: a resposta da
+      // Google ja esta na mao desde o passo 4, e e a mesma que produziria. Duas
+      // consultas para uma compra so eram duas oportunidades de discordar.
+      const refresco = await dependencias().reconciliador.aplicarRespostaVerificada({
+        uid: propriedade.uid,
+        resposta: compra,
+        consultadoEm,
+        tokenCompra,
+        produtoId,
+        fonte: 'validacao',
+      });
+      return {
+        aprovada: refresco.vipAtivo,
+        jaProcessada: true,
+        detalhes: decisao.concessao,
+        entitlement: { estado: refresco.estado, vipAtivo: refresco.vipAtivo },
+      };
     }
     if (decisao.acao === ACAO.JA_RECUSADA) {
       return { aprovada: false, jaProcessada: true, motivo: decisao.motivo };
     }
 
-    // 5) Pergunta a Google. O instante e capturado ANTES da chamada: a resposta
-    //    descreve o mundo de quando a pergunta saiu, nao de quando ela voltou.
-    const consultadoEm = new Date().toISOString();
-    let compra;
-    try {
-      compra = ehAssinatura
-        ? await consultarAssinatura(tokenCompra)
-        : await consultarProduto(produtoId, tokenCompra);
-    } catch (e) {
-      console.error('[billing] Play Developer API falhou:', e.message);
-      // NAO marca como recusada: pode ser instabilidade da API. O app mantem a
-      // compra pendente e volta a tentar.
-      await refCompra.set({ ultimoErro: e.message }, { merge: true });
-      throw new HttpsError('unavailable', 'Nao consegui confirmar a compra agora. Tente em instantes.');
-    }
+    // 8) Veredito economico. O estado bruto NAO vai para o documento nem para o
+    //    cliente: o que sai daqui e um codigo fechado (achado M-2). O estado
+    //    detalhado continua vivo no entitlement, que e onde ele significa algo.
+    const valida = ehAssinatura
+      ? ASSINATURA_VALIDA.has(compra.subscriptionState)
+      : compra.purchaseState === 0;
+    const motivo = valida ? '' : MOTIVO.COMPRA_NAO_CONFIRMADA;
 
-    // 6) Veredito.
-    let valida = false;
-    let motivo = '';
-    if (ehAssinatura) {
-      valida = ASSINATURA_VALIDA.has(compra.subscriptionState);
-      motivo = valida ? '' : `assinatura em estado ${compra.subscriptionState}`;
-    } else {
-      // purchaseState: 0 = comprado, 1 = cancelado, 2 = pendente.
-      valida = compra.purchaseState === 0;
-      motivo = valida ? '' : `produto em purchaseState ${compra.purchaseState}`;
-    }
-
-    // 6.1) ENTITLEMENT — antes do veredito decidir o rumo, e valendo ou nao.
+    // 9) ENTITLEMENT — antes do veredito decidir o rumo, e valendo ou nao.
     //
     //      A resposta que acabou de chegar e a informacao mais autoritativa que
     //      este sistema tera sobre o direito deste jogador. Grava-la so no
@@ -366,15 +512,12 @@ exports.validarCompraPlay = onCall(
     //      ninguem persiste.
     let entitlement = null;
     if (ehAssinatura) {
-      const consolidado = consolidarAssinatura(compra, consultadoEm);
-      entitlement = await dependencias().store.aplicarProposta({
-        uid,
-        ...consolidado,
-        produtoId: consolidado.produtoId || produtoId,
-        origem: 'play',
-        purchaseTokenHash: chaveDaCompra(tokenCompra),
-        purchaseToken: tokenCompra,
-        verificadoEm: consultadoEm,
+      entitlement = await dependencias().reconciliador.aplicarRespostaVerificada({
+        uid: propriedade.uid,
+        resposta: compra,
+        consultadoEm,
+        tokenCompra,
+        produtoId,
         fonte: 'validacao',
       });
       console.info('[billing] entitlement consolidado na validacao', {
@@ -394,7 +537,11 @@ exports.validarCompraPlay = onCall(
         // recuperacao ficaria barrada. Quem guarda o estado do direito e o
         // entitlement, que acabou de ser atualizado logo acima.
         await refCompra.set(
-          { ultimoEstadoAssinatura: compra.subscriptionState || null, motivo },
+          // O estado bruto da Play e da PLATAFORMA, e este documento e do
+          // jogador. O que fica aqui e o codigo fechado; o estado detalhado vive
+          // no entitlement, onde ele significa alguma coisa e onde as regras
+          // fecham o que precisa ser fechado.
+          { motivo },
           { merge: true }
         );
         return {
@@ -407,7 +554,7 @@ exports.validarCompraPlay = onCall(
       return { aprovada: false, motivo };
     }
 
-    // 7) TRANSACAO DE CONCESSAO — atomicamente idempotente.
+    // 10) TRANSACAO DE CONCESSAO — atomicamente idempotente.
     //
     //    O documento e RELIDO aqui dentro. Se outra execucao ja concedeu, esta
     //    devolve a concessao existente sem tocar no saldo. Credito e marcacao de
@@ -467,7 +614,10 @@ exports.validarCompraPlay = onCall(
     });
 
     if (resultadoConcessao.conflito) {
-      console.error('[billing] conflito de titularidade na concessao:', resultadoConcessao.motivo);
+      console.error('[billing] conflito de titularidade na concessao', {
+        uid,
+        decisao: resultadoConcessao.motivo,
+      });
       throw new HttpsError('permission-denied', 'Esta compra nao pertence a esta conta.');
     }
 
@@ -478,11 +628,11 @@ exports.validarCompraPlay = onCall(
       return { aprovada: true, jaProcessada: true, detalhes: resultadoConcessao.concessao };
     }
 
-    // 8) Fecha na Google DEPOIS de creditar. Consumir antes de creditar seria a
+    // 11) Fecha na Google DEPOIS de creditar. Consumir antes de creditar seria a
     //    receita para o jogador pagar e nao receber.
     const fechamento = await fecharComAGoogle(ehAssinatura, produtoId, tokenCompra);
     if (!fechamento.ok) {
-      await refCompra.set({ avisoFechamento: fechamento.erro }, { merge: true });
+      await refCompra.set({ avisoFechamento: fechamento.motivo }, { merge: true });
     }
 
     return {
@@ -584,7 +734,10 @@ exports.reconciliarEntitlements = onSchedule(
       } catch (e) {
         // Um documento problematico nao pode travar a varredura: o tick seguinte
         // tenta de novo, e a operacao e idempotente.
-        console.error('[billing] falha ao fechar entitlement vencido:', e.message, { uid });
+        console.error('[billing] falha ao fechar entitlement vencido', {
+          uid,
+          erro: e && e.name,
+        });
       }
     }
 
@@ -622,12 +775,30 @@ exports.reconciliarEntitlementDoJogador = onCall(
       );
     }
 
+    // `uidEsperado` exigido tambem aqui, e nao por simetria. Esta funcao le o
+    // token do documento de UM jogador e o usa para consultar a Google; se a
+    // Google responder que a compra e de OUTRA conta — token trocado numa
+    // migracao, documento adulterado antes desta correcao —, a reconciliacao
+    // administrativa nao pode ser o caminho por onde o direito muda de dono.
     const resultado = await dependencias().reconciliador.reconsultarEAplicar({
-      uid,
+      uidEsperado: uid,
       produtoId: dados.produtoId,
       tokenCompra: dados.purchaseToken,
       fonte: 'reconciliacao',
     });
+
+    if (!resultado.aplicado && MOTIVOS_DE_PROPRIEDADE.has(resultado.motivo)) {
+      console.error('[billing] reconciliacao manual recusada por propriedade', {
+        uid,
+        motivo: resultado.motivo,
+        token: rotuloToken(dados.purchaseTokenHash),
+      });
+      throw new HttpsError(
+        'failed-precondition',
+        'A compra deste jogador nao pode ser confirmada.',
+        { motivo: resultado.motivo }
+      );
+    }
 
     console.info('[billing] reconciliacao manual', {
       uid,

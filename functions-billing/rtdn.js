@@ -55,6 +55,20 @@ const {
 } = require('./entitlement');
 
 const { chaveDaCompra } = require('./entitlementStore');
+const { MOTIVO } = require('./propriedade');
+
+/**
+ * Motivos que significam "nada foi gravado, e nada sera": propriedade nao
+ * resolvida ou resposta malformada. Sao registrados na trilha e encerram o
+ * processamento sem efeito — ao contrario de uma falha de rede, que SOBE para o
+ * Pub/Sub reentregar.
+ */
+const MOTIVOS_SEM_EFEITO = new Set([
+  MOTIVO.VINCULO_AUSENTE,
+  MOTIVO.VINCULO_DESCONHECIDO,
+  MOTIVO.VINCULO_DIVERGENTE,
+  MOTIVO.RESPOSTA_PLAY_INVALIDA,
+]);
 
 /** Log neutro, para quem nao injetar nada. */
 const SILENCIO = { info() {}, warn() {}, error() {} };
@@ -65,11 +79,35 @@ const SILENCIO = { info() {}, warn() {}, error() {} };
  * @param {object} portas.store           `criarStore(...)`
  * @param {object} portas.reconciliador   `criarReconciliador(...)`
  * @param {object} [portas.log]           `{info, warn, error}`
- * @param {function(): string} [portas.agora]
  */
-function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
+function criarProcessadorRtdn({ pacote, store, reconciliador, log }) {
   const registro = log || SILENCIO;
-  const relogio = agora || (() => new Date().toISOString());
+  // O relogio saiu daqui: o unico instante que este modulo precisava carimbar
+  // era o do desfecho terminal, e ele agora vem junto da consulta autoritativa
+  // (`verificarToken`), carimbado ANTES da rede. Dois relogios para o mesmo
+  // caminho seriam duas oportunidades de discordar sobre a ordem dos eventos.
+
+  // O applicationId oficial vem da configuracao do backend, e a sua ausencia
+  // impede a INICIALIZACAO. Deixar o processador nascer sem pacote faria a
+  // conferencia de origem cair para "nao sei comparar", e conferencia que nao
+  // sabe comparar e conferencia desligada. Ver o achado M-3.
+  if (typeof pacote !== 'string' || pacote === '') {
+    throw new Error('criarProcessadorRtdn exige o applicationId oficial');
+  }
+
+  /** Encerra sem efeito, deixando a trilha contar por que. */
+  async function recusarSemEfeito(messageId, motivo, hash) {
+    registro.warn('[billing] RTDN sem propriedade comprovavel', {
+      messageId,
+      motivo,
+      token: rotuloToken(hash),
+    });
+    await store.registrarEventoSemEfeito(messageId, {
+      decisao: motivo,
+      token: rotuloToken(hash),
+    });
+    return { decisao: motivo, aplicado: false };
+  }
 
   /**
    * Processa UMA mensagem do topico RTDN.
@@ -129,22 +167,10 @@ function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
       return { decisao: 'evento_repetido', aplicado: false };
     }
 
-    // TITULARIDADE. A Google conhece o token; quem conhece o dono e o registro
-    // que a validacao gravou com o uid autenticado.
+    // PROPRIEDADE. A Google conhece o token e, desde a preparacao da compra,
+    // tambem devolve QUAL CONTA o comprou. E de la que o dono sai agora — nao
+    // mais de `compras/{hash}`, que registrava quem tivesse gravado primeiro.
     const hash = chaveDaCompra(leitura.purchaseToken);
-    const titular = await store.titularDoToken(hash);
-    if (!titular.ok) {
-      registro.warn('[billing] RTDN sem titular comprovavel', {
-        messageId,
-        motivo: titular.motivo,
-        token: rotuloToken(hash),
-      });
-      await store.registrarEventoSemEfeito(messageId, {
-        decisao: titular.motivo,
-        token: rotuloToken(hash),
-      });
-      return { decisao: titular.motivo, aplicado: false };
-    }
 
     // Mensagem sem id nao tem como ser deduplicada. Ela ainda e processada — o
     // efeito importa mais que a trilha —, e a idempotencia real continua sendo a
@@ -157,16 +183,29 @@ function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
     // expresse. Esperar para confirmar deixaria uma janela em que o estornado
     // continua VIP.
     if (leitura.acao === 'aplicar_terminal') {
-      const instanteAgora = relogio();
+      // O DONO NAO ESTA NO PAYLOAD, e nunca esteve. Antes ele saia de
+      // `compras/{hash}`, ou seja, de quem tivesse apresentado o token primeiro —
+      // o achado A-1. Agora sai da consulta autoritativa, como no caminho
+      // economico: pergunta-se a Google DE QUEM e a compra, e aplica-se o
+      // desfecho que o evento trouxe.
+      //
+      // O custo e uma consulta que antes nao existia. O beneficio e que um
+      // estorno deixa de poder cair no entitlement de quem nao e o dono. A falha
+      // de consulta SOBE, como em todo caminho: `retry: true` reentrega, e
+      // estorno atrasado e melhor que estorno perdido.
+      const dono = await reconciliador.verificarToken(leitura.purchaseToken, null);
+      if (!dono.ok) return recusarSemEfeito(messageId, dono.motivo, hash);
+
+      const consultadoEm = dono.consultadoEm;
       const resultado = await store.aplicarProposta(
         {
-          uid: titular.uid,
-          ...consolidarTerminal(leitura.terminal, instanteAgora),
-          produtoId: leitura.produtoId || titular.produtoId || null,
+          uid: dono.uid,
+          ...consolidarTerminal(leitura.terminal, consultadoEm),
+          produtoId: leitura.produtoId || null,
           origem: 'play',
           purchaseTokenHash: hash,
           purchaseToken: leitura.purchaseToken,
-          verificadoEm: instanteAgora,
+          verificadoEm: consultadoEm,
           eventoEm: leitura.eventoEm,
           eventoTipo: leitura.tipo != null ? leitura.tipo : null,
           fonte: 'rtdn',
@@ -175,7 +214,7 @@ function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
       );
       registro.info('[billing] entitlement encerrado por notificacao', {
         messageId,
-        uid: titular.uid,
+        uid: dono.uid,
         estado: leitura.terminal,
         decisao: resultado.motivo,
         token: rotuloToken(hash),
@@ -183,16 +222,20 @@ function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
       return {
         decisao: resultado.motivo,
         aplicado: resultado.aplicado,
-        uid: titular.uid,
+        uid: dono.uid,
         estado: resultado.estado,
         vipAtivo: resultado.vipAtivo,
       };
     }
 
-    // RECONCILIACAO: pergunta a Google e grava o que ela responder.
+    // RECONCILIACAO: pergunta a Google, descobre DE QUEM e, e grava o que ela
+    // responder. `uidEsperado` fica nulo de proposito — o RTDN nao tem sessao e
+    // nao tem palpite, entao ele ACEITA o dono que a autoridade resolver. E o
+    // oposto exato do comportamento antigo, em que ele aceitava o dono que
+    // tivesse chegado primeiro.
     const resultado = await reconciliador.reconsultarEAplicar({
-      uid: titular.uid,
-      produtoId: leitura.produtoId || titular.produtoId,
+      uidEsperado: null,
+      produtoId: leitura.produtoId,
       tokenCompra: leitura.purchaseToken,
       fonte: 'rtdn',
       eventoEm: leitura.eventoEm,
@@ -200,9 +243,15 @@ function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
       evento,
     });
 
+    // Propriedade nao resolvida ou resposta malformada: nada foi gravado, e nada
+    // sera. Vai para a trilha e encerra — ao contrario de falha de rede, que sobe.
+    if (MOTIVOS_SEM_EFEITO.has(resultado.motivo)) {
+      return recusarSemEfeito(messageId, resultado.motivo, hash);
+    }
+
     registro.info('[billing] entitlement reconciliado por notificacao', {
       messageId,
-      uid: titular.uid,
+      uid: resultado.uid || null,
       tipo: leitura.tipo,
       estado: resultado.estado,
       vipAtivo: resultado.vipAtivo,
@@ -213,7 +262,7 @@ function criarProcessadorRtdn({ pacote, store, reconciliador, log, agora }) {
     return {
       decisao: resultado.motivo,
       aplicado: resultado.aplicado,
-      uid: titular.uid,
+      uid: resultado.uid || null,
       estado: resultado.estado,
       vipAtivo: resultado.vipAtivo,
     };

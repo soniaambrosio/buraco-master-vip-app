@@ -299,6 +299,31 @@ service cloud.firestore {
       }
     }
 
+    // A VINCULACAO ENTRE A CONTA E A COMPRA DA GOOGLE.
+    //
+    //   playerBillingIdentity/{uid}         -> { contaOfuscada }
+    //   billingAccountIndex/{contaOfuscada} -> { uid }
+    //
+    // FECHADAS PARA TODOS, inclusive o dono e o admin. E aqui que mora a resposta
+    // para "de quem e esta compra?", e ate a correcao P0 dessa pergunta ela era
+    // respondida por ordem de chegada — quem apresentasse o purchaseToken
+    // primeiro ficava com o VIP alheio.
+    //
+    // O identificador nao e credencial: sozinho ele nao concede nada, e quem
+    // valida uma compra ainda precisa da sessao Firebase. Mas poder LER estas
+    // colecoes permitiria correlacionar conta e compra de fora, e poder ESCREVER
+    // permitiria apontar o vinculo de um jogador para a conta de outro — que e a
+    // porta que acabou de ser fechada. O cliente obtem o seu identificador pela
+    // Cloud Function `prepararCompraPlay`, com a identidade ja verificada, e por
+    // nenhum outro caminho.
+    match /playerBillingIdentity/{uid} {
+      allow read, write: if false;
+    }
+
+    match /billingAccountIndex/{contaOfuscada} {
+      allow read, write: if false;
+    }
+
     // Trilha das notificacoes da Play ja processadas (id = messageId do Pub/Sub).
     // E a barreira de idempotencia do RTDN, entao o cliente nao pode nem ler nem
     // criar: criar um documento aqui faria o sistema descartar como "repetida"

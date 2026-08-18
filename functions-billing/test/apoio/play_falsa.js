@@ -67,6 +67,12 @@ const ESTADOS_PLAY = {
  * @param {string|null} opcoes.inicioEm
  * @param {Array|null} opcoes.itens     substitui `lineItems` inteiro, para os
  *                                      casos de corpo malformado
+ * @param {string|null} opcoes.contaOfuscada
+ *        o `obfuscatedExternalAccountId` que a Google devolve. E DELE que sai a
+ *        propriedade da compra desde a correcao P0; `null` encena a compra antiga,
+ *        feita antes de o aplicativo preparar o vinculo.
+ * @param {string|null} opcoes.tokenLigado
+ *        `linkedPurchaseToken`: a assinatura que esta substitui, em troca de plano
  */
 function corpoAssinatura({
   estado,
@@ -75,9 +81,15 @@ function corpoAssinatura({
   autoRenovacao = true,
   inicioEm = null,
   itens = undefined,
+  contaOfuscada = null,
+  tokenLigado = null,
 }) {
   const corpo = { subscriptionState: estado };
   if (inicioEm !== undefined) corpo.startTime = inicioEm;
+  if (contaOfuscada) {
+    corpo.externalAccountIdentifiers = { obfuscatedExternalAccountId: contaOfuscada };
+  }
+  if (tokenLigado) corpo.linkedPurchaseToken = tokenLigado;
   corpo.lineItems = itens !== undefined
     ? itens
     : [
@@ -182,8 +194,13 @@ function criarPlayFalsa({ aguardar } = {}) {
     // onde o efeito e `FieldValue.increment` e nao um estado idempotente.
 
     /** purchaseState: 0 comprado, 1 cancelado, 2 pendente. */
-    definirProduto(token, { purchaseState = 0, produtoId = 'pacote_fichas' } = {}) {
-      programaProduto.set(token, { tipo: 'corpo', valor: { purchaseState, productId: produtoId } });
+    definirProduto(token, { purchaseState = 0, produtoId = 'pacote_fichas', contaOfuscada = null } = {}) {
+      const valor = { purchaseState, productId: produtoId };
+      // Produto avulso traz o identificador NA RAIZ, e nao aninhado como a
+      // assinatura. Os dois formatos existem de verdade, e ler so um deles
+      // deixaria metade do catalogo sem propriedade verificavel.
+      if (contaOfuscada) valor.obfuscatedExternalAccountId = contaOfuscada;
+      programaProduto.set(token, { tipo: 'corpo', valor });
       return api;
     },
 
