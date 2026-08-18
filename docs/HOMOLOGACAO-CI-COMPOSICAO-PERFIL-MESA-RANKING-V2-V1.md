@@ -2,10 +2,10 @@
 
 **Veredito: PASS — CI BLINDADO E COMPOSIÇÃO PERFIL + MESA ONLINE + RANKING REAL REHOMOLOGADA.**
 
-Execução real **#15** verde sobre o SHA final `dae65ba`, com Flutter `3.44.8`,
+Execuções reais **#15** e **#16** verdes — a #16 sobre o SHA final `a4d7c95` — com Flutter `3.44.8`,
 **36 de 36 gates obrigatórios `EXECUTADO` com exit `0`**, nenhum ausente, e a
-evidência publicada em `ci-evidencias/run-15.md` identificando branch e SHA
-corretos.
+evidência publicada em `ci-evidencias/run-15.md` e `run-16.md`, cada uma
+identificando branch e SHA corretos.
 
 Uma versão anterior deste laudo concluiu `PARTIAL/BLOCKED` por julgar a execução
 real inalcançável. **Estava errada**, e a §9.1 registra por quê — junto com os
@@ -459,26 +459,28 @@ mínimas de leitura", mas é exatamente essa permissão que publica o
 quebraria o artefato. E o único segredo em jogo segue sendo o `GITHUB_TOKEN`
 automático do run, que já existia; nenhum secret do repositório é consumido.
 
-### 9.4 Execução real
-
-### 9.4 Execução real — run #15, VERDE
+### 9.4 Execução real — runs #15 e #16, VERDES
 
 | item | valor |
 |---|---|
-| execução | **#15**, id `32082240805` |
-| URL | https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/32082240805 |
+| execução | **#15** (id `32082240805`) e **#16** (id `32082921719`) |
+| URL | https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/32082921719 |
 | evento | `push` (o gatilho autorizado) |
-| SHA executado | `dae65bac1e17f1b868546937e69b397b3b65c199` — o SHA final da branch |
+| SHA executado | #15 em `dae65ba` (árvore de código completa); #16 em `a4d7c95`, o SHA final |
 | conclusão | **success** — 27 passos, zero não-`success` |
 | Flutter efetivo | `stable-3.44.8-x64` ✅ |
 | Java efetivo | `jdk/21.0.12-8` |
 | portão | `obrigatórios: 36` &#124; `verdes: 36` &#124; `fora da fonte: 0` → **VERDE** |
 | gates `NÃO EXECUTADO` | **nenhum** |
-| evidência | `ci-evidencias/run-15.md`, 70.336 bytes |
-| SHA na evidência | `dae65bac…` — confere com o executado |
+| evidência | `ci-evidencias/run-15.md` e `run-16.md`, 70.336 bytes cada |
+| SHA na evidência | `dae65bac…` e `a4d7c95f…` — cada uma confere com o seu run |
 
 Os 36 gates aparecem na evidência como `EXECUTADO | 0`, um a um, e
 `evidencias_visuais` segue registrado fora do portão, como informativo.
+
+Os dois runs percorreram os mesmos 36 gates com o mesmo resultado. Deste ponto
+em diante, um commit só de documentação continua reexecutando o portão inteiro —
+é o gatilho `push` da branch fazendo o que foi autorizado a fazer.
 
 ### 9.5 O caminho até o verde, sem apagar nada
 
@@ -548,8 +550,9 @@ arquivo a chegar lá.
 - 11 mutações injetadas (10 da OS + o YAML quebrado), todas detectadas e revertidas;
 - bateria local verde e idêntica à referência (993 / 549 / 1542, 101 issues, 0 erros);
 - re-homologação recalculada do zero, todas as invariantes confirmadas;
-- **execução real #15 verde**, Flutter `3.44.8`, 36/36 gates `EXECUTADO` com exit `0`,
-  nenhum ausente, evidência publicada e correspondente ao SHA;
+- **execuções reais #15 e #16 verdes** (a #16 sobre o SHA final), Flutter `3.44.8`,
+  36/36 gates `EXECUTADO` com exit `0`, nenhum ausente, evidência publicada e
+  correspondente ao SHA de cada run;
 - sem alteração de produção, secrets, ambientes, protections ou configuração do
   repositório; zero PR, zero merge, zero deploy.
 
