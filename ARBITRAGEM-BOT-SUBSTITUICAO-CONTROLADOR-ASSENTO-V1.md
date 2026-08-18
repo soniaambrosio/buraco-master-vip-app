@@ -63,7 +63,7 @@ de retorno quebrada — que é um problema pior do que a ausência, porque hoje
 O HEAD `f58eff8...` reportado pela OS resolve integralmente para
 `f58eff86db2b8d1c28422367065effff345f3c34`. Confere.
 
-**Servidor — `soniaambrosio/buraco-servidor`**: 16 heads remotas. A linhagem
+**Servidor — `soniaambrosio/buraco-servidor`**: 17 heads remotas. A linhagem
 canônica do motor online **não foi assumida pela memória**; foi resolvida por
 continência:
 
@@ -107,14 +107,20 @@ O checkout local do servidor tem trabalho não commitado:
 ?? test/chat_transporte.test.js
 ```
 
-É a folha de transporte de chat, ainda não commitada. **Todo este laudo leu
-`git show c8ab95c:server.js`, nunca a árvore de trabalho** — o extrato está em
-`scratchpad/os6/server_c8ab95c.js` (6126 linhas). Verificado que o diff sujo é
-**puramente aditivo** e não toca `sair`, `desconectar` nem `avancarBots`: o
-takeover descrito acima é código commitado, não overlay local.
+É a folha de transporte de chat. **Nada está em risco**: `git diff cc8bd15 --
+server.js` é **vazio** — o conteúdo sujo é exatamente o commit `cc8bd15`, já
+publicado em `origin/claude/chat-transporte-real-v1`. O que está fora do lugar é
+o **HEAD** (parado em `c8ab95c`), não o trabalho.
 
-Fica registrado como pendência operacional: **há trabalho de chat só nesta
-máquina.**
+**Todo este laudo leu `git show c8ab95c:server.js`, nunca a árvore de
+trabalho** — o extrato está em `scratchpad/os6/server_c8ab95c.js` (6126 linhas).
+Verificado que o diff sujo é **puramente aditivo** e não toca `sair`,
+`desconectar` nem `avancarBots`: o takeover descrito acima é código commitado,
+não overlay local.
+
+Fica registrado como pendência operacional: **a árvore local do servidor está com
+uma folha por cima de outra.** Quem editar `server.js` nessa pasta mede a folha
+errada — foi exatamente por isso que este laudo leu tudo por `git show`.
 
 ### 1.3 Inventário — Bot Dart (`d3effdc`, `app/lib/bot/`, 3.349 linhas)
 
@@ -220,9 +226,11 @@ espectador da própria partida.
 
 ### 1.9 Controlador de assento em branch não composta — e STOP
 
-`grep -i controlador` em `server.js` de **todas** as 16 heads remotas do
-servidor: **0 ocorrências**. `afkBot` está presente em **todas** as heads,
-inclusive `main` — não é folha isolada, é comportamento universal.
+Varredura das **17 heads remotas** do servidor, uma a uma, resolvendo cada SHA
+por `ls-remote` (nunca por ref de rastreamento local): `grep -i controlador` em
+`server.js` devolve **0 ocorrências em todas as 17**. `afkBot` está presente em
+**todas as 17**, inclusive `main` — não é folha isolada, é comportamento
+universal do servidor.
 
 **STOP não disparado.** O censo fecha em:
 
@@ -645,7 +653,9 @@ cérebro.
 - `soniaambrosio/buraco-servidor` — base **`c8ab95c427cfb66d3cd6d6c991a3ff617b45a637`**.
   Declarar no Gate Zero que `e4bad52`, `274c50d`, `504d68f`, `baa3d8f` e
   `2fdeda5` **não estão contidas** e não entram.
-  **Commitar ou arquivar antes** o trabalho de chat sujo na árvore local.
+  **Sanear antes a árvore local**: ela está com o conteúdo de `cc8bd15`
+  (`claude/chat-transporte-real-v1`) por cima de um HEAD em `c8ab95c`. Nada a
+  salvar — só decidir se a folha de chat entra na base da OS 7.
 - `soniaambrosio/buraco-master-vip-app` — base
   **`d3effdc119bd68ccf27fdcb628834a43baf5c6d8`**.
 
