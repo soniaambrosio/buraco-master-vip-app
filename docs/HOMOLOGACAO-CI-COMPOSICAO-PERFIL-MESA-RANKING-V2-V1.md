@@ -1,16 +1,15 @@
 # Homologação — Blindagem do CI e re-homologação da composição Perfil + Mesa Online + Ranking Real V2
 
-**Veredito: PARTIAL / BLOCKED.**
+**Veredito: PASS — CI BLINDADO E COMPOSIÇÃO PERFIL + MESA ONLINE + RANKING REAL REHOMOLOGADA.**
 
-Todo o trabalho de código está entregue e provado. O que impede PASS é um único
-item, externo a esta branch e não autorizado por esta OS: o `workflow_dispatch`
-real do §12 é impossível hoje, porque `ci-os-integracao.yml` **não existe na
-branch default do repositório**. A prova está na seção 9, com o corpo da
-resposta da API.
+Execução real **#15** verde sobre o SHA final `dae65ba`, com Flutter `3.44.8`,
+**36 de 36 gates obrigatórios `EXECUTADO` com exit `0`**, nenhum ausente, e a
+evidência publicada em `ci-evidencias/run-15.md` identificando branch e SHA
+corretos.
 
-O §12 da OS já contempla exatamente esta situação: *"Se o GitHub Actions não
-puder ser executado, o veredito máximo é `PARTIAL/BLOCKED`, nunca PASS."*
-
+Uma versão anterior deste laudo concluiu `PARTIAL/BLOCKED` por julgar a execução
+real inalcançável. **Estava errada**, e a §9.1 registra por quê — junto com os
+três defeitos reais que só a execução real revelou.
 ---
 
 ## 1. Base congelada e entradas
@@ -160,7 +159,7 @@ caso `I4` reprova se ele for arrastado para dentro do portão.
 ## 4. Testes do próprio portão
 
 `scripts/ci/teste_portao_os_integracao.sh` roda **sem GitHub Actions, sem rede,
-sem Flutter e sem Node** — só bash e um diretório temporário. **28 casos, todos
+sem Flutter e sem Node** — só bash e um diretório temporário. **29 casos, todos
 verdes.** Cada caso tem nome próprio na saída, para que uma mutação derrube um
 caso identificável e não apenas "o teste".
 
@@ -186,7 +185,7 @@ Casos acrescentados além do mínimo, porque cada um fecha um caminho real de
 falsa aprovação: `C08b` (marcador convivendo com `exit 0`), `C10b` (exit só com
 espaços), `C11b` (conteúdo com injeção de comando), `C14`–`C18` (fonte vazia,
 travessia de caminho, gate duplicado, fonte ausente, diretório ausente) e
-`I1`–`I6` (invariantes da fonte única).
+`I1`–`I7` (invariantes da fonte única, inclusive a validade estrutural do YAML).
 
 ---
 
@@ -209,7 +208,7 @@ revertidos, com a árvore reconferida ao final.
 | 9 | abrir consulta de ranking no `build` do Perfil | `composicao` — ver 5.1 |
 | 10 | quebrar a porta única da Mesa Online | `cascamesaaud` — ver 5.1 |
 
-Após a reversão, o teste do portão volta a **28/28 verde** e os três arquivos são
+Após a reversão, o teste do portão volta a **29/29 verde** e os três arquivos são
 conferidos byte a byte contra o original; no overlay, os quatro arquivos mutados
 voltam idênticos e as seis suítes tocadas voltam verdes.
 
@@ -282,7 +281,7 @@ Suítes que esta OS traz para o portão, todas verdes e rodadas uma a uma:
 | `composicao/composicao_perfil_ranking_test.dart` | 19 |
 
 **Nenhum teste foi removido, pulado, comentado ou neutralizado.** A alteração de
-total é zero: os testes novos desta OS estão em bash (`portaoci`, 28 casos), e
+total é zero: os testes novos desta OS estão em bash (`portaoci`, 29 casos), e
 não no `flutter test`.
 
 O analyzer foi comparado em lista **normalizada, sem linha e sem coluna** —
@@ -393,77 +392,172 @@ exatamente a classe de defeito que um portão novo não pode ter.
 
 ---
 
-## 9. §12 — a execução real no GitHub Actions está BLOQUEADA
+## 9. §12 — execução real no GitHub Actions
 
-Tentativa executada sobre a branch desta OS, já publicada:
+### 9.1 Correção de um erro do laudo anterior
 
+A primeira versão deste laudo afirmou que a execução real era inalcançável.
+**Estava errada**, e a correção importa mais do que a conclusão original.
+
+O que era verdade: o `workflow_dispatch` devolve mesmo `HTTP 422 — "Workflow
+does not have 'workflow_dispatch' trigger"`, porque o GitHub lê esse gatilho da
+versão do arquivo que está na branch default, e `ci-os-integracao.yml` nunca
+chegou a `main` (`GET .../contents/...?ref=main` → **404**).
+
+O que eu concluí errado: que, portanto, nenhuma execução real existia. Existiam
+duas — os runs **#10** (`6aa7b2e`) e **#11** (`6db6f27`), disparadas pelos meus
+próprios pushes, **antes** de haver qualquer gatilho `push` para esta branch.
+
+### 9.2 Por que elas existiam, e o defeito que revelaram
+
+Porque o meu YAML estava **inválido**, e um workflow que não parseia é reportado
+pelo GitHub como um run vermelho de **zero jobs** — criado no push mesmo quando
+o gatilho não casa com a branch, porque é assim que o erro chega a quem empurrou.
+
+A causa, introduzida por mim em `6aa7b2e` junto com os gates novos:
+
+```yaml
+            echo "Portão final: exit \`...\` — \
+NÃO EXECUTADO reprova, exit vazio ou não numérico reprova."
 ```
-POST /repos/soniaambrosio/buraco-master-vip-app/actions/workflows/331242957/dispatches
-     {"ref":"correcao/ci-composicao-perfil-mesa-ranking-v2-v1"}
 
-HTTP 422
-{
-  "message": "Workflow does not have 'workflow_dispatch' trigger",
-  "status": "422"
-}
+A continuação com barra invertida deixou a segunda metade na **coluna 0**. Coluna
+0 encerra o bloco escalar do `run:`, e o arquivo inteiro deixou de parsear.
+Conferido com um parser YAML: base `6e428e85` **válido**, `6aa7b2e`
+**inválido**, corrigido **válido**.
+
+Isto é o pior caso que esta OS existe para impedir — não "um gate falhou sem
+tornar o portão vermelho", e sim **nenhum gate executou**. Os runs #10 e #11 não
+eram gate reprovando; eram o workflow não arrancando.
+
+O portão passou a ter o caso **`I7`**: nenhuma linha do workflow pode começar na
+coluna 0 fora chave de topo e comentário. Sem rede e sem dependência, como o
+resto da matriz. Conferido contra o YAML do próprio `6aa7b2e`, que ele derruba.
+A matriz vai a **29 casos**.
+
+### 9.3 O gatilho `push`, sob autorização explícita
+
+Autorizado em separado, e aplicado como **uma linha** (`1 0` no `numstat`), em
+commit exclusivo `e4754a9`:
+
+```yaml
+on:
+  push:
+    branches:
+      - integracao/os-final-backend-flutter
+      - correcao/ci-composicao-perfil-mesa-ranking-v2-v1   # <- a única linha
+  workflow_dispatch:
 ```
 
-### Causa, provada
+`workflow_dispatch` mantido, nenhuma outra branch incluída, `main` intocada,
+nenhum passo e nenhuma permissão alterados.
 
-| verificação | resultado |
+**Duas coisas que eu não fiz e sinalizo em vez de decidir sozinha.**
+`permissions: contents: write` **ficou como estava**: foi pedido "permissões
+mínimas de leitura", mas é exatamente essa permissão que publica o
+`ci-evidencias` que também foi pedido para confirmar — rebaixar para `read`
+quebraria o artefato. E o único segredo em jogo segue sendo o `GITHUB_TOKEN`
+automático do run, que já existia; nenhum secret do repositório é consumido.
+
+### 9.4 Execução real
+
+### 9.4 Execução real — run #15, VERDE
+
+| item | valor |
 |---|---|
-| branch default do repositório | `main` |
-| `ci-os-integracao.yml` existe em `main`? | **HTTP 404 — não existe** |
-| existe na branch desta OS? | HTTP 200 |
-| o arquivo desta branch declara `workflow_dispatch:`? | **sim**, linha 75 |
+| execução | **#15**, id `32082240805` |
+| URL | https://github.com/soniaambrosio/buraco-master-vip-app/actions/runs/32082240805 |
+| evento | `push` (o gatilho autorizado) |
+| SHA executado | `dae65bac1e17f1b868546937e69b397b3b65c199` — o SHA final da branch |
+| conclusão | **success** — 27 passos, zero não-`success` |
+| Flutter efetivo | `stable-3.44.8-x64` ✅ |
+| Java efetivo | `jdk/21.0.12-8` |
+| portão | `obrigatórios: 36` &#124; `verdes: 36` &#124; `fora da fonte: 0` → **VERDE** |
+| gates `NÃO EXECUTADO` | **nenhum** |
+| evidência | `ci-evidencias/run-15.md`, 70.336 bytes |
+| SHA na evidência | `dae65bac…` — confere com o executado |
 
-O GitHub lê o gatilho `workflow_dispatch` da versão do arquivo que está na
-**branch default**. Como `ci-os-integracao.yml` nunca chegou a `main`, o gatilho
-não existe do ponto de vista da API, por mais que exista no arquivo da branch. O
-workflow está registrado (id `331242957`) porque o GitHub o indexou de outra
-branch, mas registro não é dispatchabilidade.
+Os 36 gates aparecem na evidência como `EXECUTADO | 0`, um a um, e
+`evidencias_visuais` segue registrado fora do portão, como informativo.
 
-### Por que eu não desbloqueei sozinha
+### 9.5 O caminho até o verde, sem apagar nada
 
-Há dois caminhos, e **os dois estão fora do que esta OS autoriza**:
+Foram quatro execuções, e três defeitos reais no caminho. Registro todos,
+porque um laudo que só mostra o run verde esconde justamente o que a OS existe
+para encontrar.
 
-1. **Levar o workflow a `main`.** O §1 proíbe merge em outra branch.
-2. **Acrescentar esta branch ao gatilho `push:`.** Funcionaria — o gatilho
-   `push` é lido da branch que recebe o push, não da default. Mas o §12 é
-   explícito: *"Esta OS autoriza somente o `workflow_dispatch` da própria branch
-   e a escrita automática da evidência já prevista pelo workflow."* Alterar o
-   gatilho é ampliar a superfície autorizada, e essa decisão é sua, não minha.
+| run | SHA | resultado | causa |
+|---|---|---|---|
+| #12 | `e4754a9` | falha, **0 jobs** | YAML inválido (meu, §9.2) |
+| #13 | `dbe6734` | falha | 5 gates vermelhos por Java 17 + evidência abortada |
+| #14 | `e1e809e` | falha | só a evidência: `checkout` da branch errado |
+| **#15** | **`dae65ba`** | **success** | — |
 
-Consequência dos itens do §12 que ficam sem evidência: confirmação de Flutter
-`3.44.8`, `EXECUTADO` + `exit 0` em todos os gates obrigatórios no runner,
-evidência publicada em `ci-evidencias`, e correspondência entre a evidência e o
-SHA. Nada disso é afirmável sem uma execução real, e nenhuma delas será afirmada
-aqui.
+**Defeito 1 — YAML inválido (meu).** Descrito em §9.2. Corrigido em `dbe6734`,
+com o caso `I7` para impedir a volta.
 
----
+**Defeito 2 — Java 17 contra `firebase-tools` atual (pré-existente).** No run
+#13 o portão saiu vermelho com **cinco** gates reprovados: `socialemu`,
+`regras`, `rankingint`, `identint` e `auditident`. Todos pela mesma linha:
+
+```
+Error: firebase-tools no longer supports Java version before 21.
+```
+
+O workflow instala `firebase-tools` do registry a cada execução e o pin de Java
+continuava em `17`, então todo gate que sobe o Emulator Suite morria antes de
+rodar um único teste. Um token, em commit próprio (`e1e809e`), e os cinco
+ficaram verdes.
+
+**Este é o defeito CI-02 demonstrado em produção, e não em fixture.** Três dos
+cinco — `rankingint`, `identint` e `auditident` — são exatamente os gates que o
+agregador anterior não percorria. Sob ele, essas três falhas seriam invisíveis.
+
+**Defeito 3 — a evidência nunca era publicada (pré-existente).** Dois problemas
+empilhados, e o primeiro escondia o segundo:
+
+1. *meu:* o passo roda sob `shell: /usr/bin/bash -e`, e eu introduzi nele a
+   chamada ao agregador, que retorna `1` sempre que há gate vermelho. Sob `-e`,
+   isso aborta o passo na primeira linha — a evidência não chegava a ser
+   montada. Corrigido com `set +e` (`72ce62b`).
+2. *anterior a esta OS:* `git fetch --depth 1 origin ci-evidencias` com refspec
+   avulso popula o `FETCH_HEAD` e **não cria a branch local**. O
+   `git checkout ci-evidencias` seguinte falhava com *"pathspec did not match"*,
+   o commit caía na `main` do clone temporário, e o push terminava em *"src
+   refspec ci-evidencias does not match any"*. Corrigido com
+   `git checkout -B ci-evidencias FETCH_HEAD` (`dae65ba`).
+
+A prova de há quanto tempo durava: até este run, `ci-evidencias` continha **um
+único arquivo**, `run-1.md` — do único run que passou pelo caminho do
+`checkout --orphan`. Toda evidência posterior foi perdida em silêncio, porque o
+`-e` abortava o passo antes de imprimir a causa. O `run-15.md` é o **segundo**
+arquivo a chegar lá.
 
 ## 10. Veredito
 
-**PARTIAL / BLOCKED.**
-
-Cumprido:
+**PASS — CI BLINDADO E COMPOSIÇÃO PERFIL + MESA ONLINE + RANKING REAL REHOMOLOGADA**
 
 - base e entradas nos SHAs congelados, conferidos 2×;
 - os três defeitos demonstrados executando o agregador da base, antes da correção;
 - todos os 19 gates existentes preservados, com caso de teste que impede remoção;
-- 12 suítes Flutter novas dentro do portão;
-- `rankingfn`, `rankingint`, `identint` e `auditident` agora fatais;
+- 12 suítes Flutter novas dentro do portão, mais o `portaoci`: **19 → 36 gates**;
+- `rankingfn`, `rankingint`, `identint` e `auditident` agora fatais — e três
+  deles reprovaram de verdade no run #13, que sob o agregador antigo seria cego;
 - "NÃO EXECUTADO" reprova, e exit vazio/ilegível também;
 - evidência e agregador leem a mesma fonte, e a evidência embute a saída do agregador;
-- 10 mutações injetadas, todas detectadas e revertidas;
+- 11 mutações injetadas (10 da OS + o YAML quebrado), todas detectadas e revertidas;
 - bateria local verde e idêntica à referência (993 / 549 / 1542, 101 issues, 0 erros);
 - re-homologação recalculada do zero, todas as invariantes confirmadas;
-- sem alteração de produção, secrets ou configuração do repositório.
+- **execução real #15 verde**, Flutter `3.44.8`, 36/36 gates `EXECUTADO` com exit `0`,
+  nenhum ausente, evidência publicada e correspondente ao SHA;
+- sem alteração de produção, secrets, ambientes, protections ou configuração do
+  repositório; zero PR, zero merge, zero deploy.
 
-Não cumprido, e único bloqueio:
-
-- **§12 — execução real no GitHub Actions.** Impossível sem uma autorização que
-  esta OS não dá. Detalhe e caminhos na seção 9.
+Três defeitos reais foram encontrados no caminho e corrigidos: um meu (YAML
+inválido) e dois anteriores a esta OS (Java 17 contra o `firebase-tools` atual,
+e a evidência que nunca chegava à branch). Nenhum deles teria aparecido sem
+execução real — o que é, por si só, o argumento contra homologar CI por
+inspeção.
 
 As pendências de App Check, perfil público, avatar real e encerramento
 excepcional da UI permanecem fora desta OS.
