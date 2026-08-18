@@ -50,6 +50,19 @@ const pacote = JSON.parse(fs.readFileSync(CAMINHO_PACOTE, 'utf8'));
  * uma unidade que recebe trafego real de pagante ou escreve no direito VIP.
  */
 const SUPERFICIE_PRODUCAO = [
+  // [COMPOSICAO canonica] DECISAO DE SUPERFICIE, e nao heranca de merge.
+  //
+  // `prepararCompraPlay` chegou com a correcao P0 da propriedade da compra. Ela
+  // e quem EMITE o identificador opaco que o cliente entrega a Play como
+  // `obfuscatedAccountId`, e sem o qual a Google nao devolve vinculo nenhum na
+  // resposta autoritativa. Deixa-la fora do deploy nao seria 'menos superficie':
+  // seria toda compra chegando sem dono e `validarCompraPlay` recusando com
+  // `vinculo_ausente` — a loja parada, e por um motivo que ninguem ligaria ao
+  // alvo de deploy.
+  //
+  // Nao e credencial e nao e escolhivel pelo cliente (o payload da chamada nem e
+  // lido), entao expo-la nao devolve poder a quem tem o token.
+  'prepararCompraPlay',
   'validarCompraPlay',
   'notificacoesPlay',
   'reconciliarEntitlements',

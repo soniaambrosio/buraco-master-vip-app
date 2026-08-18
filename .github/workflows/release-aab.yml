@@ -299,11 +299,24 @@ jobs:
           flutter test test/billing/ --reporter expanded
 
       - name: "PORTAO DE QUALIDADE — backend Billing (entitlement + RTDN)"
-        # Roda sem npm install: o codebase nao tem dependencia de teste, de
-        # proposito. E a logica onde um bug custa dinheiro real — credito
-        # duplicado sob reentrega concorrente da Play Store, e ciclo de vida do
-        # direito VIP.
-        run: cd functions-billing && node --test
+        # O COMENTARIO ANTERIOR DIZIA "roda sem npm install: o codebase nao tem
+        # dependencia de teste, de proposito". Isso DEIXOU DE SER VERDADE na
+        # composicao, e deixar o texto velho no lugar teria custado um gate
+        # vermelho sem ninguem entender por que.
+        #
+        # Tres das cinco suites continuam sem dependencia nenhuma. A quarta,
+        # `adversarial.test.js`, carrega `index.js` inteiro com firebase-admin e
+        # googleapis trocados no require.cache — e para isso o pacote real
+        # precisa existir, ainda que nada dele seja executado. Sem `npm ci`,
+        # 42 dos 86 casos daquela suite falham por modulo ausente.
+        #
+        # `npm test` em vez de `node --test` solto: os alvos sao explicitos no
+        # package.json justamente para que um arquivo novo na pasta nao entre na
+        # suite sem alguem decidir, e um renomeado nao saia dela em silencio.
+        run: |
+          cd functions-billing
+          npm ci --no-audit --no-fund
+          npm test
 
       # ---------------------------------------------------------------------
       # ANDROID

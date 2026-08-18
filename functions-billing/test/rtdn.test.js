@@ -45,6 +45,15 @@ const PACOTE = 'io.github.soniaambrosio.buracomastervip';
 const UID = 'jogador-1';
 const PRODUTO = 'master_vip_mensal';
 
+/**
+ * Os identificadores de vinculacao. Desde a correcao P0 da propriedade, e daqui
+ * — e nao de `compras/{hash}` — que sai o dono de uma compra: o valor e entregue
+ * a Play como `obfuscatedAccountId` antes do dialogo abrir, e ela o devolve na
+ * resposta autoritativa.
+ */
+const VINCULO = '11'.repeat(24);
+const VINCULO_ALHEIO = '22'.repeat(24);
+
 const TOKEN = 'purchase-token-VIGENTE-nao-pode-vazar-9f3a';
 const HASH = chaveDaCompra(TOKEN);
 const TOKEN_VELHO = 'purchase-token-DA-ASSINATURA-ANTERIOR-11bc';
@@ -63,14 +72,21 @@ const DOC_INTERNO = `playerEntitlements/${UID}/interno/billing`;
 // ---------------------------------------------------------------- utilidades
 
 /** Resposta de `purchases.subscriptionsv2.get`, no formato documentado. */
-function respostaPlay(estado, expiryTime, { autoRenew = true } = {}) {
-  return {
+function respostaPlay(estado, expiryTime, { autoRenew = true, contaOfuscada = VINCULO } = {}) {
+  const corpo = {
     subscriptionState: estado,
     startTime: PASSADO,
     lineItems: [
       { productId: PRODUTO, expiryTime, autoRenewingPlan: { autoRenewEnabled: autoRenew } },
     ],
   };
+  // Quem responde "de quem e esta compra?" agora e a propria Google. Sem este
+  // campo a compra e de ninguem, e o processamento falha fechado — que e
+  // exatamente o que RTDN-19 passou a provar.
+  if (contaOfuscada) {
+    corpo.externalAccountIdentifiers = { obfuscatedExternalAccountId: contaOfuscada };
+  }
+  return corpo;
 }
 
 function ativa(expiry = FUTURO) {
@@ -124,7 +140,15 @@ function porta() {
 function montar({ respostas, relogio = [T1], titular = true } = {}) {
   const db = new FirestoreFalso();
 
+  // `titular` passou a significar OUTRA COISA, e o nome ficou por continuidade
+  // com a numeracao da OS original. Antes ele semeava `compras/{hash}`, que era a
+  // autoridade de propriedade — e era isso que deixava o primeiro portador do
+  // token escolher o beneficiario. Agora ele semeia a VINCULACAO, que e a
+  // autoridade nova; `compras/{hash}` continua semeado porque ainda e o registro
+  // de "esta compra ja foi creditada", so que nao decide mais dono nenhum.
   if (titular) {
+    db.semear(`playerBillingIdentity/${UID}`, { uid: UID, contaOfuscada: VINCULO });
+    db.semear(`billingAccountIndex/${VINCULO}`, { uid: UID, contaOfuscada: VINCULO });
     db.semear(`compras/${HASH}`, {
       uid: UID,
       produtoId: PRODUTO,
@@ -160,10 +184,13 @@ function montar({ respostas, relogio = [T1], titular = true } = {}) {
   const store = criarStore({ db, carimbo: () => CARIMBO });
   const reconciliador = criarReconciliador({
     consultarAssinatura,
+    uidDoVinculo: store.uidDoVinculo,
     aplicarProposta: store.aplicarProposta,
     agora,
   });
-  const rtdn = criarProcessadorRtdn({ pacote: PACOTE, store, reconciliador, log, agora });
+  // O relogio saiu do processador: o unico instante que ele carimbava era o do
+  // desfecho terminal, e agora ele vem junto da consulta autoritativa.
+  const rtdn = criarProcessadorRtdn({ pacote: PACOTE, store, reconciliador, log });
 
   return { db, store, reconciliador, rtdn, chamadasPlay, registros, agora };
 }
@@ -276,7 +303,19 @@ test('RTDN-04 expirada nao concede, e o documento passa a contar isso', async ()
   assert.strictEqual(db.ver(DOC_PUBLICO).vipAtivo, false);
 });
 
-test('RTDN-05 revogada e terminal TIRADA DO EVENTO — sem consultar a Play', async () => {
+test('RTDN-05 revogada: o ESTADO vem do evento, o DONO vem da Google', async () => {
+  // O NOME DESTE TESTE MUDOU, e a mudanca e o registro de uma correcao.
+  //
+  // Ele se chamava "terminal TIRADA DO EVENTO — sem consultar a Play", e
+  // provava que a revogacao nao esperava consulta nenhuma. Metade disso
+  // continua verdade e e a metade importante: o ESTADO sai do payload, porque a
+  // Google nao devolve um `subscriptionState` que diga "revogado", e esperar por
+  // um deixaria uma janela em que o revogado continua VIP.
+  //
+  // A outra metade era um defeito. O DONO tambem saia do payload — via
+  // `compras/{hash}`, ou seja, de quem tivesse apresentado o token primeiro. Era
+  // por ali que um estorno podia cair no entitlement de quem nao era o titular.
+  // Agora o dono sai da consulta autoritativa, e a consulta acontece.
   const { db, rtdn, chamadasPlay } = montar({ respostas: () => ativa() });
   semearEntitlement(db, { estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO });
 
@@ -286,9 +325,9 @@ test('RTDN-05 revogada e terminal TIRADA DO EVENTO — sem consultar a Play', as
 
   assert.strictEqual(r.estado, ESTADO.REVOGADO);
   assert.strictEqual(r.vipAtivo, false);
-  // A consulta NAO expressa "revogado": esperar por ela deixaria uma janela em
-  // que o revogado continua VIP.
-  assert.deepStrictEqual(chamadasPlay, []);
+  // Uma consulta, e so para saber de quem e. O estado gravado continua sendo o
+  // do evento — a Play respondeu ATIVA, e mesmo assim o direito foi revogado.
+  assert.deepStrictEqual(chamadasPlay, [TOKEN]);
   assert.strictEqual(db.ver(DOC_PUBLICO).vipAtivo, false);
   // O direito acaba AGORA, e nao no fim do periodo pago.
   assert.strictEqual(db.ver(DOC_PUBLICO).expiraEm, T1);
@@ -302,7 +341,9 @@ test('RTDN-06 reembolso (voidedPurchase) e terminal, mesmo com prazo futuro grav
 
   assert.strictEqual(r.estado, ESTADO.REEMBOLSADO);
   assert.strictEqual(r.vipAtivo, false);
-  assert.deepStrictEqual(chamadasPlay, []);
+  // Mesma inversao de RTDN-05: a consulta acontece, e serve para descobrir o
+  // dono. O estorno continua vindo do evento — a Play diz ATIVA aqui.
+  assert.deepStrictEqual(chamadasPlay, [TOKEN]);
   assert.strictEqual(db.ver(DOC_PUBLICO).vipAtivo, false);
   assert.strictEqual(db.ver(DOC_INTERNO).terminalEm, T1);
 });
@@ -533,7 +574,7 @@ test('RTDN-13 evento desconhecido, de teste ou de outro pacote nao altera entitl
     ['secao_desconhecida', { packageName: PACOTE, eventTimeMillis: '1', novidadeDaPlay: {} }, 'sem_secao_reconhecida'],
     ['notificacao_de_teste', { packageName: PACOTE, eventTimeMillis: '1', testNotification: { version: '1.0' } }, 'notificacao_de_teste'],
     ['produto_avulso', { packageName: PACOTE, eventTimeMillis: '1', oneTimeProductNotification: { purchaseToken: TOKEN } }, 'produto_avulso'],
-    ['pacote_alheio', { ...notificacaoAssinatura(NOTIFICACAO.RENEWED), packageName: 'com.outro.app' }, 'pacote_alheio'],
+    ['pacote alheio', { ...notificacaoAssinatura(NOTIFICACAO.RENEWED), packageName: 'com.outro.app' }, 'pacote_divergente'],
   ];
 
   for (const [nome, corpo, esperado] of casos) {
@@ -629,7 +670,12 @@ test('RTDN-16 RTDN nao contorna moderacao: nao escreve fora do seu dominio', asy
     assert.ok(
       caminho.startsWith('playerEntitlements/') ||
         caminho.startsWith('billingEvents/') ||
-        caminho.startsWith('playerModeration/'),
+        caminho.startsWith('playerModeration/') ||
+        // A vinculacao entra na lista porque passou a fazer parte do dominio do
+        // billing. Ela e LIDA aqui, nunca escrita pelo RTDN: quem a cria e
+        // `prepararCompraPlay`, com a identidade ja verificada.
+        caminho.startsWith('playerBillingIdentity/') ||
+        caminho.startsWith('billingAccountIndex/'),
       `o RTDN escreveu fora do seu dominio: ${caminho}`
     );
   }
@@ -709,19 +755,28 @@ test('RTDN-18 a Play e a autoridade: o estado consultado vence o que o evento su
 // ================================================== TITULARIDADE E FRONTEIRAS
 
 test('RTDN-19 notificacao sobre token sem titular comprovavel e descartada', async () => {
+  // O QUE MUDOU AQUI, e por que o teste continua valendo o mesmo.
+  //
+  // "Titular comprovavel" era `compras/{hash}` — quem tivesse gravado o token
+  // primeiro. Hoje e a vinculacao que a Google devolve. A consequencia visivel e
+  // que a consulta ACONTECE (e dela que sai o dono, entao nao ha como pular) e
+  // que o motivo passou a ser `vinculo_desconhecido`.
+  //
+  // O que o teste prova nao mudou: sem dono comprovavel, nada e concedido, nada
+  // e gravado, e a trilha registra a recusa.
   const { db, rtdn, chamadasPlay } = montar({ respostas: () => ativa(), titular: false });
 
   const r = await rtdn.processarNotificacao(
     mensagem(notificacaoAssinatura(NOTIFICACAO.RENEWED), 'msg-orfa')
   );
 
-  assert.strictEqual(r.decisao, 'compra_desconhecida');
+  assert.strictEqual(r.decisao, 'vinculo_desconhecido');
   assert.strictEqual(r.aplicado, false);
-  // Nao se atribui direito por palpite, e nao se gasta consulta por um token
-  // que este sistema nunca viu.
-  assert.deepStrictEqual(chamadasPlay, []);
+  // A consulta e feita porque e ela que responde de quem e a compra; o que nao
+  // acontece e atribuir o direito a alguem por palpite.
+  assert.deepStrictEqual(chamadasPlay, [TOKEN]);
   assert.strictEqual(db.ver(DOC_PUBLICO), null);
-  assert.strictEqual(db.ver('billingEvents/msg-orfa').decisao, 'compra_desconhecida');
+  assert.strictEqual(db.ver('billingEvents/msg-orfa').decisao, 'vinculo_desconhecido');
 });
 
 test('RTDN-20 mensagem sem messageId ainda produz efeito, sem trilha de deduplicacao', async () => {
@@ -748,6 +803,9 @@ test('RTDN-21 o carimbo da consulta e capturado ANTES da chamada de rede', async
   db.semear(`compras/${HASH}`, { uid: UID, produtoId: PRODUTO, assinatura: true });
 
   const agora = () => (instantes.length > 1 ? instantes.shift() : instantes[0]);
+  db.semear(`playerBillingIdentity/${UID}`, { uid: UID, contaOfuscada: VINCULO });
+  db.semear(`billingAccountIndex/${VINCULO}`, { uid: UID, contaOfuscada: VINCULO });
+
   const store = criarStore({ db, carimbo: () => CARIMBO });
   const reconciliador = criarReconciliador({
     consultarAssinatura: async () => {
@@ -755,10 +813,11 @@ test('RTDN-21 o carimbo da consulta e capturado ANTES da chamada de rede', async
       durante = agora();
       return ativa();
     },
+    uidDoVinculo: store.uidDoVinculo,
     aplicarProposta: store.aplicarProposta,
     agora,
   });
-  const rtdn = criarProcessadorRtdn({ pacote: PACOTE, store, reconciliador, agora });
+  const rtdn = criarProcessadorRtdn({ pacote: PACOTE, store, reconciliador });
 
   await rtdn.processarNotificacao(
     mensagem(notificacaoAssinatura(NOTIFICACAO.RENEWED), 'msg-relogio')

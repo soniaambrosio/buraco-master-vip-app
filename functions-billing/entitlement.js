@@ -39,6 +39,8 @@
 
 'use strict';
 
+const { MOTIVO } = require('./propriedade');
+
 /** Versao do formato de `playerEntitlements/{uid}`. Espelha kEsquemaEntitlement. */
 const ESQUEMA_ENTITLEMENT = 1;
 
@@ -158,8 +160,20 @@ function consolidarAssinatura(resposta, agora) {
   const bruto = (resposta && resposta.subscriptionState) || null;
   let estado = MAPA_PLAY[bruto] || ESTADO.DESCONHECIDO;
 
+  // A colecao so e percorrida depois de existir e ser uma lista, e cada item so
+  // e acessado depois de ser um objeto. Era aqui o achado M-1: a linha do laco
+  // protegia o item (`item && item.expiryTime`) e a linha logo abaixo do laco
+  // usava `itens[0].productId` sem protecao, entao um elemento nulo virava
+  // TypeError nao tratado — e a notificacao virava pilula envenenada, reentregue
+  // ate a retencao do topico expirar.
+  //
+  // O filtro aqui e a SEGUNDA linha de defesa. A primeira e
+  // `validarRespostaAssinatura` (propriedade.js), que RECUSA a resposta inteira
+  // antes de ela chegar a consolidacao. Esta funcao continua defensiva porque e
+  // pura e pode ser chamada de outro caminho amanha; defender duas vezes custa
+  // um `filter`, e confiar uma vez so ja custou um defeito.
   const itens = Array.isArray(resposta && resposta.lineItems)
-    ? resposta.lineItems
+    ? resposta.lineItems.filter((i) => i != null && typeof i === 'object' && !Array.isArray(i))
     : [];
 
   // Vence o item que vale por mais tempo. Uma assinatura com mais de um item
@@ -186,6 +200,7 @@ function consolidarAssinatura(resposta, agora) {
     }
   }
   if (!produtoId && itens.length > 0) produtoId = itens[0].productId || null;
+  if (typeof produtoId !== 'string' || produtoId === '') produtoId = null;
 
   // Coerencia: um estado que concede acesso com prazo vencido e um estado
   // vencido. Gravar `ativo` com `expiraEm` no passado deixaria o documento
@@ -249,11 +264,21 @@ function interpretarNotificacao(corpo, pacote) {
     return { acao: 'ignorar', motivo: 'corpo_invalido' };
   }
 
-  // Origem: a mensagem tem que ser do NOSSO pacote. O topico so aceita
-  // publicacao da Google, mas um projeto com mais de um applicationId
-  // apontando para o mesmo topico entregaria evento alheio aqui dentro.
-  if (corpo.packageName && pacote && corpo.packageName !== pacote) {
-    return { acao: 'ignorar', motivo: 'pacote_alheio' };
+  // ORIGEM: a mensagem tem de ser do NOSSO pacote, e tem de DIZER qual e.
+  //
+  // Era aqui o achado M-3. A condicao antiga era `corpo.packageName && ...`:
+  // pacote alheio era recusado, pacote AUSENTE passava. A conferencia ficava
+  // desligada justamente para a mensagem que nao declara origem — e o caminho
+  // terminal (revogacao, anulacao) tira o veredito do proprio payload, entao era
+  // exatamente ele que chegava com a unica conferencia de origem desativada.
+  //
+  // Sem pacote configurado o processamento nao acontece: uma configuracao
+  // faltando nao pode virar uma conferencia a menos.
+  if (typeof pacote !== 'string' || pacote === '') {
+    return { acao: 'ignorar', motivo: MOTIVO.PACOTE_DIVERGENTE, detalhe: 'pacote_oficial_ausente' };
+  }
+  if (corpo.packageName !== pacote) {
+    return { acao: 'ignorar', motivo: MOTIVO.PACOTE_DIVERGENTE };
   }
 
   const eventoEm = instante(
@@ -349,6 +374,19 @@ function decidirAtualizacao(atual, proposta) {
     Boolean(atual.purchaseTokenHash) &&
     atual.purchaseTokenHash === proposta.purchaseTokenHash;
 
+  // TROCA DE PLANO. A Google encadeia assinaturas por `linkedPurchaseToken`: o
+  // token novo aponta para o que ele substitui. Sem ler isso, um upgrade ficaria
+  // parado em `token_superado` — o entitlement guarda o hash do token velho e
+  // recusaria o novo — ate alguem abrir o aplicativo.
+  //
+  // Isto NAO transfere dono. O uid da proposta ja veio do identificador que a
+  // Google devolveu na resposta ATUAL; o token ligado so responde "qual
+  // entitlement esta sendo substituido", e a resposta so vale dentro do
+  // documento daquele mesmo uid.
+  const sucedeTokenLigado =
+    Boolean(atual.purchaseTokenHash) &&
+    atual.purchaseTokenHash === proposta.purchaseTokenHashLigado;
+
   // --- Titularidade do direito -------------------------------------------
   //
   // Uma compra validada chega com a identidade autenticada do jogador e com a
@@ -358,7 +396,7 @@ function decidirAtualizacao(atual, proposta) {
   // Ja um evento (notificacao ou reconciliacao) sobre um token que NAO e o
   // vigente fala de uma compra superada. Aplicar seria deixar a expiracao da
   // assinatura velha derrubar a assinatura nova.
-  if (!mesmoToken && proposta.fonte !== 'validacao') {
+  if (!mesmoToken && !sucedeTokenLigado && proposta.fonte !== 'validacao') {
     if (atual.purchaseTokenHash) {
       return { aplicar: false, motivo: 'token_superado' };
     }

@@ -341,3 +341,75 @@ describe('ENT — a porta do BACKEND continua aberta', () => {
     });
   });
 });
+
+describe('ENT — a vinculacao entre a conta e a compra da Google', () => {
+  // BLOCO NOVO, da correcao P0 da propriedade da compra.
+  //
+  // Ate ela, a resposta para "de quem e esta compra?" era *de quem apresentou o
+  // purchaseToken primeiro*: `compras/{hash}` nascia com o uid de quem chamasse,
+  // antes de a Google ser consultada. Quem tivesse o token da vitima e chegasse
+  // antes ficava com o VIP, e o pagante recebia `permission-denied` para sempre.
+  //
+  // A correcao amarrou a compra a conta por um identificador opaco, entregue a
+  // Play como `obfuscatedAccountId` e devolvido pela Google na resposta
+  // autoritativa. As duas pontas dessa amarra vivem nestas colecoes, e o que
+  // este bloco prova e que NENHUM cliente as alcanca.
+  //
+  // Por que importa que nem o dono leia: o identificador nao concede nada
+  // sozinho, mas poder le-lo permitiria correlacionar conta e compra de fora, e
+  // poder escreve-lo permitiria apontar o vinculo de um jogador para a conta de
+  // outro — que e exatamente a porta que acabou de ser fechada.
+
+  const VINCULO = '11'.repeat(24);
+
+  test('ENT-23 nem o dono le a propria vinculacao', async () => {
+    await assertFails(getDoc(doc(comoDono(), `playerBillingIdentity/${DONO}`)));
+    await assertFails(getDoc(doc(comoAdmin(), `playerBillingIdentity/${DONO}`)));
+    await assertFails(getDoc(doc(semLogin(), `playerBillingIdentity/${DONO}`)));
+  });
+
+  test('ENT-24 ninguem escreve a propria vinculacao', async () => {
+    // Escrever aqui seria escolher o identificador que a Google vai devolver —
+    // ou seja, escolher de quem e a compra. E a Cloud Function
+    // `prepararCompraPlay` que o gera, com a identidade ja verificada.
+    await assertFails(
+      setDoc(doc(comoDono(), `playerBillingIdentity/${DONO}`), {
+        uid: DONO,
+        contaOfuscada: VINCULO,
+      })
+    );
+    await assertFails(
+      setDoc(doc(comoAdmin(), `playerBillingIdentity/${DONO}`), {
+        uid: DONO,
+        contaOfuscada: VINCULO,
+      })
+    );
+  });
+
+  test('ENT-25 o indice reverso e fechado para leitura e para escrita', async () => {
+    // Este e o documento que responde "qual conta e dona deste identificador?".
+    // Poder escrever nele e poder redirecionar a compra de qualquer pessoa.
+    await assertFails(getDoc(doc(comoDono(), `billingAccountIndex/${VINCULO}`)));
+    await assertFails(getDoc(doc(comoAdmin(), `billingAccountIndex/${VINCULO}`)));
+    await assertFails(
+      setDoc(doc(comoDono(), `billingAccountIndex/${VINCULO}`), { uid: DONO })
+    );
+    await assertFails(
+      setDoc(doc(comoOutro(), `billingAccountIndex/${VINCULO}`), { uid: OUTRO })
+    );
+  });
+
+  test('ENT-26 nem apagar: remover o vinculo devolveria a compra ao primeiro que aparecesse', async () => {
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, `playerBillingIdentity/${DONO}`), { uid: DONO, contaOfuscada: VINCULO });
+      await setDoc(doc(db, `billingAccountIndex/${VINCULO}`), { uid: DONO, contaOfuscada: VINCULO });
+    });
+
+    await assertFails(deleteDoc(doc(comoDono(), `playerBillingIdentity/${DONO}`)));
+    await assertFails(deleteDoc(doc(comoOutro(), `billingAccountIndex/${VINCULO}`)));
+    await assertFails(
+      updateDoc(doc(comoOutro(), `billingAccountIndex/${VINCULO}`), { uid: OUTRO })
+    );
+  });
+});

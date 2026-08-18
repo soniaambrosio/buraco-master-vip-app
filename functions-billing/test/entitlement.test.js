@@ -270,7 +270,7 @@ test('RT-04 notificacao de outro applicationId e ignorada', () => {
     PACOTE
   );
   assert.strictEqual(r.acao, 'ignorar');
-  assert.strictEqual(r.motivo, 'pacote_alheio');
+  assert.strictEqual(r.motivo, 'pacote_divergente');
 });
 
 test('RT-05 notificacao de teste e produto avulso nao mexem em entitlement', () => {

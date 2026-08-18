@@ -44,6 +44,7 @@ import 'catalogo.dart';
 import 'estado_ui.dart';
 import 'loja_play.dart';
 import 'sessao.dart';
+import 'vinculo.dart';
 import 'validacao.dart';
 import 'validacao_firebase.dart';
 
@@ -52,11 +53,13 @@ class ServicoBilling {
     LojaPlay? loja,
     ValidadorDeCompra? validador,
     SessaoJogador? sessao,
+    PreparadorDeCompra? preparador,
     CatalogoBilling catalogo = CatalogoBilling.oficial,
     void Function(String)? registrador,
   })  : _loja = loja ?? const LojaPlayReal(),
         _validador = validador ?? ValidadorFirebase(),
         _sessao = sessao ?? const SessaoFirebase(),
+        _preparador = preparador ?? PreparadorFirebase(),
         _catalogo = catalogo,
         _registrar = registrador ?? _registroPadrao;
 
@@ -65,6 +68,17 @@ class ServicoBilling {
   final LojaPlay _loja;
   final ValidadorDeCompra _validador;
   final SessaoJogador _sessao;
+  final PreparadorDeCompra _preparador;
+
+  /// O vinculo desta sessao, e o uid a que ele pertence.
+  ///
+  /// EM MEMORIA E ESCOPADO AO UID, as duas coisas de proposito. Persistir em
+  /// disco criaria a unica falha que este desenho nao pode ter — o identificador
+  /// de A sobrevivendo ao logout e sendo usado numa compra de B. Guardar sem o
+  /// uid ao lado criaria a mesma falha dentro do mesmo processo, numa troca de
+  /// conta sem reinicio.
+  String? _vinculo;
+  String? _vinculoDoUid;
   final CatalogoBilling _catalogo;
   final void Function(String) _registrar;
 
@@ -248,6 +262,11 @@ class ServicoBilling {
     _emValidacao.clear();
     _entregasNaRestauracao = null;
     _produtos = const <ProductDetails>[];
+    // O vinculo sai junto com o resto. Ele pertence a uma CONTA, nao ao
+    // processo: sobreviver ao logout o deixaria disponivel para a proxima
+    // sessao, e uma compra de B com o identificador de A seria creditada a A.
+    _vinculo = null;
+    _vinculoDoUid = null;
     _publicar(const PainelBilling());
   }
 
@@ -279,6 +298,54 @@ class ServicoBilling {
   ///
   /// [ofertaPlanoBase] escolhe o plano-base de uma assinatura (mensal,
   /// trimestral, anual). Ver [LojaPlay.comprarAssinatura].
+  /// O vinculo desta sessao, preparando-o se ainda nao houver.
+  ///
+  /// Devolve `null` em tres situacoes, e nas tres a compra NAO deve abrir:
+  ///
+  ///   sem sessao        o backend responderia `unauthenticated` na preparacao,
+  ///                     e sem vinculo a compra nasceria orfa;
+  ///   preparacao falhou rede fora, funcao indisponivel — sem amarra;
+  ///   forma invalida    o backend recusaria; abrir aqui seria cobrar por uma
+  ///                     compra que ja se sabe que sera negada.
+  ///
+  /// O cache e por UID. Se a sessao trocou, o vinculo guardado e de OUTRA conta e
+  /// e descartado sem hesitacao — reaproveita-lo faria a compra de B ser
+  /// atribuida a A, que e exatamente o defeito que esta correcao fechou.
+  Future<String?> _vinculoDaSessao() async {
+    final uid = _sessao.uid;
+    if (uid == null) {
+      _registrar('compra nao aberta: sem sessao para vincular');
+      _publicar(_estado.copiarCom(
+        compra: EstadoCompra.erroDaPlay,
+        diagnostico: 'compra: sem sessao',
+      ));
+      return null;
+    }
+
+    if (_vinculoDoUid != uid) {
+      _vinculo = null;
+      _vinculoDoUid = null;
+    }
+    if (_vinculo != null) return _vinculo;
+
+    final concedido = await _preparador.preparar();
+    if (!vinculoBemFormado(concedido)) {
+      // O valor NAO entra no log nem no diagnostico. Ele nao e segredo de
+      // autenticacao, mas a relacao com o uid e privada, e um diagnostico que
+      // o carregue acaba em captura de tela de suporte.
+      _registrar('compra nao aberta: vinculo ausente ou mal formado');
+      _publicar(_estado.copiarCom(
+        compra: EstadoCompra.erroDaPlay,
+        diagnostico: 'compra: vinculo indisponivel',
+      ));
+      return null;
+    }
+
+    _vinculo = concedido;
+    _vinculoDoUid = uid;
+    return _vinculo;
+  }
+
   Future<bool> comprar(ProductDetails produto, {String? ofertaPlanoBase}) async {
     _publicar(_estado.copiarCom(
       compra: EstadoCompra.emAndamento,
@@ -286,11 +353,25 @@ class ServicoBilling {
       limparDiagnostico: true,
     ));
 
+    // ========================================================================
+    // O PORTAO DA PROPRIEDADE — antes de qualquer dialogo da Play
+    // ========================================================================
+    //
+    // Nao existe "compra primeiro, vincula depois". Uma compra que chega a Play
+    // sem a amarra da conta e uma compra que o backend vai recusar: a Google
+    // devolveria a resposta sem identificador externo, e sem ele nao ha dono
+    // comprovavel. O jogador teria pago para receber `permission-denied`.
+    //
+    // Por isso a recusa acontece ANTES de abrir o fluxo, e ela nao cobra nada
+    // de ninguem.
+    final vinculo = await _vinculoDaSessao();
+    if (vinculo == null) return false;
+
     try {
       return _catalogo.ehAssinatura(produto.id)
           ? await _loja.comprarAssinatura(produto,
-              ofertaPlanoBase: ofertaPlanoBase)
-          : await _loja.comprarConsumivel(produto);
+              ofertaPlanoBase: ofertaPlanoBase, vinculoDaConta: vinculo)
+          : await _loja.comprarConsumivel(produto, vinculoDaConta: vinculo);
     } catch (e) {
       _registrar('abertura do fluxo de compra falhou: ${e.runtimeType}');
       _publicar(_estado.copiarCom(

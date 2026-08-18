@@ -8,11 +8,22 @@
   },
   "scripts": {
     "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio. Mesma disciplina de firebase/testes/package.json.",
-    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/fichas.test.js test/varredura.test.js test/migracao.test.js test/reconciliacao.test.js test/diagnosticoPopulacao.test.js test/backfillHash.test.js test/backfillEfeitos.test.js test/recuperacaoMetadados.test.js test/recuperacaoEfeitos.test.js test/superficieDeploy.test.js",
+    "test": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js test/fichas.test.js test/varredura.test.js test/migracao.test.js test/reconciliacao.test.js test/diagnosticoPopulacao.test.js test/backfillHash.test.js test/backfillEfeitos.test.js test/recuperacaoMetadados.test.js test/recuperacaoEfeitos.test.js test/superficieDeploy.test.js test/adversarial.test.js",
     "serve": "firebase emulators:start --only functions",
     "//deploy:producao": "As CINCO funcoes da superficie de producao, nomeadas uma a uma. O alvo antigo era `firebase deploy --only functions`, que nao e o codebase de billing: e OS QUATRO codebases do firebase.json (colecoes, billing, torneios, moderacao) — um deploy de billing derrubaria inscricao em torneio e moderacao junto. Nomear tambem impede que as ferramentas administrativas (diagnosticarPopulacaoVip, diagnosticarMetadadosLegados, backfillPurchaseTokenHash) sejam implantadas so por dividirem o mesmo index.js. Deployar as cinco de UMA vez e o que mantem producao correspondendo a UMA linhagem: alvos separados produzem geracoes diferentes convivendo, que foi o estado encontrado nesta OS.",
-    "deploy:producao": "firebase deploy --only functions:billing:validarCompraPlay,functions:billing:notificacoesPlay,functions:billing:reconciliarEntitlements,functions:billing:concederFichasMensais,functions:billing:reconciliarEntitlementDoJogador",
-    "logs": "firebase functions:log"
+    "deploy:producao": "firebase deploy --only functions:billing:prepararCompraPlay,functions:billing:validarCompraPlay,functions:billing:notificacoesPlay,functions:billing:reconciliarEntitlements,functions:billing:concederFichasMensais,functions:billing:reconciliarEntitlementDoJogador",
+    "logs": "firebase functions:log",
+    "//test-composicao": "UNIAO das duas linhagens, e nao escolha entre elas. A propriedade da compra trouxe test/adversarial.test.js; a entrega comercial trouxe test/fichas.test.js. Ficar com um dos lados apagaria uma suite inteira sem nenhum conflito aparecer depois — que e exatamente o modo como um merge limpo perde garantia.",
+    "//test:baseline": "A suite historica exatamente como estava antes da homologacao adversarial, para que o baseline de 79 testes continue reproduzivel por um comando so.",
+    "test:baseline": "node --test test/idempotencia.test.js test/entitlement.test.js test/rtdn.test.js",
+    "//test:adversarial": "Matriz A-W mais os casos da composicao. UNICO alvo que exige `npm ci`: ele carrega `index.js` com as portas trocadas por falsas (ver test/apoio/carga_index.js), e `index.js` importa firebase-functions. Os outros continuam rodando sem node_modules.",
+    "test:adversarial": "node --test test/adversarial.test.js",
+    "//test:fichas": "A entrega economica da assinatura, isolada.",
+    "test:fichas": "node --test test/fichas.test.js",
+    "//prova:propriedade-nao-vacua": "A propriedade em test/reconciliacao.test.js e resolvida pela autoridade REAL (guarda de forma + indice billingAccountIndex), e nao por um resolver constante. Muta o proprio arnes em copia e exige VERMELHO. Sem rede, sem emulador.",
+    "prova:propriedade-nao-vacua": "node test/apoio/propriedade_nao_vacua.js",
+    "//prova:nao-vacuidade": "Neutraliza, uma a uma, as protecoes de producao dos casos criticos e exige que os testes correspondentes fiquem VERMELHOS. Muta arquivo de producao em copia temporaria e restaura sempre; aborta se a arvore nao estiver limpa.",
+    "prova:nao-vacuidade": "node test/apoio/nao_vacuidade.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",

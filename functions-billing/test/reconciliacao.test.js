@@ -33,9 +33,41 @@ const assert = require('node:assert');
 const { criarReconciliador } = require('../reconciliacao');
 const { ESTADO, decidirAtualizacao } = require('../entitlement');
 const { chaveDaCompra } = require('../entitlementStore');
+const { identificadorDaResposta, vinculoBemFormado } = require('../propriedade');
 
 const AGORA = '2026-08-15T12:00:00.000Z';
 const TOKEN = 'token-de-assinatura-abc';
+
+/** O dono das compras desta suite. Era o `uid` solto das chamadas; virou uma
+ *  IDENTIDADE, resolvida pela mesma autoridade que roda em producao. */
+const UID_DONO = 'jogador-a';
+
+/** Vinculo opaco do dono. Hexadecimal de 32, que e a forma que
+ *  `vinculoBemFormado` aceita — nao um texto qualquer que passasse por
+ *  descuido. */
+const VINCULO_DONO = 'a1'.repeat(16);
+
+/** Vinculo de OUTRA conta, bem formado e desconhecido do indice. */
+const VINCULO_ALHEIO = 'b2'.repeat(16);
+
+/**
+ * Poe o vinculo opaco na resposta da Google, no lugar onde ela o entrega.
+ *
+ * `SubscriptionPurchaseV2` carrega o identificador em
+ * `externalAccountIdentifiers.obfuscatedExternalAccountId`. Uma compra REAL
+ * sempre o traz — foi por isso que a correcao de propriedade pode exigi-lo —,
+ * e as respostas desta suite nasceram antes dele existir. Injetar aqui devolve
+ * as fixtures a forma de producao SEM tocar no que cada teste mede.
+ *
+ * So injeta se a resposta ainda nao tiver identificador: um caso que declare o
+ * seu (ou que declare NENHUM, de proposito) manda.
+ */
+function comVinculo(resposta, vinculo) {
+  if (vinculo === null) return resposta;
+  if (!resposta || typeof resposta !== 'object' || Array.isArray(resposta)) return resposta;
+  if (identificadorDaResposta(resposta) !== null) return resposta;
+  return { ...resposta, externalAccountIdentifiers: { obfuscatedExternalAccountId: vinculo } };
+}
 
 /** Resposta da Play Developer API para uma assinatura em dia. */
 function respostaAtiva(ate = '2026-12-01T00:00:00.000Z') {
@@ -49,17 +81,39 @@ function respostaAtiva(ate = '2026-12-01T00:00:00.000Z') {
  * Uma mesa de reconciliacao: Google roteirizada + store que obedece a regra
  * REAL de precedencia.
  */
-function montar({ resposta = respostaAtiva(), lanca = null, existente = null } = {}) {
+function montar({
+  resposta = respostaAtiva(),
+  lanca = null,
+  existente = null,
+  vinculo = VINCULO_DONO,
+  indice = { [VINCULO_DONO]: UID_DONO },
+} = {}) {
   const consultas = [];
   const gravacoes = [];
+  const vinculosConsultados = [];
   let atual = existente;
+
+  // A AUTORIDADE DE PROPRIEDADE, e nao um atalho.
+  //
+  // Espelha `criarStore(...).uidDoVinculo` linha a linha: guarda de FORMA,
+  // consulta ao indice `billingAccountIndex`, e `null` quando o documento nao
+  // existe ou nao tem uid. Um `async () => UID_DONO` faria os 14 casos abaixo
+  // passarem sem que propriedade nenhuma fosse resolvida — e a suite passaria a
+  // provar o contrario do que a correcao P0 fechou.
+  const uidDoVinculo = async (contaOfuscada) => {
+    vinculosConsultados.push(contaOfuscada);
+    if (!vinculoBemFormado(contaOfuscada)) return null;
+    const uid = indice[contaOfuscada];
+    return typeof uid === 'string' && uid !== '' ? uid : null;
+  };
 
   const reconciliador = criarReconciliador({
     agora: () => AGORA,
+    uidDoVinculo,
     consultarAssinatura: async (token) => {
       consultas.push(token);
       if (lanca) throw lanca;
-      return typeof resposta === 'function' ? resposta() : resposta;
+      return comVinculo(typeof resposta === 'function' ? resposta() : resposta, vinculo);
     },
     aplicarProposta: async (proposta) => {
       gravacoes.push(proposta);
@@ -85,6 +139,7 @@ function montar({ resposta = respostaAtiva(), lanca = null, existente = null } =
     reconciliador,
     consultas,
     gravacoes,
+    vinculosConsultados,
     get estado() {
       return atual;
     },
@@ -97,7 +152,7 @@ test('REC-01 compra valida: consulta a Google e grava o que ela respondeu', asyn
   const mesa = montar();
 
   const r = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     produtoId: 'vip_assinatura',
     tokenCompra: TOKEN,
     fonte: 'validacao',
@@ -114,7 +169,7 @@ test('REC-02 o hash gravado deriva do token consultado', async () => {
   const mesa = montar();
 
   await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'validacao',
   });
@@ -132,7 +187,7 @@ test('REC-03 compra INEXISTENTE para a Google nao concede nada', async () => {
   const mesa = montar({ resposta: { subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE' } });
 
   const r = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'validacao',
   });
@@ -150,7 +205,7 @@ test('REC-04 estado EXPIRADO na Google fecha o direito', async () => {
   });
 
   const r = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'reconciliacao',
   });
@@ -165,7 +220,7 @@ test('REC-05 prazo vencido nao concede, mesmo com a Google dizendo ACTIVE', asyn
   const mesa = montar({ resposta: respostaAtiva('2026-08-01T00:00:00.000Z') });
 
   const r = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'reconciliacao',
   });
@@ -176,7 +231,7 @@ test('REC-05 prazo vencido nao concede, mesmo com a Google dizendo ACTIVE', asyn
 test('REC-06 renovacao ESTENDE o prazo do direito ja existente', async () => {
   const mesa = montar({
     existente: {
-      uid: 'jogador-a',
+      uidEsperado: UID_DONO,
       estado: ESTADO.ATIVO,
       vipAtivo: true,
       expiraEm: '2026-09-01T00:00:00.000Z',
@@ -188,7 +243,7 @@ test('REC-06 renovacao ESTENDE o prazo do direito ja existente', async () => {
   });
 
   const r = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'rtdn',
   });
@@ -200,7 +255,7 @@ test('REC-06 renovacao ESTENDE o prazo do direito ja existente', async () => {
 test('REC-07 revogacao entra e derruba o direito vigente', async () => {
   const mesa = montar({
     existente: {
-      uid: 'jogador-a',
+      uidEsperado: UID_DONO,
       estado: ESTADO.ATIVO,
       vipAtivo: true,
       expiraEm: '2026-12-01T00:00:00.000Z',
@@ -215,7 +270,7 @@ test('REC-07 revogacao entra e derruba o direito vigente', async () => {
   });
 
   const r = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'rtdn',
   });
@@ -228,14 +283,14 @@ test('REC-08 chamada REPETIDA converge: o estado final e o mesmo', async () => {
   const mesa = montar();
 
   await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'validacao',
   });
   const depoisDe1 = { ...mesa.estado };
 
   const segunda = await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'validacao',
   });
@@ -251,7 +306,7 @@ test('REC-09 falha da Google SOBE e nao grava nada', async () => {
 
   await assert.rejects(
     mesa.reconciliador.reconsultarEAplicar({
-      uid: 'jogador-a',
+      uidEsperado: UID_DONO,
       tokenCompra: TOKEN,
       fonte: 'rtdn',
     }),
@@ -266,7 +321,7 @@ test('REC-09 falha da Google SOBE e nao grava nada', async () => {
 
 test('REC-10 falha externa nao derruba um direito que ja valia', async () => {
   const existente = {
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     estado: ESTADO.ATIVO,
     vipAtivo: true,
     expiraEm: '2026-12-01T00:00:00.000Z',
@@ -277,7 +332,7 @@ test('REC-10 falha externa nao derruba um direito que ja valia', async () => {
 
   await assert.rejects(
     mesa.reconciliador.reconsultarEAplicar({
-      uid: 'jogador-a',
+      uidEsperado: UID_DONO,
       tokenCompra: TOKEN,
       fonte: 'reconciliacao',
     })
@@ -297,11 +352,16 @@ test('REC-11 o carimbo e capturado ANTES da chamada de rede', async () => {
   const gravacoes = [];
   const reconciliador = criarReconciliador({
     agora: () => instantes[i++],
+    // Mesma autoridade de propriedade do `montar`, e pelo mesmo motivo: este
+    // caso monta o seu proprio reconciliador para controlar o relogio, e nao
+    // para escapar da propriedade.
+    uidDoVinculo: async (conta) =>
+      (vinculoBemFormado(conta) && conta === VINCULO_DONO ? UID_DONO : null),
     consultarAssinatura: async () => {
       // A "rede" consome o segundo instante: se o carimbo fosse lido depois da
       // consulta, ele seria o das 12:00:09.
       i += 0;
-      return respostaAtiva();
+      return comVinculo(respostaAtiva(), VINCULO_DONO);
     },
     aplicarProposta: async (p) => {
       gravacoes.push(p);
@@ -310,7 +370,7 @@ test('REC-11 o carimbo e capturado ANTES da chamada de rede', async () => {
   });
 
   await reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'validacao',
   });
@@ -323,7 +383,7 @@ test('REC-12 o produtoId do parametro so preenche o que a Google nao disse', asy
   // resposta nao traz o produto.
   const comProduto = montar({ resposta: respostaAtiva() });
   await comProduto.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     produtoId: 'produto_do_parametro',
     tokenCompra: TOKEN,
     fonte: 'validacao',
@@ -337,7 +397,7 @@ test('REC-12 o produtoId do parametro so preenche o que a Google nao disse', asy
     },
   });
   await semProduto.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     produtoId: 'produto_do_parametro',
     tokenCompra: TOKEN,
     fonte: 'validacao',
@@ -349,7 +409,7 @@ test('REC-13 a fonte e os metadados do evento chegam na proposta', async () => {
   const mesa = montar();
 
   await mesa.reconciliador.reconsultarEAplicar({
-    uid: 'jogador-a',
+    uidEsperado: UID_DONO,
     tokenCompra: TOKEN,
     fonte: 'rtdn',
     eventoEm: '2026-08-15T11:59:00.000Z',
@@ -360,4 +420,104 @@ test('REC-13 a fonte e os metadados do evento chegam na proposta', async () => {
   assert.equal(p.fonte, 'rtdn');
   assert.equal(p.eventoEm, '2026-08-15T11:59:00.000Z');
   assert.equal(p.eventoTipo, 2);
+});
+
+// ---------------------------------------------------------------------------
+// PROPRIEDADE — os casos que a composicao trouxe, e que esta suite nao tinha.
+//
+// Ela nasceu antes de a compra ter dono comprovavel: o `uid` era um parametro
+// solto, e quem apresentasse o token primeiro ficava com o VIP. A correcao P0
+// amarrou a compra a conta por um identificador opaco, e `reconsultarEAplicar`
+// passou a resolver propriedade ANTES de gravar qualquer coisa.
+//
+// Os quatro casos abaixo exercitam as quatro respostas de `decidirPropriedade`.
+// Sem eles, adaptar o arnes teria sido so fazer os REC-* pararem de reclamar.
+// ---------------------------------------------------------------------------
+
+test('REC-P1 resposta SEM vinculo nao grava nada', async () => {
+  // Compra sem identificador de conta e compra sem dono. Antes da correcao, o
+  // dono virava o parametro; agora nao ha a quem atribuir, e recusar e a unica
+  // resposta honesta.
+  const mesa = montar({ vinculo: null });
+  const r = await mesa.reconciliador.reconsultarEAplicar({
+    uidEsperado: UID_DONO,
+    tokenCompra: TOKEN,
+    fonte: 'validacao',
+  });
+
+  assert.equal(r.aplicado, false);
+  assert.equal(r.motivo, 'vinculo_ausente');
+  assert.equal(mesa.gravacoes.length, 0, 'nada pode ser gravado sem dono');
+  assert.equal(mesa.estado, null);
+});
+
+test('REC-P2 vinculo MALFORMADO nao passa pela guarda de forma', async () => {
+  // Forma e a primeira barreira: um identificador que nao tem a forma que ESTA
+  // autoridade emite nao foi emitido por nos, e trata-lo como "provavelmente e
+  // nosso" reabriria a porta pelo lado de dentro.
+  for (const ruim of ['nao-e-hex', 'A1'.repeat(16), 'a1', 'a1'.repeat(40), '']) {
+    const mesa = montar({
+      resposta: { ...respostaAtiva(), obfuscatedExternalAccountId: ruim },
+      indice: { [ruim]: UID_DONO },
+    });
+    const r = await mesa.reconciliador.reconsultarEAplicar({
+      uidEsperado: UID_DONO,
+      tokenCompra: TOKEN,
+      fonte: 'validacao',
+    });
+    assert.equal(r.aplicado, false, 'aceitou vinculo malformado: [' + ruim + ']');
+    assert.equal(mesa.gravacoes.length, 0);
+  }
+});
+
+test('REC-P3 vinculo bem formado mas DESCONHECIDO do indice recusa', async () => {
+  // O identificador tem a forma certa e mesmo assim nao pertence a conta
+  // nenhuma. E o caso de um token vazado com vinculo forjado na forma correta.
+  const mesa = montar({ vinculo: VINCULO_ALHEIO });
+  const r = await mesa.reconciliador.reconsultarEAplicar({
+    uidEsperado: UID_DONO,
+    tokenCompra: TOKEN,
+    fonte: 'validacao',
+  });
+
+  assert.equal(r.aplicado, false);
+  assert.equal(r.motivo, 'vinculo_desconhecido');
+  assert.equal(mesa.gravacoes.length, 0);
+  assert.deepEqual(mesa.vinculosConsultados, [VINCULO_ALHEIO], 'consultou o indice de verdade');
+});
+
+test('REC-P4 compra de OUTRA conta nao entra na sessao autenticada', async () => {
+  // O defeito original, no seu formato exato: quem tem o token da vitima chama
+  // com a propria sessao. O indice resolve o dono VERDADEIRO, e a divergencia
+  // com a sessao recusa.
+  const mesa = montar({
+    vinculo: VINCULO_ALHEIO,
+    indice: { [VINCULO_DONO]: UID_DONO, [VINCULO_ALHEIO]: 'jogador-vitima' },
+  });
+  const r = await mesa.reconciliador.reconsultarEAplicar({
+    uidEsperado: UID_DONO,
+    tokenCompra: TOKEN,
+    fonte: 'validacao',
+  });
+
+  assert.equal(r.aplicado, false);
+  assert.equal(r.motivo, 'vinculo_divergente');
+  assert.equal(mesa.gravacoes.length, 0, 'o atacante nao grava nada');
+});
+
+test('REC-P5 sem sessao (RTDN), o dono e quem o indice resolveu', async () => {
+  // O caminho da notificacao nao tem sessao. O dono nao pode ser "quem pediu" —
+  // nao ha quem pediu. Sai do indice, e o entitlement e gravado sob ELE.
+  const mesa = montar({
+    vinculo: VINCULO_ALHEIO,
+    indice: { [VINCULO_ALHEIO]: 'jogador-dono-real' },
+  });
+  const r = await mesa.reconciliador.reconsultarEAplicar({
+    tokenCompra: TOKEN,
+    fonte: 'rtdn',
+  });
+
+  assert.equal(r.aplicado, true);
+  assert.equal(mesa.gravacoes.length, 1);
+  assert.equal(mesa.gravacoes[0].uid, 'jogador-dono-real');
 });
