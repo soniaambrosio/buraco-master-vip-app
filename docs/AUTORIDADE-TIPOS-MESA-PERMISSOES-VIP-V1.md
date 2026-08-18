@@ -365,12 +365,32 @@ declaração. `MESA-11c` existe para que isso não volte a acontecer.
 | Suíte | Casos | Falhas | Baseline na base |
 | --- | ---: | ---: | --- |
 | `functions-mesas` (puras: TAX, POL, PAS, SAL, DEC, ELE, ESP) | **142** | 0 | não existia |
+| `functions-mesas` (emulador do Firestore: INT) | **21** | 0 | não existia |
 | `functions-conta` (inventário, plano, reautenticação, diário) | **81** | 0 | **80/81 — falhava** |
 | `buraco-servidor` (48 suítes) | **368** | 0 | 333/333 |
-| **Total** | **591** | **0** | |
+| **Total** | **612** | **0** | |
 
-`functions-mesas/test/integracao.emulador.test.js` — **19 provas escritas, NÃO
-EXECUTADAS nesta sessão.** Ver §12.
+### A suíte de emulador pagou por si duas vezes
+
+Ela existe porque os casos 24, 26 e 27 medem comportamento do **banco**, não do
+código. Na primeira execução ela encontrou **um defeito de produção que nenhum
+dobre de memória encontraria**, e na segunda encontrou um engano de teste:
+
+1. **`resolverConviteDeMesaPrivada` gravava antes de ler.** O contador do
+   limitador era gravado, e só então o vínculo do convite era lido — e o
+   Firestore recusa transação que leia depois de escrever. **Toda resolução de
+   convite falharia em produção.** Corrigido: as duas leituras acontecem juntas,
+   antes de qualquer escrita, mesmo quando o limitador já vai barrar (uma
+   leitura desperdiçada no caso raro é o preço de não ter dois caminhos, que
+   divergiriam na primeira manutenção).
+
+2. **`INT-10` esperava o motivo errado.** Um convidado sem assinatura numa Mesa
+   Privada é recusado por `CORTESIA_NAO_SERVE_PRIVADA`, e não por
+   `SEM_ASSINATURA_NEM_CORTESIA` — porque a admissão **materializa a janela do
+   passe antes de decidir**, e portanto todo jogador que chega pela primeira vez
+   *tem* cortesia. O motivo registrado diz a coisa certa ao operador: a regra
+   funcionou, não faltou benefício. O teste ganhou também a asserção de que a
+   cortesia dele **continua intacta** — ser recusado não pode cobrar.
 
 ### Mapa dos casos obrigatórios da OS
 
@@ -382,7 +402,7 @@ EXECUTADAS nesta sessão.** Ver §12.
 | 12.2 VIP | 14–18 (credencial) | `verifyIdToken(token, true)` + claim; **as provas moram na suíte da credencial do servidor** (`CRED-*`, 60 casos) e não foram reimplementadas |
 | 12.2 VIP | 19 | `ESP-05` + `TAX-11` |
 | 12.3 Cortesia | 21–23, 25, 28–34 | `PAS-*`, `DEC-COR-*` |
-| 12.3 Cortesia | 24, 26, 27 | `INT-02`, `INT-03`, `INT-04` — **emulador, não executado** |
+| 12.3 Cortesia | 24, 26, 27 | `INT-02`, `INT-03`, `INT-04` — emulador, **21/21 verde** |
 | 12.4 Privada | 35–50 (emenda) | `DEC-PRI-*`, `SAL-*`, `PRI-*`, `INT-09/10/11/12/13` |
 | 12.5 Treino | 47–54 | `DEC-TRE-01/02`, `DEC-COR-07`, `POL-10`, `POL-NEG-07`, `TAX-09` |
 | 12.6 Integração | 55–63 | suíte do servidor, verde (368), e `functions-conta` (81) |
@@ -432,17 +452,23 @@ compilação, e não em `default` silencioso.
 
 ## 12. RISCOS RESIDUAIS E O QUE NÃO FOI EXECUTADO
 
-1. **A suíte de emulador não rodou.** `test/integracao.emulador.test.js` está
-   escrito (19 provas) e cobre exatamente os casos 24, 26 e 27 — atomicidade,
-   idempotência por repetição e concorrência de duas tentativas. Ela exige o
-   emulador do Firestore, e o ambiente desta sessão não a executou. **Os três
-   casos que dependem dela estão declarados como não provados**, e nenhum deles
-   deve ser considerado verde até que ela rode:
-   ```
+1. **Como rodar a suíte de emulador nesta máquina.** Não é risco, é
+   procedimento — e ele custou tempo para ser descoberto, então fica escrito.
+   ```bash
    npm --prefix functions-mesas run test:emulador
    ```
-   O `JAVA_HOME` que funciona nesta máquina é o JBR do Android Studio
-   (`C:/Program Files/Android/Android Studio/jbr`, OpenJDK 21).
+   Três coisas que fazem esse comando falhar por motivos que não são o código:
+   - o `java` do `PATH` não serve; o que funciona é o JBR do Android Studio
+     (`C:/Program Files/Android/Android Studio/jbr/bin`, OpenJDK 21);
+   - a porta **8080 costuma estar ocupada** por outra sessão de emulador. O
+     sintoma é `Could not start Firestore Emulator, port taken`, e ele se parece
+     com suíte quebrada. A saída é `--config` com um arquivo que declare outra
+     porta (foi usada a 8099) — sem derrubar a sessão alheia;
+   - `npm install` neste repositório deixou a árvore **incompleta duas vezes**
+     (faltou `gaxios`, dependência transitiva de `gcp-metadata`). O sintoma é
+     `Cannot find module 'gaxios'` vindo de dentro do `firebase-admin`, e não de
+     código deste projeto. Conferir com
+     `ls functions-mesas/node_modules/gaxios` antes de suspeitar do teste.
 
 2. **As branches não foram publicadas.** O critério de aceite exige branch local
    e remota no mesmo SHA. Isso não foi feito: publicar é ação externa e não foi
@@ -459,21 +485,30 @@ compilação, e não em `default` silencioso.
    fora de `app/lib/`. A composição mínima recomendada está em §13.
 
 4. **O contrato `admissao-vip-v1` não carrega `tipoPartida`.** A topologia é
-   **deduzida** no backend pela existência de `salasPrivadas/{codigoDaSala}` —
-   documento que só nasce por `registrarMesaPrivada`, que exige assinatura
-   ativa. A dedução é conservadora, mas é dedução: a forma correta é `tipoPartida`
-   entrar no contrato numa v2, com as duas pontas versionadas. Enquanto isso não
-   acontece, uma Mesa Privada cuja sala **não** tenha sido registrada no backend
-   é tratada como pública casual pelo backend — e continua barrada pelo servidor,
-   que recusa a admissão sem resposta aprovada. Falha fechada, mas por dois
-   caminhos em vez de um.
+   derivada no backend de um fato do **protocolo**, e não de um palpite sobre o
+   banco: o servidor só chama este endpoint em dois casos — `vip_ranqueada`, ou
+   topologia `privada` declarada, que viaja como `casual`. Mesa pública casual
+   **não chega aqui** (`PRI-05` mede isso do lado do servidor). Logo, `casual`
+   no fio significa `privada`.
 
-5. **`registrarMesaPrivada` acontece DEPOIS de a sala existir no servidor.** Há
-   uma janela entre criar a mesa no servidor e registrá-la no backend. Nessa
-   janela o servidor já recusa a entrada (topologia privada declarada exige
-   autorização, e o backend ainda não conhece a sala). O efeito é seguro e a
-   experiência é ruim: o dono precisa registrar antes de convidar. Ordenar as
-   duas coisas é trabalho da OS visual.
+   **Uma versão anterior deste código deduzia a topologia pela existência de
+   `salasPrivadas/{codigoDaSala}`, e isso era uma falha ABERTA:** uma sala
+   privada ainda não registrada resolvia para `publica`, que não exige VIP
+   nenhum — o dono sentava de graça na própria sala exclusiva, e o furo era
+   invisível porque a entrada funcionava. `INT-18` existe para que não volte.
+
+   Ainda assim, a derivação continua sendo derivação. A forma correta é
+   `tipoPartida` entrar no contrato numa **v2**, com as duas pontas versionadas
+   e o adaptador do servidor estendido — trabalho pequeno, e que deve ser feito
+   antes de existir um terceiro caminho que chame este endpoint.
+
+5. **A Mesa Privada precisa ser registrada ANTES de alguém sentar.** Com a
+   derivação acima, uma sala privada não registrada recusa com
+   `SALA_INEXISTENTE` — inclusive para o dono assinante. Isso é falha fechada,
+   e é o comportamento correto; mas significa que a ordem
+   `criar no servidor → registrar no backend → convidar` é obrigatória, e hoje
+   nada a impõe do lado do cliente. Ordenar as duas chamadas é trabalho da OS
+   visual, e é a primeira coisa que ela precisa acertar.
 
 6. **O cofre local do servidor continua sendo uma segunda autoridade sobre
    estatística.** Esta OS tirou o valor de entrada das mãos do cliente e não

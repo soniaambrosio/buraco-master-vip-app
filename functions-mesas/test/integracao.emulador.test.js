@@ -292,7 +292,18 @@ describe("INT — Mesa Privada", () => {
       }),
     );
     assert.equal(veredito.ok, false);
-    assert.equal(veredito.codigoRecusa, RECUSA.SEM_ASSINATURA_NEM_CORTESIA);
+    // O MOTIVO E `CORTESIA_NAO_SERVE_PRIVADA`, e nao "sem assinatura nem
+    // cortesia" — e a diferenca ensina uma coisa que so aparece contra o banco:
+    // a admissao MATERIALIZA a janela do passe antes de decidir. Todo jogador
+    // que chega aqui pela primeira vez ganha a cortesia da janela corrente, e
+    // portanto TEM cortesia. Na Mesa Privada ela nao serve, e o motivo
+    // registrado diz isso — que e exatamente a informacao de que o operador
+    // precisa: a regra funcionou, nao faltou beneficio.
+    assert.equal(veredito.codigoRecusa, RECUSA.CORTESIA_NAO_SERVE_PRIVADA);
+
+    // E a cortesia dele continua INTACTA: ser recusado nao pode cobrar.
+    const passe = await store.consultarPasse("uid_convidado");
+    assert.equal(passe.estado.utilizavel, true);
   });
 
   test("INT-11 (caso 43) a cortesia nao abre Mesa Privada", async () => {
@@ -424,18 +435,43 @@ describe("INT — regressao", () => {
     }
   });
 
-  test("INT-18 (caso 1) mesa publica casual admite sem assinatura e sem passe", async () => {
+  test("INT-18 sala privada NAO REGISTRADA falha FECHADA, e nao aberta", async () => {
+    // A regressao mais importante deste arquivo.
+    //
+    // `casual` no fio so chega aqui vindo de um servidor de topologia
+    // `privada` — mesa publica casual e aprovada pelo gate sem consultar
+    // backend nenhum (`PRI-05`, na suite do servidor). Uma versao anterior
+    // deduzia a topologia pela EXISTENCIA da sala, e entao uma sala ainda nao
+    // registrada resolvia para `publica`: o dono sentava de graca na propria
+    // sala exclusiva, e o furo era invisivel porque a entrada funcionava.
     const r = relogio();
     const store = criarStore({ db, agora: r.ler });
+    await darAssinatura("uid_1");
     const veredito = await store.admitir(
       pedido({ categoriaCompetitiva: "casual", tentativaEntradaId: "te_pub" }),
     );
+    assert.equal(veredito.ok, false, "sentou numa sala privada nao registrada");
+    assert.equal(veredito.codigoRecusa, RECUSA.SALA_INEXISTENTE);
+  });
+
+  test("INT-18b a sala REGISTRADA admite o dono assinante", async () => {
+    // O contrapeso: sem ele, "recusa sala nao registrada" seria
+    // indistinguivel de "recusa tudo que e casual".
+    const r = relogio();
+    const store = criarStore({ db, agora: r.ler });
+    await darAssinatura("uid_1");
+    await store.registrarMesaPrivada({
+      uid: "uid_1",
+      codigoDaSala: "BMV-AAAA-AAAA",
+      codigoConvite: "BMV-ACDE-FGHJ",
+      cadeiras: ["liberada", "liberada", "liberada", "liberada"],
+      expiraEm: em(12 * 60 * 60 * 1000),
+    });
+    const veredito = await store.admitir(
+      pedido({ categoriaCompetitiva: "casual", tentativaEntradaId: "te_dono" }),
+    );
     assert.equal(veredito.ok, true);
-    assert.equal(veredito.fonteElegibilidade, FONTE.NAO_EXIGIDA);
-    // E o passe materializado pela janela continua utilizavel: mesa gratuita
-    // nao cobra cortesia.
-    const passe = await store.consultarPasse("uid_1");
-    assert.equal(passe.estado.utilizavel, true);
+    assert.equal(veredito.fonteElegibilidade, FONTE.ASSINATURA);
   });
 
   test("INT-19 a recusa registrada guarda o motivo REAL", async () => {

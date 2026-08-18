@@ -141,25 +141,37 @@ const CONTRATO = "admissao-vip-v1";
 /// so a mesa VIP consultava este backend.
 ///
 /// A Mesa Privada mudou isso — ela exige elegibilidade individual e passou a
-/// consultar tambem. Ate o contrato ganhar `tipoPartida` (v2), a topologia e
-/// DEDUZIDA de um fato que ja esta no banco e que o cliente nao escreve: existe
-/// documento em `salasPrivadas/{codigoDaSala}`?
+/// consultar tambem. Ate o contrato ganhar `tipoPartida` (v2), a topologia sai
+/// de um fato do PROTOCOLO, e nao de um palpite:
 ///
-/// A deducao e conservadora nos dois sentidos, e vale dizer por que:
+///   O SERVIDOR SO CHAMA ESTE ENDPOINT EM DOIS CASOS.
+///     `categoriaCompetitiva === "vip_ranqueada"`  -> mesa VIP/Ranqueada
+///     topologia `privada` DECLARADA               -> Mesa Privada, e ela e
+///                                                    `casual`
 ///
-///   ha sala privada registrada .... `privada`. Um documento so nasce ali por
-///                                   `registrarMesaPrivada`, que exige
-///                                   assinatura ativa do dono.
-///   nao ha ....................... `publica`. E a topologia de toda mesa que
-///                                   nao foi registrada como privada, e a
-///                                   categoria decide se ela e casual ou
-///                                   ranqueada.
+/// Mesa publica casual NAO chega aqui: o gate a aprova sem perguntar
+/// (`PRI-05`, na suite do servidor, prova isso medindo que o backend nao e
+/// consultado). Logo, `casual` no fio significa **privada**, e nao "publica".
 ///
-/// O que NAO acontece: o cliente escolher. Nem `tipoPartida` do payload e
-/// lido — ele existe no tipo so para que a migracao para o contrato v2 seja uma
-/// linha, e `ADM-CTR-04` prova que hoje ele e ignorado.
-function topologiaDe(temSalaPrivada: boolean): string {
-  return temSalaPrivada ? "privada" : "publica";
+///   vip_ranqueada .... `publica`   (a topologia da mesa competitiva oficial)
+///   qualquer outra ... `privada`   (so a Mesa Privada manda `casual` para ca)
+///
+/// A DIFERENCA IMPORTA, e ela e a diferenca entre falha fechada e falha
+/// aberta. Uma versao anterior deste arquivo deduzia a topologia pela
+/// EXISTENCIA de `salasPrivadas/{codigoDaSala}` — e uma sala privada ainda nao
+/// registrada resolvia para `publica`, que nao exige VIP nenhum. O dono
+/// sentava de graca na propria sala exclusiva, e o furo era invisivel porque a
+/// entrada funcionava.
+///
+/// Agora a sala nao registrada resolve para `privada` sem documento, e
+/// `decidirAdmissao` recusa com `SALA_INEXISTENTE`. Registrar antes de convidar
+/// passa a ser obrigatorio — e obrigatorio de um jeito que aparece.
+///
+/// O que NAO acontece, em nenhuma das duas versoes: o cliente escolher. Nem
+/// `tipoPartida` do payload e lido — ele existe no tipo so para que a migracao
+/// para o contrato v2 seja uma linha.
+function topologiaDe(categoriaCompetitiva: unknown): string {
+  return categoriaCompetitiva === "vip_ranqueada" ? "publica" : "privada";
 }
 
 // ===========================================================================
@@ -241,7 +253,7 @@ export function criarStore({ db, agora }: { db: Firestore; agora: () => string }
         const sala = docSala.exists ? (docSala.data() as SalaPrivada) : null;
 
         const tipo = traduzirDoServidor({
-          tipoPartida: topologiaDe(sala !== null),
+          tipoPartida: topologiaDe(pedido.categoriaCompetitiva),
           categoriaCompetitiva: pedido.categoriaCompetitiva,
         });
 
@@ -450,23 +462,37 @@ export function criarStore({ db, agora }: { db: Firestore; agora: () => string }
       const canonico = normalizarCodigo(entrada.codigoBruto);
 
       return db.runTransaction(async (tx) => {
-        const docTent = await tx.get(ref.tentativas(entrada.uid));
+        // TODAS AS LEITURAS PRIMEIRO. O Firestore recusa uma transacao que leia
+        // depois de escrever, e a versao anterior deste metodo fazia
+        // exatamente isso: gravava o contador do limitador e SO ENTAO lia o
+        // vinculo. A suite de emulador foi quem pegou — nenhum dobre de
+        // memoria reproduz essa regra, porque ela e do banco.
+        //
+        // O vinculo e lido mesmo quando o limitador ja vai barrar. E uma
+        // leitura desperdicada no caso raro, e o preco de nao ter dois
+        // caminhos: um que le antes e outro que le depois divergiriam na
+        // primeira manutencao. Nada do que se leu aqui sai na resposta quando o
+        // limitador barra.
+        const [docTent, docVinculo] = await Promise.all([
+          tx.get(ref.tentativas(entrada.uid)),
+          canonico === null ? Promise.resolve(null) : tx.get(ref.codigo(impressaoDoCodigo(canonico))),
+        ]);
+
         const decisao = avaliarTentativa({
           registro: docTent.exists ? (docTent.data() as RegistroDeTentativas) : null,
           agora: instante,
         });
+
         // O contador e gravado SEMPRE, inclusive quando o palpite e recusado
         // por excesso: nao contar a recusada tornaria o limitador contornavel
         // por insistencia.
         tx.set(ref.tentativas(entrada.uid), decisao.proximo);
 
         if (!decisao.permitido) return { ok: false as const, motivoInterno: "EXCESSO_DE_TENTATIVAS" };
-        // Codigo mal formado nem chega a tocar a colecao de convites.
         if (canonico === null) return { ok: false as const, motivoInterno: "MAL_FORMADO" };
 
-        const docVinculo = await tx.get(ref.codigo(impressaoDoCodigo(canonico)));
         const r = resolverCodigo({
-          vinculo: docVinculo.exists ? (docVinculo.data() as VinculoDeCodigo) : null,
+          vinculo: docVinculo && docVinculo.exists ? (docVinculo.data() as VinculoDeCodigo) : null,
           agora: instante,
         });
         if (!r.ok) return { ok: false as const, motivoInterno: r.motivo };
