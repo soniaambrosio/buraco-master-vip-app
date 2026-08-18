@@ -35,6 +35,14 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 # dry-run. Os gates existentes provam cada lado sozinho, com identidade de
 # fixture — que é uma afirmação sobre o que o vizinho produz, e não a coisa.
 #
+# A OS DE INTEGRAÇÃO DO SPLASH RIVE acrescentou UM gate, `splash`, e não mexeu
+# em nenhum outro. Ele prova o binário da abertura pelo BUNDLE (tamanho,
+# cabeçalho, SHA-256 e os nomes do artboard e da timeline dentro do arquivo), o
+# portão duplo animação × bootstrap e o fato de o destino continuar sendo
+# decidido pela casca. O que ele NÃO prova, e o laudo declara: que o runtime
+# nativo desenha a arte — `rive_native` é biblioteca dinâmica da plataforma alvo
+# e não existe dentro de `flutter test`. Essa prova é de aparelho.
+#
 # REGRA DURA DE HONESTIDADE: nada aqui pode sair como NÃO EXECUTADO por erro de
 # descoberta. Cada codebase tem caminho FIXO, declarado abaixo; se o caminho
 # existe e mesmo assim não roda, o motivo é impresso e o gate falha. NÃO
@@ -136,6 +144,13 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS Integracao do Splash Rive Constelacao: o binario aprovado (tamanho,
+          # cabecalho, SHA-256 e os nomes do artboard e da timeline DENTRO do
+          # arquivo, lidos pelo bundle), o portao duplo animacao x bootstrap, a
+          # arte que falha sem aprisionar ninguem e o destino que continua sendo
+          # decidido pela casca. Aqui o asset ja esta na arvore: este workflow
+          # copia `app/assets` inteiro e o `pubspec.yaml` do repositorio.
+          roda splash     test/splash/splash_constelacao_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -303,7 +318,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud splash billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -354,7 +369,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud splash billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

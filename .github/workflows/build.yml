@@ -148,7 +148,11 @@ jobs:
           ls -l app_build/assets/torneios/premiacao/coroas/ app_build/assets/torneios/premiacao/selos/
 
       - name: Add Firebase + Google Sign-In + Audio deps
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
+        # `rive` é a abertura oficial (lib/casca/splash/). O runtime é NATIVO: o
+        # gradle do plugin dispara `dart run rive_native:setup`, que BAIXA a
+        # biblioteca da plataforma. Por isso o build precisa de rede — a
+        # execução no aparelho, não: o .riv viaja dentro do APK.
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences "rive:^0.14.11"
 
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
@@ -156,7 +160,11 @@ jobs:
         # importa as duas diretamente: stream_channel para o canal WebSocket
         # falso, fake_async para atravessar o backoff da reconexão sem esperar
         # segundos de verdade. Declarar evita o aviso depend_on_referenced_packages.
-        run: cd app_build && flutter pub add dev:stream_channel dev:fake_async
+        #
+        # `crypto` entra pelo portão da abertura: ele confere o SHA-256 do .riv
+        # empacotado contra o binário aprovado. É dev, então não acrescenta um
+        # byte ao APK — a OS proíbe dependência de produção só para calcular hash.
+        run: cd app_build && flutter pub add dev:stream_channel dev:fake_async dev:crypto
 
       - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
         # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
@@ -487,12 +495,37 @@ jobs:
           test -s app_build/assets/splash/logo_splash_oficial.webp
           test -s app_build/assets/splash/splash_intro.mp3
 
+      - name: Copy Rive opening art (binário autoritativo)
+        # NÃO reexportar, NÃO recomprimir: o arquivo tem de chegar ao APK igual
+        # ao aprovado. Tamanho e SHA-256 são conferidos aqui e OUTRA VEZ dentro
+        # do portão da abertura, que lê pelo bundle do Flutter — é a diferença
+        # entre "o arquivo está no disco" e "o arquivo está no aplicativo".
+        run: |
+          mkdir -p app_build/assets/rive
+          cp app/assets/rive/splash_constelacao_master_vip_v2.riv app_build/assets/rive/
+          ARQ=app_build/assets/rive/splash_constelacao_master_vip_v2.riv
+          TAM=$(wc -c < "$ARQ")
+          SHA=$(sha256sum "$ARQ" | cut -d' ' -f1)
+          CAB=$(head -c 4 "$ARQ")
+          echo "abertura: $TAM bytes | sha256 $SHA | cabecalho $CAB"
+          test "$TAM" = "2298957" || { echo "ERRO: tamanho divergente ($TAM)"; exit 1; }
+          test "$SHA" = "a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d" || { echo "ERRO: SHA-256 divergente"; exit 1; }
+          test "$CAB" = "RIVE" || { echo "ERRO: cabeçalho divergente"; exit 1; }
+
       - name: Configure dark native launch screen
+        # A COR É A DA ARTE, e é isso que elimina o piscar: o Android pinta esta
+        # tela antes de existir engine de Flutter, e o primeiro quadro do
+        # Flutter é a abertura, com o mesmo `#050B1E`. Duas cores diferentes
+        # aqui viram um lampejo visível em todo cold start.
+        #
+        # O mecanismo nativo continua o mesmo — `launch_background` em
+        # `drawable/` e `drawable-v21/`, cobrindo Android 12+ e anteriores. Só
+        # o VALOR mudou.
         run: |
           python3 - <<'PY'
           from pathlib import Path
           root = Path('app_build/android/app/src/main/res')
-          color = '#050201'
+          color = '#050B1E'
           for rel in ['values/colors.xml', 'values-night/colors.xml']:
               p = root / rel
               p.parent.mkdir(parents=True, exist_ok=True)
@@ -512,7 +545,15 @@ jobs:
               <item android:drawable="@color/splash_background" />
           </layer-list>
           ''', encoding='utf-8')
-          print('Native launch screen configurada em fundo escuro.')
+          # A trava que impede as duas cores divergirem em silêncio: o valor
+          # nativo tem de ser o mesmo `kFundoDaAbertura` do contrato da abertura.
+          contrato = Path('app_build/lib/casca/splash/contrato_da_abertura.dart').read_text(encoding='utf-8')
+          esperado = 'Color(0x' + 'FF' + color[1:].upper() + ')'
+          assert esperado in contrato, (
+              'a cor da tela nativa (%s) nao e a do contrato da abertura: '
+              'esperava encontrar %s em contrato_da_abertura.dart' % (color, esperado)
+          )
+          print('Native launch screen configurada em %s, igual ao contrato da abertura.' % color)
           PY
 
       - name: Declare assets in pubspec (robusto)
@@ -634,7 +675,7 @@ jobs:
           # travas de segurança: exatamente UMA seção flutter: e todos os diretórios de assets declarados
           top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
           assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
-          for a in ('assets/splash/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/', 'assets/configurar_mesa/', 'assets/torneios/capas/', 'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
+          for a in ('assets/splash/', 'assets/rive/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/', 'assets/configurar_mesa/', 'assets/torneios/capas/', 'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
               assert a in s, f'FALTOU declarar {a} no pubspec!'
           for a in ('assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
               assert s.count(f'- {a}') == 1, f'{a} declarado mais de uma vez no pubspec!'
@@ -645,6 +686,38 @@ jobs:
         run: |
           echo "--- app_build/assets ---"; find app_build/assets -type f | sort | sed -n '1,20p'
           echo "baralho: $(find app_build/assets/baralho -maxdepth 1 -type f | wc -l) | sons: $(find app_build/assets/sons -maxdepth 1 -type f | wc -l) | perfil: $(find app_build/assets/perfil -maxdepth 1 -type f | wc -l) | ranking principais: $(find app_build/assets/ranking -maxdepth 1 -type f | wc -l) | selos: $(find app_build/assets/ranking/selos -maxdepth 1 -type f | wc -l) | hall: $(find app_build/assets/hall -maxdepth 1 -type f | wc -l) | inicio: $(find app_build/assets/inicio -maxdepth 1 -type f | wc -l) | configurar mesa: $(find app_build/assets/configurar_mesa -maxdepth 1 -type f | wc -l)"
+
+      - name: "PORTÃO DA ABERTURA — splash Rive (binário, portão duplo, layout)"
+        # RODA AQUI, e não junto dos outros portões, por uma razão de ordem: os
+        # portões de cima acontecem ANTES de os assets serem copiados e
+        # declarados no pubspec, e metade desta suíte lê o `.riv` PELO BUNDLE do
+        # Flutter. Antes deste ponto ela provaria o arquivo no disco, que é
+        # outra coisa — e é justamente a diferença que já fez arte sumir de APK.
+        #
+        # Prova: tamanho, cabeçalho e SHA-256 do binário empacotado; que os
+        # nomes `SplashConstelacao` e `entrada_splash` existem dentro dele e são
+        # as constantes do código; que a saída exige animação encerrada E
+        # bootstrap pronto; que arte quebrada não aprisiona ninguém e não
+        # mascara sessão que não respondeu.
+        run: |
+          if [ ! -f app/test/splash/splash_constelacao_test.dart ]; then
+            echo "ERRO: app/test/splash/splash_constelacao_test.dart não encontrado — o portão da abertura é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/splash app_build/test/casca
+          cp -R app/test/splash/. app_build/test/splash/
+          # A suíte usa o dublê da arte e a bancada de sessão, que moram junto
+          # dos testes da casca.
+          cp app/test/casca/abertura_falsa.dart app_build/test/casca/
+          cp app/test/casca/bancada_online.dart app_build/test/casca/
+          echo "============ REGISTRO DO PORTÃO DA ABERTURA ============"
+          echo "Commit testado (GITHUB_SHA): ${GITHUB_SHA}"
+          echo "SHA-256 do .riv que será empacotado:"
+          sha256sum app_build/assets/rive/splash_constelacao_master_vip_v2.riv
+          echo "========================================================"
+          cd app_build
+          flutter test test/splash --reporter expanded
+          echo "PORTÃO VERDE: abertura em Rive validada no commit ${GITHUB_SHA}."
 
       - name: Build release APK por ABI (menor; arm64 pro celular)
         # O endereço do servidor entra AQUI, pela configuração do build. Sem
@@ -663,6 +736,24 @@ jobs:
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/ranking/' | head -3 || true
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/inicio/' | head -3 || true
           unzip -l "$APK" | grep 'assets/flutter_assets/assets/configurar_mesa/' | head -3 || true
+
+      - name: Conferir a abertura DENTRO do APK (bytes, não presença)
+        # A prova que fecha o ciclo: o arquivo é EXTRAÍDO do APK assinado e o
+        # SHA-256 é conferido ali. "Aparece na listagem" não prova nada sobre o
+        # conteúdo — um asset truncado ou reempacotado aparece igualzinho.
+        #
+        # É também aqui que se prova que a abertura roda OFFLINE: se o binário
+        # está dentro do APK, não há requisição a fazer no cold start.
+        run: |
+          APK=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          unzip -p "$APK" assets/flutter_assets/assets/rive/splash_constelacao_master_vip_v2.riv > /tmp/abertura.riv
+          TAM=$(wc -c < /tmp/abertura.riv)
+          SHA=$(sha256sum /tmp/abertura.riv | cut -d' ' -f1)
+          echo "abertura no APK: $TAM bytes | sha256 $SHA"
+          test "$TAM" = "2298957" || { echo "ERRO: o .riv dentro do APK tem tamanho divergente ($TAM)"; exit 1; }
+          test "$SHA" = "a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d" || { echo "ERRO: o .riv dentro do APK não é o binário aprovado"; exit 1; }
+          echo "as libs nativas da Rive que foram empacotadas:"
+          unzip -l "$APK" | grep -i 'rive' || { echo "ERRO: nenhuma biblioteca nativa da Rive no APK — a animação não teria como rodar"; exit 1; }
 
       - name: Signing report (confirma a assinatura final)
         run: |
