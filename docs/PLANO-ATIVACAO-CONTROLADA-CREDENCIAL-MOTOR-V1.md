@@ -17,12 +17,20 @@ lugar nenhum que a ativação alcance**.
 
 A evidência impossível de produzir hoje, e só ela:
 
-> **Nem o receptor corrigido nem o produtor estão em `main`, e o produtor não é
-> carregado por módulo nenhum na linhagem de entrada.** O smoke autenticado
-> chamaria a Function implantada — que não contém a guarda de revogação — e o
-> servidor implantado não tem caminho que peça ID token.
+> **O app/Functions não tem alvo implantável.** Há linhagens incomparáveis
+> carregando autoridades distintas — credencial, moderação, Billing/RTDN, P0 —
+> e nenhuma folha do repositório carrega todas. O smoke chamaria uma Function
+> cujo dono não está decidido.
 
-Detalhamento em §2. Tudo o mais desta OS está fechado.
+**O lado do servidor foi canonizado** (`3016f64`, §1) e não bloqueia mais: a
+credencial tem consumidor real e o commit implantado é observável por
+`GET /versao`. Detalhamento em §2.4-bis e §2.5.
+
+> Histórico: as §2.2 e §2.3 abaixo descrevem o estado da OS anterior, quando o
+> produtor ainda não tinha consumidor. Ficam registradas porque explicam **por
+> que** o alvo do servidor mudou — não porque ainda valham.
+
+Tudo o mais desta OS está fechado.
 
 ---
 
@@ -30,14 +38,23 @@ Detalhamento em §2. Tudo o mais desta OS está fechado.
 
 | Papel | Repositório | Branch | SHA |
 |---|---|---|---|
-| App / Functions | `soniaambrosio/buraco-master-vip-app` | `correcao/credencial-motor-contrato-runbook-v2` | `c3d6ab98795ca49deaaa9e2e974c95d07bfe8467` |
-| Servidor | `soniaambrosio/buraco-servidor` | `integracao/credencial-motor-v2-auditoria-uuid-v1` | `c8ab95c427cfb66d3cd6d6c991a3ff617b45a637` |
+| **Servidor — ALVO IMPLANTÁVEL** | `soniaambrosio/buraco-servidor` | `homologacao/alvo-operacional-credencial-v1` | `3016f647e8ab4e8def3677868c3b309ddaee7763` |
+| Servidor — referência homologada | `soniaambrosio/buraco-servidor` | `integracao/credencial-motor-v2-auditoria-uuid-v1` | `c8ab95c427cfb66d3cd6d6c991a3ff617b45a637` |
+| App — requisito de credencial | `soniaambrosio/buraco-master-vip-app` | `correcao/credencial-motor-contrato-runbook-v2` | `c3d6ab98795ca49deaaa9e2e974c95d07bfe8467` |
+| **App — ALVO IMPLANTÁVEL** | — | — | **NÃO CANONIZADO — ver §2.5** |
 
 Resolvidos por dois caminhos independentes (`git ls-remote` e REST API do GitHub),
-concordantes. **Imutáveis** desde a rehomologação — os mesmos SHAs que receberam
-`PASS`.
+concordantes.
 
-Não usar: `deed131` isolada · `72bc99c` (commit de merge) · `85d0eee` (base).
+**O alvo do servidor mudou** na OS de canonização: `3016f64` descende de
+`274c50d` (`integracao/mesa-privada-vip-individual-v1`), que **contém** `deed131`,
+`fd99260` e `e4bad52`, e cujo `credencial_motor` e `auth_firebase` são **byte a
+byte idênticos** aos homologados em `c8ab95c`. Sobre ele foi acrescentada a prova
+de SHA (§3). Suíte: 379/379.
+
+Não usar: `deed131` isolada · `72bc99c` (commit de merge) · `85d0eee` (base) ·
+`c8ab95c` como alvo de deploy (é a **referência** homologada, e não tem o
+consumidor da credencial).
 
 ### Revalidação por leitura (Gate Zero §3.4)
 
@@ -112,6 +129,41 @@ Mas a decisão de **qual linhagem ativar** é da proprietária, e muda o objetiv
 Este plano é escrito para o **primeiro** alvo, que é o que a OS mandou e o que
 tem menor superfície.
 
+### 2.4-bis O que a OS de canonização RESOLVEU
+
+Duas das três travas caíram:
+
+| Trava | Estado |
+|---|---|
+| produtor sem consumidor | **RESOLVIDA.** O alvo `3016f64` liga a credencial: `ws_server` a constrói **uma vez** e a passa ao adaptador de admissão VIP, que põe o ID token no cabeçalho da chamada ao backend. Provado por comportamento, não por leitura. |
+| SHA de produção não observável | **RESOLVIDA no servidor.** `GET /versao` devolve o commit implantado, derivado de variável **injetada pela plataforma**. Ver §3. |
+| entradas fora de `main` | **CONTINUA ABERTA** — e agora com um agravante, o §2.5. |
+
+### 2.5 O alvo de Functions NÃO existe
+
+Medido sobre 152 pontas publicadas do repositório do app. Para o codebase
+`functions/` (torneios — onde vivem a guarda de autoridade, conquistas e
+rastreabilidade) há **linhagens incomparáveis**, e nenhuma folha carrega todas as
+autoridades:
+
+| Autoridade | Onde vive | A linhagem da credencial contém? |
+|---|---|---|
+| credencial + guarda com `checkRevoked` | `docs/plano-ativacao-credencial-motor-v1` | — (é ela) |
+| economia | contido | ✅ |
+| coleções / kit pioneiros | contido | ✅ |
+| **moderação / chat** | `claude/chat-transporte-real-v1` | ❌ |
+| **Billing / RTDN** | duas linhagens independentes | ❌ |
+| **P0 final integrada** | `homologacao/p0-final-integrada` | ❌ |
+
+A melhor folha do repositório carrega **4 de 7** autoridades. A linhagem da
+credencial carrega **3 de 7**. **Não existe branch que seja o alvo de produção
+das Functions**, e escolher `main` não resolve: `main` (`fb9edb5`) não contém a
+credencial nem as demais.
+
+Consequência para esta janela: os passos 8, 9 e 14 — smoke, identidade gravada e
+recusa do token cacheado — dependem de uma Function implantada que hoje **não
+tem dono**. Até que uma OS de composição produza esse alvo, a janela não abre.
+
 ### 2.4 O que fecha a pré-condição
 
 Uma OS separada, anterior a esta janela, que **componha e implante**:
@@ -165,6 +217,17 @@ Nomes e responsabilidades. **Nenhum valor de segredo.**
   em memória. Rotação do refresh token é absorvida em memória; reiniciar o
   processo volta ao segredo do Railway, que é a fonte da verdade.
 - **Nada em disco, nada em log**, nos dois sentidos.
+- **Prova do commit implantado:** `GET /versao` → `{"sha","origem"}`. O valor sai
+  de variável **injetada pela plataforma** (`RAILWAY_GIT_COMMIT_SHA`,
+  `SOURCE_VERSION`, `GIT_COMMIT_SHA`), validada com forma de SHA de git (7–40
+  hexadecimais); qualquer outra coisa vira `null`, nunca texto ecoado. **Não há
+  fonte que o operador digite** — uma variável escrita à mão provaria o que
+  alguém escreveu, e não o que foi implantado. O cliente não escolhe nada: query,
+  cabeçalho e corpo não mudam a resposta. Suíte `test/versao_sha.test.js`,
+  11 casos.
+- **Do lado do Firebase não existe mecanismo equivalente.** `K_REVISION` do Cloud
+  Run identifica a revisão, não o commit de origem. Fechar isso é parte da OS de
+  composição das Functions (§2.5) — sem alvo canonizado, não há onde implementar.
 
 ### Operador — o que é humano e o que é automático
 
@@ -208,7 +271,8 @@ Cada passo tem **precondição · ação · prova · rollback**. Placeholders em
 
 ### Passo 1 — Censo ANTES
 
-- **Precondição:** §2 fechada; SHAs de produção conhecidos e iguais aos aprovados.
+- **Precondição:** §2 fechada; SHAs de produção conhecidos e iguais aos aprovados —
+  no servidor isto se **lê**, não se afirma: `curl <HOST>/versao`.
 - **Ação:** contar documentos nas seis coleções da §3 e registrar `T0` (UTC).
   Registrar também o `estado()` do provedor, se o serviço já estiver no ar.
 - **Prova:** seis números escritos, com hora. Sem eles a limpeza (passo 11) não
@@ -600,6 +664,8 @@ isso em mente. Não é um teste de terça-feira à tarde.
 Abortar **imediatamente** — não improvisar, não corrigir na janela:
 
 - [ ] SHA operacional diferente do esperado, em qualquer um dos dois lados
+      (no servidor, `GET /versao` responde o commit; `null` ali é ABORT também —
+      significa que a plataforma não injetou, e o que roda não é identificável)
 - [ ] branch divergente aparecer no caminho da ativação
 - [ ] produção já estiver usando credencial desconhecida
 - [ ] o claim técnico já existir em identidade **não documentada**
