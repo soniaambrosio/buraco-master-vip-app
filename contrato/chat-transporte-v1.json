@@ -1,0 +1,72 @@
+{
+  "//": "CONTRATO CANONICO DO TRANSPORTE DE CHAT V1. Este arquivo existe IDENTICO nos dois repositorios (buraco-master-vip-app e buraco-servidor). Os dois lados afirmam o MESMO digest em teste: editar uma copia e nao a outra reprova as duas suites. E o que impede nome de Function, regiao, campo de pedido, campo de resposta e codigo de recusa de divergirem em silencio.",
+  "//digest": "O digest esperado NAO mora aqui (seria circular). Ele mora nas duas suites: functions-moderacao/test/contrato.test.js e test/chat_contrato.test.js.",
+  "versao": 1,
+  "funcoes": {
+    "//": "Nomes exatos das Cloud Functions e a regiao. O servidor monta a URL com estes valores; a Function e exportada com estes nomes.",
+    "regiao": "southamerica-east1",
+    "definirCanal": "definirCanalDeChat",
+    "enviarPeloMotor": "enviarMensagemChatPeloMotor",
+    "ingressoDiretoDoJogador": "enviarMensagemChat"
+  },
+  "pedidoDefinirCanal": {
+    "//": "Quem chama precisa do claim motorDePartidas ou admin.",
+    "campos": ["canalId", "superficie", "participantes", "aberto"],
+    "participante": ["uid", "papel"]
+  },
+  "pedidoEnviarPeloMotor": {
+    "//": "`autorUid` e legitimo AQUI e proibido no ingresso do jogador: o UID autenticado da chamada e o do motor, nao o do autor.",
+    "campos": ["autorUid", "intentId", "canalId", "superficie", "conteudo"]
+  },
+  "respostaEnviarPeloMotor": {
+    "//": "`destinatarios` sao UIDs e existem SO para o roteamento interno do transporte. Nunca atravessam o fio ate o jogador.",
+    "campos": ["enviada", "jaEnviada", "mensagem", "destinatarios"]
+  },
+  "projecaoPublica": {
+    "//": "O unico formato que chega ao jogador. Lista FECHADA: um campo a mais reprova nas duas suites.",
+    "campos": [
+      "messageId",
+      "autorPublicId",
+      "superficie",
+      "canalId",
+      "conteudo",
+      "enviadaEm",
+      "esquema"
+    ]
+  },
+  "protocoloWebSocket": {
+    "//": "Vocabulario do fio. Segue o padrao existente do servidor: `tipo` em snake/camel curto, sem envelope aninhado alem de `dados`.",
+    "pedidoDoCliente": "chat_enviar",
+    "camposDoPedidoDoCliente": ["intentId", "texto"],
+    "entregaAoDestinatario": "chat_mensagem",
+    "reciboAoRemetente": "chat_ack"
+  },
+  "superficies": {
+    "//": "Preserva o veredito da fundacao. Espectador nao fala e nao recebe; saguao esta fora desta OS.",
+    "mesa": "mesa_de_partida",
+    "espectador": "espectador_de_mesa",
+    "saguao": "saguao_publico"
+  },
+  "papeis": {
+    "sentado": "jogador_sentado",
+    "espectador": "espectador",
+    "fora": "fora_do_canal"
+  },
+  "ack": {
+    "//": "Tres desfechos distinguiveis pelo remetente, e nenhum revela estado de terceiro.",
+    "aceita": "aceita",
+    "repetida": "repetida",
+    "recusada": "recusada"
+  },
+  "recusasNoFio": {
+    "//": "Codigos ESTAVEIS e REDIGIDOS. Nenhum diz que B bloqueou voce, nem que B esta suspenso: `indisponivel` cobre bloqueio e sancao de terceiro sem contar qual dos dois foi. `silenciado` e sobre o PROPRIO remetente, e ele tem direito de saber.",
+    "textoInvalido": "texto_invalido",
+    "semAssento": "sem_assento",
+    "silenciado": "silenciado",
+    "indisponivel": "indisponivel",
+    "canalFechado": "canal_fechado",
+    "intencaoInvalida": "intencao_invalida",
+    "intencaoReutilizada": "intencao_reutilizada",
+    "indisponivelTemporario": "tente_de_novo"
+  }
+}

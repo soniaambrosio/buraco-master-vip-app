@@ -33,7 +33,20 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const { test, before, describe } = require("node:test");
+
+const path = require("node:path");
+
+/// O contrato compartilhado com o servidor. Os nomes das Functions saem DAQUI, e
+/// não de literal solto: `test/contrato.test.js` afirma o digest deste arquivo,
+/// então um nome que divirja do servidor reprova antes de chegar aqui.
+const CONTRATO = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, "..", "..", "contrato", "chat-transporte-v1.json"),
+    "utf8"
+  )
+);
 
 const PROJETO = process.env.GCLOUD_PROJECT || "demo-bmv";
 const REGIAO = "southamerica-east1";
@@ -80,7 +93,15 @@ const caminhoUrl = (caminho) =>
  * a assinatura e exigida, e por isso este atalho nao e uma porta — ele so existe
  * dentro do emulador.
  */
-async function chamar(nome, dados, uid, claims = {}) {
+async function chamar(nome, dados, uid, claims = {}, direto = false) {
+  // Desvio do harness: ver `comoMotor`. Três coisas o desligam:
+  //  * `direto: true`, para quem QUER bater na porta antiga (INT-H-01);
+  //  * ausência de `uid`, que é o caso do anônimo (INT-A-02);
+  //  * qualquer outro nome de Function.
+  if (nome === "enviarMensagemChat" && uid && !direto) {
+    return comoMotor(nome, dados, uid);
+  }
+
   const cabecalhos = { "Content-Type": "application/json" };
 
   if (uid) {
@@ -151,6 +172,32 @@ const COMO_DONO = {
   "Content-Type": "application/json",
   Authorization: "Bearer owner",
 };
+
+/**
+ * O CAMINHO DE PRODUÇÃO DO ENVIO, desde a OS do Transporte Real.
+ *
+ * Os casos abaixo pedem `enviarMensagemChat` porque é assim que se lê "o jogador
+ * X mandou este texto". Só que o ingresso DIRETO do jogador está fechado (a
+ * decisão e o motivo estão no cabeçalho daquele export, e INT-H-01 prova que ele
+ * recusa): quem fala com a autoridade é o motor de partidas, apresentando o claim
+ * `motorDePartidas` e dizendo em nome de quem fala.
+ *
+ * A tradução acontece AQUI, no harness, e não nos casos — o que eles provam (a
+ * decisão da autoridade sobre conteúdo, bloqueio, sanção e idempotência) não
+ * mudou com o transporte. Mudou a porta.
+ *
+ * O que o motor NÃO ganha por esta porta está provado em INT-H: falar por quem
+ * não ocupa o canal, e chamar sem o claim.
+ */
+function comoMotor(nome, dados, uid) {
+  if (nome !== "enviarMensagemChat") return null;
+  return chamar(
+    CONTRATO.funcoes.enviarPeloMotor,
+    Object.assign({}, dados, { autorUid: uid }),
+    MOTOR,
+    { motorDePartidas: true }
+  );
+}
 
 /** Grava direto no Firestore do emulador, pela API REST (sem firebase-admin). */
 async function gravar(caminho, campos) {
@@ -313,28 +360,45 @@ describe("INT-A — autenticacao", () => {
       AUTOR
     );
     assert.equal(r.status, 200, r.texto);
-    const cru = JSON.stringify(r.json);
+
+    // A PROJEÇÃO é o que chega ao jogador, e ela não carrega UID nenhum.
+    const projecao = JSON.stringify(r.json.result.mensagem);
     for (const proibido of [AUTOR, COLEGA, TERCEIRO, "destinatarios", "autorUid"]) {
-      assert.ok(!cru.includes(proibido), `resposta carrega ${proibido}: ${cru}`);
+      assert.ok(!projecao.includes(proibido), `a projeção carrega ${proibido}: ${projecao}`);
     }
+
+    // `destinatarios` vem AO LADO da projeção, e é proposital: é a lista que o
+    // TRANSPORTE usa para achar os sockets (§12). Ela nunca atravessa o fio até o
+    // jogador — quem prova isso é a suíte do servidor (CHT-C-04 e CHT-C-05), que
+    // afirma que o pacote entregue é somente `{tipo, dados}` com a projeção.
+    assert.ok(Array.isArray(r.json.result.destinatarios));
   });
 
-  test("INT-A-04 UID de terceiro no payload NAO muda a autoria", async () => {
-    // A prova negativa da §5, no limite real. O pedido e RECUSADO (o campo esta
-    // na trava), e a mensagem nao passa a pertencer ao terceiro.
+  test("INT-A-04 o motor NAO fala por quem nao ocupa o canal", async () => {
+    // A PROVA NEGATIVA DESTA CAMADA. Antes do transporte, o caso aqui era "UID de
+    // terceiro no payload e recusado" — e ele continua valendo, mas mudou de
+    // lugar: no ingresso do jogador o campo nem existe (test/contrato.test.js,
+    // CTA-B-04) e no fio o servidor recusa identidade divergente
+    // (buraco-servidor, CHT-A-03).
+    //
+    // Na porta do MOTOR o `autorUid` e legitimo — o UID autenticado da chamada e
+    // o do motor, nao o do autor. Entao o que protege aqui NAO e a trava de
+    // campos: e a conferencia de PARTICIPACAO. O motor pode falar por quem esta
+    // sentado no canal que ele declarou, e por mais ninguem.
     const r = await chamar(
-      "enviarMensagemChat",
+      CONTRATO.funcoes.enviarPeloMotor,
       {
+        autorUid: "uidQueNuncaSentou",
         intentId: intent("a04"),
         canalId: CANAL,
         superficie: "mesa_de_partida",
-        conteudo: "seria de outro",
-        autorUid: TERCEIRO,
+        conteudo: "falando por estranho",
       },
-      AUTOR
+      MOTOR,
+      { motorDePartidas: true }
     );
     assert.notEqual(r.status, 200);
-    assert.match(r.texto, /payloadComCampoProibido/);
+    assert.match(r.texto, /papelSemDireitoDeFala/);
   });
 
   test("INT-A-05 messageId e enviadaEm escolhidos pelo cliente sao recusados", async () => {
@@ -946,5 +1010,161 @@ describe("INT-G — denuncia sobre mensagem autoritativa", () => {
     const ev = doc.evidencia.mapValue.fields;
     assert.equal(ev.autorUid.stringValue, AUTOR);
     assert.notEqual(ev.autorUid.stringValue, TERCEIRO);
+  });
+});
+
+// ===========================================================================
+// INT-H — as duas portas: quem pode falar em nome de quem (§23)
+// ===========================================================================
+describe("INT-H — adaptadores da autoridade", () => {
+  const pedidoValido = (extra) =>
+    Object.assign(
+      {
+        autorUid: AUTOR,
+        intentId: intent("h"),
+        canalId: CANAL,
+        superficie: "mesa_de_partida",
+        conteudo: "pela porta do motor",
+      },
+      extra || {}
+    );
+
+  test("INT-H-01 o ingresso DIRETO do jogador esta fechado", async () => {
+    // A decisao da §11, provada: a porta continua exportada (nao desapareceu em
+    // silencio) e responde uma recusa NOMEADA, que um cliente antigo consegue
+    // distinguir de "falhou".
+    const r = await chamar(
+      CONTRATO.funcoes.ingressoDiretoDoJogador,
+      {
+        intentId: intent("h01"),
+        canalId: CANAL,
+        superficie: "mesa_de_partida",
+        conteudo: "pela porta antiga",
+      },
+      AUTOR,
+      {},
+      true // sem o desvio do harness: é ESTA porta que se quer testar
+    );
+    assert.notEqual(r.status, 200);
+    assert.match(r.texto, /ingressoDiretoDesativado/);
+  });
+
+  test("INT-H-02 SO o claim motorDePartidas abre a porta do motor", async () => {
+    // Jogador comum autenticado: recusado.
+    const jogador = await chamar(CONTRATO.funcoes.enviarPeloMotor, pedidoValido(), AUTOR);
+    assert.notEqual(jogador.status, 200);
+    assert.match(jogador.texto, /permission-denied|PERMISSION_DENIED/);
+
+    // Anonimo: recusado antes disso.
+    const anonimo = await chamar(CONTRATO.funcoes.enviarPeloMotor, pedidoValido(), null);
+    assert.notEqual(anonimo.status, 200);
+    assert.match(anonimo.texto, /unauthenticated|UNAUTHENTICATED/);
+
+    // Com o claim: passa.
+    const motor = await chamar(CONTRATO.funcoes.enviarPeloMotor, pedidoValido(), MOTOR, {
+      motorDePartidas: true,
+    });
+    assert.equal(motor.status, 200, motor.texto);
+  });
+
+  test("INT-H-03 o motor pode falar por quem OCUPA o canal", async () => {
+    // O outro lado de INT-A-04: a porta existe para isto, e funciona para os dois
+    // ocupantes — nao apenas para um "autor privilegiado".
+    for (const uid of [AUTOR, COLEGA]) {
+      const r = await chamar(
+        CONTRATO.funcoes.enviarPeloMotor,
+        pedidoValido({ autorUid: uid, intentId: intent("h03-" + uid) }),
+        MOTOR,
+        { motorDePartidas: true }
+      );
+      assert.equal(r.status, 200, r.texto);
+      // A projecao identifica o autor pelo publicId DELE, nao do motor.
+      assert.equal(r.json.result.mensagem.autorPublicId, uid === AUTOR ? "BMV-AUT1" : "BMV-COL1");
+    }
+  });
+
+  test("INT-H-04 o motor NAO pode falar por ESPECTADOR", async () => {
+    const r = await chamar(
+      CONTRATO.funcoes.enviarPeloMotor,
+      pedidoValido({ autorUid: PLATEIA, intentId: intent("h04") }),
+      MOTOR,
+      { motorDePartidas: true }
+    );
+    assert.notEqual(r.status, 200);
+    assert.match(r.texto, /papelSemDireitoDeFala/);
+  });
+
+  test("INT-H-05 a porta do motor devolve destinatarios para o TRANSPORTE", async () => {
+    // O unico ponto do sistema que devolve UIDs, e ele existe porque o transporte
+    // precisa saber para quais sockets entregar (§12). A projecao, ao lado, segue
+    // sem UID nenhum (§13).
+    const r = await chamar(
+      CONTRATO.funcoes.enviarPeloMotor,
+      pedidoValido({ intentId: intent("h05") }),
+      MOTOR,
+      { motorDePartidas: true }
+    );
+    assert.equal(r.status, 200, r.texto);
+    assert.deepEqual(
+      Object.keys(r.json.result).sort(),
+      CONTRATO.respostaEnviarPeloMotor.campos.slice().sort()
+    );
+    assert.ok(Array.isArray(r.json.result.destinatarios));
+    assert.equal(JSON.stringify(r.json.result.mensagem).includes(AUTOR), false);
+  });
+
+  test("INT-H-06 o motor tambem NAO escolhe messageId nem instante", async () => {
+    // `autorUid` sai da trava porque e legitimo aqui. SO ele: um motor que
+    // mandasse `messageId` ou `enviadaEm` poderia datar mensagem para tras.
+    for (const campo of ["messageId", "enviadaEm", "socketId"]) {
+      const r = await chamar(
+        CONTRATO.funcoes.enviarPeloMotor,
+        pedidoValido({ intentId: intent("h06-" + campo), [campo]: "escolhido" }),
+        MOTOR,
+        { motorDePartidas: true }
+      );
+      assert.notEqual(r.status, 200, campo);
+      assert.match(r.texto, /payloadComCampoProibido/);
+    }
+  });
+
+  test("INT-H-07 retry pelo motor converge e mantem destinatarios da 1a vez", async () => {
+    // Transporte at-least-once com `messageId` estavel (§15). A lista devolvida no
+    // retry e a GRAVADA, e nao um recalculo: reentregar por uma lista nova faria a
+    // MESMA mensagem alcancar um conjunto diferente de pessoas.
+    const pedido = pedidoValido({ intentId: intent("h07"), conteudo: "duas vezes pelo motor" });
+
+    const um = await chamar(CONTRATO.funcoes.enviarPeloMotor, pedido, MOTOR, { motorDePartidas: true });
+    const dois = await chamar(CONTRATO.funcoes.enviarPeloMotor, pedido, MOTOR, { motorDePartidas: true });
+
+    assert.equal(um.status, 200, um.texto);
+    assert.equal(dois.status, 200, dois.texto);
+    assert.equal(um.json.result.jaEnviada, false);
+    assert.equal(dois.json.result.jaEnviada, true);
+    assert.deepEqual(dois.json.result.mensagem, um.json.result.mensagem);
+    assert.deepEqual(dois.json.result.destinatarios, um.json.result.destinatarios);
+  });
+
+  test("INT-H-08 canal FECHADO recusa tambem pela porta do motor", async () => {
+    const fechado = "salaFechadaMotor";
+    await gravar(`chatChannels/${fechado}`, {
+      canalId: txt(fechado),
+      superficie: txt("mesa_de_partida"),
+      aberto: bool(false),
+      participantes: {
+        arrayValue: {
+          values: [participante(AUTOR, "jogador_sentado"), participante(COLEGA, "jogador_sentado")],
+        },
+      },
+    });
+
+    const r = await chamar(
+      CONTRATO.funcoes.enviarPeloMotor,
+      pedidoValido({ canalId: fechado, intentId: intent("h08") }),
+      MOTOR,
+      { motorDePartidas: true }
+    );
+    assert.notEqual(r.status, 200);
+    assert.match(r.texto, /canalFechado/);
   });
 });

@@ -703,22 +703,41 @@ export const definirCanalDeChat = onCall(opcoesCliente, async (req) => {
   return { definido: true, canalId: id };
 });
 
-/// Envia uma mensagem de chat.
-///
-/// O QUE O CLIENTE MANDA: `intentId`, `canalId`, `superficie`, `conteudo`.
-/// O QUE ELE NAO MANDA, e que RECUSA o pedido se vier (ver
-/// `kCamposProibidosNoEnvio` no dominio): autor, `publicId`, `messageId`, instante,
-/// socket, token, estado de moderacao. Autoria vem de `req.auth.uid`; instante e
-/// `messageId` vem daqui.
-///
-/// IDEMPOTENTE POR CONSTRUCAO (§9): a chave da reserva E o `messageId`, que o
-/// dominio deriva de `sha256(autorUid|intentId)`. Toque duplo, retry apos timeout e
-/// reconexao no meio do envio convergem no MESMO documento, e a segunda chamada
-/// devolve a MESMA mensagem com `jaEnviada: true` em vez de erro.
-export const enviarMensagemChat = onCall(opcoesCliente, async (req) => {
-  const autorUid = exigirAutenticacao(req);
-  const dados = (req.data ?? {}) as Record<string, unknown>;
 
+// -------------------------------------------------------- NUCLEO DO ENVIO
+//
+// UMA AUTORIDADE, DOIS ADAPTADORES (§10 da OS do Transporte).
+//
+// Este e o unico lugar onde uma mensagem de chat passa a existir. Os dois
+// ingressos — o do jogador e o do motor de partidas — chamam ESTA funcao e nada
+// mais. A razao e concreta e ja custou caro noutras frentes do projeto: duas
+// implementacoes da mesma regra divergem no primeiro dia em que alguem aperta um
+// limite de um lado so, e a versao frouxa e sempre a porta de abuso.
+//
+// O QUE ESTE NUCLEO NAO SABE: quem chamou. Ele recebe o `autorUid` JA DECIDIDO
+// pelo adaptador, e a diferenca entre os dois adaptadores e exatamente COMO cada
+// um o decide — `req.auth.uid` no do jogador, campo do payload no do motor,
+// porque la o chamador autenticado e o motor e nao o autor. Nenhuma politica
+// mora nessa diferenca.
+//
+// `test/contrato.test.js` afirma estruturalmente que os dois adaptadores
+// convergem aqui: nenhum deles pode ler `blocks`, `playerModeration`, chamar
+// `avaliarEnvioChat` ou gravar em `chatMessages` por conta propria.
+
+/// O que o nucleo devolve. `destinatarios` e INTERNO: sai para o motor (que
+/// precisa dele para rotear) e NUNCA para um jogador.
+interface ResultadoEnvio {
+  enviada: true;
+  jaEnviada: boolean;
+  mensagem: ReturnType<typeof projetarMensagem>;
+  destinatarios: string[];
+}
+
+async function executarEnvioDeMensagem(
+  autorUid: string,
+  dados: Record<string, unknown>,
+  camposDoPayload: string[]
+): Promise<ResultadoEnvio> {
   const intentId = exigirIdSeguro(dados.intentId, "intentId");
   const canalId = exigirIdSeguro(dados.canalId, "canalId");
 
@@ -797,7 +816,7 @@ export const enviarMensagemChat = onCall(opcoesCliente, async (req) => {
       suspenso: vigente("suspensoAte") || est.suspensaoPermanente === true,
     },
     contatos,
-    camposDoPayload: Object.keys(dados),
+    camposDoPayload,
     autorPublicId,
   });
 
@@ -848,6 +867,11 @@ export const enviarMensagemChat = onCall(opcoesCliente, async (req) => {
   // REPETICAO: a mensagem ja existia. Devolver `documento` (montado agora) seria
   // devolver um `enviadaEm` diferente do gravado, e o cliente veria a mesma
   // mensagem com dois horarios. Lemos o que esta gravado e projetamos AQUELE.
+  //
+  // O `destinatarios` tambem sai do GRAVADO, e nao do veredito recem-calculado:
+  // um retry depois de alguem bloquear teria uma lista nova, e reentregar por ela
+  // faria a MESMA mensagem alcancar um conjunto diferente de pessoas. A entrega
+  // repetida segue a decisao da vez em que a mensagem nasceu (§15).
   if (!resultado.executou) {
     const gravado = await db().collection(C_MENSAGENS).doc(messageId).get();
     if (!gravado.exists) {
@@ -857,10 +881,12 @@ export const enviarMensagemChat = onCall(opcoesCliente, async (req) => {
       logger.error("reserva de chat sem mensagem gravada", { messageId });
       throw new HttpsError("internal", "mensagem reservada e ausente.");
     }
+    const doc = gravado.data() as DocumentoMensagem;
     return {
       enviada: true,
       jaEnviada: true,
-      mensagem: projetarMensagem(gravado.data() as DocumentoMensagem),
+      mensagem: projetarMensagem(doc),
+      destinatarios: Array.isArray(doc.destinatarios) ? doc.destinatarios : [],
     };
   }
 
@@ -876,5 +902,83 @@ export const enviarMensagemChat = onCall(opcoesCliente, async (req) => {
     // `autorUid` e `destinatarios` nao saem daqui, e um campo novo no documento
     // nao vaza por esquecimento.
     mensagem: projetarMensagem(documento),
+    destinatarios: documento.destinatarios,
+  };
+}
+
+// ------------------------------------------------- ADAPTADOR DO JOGADOR
+//
+// FECHADO NESTA OS, e nao apagado (§11 da OS do Transporte).
+//
+// A DECISAO E A RAZAO. O transporte do chat passou a ser o servidor de partidas:
+// e ele que sabe em que sala o jogador esta, que assento ocupa e para quais
+// sockets a projecao vai. Deixar TAMBEM um ingresso direto do aplicativo criaria
+// dois caminhos produtivos com consequencias diferentes para a MESMA mensagem —
+// o do servidor grava e ENTREGA, e o direto gravaria e NAO entregaria, porque
+// ninguem estaria escutando por ele. O resultado seria mensagem autoritativa que
+// nenhum jogador recebe, e um jogador convencido de que falou.
+//
+// NAO E BURACO DE SEGURANCA QUE SE FECHA AQUI: o ingresso direto nunca permitiu
+// forjar autoria nem furar bloqueio — a autoridade valida participacao contra
+// `chatChannels`. O que se fecha e uma INCOERENCIA de entrega.
+//
+// POR QUE CONTINUA EXPORTADA. Apagar o export mudaria a superficie de deploy sem
+// deixar rastro para quem chamar amanha, e a §11 pede decisao documentada em vez
+// de remocao silenciosa. Ela responde uma recusa ESTAVEL e nomeada, que um
+// cliente antigo consegue distinguir de "falhou": `ingressoDiretoDesativado`.
+//
+// O NUCLEO CONTINUA PROVADO. `executarEnvioDeMensagem` e exercitado de ponta a
+// ponta pela suite de emulador atraves do adaptador do motor, e as regras de
+// conteudo, bloqueio, sancao e superficie continuam provadas pelo dominio.
+export const enviarMensagemChat = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  logger.info("ingresso direto de chat recusado", { uid });
+  throw new HttpsError("failed-precondition", "ingressoDiretoDesativado", {
+    recusa: "ingressoDiretoDesativado",
+    // Sem detalhe interno: o cliente so precisa saber que o caminho e outro.
+    caminho: "transporte",
+  });
+});
+
+// -------------------------------------------------- ADAPTADOR DO MOTOR
+//
+/// Envia uma mensagem em nome de um jogador. SO MOTOR OU ADMIN.
+///
+/// POR QUE ESTA PORTA EXISTE, e por que `autorUid` no payload aqui NAO e a falha
+/// que ele seria na porta do jogador (§10):
+///
+/// O UID autenticado desta chamada e o do MOTOR, nao o do autor. Nao ha como
+/// derivar o autor de `req.auth.uid` sem maquiar a diferenca — seria gravar toda
+/// mensagem da mesa como se o motor a tivesse escrito. Entao o autor VEM no
+/// payload, e o que o torna confiavel nao e o campo: e o claim
+/// `motorDePartidas` do chamador, mais a conferencia da autoridade de que aquele
+/// UID de fato OCUPA o canal (`papelSemDireitoDeFala` para quem nao ocupa).
+///
+/// O motor nao ganha poder de falar por quem quiser: ele ganha poder de falar por
+/// quem esta sentado, e apenas no canal que ele mesmo declarou.
+///
+/// DEVOLVE `destinatarios`. E o unico ponto do sistema que devolve UIDs, e existe
+/// porque o transporte precisa saber para quais sockets entregar. A §12 e §13 se
+/// encontram aqui: a lista e do TRANSPORTE, e o pacote que chega ao jogador e
+/// somente `mensagem`.
+export const enviarMensagemChatPeloMotor = onCall(opcoesCliente, async (req) => {
+  exigirMotorOuAdmin(req);
+  const dados = (req.data ?? {}) as Record<string, unknown>;
+
+  const autorUid = exigirIdSeguro(dados.autorUid, "autorUid");
+
+  // `autorUid` e legitimo AQUI e proibido no dominio, entao ele nao pode entrar na
+  // lista de campos que a trava inspeciona — senao a porta do motor recusaria a
+  // si mesma. Todo o RESTO do payload continua sendo inspecionado: um motor que
+  // mandasse `messageId`, `enviadaEm` ou `socketId` seria recusado igual.
+  const camposDoPayload = Object.keys(dados).filter((k) => k !== "autorUid");
+
+  const r = await executarEnvioDeMensagem(autorUid, dados, camposDoPayload);
+
+  return {
+    enviada: r.enviada,
+    jaEnviada: r.jaEnviada,
+    mensagem: r.mensagem,
+    destinatarios: r.destinatarios,
   };
 });

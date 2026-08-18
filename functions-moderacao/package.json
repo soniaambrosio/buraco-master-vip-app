@@ -11,7 +11,7 @@
     "build": "tsc",
     "lint": "tsc --noEmit",
     "//test": "Compila primeiro porque o alvo do teste e o JA compilado (lib/idempotency.js, lib/chat.js). Nao precisa do domain_bundle: os testes nao carregam index.js, so os modulos PUROS. Alvos explicitos, e nao `node --test test/`: um arquivo novo passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
-    "test": "tsc && node --test test/idempotencia.test.js test/chat.test.js",
+    "test": "tsc && node --test test/idempotencia.test.js test/chat.test.js test/contrato.test.js",
     "//test:emulador": "A integracao REAL: autenticacao, transacao, retry e concorrencia de `enviarMensagemChat`. Exige `npm run build:domain` antes (o index.js carrega o bundle do dominio) e sobe Firestore + Auth + Functions. Fica FORA de `npm test` de proposito: `npm test` nao pode depender de emulador nem de `dart compile js`.",
     "test:emulador": "cd .. && firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \"cd functions-moderacao && node --test test/integracao.chat.emulador.test.js\"",
     "serve": "npm run build && firebase emulators:start --only functions:moderacao",
