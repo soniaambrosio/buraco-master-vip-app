@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31) não usa mais `windowBackground` para desenhar a janela de
+  partida: quem manda é a SplashScreen API. Sem este arquivo o sistema cai no
+  comportamento derivado — fundo tirado do `launch_background` e, no centro, o
+  ÍCONE DO APLICATIVO. Era esse o defeito: o `ic_launcher` padrão do Flutter
+  aparecia em todo cold start, antes da abertura do jogo.
+
+  Declarar `windowSplashScreenAnimatedIcon` explicitamente também tira a heurística
+  do caminho: o sistema desenha ESTE drawable, e não uma composição inferida do
+  ícone adaptativo — que muda entre a API 31 e a 36.
+-->
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <!-- Mantido para o caminho pré-31 e para o fundo da janela enquanto a
+             engine do Flutter ainda não desenhou o primeiro quadro. -->
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+</resources>

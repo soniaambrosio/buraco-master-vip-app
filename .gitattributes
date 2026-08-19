@@ -15,3 +15,10 @@
 # reprovariam um repositório íntegro. `-text` desliga a conversão e mantém o
 # diff legível, que `binary` esconderia sem necessidade.
 *.svg -text
+
+# Os recursos nativos de marca são conferidos por SHA-256 antes de irem para o
+# APK (`branding/MANIFESTO.sha256`). O `.xml` do ícone adaptativo e os `styles`
+# da SplashScreen API são TEXTO — mesma armadilha do `.svg` acima: com
+# `core.autocrlf=true` o checkout reescreveria as quebras e o manifesto
+# reprovaria um repositório íntegro. `-text` vale para a pasta inteira.
+branding/** -text
