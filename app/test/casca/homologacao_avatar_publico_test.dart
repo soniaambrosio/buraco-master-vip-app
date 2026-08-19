@@ -1607,6 +1607,11 @@ void main() {
         'lib/casca/home_de_producao.dart',
         'lib/services/perfil_service.dart',
         'lib/screens/perfil_screen.dart',
+        // ENTROU quando o Perfil visitado passou a existir: a página deixou de
+        // ser só quem orquestra e virou PRODUTORA de um valor de avatar — é ela
+        // que traduz a projeção pública do terceiro. Uma produtora fora desta
+        // lista é uma produtora sem auditoria.
+        'lib/pages/perfil_page.dart',
       ]) {
         valoresVistos.addAll(
           _valoresDeArgumento(
