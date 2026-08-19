@@ -4,3 +4,14 @@
 # preservacao dependeria unicamente da heuristica de deteccao de binario do
 # git. Aqui ela deixa de ser heuristica.
 *.riv binary
+
+# O `.svg` da constelação é o SEGUNDO asset autoritativo, e ele é TEXTO — foi
+# por isso que quase escapou. O blob no git está correto, mas com
+# `core.autocrlf=true` o CHECKOUT reescrevia as quebras de linha e o arquivo na
+# árvore saía com outro SHA-256 (`90492caa…` em vez de `a87fc5ad…`).
+#
+# Isso não é preciosismo de hash: o portão da abertura e o `build.yml` conferem
+# o SHA do arquivo empacotado, e numa máquina com autocrlf ligado eles
+# reprovariam um repositório íntegro. `-text` desliga a conversão e mantém o
+# diff legível, que `binary` esconderia sem necessidade.
+*.svg -text
