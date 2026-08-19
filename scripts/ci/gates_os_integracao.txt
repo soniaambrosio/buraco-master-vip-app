@@ -87,7 +87,21 @@ torneiosfn
 socialdom
 socialfn
 socialemu
-regras
+
+# [COMPOSICAO canonica] `regras` SAIU DAQUI, e nao por afrouxamento: o gate foi
+# RENOMEADO para `colecoesemu` na OS do fail-closed — "nem o comando, nem a
+# suite, nem o que ele prova mudaram", diz o comentario do proprio passo 3g do
+# workflow. O nome velho ficou nesta fonte sem nunca ter tido produtor.
+#
+# O efeito era o contrario do CI-02, e igualmente ruim: em vez de gate que roda
+# e nao e percorrido, um gate PERCORRIDO QUE NINGUEM RODA. O agregador falha
+# fechado sobre ausencia de resultado — corretamente —, o que deixava o portao
+# incapaz de ficar verde por um fantasma, e e assim que se cria pressao para
+# afrouxar o agregador.
+#
+# A suite continua OBRIGATORIA sob o nome atual, `colecoesemu`, mais abaixo.
+# PN-10 e PN-12 passam a exigir a bijecao nos DOIS sentidos, para que nem um
+# gate sem produtor nem um produtor sem gate voltem a existir.
 
 # --- 8. suite TRANSACIONAL do Passe VIP de Cortesia --------------------------
 # O `rankingfn` prova a REGRA do passe (as duas fronteiras, o acumulo, o
@@ -98,7 +112,8 @@ regras
 # Ele entra como OBRIGATORIO, e nao informativo, pelo mesmo criterio do
 # CI-02: uma suite que roda e nao e percorrida pelo agregador e uma suite que
 # pode ficar vermelha sem ninguem saber. As Rules do bloco 8/8 ja entram pelo
-# gate `regras`, que roda `test:integrado`.
+# gate `colecoesemu`, que roda `test:integrado` (o gate chamou-se `regras`
+# ate a OS do fail-closed; ver a lapide no bloco 7).
 passeint
 
 # --- 9. codebases que EXECUTAVAM e eram ignorados pelo agregador (CI-02) ----
@@ -129,3 +144,32 @@ chatemu
 # falhar sem reprovar, que e o defeito CI-02 pelo outro lado.
 moderacaoemu
 colecoesemu
+
+# --- 10. as TRES codebases que a composicao trouxe e o CI nunca conheceu -----
+# `functions-conta`, `functions-mesas` e `functions-economia` sao implantaveis
+# (estao em firebase.json, cada uma com codebase propria) e nao apareciam em
+# passo nenhum do workflow. Nao e o CI-02 — aquele era gate que RODAVA e o
+# agregador ignorava; este e o degrau anterior, codebase que nem chegava a
+# rodar, e portanto sem nem evidencia. So a composicao podia enxergar isso:
+# cada linhagem via apenas as codebases que ela mesma trouxe.
+#
+# `contaemu` e a exclusao de conta contra Firestore e Auth REAIS — e o unico
+# lugar onde a etapa `mesas` da exclusao e de fato executada, e foi assim que a
+# divergencia entre plano e execucao apareceu.
+contafn
+contaemu
+mesasfn
+economiafn
+
+# --- 11. §16 proveniencia de SHA e §19 provas negativas da composicao -------
+# `proveni` guarda o mecanismo que amarra o artefato implantado ao SHA da
+# composicao: geracao a partir de `git rev-parse HEAD`, recusa de valor manual,
+# verificacao byte a byte, e o `predeploy` que torna o passo impossivel de
+# pular.
+#
+# `composneg` sao as 15 provas negativas da ARVORE COMPOSTA — invariantes que
+# atravessam codebases e que nenhuma suite de folha pode enxergar sozinha. Ele
+# le, entre outras coisas, ESTE arquivo e o workflow: e por isso que tirar um
+# gate daqui derruba `composneg`, e nao so silencia o portao.
+proveni
+composneg

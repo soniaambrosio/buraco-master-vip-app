@@ -87,8 +87,20 @@ printf '== invariantes da fonte única ==\n'
 
 # A fonte tem que continuar declarando TODO gate que já era obrigatório antes
 # desta OS. Remover um deles é uma regressão silenciosa de cobertura.
+#
+# [COMPOSICAO canonica] `regras` saiu desta lista e entrou `colecoesemu`, e a
+# GUARDA NÃO AFROUXOU: é a mesma suíte, sob o único nome que algum passo do
+# workflow de fato produz. O gate foi renomeado em `c86aa9d`; esta fonte única
+# nasceu depois, em `835fe99`, já com o nome velho — um erro de transcrição, e
+# não um gate perdido. Como `regras` nunca teve produtor, o agregador o via
+# como "NÃO EXECUTADO" e reprovava: o portão não tinha como ficar verde por um
+# fantasma, que é justamente a pressão que leva alguém a afrouxar o agregador.
+#
+# Trocar o nome aqui mantém intacto o que I1 protege — a suíte das Rules não
+# pode sair da fonte única em silêncio —, e PN-10 passou a exigir, por si, que
+# nenhum gate declarado fique sem produtor.
 HERDADOS="analyze motor resil encerr torneios mtorneios integr colarte colfire \
-colkit social casca cascaaud billing torneiosfn socialdom socialfn socialemu regras"
+colkit social casca cascaaud billing torneiosfn socialdom socialfn socialemu colecoesemu"
 faltando=""
 for g in $HERDADOS; do
   contem_gate "$g" || faltando="$faltando $g"
@@ -203,10 +215,13 @@ for g in rankingfn rankingint identint auditident; do
 done
 
 # 8 — marcador nao_<gate> -> vermelho.
+# O gate usado como cobaia é `colecoesemu` (era `regras`, o nome aposentado —
+# ver a nota em I1). O caso mede o AGREGADOR, e não aquela suíte: qualquer gate
+# real serve, e um gate irreal media o nada.
 reset_verde
-rm -f "$RES/exit_regras"
-printf 'firebase/testes/package.json ausente\n' > "$RES/nao_regras"
-esperar 1 "C08 — marcador nao_regras => VERMELHO (CI-03)" 'regras +NAO EXECUTADO'
+rm -f "$RES/exit_colecoesemu"
+printf 'firebase/testes/package.json ausente\n' > "$RES/nao_colecoesemu"
+esperar 1 "C08 — marcador nao_colecoesemu => VERMELHO (CI-03)" 'colecoesemu +NAO EXECUTADO'
 
 # 8b — marcador CONVIVENDO com um exit 0 remanescente: o marcador vence.
 reset_verde

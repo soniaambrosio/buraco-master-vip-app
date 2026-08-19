@@ -35,6 +35,8 @@
       "source": "firebase/functions",
       "codebase": "colecoes",
       "runtime": "nodejs20",
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
+      "predeploy": ["node ferramentas/proveniencia/gerar.js", "node ferramentas/proveniencia/verificar.js"],
       "ignore": ["node_modules", ".git", "*.log"]
     },
     {
@@ -42,6 +44,8 @@
       "source": "functions-billing",
       "codebase": "billing",
       "runtime": "nodejs20",
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
+      "predeploy": ["node ferramentas/proveniencia/gerar.js", "node ferramentas/proveniencia/verificar.js"],
       "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log"]
     },
     {
@@ -50,7 +54,10 @@
       "codebase": "torneios",
       "runtime": "nodejs20",
       "//predeploy": "A ordem importa: primeiro o dominio Dart vira JS, depois o TypeScript compila contra ele. Inverter faria o tsc rodar sem o bundle e falhar na carga de domain.ts.",
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
       "predeploy": [
+        "node ferramentas/proveniencia/gerar.js",
+        "node ferramentas/proveniencia/verificar.js",
         "npm --prefix \"$RESOURCE_DIR\" run build:domain",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
@@ -62,6 +69,8 @@
       "source": "functions-economia",
       "codebase": "economia",
       "runtime": "nodejs20",
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
+      "predeploy": ["node ferramentas/proveniencia/gerar.js", "node ferramentas/proveniencia/verificar.js"],
       "ignore": ["node_modules", ".git", "*.log"]
     },
     {
@@ -70,7 +79,10 @@
       "codebase": "moderacao",
       "runtime": "nodejs20",
       "//predeploy": "Mesma ordem obrigatoria do codebase de torneios: o dominio Dart vira JS antes do tsc, que compila contra ele.",
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
       "predeploy": [
+        "node ferramentas/proveniencia/gerar.js",
+        "node ferramentas/proveniencia/verificar.js",
         "npm --prefix \"$RESOURCE_DIR\" run build:domain",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
@@ -83,7 +95,8 @@
       "runtime": "nodejs20",
       "//codebase-proprio": "Pelo mesmo motivo que separa os outros quatro: sao unidades de implantacao independentes. Um deploy de ranking nao pode derrubar a inscricao em torneio, a validacao de compra nem a moderacao. E vale ao contrario tambem — este codebase reage a TODA escrita em `matches`, e um erro nele nao pode impedir a partida de ser registrada.",
       "//sem-predeploy-de-dominio": "Torneios e moderacao compilam um dominio Dart antes do tsc porque a regra competitiva deles mora em Dart. A regra competitiva do ranking NAO EXISTE — nao ha formula de pontuacao decidida em lugar nenhum do projeto (ver functions-ranking/src/politica.ts). Nao ha dominio a compilar, e um bundle vazio so para imitar o vizinho seria cerimonia sem conteudo. Quando a formula existir, ela entra por politica.ts; se vier a morar em Dart, esta entrada ganha o mesmo par build:domain + build dos vizinhos.",
-      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
+      "predeploy": ["node ferramentas/proveniencia/gerar.js", "node ferramentas/proveniencia/verificar.js", "npm --prefix \"$RESOURCE_DIR\" run build"],
       "ignore": ["node_modules", ".git", "*.log"]
     },
     {
@@ -93,7 +106,10 @@
       "codebase": "social",
       "runtime": "nodejs20",
       "//predeploy": "Mesma ordem obrigatoria: o dominio Dart vira JS antes do tsc. Aqui o bundle carrega TAMBEM o dominio de moderacao, porque js_bridge.dart importa `avaliarContato` de app/lib/moderacao/relacao_social.dart — §18 manda consumir o bloqueio existente, e a forma mais forte de consumir e compilar a mesma funcao.",
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
       "predeploy": [
+        "node ferramentas/proveniencia/gerar.js",
+        "node ferramentas/proveniencia/verificar.js",
         "npm --prefix \"$RESOURCE_DIR\" run build:domain",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
@@ -106,7 +122,8 @@
       "source": "functions-conta",
       "codebase": "conta",
       "runtime": "nodejs20",
-      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
+      "predeploy": ["node ferramentas/proveniencia/gerar.js", "node ferramentas/proveniencia/verificar.js", "npm --prefix \"$RESOURCE_DIR\" run build"],
       "ignore": ["node_modules", ".git", "*.log"]
     },
     {
@@ -124,7 +141,8 @@
 
       "//sem-predeploy-de-dominio": "Pelo mesmo criterio de ranking e conta: nao ha regra de jogo em Dart a compilar. A regra deste codebase — que tipos existem, quem pode sentar, quando o passe e consumido — mora em TypeScript, em src/, ao lado de quem a obedece. DUAS excecoes de leitura, ambas conferidas por teste contra o arquivo original: os valores de `TipoDePartida` (app/lib/rastreabilidade/identidade_partida.dart) e `ESTADOS_COM_ACESSO` (functions-billing/entitlement.js).",
 
-      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"],
+      "//proveniencia": "§16. Estes dois passos NAO sao opcionais e NAO sao do build: sao o que amarra o artefato ao SHA da composicao. `gerar` carimba TODAS as codebases de uma vez (a relacao sai deste mesmo arquivo), `verificar` re-renderiza e compara byte a byte. Estao no predeploy, e nao num script de release, porque assim o operador nao consegue implantar sem eles — `firebase deploy` roda o predeploy ou nao sobe. Rodar nove vezes e redundante e barato; a alternativa (rodar uma vez, fora do deploy) seria pulavel.",
+      "predeploy": ["node ferramentas/proveniencia/gerar.js", "node ferramentas/proveniencia/verificar.js", "npm --prefix \"$RESOURCE_DIR\" run build"],
       "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
