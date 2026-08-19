@@ -8,6 +8,41 @@
 // criasse, garantisse ou inicializasse identidade, esse número subiria ao abri-la
 // — e sobe zero.
 //
+// ---------------------------------------------------------------------------
+// POR QUE O RANKING AQUI É A `RankingPage`, E NÃO UMA RÉPLICA
+// ---------------------------------------------------------------------------
+//
+// Este arquivo hospedava um `RankingHostDeTeste`: um widget de teste que repetia
+// à mão o consumo que o `main.dart` fazia do Ranking — ler `EscopoSessao`,
+// mapear `FaseIdentidade` para `RankingEstado`, e alimentar a tela com um
+// `RankingVM.mock()`.
+//
+// As duas metades desse host morreram, e por motivos opostos:
+//
+//   1. `RankingVM.mock()` foi RETIRADA de propósito de `ranking_screen.dart`
+//      (o comentário que registra a remoção continua lá): ela era a única
+//      origem dos dados da tela e viajava dentro do APK. Ressuscitá-la para o
+//      teste compilar seria desfazer a entrega — dado de exemplo não volta ao
+//      `lib/`.
+//
+//   2. O mapeamento `FaseIdentidade → RankingEstado` deixou de existir em
+//      produção. Quem hospeda o Ranking hoje é a `RankingPage`, e o estado da
+//      tela vem da `RankingFase` do paginador — da fonte de ranking, não da
+//      identidade. Reescrever a réplica com esse mapeamento seria fiscalizar um
+//      consumo que nenhum arquivo do `lib/` faz.
+//
+// A reconstrução, então, é NÃO ter réplica: os casos montam a `RankingPage` de
+// produção. O host de teste existia para não tornar público um detalhe privado
+// do `main.dart` (`_RankingPreviewHostState`); o detalhe virou uma página
+// pública, e o motivo caiu junto. Com isso a contagem passa a ser medida contra
+// o código que roda de verdade, e a divergência réplica-original que o
+// `auditoria_identidade_test.dart` vigiava fica impossível por construção.
+//
+// O que a `RankingPage` aceita é a FONTE (`RankingPage(service: ...)`) — a mesma
+// costura que a documentação dela aponta para ligar o ranking oficial quando ele
+// existir. Injetar aqui uma fonte que nunca responde não é maquete: não devolve
+// jogador nenhum, não entra no APK e não é alcançável pelo produto.
+//
 // SUPERFÍCIE DE TELEFONE: o padrão do `flutter_test` é 800x600, que é paisagem
 // de desktop e faz telas desenhadas para celular estourarem em overflow. As
 // telas aqui são de celular.
@@ -18,9 +53,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:buraco_master_vip/pages/perfil_page.dart';
+import 'package:buraco_master_vip/pages/ranking_page.dart';
+import 'package:buraco_master_vip/ranking/ranking_contract.dart';
 import 'package:buraco_master_vip/screens/amigos_screen.dart';
 import 'package:buraco_master_vip/screens/perfil_screen.dart';
 import 'package:buraco_master_vip/screens/ranking_screen.dart';
+import 'package:buraco_master_vip/services/ranking_service.dart';
 import 'package:buraco_master_vip/sessao/escopo_sessao.dart';
 import 'package:buraco_master_vip/sessao/fonte_identidade.dart';
 import 'package:buraco_master_vip/sessao/identidade_publica_sessao.dart';
@@ -51,39 +89,12 @@ class FonteEspia implements FonteDeIdentidade {
   }
 }
 
-/// Réplica fiel do consumo que `main.dart` faz no Ranking.
-///
-/// A tela real vive dentro de `_RankingPreviewHostState`, que é privado. Este
-/// host repete a MESMA leitura — `EscopoSessao.identidadeDe` e o mapeamento de
-/// fase para `RankingEstado` — para que o teste exercite o contrato de consumo
-/// sem tornar público um detalhe interno de `main.dart`. A auditoria estrutural
-/// (`auditoria_identidade_test.dart`) é quem garante que o original não diverja.
-class RankingHostDeTeste extends StatelessWidget {
-  const RankingHostDeTeste({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final identidade = EscopoSessao.identidadeDe(context);
-    return RankingScreen(
-      vm: RankingVM.mock(),
-      estado: switch (identidade.fase) {
-        FaseIdentidade.carregando ||
-        FaseIdentidade.naoCarregada => RankingEstado.carregando,
-        FaseIdentidade.falha => RankingEstado.erro,
-        FaseIdentidade.naoAutenticado ||
-        FaseIdentidade.disponivel => RankingEstado.normal,
-      },
-      onVoltar: () {},
-      onTrocarAba: (_) {},
-      onAbrirHall: () {},
-      onVerJogador: (_) {},
-      onRecarregar: () => EscopoSessao.talvezDe(context)?.recarregar(),
-      onNavTap: (_) {},
-    );
-  }
-}
-
 /// Réplica fiel do consumo que `main.dart` faz na tela de Amigos/Descoberta.
+///
+/// Aqui a réplica CONTINUA valendo: o Amigos ainda é hospedado por um `State`
+/// privado do `main.dart`, e o que ele faz com a identidade — `publicId ?? '—'`
+/// — é exatamente o que este host repete. A auditoria estrutural
+/// (`auditoria_identidade_test.dart`) é quem garante que o original não divirja.
 class SocialHostDeTeste extends StatelessWidget {
   const SocialHostDeTeste({super.key});
 
@@ -168,23 +179,50 @@ void main() {
   // CASO B — Ranking direto
   // =========================================================================
   group('CASO B — login → Ranking', () {
-    testWidgets('Ranking funciona consumindo a identidade canônica', (
+    testWidgets('o Ranking abre sem tocar na identidade canônica', (
       tester,
     ) async {
       await login(tester);
       expect(sessao.publicId, kPublicIdDeTeste);
       final antes = fonte.chamadas;
 
-      await montar(tester, const RankingHostDeTeste());
+      await montar(tester, const RankingPage());
 
       expect(find.byType(RankingScreen), findsOneWidget);
       // Abrir o Ranking NÃO produziu chamada nenhuma.
       expect(fonte.chamadas, antes);
+      // E a identidade que já estava resolvida continua a mesma: o Ranking não
+      // a substitui, não a recarrega e não a invalida.
       expect(sessao.publicId, kPublicIdDeTeste);
+      expect(sessao.estado.fase, FaseIdentidade.disponivel);
     });
 
-    testWidgets('Ranking respeita a fase de carregamento', (tester) async {
-      // Fonte que não responde: a identidade fica em voo.
+    testWidgets('o Ranking obedece à fase da PRÓPRIA fonte, não à da sessão', (
+      tester,
+    ) async {
+      // Com a identidade RESOLVIDA e o ranking em voo, a tela mostra
+      // carregando — ou seja, o estado dela vem do paginador. É este teste que
+      // impede a volta do acoplamento antigo, em que a fase da IDENTIDADE
+      // decidia o que o Ranking desenhava.
+      await login(tester);
+      expect(sessao.estado.fase, FaseIdentidade.disponivel);
+
+      await montar(
+        tester,
+        const RankingPage(service: _RankingQueNuncaResponde()),
+      );
+
+      final tela = tester.widget<RankingScreen>(find.byType(RankingScreen));
+      expect(tela.estado, RankingEstado.carregando);
+      expect(fonte.chamadas, 1, reason: 'só o login chamou');
+    });
+
+    testWidgets('sem identidade resolvida o Ranking ainda abre, e não a cunha', (
+      tester,
+    ) async {
+      // O contrapeso: identidade em voo (fonte que nunca responde) e ranking
+      // idem. A tela obedece à fase do ranking, e a sessão não ganha um
+      // publicId inventado pelo caminho.
       final lenta = _FonteQueNuncaResponde();
       final sessaoLenta = SessaoDoJogador(
         fonte: lenta,
@@ -199,16 +237,47 @@ void main() {
       await tester.pumpWidget(
         EscopoSessao(
           sessao: sessaoLenta,
-          child: const MaterialApp(home: RankingHostDeTeste()),
+          child: const MaterialApp(
+            home: RankingPage(service: _RankingQueNuncaResponde()),
+          ),
         ),
       );
       await tester.pump();
 
       expect(sessaoLenta.estado.fase, FaseIdentidade.carregando);
-      // A tela obedece à fase em vez de seguir com identificador inventado.
       final tela = tester.widget<RankingScreen>(find.byType(RankingScreen));
       expect(tela.estado, RankingEstado.carregando);
       expect(sessaoLenta.publicId, isNull);
+    });
+  });
+
+  // =========================================================================
+  // REGRESSÃO — a maquete não volta ao caminho de produção
+  // =========================================================================
+  group('o Ranking de produção não desenha jogador inventado', () {
+    testWidgets('a fonte embarcada por padrão não entrega jogador nenhum', (
+      tester,
+    ) async {
+      // A prova de que `RankingVM.mock()` não voltou por outro nome: montada
+      // como o `main.dart` a monta — `const RankingPage()`, sem argumento —, a
+      // página cai na [RankingSemFonte] e o view-model que chega à tela está
+      // literalmente vazio. Nenhum pódio de exemplo, nenhuma divisão fictícia,
+      // nenhuma temporada com prazo inventado dentro do APK.
+      //
+      // A afirmação é COMPORTAMENTAL de propósito: um teste que procurasse a
+      // string `RankingVM.mock` no `lib/` casaria com o comentário que registra
+      // a remoção dela, e passaria a vigiar prosa em vez de código.
+      await login(tester);
+      await montar(tester, const RankingPage());
+
+      final tela = tester.widget<RankingScreen>(find.byType(RankingScreen));
+      expect(tela.estado, RankingEstado.erro);
+      expect(tela.mensagemErro, RankingSemFonte.motivo);
+      expect(tela.vm.podio, isEmpty);
+      expect(tela.vm.lista, isEmpty);
+      expect(tela.vm.escadaLigas, isEmpty);
+      expect(tela.vm.divisao, isNull);
+      expect(tela.vm.faixaTempo, isEmpty);
     });
   });
 
@@ -293,7 +362,7 @@ void main() {
       await login(tester);
 
       // Ordem 1: Ranking, depois Social.
-      await montar(tester, const RankingHostDeTeste());
+      await montar(tester, const RankingPage());
       await montar(tester, const SocialHostDeTeste());
       final ordem1 = tester
           .widget<AmigosScreen>(find.byType(AmigosScreen))
@@ -302,7 +371,7 @@ void main() {
 
       // Ordem 2: Social, depois Ranking, depois Social de novo.
       await montar(tester, const SocialHostDeTeste());
-      await montar(tester, const RankingHostDeTeste());
+      await montar(tester, const RankingPage());
       await montar(tester, const SocialHostDeTeste());
       final ordem2 = tester
           .widget<AmigosScreen>(find.byType(AmigosScreen))
@@ -326,7 +395,7 @@ void main() {
       expect(fonte.chamadas, 1, reason: 'só o login chamou');
 
       for (var i = 0; i < 10; i++) {
-        await montar(tester, const RankingHostDeTeste());
+        await montar(tester, const RankingPage());
       }
 
       expect(fonte.chamadas, 1);
@@ -337,7 +406,7 @@ void main() {
       tester,
     ) async {
       await login(tester);
-      await montar(tester, const RankingHostDeTeste());
+      await montar(tester, const RankingPage());
 
       // 60 frames — um segundo de reconstrução contínua.
       for (var i = 0; i < 60; i++) {
@@ -353,7 +422,7 @@ void main() {
       // O cenário que a arquitetura antiga usava para cunhar id: entrar no
       // Ranking. Aqui não nasce nada.
       abrirSessao();
-      await montar(tester, const RankingHostDeTeste());
+      await montar(tester, const RankingPage());
       await tester.pumpAndSettle();
 
       expect(fonte.chamadas, 0);
@@ -367,4 +436,21 @@ class _FonteQueNuncaResponde implements FonteDeIdentidade {
   @override
   Future<IdentidadePublica> obterMinhaIdentidade() =>
       Completer<IdentidadePublica>().future;
+}
+
+/// Fonte de ranking que fica em voo para sempre — deixa a tela em `carregando`.
+///
+/// Não é maquete: não publica jogador, divisão, liga nem posição. Entra pela
+/// mesma porta por onde a fonte oficial entrará (`RankingPage(service: ...)`),
+/// e o padrão de produção continua sendo a [RankingSemFonte].
+class _RankingQueNuncaResponde extends RankingService {
+  const _RankingQueNuncaResponde();
+
+  @override
+  Future<RankingAbertura> abrir(RankingEscopo escopo) =>
+      Completer<RankingAbertura>().future;
+
+  @override
+  Future<RankingPagina> proximaPagina(RankingEscopo escopo, String cursor) =>
+      Completer<RankingPagina>().future;
 }
