@@ -256,8 +256,19 @@ class OnlineService extends ChangeNotifier {
   /// decidir entre "aguarde" e "faça alguma coisa".
   bool get falhaTerminal => _estadoTerminal;
 
-  /// Geração da conexão atual. Exposta para diagnóstico e teste.
-  @visibleForTesting
+  /// Geração da conexão atual.
+  ///
+  /// SOBE a cada abertura de socket, a cada `desligar` e a cada falha terminal.
+  /// Duas leituras do transporte feitas em gerações diferentes falam de sessões
+  /// diferentes, e comparar uma com a outra é comparar coisas que não se
+  /// sucedem: o `desconectado` de quem saiu da conta não é a continuação do
+  /// `conectado` de quem estava jogando.
+  ///
+  /// NÃO É MAIS SÓ PARA TESTE, e a anotação saiu por isso. Quem lê é a tela do
+  /// lobby, para decidir se uma mudança de status é notícia a anunciar ou só a
+  /// virada de uma sessão para outra. É leitura, e só: nada do lado de fora
+  /// escreve neste número nem depende do seu valor absoluto — só de ele ter
+  /// mudado ou não.
   int get geracao => _geracaoTransporte;
 
   /// Abre a conexão com o servidor. Idempotente.

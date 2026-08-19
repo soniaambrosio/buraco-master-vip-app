@@ -125,6 +125,20 @@ class PortaDeComandosOnline extends ChangeNotifier {
   MotivoDaRecusa? _ultimaRecusa;
   String? _mensagemDaRecusa;
 
+  /// Quantas recusas COM TEXTO já saíram desta porta.
+  ///
+  /// Existe por causa de uma armadilha do anúncio por leitor de tela: quem
+  /// observa só [mensagemDaRecusa] não distingue "a mesma recusa continua na
+  /// tela" de "a mesma recusa aconteceu de novo". As duas são a mesma string —
+  /// e a segunda é notícia. Tentar duas vezes a mesma jogada inválida tem de
+  /// falar duas vezes; ficar olhando para o recado que já foi lido, nenhuma.
+  ///
+  /// O selo NÃO vai no fio e não é estado de jogo: é o carimbo de ocorrência
+  /// que o protocolo do servidor não tem. Ele sobe uma vez por recusa que
+  /// PRODUZ TEXTO — o duplo toque, que morre em silêncio de propósito, não
+  /// mexe nele.
+  int _selosDeRecusa = 0;
+
   /// A intenção esperando resposta, ou nulo.
   IntencaoPendente? get pendente => _pendente;
 
@@ -137,6 +151,9 @@ class PortaDeComandosOnline extends ChangeNotifier {
   /// O texto da recusa, para a pessoa ler. Vem do servidor já redigido pelo
   /// [OnlineService], ou é nosso quando a recusa é local.
   String? get mensagemDaRecusa => _mensagemDaRecusa;
+
+  /// Quantas recusas com texto já aconteceram. Ver [_selosDeRecusa].
+  int get selosDeRecusa => _selosDeRecusa;
 
   /// Dá para mandar comando agora? Só com a conexão autenticada e sem intenção
   /// pendurada.
@@ -226,6 +243,7 @@ class PortaDeComandosOnline extends ChangeNotifier {
       _mensagemDaRecusa = _online.status == OnlineStatus.naoAutenticado
           ? 'entre na sua conta para continuar jogando'
           : 'sem conexão com o servidor — sua jogada não foi enviada';
+      _selosDeRecusa++;
       notifyListeners();
       return false;
     }
@@ -248,6 +266,7 @@ class PortaDeComandosOnline extends ChangeNotifier {
       _mensagemDaRecusa =
           'o servidor não respondeu à sua jogada — confira a mesa antes de '
           'tentar de novo';
+      _selosDeRecusa++;
       notifyListeners();
     });
   }
@@ -283,6 +302,7 @@ class PortaDeComandosOnline extends ChangeNotifier {
       _limparPendencia();
       _ultimaRecusa = _classificar();
       _mensagemDaRecusa = erro;
+      _selosDeRecusa++;
       mudou = true;
     }
     _ultimoErro = erro;
@@ -297,6 +317,7 @@ class PortaDeComandosOnline extends ChangeNotifier {
       _mensagemDaRecusa =
           'a conexão caiu antes da resposta — a mesa vai se acertar quando ela '
           'voltar';
+      _selosDeRecusa++;
       mudou = true;
     }
 

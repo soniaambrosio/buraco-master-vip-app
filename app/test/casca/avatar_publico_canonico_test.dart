@@ -1261,13 +1261,35 @@ void main() {
         reason: 'a maquete de Amigos entrou no fecho de produção',
       );
 
+      // 55 → 56 AO ENTRAR A VOZ DOS ESTADOS, e o único também tem nome.
+      //
+      // É o utilitário que faz Login, Lobby e Mesa Online anunciarem UMA vez
+      // por transição o que hoje mudava em silêncio — a vez, a recusa, a
+      // conexão e a entrada na mesa. Ele entra no fecho porque é importado
+      // pelas telas alcançáveis, e é o oposto de crescimento inesperado: sem um
+      // lugar só para a sentinela de transição, cada tela teria a sua, e a
+      // terceira divergiria.
+      //
+      // Ele não arrasta nada: as duas importações são de framework.
+      const daVozDosEstados = ['lib/casca/anuncio_de_transicao.dart'];
+      for (final caminho in daVozDosEstados) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — as mudanças de estado voltaram a '
+              'acontecer em silêncio',
+        );
+      }
+
       expect(
         alcancaveis,
         hasLength(
           40 +
               doRankingReal.length +
               daNavegacaoPublica.length +
-              daDescobertaSocial.length,
+              daDescobertaSocial.length +
+              daVozDosEstados.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.

@@ -36,9 +36,26 @@
 //   * MÃO ALHEIA. Não existe caminho: `AssentoOnline` só tem contagem.
 //   * CONQUISTA E PONTUAÇÃO DE RANKING. Não se concede nada por inferência do
 //     cliente. O resultado que aparece é o que o servidor declarou.
+//
+// ===========================================================================
+// O QUE ESTA TELA DIZ EM VOZ ALTA
+// ===========================================================================
+//
+// Três coisas, e todas a partir do estado que já chegou pronto:
+//
+//   * a ENTRADA na mesa, quando esta tela nasce — porque o lobby não navega,
+//     ele TROCA DE CORPO, e uma troca de corpo sem `push` não avisa ninguém;
+//   * a VEZ, quando `suaVez` vira verdadeira;
+//   * a RECUSA, quando a porta de comandos ganha um selo novo.
+//
+// Nada disso é inventado aqui, nada é adivinhado, e nada sai duas vezes: cada
+// anúncio tem uma sentinela guardando a transição, e esta tela é reconstruída a
+// cada mensagem do servidor. Ver `anuncio_de_transicao.dart`.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
+import '../anuncio_de_transicao.dart';
 import 'arte_das_cartas.dart';
 import 'estado_mesa_online.dart';
 import 'porta_de_comandos_online.dart';
@@ -80,9 +97,53 @@ class _MesaOnlineScreenState extends State<MesaOnlineScreen> {
   /// Ids das cartas marcadas pelo dedo. Local, visual, e só.
   final Set<String> _selecionadas = {};
 
+  /// A vez, como ela estava na última vez que esta tela olhou.
+  final SentinelaDeTransicao<bool> _sentinelaDaVez =
+      SentinelaDeTransicao<bool>();
+
+  /// O selo da última recusa já dita.
+  final SentinelaDeTransicao<int> _sentinelaDaRecusa =
+      SentinelaDeTransicao<int>();
+
+  /// Onde o foco pousa quando esta superfície aparece.
+  ///
+  /// O lobby vira mesa TROCANDO O CORPO da rota, sem `push`. Sem um ponto de
+  /// entrada declarado, o foco fica onde o framework o deixou cair quando o
+  /// widget que o segurava deixou de existir — e o widget que o segurava era,
+  /// no caminho comum, um campo de texto do lobby.
+  final FocusNode _entradaDaMesa = FocusNode(debugLabel: 'entrada-da-mesa');
+
+  @override
+  void initState() {
+    super.initState();
+    // A ANCORAGEM ACONTECE AQUI, e não no primeiro `didUpdateWidget`: chegar à
+    // mesa já na própria vez não é a notícia de a vez ter chegado. É a notícia
+    // de estar na mesa, e quem a dá é o anúncio de entrada logo abaixo.
+    _sentinelaDaVez.ancorar(widget.estado.suaVez);
+    _sentinelaDaRecusa.ancorar(widget.porta.selosDeRecusa);
+
+    // DEPOIS DO QUADRO porque o nó de foco só está preso à árvore quando ela
+    // termina de ser construída. Não é espera arbitrária — é a fronteira do
+    // quadro, e não tem duração. O `mounted` cobre o caso de a mesa ser
+    // desfeita antes disso: uma partida que acaba, uma sessão que vira, um
+    // socket que cai no mesmo instante.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _entradaDaMesa.requestFocus();
+      anunciar(context, 'Você entrou na mesa da partida');
+    });
+  }
+
+  @override
+  void dispose() {
+    _entradaDaMesa.dispose();
+    super.dispose();
+  }
+
   @override
   void didUpdateWidget(MesaOnlineScreen antiga) {
     super.didUpdateWidget(antiga);
+    _falarDoQueMudou();
     // VISÃO NOVA APAGA A SELEÇÃO. Não é zelo: o retrato novo pode ter tirado da
     // mão a carta marcada (ela foi baixada, ou a rodada virou), e uma seleção
     // sobrevivente apontaria para carta que não está mais lá. O comando seguinte
@@ -92,6 +153,31 @@ class _MesaOnlineScreenState extends State<MesaOnlineScreen> {
       _selecionadas.removeWhere(
         (id) => !widget.estado.minhaMao.any((c) => c.id == id),
       );
+    }
+  }
+
+  /// O que mudou desde a reconstrução anterior, dito uma vez.
+  ///
+  /// Roda em `didUpdateWidget`, que é onde as duas autoridades desta tela
+  /// chegam trocadas: o `EstadoMesaOnline` novo vem dentro do widget, e a porta
+  /// notificou o lobby, que reconstruiu. NÃO roda em `build` — build acontece
+  /// também por mudança de tamanho, de tema e de teclado, e um anúncio preso ao
+  /// build fala quando alguém gira o aparelho.
+  void _falarDoQueMudou() {
+    // A VEZ. Só a ENTRADA nela é notícia: sair da própria vez é consequência de
+    // uma jogada que a pessoa acabou de fazer, e ela já sabe.
+    if (_sentinelaDaVez.mudou(widget.estado.suaVez) && widget.estado.suaVez) {
+      // A mesma frase que o placar mostra: uma notícia, um vocabulário.
+      anunciar(context, 'É a sua vez', urgencia: Assertiveness.assertive);
+    }
+
+    // A RECUSA. O texto é o do servidor, já redigido pelo transporte, e é o
+    // MESMO que a barra de ações desenha. Nada de código de erro, motivo
+    // interno ou identificador: o que se ouve é o que se lê.
+    final recusa = widget.porta.mensagemDaRecusa;
+    if (_sentinelaDaRecusa.mudou(widget.porta.selosDeRecusa) &&
+        recusa != null) {
+      anunciar(context, recusa, urgencia: Assertiveness.assertive);
     }
   }
 
@@ -129,7 +215,17 @@ class _MesaOnlineScreenState extends State<MesaOnlineScreen> {
           children: [
             if (widget.avisoDeConexao != null)
               _FaixaDeAviso(texto: widget.avisoDeConexao!),
-            _Placar(estado: e),
+            // O PONTO DE ENTRADA da superfície nova. O placar é a escolha
+            // óbvia: é o topo do conteúdo e é onde estão o placar, a rodada e
+            // de quem é a vez — as três coisas que alguém que acabou de chegar
+            // precisa saber antes de qualquer outra.
+            //
+            // O `Focus` também FUNDE o placar num nó só de semântica, e isso é
+            // ganho, não efeito colateral tolerado: antes, "Sua dupla" e "120"
+            // eram duas paradas separadas do leitor de tela, e o número chegava
+            // sem o nome. Agora o bloco é lido inteiro de uma vez — que é como
+            // um placar se lê.
+            Focus(focusNode: _entradaDaMesa, child: _Placar(estado: e)),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 12),

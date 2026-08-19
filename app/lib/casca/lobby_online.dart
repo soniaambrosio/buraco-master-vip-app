@@ -52,8 +52,10 @@
 // escolher entre Login e Home, e pelo mesmo motivo.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../services/online_service.dart';
+import 'anuncio_de_transicao.dart';
 import 'escopo_transporte.dart';
 import 'mesa_online/estado_mesa_online.dart';
 import 'mesa_online/mesa_online_screen.dart';
@@ -69,6 +71,35 @@ class LobbyOnline extends StatefulWidget {
 class _LobbyOnlineState extends State<LobbyOnline> {
   OnlineService? _srv;
   bool _pediuConexao = false;
+
+  /// O status do transporte, como ele estava no último aviso.
+  ///
+  /// A GERAÇÃO é a chave, e é ela que separa duas coisas que o status sozinho
+  /// confunde. A queda de rede acontece DENTRO da geração corrente
+  /// (`conectado` → `conectando`), e é notícia. Logout, troca de conta e cada
+  /// tentativa nova do ciclo de reconexão SOBEM a geração — e aí o estado
+  /// anterior é de uma sessão que já não existe. Comparar através dessa
+  /// fronteira faria o app dizer "conexão perdida" para quem acabou de sair da
+  /// conta de propósito, e repetir "reconectando" a cada disparo do
+  /// temporizador de tentativas.
+  final SentinelaDeTransicao<OnlineStatus> _sentinelaDoStatus =
+      SentinelaDeTransicao<OnlineStatus>();
+
+  /// A falha terminal é observada FORA da geração — justamente porque é ela
+  /// que sobe a geração ao acontecer, e sem isto a desistência do ciclo
+  /// automático seria a única notícia que ninguém receberia.
+  final SentinelaDeTransicao<bool> _sentinelaDaFalha =
+      SentinelaDeTransicao<bool>();
+
+  /// Esta tela já viu o transporte de pé alguma vez.
+  ///
+  /// Sem isto a PRIMEIRA conexão da sessão seria anunciada como uma volta, e
+  /// ninguém tinha ido a lugar nenhum.
+  bool _jaConectou = false;
+
+  /// A queda já foi dita. Impede que "restaurada" saia sem uma perda antes, e
+  /// que a perda saia duas vezes no mesmo ciclo de tentativas.
+  bool _disseQueCaiu = false;
 
   /// A porta por onde as ações da mesa saem.
   ///
@@ -121,12 +152,98 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   }
 
   void _atualizar() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final srv = _srv;
+    if (srv != null) _falarDaConexao(srv);
+    setState(() {});
   }
+
+  /// O que dizer em voz alta sobre a conexão, e quando.
+  ///
+  /// ---------------------------------------------------------------------
+  /// POR QUE AQUI, E NÃO NA MESA
+  /// ---------------------------------------------------------------------
+  ///
+  /// Esta tela é a única dona do `OnlineService` nas duas superfícies: quando
+  /// há partida, o corpo desta rota É a mesa. Um segundo observador dentro da
+  /// mesa faria a queda ser anunciada duas vezes com a mesa aberta e nenhuma
+  /// com ela fechada — e a mesa passaria a ter opinião sobre transporte, que é
+  /// justamente o que a arquitetura desta pasta não tem.
+  ///
+  /// ---------------------------------------------------------------------
+  /// POR QUE NÃO É REGIÃO VIVA
+  /// ---------------------------------------------------------------------
+  ///
+  /// Porque metade da notícia é um DESAPARECIMENTO. A faixa de aviso e o texto
+  /// do chip somem quando a conexão volta, e um nó que some não fala. Marcá-los
+  /// como região viva resolveria a ida e perderia a volta — que é a metade que
+  /// importa, porque é ela que devolve as ações à pessoa.
+  void _falarDaConexao(OnlineService srv) {
+    // 1) FALHA DEFINITIVA. O ciclo automático desistiu, ou a credencial foi
+    //    recusada. Não adianta esperar, e o chip que a explica é o único aviso
+    //    hoje. Vem antes de tudo porque também sobe a geração.
+    if (_sentinelaDaFalha.mudou(srv.falhaTerminal) && srv.falhaTerminal) {
+      _disseQueCaiu = false;
+      final frase = _fraseDaFalha(srv.status);
+      if (frase != null) {
+        anunciar(context, frase, urgencia: Assertiveness.assertive);
+      }
+      return;
+    }
+
+    if (!_sentinelaDoStatus.mudou(srv.status, geracao: srv.geracao)) return;
+
+    switch (srv.status) {
+      case OnlineStatus.conectado:
+        _jaConectou = true;
+        if (!_disseQueCaiu) return; // a primeira conexão não é uma volta
+        _disseQueCaiu = false;
+        anunciar(context, 'conexão restaurada');
+      case OnlineStatus.conectando:
+      case OnlineStatus.erro:
+        if (!_jaConectou || _disseQueCaiu) return;
+        _disseQueCaiu = true;
+        anunciar(
+          context,
+          'conexão perdida — reconectando',
+          urgencia: Assertiveness.assertive,
+        );
+      // `autenticando` é etapa interna do aperto de mão, e `desconectado` é
+      // saída deliberada. Nenhum dos dois é notícia para quem está jogando.
+      case OnlineStatus.autenticando:
+      case OnlineStatus.desconectado:
+      case OnlineStatus.naoAutenticado:
+      case OnlineStatus.atualizacaoObrigatoria:
+      case OnlineStatus.servidorDesatualizado:
+      case OnlineStatus.configuracaoInvalida:
+      case OnlineStatus.semConexao:
+        return;
+    }
+  }
+
+  /// A frase de uma falha terminal, ou nulo quando o estado não é terminal.
+  ///
+  /// O texto é o mesmo do chip que fica na tela — e é de propósito: quem ouve e
+  /// quem lê têm de estar falando da mesma coisa.
+  String? _fraseDaFalha(OnlineStatus status) => switch (status) {
+    OnlineStatus.semConexao => 'sem conexão — toque para tentar de novo',
+    OnlineStatus.naoAutenticado => 'entre na sua conta para jogar online',
+    OnlineStatus.atualizacaoObrigatoria =>
+      'atualize o aplicativo para jogar online',
+    OnlineStatus.servidorDesatualizado =>
+      'servidor em atualização — tente mais tarde',
+    OnlineStatus.configuracaoInvalida => 'este aplicativo está mal configurado',
+    _ => null,
+  };
 
   @override
   void dispose() {
-    // Só solta o ouvinte. O transporte continua vivo — ele é da raiz.
+    // SOLTAR O OUVINTE É O QUE CALA A TELA. O transporte é da raiz e continua
+    // vivo depois que esta rota sai: sem isto, um `OnlineService` que notifica
+    // encontraria um `_falarDaConexao` de uma tela que já não está na árvore,
+    // e a pessoa ouviria "conexão perdida" numa Home que não fala de conexão
+    // nenhuma. Não desliga o transporte — sair da tela do lobby não é sair do
+    // jogo online.
     _srv?.removeListener(_atualizar);
     // A porta, ao contrário, é DESTA tela: ela foi construída aqui e morre
     // aqui. Descartá-la também solta o ouvinte que ela mantém no transporte.
@@ -294,6 +411,14 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     );
   }
 
+  /// A recusa do servidor a um comando do lobby — código que não existe, mesa
+  /// cheia, entrada negada.
+  ///
+  /// REGIÃO VIVA, e não anúncio: aqui a notícia É um texto que fica. Ele
+  /// aparece, o leitor de tela o lê no instante em que entra, e continua no
+  /// mesmo lugar para quem quiser voltar a ele. O `MergeSemantics` põe a marca
+  /// e o rótulo no MESMO nó — separados, a região viva ficaria vazia e não
+  /// haveria mudança a anunciar.
   Widget _erroBox(String msg) => Container(
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
@@ -301,9 +426,14 @@ class _LobbyOnlineState extends State<LobbyOnline> {
       borderRadius: BorderRadius.circular(10),
       border: Border.all(color: const Color(0x55E05B5B)),
     ),
-    child: Text(
-      msg,
-      style: const TextStyle(color: Color(0xFFF6C9C9), fontSize: 12.5),
+    child: MergeSemantics(
+      child: Semantics(
+        liveRegion: true,
+        child: Text(
+          msg,
+          style: const TextStyle(color: Color(0xFFF6C9C9), fontSize: 12.5),
+        ),
+      ),
     ),
   );
 

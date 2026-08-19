@@ -201,12 +201,19 @@ class _CartaDeEntrada extends StatelessWidget {
                 // a mesma raiz.
                 onPressed: emVoo != null ? null : () => onEntrar(provedor),
                 child: emVoo == provedor
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 19,
                         height: 19,
+                        // O NOME DO CONTROLE NÃO PODE SUMIR COM O RÓTULO. Sem
+                        // `semanticsLabel`, o botão em voo é um nó sem nome: o
+                        // leitor de tela anuncia "desabilitado" e não diz do
+                        // que se trata — a pessoa perde de vista o único
+                        // controle da tela no exato instante em que ele está
+                        // trabalhando para ela.
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Color(0xFF3A2606),
+                          color: const Color(0xFF3A2606),
+                          semanticsLabel: '${provedor.rotulo}, entrando…',
                         ),
                       )
                     : Text(
@@ -270,6 +277,23 @@ class _SemProvedor extends StatelessWidget {
   }
 }
 
+/// A falha, dita em voz alta assim que entra na árvore.
+///
+/// REGIÃO VIVA, e não anúncio imperativo, por causa de onde esta caixa nasce:
+/// DEPOIS do botão. Quem varre a tela de cima para baixo passa pelo controle
+/// antes da explicação, e só a encontra se resolver continuar procurando —
+/// numa tela em que o botão acabou de voltar ao normal e nada mais mudou.
+///
+/// A região viva resolve as duas metades do problema de uma vez: o texto é lido
+/// no instante em que aparece, E continua ali, no lugar de sempre, para quem
+/// quiser voltar a ele. Um anúncio solto faria a primeira metade e perderia a
+/// segunda. Mexer no foco faria pior: tiraria a pessoa do botão que ela
+/// acabou de apertar e que ela vai querer apertar de novo.
+///
+/// O `MergeSemantics` existe porque a marca precisa cair no MESMO nó que
+/// carrega o texto. Sem ele, a propriedade fica num nó de contêiner e o rótulo
+/// num nó filho — e um leitor de tela não anuncia a mudança de uma região viva
+/// vazia.
 class _Recado extends StatelessWidget {
   const _Recado({required this.texto});
 
@@ -285,10 +309,15 @@ class _Recado extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0x55E05B5B)),
       ),
-      child: Text(
-        texto,
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: Color(0xFFF6C9C9), fontSize: 12.5),
+      child: MergeSemantics(
+        child: Semantics(
+          liveRegion: true,
+          child: Text(
+            texto,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFFF6C9C9), fontSize: 12.5),
+          ),
+        ),
       ),
     );
   }
