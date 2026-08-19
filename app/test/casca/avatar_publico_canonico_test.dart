@@ -1169,9 +1169,31 @@ void main() {
         );
       }
 
+      // 48 → 49 COM A INSPEÇÃO AMPLIADA DE COSMÉTICOS, e o único arquivo novo
+      // também tem nome. Mesma disciplina das duas rodadas acima.
+      //
+      // Ele entra pelo Perfil, que já era alcançável: a vitrine equipada, o baú
+      // de presentes e o selo do mascote passaram a abrir a arte em tamanho
+      // grande. É um arquivo de widget puro — importa só o Material — e por
+      // isso não arrasta ninguém atrás de si, como o teste logo abaixo exige.
+      const daInspecaoAmpliada = ['lib/cosmeticos/inspecao_ampliada.dart'];
+      for (final caminho in daInspecaoAmpliada) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — a inspeção ampliada deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+
       expect(
         alcancaveis,
-        hasLength(40 + doRankingReal.length + daNavegacaoPublica.length),
+        hasLength(
+          40 +
+              doRankingReal.length +
+              daNavegacaoPublica.length +
+              daInspecaoAmpliada.length,
+        ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
       final resolvedor = _codigo(File('lib/sessao/avatar_publico.dart'));

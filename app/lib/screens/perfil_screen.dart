@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../cosmeticos/inspecao_ampliada.dart';
 import '../ranking/estado_ranking.dart';
 
 export '../ranking/estado_ranking.dart' show EstadoRanking, FaseRanking;
@@ -60,6 +61,13 @@ class ItemVitrine {
     required this.nome,
     required this.icone,
   });
+
+  /// A que família de cosmético este slot pertence, para a inspeção ampliada.
+  ///
+  /// A tabela vive no módulo da inspeção, e não aqui: a Loja e o Perfil chamam
+  /// os mesmos cosméticos por nomes diferentes, e uma segunda tabela seria uma
+  /// segunda chance de as duas telas discordarem sobre o que é um dorso.
+  CategoriaInspecao get familia => familiaDoSlot(slot);
 }
 
 class Presente {
@@ -664,7 +672,21 @@ class _PerfilScreenState extends State<PerfilScreen> {
                       border: Border.all(color: _ouro, width: 1.5),
                       boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
                     ),
-                    child: _icone(vm.mascote, 22),
+                    // O selo do mascote é 42x42 no canto INFERIOR direito; o
+                    // botão da câmera é 34x34 no SUPERIOR direito. As duas
+                    // áreas não se tocam dentro dos 126 pixels do herói, e é
+                    // por isso que ampliar o mascote aqui não disputa toque com
+                    // trocar o avatar.
+                    child: AlvoDeInspecao(
+                      item: ItemInspecionavel(
+                        id: 'mascote',
+                        nome: 'Mascote',
+                        categoria: CategoriaInspecao.mascote,
+                        estado: EstadoInspecao.equipado,
+                        previa: vm.mascote,
+                      ),
+                      child: _icone(vm.mascote, 22),
+                    ),
                   ),
                 ),
                 if (vm.ehMeuPerfil)
@@ -1237,6 +1259,13 @@ class _PerfilScreenState extends State<PerfilScreen> {
     );
   }
 
+  /// A VITRINE EQUIPADA, e cada peça dela ampliável.
+  ///
+  /// O ícone tem 30 pixels: é um selo de "está equipado", não uma vista do
+  /// item. Tocar abre a mesma arte grande. Aqui o alvo é o card inteiro, e é
+  /// seguro que seja — nesta seção não existe botão de comprar nem de equipar.
+  /// O único comando é o "trocar ›" do TÍTULO da seção, que fica fora deste
+  /// widget e continua tão longe do alvo quanto sempre esteve.
   Widget _vitrine() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -1244,24 +1273,35 @@ class _PerfilScreenState extends State<PerfilScreen> {
         children: [
           for (var i = 0; i < vm.vitrine.length; i++) ...[
             Expanded(
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(2, 8, 2, 8),
-                decoration: BoxDecoration(
-                  color: _card,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _borda),
+              child: AlvoDeInspecao(
+                item: ItemInspecionavel(
+                  id: vm.vitrine[i].slot,
+                  nome: vm.vitrine[i].nome,
+                  categoria: vm.vitrine[i].familia,
+                  // A seção chama-se VITRINE EQUIPADA: o que está aqui está em
+                  // uso, e o selo da inspeção não precisa perguntar a ninguém.
+                  estado: EstadoInspecao.equipado,
+                  previa: vm.vitrine[i].icone,
                 ),
-                child: Column(
-                  children: [
-                    _imagem(vm.vitrine[i].icone, 30),
-                    const SizedBox(height: 4),
-                    Text(
-                      vm.vitrine[i].nome,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: _textoSec, fontSize: 9),
-                    ),
-                  ],
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(2, 8, 2, 8),
+                  decoration: BoxDecoration(
+                    color: _card,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _borda),
+                  ),
+                  child: Column(
+                    children: [
+                      _imagem(vm.vitrine[i].icone, 30),
+                      const SizedBox(height: 4),
+                      Text(
+                        vm.vitrine[i].nome,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _textoSec, fontSize: 9),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1467,33 +1507,48 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   ),
                   itemBuilder: (context, index) {
                     final presente = vm.presentes[index];
-                    return Container(
-                      padding: const EdgeInsets.fromLTRB(4, 10, 4, 8),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Color(0xFF241748), Color(0xFF1A1030)],
-                        ),
-                        borderRadius: BorderRadius.circular(13),
-                        border: Border.all(color: const Color(0x66B98BFF)),
+                    // A inspeção abre POR CIMA do baú, sem fechá-lo: é um
+                    // diálogo na navegação raiz, e o baú é uma folha de rota
+                    // abaixo dele. Fechar a inspeção devolve a pessoa à lista
+                    // de presentes, e `onFecharPresentes` não é chamado —
+                    // porque o baú não fechou.
+                    return AlvoDeInspecao(
+                      item: ItemInspecionavel(
+                        id: presente.id,
+                        nome: presente.nome,
+                        categoria: CategoriaInspecao.presente,
+                        estado: EstadoInspecao.adquirido,
+                        previa: presente.icone,
+                        detalhe: '×${presente.quantidade}',
                       ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Expanded(child: Center(child: _imagem(presente.icone, 46))),
-                          const SizedBox(height: 3),
-                          Text(
-                            presente.nome,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Color(0xFFD9CFFB), fontSize: 10, fontWeight: FontWeight.w700),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(4, 10, 4, 8),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Color(0xFF241748), Color(0xFF1A1030)],
                           ),
-                          Text(
-                            '×${presente.quantidade}',
-                            style: const TextStyle(color: Color(0xFFF6D77A), fontSize: 11, fontWeight: FontWeight.w900),
-                          ),
-                        ],
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(color: const Color(0x66B98BFF)),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Expanded(child: Center(child: _imagem(presente.icone, 46))),
+                            const SizedBox(height: 3),
+                            Text(
+                              presente.nome,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Color(0xFFD9CFFB), fontSize: 10, fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              '×${presente.quantidade}',
+                              style: const TextStyle(color: Color(0xFFF6D77A), fontSize: 11, fontWeight: FontWeight.w900),
+                            ),
+                          ],
+                        ),
                       ),
                     );
                   },

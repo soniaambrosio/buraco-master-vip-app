@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../cosmeticos/inspecao_ampliada.dart';
 import 'perfil_screen.dart' show NavDestino;
 import 'loja_screen.dart' show LojaCategoria;
 
@@ -8,6 +9,50 @@ enum Raridade { comum, raro, epico, lendario, vip }
 enum MoedaTipo { moedas, gemas }
 
 enum ItemEstado { bloqueado, disponivel, comprado, equipado }
+
+/// A ponte entre o vocabulário da Loja e o da inspeção ampliada.
+///
+/// São duas listas com propósitos diferentes, e por isso não foram fundidas
+/// numa só: [LojaCategoria] é a PRATELEIRA (o que a Loja tem à venda hoje) e
+/// [CategoriaInspecao] é a FAMÍLIA do cosmético (o que a inspeção sabe rotular,
+/// incluindo feltros e balões, que ainda não estão à venda). Uma prateleira que
+/// mudasse a rotulagem de um item ao ser reorganizada seria uma prateleira com
+/// poder demais.
+extension LojaCategoriaInspecao on LojaCategoria {
+  CategoriaInspecao get familia {
+    switch (this) {
+      case LojaCategoria.dorsos:
+        return CategoriaInspecao.verso;
+      case LojaCategoria.molduras:
+        return CategoriaInspecao.moldura;
+      case LojaCategoria.avatares:
+        return CategoriaInspecao.avatar;
+      case LojaCategoria.mascotes:
+        return CategoriaInspecao.mascote;
+      case LojaCategoria.efeitos:
+        // A prateleira chama-se "Efeitos de Vitória", e é isso que ela vende.
+        // Rotular como "de entrada" seria trocar o item por outro no caminho.
+        return CategoriaInspecao.efeitoDeVitoria;
+      case LojaCategoria.emojis:
+        return CategoriaInspecao.emoji;
+    }
+  }
+}
+
+extension ItemEstadoInspecao on ItemEstado {
+  EstadoInspecao get paraInspecao {
+    switch (this) {
+      case ItemEstado.bloqueado:
+        return EstadoInspecao.bloqueado;
+      case ItemEstado.disponivel:
+        return EstadoInspecao.disponivel;
+      case ItemEstado.comprado:
+        return EstadoInspecao.adquirido;
+      case ItemEstado.equipado:
+        return EstadoInspecao.equipado;
+    }
+  }
+}
 
 extension LojaCategoriaVisual on LojaCategoria {
   String get titulo {
@@ -774,7 +819,26 @@ class _ItemCard extends StatelessWidget {
                 ),
               ),
             ),
-            Expanded(child: _previa()),
+            // A ARTE É O ALVO DA AMPLIAÇÃO — e nada além dela.
+            //
+            // Este `Expanded` é IRMÃO da `Row` de ações lá embaixo, e a
+            // vizinhança é a garantia: um toque em Comprar/Equipar não passa
+            // por aqui, e um toque aqui não alcança botão nenhum. Envolver o
+            // card inteiro faria do botão um descendente do alvo, e aí o toque
+            // ambíguo passaria a depender da arena de gestos em vez do layout.
+            Expanded(
+              child: AlvoDeInspecao(
+                item: ItemInspecionavel(
+                  id: item.id,
+                  nome: item.nome,
+                  categoria: categoria.familia,
+                  estado: item.estado.paraInspecao,
+                  previa: item.previa,
+                  detalhe: _raridadeLabel,
+                ),
+                child: _previa(),
+              ),
+            ),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [

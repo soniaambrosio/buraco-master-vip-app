@@ -325,7 +325,19 @@ bool _temLiteralSolto(String valor) {
 
 List<String> _valoresDeArgumento(String codigo, String nome) {
   final valores = <String>[];
-  final marca = RegExp('\\b$nome\\s*:');
+  // POR QUE NÃO É `\b`, E POR QUE ISSO NÃO AFROUXA A REGRA.
+  //
+  // Um argumento nomeado NUNCA vem depois de um ponto. `\b` casava também com
+  // `CategoriaInspecao.avatar:` — rótulo de `case` e chave de mapa por enum —,
+  // e nenhum dos dois DECIDE avatar nenhum: o primeiro escolhe um ramo, o
+  // segundo indexa uma tabela. Foi assim que um arquivo de widget passou a ser
+  // acusado de escrever avatar por rotular uma categoria da Loja.
+  //
+  // A chave de mapa EM TEXTO (`'avatar': '...'`) continua pega, de propósito:
+  // essa é uma forma legítima de escrever o campo, e o dia em que um produtor
+  // montar um mapa desses é exatamente o dia em que esta suíte tem de gritar.
+  // O que sai da mira é só o que a sintaxe do Dart já impede de ser argumento.
+  final marca = RegExp('(?<![.\\w])$nome\\s*:');
   for (final m in marca.allMatches(codigo)) {
     var i = m.end;
     var profundidade = 0;

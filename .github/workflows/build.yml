@@ -307,6 +307,32 @@ jobs:
           flutter test test/casca --reporter expanded
           echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE VITRINE — ampliar cosmético não é comprar nem equipar"
+        # Prova que o toque na arte de um item da Loja ou do Perfil abre a peça
+        # em tamanho grande e NADA MAIS: saldo, inventário e item equipado
+        # ficam idênticos entre abrir e fechar, o botão Comprar/Equipar nunca é
+        # descendente do alvo de ampliação, a inspeção fecha pelos três
+        # caminhos (toque fora, X e voltar do sistema) e o módulo não tem campo
+        # de callback nem import de serviço por onde uma compra pudesse entrar.
+        #
+        # Gateia o DIRETÓRIO, e não o arquivo: quando nascer a inspeção de
+        # feltros ou de balões, a suíte nova entra no portão sem ninguém
+        # precisar lembrar de acrescentar uma linha aqui.
+        run: |
+          if [ ! -d app/test/cosmeticos ]; then
+            echo "ERRO: app/test/cosmeticos não encontrado — o portão da vitrine é OBRIGATÓRIO."
+            exit 1
+          fi
+          if [ ! -f app/test/cosmeticos/inspecao_ampliada_test.dart ]; then
+            echo "ERRO: inspecao_ampliada_test.dart não encontrado — é ele que prova a AUSÊNCIA de compra."
+            exit 1
+          fi
+          mkdir -p app_build/test/cosmeticos
+          cp -R app/test/cosmeticos/. app_build/test/cosmeticos/
+          cd app_build
+          flutter test test/cosmeticos --reporter expanded
+          echo "PORTÃO VERDE: inspeção ampliada de cosméticos validada no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
         # validado por perfil de build, protocolo 2 no handshake, renovação de
