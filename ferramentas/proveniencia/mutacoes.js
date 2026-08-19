@@ -123,11 +123,29 @@ const restaurar = () => {
   for (const [nome, texto] of originais) fs.writeFileSync(path.join(AQUI, nome), texto, 'utf8');
 };
 
+/**
+ * Normaliza o fim de linha do alvo ao do arquivo.
+ *
+ * O repositorio e checado fora com CRLF no Windows, e uma ancora escrita com
+ * `\n` simplesmente NAO CASA. A mutacao vira INSTRUMENTO QUEBRADO e a campanha
+ * deixa de medir aquela guarda — sem que nada fique vermelho, que e o modo mais
+ * caro de falhar: a campanha se declara completa tendo pulado uma prova.
+ *
+ * Foi exatamente o que aconteceu com `MP5` — a porta do valor manual — quando
+ * esta campanha rodou pela primeira vez fora do disco de trabalho.
+ */
+function paraEol(texto, alvo) {
+  return alvo.includes('\r\n')
+    ? texto.replace(/\r?\n/g, '\r\n')
+    : texto.replace(/\r\n/g, '\n');
+}
+
 function aplicar(m) {
   const texto = originais.get(m.arquivo);
   const trocas = [{ de: m.de, para: m.para }].concat(m.tambem ? [m.tambem] : []);
   let saida = texto;
-  for (const t of trocas) {
+  for (const bruta of trocas) {
+    const t = { de: paraEol(bruta.de, texto), para: paraEol(bruta.para, texto) };
     const ocorrencias = saida.split(t.de).length - 1;
     if (ocorrencias !== 1) {
       return { erro: `alvo aparece ${ocorrencias}x (esperado 1): ${JSON.stringify(t.de.slice(0, 40))}` };
