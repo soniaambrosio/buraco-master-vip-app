@@ -135,8 +135,21 @@ void main(List<String> argumentos) {
   }
 
   _secao('declarados no pubspec mas INEXISTENTES');
+  // A existencia e conferida NO DISCO, e nao contra a varredura de `existentes`.
+  //
+  // Aquela varredura so enxerga `app/assets/`, o que era suficiente enquanto
+  // tudo que o pubspec declarava vivia la. Deixou de ser: o catalogo de colecoes
+  // e declarado como `data/colecoes/catalogo.seed.json` — ele nao e arte, e a
+  // fonte de dados que `InventarioService` le do bundle, e duplica-lo dentro de
+  // `assets/` criaria uma segunda copia do catalogo, que e exatamente o que o
+  // modulo evita.
+  //
+  // Com a checagem antiga, toda declaracao fora de `assets/` era reprovada por
+  // definicao: a pasta existia, o build passava, e o portao acusava falha. Ler o
+  // disco responde a pergunta que o portao realmente faz — "o `flutter build`
+  // vai achar isto?" — para qualquer pasta declarada.
   final declaradasVazias = declaradas
-      .where((d) => !existentes.any((f) => f.startsWith(d)))
+      .where((d) => !_temArquivo(Directory('${app.path}/$d')))
       .toList()
     ..sort();
   if (declaradasVazias.isEmpty) {
@@ -207,6 +220,14 @@ Set<String> _pastasDeclaradas(File pubspec) {
   }
   return pastas;
 }
+
+/// A pasta existe e tem ao menos um arquivo DIRETO.
+///
+/// Nao recursivo de proposito: o Flutter tambem nao e. Uma pasta declarada que
+/// so contenha subpastas nao empacota nada, e o portao deve dizer isso em vez de
+/// dar por boa uma declaracao que nao entrega arquivo nenhum.
+bool _temArquivo(Directory pasta) =>
+    pasta.existsSync() && pasta.listSync().whereType<File>().isNotEmpty;
 
 void _secao(String t) => stdout.writeln('\n--- $t ---');
 

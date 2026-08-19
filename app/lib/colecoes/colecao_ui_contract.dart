@@ -345,3 +345,228 @@ ColecaoVM _semTentativa(
       ? vm(EstadoColecao.eligibleUnclaimed)
       : vm(EstadoColecao.notEligible);
 }
+
+// ---------------------------------------------------------------------------
+// INVENTARIO DO JOGADOR
+// ---------------------------------------------------------------------------
+//
+// [montarColecaoVM], acima, projeta UMA CAMPANHA: existe para responder "voce
+// tem direito a este kit, quer abrir?". O inventario responde outra pergunta —
+// "o que ja e meu?" — e por isso tem projecao propria em vez de reaproveitar a
+// de campanha com campos nulos.
+//
+// A DIFERENCA QUE IMPORTA: aqui nao existe elegibilidade, nao existe resgate e
+// nao existe convite. Um item so aparece se [InventarioUsuario.possui] disser
+// que o jogador o possui — a posse vem de `users/{uid}/inventory`, gravada
+// exclusivamente pelo servidor (ver colecao_firebase.dart e firestore.rules).
+// Nenhuma linha abaixo concede, precifica ou desbloqueia nada.
+
+/// Estados da superficie de inventario. Exaustivos pelo mesmo motivo de
+/// [EstadoColecao]: a tela nao deve inferir nada a partir de lista vazia.
+enum EstadoInventario {
+  /// Sem jogador autenticado. Nao existe de quem ler posse, e devolver um
+  /// inventario vazio seria afirmar que o jogador nao tem nada — que e
+  /// diferente de nao saber.
+  semSessao,
+
+  /// Lendo catalogo e inventario.
+  carregando,
+
+  /// Leitura concluida: o jogador realmente nao possui nenhum item.
+  vazio,
+
+  /// Ha itens possuidos em [InventarioVM.grupos].
+  pronto,
+
+  /// A leitura falhou. [InventarioVM.mensagemErro] explica e onRecarregar
+  /// esta ativo.
+  erro,
+}
+
+/// Os itens que o jogador possui de UMA colecao.
+///
+/// Agrupar por colecao e decisao de apresentacao, nao de dominio: o inventario
+/// e uma lista plana em `users/{uid}/inventory`, e o agrupamento so existe
+/// porque uma vitrine com dezenas de pecas soltas nao se le.
+class GrupoInventario {
+  final String collectionId;
+  final String displayName;
+
+  /// Raridade declarada no catalogo. String vazia quando o catalogo nao a
+  /// declara — nunca um valor inventado.
+  final String raridade;
+
+  /// A colecao e permanente (nao revogavel).
+  final bool permanente;
+
+  /// Apenas os itens POSSUIDOS, na ordem de apresentacao do catalogo.
+  final List<RecompensaVM> itens;
+
+  /// Quantos itens a colecao oferece hoje. Serve para o "3 de 10"; vem do
+  /// catalogo, nao de contagem do inventario.
+  final int totalNaColecao;
+
+  const GrupoInventario({
+    required this.collectionId,
+    required this.displayName,
+    required this.raridade,
+    required this.permanente,
+    required this.itens,
+    required this.totalNaColecao,
+  });
+
+  int get possuidos => itens.length;
+
+  int get equipados => itens.where((i) => i.equipped).length;
+
+  /// O jogador possui tudo que a colecao oferece.
+  bool get completa => totalNaColecao > 0 && possuidos >= totalNaColecao;
+}
+
+/// Estado completo do inventario, pronto para render.
+class InventarioVM {
+  final EstadoInventario estado;
+
+  /// Colecoes das quais o jogador possui ao menos um item. Colecao sem nenhum
+  /// item possuido NAO aparece: o inventario mostra o que e dele, e nao um
+  /// catalogo do que falta — isto aqui nao e vitrine de loja.
+  final List<GrupoInventario> grupos;
+
+  /// Itens presentes no inventario que o catalogo desta versao do aplicativo
+  /// nao conhece.
+  ///
+  /// Contados e nao desenhados: sem definicao nao ha nome, arte nem slot, e
+  /// desenhar um card com id cru seria pior do que dizer honestamente que ha
+  /// pecas que esta versao ainda nao sabe mostrar. Acontece quando o servidor
+  /// concede uma colecao mais nova que o aplicativo instalado.
+  final int itensSemDefinicao;
+
+  /// Preenchida somente em [EstadoInventario.erro].
+  final String? mensagemErro;
+
+  const InventarioVM({
+    required this.estado,
+    required this.grupos,
+    this.itensSemDefinicao = 0,
+    this.mensagemErro,
+  });
+
+  const InventarioVM.semSessao()
+      : estado = EstadoInventario.semSessao,
+        grupos = const <GrupoInventario>[],
+        itensSemDefinicao = 0,
+        mensagemErro = null;
+
+  const InventarioVM.carregando()
+      : estado = EstadoInventario.carregando,
+        grupos = const <GrupoInventario>[],
+        itensSemDefinicao = 0,
+        mensagemErro = null;
+
+  const InventarioVM.erro(String mensagem)
+      : estado = EstadoInventario.erro,
+        grupos = const <GrupoInventario>[],
+        itensSemDefinicao = 0,
+        mensagemErro = mensagem;
+
+  int get totalItens =>
+      grupos.fold(0, (soma, grupo) => soma + grupo.possuidos);
+
+  int get totalEquipados =>
+      grupos.fold(0, (soma, grupo) => soma + grupo.equipados);
+
+  bool get temItens => totalItens > 0;
+
+  /// Ha pecas possuidas que esta versao nao sabe desenhar.
+  bool get temItensSemDefinicao => itensSemDefinicao > 0;
+}
+
+/// Intencoes que a tela de inventario devolve.
+///
+/// Nao ha `onClaim` de proposito. Conceder e ato da campanha, e mistura-lo aqui
+/// transformaria a vitrine do jogador numa segunda superficie de oferta.
+///
+/// TAMBEM NAO HA `onUnequip`, e a razao e de autoridade, nao de escopo.
+/// [InventarioUsuario.desequipar] existe e decide corretamente, mas
+/// [ColecaoRepositorio.aplicarEquipagem] — o unico caminho de escrita — SEMPRE
+/// marca um item como equipado no mesmo lote. Nao ha, hoje, como persistir um
+/// desequipar puro. Declarar o callback assim mesmo entregaria a tela um botao
+/// que muda a interface e nao muda o servidor: o item voltaria equipado na
+/// proxima leitura, e o jogador leria isso como perda do item.
+///
+/// Na pratica o jogador nao fica preso: todo slot desta colecao tem
+/// `maxAtivos: 1`, entao equipar outra peca do mesmo slot troca a ativa — e a
+/// troca TEM caminho de escrita. Quando o repositorio ganhar um desequipar
+/// proprio, o callback entra aqui.
+class InventarioCallbacks {
+  /// Equipa um item possuido. A exclusividade de slot e resolvida por
+  /// [InventarioUsuario.equipar]; a tela nao decide quem sai.
+  final void Function(String itemId) onEquip;
+
+  /// Repete a leitura apos [EstadoInventario.erro].
+  final void Function() onRecarregar;
+
+  final void Function() onClose;
+
+  const InventarioCallbacks({
+    required this.onEquip,
+    required this.onRecarregar,
+    required this.onClose,
+  });
+}
+
+/// Projeta o inventario do jogador contra o catalogo.
+///
+/// Funcao pura, como [montarColecaoVM]: mesma entrada, mesma tela. E o UNICO
+/// lugar onde posse vira apresentacao.
+///
+/// A iteracao parte do INVENTARIO e nao do catalogo — de proposito. Varrer o
+/// catalogo e perguntar "possui?" produziria a lista de tudo que existe, com os
+/// nao possuidos marcados; e a estrutura de uma loja, e mais cedo ou mais tarde
+/// alguem desenharia os cadeados. Partindo do inventario, um item que o jogador
+/// nao tem simplesmente nao existe nesta tela.
+InventarioVM montarInventarioVM({
+  required CatalogoColecoes catalogo,
+  required InventarioUsuario inventario,
+}) {
+  final porColecao = <String, List<RecompensaVM>>{};
+  var semDefinicao = 0;
+
+  for (final possuido in inventario.itens) {
+    final definicao = catalogo.buscarItem(possuido.itemId);
+    if (definicao == null) {
+      semDefinicao++;
+      continue;
+    }
+    (porColecao[definicao.collectionId] ??= <RecompensaVM>[])
+        .add(RecompensaVM.de(definicao, inventario));
+  }
+
+  final grupos = <GrupoInventario>[];
+  for (final entrada in porColecao.entries) {
+    final definicao = catalogo.buscarColecao(entrada.key);
+    final itens = entrada.value
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    grupos.add(GrupoInventario(
+      collectionId: entrada.key,
+      // O `??` e defensivo e nao deveria disparar: o `collectionId` veio de uma
+      // definicao que o proprio catalogo devolveu. Se disparar, mostra o id cru
+      // em vez de um nome bonito e falso.
+      displayName: definicao?.displayName ?? entrada.key,
+      raridade: definicao?.rarity ?? '',
+      permanente: definicao?.permanente ?? false,
+      itens: List.unmodifiable(itens),
+      totalNaColecao: definicao?.ativos.length ?? itens.length,
+    ));
+  }
+
+  // Ordem estavel: sem isto a tela reordenaria os grupos a cada leitura, porque
+  // a ordem de um Map segue a de insercao, que segue a do Firestore.
+  grupos.sort((a, b) => a.collectionId.compareTo(b.collectionId));
+
+  return InventarioVM(
+    estado: grupos.isEmpty ? EstadoInventario.vazio : EstadoInventario.pronto,
+    grupos: List.unmodifiable(grupos),
+    itensSemDefinicao: semDefinicao,
+  );
+}

@@ -5,6 +5,7 @@ import '../screens/perfil_screen.dart';
 import '../services/perfil_service.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
+import 'inventario_page.dart';
 import 'ranking_page.dart';
 
 /// Controlador da tela de Perfil (camada de lógica — Claude).
@@ -149,7 +150,17 @@ class _PerfilPageState extends State<PerfilPage> {
       onVerTodasConquistas: () => _breve('Todas as conquistas'),
       onVerConquista: (id) => _breve('Conquista: $id'),
       onVerUltimaConquista: () => _breve('Última conquista'),
-      onTrocarVitrine: () => _breve('Trocar itens da vitrine'),
+      // Entrada do Inventário. "Trocar itens da vitrine" É a pergunta "o que eu
+      // tenho para pôr aqui?", e agora ela tem resposta real: `InventarioPage`
+      // lê `users/{uid}/inventory` e equipa pela autoridade do domínio.
+      //
+      // O Perfil continua sem saber de posse — ele navega, não consulta. Os
+      // números da vitrine em `PerfilService._vitrinePadrao` seguem como estavam;
+      // ligá-los ao inventário real é outra fatia, e fazê-la de carona aqui
+      // criaria uma segunda origem de posse.
+      onTrocarVitrine: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const InventarioPage()),
+      ),
       onCompartilhar: _compartilhar,
       onRecarregar: _carregar,
       onNavTap: (destino) {

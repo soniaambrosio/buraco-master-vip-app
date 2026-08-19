@@ -40,6 +40,21 @@ Get-ChildItem (Join-Path $build 'assets') -File | Remove-Item -Force
 # O portao de recompensas de torneios le as seeds a partir de test/torneios/data/.
 Copiar (Join-Path $app 'data\torneios') (Join-Path $build 'test\torneios\data')
 
+# Idem para colecoes: as suites de test/colecoes/ leem os seeds por
+# test/suporte/seeds.dart, que procura primeiro em test/<dominio>/data/.
+Copiar (Join-Path $app 'data\colecoes') (Join-Path $build 'test\colecoes\data')
+
+# O catalogo de colecoes tambem viaja como ASSET declarado no pubspec
+# (data/colecoes/catalogo.seed.json): e dele que InventarioService tira os nomes
+# e a arte em tempo de execucao. Sem esta copia, asset declarado nao existe e
+# `flutter test` falha ao montar o bundle - nao no assert, no carregamento.
+$catalogoDe = Join-Path $app 'data\colecoes\catalogo.seed.json'
+$catalogoPara = Join-Path $build 'data\colecoes'
+if (Test-Path $catalogoDe) {
+  New-Item -ItemType Directory -Force -Path $catalogoPara | Out-Null
+  Copy-Item $catalogoDe $catalogoPara -Force
+}
+
 # O widget_test.dart que vem do `flutter create` tem erro pre-existente e
 # derrubaria a suite inteira; o proprio CI evita roda-lo.
 Remove-Item (Join-Path $build 'test\widget_test.dart') -ErrorAction SilentlyContinue

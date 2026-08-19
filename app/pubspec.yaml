@@ -164,3 +164,13 @@ flutter:
     - assets/torneios/premiacao/coroas/
     - assets/torneios/premiacao/selos/
     - assets/colecoes/pioneiros_2026/
+    # Catálogo canônico das coleções — QUAIS itens existem, o nome de cada um, a
+    # arte, o slot e a ordem. Até aqui só os testes o liam, direto do disco; o
+    # aplicativo em execução não tinha de onde saber o nome de uma peça que o
+    # jogador possui. Sem esta linha, `InventarioService` levanta o inventário
+    # do Firestore e não consegue desenhar nenhum item.
+    #
+    # Arquivo a arquivo, e não a pasta `data/colecoes/`: os outros seeds de lá
+    # (manifesto de arte, relatório de otimização de PNG) são insumo de build e
+    # de auditoria, e não têm por que pesar no APK.
+    - data/colecoes/catalogo.seed.json
