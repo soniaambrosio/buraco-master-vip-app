@@ -433,7 +433,7 @@ Play. Sem ampliação de permissões de workflow.
 
 # ADENDO — Correção visual da constelação (V1)
 
-**Veredito: `PENDENTE — CONSTELAÇÃO COMPOSTA E MEDIDA; DUAS DECISÕES VISUAIS EM ABERTO`**
+**Veredito: `PASS — SPLASH CONSTELAÇÃO MASTER VIP INTEGRADO COM RIVE INTACTO, CONSTELAÇÃO COMPLEMENTAR E SOBREPOSIÇÃO DO TÍTULO CORRIGIDA V1`**
 
 Não é PASS. A composição está construída, provada e empacotada, mas duas
 constatações visuais caem exatamente na cláusula que manda parar em vez de
@@ -574,3 +574,116 @@ Rive, e o `ci-os-integracao.yml` não é dispatchável fora de `main`.
 
 Nada foi publicado: os commits desta correção estão **apenas locais**, e o SHA
 `e246d54` continua sendo o topo publicado até a arbitragem.
+
+---
+
+## A6. A máscara — arbitragem aplicada
+
+Decisão: máscara **somente na camada SVG**, excluindo a pequena região onde os
+dois nós encostavam na base de "MASTER VIP".
+
+O asset **não foi tocado**. Não houve deslocamento, redimensionamento nem
+recorte do arquivo: é um `ClipPath` de composição, no Flutter, aplicado **só ao
+SVG** — a Rive não passa por máscara nenhuma.
+
+```dart
+const List<Rect> kExclusoesDaConstelacao = <Rect>[
+  Rect.fromLTRB(448, 1514, 484, 1550),   // nó (466,1532)
+  Rect.fromLTRB(599, 1514, 635, 1550),   // nó (617,1532)
+];
+```
+
+Coordenadas do canvas `1080 × 1920`, convertidas pela MESMA conta do `contain`
+da arte. Em pixels de tela a exclusão sairia do lugar em todo aparelho que não
+fosse 1080 × 1920 — e sairia em silêncio, aparecendo só no telefone de alguém.
+`C13` prova isso em quatro proporções, inclusive uma quadrada.
+
+### A6.1 A medição, depois
+
+Mesmo método de antes — quadro final renderizado com e sem a camada, comparado
+pixel a pixel:
+
+| Máscara | Pixels | Alterados | Antes |
+| --- | --- | --- | --- |
+| ≥ 100 | 207.773 | **0** | 156 |
+| ≥ 200 | 143.794 | **0** | 133 |
+| ≥ 300 | 90.210 | **0** | 126 |
+| ≥ 400 | 58.305 | **0** | 120 |
+
+**Zero** em coroa, escudo e título, em todos os limiares que isolam a arte. No
+limiar 40, que inclui a vinheta suave do artboard, a caixa dos pixels afetados
+encolheu de `y 627..1536` para `y 626..1046`: a faixa do título sumiu inteira.
+
+### A6.2 Os quatro quadros, re-renderizados
+
+| Quadro | Conferência |
+| --- | --- |
+| `01_inicio` | `#050B1E` liso — sem lampejo |
+| `02_um_terco` | constelação em fade, arte entrando |
+| `03_dois_tercos` | brasão no ar, constelação completa |
+| `04_final` | coroa + escudo + espadilha + título + estrelas + linhas |
+
+Constelação completa, mesmo enquadramento, fade de 600 ms preservado
+(`C14` afirma `duration == 600ms` e `tween 0 → 1`), e `onConcluida` chamada
+exatamente uma vez.
+
+Na ampliação da base do título, as linhas agora terminam logo abaixo das letras
+e voltam do outro lado — lê-se como a constelação passando POR TRÁS do título.
+
+### A6.3 O defeito de checkout que quase escapou
+
+Montando o overlay final a partir de `git archive HEAD` — e não da árvore de
+trabalho —, o SVG saiu com SHA `90492caa…` em vez de `a87fc5ad…`.
+
+Causa: o `.riv` estava protegido por `*.riv binary`, mas o `.svg` é TEXTO, e com
+`core.autocrlf=true` o **checkout** reescrevia as quebras de linha. O blob no
+git sempre esteve correto; quem alterava era a saída.
+
+Não é preciosismo de hash: o portão da abertura e o `build.yml` conferem o
+SHA-256 do arquivo empacotado, então numa máquina com autocrlf ligado eles
+reprovariam um repositório íntegro — e o diagnóstico pareceria "asset
+corrompido" quando o defeito era do checkout. `.gitattributes` ganhou
+`*.svg -text`.
+
+Copiar da árvore de trabalho mascarava o problema. Foi o overlay a partir do
+`archive` que o encontrou.
+
+### A6.4 Mutação da máscara
+
+| Mutante | Resultado |
+| --- | --- |
+| tirar o `ClipPath` | **morto** |
+| calcular a exclusão em pixels de tela (sem o `contain`) | **morto** |
+| esvaziar `kExclusoesDaConstelacao` | **sobreviveu → teste corrigido → morto** |
+
+O sobrevivente era um teste vazio: `C12` percorria a lista e nada mais, então
+com ela vazia o laço não rodava, nenhuma expectativa era avaliada e o caso
+passava com a máscara desligada. Agora as duas caixas são afirmadas uma a uma,
+e os dois pontos que a medição acusou são verificados nominalmente.
+
+## A7. Gates finais (checkout limpo do HEAD)
+
+| Comando | Resultado |
+| --- | --- |
+| `flutter analyze` | 103 — **idêntico byte a byte à base `089cb5e`** |
+| `flutter test test/splash` | **+48** |
+| `flutter test test/casca` | **+244** |
+| `flutter test test/sessao` | **+83** |
+| `flutter test test/ranking` | **+183** |
+| os 15 alvos nomeados do CI | todos verdes |
+| `flutter test` (glob) | **+1201** (base 1153 → +48, exatamente a suíte da abertura) |
+| `flutter build apk --debug` | APK gerado |
+| `.riv` no APK | `a5a7ca19…d4d67d`, 2.298.957 bytes |
+| `.svg` no APK | `a87fc5ad…c0204`, 4.663 bytes |
+| libs nativas | `librive_native.so` em arm64-v8a, armeabi-v7a e x86_64 |
+
+## A8. Residual aceito nesta V1
+
+`flutter_svg` não implementa `<filter>`: os grupos `NuvemDeBrilho` e
+`Cintilacoes` são desenhados sem `feGaussianBlur`, como discos de borda dura em
+vez de brilho difuso. **Aceito por decisão**, sem troca de renderizador e sem
+rasterizar o SVG. Fica registrado como residual visual desta V1.
+
+Seguem valendo, sem novidade: cold start em aparelho não foi provado, o build
+depende de rede para as libs nativas da Rive, e o `ci-os-integracao.yml` não é
+dispatchável fora de `main`.
