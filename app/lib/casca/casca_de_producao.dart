@@ -37,6 +37,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../screens/splash_oficial_screen.dart';
 import '../sessao/escopo_sessao.dart';
@@ -47,6 +48,14 @@ import 'login_de_producao.dart';
 /// Quanto a casca espera o fluxo de autenticação se pronunciar antes de
 /// desistir e oferecer uma saída.
 const Duration kLimitePadraoDeResolucao = Duration(seconds: 8);
+
+/// O título do estado de espera estourada.
+///
+/// Constante porque ele é dito DUAS vezes: desenhado na tela e anunciado a
+/// quem usa leitor de tela, no quadro em que o estado entra em vigor. Duas
+/// cópias da mesma frase divergem com o tempo, e um anúncio divergente passa
+/// a descrever uma tela que não está mais ali.
+const String kTituloDaEsperaEstourada = 'Não consegui iniciar sua sessão';
 
 class CascaDeProducao extends StatefulWidget {
   const CascaDeProducao({
@@ -82,6 +91,12 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
   /// O teto de espera estourou sem a sessão se pronunciar.
   bool _esperaEstourou = false;
 
+  /// A entrada NESTE estado já foi dita em voz alta.
+  ///
+  /// Zerada por [_tentarDeNovo]: voltar a esperar e estourar de novo é uma
+  /// transição nova, e merece ser anunciada de novo.
+  bool _jaAnunciouOEstouro = false;
+
   Timer? _relogioDaEspera;
 
   Duration get _limite => widget.limiteDeResolucao ?? kLimitePadraoDeResolucao;
@@ -105,8 +120,50 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
     });
   }
 
+  /// Diz, uma vez só, que a tela mudou debaixo de quem não está olhando.
+  ///
+  /// A troca acontece DENTRO desta casca: a rota não muda, e quem usa leitor
+  /// de tela estava na abertura. Sem anúncio, a pessoa segue esperando uma
+  /// animação que já foi substituída por um botão. É o que a visão entrega de
+  /// graça e a leitura não.
+  ///
+  /// QUEM CHAMA É O `build`, E NÃO O RELÓGIO. A bandeira `_esperaEstourou`
+  /// não é a autoridade sobre o que está na tela — ela é só um dos termos da
+  /// decisão. Sem sessão montada acima, por exemplo, o teto estoura do mesmo
+  /// jeito e o que aparece é o AVISO TERMINAL; anunciado dali, o estouro
+  /// falaria de uma tela que ninguém está vendo. Chamado do ramo que de fato
+  /// desenha o estado, o anúncio só existe quando o estado existe.
+  ///
+  /// UMA VEZ, E NÃO A CADA QUADRO: a bandeira sobe na primeira chamada e só
+  /// desce em [_tentarDeNovo]. Reconstrução por qualquer outro motivo —
+  /// teclado, rotação, escala de texto — passa por aqui e não fala nada.
+  void _anunciarAEsperaEstourada() {
+    if (_jaAnunciouOEstouro) return;
+    _jaAnunciouOEstouro = true;
+    // O quadro que está sendo construído agora é o que põe o estado na tela,
+    // e anunciar antes dele é descrever o que ainda não está lá. Este
+    // callback não agenda quadro nenhum: ele pega carona no que já está em
+    // construção.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Rede, e não a trave. Quem impede de fato o anúncio atrasado é o
+      // `cancel` do [dispose]: sem ele, o relógio acorda uma casca que já
+      // saiu da árvore. Este `mounted` cobre a janela entre o quadro e o
+      // callback, que o desenho atual não consegue abrir — fica pelo que
+      // custa, que é nada.
+      if (!mounted) return;
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        kTituloDaEsperaEstourada,
+        Directionality.maybeOf(context) ?? TextDirection.ltr,
+      );
+    });
+  }
+
   void _tentarDeNovo() {
-    setState(() => _esperaEstourou = false);
+    setState(() {
+      _esperaEstourou = false;
+      _jaAnunciouOEstouro = false;
+    });
     _armarEspera();
   }
 
@@ -131,6 +188,7 @@ class _CascaDeProducaoState extends State<CascaDeProducao> {
 
     if (!sessao.resolvida) {
       if (_esperaEstourou) {
+        _anunciarAEsperaEstourada();
         return _EsperaEstourada(onTentarDeNovo: _tentarDeNovo);
       }
       return _splash();
@@ -165,15 +223,27 @@ class _EsperaEstourada extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Moldura(
       children: [
-        const Text('⏳', style: TextStyle(fontSize: 40)),
+        // DECORAÇÃO, E SÓ. A ampulheta repete em desenho o que o título e a
+        // mensagem já dizem por escrito. Dentro da árvore ela vira a palavra
+        // "ampulheta" na frente de uma frase que não pediu por ela — e quem
+        // ouve não tem como saber que aquilo era enfeite.
+        const ExcludeSemantics(
+          child: Text('⏳', style: TextStyle(fontSize: 40)),
+        ),
         const SizedBox(height: 14),
-        const Text(
-          'Não consegui iniciar sua sessão',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Color(0xFFF6E2A6),
-            fontSize: 19,
-            fontWeight: FontWeight.w900,
+        // O TÍTULO É CABEÇALHO, E É O ÚNICO. Marcar a mensagem também faria o
+        // salto entre cabeçalhos parar duas vezes dentro do mesmo estado, que
+        // para quem navega assim é o mesmo que não haver cabeçalho nenhum.
+        Semantics(
+          header: true,
+          child: const Text(
+            kTituloDaEsperaEstourada,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFFF6E2A6),
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -216,15 +286,25 @@ class _AvisoTerminal extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Moldura(
       children: [
-        const Text('⚠️', style: TextStyle(fontSize: 40)),
+        // Mesma decoração, mesma razão do estado acima.
+        const ExcludeSemantics(
+          child: Text('⚠️', style: TextStyle(fontSize: 40)),
+        ),
         const SizedBox(height: 14),
-        Text(
-          titulo,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFFF6E2A6),
-            fontSize: 19,
-            fontWeight: FontWeight.w900,
+        // Aqui NÃO há anúncio: este estado é o primeiro quadro da rota, e não
+        // uma troca sob os pés de quem já estava lendo. O leitor de tela já
+        // anuncia a rota que abre; um `announce` por cima seria a mesma
+        // informação dita duas vezes.
+        Semantics(
+          header: true,
+          child: Text(
+            titulo,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFF6E2A6),
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -258,9 +338,17 @@ class _Moldura extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 430),
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: children,
+              // UMA UNIDADE, E NÃO TRÊS TEXTOS SOLTOS NO MEIO DA ROTA. O
+              // container dá começo e fim ao estado; `explicitChildNodes` é o
+              // que impede esse container de achatar os filhos num rótulo só —
+              // achatado, o botão perderia o papel, o estado e a ação junto.
+              child: Semantics(
+                container: true,
+                explicitChildNodes: true,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: children,
+                ),
               ),
             ),
           ),
