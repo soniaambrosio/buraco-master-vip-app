@@ -150,6 +150,14 @@ jobs:
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences
 
+      - name: Localização oficial do framework (pt-BR)
+        # Vem do SDK, não do pub.dev — daí o descritor `{sdk: flutter}`. Sem ela,
+        # `casca/raiz_do_aplicativo.dart` não compila (o import some) e o APK
+        # sequer é gerado. Com ela, o botão de retorno, a barreira de diálogo e
+        # o menu de seleção de texto são anunciados em português; sem ela, o
+        # Material cai em `DefaultMaterialLocalizations` e volta a dizer "Back".
+        run: cd app_build && flutter pub add "flutter_localizations:{sdk: flutter}"
+
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
         # (de web_socket_channel e flutter_test), mas o portão de autenticação

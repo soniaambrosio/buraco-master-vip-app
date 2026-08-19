@@ -26,6 +26,14 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # As traducoes OFICIAIS do framework, vindas do proprio SDK. Sem esta
+  # dependencia o `MaterialApp` cai em `DefaultMaterialLocalizations`, que so
+  # fala ingles: o botao de retorno e anunciado como "Back", a barreira de
+  # dialogo como "Dismiss" e o menu de selecao de texto como "Cut/Copy/Paste".
+  # Nao ha versao a fixar — ela acompanha o Flutter pinado pelo CI.
+  flutter_localizations:
+    sdk: flutter
+
   cupertino_icons: ^1.0.8
 
   # --- Firebase --------------------------------------------------------------

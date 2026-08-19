@@ -105,6 +105,11 @@ jobs:
       - name: Add Firebase + Google Sign-In + Audio deps
         run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers
 
+      - name: Localização oficial do framework (pt-BR)
+        # Do SDK, não do pub.dev. `casca/raiz_do_aplicativo.dart` a importa: sem
+        # esta linha o overlay de lib/ não compila e o build web falha.
+        run: cd app_build && flutter pub add "flutter_localizations:{sdk: flutter}"
+
       - name: Declare assets in pubspec (robusto)
         run: |
           cd app_build
