@@ -100,6 +100,25 @@ class AutenticacaoFalsa implements ComandosDeAutenticacao {
   int saidas = 0;
   String uidQueVaiEntrar = 'uid-A';
 
+  /// O que o próximo `entrar` devolve. O padrão é o de sempre — entrar dando
+  /// certo —, e por isso nenhuma suíte existente muda de comportamento.
+  ResultadoDeLogin proximoResultado = const ResultadoDeLogin.entrou();
+
+  /// Segura o pedido de login no ar até o teste soltar.
+  ///
+  /// Sem isto não dá para OBSERVAR o estado "entrando…": o `Future` de um
+  /// dublê resolve no mesmo microtask, e a tela nunca chega a desenhar o
+  /// indicador de progresso que a OS manda nomear.
+  Completer<void>? _represa;
+
+  /// O próximo `entrar` fica pendurado até [soltarLogin].
+  void segurarProximoLogin() => _represa = Completer<void>();
+
+  void soltarLogin() {
+    _represa?.complete();
+    _represa = null;
+  }
+
   @override
   List<ProvedorDeLogin> get provedoresDisponiveis => const [
     ProvedorDeLogin.google,
@@ -108,8 +127,14 @@ class AutenticacaoFalsa implements ComandosDeAutenticacao {
   @override
   Future<ResultadoDeLogin> entrar(ProvedorDeLogin provedor) async {
     entradas++;
-    _fluxo.add(uidQueVaiEntrar);
-    return const ResultadoDeLogin.entrou();
+    final represa = _represa;
+    if (represa != null) await represa.future;
+    // Só um login BEM-SUCEDIDO mexe no fluxo de uids: uma falha não troca de
+    // conta, e empurrar uid aqui faria a casca navegar apesar do erro.
+    if (proximoResultado.desfecho == DesfechoDeLogin.entrou) {
+      _fluxo.add(uidQueVaiEntrar);
+    }
+    return proximoResultado;
   }
 
   @override
