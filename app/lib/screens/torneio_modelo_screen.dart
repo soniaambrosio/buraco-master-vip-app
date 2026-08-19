@@ -291,21 +291,34 @@ class _ModeloTorneioScreenState extends State<ModeloTorneioScreen> {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: TorneiosPalette.amethyst.withValues(alpha: .48)),
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.tune_rounded, color: TorneiosPalette.gold, size: 34),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Modelo recorrente', style: TextStyle(color: TorneiosPalette.goldHi, fontWeight: FontWeight.w900)),
-                Text('Todas as decisões finais serão validadas pelo Claude.', style: TextStyle(color: Color(0xFFD3C0E4), fontSize: 10.5)),
-              ],
+      // Este era o UNICO Switch cru da folha. O rotulo "Modelo recorrente"
+      // era no IRMAO do controle na arvore — mesma profundidade, sem
+      // associacao —, entao o leitor de tela anunciava um interruptor sem
+      // nome. Os outros doze toggles usam `SwitchListTile`, que resolve isso
+      // internamente com `MergeSemantics`.
+      //
+      // Aqui o desenho e outro (icone + coluna de dois textos + Switch numa
+      // Row), e trocar por `SwitchListTile` mudaria o layout. `MergeSemantics`
+      // entrega a MESMA semantica sem tocar em uma unica medida: ele nao e
+      // widget de layout, so colapsa a subarvore num no unico — que passa a
+      // carregar o nome, o estado ligado/desligado e a acao de toque juntos.
+      child: MergeSemantics(
+        child: Row(
+          children: [
+            const Icon(Icons.tune_rounded, color: TorneiosPalette.gold, size: 34),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Modelo recorrente', style: TextStyle(color: TorneiosPalette.goldHi, fontWeight: FontWeight.w900)),
+                  Text('Todas as decisões finais serão validadas pelo Claude.', style: TextStyle(color: Color(0xFFD3C0E4), fontSize: 10.5)),
+                ],
+              ),
             ),
-          ),
-          Switch(value: _ativo, onChanged: (v) => setState(() => _ativo = v), activeColor: TorneiosPalette.gold),
-        ],
+            Switch(value: _ativo, onChanged: (v) => setState(() => _ativo = v), activeColor: TorneiosPalette.gold),
+          ],
+        ),
       ),
     );
   }

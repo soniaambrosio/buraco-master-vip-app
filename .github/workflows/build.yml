@@ -337,6 +337,32 @@ jobs:
           flutter test test/torneios/saneamento_mock_admin_test.dart --reporter expanded
           echo "PORTÃO VERDE: Central de Torneios sem ferramenta mock e gestão sob autoridade, commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE ACESSIBILIDADE — P0 semânticos da Central de Torneios"
+        # A auditoria da OS 12 mediu TRÊS achados P0 nesta folha. Dois são
+        # semânticos, e a OS 12.1 os fechou: dois controles só-ícone que
+        # chegavam à árvore com rótulo vazio ("Ver classificação", na Sala de
+        # espera, e "Compartilhar conquista", no Resultado), e um Switch cru
+        # cujo rótulo era nó IRMÃO, e não do próprio controle.
+        #
+        # O portão lê a ÁRVORE SEMÂNTICA real, montada em 360x800 dp — não o
+        # texto do código. Um grep por `semanticLabel` continuaria verde se o
+        # rótulo fosse escrito no widget errado, e continuaria verde se o nó
+        # fosse duplicado, que é justamente o defeito vizinho.
+        #
+        # Ele também guarda a FRONTEIRA com a OS 12.2: o terceiro P0 é de
+        # layout, continua medido e nomeado aqui, e o portão fica VERMELHO se
+        # alguém o corrigir por dentro de uma OS de reparo semântico.
+        run: |
+          if [ ! -f app/test/torneios/a11y_p0_semantico_test.dart ]; then
+            echo "ERRO: a11y_p0_semantico_test.dart não encontrado — o portão de acessibilidade é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/torneios
+          cp app/test/torneios/a11y_p0_semantico_test.dart app_build/test/torneios/
+          cd app_build
+          flutter test test/torneios/a11y_p0_semantico_test.dart --reporter expanded
+          echo "PORTÃO VERDE: P0 semânticos de Torneios fechados, commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
         # validado por perfil de build, protocolo 2 no handshake, renovação de

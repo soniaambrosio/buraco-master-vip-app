@@ -151,6 +151,13 @@ jobs:
           # lib/ impede que o seletor de cenarios de laboratorio e o
           # mostrarAdmin voltem por outra tela.
           roda torneiosmk test/torneios/saneamento_mock_admin_test.dart
+          # OS 12.1 — P0 semanticos de Torneios: os dois controles so-icone
+          # que chegavam a arvore sem nome nenhum, e o Switch cru cujo rotulo
+          # era no irmao. A prova le a arvore semantica real e exerce o toque
+          # pelo SemanticsOwner, que e o caminho da tecnologia assistiva.
+          # Guarda tambem a fronteira com a OS 12.2: o P0 de layout continua
+          # medido, e corrigi-lo por aqui deixa o portao vermelho.
+          roda torneiosa11y test/torneios/a11y_p0_semantico_test.dart
           # OS Integracao do Splash Rive Constelacao: o binario aprovado (tamanho,
           # cabecalho, SHA-256 e os nomes do artboard e da timeline DENTRO do
           # arquivo, lidos pelo bundle), o portao duplo animacao x bootstrap, a
@@ -325,7 +332,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud splash billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosa11y splash billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -376,7 +383,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosmk splash billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosmk torneiosa11y splash billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

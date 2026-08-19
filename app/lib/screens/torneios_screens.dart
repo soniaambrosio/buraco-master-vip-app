@@ -1380,7 +1380,12 @@ class _SalaEsperaTorneioScreenState extends State<SalaEsperaTorneioScreen> {
       title: 'Sala de espera',
       subtitle: vm.nome,
       onBack: widget.onVoltar,
-      actions: [IconButton(onPressed: widget.onVerClassificacao, icon: const Icon(Icons.leaderboard_rounded, color: TorneiosPalette.goldHi))],
+      // O unico caminho da Sala de espera para a classificacao era um icone
+      // sem nome nenhum: o leitor de tela anunciava "botao" e parava ai. O nome
+      // vai no `semanticLabel` do icone, e nao num `tooltip`, porque o tooltip
+      // cai no campo secundario do no de acessibilidade — o TalkBack so o le
+      // quando NAO ha descricao de conteudo, e outros servicos nao o leem.
+      actions: [IconButton(onPressed: widget.onVerClassificacao, icon: const Icon(Icons.leaderboard_rounded, color: TorneiosPalette.goldHi, semanticLabel: 'Ver classificação'))],
       scroll: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1706,7 +1711,9 @@ class ResultadoTorneioScreen extends StatelessWidget {
       title: 'Resultado oficial',
       subtitle: vm.nome,
       onBack: onVoltar,
-      actions: [IconButton(onPressed: () => callbacks.onCompartilharConquista(vm.tournamentId), icon: const Icon(Icons.share_rounded, color: TorneiosPalette.goldHi))],
+      // Mesmo defeito do botao de classificacao, e o nome diz a ACAO
+      // ("Compartilhar conquista"), nao o desenho do icone ("compartilhar").
+      actions: [IconButton(onPressed: () => callbacks.onCompartilharConquista(vm.tournamentId), icon: const Icon(Icons.share_rounded, color: TorneiosPalette.goldHi, semanticLabel: 'Compartilhar conquista'))],
       scroll: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
