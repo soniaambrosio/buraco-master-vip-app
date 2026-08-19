@@ -153,6 +153,22 @@ List<No> arvore(WidgetTester tester) {
   }
 
   andar(raiz, 0, null);
+
+  // Sem esta linha, o dia em que a árvore vier vazia deixaria VERDE toda
+  // afirmação da forma "não existe nó com tal defeito" — e são várias, aqui.
+  // Verde por vazio é o pior resultado possível num portão de acessibilidade.
+  //
+  // Não há `ensureSemantics()` neste arquivo de propósito: nesta binding a
+  // semântica já vem ligada, e o handle traz junto uma armadilha conhecida —
+  // `flutter_test` confere que os handles foram descartados ANTES de rodar os
+  // tearDowns, então `addTearDown(handle.dispose)` reprova o arquivo inteiro e
+  // esconde a falha real. Se algum dia a semântica deixar de vir ligada, o
+  // `!` acima estoura alto e esta guarda pega o resto.
+  expect(
+    saida.length,
+    greaterThan(10),
+    reason: 'a varredura precisa ter árvore para ler — vieram ${saida.length} nós',
+  );
   return saida;
 }
 
