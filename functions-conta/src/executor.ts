@@ -401,6 +401,83 @@ async function tratarBilling(ctx: Contexto): Promise<void> {
 }
 
 /// O corte do vinculo.
+/// A etapa `mesas` — sete itens, e a ordem e a do plano.
+///
+/// ELA EXISTIA NO PLANO E NAO NO EXECUTOR, e o efeito nao era "a etapa nao
+/// roda": `executarEtapa` lanca ao ver etapa sem execucao, entao a exclusao
+/// INTEIRA parava antes de apagar qualquer coisa. Os testes unitarios nao
+/// pegavam porque conferem matriz x plano; quem instancia `EXECUCOES` e a suite
+/// de emulador.
+///
+/// NADA AQUI DECIDE RETENCAO. Cada operacao cumpre a classe que
+/// `inventario.ts` ja fixou, e os campos sao os que o produtor real grava
+/// (`functions-mesas/src/firestore.ts` e `functions-economia/economiaStore.js`).
+///
+/// A ORDEM, como o resumo do plano descreve:
+///
+///   1. o que NAO responde mais a ninguem sai primeiro — contador de palpites,
+///      ancoras de assento e passe de cortesia;
+///   2. depois o que e COMPARTILHADO perde o titular — convite, sala, admissoes
+///      e o livro-razao. A sala vem por ultimo entre as suas porque perder o
+///      `proprietarioUid` e o que impede alguem de herdar o controle das
+///      cadeiras de uma conta que nao existe mais.
+async function tratarMesas(ctx: Contexto): Promise<void> {
+  // --- APAGAR ---------------------------------------------------------------
+
+  // `tentativasDeCodigo/{uid}` — contador de janela de dez minutos. A chave E o
+  // uid, entao nao ha consulta: um `delete` de documento que pode nao existir e
+  // idempotente por construcao no Firestore.
+  await db().collection("tentativasDeCodigo").doc(ctx.uid).delete();
+
+  // `passesVip/{uid}` — passe de cortesia, tambem chaveado pelo uid.
+  await db().collection("passesVip").doc(ctx.uid).delete();
+
+  // `assentosAdmitidos/{codigoDaSala}__{uid}` — a chave e COMPOSTA, e por isso a
+  // busca e pelo campo `uid`, que o produtor grava no documento junto com a
+  // ancora. Derivar a chave exigiria conhecer todas as salas em que ele sentou,
+  // que e informacao que esta etapa nao tem — e nao deve passar a ter.
+  await apagarPorConsulta(
+    db().collection("assentosAdmitidos").where("uid", "==", ctx.uid)
+  );
+
+  // --- DESVINCULAR ----------------------------------------------------------
+  //
+  // Os quatro abaixo sao COMPARTILHADOS: uma sala tem quatro cadeiras, um
+  // convite serve a quem ainda vai entrar, uma admissao e o registro de uma
+  // tentativa e o livro-razao fecha a conta de moedas do jogo. Apagar qualquer
+  // um porque um participante saiu derrubaria o registro dos outros.
+  const marca = { uidRemovidoEm: agoraIso(), motivoRemocao: "contaExcluida" };
+
+  // O convite antes da sala: ele expira sozinho em horas, e tirar o dono dele
+  // primeiro fecha a porta de entrada nova enquanto a sala ainda se resolve.
+  await desvincularPorConsulta(
+    db().collection("codigosDeSala").where("proprietarioUid", "==", ctx.uid),
+    ["proprietarioUid"],
+    marca
+  );
+
+  await desvincularPorConsulta(
+    db().collection("admissoesDeMesa").where("uid", "==", ctx.uid),
+    ["uid"],
+    marca
+  );
+
+  await desvincularPorConsulta(
+    db().collection("economiaLedger").where("uid", "==", ctx.uid),
+    ["uid"],
+    marca
+  );
+
+  // A SALA POR ULTIMO. Sem `proprietarioUid`, `podeControlarCadeiras` deixa de
+  // reconhecer dono — e ninguem herda o controle das cadeiras de uma conta
+  // encerrada. A mesa dos outros tres continua de pe.
+  await desvincularPorConsulta(
+    db().collection("salasPrivadas").where("proprietarioUid", "==", ctx.uid),
+    ["proprietarioUid"],
+    marca
+  );
+}
+
 async function cortarIdentidade(ctx: Contexto): Promise<void> {
   if (ctx.publicId) {
     // O perfil publico PERDE O ROSTO e ganha o estado que o contrato de
@@ -481,6 +558,7 @@ const EXECUCOES: Record<string, Execucao> = {
   colecoes: apagarColecoes,
   ranking: anonimizarRanking,
   billing: tratarBilling,
+  mesas: tratarMesas,
   identidade: cortarIdentidade,
   perfil: apagarPerfil,
   encerrar: apagarAutenticacao,

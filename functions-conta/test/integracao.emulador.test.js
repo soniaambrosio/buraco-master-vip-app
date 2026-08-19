@@ -66,6 +66,7 @@ const ALVO = "uid-do-jogador-que-sai";
 const AMIGO = "uid-do-amigo";
 const TERCEIRO = "uid-de-quem-fica";
 const PUBLIC_ID = "P0ALVO0000AA";
+const SALA = "SALA01";
 const PUBLIC_AMIGO = "P0AMIGO000BB";
 
 // ---------------------------------------------------------------------------
@@ -100,6 +101,14 @@ const COLECOES = [
   "matches",
   "campaigns",
   "tournaments",
+  // A etapa `mesas`: tres colecoes APAGAR e quatro DESVINCULAR.
+  "tentativasDeCodigo",
+  "passesVip",
+  "assentosAdmitidos",
+  "codigosDeSala",
+  "admissoesDeMesa",
+  "economiaLedger",
+  "salasPrivadas",
   C_DIARIO,
 ];
 
@@ -172,6 +181,76 @@ async function semearVip(uid = ALVO) {
     .collection("billingEvents")
     .doc("msg-1")
     .set({ uid, messageId: "msg-1", estado: "concluido", token: "abc1" });
+}
+
+/// As sete colecoes da etapa `mesas`, com dado do ALVO e dado de TERCEIRO.
+///
+/// O terceiro aparece em TODAS de proposito: e ele que prova que excluir um
+/// jogador nao leva junto o registro de outro. A sala e o convite sao
+/// COMPARTILHADOS — o alvo e o dono, mas ha mais gente na mesa.
+async function semearMesas(uid = ALVO) {
+  await db.collection("tentativasDeCodigo").doc(uid).set({ uid, tentativas: 3 });
+  await db.collection("tentativasDeCodigo").doc(TERCEIRO).set({ uid: TERCEIRO, tentativas: 1 });
+
+  await db.collection("passesVip").doc(uid).set({ uid, consumidoEm: null });
+  await db.collection("passesVip").doc(TERCEIRO).set({ uid: TERCEIRO, consumidoEm: null });
+
+  // Chave COMPOSTA `{codigoDaSala}__{uid}`, e campo `uid` no documento — e pelo
+  // campo que a exclusao acha, porque a chave exigiria conhecer todas as salas.
+  await db
+    .collection("assentosAdmitidos")
+    .doc(SALA + "__" + uid)
+    .set({ uid, codigoDaSala: SALA, assento: 0 });
+  await db
+    .collection("assentosAdmitidos")
+    .doc(SALA + "__" + TERCEIRO)
+    .set({ uid: TERCEIRO, codigoDaSala: SALA, assento: 2 });
+
+  await db.collection("codigosDeSala").doc("impressao-1").set({
+    proprietarioUid: uid,
+    codigoDaSala: SALA,
+    expiraEm: "2026-12-31T00:00:00.000Z",
+  });
+  await db.collection("codigosDeSala").doc("impressao-2").set({
+    proprietarioUid: TERCEIRO,
+    codigoDaSala: "OUTRA",
+    expiraEm: "2026-12-31T00:00:00.000Z",
+  });
+
+  await db.collection("salasPrivadas").doc(SALA).set({
+    salaId: SALA,
+    codigoDaSala: SALA,
+    proprietarioUid: uid,
+    ocupantes: [uid, TERCEIRO],
+  });
+  await db.collection("salasPrivadas").doc("OUTRA").set({
+    salaId: "OUTRA",
+    codigoDaSala: "OUTRA",
+    proprietarioUid: TERCEIRO,
+    ocupantes: [TERCEIRO],
+  });
+
+  await db.collection("admissoesDeMesa").doc("te_do_alvo").set({
+    uid,
+    tentativaEntradaId: "te_do_alvo",
+    decisao: "admitido",
+  });
+  await db.collection("admissoesDeMesa").doc("te_do_terceiro").set({
+    uid: TERCEIRO,
+    tentativaEntradaId: "te_do_terceiro",
+    decisao: "admitido",
+  });
+
+  await db.collection("economiaLedger").doc("recibo-do-alvo").set({
+    uid,
+    chaveIdempotencia: "recibo-do-alvo",
+    delta: 50,
+  });
+  await db.collection("economiaLedger").doc("recibo-do-terceiro").set({
+    uid: TERCEIRO,
+    chaveIdempotencia: "recibo-do-terceiro",
+    delta: 20,
+  });
 }
 
 async function semearRanqueado(uid = ALVO, publicId = PUBLIC_ID) {
@@ -709,5 +788,102 @@ describe("falha parcial e retomada", () => {
       await existe(`users/${ALVO}`),
       "convergir e NAO TOCAR EM NADA: o diario e a autoridade sobre o que ja foi feito"
     );
+  });
+});
+
+// ===========================================================================
+// A ETAPA `mesas` — declarada no plano e, ate esta correcao, sem execucao
+// ===========================================================================
+//
+// A divergencia nao fazia a etapa "nao rodar": `executarEtapa` LANCA ao ver
+// etapa sem execucao, entao a exclusao INTEIRA parava antes de apagar qualquer
+// coisa. E so esta suite pega — a unitaria confere matriz x plano, e quem
+// instancia `EXECUCOES` e o emulador.
+
+describe("jogador com mesas", () => {
+  test("os tres itens APAGAR somem, e os do terceiro ficam", async () => {
+    await semearComum();
+    await semearMesas();
+
+    await executar(ALVO);
+
+    assert.equal(await existe("tentativasDeCodigo/" + ALVO), false);
+    assert.equal(await existe("passesVip/" + ALVO), false);
+    assert.equal(await existe("assentosAdmitidos/" + SALA + "__" + ALVO), false);
+
+    assert.equal(
+      await existe("tentativasDeCodigo/" + TERCEIRO),
+      true,
+      "o contador do terceiro nao e dele"
+    );
+    assert.equal(await existe("passesVip/" + TERCEIRO), true);
+    assert.equal(
+      await existe("assentosAdmitidos/" + SALA + "__" + TERCEIRO),
+      true,
+      "a ancora do terceiro fica: ele continua sentado"
+    );
+  });
+
+  test("os quatro DESVINCULAR mantem o fato e perdem o titular", async () => {
+    await semearComum();
+    await semearMesas();
+
+    await executar(ALVO);
+
+    const sala = await dados("salasPrivadas/" + SALA);
+    assert.ok(sala, "a sala pode estar em andamento com outras pessoas");
+    assert.equal(
+      sala.proprietarioUid,
+      undefined,
+      "sem dono, ninguem herda o controle das cadeiras"
+    );
+    assert.deepEqual(
+      sala.ocupantes,
+      [ALVO, TERCEIRO],
+      "o executor NAO mexe em lista de ocupantes: isso e regra de Mesa, e nao mora aqui"
+    );
+    assert.equal(sala.motivoRemocao, "contaExcluida");
+
+    const convite = await dados("codigosDeSala/impressao-1");
+    assert.ok(convite, "o convite serve a quem ainda vai entrar");
+    assert.equal(convite.proprietarioUid, undefined);
+
+    const admissao = await dados("admissoesDeMesa/te_do_alvo");
+    assert.ok(admissao, "a decisao de admissao aconteceu, e o registro dela fica");
+    assert.equal(admissao.uid, undefined);
+    assert.equal(admissao.decisao, "admitido", "o fato permanece intacto");
+
+    const recibo = await dados("economiaLedger/recibo-do-alvo");
+    assert.ok(recibo, "o livro-razao fecha a conta de moedas do jogo");
+    assert.equal(recibo.uid, undefined);
+    assert.equal(recibo.delta, 50, "o valor do lancamento nao muda");
+  });
+
+  test("nenhum registro de OUTRO jogador e tocado", async () => {
+    await semearComum();
+    await semearMesas();
+
+    await executar(ALVO);
+
+    assert.equal((await dados("codigosDeSala/impressao-2")).proprietarioUid, TERCEIRO);
+    assert.equal((await dados("salasPrivadas/OUTRA")).proprietarioUid, TERCEIRO);
+    assert.equal((await dados("admissoesDeMesa/te_do_terceiro")).uid, TERCEIRO);
+    assert.equal((await dados("economiaLedger/recibo-do-terceiro")).uid, TERCEIRO);
+  });
+
+  test("repetir a exclusao converge, sem erro e sem efeito novo", async () => {
+    await semearComum();
+    await semearMesas();
+
+    await executar(ALVO);
+    const primeira = await dados("salasPrivadas/" + SALA);
+
+    await executar(ALVO);
+    const segunda = await dados("salasPrivadas/" + SALA);
+
+    assert.equal(segunda.proprietarioUid, undefined);
+    assert.equal(segunda.motivoRemocao, primeira.motivoRemocao);
+    assert.equal(await existe("passesVip/" + ALVO), false);
+    assert.equal(await existe("passesVip/" + TERCEIRO), true);
   });
 });
