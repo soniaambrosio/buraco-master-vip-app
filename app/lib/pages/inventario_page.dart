@@ -76,7 +76,10 @@ class _InventarioPageState extends State<InventarioPage> {
     setState(() => _vm = const InventarioVM.carregando());
     try {
       final vm = await _service.carregar(uid);
-      if (!mounted) return;
+      // null = esta leitura foi superada por outra mais nova (troca de conta, ou
+      // um "tentar de novo" durante uma leitura lenta). Sair sem `setState`
+      // deixa a leitura vencedora mandar no que aparece.
+      if (vm == null || !mounted) return;
       setState(() => _vm = vm);
     } on InventarioIndisponivel catch (e) {
       if (!mounted) return;
@@ -89,7 +92,12 @@ class _InventarioPageState extends State<InventarioPage> {
   }
 
   Future<void> _equipar(String itemId) async {
-    final uid = _uidCarregado;
+    // Lido da sessão canônica NO MOMENTO DO TOQUE, e não do campo desta tela: se
+    // a conta trocou entre o desenho do card e o toque, o pedido tem de sair com
+    // o dono atual — e o serviço recusa, porque o inventário em memória é do
+    // outro. O campo serviria para a comparação de recarga, não para autorizar
+    // uma escrita.
+    final uid = EscopoSessao.identidadeDe(context).uid;
     if (uid == null || _equipando != null) return;
     setState(() => _equipando = itemId);
     try {

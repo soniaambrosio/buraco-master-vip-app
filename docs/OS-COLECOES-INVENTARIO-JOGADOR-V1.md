@@ -143,3 +143,61 @@ levantava o inventário e não tinha de onde saber o nome de uma peça.
 chama `RankingVM.mock()`, removida de propósito em uma integração anterior
 (o comentário em `ranking_screen.dart:106` registra a remoção). É anterior a esta
 OS e não foi tocada.
+
+## Procedência do UID (auditoria de encerramento)
+
+**PASS — a identidade vem da sessão canônica, sem leitura independente de auth.**
+
+Varredura por `FirebaseAuth` / `currentUser` / `authStateChanges` /
+`firebase_auth` em `lib/services/inventario_service.dart`,
+`lib/pages/inventario_page.dart` e `lib/colecoes/*.dart`: **nenhuma ocorrência.**
+
+A cadeia é:
+
+```
+SessaoDoJogador.estado.uid
+  → EscopoSessao.identidadeDe(context).uid        (inventario_page.dart)
+    → InventarioService.carregar(uid) / .equipar(uid, …)
+      → ColecaoRepositorio.carregarInventario(uid:)  → users/{uid}/inventory
+```
+
+O serviço **não descobre** o UID: recebe-o por parâmetro e não importa
+`firebase_auth`. A página lê `EscopoSessao`, que é o `InheritedNotifier` da
+`SessaoDoJogador`. `publicId` não é usado como chave em ponto nenhum — é opaco e
+apontaria para um caminho inexistente.
+
+### Defeito encontrado nesta auditoria e corrigido
+
+Seguindo esse fio apareceu uma corrida real, presente no commit anterior
+(`3829066`): `carregar()` escrevia `_inventario` e `_uidCarregado` **depois do
+`await`, sem verificar se outra leitura a havia superado**.
+
+`Future` não se cancela em Dart. A leitura de A continua e termina mesmo depois
+da troca de conta — então uma resposta lenta de A que chegasse **depois** da de B
+sobrescrevia o estado com o de A: B via o acervo de A, e `equipar` passava a
+aceitar item de A em nome de B.
+
+Correção: contador de geração. `carregar` numera o pedido, e a resposta que não
+for a do pedido corrente é **descartada** (devolve `null`) em vez de aplicada —
+inclusive no caminho de erro, para que a falha de A não apareça na tela de B.
+`equipar` recusa o *commit* em memória se a sessão virou durante a escrita (a
+gravação no servidor foi de A, no caminho de A, e estava correta — o que não pode
+é ela virar estado de B). A página ignora `null` e lê o UID da sessão **no
+momento do toque**, não de um campo desenhado antes.
+
+### Prova
+
+Repositório com portão por UID, tornando a corrida determinística (sem portão o
+teste passaria por sorte). Cinco casos em `inventario_page_test.dart`:
+
+| Caso | Garante |
+| --- | --- |
+| acervo de A não APARECE depois de B carregar | leitura superada devolve `null` |
+| acervo de A não é ACEITO em B | `equipar` segue operando como B |
+| item de A nunca é aceito em nome de B | recusa `itemNaoPossuido`, nada vai ao servidor |
+| sair da conta durante a leitura | resposta descartada, nada fica em memória |
+| erro de leitura superada | não vira erro na tela de B |
+
+Mutação: **removida a trava de geração, 4 dos 5 casos quebram.**
+
+Total do portão de coleções: **140 casos, verdes.**

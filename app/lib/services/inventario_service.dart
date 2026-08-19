@@ -95,6 +95,13 @@ class InventarioService {
   /// ate a primeira leitura terminar.
   String? _uidCarregado;
 
+  /// Numero do pedido de leitura mais recente.
+  ///
+  /// `Future` nao se cancela em Dart: uma leitura lenta CONTINUA e vai terminar,
+  /// mesmo que o jogador ja tenha trocado de conta. O contador e o que permite
+  /// reconhecer a resposta que chegou tarde e descarta-la em vez de aplica-la.
+  int _geracao = 0;
+
   InventarioService({
     ColecaoRepositorio? repositorio,
     Future<String> Function(String)? lerAsset,
@@ -116,7 +123,12 @@ class InventarioService {
   /// [uid] nulo ou vazio devolve [EstadoInventario.semSessao] em vez de um
   /// inventario vazio: nao ter itens e nao saber se tem sao coisas diferentes, e
   /// so uma delas deve ser dita ao jogador.
-  Future<InventarioVM> carregar(String? uid) async {
+  ///
+  /// Devolve null quando a leitura foi SUPERADA por outra mais nova. Nesse caso
+  /// nada e escrito em memoria e a tela deve ignorar a resposta.
+  Future<InventarioVM?> carregar(String? uid) async {
+    final geracao = ++_geracao;
+
     if (uid == null || uid.isEmpty) {
       _esquecer();
       return const InventarioVM.semSessao();
@@ -127,8 +139,25 @@ class InventarioService {
     if (_uidCarregado != uid) _esquecer();
 
     final catalogo = await carregarCatalogo();
-    final inventario =
-        await _aoServidor(() => _repositorio.carregarInventario(uid: uid));
+
+    final InventarioUsuario inventario;
+    try {
+      inventario =
+          await _aoServidor(() => _repositorio.carregarInventario(uid: uid));
+    } catch (_) {
+      // Erro de uma leitura ja superada nao vai a tela: mostrar "sem conexao"
+      // do jogador A por cima do acervo de B, que carregou bem, seria falar do
+      // pedido errado.
+      if (geracao != _geracao) return null;
+      rethrow;
+    }
+
+    // O PONTO DA TRAVA. Sem esta linha, uma resposta atrasada de A que chega
+    // DEPOIS da de B sobrescreve `_inventario` e `_uidCarregado` com os de A: o
+    // jogador B passa a ver o acervo de A, e `equipar` passa a aceitar itens de
+    // A em nome de B. Comparar `uid` nao bastaria — duas leituras do MESMO uid
+    // tambem podem se cruzar, e a mais velha venceria.
+    if (geracao != _geracao) return null;
 
     _inventario = inventario;
     _uidCarregado = uid;
@@ -141,6 +170,7 @@ class InventarioService {
   /// em memoria muda. Atualizar antes da confirmacao mostraria a troca feita e a
   /// desfaria na proxima leitura.
   Future<EquipagemAplicada> equipar(String uid, String itemId) async {
+    final geracao = _geracao;
     final catalogo = await carregarCatalogo();
     final atual = _inventario;
     if (atual == null || _uidCarregado != uid) {
@@ -165,6 +195,16 @@ class InventarioService {
           itemIdEquipado: itemId,
           itemIdsDesequipados: resultado.desequipados,
         ));
+
+    // A gravacao no servidor foi de A e estava certa — era item de A, no caminho
+    // de A. O que nao pode acontecer e o resultado dela virar o estado em
+    // memoria depois que a sessao virou B.
+    if (geracao != _geracao || _uidCarregado != uid) {
+      throw const InventarioIndisponivel(
+        'A sessão mudou enquanto isso. Recarrega teus itens.',
+        podeTentarDeNovo: true,
+      );
+    }
 
     final novo = resultado.inventario!;
     _inventario = novo;

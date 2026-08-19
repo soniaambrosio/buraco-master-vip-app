@@ -13,10 +13,13 @@
 // SUPERFICIE DE TELEFONE: o padrao do flutter_test e 800x600, uma janela de
 // desktop deitada; a tela e de celular. Ver test/superficie_de_teste.dart.
 
+import 'dart:async';
+
 import 'package:buraco_master_vip/colecoes/colecao_campanha.dart';
 import 'package:buraco_master_vip/colecoes/colecao_catalogo.dart';
 import 'package:buraco_master_vip/colecoes/colecao_inventario.dart';
 import 'package:buraco_master_vip/colecoes/colecao_repositorio.dart';
+import 'package:buraco_master_vip/colecoes/colecao_ui_contract.dart';
 import 'package:buraco_master_vip/pages/inventario_page.dart';
 import 'package:buraco_master_vip/services/inventario_service.dart';
 import 'package:buraco_master_vip/sessao/escopo_sessao.dart';
@@ -97,7 +100,83 @@ class RepositorioFalso implements ColecaoRepositorio {
 }
 
 /// Identidade pronta, sem rede.
-class FonteFixa implements FonteDeIdentidade {
+
+/// Repositorio que permite PRENDER a leitura de um uid especifico.
+///
+/// E o que torna a corrida deterministica: sem um portao, "a resposta de A chega
+/// depois da de B" dependeria de temporizacao e o teste passaria por sorte.
+class RepositorioComPortao implements ColecaoRepositorio {
+  RepositorioComPortao(this._itens);
+
+  List<ItemInventario> _itens;
+
+  final Map<String, Completer<void>> _portoes = {};
+
+  /// Erro a lancar na leitura daquele uid, quando houver.
+  final Map<String, ErroColecao> erroPorUid = {};
+
+  final List<({String uid, String equipado, List<String> desequipados})>
+      equipagens = [];
+
+  void prender(String uid) => _portoes[uid] = Completer<void>();
+
+  void soltar(String uid) => _portoes.remove(uid)?.complete();
+
+  @override
+  Future<InventarioUsuario> carregarInventario({
+    required String uid,
+    String? collectionId,
+  }) async {
+    final portao = _portoes[uid];
+    if (portao != null) await portao.future;
+    final erro = erroPorUid[uid];
+    if (erro != null) throw erro;
+    return InventarioUsuario(uid, _itens.where((i) => i.userId == uid));
+  }
+
+  @override
+  Future<void> aplicarEquipagem({
+    required String uid,
+    required String itemIdEquipado,
+    required List<String> itemIdsDesequipados,
+  }) async {
+    equipagens.add((
+      uid: uid,
+      equipado: itemIdEquipado,
+      desequipados: itemIdsDesequipados,
+    ));
+    _itens = [
+      for (final item in _itens)
+        if (item.itemId == itemIdEquipado)
+          item.copiarCom(equipped: true)
+        else if (itemIdsDesequipados.contains(item.itemId))
+          item.copiarCom(equipped: false)
+        else
+          item,
+    ];
+  }
+
+  @override
+  Future<CampanhaColecao> carregarCampanha(String campaignId) =>
+      throw UnimplementedError('o inventario nao le campanha');
+
+  @override
+  Future<bool> featureFlagLigada(CampanhaColecao campanha) =>
+      throw UnimplementedError('o inventario nao le feature flag');
+
+  @override
+  Future<EvidenciaElegibilidade> carregarEvidencia({
+    required String campaignId,
+    required String uid,
+  }) =>
+      throw UnimplementedError('o inventario nao le elegibilidade');
+
+  @override
+  Future<RespostaResgate> resgatar(String campaignId) =>
+      throw UnimplementedError('o inventario NAO resgata');
+}
+
+class FonteFixa implements FonteDeIdentidade {
   FonteFixa(this.uid);
 
   final String uid;
@@ -276,9 +355,9 @@ void main() {
     ]);
     final service = servicoCom(repo);
 
-    expect((await service.carregar(_uid)).totalItens, 1);
+    expect((await service.carregar(_uid))!.totalItens, 1);
 
-    final doOutro = await service.carregar('outro_uid');
+    final doOutro = (await service.carregar('outro_uid'))!;
     expect(doOutro.totalItens, 1);
     expect(
       doOutro.grupos.single.itens.single.id,
@@ -297,5 +376,111 @@ void main() {
       throwsA(isA<InventarioIndisponivel>()),
     );
     expect(repo.equipagens, isEmpty);
+  });
+
+  group('troca de conta A -> B com resposta atrasada', () {
+    // `Future` nao se cancela em Dart: a leitura de A CONTINUA depois de o
+    // jogador trocar de conta, e vai terminar. Estes casos prendem a leitura de
+    // A num portao, deixam a de B passar inteira, e so entao soltam A — que e a
+    // ordem que acontece de verdade quando a rede de A esta lenta.
+
+    late RepositorioComPortao repo;
+    late InventarioService service;
+
+    setUp(() {
+      repo = RepositorioComPortao([
+        _item(ColecaoItemIds.pioneerCrown, userId: 'uid_a'),
+        _item(ColecaoItemIds.pioneerEmblem, userId: 'uid_b'),
+      ]);
+      service = InventarioService(
+        repositorio: repo,
+        lerAsset: (_) async => catalogoBruto,
+      );
+    });
+
+    test('o acervo de A nao APARECE depois de B ter carregado', () async {
+      repo.prender('uid_a');
+
+      final futuroA = service.carregar('uid_a');
+      final vmB = await service.carregar('uid_b');
+
+      expect(vmB!.grupos.single.itens.single.id, ColecaoItemIds.pioneerEmblem);
+
+      // A resposta de A chega agora, atrasada.
+      repo.soltar('uid_a');
+      final vmA = await futuroA;
+
+      expect(
+        vmA,
+        isNull,
+        reason: 'leitura superada tem de ser descartada, nao entregue a tela',
+      );
+    });
+
+    test('o acervo de A nao e ACEITO em B: equipar segue sendo de B', () async {
+      repo.prender('uid_a');
+      final futuroA = service.carregar('uid_a');
+      await service.carregar('uid_b');
+      repo.soltar('uid_a');
+      await futuroA;
+
+      // Se a resposta atrasada de A tivesse vencido, o estado em memoria seria
+      // o de A e esta chamada seria recusada — ou, pior, gravaria item de A.
+      final aplicada = await service.equipar('uid_b', ColecaoItemIds.pioneerEmblem);
+
+      expect(aplicada.aceita, isTrue);
+      expect(repo.equipagens.single.equipado, ColecaoItemIds.pioneerEmblem);
+      expect(repo.equipagens.single.uid, 'uid_b');
+    });
+
+    test('item de A nunca e aceito em nome de B', () async {
+      repo.prender('uid_a');
+      final futuroA = service.carregar('uid_a');
+      await service.carregar('uid_b');
+      repo.soltar('uid_a');
+      await futuroA;
+
+      // A Coroa e de A. Pedi-la em nome de B tem de ser recusado pelo dominio,
+      // e nada pode chegar ao servidor.
+      final aplicada = await service.equipar('uid_b', ColecaoItemIds.pioneerCrown);
+
+      expect(aplicada.aceita, isFalse);
+      expect(aplicada.recusa, RecusaEquipagem.itemNaoPossuido);
+      expect(repo.equipagens, isEmpty);
+    });
+
+    test('sair da conta durante a leitura descarta a resposta', () async {
+      repo.prender('uid_a');
+      final futuroA = service.carregar('uid_a');
+
+      // Logout: a sessao canonica passa a nao ter uid.
+      final vmSaida = await service.carregar(null);
+      expect(vmSaida!.estado, EstadoInventario.semSessao);
+
+      repo.soltar('uid_a');
+      expect(await futuroA, isNull);
+
+      // E nada ficou em memoria para equipar.
+      await expectLater(
+        service.equipar('uid_a', ColecaoItemIds.pioneerCrown),
+        throwsA(isA<InventarioIndisponivel>()),
+      );
+    });
+
+    test('erro de uma leitura superada nao vira erro na tela de B', () async {
+      repo.prender('uid_a');
+      repo.erroPorUid['uid_a'] =
+          const ErroColecao(FalhaBackend.indisponivel, 'sem rede');
+
+      final futuroA = service.carregar('uid_a');
+      final vmB = await service.carregar('uid_b');
+      expect(vmB, isNotNull);
+
+      repo.soltar('uid_a');
+
+      // Sem a trava, este `await` lancaria e a tela de B mostraria "sem conexao"
+      // por causa de um pedido que nao e mais dela.
+      expect(await futuroA, isNull);
+    });
   });
 }
