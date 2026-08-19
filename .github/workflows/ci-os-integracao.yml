@@ -136,6 +136,15 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS A11Y-3 Casca navegavel: todo alvo tocavel de Home, Onde
+          # jogar e Perfil e uma acao NOMEADA, com papel de botao,
+          # disponibilidade verdadeira e 48 pontos de area tocavel. A
+          # suite le a ARVORE DE ACESSIBILIDADE que o Flutter produziu —
+          # rotulo, papel, estado e retangulo em pontos logicos —, e nao
+          # o codigo-fonte: e a unica forma de pegar um excludeSemantics
+          # que apaga a acao de toque junto com a decoracao, ou um piso
+          # de 48 que o layout de cima esmagou.
+          roda a11ycasca  test/casca/a11y_alvos_da_casca_test.dart
           # OS Identidade do Perfil Publico Visitado: quando A abre o perfil de
           # B, os QUATRO campos — nome, avatar, liga e numeros — vem do
           # `publicId` de B. O defeito que este gate fecha nao quebrava nada:
@@ -310,7 +319,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11ycasca perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -361,7 +370,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11ycasca perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

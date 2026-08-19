@@ -1261,13 +1261,32 @@ void main() {
         reason: 'a maquete de Amigos entrou no fecho de produção',
       );
 
+      // 55 → 56 AO ENTRAR O PISO DE ÁREA TOCÁVEL, e o arquivo também tem nome.
+      //
+      // Mesma disciplina das três rodadas acima. Este é o único componente
+      // novo da correção de acessibilidade dos botões: um número — 48 — e uma
+      // caixa que o aplica. Ele é alcançável porque as três telas o usam, e
+      // não arrasta nada: importa só o widgets.dart do Flutter, e é
+      // incapaz de decidir navegação ou disponibilidade (não recebe callback).
+      const doPisoDeToque = ['lib/widgets/alvo_minimo.dart'];
+      for (final caminho in doPisoDeToque) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — o piso de área tocável deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+
       expect(
         alcancaveis,
         hasLength(
           40 +
               doRankingReal.length +
               daNavegacaoPublica.length +
-              daDescobertaSocial.length,
+              daDescobertaSocial.length +
+              doPisoDeToque.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
