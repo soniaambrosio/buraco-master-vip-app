@@ -771,27 +771,29 @@ void main() {
   // =========================================================================
   // O LIMITE FUNCIONAL DECLARADO PELA OS
   // =========================================================================
-  group('pendência registrada — a identidade do terceiro', () {
-    testWidgets('o Ranking do visitado é DELE, e nenhuma identidade é inventada', (
+  group('a identidade do terceiro — pendência RESOLVIDA', () {
+    testWidgets('o perfil visitado é do visitado, nos quatro campos', (
       tester,
     ) async {
       // ---------------------------------------------------------------------
-      // ESTE CASO NÃO AFIRMA QUE O PERFIL VISITADO ESTÁ CERTO.
+      // ESTE CASO MUDOU DE SENTIDO, E A HISTÓRIA IMPORTA.
       // ---------------------------------------------------------------------
       //
-      // Ele afirma as três garantias que a composição DEVE dar, e deixa de fora
-      // — de propósito — o nome e o avatar, que continuam vindo da sessão de
-      // quem está olhando. Esse é o defeito conhecido, e consertá-lo exige
-      // BUSCAR e projetar a identidade pública do terceiro, que é trabalho de
-      // outra OS.
+      // Ele nasceu registrando uma PENDÊNCIA: naquela composição, o perfil
+      // visitado tinha a liga certa e o nome e o avatar de quem estava olhando,
+      // porque o `PerfilService` só recebia a identidade da sessão. O caso
+      // deliberadamente não afirmava nada sobre nome e avatar — afirmar o valor
+      // errado o carimbaria como esperado, e ficaria vermelho no dia da
+      // correção.
       //
-      // Escrever aqui um `expect(vm.nome, 'Terceiro')` seria mentir sobre o
-      // presente; escrever `expect(vm.nome, 'Ana')` seria pior — carimbaria o
-      // defeito como comportamento esperado, e o dia em que alguém o
-      // consertasse a suíte ficaria vermelha acusando a correção. Então o
-      // defeito fica registrado em prosa e em laudo, e o teste guarda só o que
-      // não pode regredir.
-      transporte.respostaPublica = (id) => publicoCom(id: id, liga: 'Prata');
+      // Esse dia chegou. A projeção pública que a tela já consultava para a liga
+      // sempre trouxe apelido e avatar junto; o cliente é que os descartava.
+      // Agora os quatro campos vêm do mesmo `publicId`, e é isso que se afirma.
+      //
+      // A matriz completa — com fixtures grotescamente diferentes entre
+      // visitante e visitado — está em `test/perfil/identidade_visitada_test.dart`.
+      transporte.respostaPublica = (id) =>
+          publicoCom(id: id, liga: 'Prata');
       await login(tester);
       await montar(
         tester,
@@ -805,9 +807,11 @@ void main() {
       // 2. o ranking exibido é o DO VISITADO, e não o de quem olha;
       expect(vm.ranking.liga, 'Prata');
       expect(vm.ranking.posicaoMundial, 50);
-      // 3. nenhuma identidade fictícia foi criada para tapar o buraco.
-      expect(vm.nome, isNot('Terceiro'));
-      expect(vm.nome.trim(), isNotEmpty);
+      // 3. e agora o nome também: a fixture publica apelido vazio, então vale a
+      //    regra de apresentação — o id público, que É de quem está sendo
+      //    visitado. O que não pode, em hipótese alguma, é ser o de quem olha.
+      expect(vm.nome, alvoX);
+      expect(vm.nome, isNot('Ana'));
       expect(vm.ranking.liga, isNot('Ouro'));
     });
 

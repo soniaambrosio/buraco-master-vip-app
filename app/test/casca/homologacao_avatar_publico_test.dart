@@ -1616,14 +1616,30 @@ void main() {
         );
       }
       expect(valoresVistos, isNotEmpty);
+
+      // AS DUAS FORMAS ACEITAS, e a segunda foi alargada quando o Perfil
+      // visitado passou a existir.
+      //
+      //   1. CHAMADA ao resolvedor. `avatarPublicoDe` é a porta principal e
+      //      `avatarPublicoDaIdentidade` é o atalho dela; as duas casam com
+      //      `avatarPublico`, e nenhum literal casa.
+      //
+      //   2. REPASSE de um valor que já veio dele. Antes, isso só acontecia na
+      //      forma `avatar` — um parâmetro com o mesmo nome. Agora o perfil
+      //      visitado recebe um retrato pronto e repassa `v.avatar`, que é o
+      //      mesmo repasse com um campo no meio.
+      //
+      // O repasse é reconhecido pela FORMA, e não por uma lista de nomes: um
+      // caminho de identificadores, sem aspas, sem `??`, sem `?.` e sem
+      // chamada. É a lição do próprio H-E09 aplicada de novo — proteger uso, e
+      // não coincidência textual. `'👑'` tem aspas; `identidade?.avatarRef ??
+      // '👑'` tem aspas e `??`; `identidade?.avatarRef` tem `?.`. Os três
+      // continuam reprovando.
+      final repasse = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$');
       for (final v in valoresVistos) {
         expect(
-          v,
-          anyOf(
-            contains('avatarPublicoDaIdentidade'),
-            equals('avatar'),
-            equals('avatarCanonico'),
-          ),
+          v.contains('avatarPublico') || repasse.hasMatch(v),
+          isTrue,
           reason: 'o avatar "$v" não vem do resolvedor',
         );
       }

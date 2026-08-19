@@ -491,4 +491,60 @@ void main() {
       reason: 'é por log que credencial e identidade vazam sem ninguém ver',
     );
   });
+
+  // =========================================================================
+  // O PORTÃO DA IDENTIDADE VISITADA EXISTE, E A AUSÊNCIA DELE REPROVA
+  // =========================================================================
+  //
+  // POR QUE ESTA PROVA MORA AQUI, E NÃO NA SUÍTE QUE ELA PROTEGE.
+  //
+  // O workflow trata arquivo de teste ausente como NÃO EXECUTADO, e NÃO
+  // EXECUTADO não derruba o portão — é uma decisão antiga e deliberada, para que
+  // um artefato que não existe naquele recorte não invente vermelho. O efeito
+  // colateral é que apagar um arquivo de suíte SILENCIA o gate dele em vez de
+  // quebrá-lo.
+  //
+  // Uma prova escrita dentro da própria suíte morreria junto com ela. Escrita
+  // aqui — num gate que já é obrigatório e que fala de outro assunto — ela
+  // sobrevive ao apagamento e o denuncia. É a mesma ideia do resto deste
+  // arquivo: a garantia tem de morar fora do que ela garante.
+  group('o portão da identidade visitada', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File('test/perfil/identidade_visitada_test.dart').existsSync(),
+        isTrue,
+        reason: 'a suíte que prova o Perfil visitado sumiu — e some em silêncio, '
+            'porque ausência vira NÃO EXECUTADO no portão',
+      );
+    });
+
+    test('o workflow a executa e a considera no portão', () {
+      // O overlay do CI roda a partir de `app_build/`, e o workflow fica dois
+      // níveis acima. Fora do CI o arquivo pode não estar alcançável — e aí o
+      // caso não tem o que afirmar, em vez de afirmar errado.
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+
+      expect(
+        texto,
+        contains('roda perfilvis  test/perfil/identidade_visitada_test.dart'),
+        reason: 'o gate perfilvis não executa mais a suíte',
+      );
+      // Nas DUAS listas: a da evidência publicada e a que decide verde/vermelho.
+      // Estar só na primeira faria o gate aparecer no relatório e não reprovar.
+      expect(
+        RegExp(r'GATES="[^"]*\bperfilvis\b').hasMatch(texto),
+        isTrue,
+        reason: 'perfilvis saiu da evidência publicada',
+      );
+      expect(
+        RegExp(r'for k in [^;]*\bperfilvis\b[^;]*; do').hasMatch(texto),
+        isTrue,
+        reason: 'perfilvis saiu do portão verde/vermelho — passaria a rodar '
+            'sem poder reprovar',
+      );
+    });
+  });
 }
