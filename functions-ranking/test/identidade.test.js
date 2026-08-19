@@ -63,11 +63,29 @@ function semComentarios(texto) {
 }
 
 describe("integracao: o Ranking nao tem gerador de identidade", () => {
+  /// A UNICA fonte deste codebase autorizada a sortear.
+  ///
+  /// A excecao nasceu com o Passe de Cortesia, que exige por contrato um
+  /// identificador de ciclo OPACO E NAO DERIVADO — uid, data, posicao e contador
+  /// nao servem, porque todos se deduzem de fora. Ver o cabecalho do proprio
+  /// arquivo, e o teste logo abaixo, que impede a excecao de virar porta.
+  const FONTE_DE_ALEATORIEDADE = "ids_opacos.ts";
+
   test("nenhuma fonte importa fonte de aleatoriedade", () => {
     // `randomBytes` era o insumo de `garantirIdPublico`. Sem ele nao se sorteia
-    // id — e um codebase que nao precisa de aleatoriedade para nada mais nao tem
-    // razao para importa-la de volta.
+    // id — e o ranking NAO e a autoridade de identidade publica: quem emite
+    // `publicId` e functions-social, e um segundo emissor criaria duas
+    // identidades para a mesma pessoa.
+    //
+    // ESTE TESTE FOI ESTREITADO, E NAO AFROUXADO. Ele nasceu banindo
+    // aleatoriedade em TODA fonte, com a premissa escrita de que "um codebase
+    // que nao precisa de aleatoriedade para nada mais nao tem razao para
+    // importa-la de volta". A premissa mudou: o Passe de Cortesia precisa. O
+    // que NAO mudou e o que o teste protege — nenhuma fonte que toque
+    // identidade sorteia coisa alguma, e a excecao e um arquivo so, de tres
+    // linhas, conferido pelo caso seguinte.
     for (const { arquivo, texto } of fontes()) {
+      if (arquivo === FONTE_DE_ALEATORIEDADE) continue;
       const codigo = semComentarios(texto);
       assert.equal(
         /randomBytes|randomUUID|crypto/.test(codigo),
@@ -80,6 +98,38 @@ describe("integracao: o Ranking nao tem gerador de identidade", () => {
         `${arquivo} usa Math.random.`
       );
     }
+  });
+
+  test("a excecao de aleatoriedade nao conhece identidade", () => {
+    // O QUE IMPEDE A EXCECAO DE VIRAR PORTA. `ids_opacos.ts` pode sortear, e so
+    // isso: se um dia ele aprender a palavra `publicId`, a autoridade de
+    // identidade tera voltado ao ranking por uma janela lateral — que e
+    // exatamente o defeito que o teste acima existe para impedir.
+    const arquivo = path.join(RAIZ_SRC, FONTE_DE_ALEATORIEDADE);
+    assert.equal(fs.existsSync(arquivo), true, "a excecao tem de existir para ser conferida");
+    const codigo = semComentarios(fs.readFileSync(arquivo, "utf8"));
+
+    for (const palavra of [
+      "publicId",
+      "publicPlayerId",
+      "playerIdentities",
+      "publicIdIndex",
+      "identidade",
+      "uid",
+      "Firestore",
+      "firestore",
+    ]) {
+      assert.equal(
+        codigo.includes(palavra),
+        false,
+        `${FONTE_DE_ALEATORIEDADE} passou a conhecer "${palavra}" — a excecao virou porta.`
+      );
+    }
+    // E continua sendo um arquivo minusculo. Uma excecao que cresce deixa de ser
+    // excecao; se este numero precisar subir, e porque alguem colocou regra
+    // dentro dela.
+    const linhasDeCodigo = codigo.split("\n").filter((l) => l.trim().length > 0).length;
+    assert.ok(linhasDeCodigo <= 8, `${FONTE_DE_ALEATORIEDADE} cresceu para ${linhasDeCodigo} linhas de codigo`);
   });
 
   test("nao existe funcao que produza um id publico", () => {
