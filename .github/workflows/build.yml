@@ -567,6 +567,66 @@ jobs:
           print('Native launch screen configurada em %s, igual ao contrato da abertura.' % color)
           PY
 
+      - name: "MARCA NATIVA — ícone oficial e starting window do Android 12+"
+        # O QUE ESTE PASSO CONSERTA: o `flutter create` entrega cinco bitmaps
+        # `mipmap-*/ic_launcher.png` com o logotipo do Flutter, e mais nada — sem
+        # ícone adaptativo e sem `values-v31`. No Android 12+ o sistema desenha a
+        # starting window a partir do ÍCONE DO APLICATIVO, então esse logotipo
+        # aparecia em todo cold start, no fundo certo e com a marca errada.
+        #
+        # A arte é a oficial já publicada na Play (`branding/fonte/`), e todos os
+        # recursos derivados são COMMITADOS, não gerados aqui: gerar no CI exigiria
+        # decodificador de imagem e tornaria o resultado dependente da versão da
+        # ferramenta. Commitado + `sha256sum -c` é o que dá prova byte a byte.
+        #
+        # `values-v31` também deixa de ser opcional: sem ele o sistema infere a
+        # janela de partida do ícone adaptativo, e a heurística dessa inferência
+        # MUDA entre a API 31 e a 36. Declarar `windowSplashScreenAnimatedIcon`
+        # tira a inferência do caminho e faz as duas versões desenharem o mesmo.
+        run: |
+          set -e
+          cd branding && sha256sum -c MANIFESTO.sha256 > /tmp/marca.txt && cd ..
+          echo "recursos de marca conferidos: $(grep -c ': OK' /tmp/marca.txt) arquivos"
+
+          RES=app_build/android/app/src/main/res
+
+          # A cor da janela de partida é escrita pelo passo anterior e é a MESMA
+          # referenciada pelo ícone adaptativo e pelo tema v31. Se ela sumir, o
+          # aapt falharia lá na frente com um erro de link difícil de ligar aqui.
+          grep -q 'name="splash_background"' "$RES/values/colors.xml" \
+            || { echo "ERRO: @color/splash_background não existe; rode antes 'Configure dark native launch screen'"; exit 1; }
+
+          ANTES=$(sha256sum "$RES/mipmap-xxxhdpi/ic_launcher.png" | cut -d' ' -f1)
+          cp -R branding/android/res/. "$RES"/
+          DEPOIS=$(sha256sum "$RES/mipmap-xxxhdpi/ic_launcher.png" | cut -d' ' -f1)
+          test "$ANTES" != "$DEPOIS" \
+            || { echo "ERRO: o ic_launcher do scaffold NÃO foi substituído"; exit 1; }
+
+          # Trava fail-closed: os cinco bitmaps do Flutter 3.44.8, por SHA-256.
+          # Se o pin do Flutter subir e o template mudar de arte, esta lista para
+          # de casar — e aí a trava do tamanho abaixo é quem segura.
+          PADROES="c7c0c0189145e4e32a401c61c9bdc615754b0264e7afae24e834bb81049eaf81
+          6a7c8f0d703e3682108f9662f813302236240d3f8f638bb391e32bfb96055fef
+          e14aa40904929bf313fded22cf7e7ffcbf1d1aac4263b5ef1be8bfce650397aa
+          4d470bf22d5c17d84edc5f82516d1ba8a1c09559cd761cefb792f86d9f52b540
+          3c34e1f298d0c9ea3455d46db6b7759c8211a49e9ec6e44b635fc5c87dfb4180"
+          for f in "$RES"/mipmap-*dpi/ic_launcher.png; do
+            H=$(sha256sum "$f" | cut -d' ' -f1)
+            if echo "$PADROES" | tr -d ' ' | grep -qx "$H"; then
+              echo "ERRO: $f ainda é o ícone padrão do Flutter"; exit 1
+            fi
+            # A arte oficial é ilustração; o padrão do Flutter é um logotipo
+            # chapado de 1,4 kB. Ordem de grandeza separa os dois mesmo que a
+            # lista de SHA envelheça com o pin do Flutter.
+            T=$(wc -c < "$f")
+            test "$T" -gt 3000 || { echo "ERRO: $f tem só $T bytes — não é a arte oficial"; exit 1; }
+          done
+
+          echo "--- recursos de marca instalados ---"
+          find "$RES" -name 'ic_launcher*' -o -name 'splash_icon*' -o -name 'styles.xml' | sort
+          echo "--- tema da janela de partida (API 31+) ---"
+          cat "$RES/values-v31/styles.xml"
+
       - name: Declare assets in pubspec (robusto)
         run: |
           python3 - <<'PY'
@@ -771,6 +831,69 @@ jobs:
           echo "as libs nativas da Rive que foram empacotadas:"
           unzip -l "$APK" | grep -i 'rive' || { echo "ERRO: nenhuma biblioteca nativa da Rive no APK — a animação não teria como rodar"; exit 1; }
 
+
+      - name: "PORTÃO DA MARCA — nenhum branding do Flutter dentro do APK"
+        # Aqui a pergunta é sobre o ARTEFATO, não sobre a pasta de build. O que
+        # se prova, lendo a tabela de recursos do APK assinado:
+        #   1. `mipmap/ic_launcher` tem variante `anydpi-v26` — ou seja, virou
+        #      ícone adaptativo, e não continua um bitmap solto;
+        #   2. as camadas `ic_launcher_foreground` e `ic_launcher_monochrome`
+        #      existem nas cinco densidades;
+        #   3. `drawable/splash_icon` existe — é ele que o Android 12+ desenha;
+        #   4. `style/LaunchTheme` tem variante v31 — sem ela o sistema volta a
+        #      inferir a janela de partida do ícone do aplicativo;
+        #   5. `color/splash_background` continua `#ff050b1e`.
+        #
+        # Os BYTES dos PNG dentro do APK não servem de prova: o AGP recomprime
+        # PNG no release, então o SHA muda mesmo com pixel idêntico. Por isso a
+        # trava de bytes fica no passo de instalação, sobre o arquivo commitado,
+        # e aqui a trava é estrutural mais ordem de grandeza do tamanho.
+        run: |
+          set -e
+          APK=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          AAPT2=$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt2 | sort | tail -1)
+          test -n "$AAPT2" || { echo "ERRO: aapt2 não encontrado"; exit 1; }
+          "$AAPT2" dump resources "$APK" > /tmp/recursos.txt
+
+          bloco() { awk -v alvo="$1" '$0 ~ alvo {p=1; next} /resource 0x/ {p=0} p' /tmp/recursos.txt; }
+
+          echo "--- mipmap/ic_launcher ---"; bloco "mipmap/ic_launcher$"
+          bloco "mipmap/ic_launcher$" | grep -q 'anydpi-v26' \
+            || { echo "ERRO: ic_launcher no APK não é adaptativo (sem anydpi-v26)"; exit 1; }
+
+          # As TRÊS camadas, lidas do XML compilado. Contar densidades provaria
+          # que os PNG estão lá; só isto prova que o ícone os USA — inclusive a
+          # `monochrome`, que é o ícone temático do Android 13+.
+          ADAPTATIVO=$(bloco "mipmap/ic_launcher$" | grep anydpi | sed 's/.*(file) //; s/ type=.*//')
+          "$AAPT2" dump xmltree "$APK" --file "$ADAPTATIVO" > /tmp/adaptativo.txt
+          cat /tmp/adaptativo.txt
+          for camada in background foreground monochrome; do
+            grep -q "E: $camada" /tmp/adaptativo.txt \
+              || { echo "ERRO: o ícone adaptativo no APK não tem a camada '$camada'"; exit 1; }
+          done
+
+          for recurso in "mipmap/ic_launcher_foreground$" "drawable/ic_launcher_monochrome$" "drawable/splash_icon$"; do
+            N=$(bloco "$recurso" | grep -c 'dpi)')
+            echo "$recurso -> $N densidades"
+            test "$N" -ge 5 || { echo "ERRO: $recurso tem $N densidades, esperava 5"; exit 1; }
+          done
+
+          echo "--- style/LaunchTheme ---"; bloco "style/LaunchTheme$"
+          bloco "style/LaunchTheme$" | grep -q 'v31' \
+            || { echo "ERRO: LaunchTheme sem variante v31 — a starting window voltaria ao ícone inferido"; exit 1; }
+
+          grep -A3 'color/splash_background' /tmp/recursos.txt | grep -qi '#ff050b1e' \
+            || { echo "ERRO: splash_background no APK não é #ff050b1e"; exit 1; }
+
+          # Ordem de grandeza: o ícone padrão do Flutter em xxxhdpi tem 1443
+          # bytes. A arte oficial recomprimida não chega perto disso.
+          CAMINHO=$(bloco "mipmap/ic_launcher_foreground$" | grep 'xxxhdpi' | sed 's/.*(file) //; s/ type=.*//')
+          unzip -p "$APK" "$CAMINHO" > /tmp/foreground.png
+          T=$(wc -c < /tmp/foreground.png)
+          echo "camada de frente empacotada ($CAMINHO): $T bytes"
+          test "$T" -gt 20000 || { echo "ERRO: camada de frente com $T bytes — não é a arte oficial"; exit 1; }
+
+          echo "OK: o APK carrega a marca do Buraco Master VIP, e nenhum recurso do Flutter sobrou."
       - name: Signing report (confirma a assinatura final)
         run: |
           cd app_build/android
