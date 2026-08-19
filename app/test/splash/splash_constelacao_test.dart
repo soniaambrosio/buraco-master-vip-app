@@ -35,6 +35,7 @@ import 'package:buraco_master_vip/casca/splash/contrato_da_abertura.dart';
 import 'package:buraco_master_vip/casca/splash/splash_constelacao_screen.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -48,6 +49,27 @@ import '../casca/bancada_online.dart';
 const int kTamanhoAutoritativo = 2298957;
 const String kSha256Autoritativo =
     'a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d';
+
+/// O segundo asset visual autoritativo.
+const int kTamanhoDaConstelacao = 4663;
+const String kSha256DaConstelacao =
+    'a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204';
+
+/// Bundle que entrega tudo, menos a constelação.
+///
+/// É a costura padrão do Flutter — `DefaultAssetBundle` — e é ela que torna
+/// "um SVG ausente não impede a abertura de terminar" uma coisa PROVADA em vez
+/// de afirmada. Sem ela, exercitar essa falha exigiria apagar o arquivo do
+/// repositório.
+class _BundleSemConstelacao extends CachingAssetBundle {
+  @override
+  Future<ByteData> load(String key) {
+    if (key == kAssetDaConstelacao) {
+      throw FlutterError('constelação indisponível');
+    }
+    return rootBundle.load(key);
+  }
+}
 
 /// Superfície de telefone. Sem isto o teste desenha numa janela de mesa e a
 /// medida de layout não diz nada sobre o aparelho de ninguém.
@@ -66,6 +88,7 @@ Future<int Function()> _montarAbertura(
   TextScaler escalaDeTexto = TextScaler.noScaling,
   Size tamanho = const Size(1080, 1920),
   String chave = 'abertura',
+  AssetBundle? bundle,
 }) async {
   _telefone(tester, tamanho: tamanho);
   var saidas = 0;
@@ -77,15 +100,18 @@ Future<int Function()> _montarAbertura(
             disableAnimations: movimentoReduzido,
             textScaler: escalaDeTexto,
           ),
-          child: SplashConstelacaoScreen(
-            // A chave é o que impede a remontagem de REAPROVEITAR o State da
-            // montagem anterior: sem ela, um caso que monta a tela duas vezes
-            // mede a primeira montagem duas vezes e passa por engano.
-            key: ValueKey<String>(chave),
-            duracao: duracao,
-            habilitarSom: false,
-            fonte: fonte,
-            onConcluida: () => saidas++,
+          child: _talvezComBundle(
+            bundle,
+            SplashConstelacaoScreen(
+              // A chave é o que impede a remontagem de REAPROVEITAR o State da
+              // montagem anterior: sem ela, um caso que monta a tela duas vezes
+              // mede a primeira montagem duas vezes e passa por engano.
+              key: ValueKey<String>(chave),
+              duracao: duracao,
+              habilitarSom: false,
+              fonte: fonte,
+              onConcluida: () => saidas++,
+            ),
           ),
         ),
       ),
@@ -93,6 +119,9 @@ Future<int Function()> _montarAbertura(
   );
   return () => saidas;
 }
+
+Widget _talvezComBundle(AssetBundle? bundle, Widget filho) =>
+    bundle == null ? filho : DefaultAssetBundle(bundle: bundle, child: filho);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -269,6 +298,220 @@ void main() {
       // A `State Machine 1` da arte está vazia e NÃO é a autoridade desta V1.
       expect(fonte, isNot(contains('stateMachine')));
       expect(fonte, isNot(contains('StateMachine')));
+    });
+  });
+
+  // =========================================================================
+  // Correção visual V1 — a constelação como camada complementar
+  // =========================================================================
+  group('CONSTELACAO — a camada que faltava, sem tocar no .riv', () {
+    test('C01 o .riv continua com o MESMO tamanho e o MESMO SHA-256', () async {
+      // O binario nao foi tocado por esta correcao, e este caso e o que
+      // impede alguem "resolver" um problema visual mexendo nele.
+      final dados = await rootBundle.load(kAssetDaAbertura);
+      final bytes = dados.buffer.asUint8List(
+        dados.offsetInBytes,
+        dados.lengthInBytes,
+      );
+      expect(bytes.length, kTamanhoAutoritativo);
+      expect(sha256.convert(bytes).toString(), kSha256Autoritativo);
+    });
+
+    test('C02 a constelação está no repositório e no bundle', () async {
+      expect(File(kAssetDaConstelacao).existsSync(), isTrue);
+      final dados = await rootBundle.load(kAssetDaConstelacao);
+      final bytes = dados.buffer.asUint8List(
+        dados.offsetInBytes,
+        dados.lengthInBytes,
+      );
+      expect(bytes.length, kTamanhoDaConstelacao);
+      expect(sha256.convert(bytes).toString(), kSha256DaConstelacao);
+      expect(String.fromCharCodes(bytes.take(5)), '<?xml');
+      // A mesma area de referencia da Rive. Sem isso as duas camadas
+      // escorregariam uma em relacao a outra em qualquer tela que nao fosse
+      // exatamente 9:16.
+      final texto = String.fromCharCodes(bytes);
+      expect(texto, contains('viewBox="0 0 1080 1920"'));
+    });
+
+    test('C03 o asset da constelação está declarado no pubspec', () {
+      // Mesmo diretorio ja declarado do .riv — e o caso existe para que
+      // ninguem mova o arquivo para uma pasta nao declarada sem perceber.
+      final pubspec = File('pubspec.yaml').readAsStringSync();
+      expect(pubspec, contains('- assets/rive/'));
+      expect(kAssetDaConstelacao, startsWith('assets/rive/'));
+    });
+
+    testWidgets('C04 a constelação aparece na abertura, POR CIMA da Rive', (
+      tester,
+    ) async {
+      final fonte = AberturaFalsa();
+      await _montarAbertura(tester, fonte: fonte, chave: 'c04');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byKey(kChaveDaArteFalsa), findsOneWidget);
+
+      // A ORDEM IMPORTA, e nao e preferencia: o artboard da Rive pinta fundo
+      // opaco em toda a sua area. Uma constelacao POR BAIXO seria coberta, e o
+      // defeito continuaria — so que com um asset a mais no APK fingindo que
+      // foi resolvido.
+      final pilha = tester.widget<Stack>(
+        find
+            .descendant(
+              of: find.byType(SplashConstelacaoScreen),
+              matching: find.byType(Stack),
+            )
+            .first,
+      );
+      final indiceDaArte = pilha.children.indexWhere(
+        (w) => w.key == kChaveDaArteFalsa,
+      );
+      expect(indiceDaArte, isNonNegative);
+      expect(
+        indiceDaArte,
+        lessThan(pilha.children.length - 1),
+        reason: 'a constelação não é a última camada — ela ficaria por baixo',
+      );
+    });
+
+    testWidgets('C05 a constelação não recebe toque', (tester) async {
+      await _montarAbertura(tester, fonte: AberturaFalsa(), chave: 'c05');
+      await tester.pump(const Duration(milliseconds: 100));
+      // `MaterialApp` e `Scaffold` já trazem `IgnorePointer` na árvore, e todos
+      // eles com `ignoring: false`. O que este caso exige é que exista um
+      // ATIVO acima da constelação.
+      final barreiras = tester.widgetList<IgnorePointer>(
+        find.ancestor(
+          of: find.byType(SvgPicture),
+          matching: find.byType(IgnorePointer),
+        ),
+      );
+      expect(
+        barreiras.where((b) => b.ignoring),
+        hasLength(1),
+        reason: 'a camada visual passou a poder engolir toque',
+      );
+    });
+
+    testWidgets('C06 a constelação NÃO cria uma segunda conclusão', (
+      tester,
+    ) async {
+      final fonte = AberturaFalsa(
+        duracaoDaTimeline: const Duration(milliseconds: 100),
+      );
+      final saidas = await _montarAbertura(tester, fonte: fonte, chave: 'c06');
+
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(saidas(), 1);
+      // O fade da constelacao vai ate 60 ms, e a arte esta na tela: nem o fim
+      // do fade nem o relogio produzem a segunda saida.
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(
+        saidas(),
+        1,
+        reason: 'a camada visual passou a mandar na duração da apresentação',
+      );
+    });
+
+    testWidgets('C07 constelação ausente não impede a continuidade', (
+      tester,
+    ) async {
+      final fonte = AberturaFalsa(
+        duracaoDaTimeline: const Duration(milliseconds: 100),
+      );
+      final saidas = await _montarAbertura(
+        tester,
+        fonte: fonte,
+        chave: 'c07',
+        bundle: _BundleSemConstelacao(),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(SvgPicture), findsNothing);
+      // A Rive continua, o fundo continua, e a abertura termina na hora certa.
+      expect(find.byKey(kChaveDaArteFalsa), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(saidas(), 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('C08 Rive quebrada: a constelação sozinha não trava nada', (
+      tester,
+    ) async {
+      // O comportamento anterior tem de ficar igual: fundo estavel, sem texto,
+      // e saida pelo relogio de seguranca.
+      final saidas = await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(falha: FalhaDaAbertura.arteNaoCarregou),
+        chave: 'c08',
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(kChaveDaArteFalsa), findsNothing);
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byType(Text), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(saidas(), 1);
+    });
+
+    testWidgets('C09 movimento reduzido: a camada entra sem fade', (
+      tester,
+    ) async {
+      final saidas = await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(),
+        chave: 'c09',
+        movimentoReduzido: true,
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+
+      // A constelacao e imagem parada: ela entra. O que o movimento reduzido
+      // desliga e o fade, e nao a camada.
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byType(TweenAnimationBuilder<double>), findsNothing);
+
+      await tester.pump(const Duration(milliseconds: 61));
+      expect(saidas(), 1);
+    });
+
+    testWidgets('C10 a constelação não altera a ordem do portão duplo', (
+      tester,
+    ) async {
+      final b = Bancada();
+      addTearDown(b.fechar);
+      final fonte = AberturaFalsa(
+        duracaoDaTimeline: const Duration(milliseconds: 20),
+      );
+      _telefone(tester);
+
+      await tester.pumpWidget(
+        RaizDoAplicativo(
+          sessao: b.sessao,
+          autenticacao: b.autenticacao,
+          online: b.online,
+          duracaoDaSplash: const Duration(milliseconds: 300),
+          somNaSplash: false,
+          fonteDaAbertura: fonte,
+          limiteDeResolucao: const Duration(seconds: 8),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // A constelacao esta na tela, a animacao acabou, e mesmo assim ninguem
+      // foi roteado: quem decide continua sendo a sessao.
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byType(LoginDeProducao), findsNothing);
+      expect(find.byType(HomeDeProducao), findsNothing);
+
+      b.fluxo.add(null);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(LoginDeProducao), findsOneWidget);
+      expect(find.byType(SvgPicture), findsNothing);
     });
   });
 
