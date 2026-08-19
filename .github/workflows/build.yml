@@ -330,6 +330,18 @@ jobs:
           mkdir -p app_build/test/cosmeticos
           cp -R app/test/cosmeticos/. app_build/test/cosmeticos/
           cd app_build
+          # Os casos de responsividade medem a FORMA de tres artes REAIS, lidas
+          # do disco — vertical, horizontal e quadrada. Se uma delas sumir da
+          # copia de assets, o item cai no desenho de reserva e o caso passaria
+          # medindo o icone de falha. A ausencia para o portao aqui, com nome.
+          for ARTE in assets/baralho/dorso.webp \
+                      assets/perfil/presente_diamante.webp \
+                      assets/torneios/premiacao/selos/seal_runner_up.png; do
+            if [ ! -s "$ARTE" ]; then
+              echo "ERRO: $ARTE ausente — os casos de proporcao da inspecao dependem dela."
+              exit 1
+            fi
+          done
           flutter test test/cosmeticos --reporter expanded
           echo "PORTÃO VERDE: inspeção ampliada de cosméticos validada no commit ${GITHUB_SHA}."
 

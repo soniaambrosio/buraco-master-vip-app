@@ -193,6 +193,155 @@ outra exceção continua reprovando.
 **Zero Functions, Rules, servidor, Billing e economia.** Nenhum arquivo fora de
 `app/lib/`, `app/test/` e `.github/workflows/` foi tocado.
 
+
+# V2 — a barra subiu: responsividade medida, e as dez mutações provadas aqui
+
+A V1 acima entregou o módulo, os pontos de toque e 39 casos. A reemissão da OS
+pede mais duas coisas que a V1 não cobria, e é isso que esta seção acrescenta:
+
+* **§7 responsividade** — quatro superfícies e três formas de item, sem overflow.
+  A V1 rodava tudo em 390×844 e em nenhum momento olhava a forma da arte.
+* **§9 dez mutações** — a V1 provou nove. Faltavam nomeadas: *asset ausente gera
+  crash*, *dois overlays simultâneos*, *Perfil usa item do visitante errado*, e
+  *Back navega para fora em vez de fechar*.
+
+Nada do módulo mudou. `app/lib/cosmeticos/inspecao_ampliada.dart`,
+`loja_categoria_screen.dart` e `perfil_screen.dart` são byte a byte os de
+`1800981` — a V2 é medição, não conserto. Que o comportamento já estivesse certo
+não é o mesmo que estar provado, e era a prova que faltava.
+
+## Os 17 casos novos
+
+`app/test/cosmeticos/inspecao_ampliada_test.dart` foi de 39 para **56 casos**.
+
+### R1–R12 — quatro telas × três formas
+
+| | item vertical | item horizontal | item quadrado |
+|---|---|---|---|
+| **360×800** | R1 | R2 | R3 |
+| **390×844** | R4 | R5 | R6 |
+| **412×915** | R7 | R8 | R9 |
+| **tablet 800×1280** | R10 | R11 | R12 |
+
+O cruzamento não é zelo. A inspeção falha de dois jeitos diferentes, e cada um
+mora num canto da matriz: o texto estoura na tela mais **baixa**, onde sobra
+menos altura para o cabeçalho, o nome e o selo; e a arte se deforma na mais
+**larga**, onde sobra folga e a tentação de esticar. Medir só o telefone do meio
+não pega nem um nem outro — e era exatamente o telefone do meio que a V1 media.
+
+Cada caso mede três coisas:
+
+1. **Nada estourou.** Um `RenderFlex overflowed` é reportado na pintura e vira
+   exceção em teste.
+2. **O cartão cabe.** Overflow não é o único jeito de não caber: um cartão alto
+   demais sai pela borda **sem reclamar**, porque o `Dialog` o centraliza e
+   deixa transbordar. O caso compara o retângulo do conteúdo com o da tela.
+3. **A arte não foi deformada nem cortada.** Aqui está o ponto que faz esses
+   doze casos valerem alguma coisa: o caso **não olha o nome do `BoxFit`**. Ele
+   pega o `fit` que o módulo realmente usou, aplica-o à imagem real na caixa
+   real com `applyBoxFit`, e mede o retângulo que sairia pintado. `fill` e
+   `fitWidth` mudam a proporção do destino; `cover` faz o destino ultrapassar a
+   caixa, que é o corte. Os dois modos de falhar morrem em números.
+
+**As três artes são reais, e escolhidas por medição.** `assets/baralho/dorso.webp`
+(907×1210) é o cosmético mais vertical do repositório, `assets/perfil/presente_diamante.webp`
+(170×115) o mais horizontal, e `assets/torneios/premiacao/selos/seal_runner_up.png`
+(1024×1024) é exatamente quadrado. Uma imagem sintética provaria que o `contain`
+funciona sobre uma imagem sintética.
+
+**Por que os casos leem o asset do DISCO, e não do bundle.** No `build.yml` o
+passo que **declara** os assets no `pubspec` roda depois dos portões de teste
+(as artes já estão copiadas em `app_build/assets/`, mas o `rootBundle` ainda não
+as conhece). Um `Image.asset` ali cai no `errorBuilder`, e um caso que medisse a
+forma estaria medindo o ícone de falha — verde, e sem sentido. O
+`_BundleDeDisco` da suíte lê o mesmo arquivo que vai para o APK, no CI e na
+máquina, e o caso reprova alto se a arte sumir ou trocar de proporção.
+
+Uma armadilha custou tempo e fica registrada: o `AssetImage` **não pede a arte
+primeiro** — pede o `AssetManifest.bin`, para escolher a variante de densidade.
+Um pacote que só saiba servir arquivos derruba a resolução inteira antes de
+chegar na arte. O bundle da suíte responde a `AssetManifest*` com um manifesto
+vazio, que é a resposta honesta: "esta arte não tem variante".
+
+O portão de `build.yml` ganhou uma pré-condição pelas três artes: se uma sumir
+da cópia de assets, o portão para **com o nome do arquivo**, em vez de a suíte
+degradar em silêncio.
+
+### X1–X5 — as armadilhas que faltavam
+
+| Caso | O que ele impede |
+|---|---|
+| X1 | arte ausente derrubar a tela — o desenho de reserva aparece, o cartão continua de pé e ainda fecha |
+| X2 | arte buscada por URL, nas três superfícies (módulo + as duas telas) |
+| X3 | dois toques empilharem dois overlays — o segundo toque é dado **um quadro** depois do primeiro, com a inspeção ainda entrando |
+| X4 | o Perfil visitado ampliar item que não é o tocado, e o zoom publicar algo que o perfil alheio não tinha |
+| X5 | o voltar do sistema levar a pessoa para **fora** da vitrine em vez de só fechar a inspeção |
+
+Dois detalhes de projeto valem registro:
+
+**X3 mede a janela, e não o repouso.** O V2 da V1 já batia três vezes seguidas,
+mas sempre esperando o `pumpAndSettle` — mede o estado calmo, quando a barreira
+modal já está lá. A janela onde um segundo toque escaparia é o quadro em que a
+inspeção está **entrando**, e é nele que X3 bate.
+
+**X4 toca o SEGUNDO item da vitrine.** Uma inspeção que sempre abrisse o item de
+índice zero passaria despercebida no primeiro card — que é justamente o que uma
+pessoa toca primeiro quando confere à mão.
+
+Sobre "Perfil usa item do visitante errado": nesta arquitetura o Perfil tem uma
+**fonte só** — o `PerfilVM` que a página recebe. Não existe cache do dono do
+aparelho para o item vazar de lá, então a forma matável dessa mutação é a troca
+de identidade **dentro** da vitrine visitada, que é o que X4 mata. Onde a OS
+manda não inventar publicação nova para permitir zoom, o caso confere o
+contrário pelo que **não** apareceu: fechada a inspeção, o comando `trocar ›`
+continua fora do perfil alheio.
+
+## As dez mutações, injetadas nesta sessão
+
+Cada uma foi escrita no código de produção, a suíte inteira rodou, e o código
+foi restaurado. Nenhuma sobreviveu.
+
+| # | Mutação injetada | Reprovaram |
+|---|---|---|
+| 1 | `BoxFit.contain` → `BoxFit.fill` na arte | E4, M4, **R1–R12** |
+| 2 | `BoxFit.contain` → `BoxFit.cover` na arte | E4, M4, **R1–R12** |
+| 3 | `errorBuilder` removido do `Image.asset` | **X1**, X3, X5, A1–A2, E1–E4, E6, F1–F4 |
+| 4 | `showDialog` → `OverlayEntry` (sobreposição sem rota) | **X3**, **X5**, F1–F4, M5, S6, V1–V3, X1 |
+| 5 | a vitrine do Perfil inspeciona sempre `vitrine[0]` | **X4**, V3 |
+| 6 | desenho de reserva vira `Image.network(...)` | **X2**, **X1**, M3, X3, X5, A1–A2, E1–E4, E6, F1–F4 |
+| 7 | `barrierDismissible: true` → `false` | F1, M5 |
+| 8 | um `PopScope(canPop: false)` prende a rota | **X5**, F3, F1, M5 |
+| 9 | o alvo de ampliação engole o card inteiro | S2, S4, S5, V2 |
+| 10 | tocar na arte dispara a ação principal (vira compra) | S1, S4, S5, V1, V2 |
+
+A número 4 é a que mais ensina. "Overlay" é a palavra da própria OS, e um
+`OverlayEntry` é a leitura literal dela — só que uma sobreposição que não é rota
+não absorve o toque de fora (abre duas) e não intercepta o voltar (o sistema
+pop a tela de baixo). X3 e X5 existem para que essa leitura literal não passe.
+
+A número 3 mostra por que X1 precisa de nome próprio: sem `errorBuilder`
+quatorze casos caem, mas todos por motivos diferentes; só X1 diz o que
+aconteceu.
+
+## Evidência local
+
+Mesmo overlay do CI em `C:\bmvcos`, Flutter 3.41.4.
+
+```
+flutter test test/cosmeticos  →  56 casos, All tests passed  (39 + 17)
+flutter test                  →  1209 casos, All tests passed (1192 + 17)
+flutter analyze               →  103 issues (base 1800981: 103 — delta ZERO)
+                                 nenhum apontamento em lib/cosmeticos/ nem na suíte
+```
+
+## O que a V2 continua NÃO fazendo
+
+Tudo o que a V1 já declarava segue de pé, e nada foi reaberto: a Loja continua
+fora do fecho de `lib/main.dart`, `assets/loja/` continua não existindo nesta
+linhagem, a folha de confirmação de compra continua sem `errorBuilder` (registrada,
+não corrigida, porque é caminho de compra), e nenhum arquivo fora de `app/test/`
+e `.github/workflows/` foi tocado nesta rodada.
+
 ---
 
-**PASS — INSPEÇÃO AMPLIADA SEGURA DE COSMÉTICOS NA LOJA E PERFIL V1**
+**PASS — INSPEÇÃO AMPLIADA DOS COSMÉTICOS DA LOJA E DO PERFIL CANONIZADA V1**

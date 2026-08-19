@@ -38,6 +38,8 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:buraco_master_vip/cosmeticos/inspecao_ampliada.dart';
@@ -276,10 +278,10 @@ PerfilVM _perfilVM() {
   );
 }
 
-Widget _perfil(_LivroDoPerfil livro) {
+Widget _perfil(_LivroDoPerfil livro, {PerfilVM? vm}) {
   return _casca(
     PerfilScreen(
-      vm: _perfilVM(),
+      vm: vm ?? _perfilVM(),
       onVoltar: () {},
       onAbrirConfig: () {},
       onTrocarAvatar: () => livro.trocouAvatar++,
@@ -326,6 +328,159 @@ String _codigo(File f) {
   return saida.toString();
 }
 
+// ===========================================================================
+// Superfícies e formas de arte, para a responsividade
+//
+// A OS manda medir quatro telas e três formas de item. As duas listas abaixo
+// são o enunciado dela transcrito, e o cruzamento delas vira doze casos.
+// ===========================================================================
+
+class _Superficie {
+  final String nome;
+  final Size tamanho;
+  const _Superficie(this.nome, this.tamanho);
+}
+
+const List<_Superficie> _superficies = [
+  _Superficie('360x800', Size(360, 800)),
+  _Superficie('390x844', Size(390, 844)),
+  _Superficie('412x915', Size(412, 915)),
+  // O tablet não é "um celular grande": é a única superfície em que sobra
+  // largura, e onde um cartão sem teto viraria uma arte de 700 pixels no meio
+  // do nada. O `maxWidth: 380` do módulo é o que impede isso, e é aqui que ele
+  // é medido.
+  _Superficie('tablet 800x1280', Size(800, 1280)),
+];
+
+/// Uma arte REAL do projeto, com a proporção que ela tem de verdade.
+///
+/// Nenhuma das três é sintética, e isso é de propósito: uma imagem inventada
+/// no teste provaria que o `contain` funciona sobre uma imagem inventada. O
+/// dorso do baralho é o cosmético mais vertical que existe no repositório, o
+/// presente é o mais horizontal, e o selo de premiação é exatamente quadrado.
+class _Forma {
+  final String nome;
+  final String caminho;
+  final double razao;
+  const _Forma(this.nome, this.caminho, this.razao);
+}
+
+const List<_Forma> _formas = [
+  _Forma('item vertical', 'assets/baralho/dorso.webp', 907 / 1210),
+  _Forma('item horizontal', 'assets/perfil/presente_diamante.webp', 170 / 115),
+  _Forma(
+    'item quadrado',
+    'assets/torneios/premiacao/selos/seal_runner_up.png',
+    1,
+  ),
+];
+
+Future<void> _emTela(WidgetTester tester, Size tamanho) async {
+  tester.view.physicalSize = tamanho;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
+/// O pacote de assets lido do DISCO, e não do bundle empacotado.
+///
+/// Sem isto os casos de proporção seriam decorativos. No workflow do APK o
+/// passo que DECLARA os assets no `pubspec` roda depois dos portões de teste —
+/// as artes já estão copiadas em `app_build/assets/`, mas o `rootBundle` ainda
+/// não as conhece. Um `Image.asset` ali cai no `errorBuilder`, e um caso que
+/// medisse a forma da arte estaria medindo o ícone de falha, verde e vazio.
+///
+/// Lendo do disco, o caso mede o mesmo arquivo `.webp` que vai para o APK, no
+/// CI e na máquina, e falha alto se o arquivo sumir.
+class _BundleDeDisco extends CachingAssetBundle {
+  @override
+  Future<ByteData> load(String key) async {
+    // O `AssetImage` NÃO pede a arte primeiro: pede o MANIFESTO, para escolher
+    // a variante de densidade. Um manifesto vazio responde "esta arte não tem
+    // variante", e aí o caminho pedido é o caminho lido. Sem isto o manifesto
+    // ausente derruba a resolução inteira antes de chegar na arte, o item cai
+    // no `errorBuilder`, e o caso mediria o ícone de falha achando que mede a
+    // moldura.
+    if (key.startsWith('AssetManifest')) {
+      return const StandardMessageCodec().encodeMessage(<String, Object?>{})!;
+    }
+    final arquivo = File(key);
+    if (!arquivo.existsSync()) {
+      throw FlutterError('asset ausente no disco: $key');
+    }
+    return ByteData.sublistView(arquivo.readAsBytesSync());
+  }
+}
+
+Widget _cascaComDisco(Widget filho) =>
+    DefaultAssetBundle(bundle: _BundleDeDisco(), child: _casca(filho));
+
+/// Uma tela com um alvo de inspeção e nada mais.
+Widget _bancadaDeArte(ItemInspecionavel item) => _cascaComDisco(
+      Scaffold(
+        body: Center(
+          child: AlvoDeInspecao(
+            item: item,
+            child: const SizedBox(width: 90, height: 90),
+          ),
+        ),
+      ),
+    );
+
+/// Deixa a decodificação REAL acontecer.
+///
+/// Ler o arquivo e passá-lo pelo codec é trabalho de verdade da engine, e o
+/// relógio falso do `flutter_test` não o faz andar: sem `runAsync` a imagem
+/// nunca chega ao `RenderImage` e `render.image` fica nulo para sempre.
+Future<void> _decodifica(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+  });
+  await tester.pump();
+}
+
+/// O tamanho lógico da tela montada agora.
+Size _tamanhoLogico(WidgetTester tester) =>
+    tester.view.physicalSize / tester.view.devicePixelRatio;
+
+/// O perfil de OUTRA pessoa, com cosméticos que não são os meus.
+///
+/// Cada peça tem nome próprio e inconfundível. Se a inspeção de um perfil
+/// visitado desenhar o item do visitante, é por esses nomes que se descobre —
+/// e nenhum deles coincide com os de [_perfilVM].
+PerfilVM _perfilVMVisitado() {
+  return PerfilVM(
+    ehMeuPerfil: false,
+    nome: 'Rita do Buraco',
+    avatar: '🎩',
+    mascote: '🦁',
+    moldura: 'assets/perfil/vitrine_moldura.webp',
+    dorso: 'assets/perfil/vitrine_dorso.webp',
+    efeito: 'assets/perfil/vitrine_efeito.webp',
+    nivel: null,
+    xpAtual: null,
+    xpProximo: null,
+    titulo: null,
+    tituloEmoji: null,
+    ranking: const EstadoRanking.indisponivel(),
+    stats: null,
+    ultimaConquista: null,
+    presentesCount: null,
+    conquistas: null,
+    vitrine: const [
+      ItemVitrine(
+        slot: 'moldura',
+        nome: 'Coroa da Rita',
+        icone: 'assets/perfil/vitrine_moldura.webp',
+      ),
+      ItemVitrine(
+        slot: 'dorso',
+        nome: 'Dorso da Rita',
+        icone: 'assets/perfil/vitrine_dorso.webp',
+      ),
+    ],
+    presentes: const [],
+  );
+}
 void main() {
   // =========================================================================
   // §1 — AS OITO CATEGORIAS DA OS
@@ -1089,6 +1244,303 @@ void main() {
           reason: '$caminho passou a ter ampliação por conta própria',
         );
       }
+    });
+  });
+
+  // =========================================================================
+  // §8 — RESPONSIVIDADE
+  //
+  // Quatro telas × três formas de arte. O cruzamento não é zelo: a ampliação
+  // falha de dois jeitos DIFERENTES, e cada um deles só aparece num canto da
+  // matriz. O texto estoura na tela mais BAIXA (360x800, onde o cartão tem
+  // menos altura sobrando), e a arte se deforma na tela mais LARGA (o tablet,
+  // onde sobra folga e a tentação de esticar). Medir só o telefone do meio não
+  // pega nem um nem outro.
+  //
+  // O nome e o detalhe são longos de propósito nos doze: um overflow de
+  // `Column` nasce do texto que não coube, não da imagem — a imagem mora numa
+  // caixa de altura fixa e nunca empurra ninguém.
+  // =========================================================================
+  group('R — a inspeção cabe em toda tela, com arte de qualquer forma', () {
+    var n = 0;
+    for (final tela in _superficies) {
+      for (final forma in _formas) {
+        n++;
+        testWidgets('R$n ${tela.nome} · ${forma.nome}', (t) async {
+          await _emTela(t, tela.tamanho);
+          await t.pumpWidget(
+            _bancadaDeArte(
+              _item(
+                nome: 'Moldura Pérola Negra Edição de Aniversário',
+                detalhe: 'Lendário · recebido no torneio de aniversário',
+                previa: forma.caminho,
+              ),
+            ),
+          );
+          await t.tap(find.byType(AlvoDeInspecao));
+          await t.pumpAndSettle();
+          await _decodifica(t);
+
+          // 1. NADA ESTOUROU. Um `RenderFlex overflowed` é reportado na
+          // pintura, e em teste vira exceção — é este expect que a pega.
+          expect(
+            t.takeException(),
+            isNull,
+            reason: 'a inspeção estourou em ${tela.nome} com ${forma.nome}',
+          );
+
+          // 2. O CARTÃO CABE NA TELA. Overflow não é o único jeito de não
+          // caber: um cartão alto demais sai pela borda sem reclamar, porque o
+          // Dialog o centraliza e deixa transbordar.
+          final conteudo = t.getRect(
+            find
+                .descendant(
+                  of: find.byType(InspecaoAmpliada),
+                  matching: find.byType(Column),
+                )
+                .first,
+          );
+          final tamanho = _tamanhoLogico(t);
+          expect(conteudo.top, greaterThanOrEqualTo(-.5),
+              reason: 'o topo do cartão saiu da tela em ${tela.nome}');
+          expect(conteudo.bottom, lessThanOrEqualTo(tamanho.height + .5),
+              reason: 'o pé do cartão saiu da tela em ${tela.nome}');
+          expect(conteudo.left, greaterThanOrEqualTo(-.5));
+          expect(conteudo.right, lessThanOrEqualTo(tamanho.width + .5));
+
+          // 3. A ARTE NÃO FOI DEFORMADA NEM CORTADA. Aqui não se olha o NOME
+          // do BoxFit: pega-se o fit que o módulo realmente usou, aplica-se à
+          // imagem real na caixa real, e mede-se o retângulo que sairia
+          // pintado. `fill` e `fitWidth` mudam a proporção do destino; `cover`
+          // faz o destino ultrapassar a caixa, que é o corte. Os dois modos de
+          // falhar morrem em números, e não em vocabulário.
+          final render = t.renderObject<RenderImage>(
+            find.descendant(
+              of: find.byType(InspecaoAmpliada),
+              matching: find.byType(RawImage),
+            ),
+          );
+          final imagem = render.image;
+          expect(
+            imagem,
+            isNotNull,
+            reason: 'a arte de ${forma.caminho} não decodificou — este caso '
+                'mediria o ícone de falha, e diria que está tudo bem',
+          );
+          final origem =
+              Size(imagem!.width.toDouble(), imagem.height.toDouble());
+          expect(
+            origem.width / origem.height,
+            closeTo(forma.razao, .01),
+            reason: '${forma.caminho} deixou de ser ${forma.nome}: este caso '
+                'passou a medir outra forma e ninguém avisou',
+          );
+
+          final fit = render.fit;
+          expect(fit, isNotNull, reason: 'a arte ampliada ficou sem fit');
+          final destino = applyBoxFit(fit!, origem, render.size).destination;
+          expect(
+            destino.width / destino.height,
+            closeTo(forma.razao, .01),
+            reason: 'a arte saiu esticada em ${tela.nome} ($fit)',
+          );
+          expect(
+            destino.width,
+            lessThanOrEqualTo(render.size.width + .5),
+            reason: 'a arte foi cortada na largura em ${tela.nome} ($fit)',
+          );
+          expect(
+            destino.height,
+            lessThanOrEqualTo(render.size.height + .5),
+            reason: 'a arte foi cortada na altura em ${tela.nome} ($fit)',
+          );
+        });
+      }
+    }
+  });
+
+  // =========================================================================
+  // §9 — AS ARMADILHAS RESTANTES
+  //
+  // Cada caso deste grupo existe porque a OS nomeia uma mutação que nenhum dos
+  // grupos acima mataria.
+  // =========================================================================
+  group('X — arte ausente, toque dobrado, perfil alheio e o botão voltar', () {
+    testWidgets('X1 arte ausente falha de forma segura, e não derruba a tela',
+        (t) async {
+      await _emTela(t, const Size(390, 844));
+      await t.pumpWidget(
+        _bancadaDeArte(
+          _item(
+            nome: 'Arte Que Sumiu',
+            previa: 'assets/loja/molduras/inexistente.webp',
+          ),
+        ),
+      );
+      await t.tap(find.byType(AlvoDeInspecao));
+      await t.pumpAndSettle();
+      await _decodifica(t);
+
+      expect(
+        t.takeException(),
+        isNull,
+        reason: 'a arte ausente virou exceção: o errorBuilder sumiu, e a '
+            'inspeção de um item sem arte passou a derrubar a tela',
+      );
+      expect(
+        find.byIcon(Icons.auto_awesome_rounded),
+        findsOneWidget,
+        reason: 'sem o desenho de reserva a pessoa vê um buraco e não sabe se '
+            'o app travou',
+      );
+      // O resto do cartão continua de pé: nome, categoria e a saída.
+      expect(find.text('Arte Que Sumiu'), findsOneWidget);
+      await t.tap(find.byTooltip('Fechar'));
+      await t.pumpAndSettle();
+      expect(find.byType(InspecaoAmpliada), findsNothing);
+    });
+
+    test('X2 nenhuma arte é buscada por URL, em nenhuma das três superfícies',
+        () {
+      // A OS proíbe asset externo como reserva, e a razão é dupla: uma arte
+      // baixada na hora conta ao servidor que aquela pessoa abriu aquele item,
+      // e some quando o servidor sai do ar. O desenho de reserva do módulo é
+      // um ícone local, e é assim que tem de continuar.
+      final superficies = {
+        'lib/cosmeticos/inspecao_ampliada.dart': _fonteDoModulo(),
+        'lib/screens/loja_categoria_screen.dart':
+            File('lib/screens/loja_categoria_screen.dart'),
+        'lib/screens/perfil_screen.dart':
+            File('lib/screens/perfil_screen.dart'),
+      };
+      for (final entrada in superficies.entries) {
+        expect(entrada.value.existsSync(), isTrue,
+            reason: '${entrada.key} sumiu');
+        final codigo = _codigo(entrada.value);
+        for (final marca in [
+          'Image.network',
+          'NetworkImage',
+          'http://',
+          'https://',
+        ]) {
+          expect(
+            codigo,
+            isNot(contains(marca)),
+            reason: '"$marca" entrou em ${entrada.key}: a arte passou a vir '
+                'da rede',
+          );
+        }
+      }
+    });
+
+    testWidgets('X3 dois toques seguidos não empilham dois overlays',
+        (t) async {
+      await _emTela(t, const Size(390, 844));
+      var compras = 0;
+      await t.pumpWidget(
+        _casca(_Bancada(item: _item(), onComprar: () => compras++)),
+      );
+
+      await t.tap(find.byType(AlvoDeInspecao));
+      // UM quadro só: a inspeção está ENTRANDO, e é exatamente aqui que um
+      // segundo toque escaparia. Quem espera o pumpAndSettle mede o estado
+      // calmo e nunca vê a janela.
+      await t.pump();
+      await t.tap(find.byType(AlvoDeInspecao), warnIfMissed: false);
+      await t.pumpAndSettle();
+
+      expect(
+        find.byType(InspecaoAmpliada),
+        findsOneWidget,
+        reason: 'o segundo toque atravessou a barreira e abriu uma segunda '
+            'inspeção: fechar uma deixaria a outra na tela',
+      );
+      expect(compras, 0);
+
+      // E uma saída basta para voltar à tela: se tivessem entrado duas rotas,
+      // o primeiro fechamento deixaria a de baixo aparecendo.
+      await t.tap(find.byTooltip('Fechar'));
+      await t.pumpAndSettle();
+      expect(find.byType(InspecaoAmpliada), findsNothing);
+      expect(compras, 0);
+    });
+
+    testWidgets(
+        'X4 o Perfil visitado amplia o item DELE, e o zoom não publica nada a '
+        'mais', (t) async {
+      await _emTela(t, const Size(390, 844));
+      final livro = _LivroDoPerfil();
+      await t.pumpWidget(_perfil(livro, vm: _perfilVMVisitado()));
+      await t.pumpAndSettle();
+
+      // A vitrine visitada mostra as peças DA RITA. Nenhum nome do meu próprio
+      // perfil pode aparecer aqui.
+      expect(find.text('Coroa da Rita'), findsOneWidget);
+      expect(
+        find.text('Moldura'),
+        findsNothing,
+        reason: 'a vitrine do perfil visitado desenhou o item do visitante',
+      );
+
+      // O SEGUNDO item, e não o primeiro. Uma inspeção que sempre abrisse o
+      // item de índice zero passaria despercebida no primeiro card, que é
+      // justamente o que a pessoa toca primeiro quando confere à mão.
+      await t.tap(find.text('Dorso da Rita'));
+      await t.pumpAndSettle();
+
+      final cartao = find.byType(InspecaoAmpliada);
+      expect(cartao, findsOneWidget);
+      expect(
+        find.descendant(of: cartao, matching: find.text('Dorso da Rita')),
+        findsOneWidget,
+        reason: 'a inspeção ampliou um item que não é o que foi tocado',
+      );
+      expect(
+        find.descendant(of: cartao, matching: find.text('Coroa da Rita')),
+        findsNothing,
+        reason: 'a inspeção abriu o item do vizinho na vitrine',
+      );
+
+      // O zoom não inventou publicação nova: o comando de trocar a vitrine
+      // continua fora do perfil alheio, e nada foi acionado nele.
+      await t.tap(find.byTooltip('Fechar'));
+      await t.pumpAndSettle();
+      expect(
+        find.text('trocar ›'),
+        findsNothing,
+        reason: 'a inspeção trouxe junto um comando que o perfil visitado não '
+            'tinha',
+      );
+      expect(livro.fotografia, everyElement(0));
+    });
+
+    testWidgets('X5 o voltar do sistema fecha a inspeção e NÃO sai da tela',
+        (t) async {
+      await _emTela(t, const Size(390, 844));
+      var compras = 0;
+      await t.pumpWidget(
+        _casca(_Bancada(item: _item(), onComprar: () => compras++)),
+      );
+      await t.tap(find.byType(AlvoDeInspecao));
+      await t.pumpAndSettle();
+      expect(find.byType(InspecaoAmpliada), findsOneWidget);
+
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+
+      expect(find.byType(InspecaoAmpliada), findsNothing);
+      // A diferença entre "fechou a inspeção" e "saiu da vitrine" é esta: a
+      // tela de baixo continua montada e continua respondendo. Um voltar que
+      // desmontasse a vitrine junto passaria no F3 e reprovaria aqui.
+      expect(
+        find.byType(AlvoDeInspecao),
+        findsOneWidget,
+        reason: 'o voltar levou a pessoa para fora da vitrine em vez de só '
+            'fechar a inspeção',
+      );
+      await t.tap(find.text('Comprar'));
+      await t.pump();
+      expect(compras, 1);
     });
   });
 }
