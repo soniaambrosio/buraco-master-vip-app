@@ -432,6 +432,34 @@ void main() {
       expect(find.text('Remover'), findsNothing);
     });
 
+    testWidgets('`ehMeuPerfil` VENCE um `publicIdVisitado` escrito junto', (
+      tester,
+    ) async {
+      // ------------------------------------------------------------------
+      // ESTE CASO EXISTE PORQUE UMA MUTAÇÃO PASSOU DESPERCEBIDA SEM ELE
+      // ------------------------------------------------------------------
+      //
+      // O caso acima monta `const PerfilPage()`, em que `publicIdVisitado` é
+      // NULO — e ali a guarda `ehMeuPerfil` é redundante, porque o id nulo já
+      // barra a consulta sozinho. Removendo a guarda, aquele caso continuava
+      // verde e a proteção sumia sem nenhum sinal.
+      //
+      // A combinação em que as duas metades discordam é legítima e está
+      // documentada no construtor: passar os dois é permitido, e o `ehMeuPerfil`
+      // escrito vence. É exatamente aqui que "não consultar o próprio perfil
+      // pela porta remota" precisa valer.
+      await montar(
+        tester,
+        const PerfilPage(ehMeuPerfil: true, publicIdVisitado: 'P0EUMESMO0001'),
+      );
+      expect(
+        t.chamadasDe('verPerfil'),
+        0,
+        reason: 'o dono foi consultado pela porta reservada a terceiros',
+      );
+      expect(find.text('Adicionar'), findsNothing);
+    });
+
     testWidgets('remover reflete a relação nova, vinda da autoridade', (
       tester,
     ) async {

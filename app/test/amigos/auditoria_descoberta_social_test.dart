@@ -380,15 +380,33 @@ void main() {
       }
     });
 
-    test('nenhum código de recusa cru chega à tela', () {
-      // A tradução é um `switch` fechado; o `default` é frase neutra. Uma
-      // interpolação do código cru contaria ao jogador o vocabulário interno.
+    test('o código de recusa só é LIDO para escolher a frase, nunca exibido', () {
+      // ---------------------------------------------------------------------
+      // A REGRA FICOU MAIS FORTE PORQUE A ANTERIOR DEIXOU PASSAR UMA MUTAÇÃO
+      // ---------------------------------------------------------------------
+      //
+      // Antes esta varredura proibia a INTERPOLAÇÃO (`${e.recusa}`). Injetando
+      // um braço de `switch` que devolve `e.recusa` CRU — sem interpolação
+      // nenhuma —, o código interno chegava inteiro à tela e a auditoria ficava
+      // verde. O defeito não é a interpolação: é o valor sair.
+      //
+      // A regra agora é posicional e não tem essa brecha: `e.recusa` só pode
+      // aparecer como ASSUNTO de um `switch`. Em qualquer outra posição ele
+      // está a caminho de virar texto.
       final rotulos = _codigo(File('lib/amigos/rotulos_sociais.dart'));
-      expect(
-        rotulos,
-        isNot(RegExp(r'\$\{?e\.recusa')),
-        reason: 'o código de recusa foi interpolado numa frase',
-      );
+      final usos = RegExp(r'e\.recusa').allMatches(rotulos).toList();
+      expect(usos, isNotEmpty, reason: 'a varredura não achou nenhum uso');
+      for (final m in usos) {
+        final antes = rotulos.substring(
+          (m.start - 10).clamp(0, rotulos.length),
+          m.start,
+        );
+        expect(
+          antes,
+          endsWith('switch ('),
+          reason: 'o código de recusa saiu do `switch` e está indo para a tela',
+        );
+      }
     });
   });
 
