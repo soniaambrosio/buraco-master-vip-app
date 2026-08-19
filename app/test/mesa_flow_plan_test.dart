@@ -6,9 +6,23 @@ import '../lib/screens/mesa_renderer_contract.dart';
 
 void main() {
   group('MesaFlowPlan', () {
+  // AS DUAS TRAVESSIAS ABAIXO DECLARAM `ehVip: true`, e isso nao e remendo
+  // para ficar verde: e a instrucao escrita na propria `ConfigMesaVM.mock`.
+  //
+  // O padrao do mock era `true`, e a autoridade dos tipos de mesa o inverteu de
+  // proposito — "um mock e FONTE DE DADOS DE EXEMPLO; ele nao pode ser fonte de
+  // autorizacao, e ausencia de informacao nao pode significar direito". Estes
+  // casos foram escritos antes daquela inversao e herdavam o VIP em silencio.
+  //
+  // O que eles medem continua sendo o PLANO DE TRAVESSIA (runtime legado para 4,
+  // motor novo para 2, contexto e skin preservados), e nao a elegibilidade. Para
+  // medir a travessia de uma mesa privada e preciso ter direito a ela; quem prova
+  // que o direito nao se inventa e o terceiro caso deste arquivo, mais
+  // `test/mesa/gate_vip_selecao_test.dart` no cliente e `functions-mesas` no
+  // servidor.
     test('4 jogadores pode chegar ao runtime legado preservando contexto', () {
       final plan = MesaFlowPlan.fromVm(
-        ConfigMesaVM.mock(tipo: TipoMesa.privada),
+        ConfigMesaVM.mock(tipo: TipoMesa.privada, ehVip: true),
       );
 
       expect(plan.valido, isTrue);
@@ -22,7 +36,7 @@ void main() {
     });
 
     test('2 jogadores não é falsificado como partida de 4 no runtime antigo', () {
-      final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada).copyWith(
+      final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada, ehVip: true).copyWith(
         modo: ModoJogo.dois,
         aposta: const ApostaVM(
           valor: 500,
