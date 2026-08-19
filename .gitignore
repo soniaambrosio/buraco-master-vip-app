@@ -48,3 +48,12 @@ node_modules/
 # `lib/` — provar um JS que pode nao corresponder ao TypeScript ao lado, e numa
 # operacao que apaga conta essa e a divergencia mais cara possivel.
 /functions-conta/lib/
+
+# §16 — PROVENIENCIA DO CODIGO IMPLANTADO DAS FUNCTIONS.
+# `<codebase>/proveniencia.json` carrega o SHA da composicao dentro do artefato
+# que sobe. NAO pode ser versionado, e nao por gosto: um arquivo que contem o
+# SHA do commit que o contem e impossivel — escreve-lo muda a arvore e muda o
+# SHA. E artefato de BUILD, gerado pelo `predeploy` imediatamente antes do
+# deploy, e e por ser regenerado a cada build que ele nao tem como divergir do
+# codigo. Ver ferramentas/proveniencia/proveniencia.js.
+proveniencia.json
