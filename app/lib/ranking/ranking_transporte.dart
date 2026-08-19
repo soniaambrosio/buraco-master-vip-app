@@ -152,6 +152,7 @@ class FotografiaRanking {
     required this.ligaId,
     required this.posicao,
     required this.classificado,
+    this.publico,
   });
 
   /// O jogador tem resposta da autoridade, mas não está na tabela.
@@ -162,7 +163,8 @@ class FotografiaRanking {
     : rotuloLiga = '',
       ligaId = null,
       posicao = 0,
-      classificado = false;
+      classificado = false,
+      publico = null;
 
   /// A temporada a que esta fotografia pertence, quando a autoridade a informa.
   ///
@@ -182,6 +184,33 @@ class FotografiaRanking {
 
   /// Se a autoridade considera este jogador classificado na temporada.
   final bool classificado;
+
+  /// O jogador público INTEIRO, quando esta fotografia é de um TERCEIRO.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE ELE SOBREVIVE À TRADUÇÃO
+  /// -------------------------------------------------------------------------
+  ///
+  /// `consultarJogadorPorIdPublico` devolve `jogador: projetarJogador(...)` — a
+  /// mesma lista branca que alimenta a tabela, com apelido e avatar dentro. Até
+  /// aqui esta classe lia daquele mapa só liga, ligaId e posição, e jogava o
+  /// resto fora. O Perfil visitado, que não tinha de onde tirar nome e avatar do
+  /// visitado, acabava completando os dois com a identidade de QUEM ESTAVA
+  /// OLHANDO — o defeito que esta correção fecha.
+  ///
+  /// Guardar a projeção inteira aqui é consumir uma autoridade que já existia, e
+  /// não criar uma segunda: o objeto é o mesmo [JogadorPublicoRanking] que a
+  /// tabela usa, com a mesma leitura estrita dos dezessete campos.
+  ///
+  /// NULO NO CAMINHO DO DONO, e isso é deliberado. `abrirRanking` também traz um
+  /// `resumo.eu` com apelido e avatar, mas o dono não precisa deles — a
+  /// identidade dele vem da sessão canônica, que é a autoridade certa para o
+  /// próprio jogador e não depende de estar classificado. Preencher este campo
+  /// lá criaria uma segunda fonte de nome para o dono, que é exatamente a classe
+  /// de defeito que o resto desta linhagem passou meses fechando. Também nulo
+  /// quando a autoridade responde `classificado: false`: não há jogador
+  /// publicado, e não há o que projetar.
+  final JogadorPublicoRanking? publico;
 
   /// Lê `abrirRanking` → `resumo`.
   ///
@@ -232,10 +261,16 @@ class FotografiaRanking {
       }
       return FotografiaRanking.semColocacao(temporadaId: temporadaId);
     }
+    final mapa = _mapa(jogador, 'jogador');
     return FotografiaRanking._doJogador(
-      _mapa(jogador, 'jogador'),
+      mapa,
       temporadaId: temporadaId,
       classificado: true,
+      // A MESMA resposta, lida também pelo modelo público. Não é uma segunda
+      // consulta nem um segundo contrato: é o mapa que já está na mão, passando
+      // pelo leitor estrito que a tabela usa. Só o caminho do TERCEIRO faz
+      // isto — ver [publico].
+      publico: JogadorPublicoRanking.doMapa(mapa, 'jogador'),
     );
   }
 
@@ -243,6 +278,7 @@ class FotografiaRanking {
     Map<Object?, Object?> j, {
     required String? temporadaId,
     required bool classificado,
+    JogadorPublicoRanking? publico,
   }) {
     final liga = j['liga'];
     final posicao = j['posicao'];
@@ -264,6 +300,7 @@ class FotografiaRanking {
       ligaId: _textoOpcional(j['ligaId']),
       posicao: posicao,
       classificado: classificado,
+      publico: publico,
     );
   }
 

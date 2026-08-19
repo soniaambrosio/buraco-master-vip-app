@@ -74,7 +74,7 @@ class PerfilService {
   /// 'Jogador(a)' é um RÓTULO, não um nome: ninguém consegue buscar por ele e
   /// ele não é gravado em lugar nenhum. Fallback de apresentação não é fallback
   /// de identidade.
-  static const String _rotuloSemApelido = 'Jogador(a)';
+  static const String rotuloSemApelido = 'Jogador(a)';
 
   /// Carrega o perfil. FASE 2: substituir o corpo por leitura no Firestore.
   ///
@@ -101,8 +101,37 @@ class PerfilService {
     // `_montar` já decidia — a constante da casca, ou a fixture da prévia
     // quando a chave de demonstração está ligada.
     EstadoRanking? ranking,
+    // O retrato do jogador VISITADO, já traduzido para a linguagem da tela.
+    //
+    // -----------------------------------------------------------------------
+    // ESTE PARÂMETRO É A CORREÇÃO INTEIRA
+    // -----------------------------------------------------------------------
+    //
+    // Até aqui, um perfil visitado era montado com a [identidade] — que é
+    // sempre a da SESSÃO, porque é a única que este serviço recebe. O resultado
+    // era um perfil com a liga certa do visitado e o nome e o avatar de quem
+    // estava olhando: uma pessoa inexistente, feita de metades de duas.
+    //
+    // Quando isto vem preenchido, ele é a ÚNICA fonte de nome, avatar e
+    // números, e a [identidade] não é consultada para nada. Não há mescla, não
+    // há fallback cruzado, e não há caminho em que um campo venha de cada lado.
+    //
+    // ELE CHEGA PRONTO, e este serviço não sabe de onde. Quem traduz a projeção
+    // pública é o [PerfilPage], num lugar só, e por uma razão de fronteira: o
+    // Perfil não pode conhecer o transporte de ranking — há auditoria que o
+    // exige, e é a mesma disciplina que mantém o ranking chegando pronto de fora
+    // em vez de consultado aqui.
+    RetratoVisitado? visitado,
   }) async {
     await Future.delayed(const Duration(milliseconds: 350)); // simula I/O (Fase 2: await Firestore)
+
+    // O PERFIL VISITADO SAI DAQUI E NÃO OLHA PARA TRÁS.
+    //
+    // `return` cedo, e não um ternário lá embaixo, porque o que separa os dois
+    // casos é a AUTORIDADE e não o valor de um campo: misturar os dois ramos
+    // numa expressão só é como o vazamento nasceu da primeira vez.
+    if (visitado != null) return _montarVisitado(visitado, ranking);
+
     final apelido = identidade?.apelido.trim() ?? '';
     // Sem apelido escolhido, o `publicId` é o que os outros jogadores veem —
     // ele É o identificador público, e exibi-lo não vaza nada. O rótulo genérico
@@ -112,7 +141,7 @@ class PerfilService {
       ehMeuPerfil: ehMeuPerfil,
       nome: apelido.isNotEmpty
           ? apelido
-          : (publico.isNotEmpty ? publico : _rotuloSemApelido),
+          : (publico.isNotEmpty ? publico : rotuloSemApelido),
       // O avatar segue a MESMA autoridade que o nome: o que veio de
       // `publicProfiles` dentro da identidade canônica. Antes desta linha o
       // serviço escrevia `avatar: '👑'` fixo — o apelido real ao lado de uma
@@ -122,6 +151,23 @@ class PerfilService {
       ranking: ranking,
     );
   }
+
+  /// O perfil de um TERCEIRO, feito só do que a autoridade pública publicou.
+  ///
+  /// Nenhum campo aqui pode cair para a sessão — a [identidade] sequer é lida
+  /// neste caminho.
+  ///
+  /// `demo` é FALSO sempre: a fixture de demonstração existe para a prévia do
+  /// próprio perfil, e vesti-la num terceiro seria afirmar sobre ele números que
+  /// ninguém apurou.
+  PerfilVM _montarVisitado(RetratoVisitado v, EstadoRanking? ranking) => _montar(
+    ehMeuPerfil: false,
+    nome: v.nome,
+    avatar: v.avatar,
+    demo: false,
+    ranking: ranking,
+    stats: v.stats,
+  );
 
   /// VM mínimo para o estado "carregando" (a tela mostra skeleton; nada é exibido).
   ///
@@ -139,7 +185,7 @@ class PerfilService {
     ranking: const EstadoRanking.carregando(),
   );
 
-  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required String avatar, required bool demo, EstadoRanking? ranking}) {
+  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required String avatar, required bool demo, EstadoRanking? ranking, PerfilStats? stats}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
       nome: nome,
@@ -176,9 +222,14 @@ class PerfilService {
               : rankingDaCascaPublicavel),
       // Quatro zeros não são "o placar de quem ainda não jogou": são um placar
       // sem placar nenhum atrás. Nada grava resultado de partida no cliente.
-      stats: demo
-          ? const PerfilStats(vitorias: 342, partidas: 1204, canastras: 89, aproveitamento: 68)
-          : null,
+      // O `stats` recebido GANHA, e só o perfil visitado o manda: são os números
+      // que a autoridade pública publicou sobre aquele jogador. Sem ele, vale a
+      // regra de sempre — fixture na prévia, nada no caminho publicável, porque
+      // nada grava resultado de partida no cliente.
+      stats: stats ??
+          (demo
+              ? const PerfilStats(vitorias: 342, partidas: 1204, canastras: 89, aproveitamento: 68)
+              : null),
       ultimaConquista: demo
           ? const UltimaConquista(
               titulo: 'Primeira Batida Real',

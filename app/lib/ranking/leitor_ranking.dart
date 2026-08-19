@@ -72,13 +72,30 @@ import 'ranking_transporte.dart';
 ///
 /// Descarte continua sendo `null` — o valor inteiro, e não um dos dois campos.
 class LeituraDeAbertura {
-  const LeituraDeAbertura({required this.eu, required this.tabela});
+  const LeituraDeAbertura({
+    required this.eu,
+    required this.tabela,
+    this.visitado,
+  });
 
   /// O estado competitivo do jogador autenticado.
   final EstadoRanking eu;
 
   /// A tabela publicada na mesma resposta.
   final EstadoTabelaRanking tabela;
+
+  /// O jogador público, quando esta leitura foi sobre um TERCEIRO.
+  ///
+  /// Traz a projeção inteira que a autoridade publicou — apelido, avatar e
+  /// números —, e é o que permite ao Perfil visitado mostrar a pessoa que ele
+  /// diz estar mostrando. Nulo em toda leitura do próprio jogador: a identidade
+  /// do dono vem da sessão canônica, e duplicá-la aqui recriaria a segunda fonte
+  /// de nome que esta linhagem já fechou.
+  ///
+  /// Nulo TAMBÉM quando a leitura falhou. Isso é o que impede o caminho de erro
+  /// de virar "mostra o visitante": sem projeção não há terceiro a desenhar, e a
+  /// tela tem de dizer que não sabe.
+  final JogadorPublicoRanking? visitado;
 }
 
 /// De quem é a fotografia pedida.
@@ -267,12 +284,35 @@ class LeitorDeRanking {
     required String contaPublicId,
     required String alvoPublicId,
   }) async =>
-      (await _ler(
-        _chaveDe(contaPublicId, alvoPublicId),
-        () async => AberturaRanking.semTabela(
-          await _transporte.rankingPorIdPublico(alvoPublicId),
-        ),
+      (await perfilPublico(
+        contaPublicId: contaPublicId,
+        alvoPublicId: alvoPublicId,
       ))?.eu;
+
+  /// O jogador visitado INTEIRO: identidade pública e estado competitivo.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE UMA LEITURA SÓ, E NÃO UMA PARA O NOME E OUTRA PARA A LIGA
+  /// -------------------------------------------------------------------------
+  ///
+  /// Porque nome, avatar e liga do visitado saem da MESMA resposta, e separá-los
+  /// em duas chamadas abriria a janela em que a tela mostra o nome de um e a
+  /// liga de outro — que é a forma que este defeito tomaria depois de
+  /// "corrigido". Um perfil é uma unidade de identidade: ou os quatro campos
+  /// vêm do mesmo `publicId`, ou não vem nenhum.
+  ///
+  /// [rankingPublico] passou a ser uma PROJEÇÃO desta leitura, e não uma leitura
+  /// paralela — mesma chave, mesmo voo, mesmo dedupe, mesma barreira temporal.
+  /// Quem já só queria a liga continua pedindo por lá e não paga nada a mais.
+  Future<LeituraDeAbertura?> perfilPublico({
+    required String contaPublicId,
+    required String alvoPublicId,
+  }) => _ler(
+    _chaveDe(contaPublicId, alvoPublicId),
+    () async => AberturaRanking.semTabela(
+      await _transporte.rankingPorIdPublico(alvoPublicId),
+    ),
+  );
 
   _Chave _chaveDe(String contaPublicId, String? alvoPublicId) =>
       alvoPublicId == null || alvoPublicId == contaPublicId
@@ -321,6 +361,9 @@ class LeitorDeRanking {
                 tabela,
                 temporadaId: foto.temporadaId,
               ),
+        // Só vem preenchido no caminho do terceiro — é a própria fotografia que
+        // o carrega, e ela só o carrega quando a leitura foi por id público.
+        visitado: foto.publico,
       );
       temporadaDaResposta = foto.temporadaId;
     } on FalhaRanking catch (e) {

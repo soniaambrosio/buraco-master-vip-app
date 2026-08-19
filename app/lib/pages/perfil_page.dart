@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../casca/ranking_de_producao.dart';
 import '../ranking/escopo_ranking.dart';
 import '../ranking/estado_ranking.dart';
+import '../ranking/leitor_ranking.dart' show LeituraDeAbertura;
+import '../ranking/ranking_transporte.dart' show JogadorPublicoRanking;
 import '../screens/perfil_screen.dart';
 import '../services/perfil_service.dart';
 import '../sessao/avatar_publico.dart';
@@ -129,25 +131,61 @@ class _PerfilPageState extends State<PerfilPage> {
     _carregar();
   }
 
-  /// O ranking de um perfil VISITADO.
+  /// A leitura de um perfil VISITADO: identidade pública E estado competitivo.
   ///
   /// Só existe para o outro: o do próprio jogador é lido no `build`, do estado
   /// que a casca já mantém, para que Perfil e Home nunca discordem e para que a
   /// tela acompanhe a consulta em vez de congelar o valor do instante da carga.
   ///
+  /// UMA LEITURA, e não duas. Nome, avatar e liga do visitado saem da mesma
+  /// resposta e do mesmo `publicId`; pedi-los separadamente abriria a janela em
+  /// que a tela mostra o nome de um e a liga de outro.
+  ///
   /// Devolve `null` quando a resposta perdeu a validade no caminho — a sessão
   /// mudou, ou já houve pedido mais novo. Quem chama não publica nada.
-  Future<EstadoRanking?> _rankingVisitado(String? contaPublicId) async {
+  Future<LeituraDeAbertura?> _lerVisitado(String? contaPublicId) async {
     final alvo = widget.publicIdVisitado;
     final leitor = EscopoRanking.talvezDe(context)?.leitor;
     // Sem alvo, sem conta ou sem escopo não há a quem perguntar. A tela mostra
     // o resto e não afirma ranking — que é diferente de afirmar ausência dele.
-    if (alvo == null || contaPublicId == null || leitor == null) {
-      return rankingDaCascaPublicavel;
-    }
-    return leitor.rankingPublico(
+    if (alvo == null || contaPublicId == null || leitor == null) return null;
+    return leitor.perfilPublico(
       contaPublicId: contaPublicId,
       alvoPublicId: alvo,
+    );
+  }
+
+  /// A projeção pública de um terceiro, traduzida para a tela.
+  ///
+  /// -------------------------------------------------------------------------
+  /// O ÚNICO PONTO EM QUE A FRONTEIRA É ATRAVESSADA
+  /// -------------------------------------------------------------------------
+  ///
+  /// Os três campos nascem AQUI, do MESMO objeto, e é isso que os torna
+  /// incapazes de divergir. Espalhar esta tradução — o nome lido num lugar, o
+  /// avatar noutro — é literalmente como o defeito existia: cada campo achava a
+  /// sua própria fonte, e uma delas era a sessão de quem estava olhando.
+  ///
+  /// O nome segue a MESMA regra de apresentação do perfil próprio — apelido,
+  /// senão o id público, senão o rótulo genérico — porque a pergunta é a mesma
+  /// ("como esta pessoa se chama para os outros?"). O que muda é de quem se
+  /// está falando, e é só isso que tinha de mudar.
+  static RetratoVisitado _retratoDe(JogadorPublicoRanking j) {
+    final apelido = j.apelido.trim();
+    final id = j.publicPlayerId.trim();
+    return RetratoVisitado(
+      nome: apelido.isNotEmpty
+          ? apelido
+          : (id.isNotEmpty ? id : PerfilService.rotuloSemApelido),
+      avatar: avatarPublicoDe(j.avatar),
+      // `canastras` nulo porque a lista branca de `projetarJogador` não a
+      // publica. Zero seria uma afirmação sobre o jogo de outra pessoa.
+      stats: PerfilStats(
+        vitorias: j.vitorias,
+        partidas: j.partidas,
+        canastras: null,
+        aproveitamento: j.aproveitamento.round(),
+      ),
     );
   }
 
@@ -165,13 +203,30 @@ class _PerfilPageState extends State<PerfilPage> {
       // `null` é descarte: a resposta é de uma sessão que acabou, ou já foi
       // superada por outra. Vira "não sei" — o Perfil monta o resto da tela sem
       // afirmar ranking, em vez de exibir a fotografia de quem saiu.
+      final leitura = widget.ehMeuPerfil
+          ? null
+          : await _lerVisitado(contaPublicId);
       final ranking = widget.ehMeuPerfil
           ? null
-          : (await _rankingVisitado(contaPublicId) ?? rankingDaCascaPublicavel);
+          : (leitura?.eu ?? rankingDaCascaPublicavel);
       final vm = await _service.carregar(
         ehMeuPerfil: widget.ehMeuPerfil,
-        identidade: identidade,
+        // A IDENTIDADE DA SESSÃO NÃO ATRAVESSA PARA UM PERFIL VISITADO.
+        //
+        // Passá-la e confiar que o serviço "vai preferir o visitado" seria
+        // deixar de pé o caminho pelo qual o defeito existia: bastava a projeção
+        // pública faltar — leitura vencida, falha de rede, jogador sem
+        // classificação — para o serviço cair de volta na sessão e desenhar
+        // quem estava olhando. Com `null` aqui, não há para onde cair.
+        identidade: widget.ehMeuPerfil ? identidade : null,
         ranking: ranking,
+        // Nulo quando a leitura falhou ou venceu. O serviço então monta um
+        // perfil SEM nome e SEM avatar de ninguém — que é o certo: não se sabe
+        // quem é, e inventar seria mostrar a pessoa errada.
+        visitado: switch (leitura?.visitado) {
+          final JogadorPublicoRanking j => _retratoDe(j),
+          null => null,
+        },
       );
       if (!mounted) return;
       setState(() {
@@ -278,16 +333,22 @@ class _PerfilPageState extends State<PerfilPage> {
     // sem passar pela recarga (que só observa o `publicId`) e sem devolver a
     // tela ao esqueleto.
     //
-    // SEM GUARDA DE `ehMeuPerfil`, ao contrário do ranking, e a assimetria é
-    // deliberada: não há de onde tirar o avatar de terceiro nesta árvore. O
-    // `PerfilService` monta o VM visitado a partir da identidade da SESSÃO —
-    // nome inclusive —, então o campo já chegaria aqui com este mesmo valor.
-    // Guardar a reaplicação daria a impressão de proteger um dado de terceiro
-    // que ninguém buscou, e só tiraria a reatividade do próprio perfil.
+    // COM GUARDA DE `ehMeuPerfil`, e a guarda é a correção.
+    //
+    // A composição anterior aplicava esta linha em TODO perfil, e registrou a
+    // assimetria como deliberada com um argumento que era verdadeiro na época:
+    // não havia de onde tirar o avatar de um terceiro, então reaplicar o da
+    // sessão não mudava nada — o serviço já tinha escrito o mesmo valor.
+    //
+    // Agora há. O perfil visitado chega da carga com o avatar que a autoridade
+    // pública publicou para aquele `publicId`, e reaplicar o da sessão por cima
+    // apagaria justamente o que esta correção foi buscar. A reatividade que esta
+    // reaplicação existe para dar — trocar de avatar e ver na hora, sem recarga
+    // — é do DONO, e só faz sentido para ele.
     final identidade = EscopoSessao.identidadeDe(context).identidade;
-    final vm = comRanking.comAvatarPublico(
-      avatarPublicoDaIdentidade(identidade),
-    );
+    final vm = widget.ehMeuPerfil
+        ? comRanking.comAvatarPublico(avatarPublicoDaIdentidade(identidade))
+        : comRanking;
 
     return PerfilScreen(
       vm: vm,

@@ -11,7 +11,21 @@ enum NavDestino { inicio, ranking, loja, perfil }
 class PerfilStats {
   final int vitorias;
   final int partidas;
-  final int canastras;
+
+  /// Canastras — NULÁVEL, e é o único dos quatro que é.
+  ///
+  /// A lista branca de `projetarJogador` publica partidas, vitórias, derrotas e
+  /// aproveitamento de um jogador, e NÃO publica canastras. Quando o Perfil
+  /// passou a mostrar os números de um terceiro, ficou faltando exatamente um
+  /// dos quatro quadradinhos — e as duas saídas ruins eram escrever zero
+  /// (afirmar que a pessoa nunca fez canastra) ou esconder os outros três
+  /// (jogar fora o que a autoridade publicou de verdade).
+  ///
+  /// Nulo é a terceira, e é a mesma regra que o resto desta tela já segue: nível,
+  /// XP e título são nulos pelo mesmo motivo, e [EstadoRanking] existe inteiro
+  /// para poder dizer "não sei" sobre liga. Um tipo que não sabe dizer isso
+  /// obriga quem o constrói a mentir.
+  final int? canastras;
   final int aproveitamento;
 
   const PerfilStats({
@@ -74,6 +88,43 @@ class Presente {
     required this.icone,
     required this.quantidade,
   });
+}
+
+/// O que a tela precisa saber sobre um jogador VISITADO.
+///
+/// ---------------------------------------------------------------------------
+/// NÃO É UM SEGUNDO PERFIL PÚBLICO
+/// ---------------------------------------------------------------------------
+///
+/// A autoridade sobre quem é um terceiro continua sendo uma só — a projeção que
+/// o backend publica e que o cliente lê como `JogadorPublicoRanking`. Isto aqui
+/// é a TRADUÇÃO dela para a linguagem da tela, e existe por uma razão de
+/// fronteira: o `PerfilService` não pode conhecer o transporte de ranking (há
+/// auditoria que o exige), então alguém tem de atravessar essa fronteira. Quem
+/// atravessa é o `PerfilPage`, num ponto só.
+///
+/// O VALOR DE SER UM OBJETO, e não três parâmetros soltos: nome, avatar e
+/// números viajam JUNTOS ou não viajam. Foi exatamente a possibilidade de eles
+/// viajarem separados que produziu o defeito que este tipo veio fechar — um
+/// perfil com a liga de B e o nome de A. Um objeto só não tem como ser montado
+/// pela metade a partir de duas pessoas.
+class RetratoVisitado {
+  const RetratoVisitado({
+    required this.nome,
+    required this.avatar,
+    required this.stats,
+  });
+
+  /// Como este jogador se apresenta aos outros. Nunca o nome de quem olha.
+  final String nome;
+
+  /// Já resolvido pela autoridade canônica de avatar — a mesma da Home e do
+  /// perfil próprio. Não há segundo fallback: referência ausente ou malformada
+  /// de um terceiro cai na MESMA coroa que a de qualquer um.
+  final String avatar;
+
+  /// Os números que a autoridade pública publicou sobre ele.
+  final PerfilStats stats;
 }
 
 /// View-model visual do contrato entregue pelo Claude.
@@ -973,10 +1024,15 @@ class _PerfilScreenState extends State<PerfilScreen> {
     // de quem ainda não jogou" — seriam um placar sem placar nenhum atrás.
     final stats = vm.stats;
     if (stats == null) return const SizedBox.shrink();
+    final canastras = stats.canastras;
+    // O quadradinho de canastras SOME quando não há fonte, em vez de mostrar
+    // zero. Vale para o perfil visitado, onde a lista branca da autoridade
+    // pública não publica canastras — e três números verdadeiros valem mais que
+    // quatro com um inventado.
     final dados = [
       (_numero(stats.vitorias), 'Vitórias'),
       (_numero(stats.partidas), 'Partidas'),
-      (_numero(stats.canastras), 'Canastras'),
+      if (canastras != null) (_numero(canastras), 'Canastras'),
       ('${stats.aproveitamento}%', 'Aproveit.'),
     ];
     return Padding(
