@@ -55,6 +55,7 @@ import 'package:flutter/material.dart';
 import '../amigos/escopo_social.dart';
 import '../amigos/estado_social.dart';
 import '../amigos/leitor_social.dart';
+import '../amigos/rotulos_sociais.dart';
 import '../amigos/transporte_social.dart' show kAcoesDeAmizade;
 import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
@@ -146,54 +147,14 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
       // A aba visível foi VENCIDA pela ação (ver `_vencerListas`): quem a
       // recarrega é esta tela, porque é ela que sabe qual está à vista.
       social.garantir(_aba);
-      _recado(_textoDoDesfecho(acao, r));
+      _recado(textoDoDesfecho(acao, repeticao: r.repeticao));
     } on FalhaSocial catch (e) {
       if (!mounted) return;
-      _recado(_textoDaFalha(e));
+      _recado(textoDaFalhaSocial(e));
     } finally {
       if (mounted) setState(() => _agindoSobre = null);
     }
   }
-
-  /// O que dizer quando a ação deu certo.
-  ///
-  /// `repeticao` ganha frase PRÓPRIA em vez de silêncio: a pessoa tocou e algo
-  /// tem de responder, e "vocês já são amigos" é verdade e é informação — muito
-  /// melhor que repetir "pedido enviado" para um pedido que não foi enviado
-  /// agora.
-  static String _textoDoDesfecho(AcaoSocial acao, RespostaDeAcao r) {
-    if (r.repeticao) return 'Isso já estava resolvido por aqui 👍';
-    return switch (acao) {
-      AcaoSocial.adicionarAmigo => 'Pedido enviado!',
-      AcaoSocial.aceitarSolicitacao => 'Vocês agora são amigos 🎉',
-      AcaoSocial.recusarSolicitacao => 'Pedido recusado.',
-      AcaoSocial.cancelarSolicitacao => 'Pedido cancelado.',
-      AcaoSocial.removerAmigo => 'Amizade desfeita.',
-      _ => 'Pronto.',
-    };
-  }
-
-  /// O que dizer quando o servidor recusou.
-  ///
-  /// NÃO EXPÕE O MOTIVO CRU. `alvoMeBloqueou` não existe no vocabulário do
-  /// contrato justamente para que a tela não possa escrever "Fulano bloqueou
-  /// você"; e mesmo os motivos que existem (`limiteDeAmigos`) só valem uma
-  /// frase quando ela ajuda a pessoa a fazer algo diferente.
-  static String _textoDaFalha(FalhaSocial e) => switch (e.motivo) {
-    MotivoFalhaSocial.naoEncontrado => 'Não encontrei esse jogador.',
-    MotivoFalhaSocial.naoAutenticado =>
-      'Sua sessão expirou. Entre de novo para continuar.',
-    MotivoFalhaSocial.regraDeNegocio => switch (e.recusa) {
-      'limiteDeAmigos' => 'Você atingiu o limite de amigos.',
-      'limiteDeSolicitacoesEnviadas' =>
-        'Você tem pedidos demais esperando resposta.',
-      // Uma recusa que esta versão do aplicativo não conhece. Frase neutra, e
-      // NUNCA o código cru na cara do jogador.
-      _ => 'Não deu para fazer isso agora.',
-    },
-    MotivoFalhaSocial.pedidoInvalido => 'Não deu para fazer isso agora.',
-    _ => 'Falha de conexão. Tenta de novo?',
-  };
 
   void _recado(String msg) {
     ScaffoldMessenger.of(context)
@@ -382,7 +343,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
       return _AvisoSocial(
         mensagem: falha == null
             ? 'Não consegui buscar agora.'
-            : _textoDaBuscaRecusada(falha),
+            : textoDaBuscaRecusada(falha),
         // Só oferece insistir quando insistir pode dar outro resultado. Repetir
         // um termo curto demais devolveria a mesma recusa para sempre.
         onTentarDeNovo: falha != null && falha.transitoria
@@ -436,17 +397,6 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
       ],
     );
   }
-
-  /// A recusa da busca, dita para quem digitou.
-  static String _textoDaBuscaRecusada(FalhaSocial e) => switch (e.recusa) {
-    'consultaMuitoCurta' => 'Escreva um pouco mais para procurar.',
-    'consultaMuitoLonga' => 'Esse texto é longo demais para um apelido.',
-    'consultaInvalida' => 'Não consegui entender esse texto.',
-    _ =>
-      e.transitoria
-          ? 'Falha de conexão. Tenta de novo?'
-          : 'Não consegui buscar agora.',
-  };
 
   // -------------------------------------------------------------------------
   // Listas
@@ -652,20 +602,10 @@ class _LinhaSocial extends StatelessWidget {
 
   /// O rótulo do estado. DESCREVE, e não autoriza — quem autoriza é [acoes].
   ///
-  /// `nenhuma` e `desconhecida` não ganham rótulo: a primeira porque "vocês não
-  /// são nada" não é informação, a segunda porque este aplicativo não sabe o
-  /// que o servidor quis dizer e um palpite ali seria pior que o silêncio.
-  String? get _rotulo => switch (relacao) {
-    RelacaoSocial.amigos => 'Amigos',
-    RelacaoSocial.solicitacaoEnviada => 'Pedido enviado',
-    RelacaoSocial.solicitacaoRecebida => 'Quer ser seu amigo',
-    RelacaoSocial.bloqueadoPorMim => 'Bloqueado por você',
-    // Um estado só para dois fatos (o outro me bloqueou; há sanção social), e a
-    // frase não distingue os dois de propósito.
-    RelacaoSocial.indisponivel => 'Indisponível',
-    RelacaoSocial.euMesmo => 'Você',
-    RelacaoSocial.nenhuma || RelacaoSocial.desconhecida => null,
-  };
+  /// As palavras moram em `amigos/rotulos_sociais.dart`, e não aqui, para que
+  /// esta linha e a faixa do Perfil visitado não possam chamar a mesma relação
+  /// por nomes diferentes.
+  String? get _rotulo => rotuloDaRelacao(relacao);
 
   String get _anuncio {
     final partes = <String>[
@@ -774,18 +714,6 @@ class _BotaoDeAcao extends StatelessWidget {
   final AcaoSocial acao;
   final VoidCallback onTap;
 
-  /// O rótulo é do VERBO, e não do estado. "Aceitar", não "Pedido recebido".
-  static String rotuloDe(AcaoSocial acao) => switch (acao) {
-    AcaoSocial.adicionarAmigo => 'Adicionar',
-    AcaoSocial.aceitarSolicitacao => 'Aceitar',
-    AcaoSocial.recusarSolicitacao => 'Recusar',
-    AcaoSocial.cancelarSolicitacao => 'Cancelar',
-    AcaoSocial.removerAmigo => 'Remover',
-    AcaoSocial.bloquear => 'Bloquear',
-    AcaoSocial.desbloquear => 'Desbloquear',
-    AcaoSocial.editarPerfil => 'Editar',
-  };
-
   @override
   Widget build(BuildContext context) => Semantics(
     button: true,
@@ -800,7 +728,7 @@ class _BotaoDeAcao extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10),
           visualDensity: VisualDensity.compact,
         ),
-        child: Text(rotuloDe(acao), style: const TextStyle(fontSize: 12.5)),
+        child: Text(verboDaAcao(acao), style: const TextStyle(fontSize: 12.5)),
       ),
     ),
   );

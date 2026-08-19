@@ -458,6 +458,27 @@ class PerfilScreen extends StatefulWidget {
   /// aperta. Sem ele, o desenho é byte a byte o que sempre foi.
   final VoidCallback? onAbrirRanking;
 
+  /// A faixa de relação social do perfil VISITADO — "Amigos", "Pedido enviado"
+  /// e os botões que a autoridade ofereceu.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE UM WIDGET, E NÃO CAMPOS
+  /// -------------------------------------------------------------------------
+  ///
+  /// Esta tela é a superfície visual, e ela não conhece — nem pode passar a
+  /// conhecer — o vocabulário social. Com campos (`relacao`, `acoes`,
+  /// `onAcaoSocial`), o `switch` que decide qual botão existe acabaria aqui
+  /// dentro, e este arquivo viraria um segundo lugar onde se decide o que o
+  /// jogador tem permissão de fazer. Toda essa decisão mora em
+  /// `pages/perfil_page.dart` e em `amigos/`, onde ela pode ser auditada.
+  ///
+  /// O que chega aqui é uma caixa pronta e o lugar onde ela é desenhada.
+  ///
+  /// `null` no perfil do DONO, e não é opcionalidade frouxa: não existe relação
+  /// de alguém consigo, e um espaço reservado para ela empurraria o cabeçalho
+  /// do próprio jogador para baixo por nada.
+  final Widget? faixaSocial;
+
   const PerfilScreen({
     super.key,
     required this.vm,
@@ -478,6 +499,7 @@ class PerfilScreen extends StatefulWidget {
     required this.onRecarregar,
     required this.onNavTap,
     this.onAbrirRanking,
+    this.faixaSocial,
   });
 
   @override
@@ -786,6 +808,14 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ],
             ],
           ),
+          // A FAIXA SOCIAL vem antes do título honorífico e depois do nome: a
+          // pergunta "quem é essa pessoa para mim?" é a primeira que se faz num
+          // perfil de terceiro, e enterrá-la abaixo das estatísticas obrigaria a
+          // rolar para descobrir se dá para adicionar alguém.
+          if (widget.faixaSocial != null) ...[
+            const SizedBox(height: 8),
+            widget.faixaSocial!,
+          ],
           // Título honorífico só existe se alguém o concedeu. Sem fonte, a
           // faixa inteira sai — 'Novato(a)' também é um título inventado, e um
           // que o jogo põe na pessoa sem ela ter feito nada para merecê-lo.

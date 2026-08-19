@@ -1228,19 +1228,22 @@ void main() {
         );
       }
 
-      // 48 → 54 AO ENTRAR A DESCOBERTA SOCIAL, e os seis também têm nome.
+      // 48 → 55 AO ENTRAR A DESCOBERTA SOCIAL, e os sete também têm nome.
       //
       // Cinco são o módulo do grafo social (o estado canônico, a porta, o
       // adaptador de Firebase, o leitor e o escopo — a mesma divisão que o
-      // Ranking Real já tinha) e o sexto é a tela produtiva de Amigos. A
-      // maquete `lib/screens/amigos_screen.dart` continua FORA do fecho, e é
-      // isso que C16 e N12 provam.
+      // Ranking Real já tinha); o sexto é o dicionário de rótulos, que existe
+      // para que a tela de Amigos e a faixa do Perfil visitado não chamem a
+      // mesma relação por nomes diferentes; e o sétimo é a tela produtiva de
+      // Amigos. A maquete `lib/screens/amigos_screen.dart` continua FORA do
+      // fecho, e é isso que C16 e N12 provam.
       const daDescobertaSocial = [
         'lib/amigos/estado_social.dart',
         'lib/amigos/transporte_social.dart',
         'lib/amigos/transporte_social_firebase.dart',
         'lib/amigos/leitor_social.dart',
         'lib/amigos/escopo_social.dart',
+        'lib/amigos/rotulos_sociais.dart',
         'lib/casca/amigos_de_producao.dart',
       ];
       for (final caminho in daDescobertaSocial) {

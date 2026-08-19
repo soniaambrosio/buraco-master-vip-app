@@ -239,6 +239,11 @@ class LeitorSocial extends ChangeNotifier {
     _geracao = geracao;
     _ultimoPedido.clear();
     _emVoo.clear();
+    // As vistas em voo também: a resposta de uma relação pedida pela conta
+    // anterior já foi neutralizada pela comparação de geração dentro de
+    // [vistaDe], mas deixá-las no mapa faria um pedido da conta NOVA sobre o
+    // mesmo `publicId` receber, por deduplicação, o `null` da conta velha.
+    _vistasEmVoo.clear();
     _ultimaBusca = 0;
     for (final qual in QualLista.values) {
       _listas[qual] = const ListaSocial();
@@ -419,6 +424,55 @@ class LeitorSocial extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
+  // A vista de UM jogador
+  // -------------------------------------------------------------------------
+
+  /// A relação com [publicId], segundo a autoridade.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE ISTO NÃO TEM CACHE
+  /// -------------------------------------------------------------------------
+  ///
+  /// As listas têm — elas são páginas, e uma página velha é melhor que uma tela
+  /// em branco enquanto a nova chega. Uma RELAÇÃO é diferente: ela é o que
+  /// decide quais botões aparecem, e um botão desenhado a partir de uma relação
+  /// guardada é um botão que afirma uma permissão que pode já não valer.
+  ///
+  /// O que existe é DEDUPLICAÇÃO DE VOO: dois pedidos simultâneos do mesmo
+  /// `publicId` compartilham a chamada. Isso não guarda nada — o segundo pedido
+  /// espera a resposta do primeiro, que está a caminho.
+  ///
+  /// Devolve `null` quando a sessão mudou no meio do caminho. Nulo é "não sei",
+  /// e quem chama desenha a tela sem afirmar relação nenhuma — nunca deduz.
+  Future<ResultadoSocial?> vistaDe(String publicId) {
+    final alvo = publicId.trim();
+    if (alvo.isEmpty) return Future<ResultadoSocial?>.value(null);
+
+    final jaVoando = _vistasEmVoo[alvo];
+    if (jaVoando != null) return jaVoando;
+
+    final geracao = _geracao;
+    _chamadas++;
+    final voo = _transporte
+        .verPerfilPublico(alvo)
+        .then<ResultadoSocial?>((v) => geracao == _geracao ? v : null)
+        // CORPO DE BLOCO, e não seta. `Map.remove` DEVOLVE o valor removido —
+        // que aqui é este mesmo `Future` —, e `whenComplete` espera pelo que a
+        // sua função retorna. Escrito como `=> _vistasEmVoo.remove(alvo)`, o
+        // voo passa a esperar por si mesmo e NUNCA completa: toda visita a um
+        // perfil de terceiro trava para sempre, sem erro e sem log. As chaves
+        // fazem a função devolver `void`, e o ciclo não existe.
+        .whenComplete(() {
+          _vistasEmVoo.remove(alvo);
+        });
+    _vistasEmVoo[alvo] = voo;
+    return voo;
+  }
+
+  final Map<String, Future<ResultadoSocial?>> _vistasEmVoo =
+      <String, Future<ResultadoSocial?>>{};
+
+  // -------------------------------------------------------------------------
   // Ações
   // -------------------------------------------------------------------------
 
@@ -446,10 +500,13 @@ class LeitorSocial extends ChangeNotifier {
     // para quem chamou como se a ação tivesse falhado.
     _subtrair(acao, alvo);
 
+    // A MESMA porta que o Perfil visitado usa — [vistaDe] —, e não uma chamada
+    // direta ao transporte. É o que garante que a releitura de depois da ação e
+    // a leitura de abertura do Perfil sigam a mesma regra de geração e a mesma
+    // deduplicação de voo.
     ResultadoSocial? vista;
     try {
-      _chamadas++;
-      vista = await _transporte.verPerfilPublico(alvo);
+      vista = await vistaDe(alvo);
     } on FalhaSocial {
       // A releitura falhou. A relação fica "não sei" — e não deduzida.
       vista = null;

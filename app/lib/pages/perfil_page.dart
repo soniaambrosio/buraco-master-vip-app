@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../amigos/escopo_social.dart';
+import '../amigos/estado_social.dart';
+import '../amigos/leitor_social.dart';
+import '../amigos/rotulos_sociais.dart';
+import '../amigos/transporte_social.dart' show kAcoesDeAmizade;
 import '../casca/ranking_de_producao.dart';
 import '../ranking/escopo_ranking.dart';
 import '../ranking/estado_ranking.dart';
@@ -114,6 +119,29 @@ class _PerfilPageState extends State<PerfilPage> {
   /// "a identidade mudou" de "o widget reconstruiu".
   String? _publicIdCarregado;
   bool _jaCarregou = false;
+
+  /// A relação com o jogador VISITADO, como a autoridade social a descreve.
+  ///
+  /// -------------------------------------------------------------------------
+  /// ISTO NÃO É UM GRAFO NO CLIENTE
+  /// -------------------------------------------------------------------------
+  ///
+  /// É UMA relação, do jogador que está nesta rota, respondida por
+  /// `social:verPerfilPublico`, e ela morre junto com a rota. Não há mapa, não
+  /// há acumulação entre visitas e não há nada aqui que responda "somos amigos?"
+  /// sobre alguém que não seja o desta tela.
+  ///
+  /// E ela é lida da autoridade SOCIAL, não da projeção do ranking — que é o
+  /// que continua desenhando nome, avatar e números. Duas autoridades para duas
+  /// perguntas diferentes: quem é essa pessoa (ranking, já canonizado) e o que
+  /// eu sou dela (social). Misturá-las seria pedir ao ranking uma resposta que
+  /// ele não tem.
+  ResultadoSocial? _relacao;
+
+  /// Uma ação social está em voo. Enquanto estiver, os botões somem — dois
+  /// toques em "Adicionar" seriam duas chamadas, e a segunda voltaria com
+  /// `repeticao`.
+  bool _agindo = false;
 
   /// O Perfil não pede identidade — ele REAGE à identidade da sessão.
   ///
@@ -233,12 +261,70 @@ class _PerfilPageState extends State<PerfilPage> {
         _vm = vm;
         _estado = PerfilEstado.normal;
       });
+      // A RELAÇÃO VEM DEPOIS, e numa consulta própria — nunca embutida na
+      // carga. Duas razões: ela é de outra autoridade (o codebase social, e não
+      // o de ranking), e uma falha dela NÃO pode derrubar o perfil. Quem visita
+      // alguém quer ver o perfil mesmo quando o social está fora do ar; o que
+      // se perde nesse caso é o botão de adicionar, não a tela.
+      await _lerRelacao();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _estado = PerfilEstado.erro;
         _erro = 'Não consegui carregar seu perfil agora. Tenta de novo?';
       });
+    }
+  }
+
+  /// Lê a relação com o visitado, e engole a falha.
+  ///
+  /// ENGOLIR AQUI É A DECISÃO CERTA, e é o oposto do que `_agir` faz. Aqui a
+  /// ausência de resposta tem uma representação honesta na tela: sem relação, a
+  /// faixa social não aparece, e não aparecer é exatamente "não sei o que vocês
+  /// são um do outro". Em `_agir` não há representação honesta do silêncio — a
+  /// pessoa tocou num botão e precisa saber se funcionou —, e por isso lá a
+  /// falha vira recado.
+  Future<void> _lerRelacao() async {
+    final alvo = widget.publicIdVisitado;
+    if (widget.ehMeuPerfil || alvo == null) return;
+    final social = EscopoSocial.talvezDe(context);
+    if (social == null) return;
+    try {
+      final vista = await social.vistaDe(alvo);
+      if (!mounted) return;
+      setState(() => _relacao = vista);
+    } on FalhaSocial {
+      if (!mounted) return;
+      // Volta a "não sei" em vez de manter a relação anterior: depois de um
+      // retry que falhou, a faixa antiga seria uma afirmação sem respaldo.
+      setState(() => _relacao = null);
+    }
+  }
+
+  /// Executa uma ação social sobre o visitado e reflete a resposta na tela.
+  ///
+  /// O QUE VOLTA PARA A UI É A VISTA RELIDA DA AUTORIDADE
+  /// ([RespostaDeAcao.vista]), e não uma dedução a partir do desfecho. O
+  /// desfecho traz o estado do BANCO (`amigos`, `pendente`), que não conhece
+  /// bloqueio nem sanção — desenhar botões a partir dele reabriria, num lugar
+  /// novo, a política duplicada que o módulo inteiro existe para não ter.
+  ///
+  /// `vista` nula é "não sei": a faixa some. Não vira "vocês não são nada".
+  Future<void> _acaoSocial(AcaoSocial acao) async {
+    final alvo = widget.publicIdVisitado;
+    final social = EscopoSocial.talvezDe(context);
+    if (alvo == null || social == null || _agindo) return;
+    setState(() => _agindo = true);
+    try {
+      final r = await social.agir(acao, alvo);
+      if (!mounted) return;
+      setState(() => _relacao = r.vista);
+      _toast(textoDoDesfecho(acao, repeticao: r.repeticao));
+    } on FalhaSocial catch (e) {
+      if (!mounted) return;
+      _toast(textoDaFalhaSocial(e));
+    } finally {
+      if (mounted) setState(() => _agindo = false);
     }
   }
 
@@ -354,6 +440,16 @@ class _PerfilPageState extends State<PerfilPage> {
       vm: vm,
       estado: _estado,
       mensagemErro: _erro,
+      // Nula no perfil do dono, e nula enquanto não se souber a relação. Ver
+      // [_FaixaSocial] para por que "não sei" é ausência de faixa, e não uma
+      // faixa dizendo que não há relação.
+      faixaSocial: widget.ehMeuPerfil || _relacao == null
+          ? null
+          : _FaixaSocial(
+              relacao: _relacao!,
+              ocupado: _agindo,
+              onAgir: _acaoSocial,
+            ),
       onVoltar: () => Navigator.of(context).maybePop(),
       onAbrirConfig: () => _breve('Configurações do perfil'),
       onTrocarAvatar: () => _breve('Trocar avatar'),
@@ -392,6 +488,99 @@ class _PerfilPageState extends State<PerfilPage> {
             break;
         }
       },
+    );
+  }
+}
+
+/// A faixa de relação social do Perfil visitado.
+///
+/// ---------------------------------------------------------------------------
+/// O QUE ELA DESENHA, E DE ONDE VEM CADA COISA
+/// ---------------------------------------------------------------------------
+///
+/// O rótulo vem de [rotuloDaRelacao] — as mesmas palavras que a tela de Amigos
+/// usa, porque são a mesma relação. Os botões vêm de [ResultadoSocial.acoes],
+/// que é o que a AUTORIDADE ofereceu para aquele jogador naquele momento; não há
+/// aqui nenhum `if (relacao == amigos)` decidindo botão, e não pode haver.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE UM ESTADO SEM RÓTULO E SEM AÇÃO NÃO DESENHA NADA
+/// ---------------------------------------------------------------------------
+///
+/// [RelacaoSocial.nenhuma] com a lista de ações vazia é o caso de quem não pode
+/// interagir por motivo que o contrato esconde — e o desenho certo é o silêncio.
+/// Uma faixa vazia com moldura seria, ela mesma, a informação de que há algo do
+/// outro lado: é a mesma razão pela qual o backend não oferece nem "bloquear"
+/// num perfil indisponível.
+class _FaixaSocial extends StatelessWidget {
+  const _FaixaSocial({
+    required this.relacao,
+    required this.ocupado,
+    required this.onAgir,
+  });
+
+  final ResultadoSocial relacao;
+  final bool ocupado;
+  final ValueChanged<AcaoSocial> onAgir;
+
+  static const _ouro = Color(0xFFEFB94A);
+  static const _ouroClaro = Color(0xFFF6E2A6);
+  static const _textoSec = Color(0xFFB6A884);
+  static const _borda = Color(0x33EFB94A);
+
+  @override
+  Widget build(BuildContext context) {
+    final rotulo = rotuloDaRelacao(relacao.relacao);
+    // Só as ações que este aplicativo sabe executar. `bloquear` e `desbloquear`
+    // são do codebase de MODERAÇÃO — o social apenas reage a eles por gatilho —,
+    // e desenhá-los como botão sem porta seria prometer o que não se cumpre.
+    final acoes = relacao.acoes.where(kAcoesDeAmizade.contains).toList();
+    if (rotulo == null && acoes.isEmpty) return const SizedBox.shrink();
+
+    return Semantics(
+      container: true,
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          if (rotulo != null)
+            Text(
+              rotulo,
+              style: const TextStyle(
+                color: _textoSec,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          if (ocupado)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2.2, color: _ouro),
+            )
+          else
+            for (final acao in acoes)
+              ConstrainedBox(
+                // O piso das diretrizes de toque, e não só o tamanho do texto.
+                constraints: const BoxConstraints(minHeight: 40, minWidth: 88),
+                child: OutlinedButton(
+                  onPressed: () => onAgir(acao),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _ouroClaro,
+                    side: const BorderSide(color: _borda),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: Text(
+                    verboDaAcao(acao),
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                ),
+              ),
+        ],
+      ),
     );
   }
 }
