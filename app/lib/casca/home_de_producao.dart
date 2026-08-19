@@ -49,6 +49,19 @@ import 'onde_jogar_de_producao.dart';
 class HomeDeProducao extends StatelessWidget {
   const HomeDeProducao({super.key});
 
+  /// Os destinos da barra inferior que não têm tela neste build, e o nome com
+  /// que o aviso os chama.
+  ///
+  /// UMA declaração, lida por dois lugares: [_nav] a consulta para decidir o
+  /// que o toque faz, e a barra a recebe para ANUNCIAR o estado. Antes o
+  /// primeiro estava escrito num `switch` e o segundo não existia — e é assim
+  /// que nasce uma barra que diz "Loja" com voz de botão pronto enquanto o
+  /// toque responde que a loja ainda não existe.
+  static const Map<NavDestino, String> _navSemTela = {
+    NavDestino.ranking: 'Ranking',
+    NavDestino.loja: 'Loja VIP',
+  };
+
   @override
   Widget build(BuildContext context) {
     final identidade = EscopoSessao.identidadeDe(context);
@@ -86,6 +99,7 @@ class HomeDeProducao extends StatelessWidget {
       // duas vezes não abre duas chamadas.
       onRecarregar: () => EscopoSessao.talvezDe(context)?.recarregar(),
       onNavTap: (destino) => _nav(context, destino),
+      navIndisponiveis: _navSemTela.keys.toSet(),
     );
   }
 
@@ -229,15 +243,22 @@ class HomeDeProducao extends StatelessWidget {
   }
 
   void _nav(BuildContext context, NavDestino destino) {
+    // O que não tem tela sai por [_navSemTela] — a MESMA lista que a barra
+    // recebeu para anunciar. Os dois `case` de baixo continuam escritos porque
+    // o `switch` é exaustivo, e não porque são alcançáveis.
+    final semTela = _navSemTela[destino];
+    if (semTela != null) {
+      _aindaNao(context, semTela);
+      return;
+    }
     switch (destino) {
       case NavDestino.inicio:
         break; // já estamos aqui
       case NavDestino.perfil:
         _abrirPerfil(context);
       case NavDestino.ranking:
-        _aindaNao(context, 'Ranking');
       case NavDestino.loja:
-        _aindaNao(context, 'Loja VIP');
+        break; // tratados acima
     }
   }
 

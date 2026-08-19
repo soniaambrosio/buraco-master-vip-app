@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/alvo_minimo.dart';
 import 'perfil_screen.dart' show NavDestino;
 
 enum InicioEstado { carregando, normal, erro }
@@ -188,6 +189,16 @@ class InicioScreen extends StatelessWidget {
   final VoidCallback onRecarregar;
   final ValueChanged<NavDestino> onNavTap;
 
+  /// Os destinos da barra inferior que AINDA NÃO EXISTEM neste build.
+  ///
+  /// Vem de fora, e não de um `if` aqui dentro, porque quem sabe o que tem
+  /// tela é o host — é ele que roteia o toque. A barra lê esta lista só para
+  /// ANUNCIAR o estado; ela não decide nada e continua repassando todos os
+  /// toques, inclusive os dos destinos que não existem, porque é o toque que
+  /// dispara o aviso. É a mesma regra que [MenuItem.disponivel] já aplicava na
+  /// grade do menu.
+  final Set<NavDestino> navIndisponiveis;
+
   const InicioScreen({
     super.key,
     required this.vm,
@@ -201,6 +212,7 @@ class InicioScreen extends StatelessWidget {
     required this.onRecarregar,
     required this.onNavTap,
     this.mensagemErro,
+    this.navIndisponiveis = const <NavDestino>{},
   });
 
   @override
@@ -223,7 +235,10 @@ class InicioScreen extends StatelessWidget {
               child: Column(
                 children: [
                   Expanded(child: _body(context)),
-                  _BottomNav(onTap: onNavTap),
+                  _BottomNav(
+                    onTap: onNavTap,
+                    indisponiveis: navIndisponiveis,
+                  ),
                 ],
               ),
             ),
@@ -349,6 +364,29 @@ class _PlayerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // O cartão inteiro é UM botão — ele abre o Perfil de ponta a ponta — e o
+    // Histórico é OUTRO, por dentro dele. Os dois continuam sendo nós
+    // distintos porque as duas anotações de toque disputam entre si; o que
+    // faltava era o PAPEL, e sem ele o leitor de tela anunciava o cartão como
+    // um texto qualquer, sem dizer que dá para tocar.
+    //
+    // O rótulo não substitui o conteúdo: ele entra ANTES do que os filhos já
+    // diziam, num nó só. Por isso não há `excludeSemantics` aqui — ele apagaria
+    // a subárvore inteira, e o botão de Histórico sumiria junto com o nome.
+    return Semantics(
+      button: true,
+      // O Perfil existe de verdade, e dizê-lo é o par honesto de dizer que
+      // Ranking, Recompensas e Loja não existem: numa tela onde parte dos
+      // destinos é anunciada como indisponível, o silêncio dos outros vira
+      // ambiguidade. Todo alvo desta tela declara a sua disponibilidade.
+      enabled: true,
+      label: 'Seu perfil',
+      child: _cartao(),
+    );
+  }
+
+  /// O desenho do cartão, sem semântica. [build] só o embrulha.
+  Widget _cartao() {
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -363,7 +401,9 @@ class _PlayerCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              _Avatar(jogador: jogador),
+              // Fora da leitura: o avatar é a mesma pessoa que o nome logo ao
+              // lado já nomeia, e sem isto o cartão começa com "coroa".
+              ExcludeSemantics(child: _Avatar(jogador: jogador)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -419,10 +459,14 @@ class _PlayerCard extends StatelessWidget {
                   ],
                 ),
               ),
+              // SEM `visualDensity: VisualDensity.compact`, e a remoção é a
+              // correção: a densidade compacta desconta 8 pontos do mínimo do
+              // `IconButton` e deixava este botão com 40x40 — menos que o piso
+              // de [kAlvoMinimoDeToque], num alvo encostado na borda do
+              // cartão. Sem ela o próprio Flutter já garante 48x48.
               IconButton(
                 onPressed: onHistorico,
                 tooltip: 'Histórico',
-                visualDensity: VisualDensity.compact,
                 icon: Icon(
                   Icons.history_rounded,
                   color: Colors.white.withValues(alpha: .22),
@@ -681,7 +725,13 @@ class _PlayButton extends StatelessWidget {
     return Center(
       child: Semantics(
         button: true,
+        enabled: true,
         label: 'Jogar',
+        onTap: onTap,
+        // A arte do botão e o texto de emergência do `errorBuilder` dizem a
+        // mesma palavra que o rótulo. Sem a exclusão, quem cai no fallback
+        // ouve "Jogar" duas vezes.
+        excludeSemantics: true,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(38),
@@ -716,6 +766,19 @@ class _PlayButton extends StatelessWidget {
   }
 }
 
+/// O nome do item da grade, para ser ouvido.
+///
+/// É o rótulo que já está desenhado, mais o selo quando existe. O que fica de
+/// fora é a arte do ícone (que entrava como "imagem") e o texto "em breve" —
+/// esse último não some da leitura, ele muda de lugar: quem o diz agora é o
+/// estado `enabled: false` do próprio botão, e dizê-lo duas vezes seria
+/// exatamente o anúncio duplicado que a correção veio tirar.
+String _rotuloDoItem(MenuItem item) {
+  final badge = item.badge;
+  if (badge == null || badge.isEmpty) return item.label;
+  return '${item.label}, $badge';
+}
+
 class _MenuGrid extends StatelessWidget {
   final List<MenuItem> items;
   final bool compact;
@@ -740,94 +803,114 @@ class _MenuGrid extends StatelessWidget {
         // Indisponível continua CLICÁVEL de propósito: o toque é o que dispara
         // o aviso de que ainda não existe. Um item inerte deixaria a pessoa
         // achando que o toque não pegou.
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () => onTap(item.id),
-            borderRadius: BorderRadius.circular(14),
-            child: Ink(
-              decoration: BoxDecoration(
-                color: InicioScreen._card,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: item.disponivel
-                      ? InicioScreen._border
-                      : Colors.white.withValues(alpha: .08),
+        //
+        // O que a semântica acrescenta é dizer isso em voz alta. `enabled` lê
+        // `item.disponivel` — o MESMO campo que apaga o ícone, muda a borda e
+        // desenha o selo —, então não há como o anúncio e o desenho
+        // divergirem, e o toque continua chegando ao host intacto.
+        //
+        // `excludeSemantics` porque os fragmentos de dentro repetem o rótulo: a
+        // arte do ícone entrava como imagem e o selo "em breve" dizia com
+        // outras palavras o que `enabled: false` já diz.
+        return Semantics(
+          button: true,
+          enabled: item.disponivel,
+          label: _rotuloDoItem(item),
+          // `onTap` REPETE o callback do gesto porque `excludeSemantics` leva
+          // embora a ação de toque junto com a decoração: sem ele, o nó fica
+          // com papel de botão e nada para acionar. É o mesmo callback — o
+          // dedo entra pelo `InkWell`, o leitor de tela entra por aqui.
+          onTap: () => onTap(item.id),
+          excludeSemantics: true,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => onTap(item.id),
+              borderRadius: BorderRadius.circular(14),
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: InicioScreen._card,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: item.disponivel
+                        ? InicioScreen._border
+                        : Colors.white.withValues(alpha: .08),
+                  ),
                 ),
-              ),
-              child: Stack(
-                children: [
-                  Center(
-                    child: Opacity(
-                      opacity: item.disponivel ? 1 : .38,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _AssetOrText(
-                            value: item.icone,
-                            width: compact ? 38 : 40,
-                            height: compact ? 38 : 40,
-                            textSize: 28,
-                          ),
-                          const SizedBox(height: 5),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: Text(
-                              item.label,
-                              maxLines: 2,
-                              textAlign: TextAlign.center,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: .70),
-                                fontSize: compact ? 10.4 : 11,
-                                height: 1.05,
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Opacity(
+                        opacity: item.disponivel ? 1 : .38,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _AssetOrText(
+                              value: item.icone,
+                              width: compact ? 38 : 40,
+                              height: compact ? 38 : 40,
+                              textSize: 28,
+                            ),
+                            const SizedBox(height: 5),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 3),
+                              child: Text(
+                                item.label,
+                                maxLines: 2,
+                                textAlign: TextAlign.center,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: .70),
+                                  fontSize: compact ? 10.4 : 11,
+                                  height: 1.05,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (!item.disponivel)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 5,
-                      child: Text(
-                        'em breve',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: .34),
-                          fontSize: compact ? 8.4 : 9,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: .3,
+                          ],
                         ),
                       ),
                     ),
-                  if (item.badge != null)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Container(
-                        constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF9D1532),
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: InicioScreen._gold, width: .7),
-                        ),
-                        alignment: Alignment.center,
+                    if (!item.disponivel)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 5,
                         child: Text(
-                          item.badge!,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
+                          'em breve',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .34),
+                            fontSize: compact ? 8.4 : 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: .3,
                           ),
                         ),
                       ),
-                    ),
-                ],
+                    if (item.badge != null)
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF9D1532),
+                            borderRadius: BorderRadius.circular(9),
+                            border: Border.all(color: InicioScreen._gold, width: .7),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            item.badge!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -839,7 +922,13 @@ class _MenuGrid extends StatelessWidget {
 
 class _BottomNav extends StatelessWidget {
   final ValueChanged<NavDestino> onTap;
-  const _BottomNav({required this.onTap});
+
+  /// Os destinos sem tela neste build. Ver [InicioScreen.navIndisponiveis]:
+  /// serve para ANUNCIAR, e nunca para decidir — todos os toques continuam
+  /// saindo por [onTap], inclusive os destes.
+  final Set<NavDestino> indisponiveis;
+
+  const _BottomNav({required this.onTap, this.indisponiveis = const {}});
 
   @override
   Widget build(BuildContext context) {
@@ -861,31 +950,48 @@ class _BottomNav extends StatelessWidget {
   }
 
   Widget _item(NavDestino destino, String label, String asset, bool active) {
+    // 47 pontos de altura, e ninguém tinha escolhido esse número: ele era a
+    // soma do ícone com o rótulo. [AlvoMinimo] põe o piso sem tocar no
+    // desenho — o que cresce é a caixa que o `InkWell` cobre.
+    //
+    // `selected` é o que diz "você está aqui", e sem ele a aba corrente só se
+    // distinguia pela cor. `enabled` lê a lista de destinos sem tela, a mesma
+    // que o host usa para rotear.
     return Expanded(
-      child: InkWell(
+      child: Semantics(
+        button: true,
+        enabled: !indisponiveis.contains(destino),
+        selected: active,
+        label: label,
         onTap: () => onTap(destino),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Image.asset(
-                asset,
-                width: 28,
-                height: 28,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const SizedBox(width: 28, height: 28),
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: () => onTap(destino),
+          child: AlvoMinimo(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 1),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Image.asset(
+                    asset,
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox(width: 28, height: 28),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: active ? InicioScreen._gold : Colors.white.withValues(alpha: .26),
+                      fontSize: 11,
+                      fontWeight: active ? FontWeight.w800 : FontWeight.w400,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 1),
-              Text(
-                label,
-                style: TextStyle(
-                  color: active ? InicioScreen._gold : Colors.white.withValues(alpha: .26),
-                  fontSize: 11,
-                  fontWeight: active ? FontWeight.w800 : FontWeight.w400,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
