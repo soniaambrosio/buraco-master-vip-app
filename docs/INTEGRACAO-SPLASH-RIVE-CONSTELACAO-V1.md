@@ -435,9 +435,18 @@ Play. Sem ampliação de permissões de workflow.
 
 **Veredito: `PASS — SPLASH CONSTELAÇÃO MASTER VIP INTEGRADO COM RIVE INTACTO, CONSTELAÇÃO COMPLEMENTAR E SOBREPOSIÇÃO DO TÍTULO CORRIGIDA V1`**
 
-Não é PASS. A composição está construída, provada e empacotada, mas duas
-constatações visuais caem exatamente na cláusula que manda parar em vez de
-maquiar. Elas estão na §A4.
+A composição está construída, provada, medida e empacotada.
+
+As duas constatações visuais levantadas pela §A4 **foram arbitradas e estão
+resolvidas**:
+
+- a **sobreposição do título** foi corrigida por máscara de composição — §A6, com
+  a medição refeita dando **zero** pixels alterados em coroa, escudo e título;
+- a **ausência de desfoque do `flutter_svg`** foi **aceita** como residual visual
+  documentado desta V1 — §A8.
+
+A §A4 fica como está, de propósito: ela é o registro da medição que motivou a
+arbitragem, e não uma pendência. Quem quiser o estado final vai direto às §§A6–A8.
 
 O `.riv` **não foi tocado**: `2.298.957` bytes, SHA-256
 `a5a7ca19…d4d67d`, conferido no bundle, no repositório e dentro do APK.
@@ -512,7 +521,12 @@ Entrou porque o Flutter não desenha SVG sozinho, e a alternativa seria
 reimplementar a arte num `CustomPainter` — exatamente o "recriar" que a OS
 proíbe.
 
-## A4. AS DUAS DECISÕES QUE NÃO SÃO MINHAS
+## A4. AS DUAS DECISÕES QUE NÃO ERAM MINHAS — arbitradas
+
+> **Esta seção é REGISTRO HISTÓRICO, não pendência.** Ela documenta a medição
+> que motivou a arbitragem e as opções que foram levadas à decisão. As duas
+> foram decididas e aplicadas: a sobreposição do título na **§A6**, o desfoque
+> do `flutter_svg` na **§A8**. O que se lê abaixo é o estado de ANTES.
 
 ### A4.1 Dois nós da constelação encostam na base do título
 
@@ -551,6 +565,9 @@ Opções, para a decisão — **nenhuma delas foi aplicada**:
 4. **Deslocar a camada** alguns pixels. Muda o enquadramento aprovado, e por
    isso é a que menos recomendo.
 
+> **DECIDIDO: opção 2 (máscara).** Aplicada e medida na **§A6** — depois dela,
+> zero pixels alterados em coroa, escudo e título.
+
 ### A4.2 `flutter_svg` ignora os filtros de desfoque do SVG
 
 O renderizador emite, literalmente, `unhandled element <filter/>`.
@@ -566,14 +583,19 @@ saídas possíveis — **nenhuma aplicada** — são aceitar como está, pedir u
 exportação do SVG com o brilho já rasterizado nas formas, ou trocar o
 renderizador. Editar o SVG para "resolver" está fora do que me foi autorizado.
 
+> **DECIDIDO: aceitar como está.** Fica como residual visual documentado desta
+> V1, sem troca de renderizador e sem rasterizar o SVG — ver **§A8**.
+
 ## A5. O que continua não provado
 
 Tudo o que a §10 já listava segue valendo, e sem novidade: **cold start em
 aparelho não foi provado**, o build depende de rede para as libs nativas da
 Rive, e o `ci-os-integracao.yml` não é dispatchável fora de `main`.
 
-Nada foi publicado: os commits desta correção estão **apenas locais**, e o SHA
-`e246d54` continua sendo o topo publicado até a arbitragem.
+Sobre a publicação: enquanto a arbitragem estava aberta, os commits desta
+correção ficaram apenas locais e `e246d54` seguia sendo o topo publicado.
+**Depois da decisão, a branch foi publicada** — o topo atual está na §A7.
+Continua sem merge em `main`, sem PR e sem deploy.
 
 ---
 
