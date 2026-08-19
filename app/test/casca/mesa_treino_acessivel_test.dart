@@ -464,6 +464,46 @@ void main() {
       await encerrarMesaDeTreino(tester);
     });
 
+    testWidgets('as faixas anunciadas ao leitor de tela não se sobrepõem', (
+      tester,
+    ) async {
+      await abrirMesaDeTreino(tester);
+
+      // A varredura acima prova o dedo que ENXERGA a carta e mira nela. Quem usa
+      // TalkBack navega diferente: arrasta o dedo pela tela e ouve o que passa
+      // por baixo, e o que responde ali é o RETÂNGULO DO NÓ, não o detector de
+      // gesto. Retângulos empilhados dariam onze alvos por cima uns dos outros —
+      // a mesma armadilha da mão antiga, num caminho que a varredura não vê.
+      final faixas = tester.semantics
+          .simulatedAccessibilityTraversal()
+          .where((n) => kMarcaDeCartaDaMao.hasMatch(n.label))
+          .map((n) => (rotulo: n.label, area: retanguloNaTela(n)))
+          .toList();
+      expect(faixas, hasLength(11));
+
+      for (final faixa in faixas) {
+        expect(
+          faixa.area.width,
+          greaterThanOrEqualTo(kFaixaMinimaDeToque),
+          reason: '"${faixa.rotulo}" é anunciada com ${faixa.area.width} '
+              'pontos de largura',
+        );
+      }
+      for (var i = 0; i < faixas.length; i++) {
+        for (var j = i + 1; j < faixas.length; j++) {
+          final comum = faixas[i].area.intersect(faixas[j].area);
+          expect(
+            comum.isEmpty || comum.width <= 0.01,
+            isTrue,
+            reason: '"${faixas[i].rotulo}" e "${faixas[j].rotulo}" dividem '
+                '${comum.width} pontos de tela',
+          );
+        }
+      }
+
+      await encerrarMesaDeTreino(tester);
+    });
+
     testWidgets('a última carta não é a única confortável', (tester) async {
       await abrirMesaDeTreino(tester);
       final varredura = await medirFaixasEfetivas(tester);
