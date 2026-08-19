@@ -181,6 +181,58 @@ export function entradaPublica(
   };
 }
 
+/// Uma entrada de RESULTADO DE BUSCA: apresentacao publica + estado social.
+///
+/// E [EntradaPublica] mais `relacao` e `acoes`, e MENOS `desde`: "amigos desde"
+/// nao e informacao de descoberta, e uma busca que devolvesse a data de amizade
+/// de cada resultado estaria contando ao pesquisador coisas sobre relacoes que
+/// ele nao abriu.
+export interface EntradaDeBusca {
+  publicId: string;
+  apelido: string;
+  avatarRef: string | null;
+  relacao: string;
+  acoes: string[];
+}
+
+/// As UNICAS chaves que um resultado de busca pode ter (OS de Busca §7).
+///
+/// A allowlist de novo, mesmo com a fonte ja sendo publica — "defesa em
+/// profundidade", nas palavras da §7. `publicProfiles` e limpo por construcao
+/// (a trava de escrita nao deixa outro campo entrar), mas o dia em que ele
+/// ganhar um campo legitimo e novo, ele nao vaza para a busca de brinde: ele
+/// simplesmente nao e copiado.
+export const CAMPOS_DO_RESULTADO = [
+  "publicId",
+  "apelido",
+  "avatarRef",
+  "relacao",
+  "acoes",
+] as const;
+
+/// Monta um resultado de busca a partir do perfil publico e do estado social.
+///
+/// CAMPO A CAMPO, e nunca por espalhamento do perfil lido. Um `{...perfil}` aqui
+/// traria `apelidoOrdenacao`, `estado`, `criadoEm` e `esquema` — nenhum deles
+/// privado, todos irrelevantes para quem procura, e o quarto e um detalhe
+/// interno de versao de documento que o cliente passaria a enxergar sem que
+/// ninguem tivesse decidido isso.
+export function entradaDeBusca(
+  perfil: { publicId?: unknown; apelido?: unknown; avatarRef?: unknown } | undefined,
+  publicIdConhecido: string,
+  relacao: string,
+  acoes: string[]
+): EntradaDeBusca {
+  const base = entradaPublica(perfil, publicIdConhecido, null);
+  return {
+    publicId: base.publicId,
+    apelido: base.apelido,
+    avatarRef: base.avatarRef,
+    relacao,
+    acoes: [...acoes],
+  };
+}
+
 /// O estado da relacao lido do documento canonico, sem expor os UIDs.
 export interface RelacaoLida {
   estado: "nenhuma" | "pendente" | "amigos";

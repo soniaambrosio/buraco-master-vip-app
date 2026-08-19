@@ -28,10 +28,17 @@ import { CallableRequest, HttpsError, onCall } from "firebase-functions/v2/https
 import {
   C_AMIZADES,
   C_PERFIS_PUBLICOS,
+  entradaDeBusca,
   entradaPublica,
   exigirRespostaSegura,
 } from "./chaves";
-import { LIMITES, VereditoAmizade, agoraUtc, dominio } from "./domain";
+import {
+  CandidatoDeBusca,
+  LIMITES,
+  VereditoAmizade,
+  agoraUtc,
+  dominio,
+} from "./domain";
 import {
   desfazerPorBloqueio,
   db,
@@ -46,7 +53,9 @@ import {
   propagarApelidoParaAmigos,
   publicIdDe,
   reconciliarProjecoes,
+  relacoesParaBusca,
   resolverUid,
+  varrerVisiveis,
 } from "./repositorio";
 
 initializeApp();
@@ -106,8 +115,21 @@ function recusar(recusa: string | null): never {
     recusa === "perfilPublicoNaoDisponivel" ||
     recusa === "perfilPublicoInvalido";
 
+  // Recusas de FORMA do pedido de busca. `invalid-argument`, e nao
+  // `failed-precondition`: o servidor nao esta num estado que impede a
+  // operacao — o pedido e que nao tem forma de pedido. A distincao importa para
+  // o cliente saber se vale a pena tentar de novo com o mesmo texto (nao vale).
+  const pedidoMalformado =
+    recusa === "consultaInvalida" ||
+    recusa === "consultaMuitoCurta" ||
+    recusa === "consultaMuitoLonga";
+
   throw new HttpsError(
-    naoEncontrado ? "not-found" : "failed-precondition",
+    naoEncontrado
+      ? "not-found"
+      : pedidoMalformado
+        ? "invalid-argument"
+        : "failed-precondition",
     recusa ?? "pedido recusado",
     { recusa }
   );
@@ -334,6 +356,117 @@ export const localizarJogadorPorIdentidade = onCall(
     });
   }
 );
+
+// ===========================================================================
+// BUSCA POR APELIDO (OS de Busca e Descoberta Social)
+// ===========================================================================
+
+/// Procura jogadores pelo apelido publico.
+///
+/// POR QUE A BUSCA E UMA FUNCTION, e nao uma consulta do cliente ao Firestore
+/// (§11): as Rules nao conseguem impor teto de resultados, nem exigir tamanho
+/// minimo de termo, nem esconder de mim quem me bloqueou. Uma regra libera ou
+/// nega a consulta inteira — e uma consulta liberada e o diretorio inteiro,
+/// paginavel. Por isso o `list` de `publicProfiles` foi fechado ao cliente na
+/// mesma OS que abriu esta porta: a leitura por ID continua publica (e o que
+/// sustenta `Ranking -> publicId -> Ver Perfil`), a VARREDURA nao.
+///
+/// A CADEIA, e o que cada elo protege:
+///
+///   1. dominio valida o termo ............ minimo, maximo, controle, modo (§9)
+///   2. faixa sobre `apelidoOrdenacao` .... campo derivado que ja existia (§4)
+///   3. varredura ate `limite + 1` VISIVEIS. o bloqueado nao mexe em nada (§8)
+///   4. `publicId -> uid` em lote ......... so aqui, e so no servidor (§3)
+///   5. teto + `truncado`, sem cursor ..... a busca nao percorre a base (§9)
+///   6. dominio projeta relacao e acoes ... estado social sanitizado (§10)
+///   7. allowlist explicita na resposta ... defesa em profundidade (§7)
+///   8. `exigirRespostaSegura` ............ a trava, de novo, sobre o todo (§3)
+///
+/// O ELO 3 E O QUE FAZ A §8 VALER ATE NO METADADO. Calcular `truncado` sobre o
+/// lote bruto — que e o que uma consulta unica faria — deixaria um candidato
+/// bloqueado dizer "havia mais" num resultado completo, e um bloqueado entre os
+/// primeiros roubaria a vaga de um jogador legitimo. Para quem procura, o
+/// bloqueado nao existe; e um inexistente nao altera contagem, ordem nem
+/// metadado. Ver `varrerVisiveis`.
+///
+/// NAO EXISTE ROTA "LISTAR TODOS". Nao ha parametro que devolva a base, nao ha
+/// termo vazio que case com tudo e nao ha curinga: `*` e `%` sao caracteres
+/// comuns num apelido, e a faixa os compara literalmente.
+export const buscarJogadoresPorApelido = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const { termo, modo, limite } = (req.data ?? {}) as Record<string, unknown>;
+
+  const consulta = dominio.avaliarConsultaDeBusca({ termo, modo, limite });
+  if (!consulta.aceita) recusar(consulta.recusa);
+
+  // A varredura ja resolve `publicId -> uid` e o bloqueio: os dois decidem QUEM
+  // aparece, e por isso acontecem antes de qualquer decisao sobre a pagina.
+  const pagina = await varrerVisiveis(
+    uid,
+    consulta.chaveInicio,
+    consulta.chaveFim,
+    consulta.modo === "exato",
+    consulta.limite
+  );
+
+  // Nenhum candidato visivel: encerra sem gastar a leitura das relacoes.
+  //
+  // ESTE E O MESMO CAMINHO de tres situacoes diferentes — apelido inexistente,
+  // todos os candidatos bloqueados, e candidatos com dado inconsistente — e a
+  // resposta e identica nos tres. §8: a ausencia por bloqueio nao pode ser
+  // distinguivel da ausencia por nao existir.
+  //
+  // E responde LISTA VAZIA, nao erro: §14 pede o caso, e um `not-found` aqui
+  // contaria com um codigo o que a lista ja conta com um comprimento.
+  if (pagina.candidatos.length === 0) {
+    return exigirRespostaSegura({
+      itens: [],
+      truncado: pagina.truncado,
+      modo: consulta.modo,
+    });
+  }
+
+  // A relacao de amizade e lida SO PARA QUEM VAI APARECER. Ela decora o
+  // resultado; ela nunca decide se ele existe.
+  const relacoes = await relacoesParaBusca(uid, [
+    ...pagina.uidPorPublicId.values(),
+  ]);
+
+  const candidatos: CandidatoDeBusca[] = pagina.candidatos.map((c) => {
+    const alvoUid = pagina.uidPorPublicId.get(c.publicId) as string;
+    const rel = relacoes.get(alvoUid);
+    const bloqueio = pagina.bloqueios.get(c.publicId);
+    return {
+      publicId: c.publicId,
+      uidAlvo: alvoUid,
+      estado: rel?.estado ?? "nenhuma",
+      solicitanteUid: rel?.solicitanteUid ?? null,
+      euBloqueeiOAlvo: bloqueio?.euBloqueeiOAlvo === true,
+      alvoMeBloqueou: bloqueio?.alvoMeBloqueou === true,
+    };
+  });
+
+  const projetados = dominio.projetarResultadosDeBusca({
+    uidObservador: uid,
+    candidatos,
+    observadorComChatSilenciado: pagina.sancao.chatSilenciado,
+    observadorComRestricaoSocial: pagina.sancao.restricaoSocial,
+  });
+
+  const perfis = new Map(
+    pagina.candidatos.map((c) => [c.publicId, c.perfil] as const)
+  );
+
+  return exigirRespostaSegura({
+    itens: projetados.itens.map((r) =>
+      entradaDeBusca(perfis.get(r.publicId), r.publicId, r.relacao, r.acoes)
+    ),
+    /// Havia mais VISIVEIS do que o teto. O cliente refina o termo — nao ha
+    /// cursor, e a ausencia dele e a decisao antienumeracao de §9.
+    truncado: pagina.truncado,
+    modo: consulta.modo,
+  });
+});
 
 // ===========================================================================
 // GRAFO SOCIAL (§13 a §17)

@@ -61,6 +61,13 @@ acontecer no dia em que as duas árvores se encontrarem.
 banco**. Qualquer jogador autenticado lê qualquer perfil — é isso que permite
 `Ranking/Hall → publicId → Ver Perfil` sem que nenhuma dessas telas conheça UID.
 
+> **Emenda da OS de Busca e Descoberta v1:** *ler* continua público; *varrer* não.
+> O `allow list` desta coleção passou a exigir admin. A leitura por ID
+> (`allow get`) não mudou, e é ela que sustenta tudo o que está descrito acima —
+> nenhuma tela nem Function deste contrato usava `list`. Ver
+> [CONTRATO-BUSCA-APELIDO-DESCOBERTA.md](CONTRATO-BUSCA-APELIDO-DESCOBERTA.md),
+> seção "O achado".
+
 ### Campos permitidos — lista fechada
 
 ```
@@ -364,6 +371,7 @@ App Check exigido em produção; dispensado sob o emulador.
 | `listarSolicitacoesEnviadas` | paginado, por recência |
 | `aoBloquearJogador` | gatilho de faxina (Firestore) |
 | `reconciliarPerfilSocial` | reparo administrativo |
+| `buscarJogadoresPorApelido` | busca por apelido — **acrescentada pela OS de Busca**; contrato próprio em [CONTRATO-BUSCA-APELIDO-DESCOBERTA.md](CONTRATO-BUSCA-APELIDO-DESCOBERTA.md) |
 
 Todas recebem **publicId**, nunca UID de terceiro. Todas passam por
 `exigirRespostaSegura`, que varre a resposta em profundidade e **lança** se
@@ -587,6 +595,6 @@ suporte.
 | **`functions-ranking` não consolidado** | duas coleções de identidade em branches diferentes | OS de consolidação — ver seção 11 |
 | **Exclusão/desativação de conta não existe no projeto** | `EstadoPerfilPublico.indisponivel` está implementado e testado, mas **nada o escreve**: não há fluxo de exclusão nesta árvore. O perfil de uma conta removida permaneceria `ativo`. | OS de LGPD/exclusão. Quando ela existir, basta gravar `estado: "indisponivel"` — a leitura já respeita. |
 | **Solicitação pendente não expira** | uma pendência recusada pode ser reenviada imediatamente; pendências antigas ficam para sempre | decisão de produto |
-| **Sem busca por apelido** | adicionar amigo é por publicId, Perfil, e futuramente Ranking/Hall (§28) | fora do escopo v1 |
+| ~~**Sem busca por apelido**~~ | **RESOLVIDA.** `buscarJogadoresPorApelido` existe; ver [CONTRATO-BUSCA-APELIDO-DESCOBERTA.md](CONTRATO-BUSCA-APELIDO-DESCOBERTA.md) | OS de Busca e Descoberta Social v1 |
 | **Sem UI** | esta OS entrega backend e contrato; `app/lib/screens/amigos_screen.dart` ainda é a tela estática anterior | OS de UI social |
 | **Nenhuma Function foi implantada** | tudo foi exercitado no emulador; não houve deploy | operação |

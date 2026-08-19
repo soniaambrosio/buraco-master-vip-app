@@ -161,6 +161,78 @@ describe('perfil publico: legivel por todos, escrito por ninguem', () => {
     await assertFails(getDoc(doc(semLogin(), `publicProfiles/${PID_ANA}`)));
   });
 
+  test('BUSCA §9 — o cliente NAO VARRE a colecao de perfis publicos', async () => {
+    // O documento e publico; a COLECAO nao. `getDocs` aqui devolveria o apelido
+    // e o publicId de todos os jogadores numa consulta, paginavel ate o fim da
+    // base — a "listagem irrestrita de usuarios" que a OS de Busca proibe.
+    //
+    // A OS de Identidade Publica concedeu `get, list` juntos e o `list` nunca
+    // teve consumidor: as telas resolvem um publicId por vez, e as Functions
+    // usam o Admin SDK, que ignora estas regras.
+    await assertFails(getDocs(collection(comoAna(), 'publicProfiles')));
+    await assertFails(getDocs(collection(comoCaio(), 'publicProfiles')));
+    await assertFails(getDocs(collection(semLogin(), 'publicProfiles')));
+  });
+
+  test('BUSCA §9 — nem uma consulta FILTRADA passa: a busca e do servidor', async () => {
+    // A tentativa esperta: em vez de listar tudo, listar por faixa de apelido —
+    // que e exatamente a consulta que a Function faz. Negada tambem, e tem que
+    // ser: uma regra nao impoe termo minimo, teto de resultados nem respeito ao
+    // bloqueio, e sem os tres a consulta e um diretorio com filtro.
+    const { query, where, orderBy, limit } = require('firebase/firestore');
+    await assertFails(getDocs(query(
+      collection(comoCaio(), 'publicProfiles'),
+      where('apelidoOrdenacao', '>=', 'a'),
+      orderBy('apelidoOrdenacao'),
+      limit(50),
+    )));
+    await assertFails(getDocs(query(
+      collection(comoCaio(), 'publicProfiles'),
+      where('apelidoOrdenacao', '==', 'ana'),
+    )));
+  });
+
+  test('BUSCA §12 — a leitura POR ID continua publica: nao houve regressao', async () => {
+    // O que saiu foi a varredura. O documento publico deliberado — o primeiro do
+    // banco — continua legivel por qualquer autenticado, que e o que sustenta
+    // `Ranking/Hall -> publicId -> Ver Perfil`.
+    await assertSucceeds(getDoc(doc(comoCaio(), `publicProfiles/${PID_ANA}`)));
+    await assertSucceeds(getDoc(doc(comoAna(), `publicProfiles/${PID_BIA}`)));
+  });
+
+  test('BUSCA §12 — o admin ainda lista, para suporte e reconciliacao', async () => {
+    await assertSucceeds(getDocs(collection(comoAdmin(), 'publicProfiles')));
+  });
+
+  test('BUSCA §4 — nao existe colecao auxiliar de indice de busca', async () => {
+    // A OS permite uma estrutura derivada; esta implementacao nao criou nenhuma,
+    // porque `apelidoOrdenacao` ja mora no proprio perfil publico. Se alguem
+    // criar uma um dia, o fecho padrao a nega — e este teste e o alarme que
+    // avisa que ela precisa das PROPRIAS regras antes de existir.
+    for (const inventada of ['nicknameIndex', 'apelidoIndex', 'searchIndex', 'buscaApelidos']) {
+      await assertFails(getDoc(doc(comoAna(), `${inventada}/ana`)));
+      await assertFails(getDocs(collection(comoAna(), inventada)));
+      await assertFails(setDoc(doc(comoAna(), `${inventada}/ana`), {
+        apelidoOrdenacao: 'ana', publicId: PID_ANA,
+      }));
+    }
+  });
+
+  test('BUSCA §12 — o cliente nao escreve a chave de busca do proprio perfil', async () => {
+    // `apelidoOrdenacao` E o indice de busca. Poder grava-lo seria poder aparecer
+    // em qualquer consulta: bastaria escrever a chave do apelido alheio.
+    await assertFails(
+      updateDoc(doc(comoAna(), `publicProfiles/${PID_ANA}`), {
+        apelidoOrdenacao: 'aaaaaaa',
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(comoCaio(), `publicProfiles/${PID_ANA}`), {
+        apelidoOrdenacao: 'zzz',
+      }),
+    );
+  });
+
   test('o documento publico NAO carrega UID, e-mail nem Billing (§5, §31-F)', async () => {
     const s = await assertSucceeds(
       getDoc(doc(comoCaio(), `publicProfiles/${PID_ANA}`)),
@@ -498,6 +570,7 @@ describe('Functions sociais', comFunctions, () => {
       atualizar: chamar('atualizarPerfilPublico'),
       verPerfil: chamar('verPerfilPublico'),
       localizar: chamar('localizarJogadorPorIdentidade'),
+      buscar: chamar('buscarJogadoresPorApelido'),
       enviar: chamar('enviarSolicitacaoAmizade'),
       aceitar: chamar('aceitarSolicitacaoAmizade'),
       recusar: chamar('recusarSolicitacaoAmizade'),
@@ -931,6 +1004,733 @@ describe('Functions sociais', comFunctions, () => {
   test('o limite de pagina tem teto (§22)', async () => {
     const r = await fn.um.listarAmigos({ limite: 100000 });
     assert.ok(r.data.itens.length <= 50);
+  });
+
+  // ============================================================== BUSCA
+  //
+  // O BANCO DESTE ARQUIVO E COMPARTILHADO entre todos os testes acima, e varios
+  // deles criaram jogadores com apelido ('Dona Maria', 'Zeca', 'Ávila', 'Bia',
+  // 'Carlos'). Por isso os apelidos daqui sao improvaveis de proposito: uma
+  // asserção de "veio exatamente um resultado" so vale se ninguem mais puder
+  // casar com o termo.
+  // ==========================================================================
+
+  describe('busca por apelido', () => {
+    const busca = {};
+    // Sufixo comum aos tres primeiros, para o teste de prefixo.
+    const RARO = 'Quixote';
+
+    before(async () => {
+      busca.alfa = await cliente('busca-alfa');
+      busca.beta = await cliente('busca-beta');
+      busca.gama = await cliente('busca-gama');
+
+      busca.pidAlfa = (await busca.alfa.identidade({})).data.publicId;
+      busca.pidBeta = (await busca.beta.identidade({})).data.publicId;
+      busca.pidGama = (await busca.gama.identidade({})).data.publicId;
+
+      // Acento e caixa DIFERENTES entre os dois, de proposito: a busca por
+      // "quixote" tem que alcançar os dois, e e a normalizacao que faz isso.
+      await busca.alfa.atualizar({ apelido: `${RARO} Álfa` });
+      await busca.beta.atualizar({ apelido: `${RARO.toUpperCase()} BETA` });
+      await busca.gama.atualizar({ apelido: 'Zarabatana Solitaria' });
+    });
+
+    // ------------------------------------------------------------ encontrar
+
+    test('apelido EXISTENTE e encontrado por correspondencia exata (§6)', async () => {
+      const r = await busca.gama.buscar({
+        termo: 'Zarabatana Solitaria',
+        modo: 'exato',
+      });
+      assert.equal(r.data.itens.length, 1);
+      assert.equal(r.data.itens[0].publicId, busca.pidGama);
+      assert.equal(r.data.itens[0].apelido, 'Zarabatana Solitaria');
+      assert.equal(r.data.modo, 'exato');
+    });
+
+    test('caixa, acento e espaco nao atrapalham (§5)', async () => {
+      // A prova de ponta a ponta da equivalencia entre a normalizacao da
+      // gravacao e a da busca: o apelido foi gravado "Zarabatana Solitaria" e e
+      // encontrado por quatro formas diferentes de digita-lo.
+      for (const termo of [
+        'zarabatana solitaria',
+        'ZARABATANA SOLITARIA',
+        '  Zarabatana   Solitaria  ',
+        'Zarabatána Solitária',
+      ]) {
+        const r = await busca.alfa.buscar({ termo, modo: 'exato' });
+        assert.equal(r.data.itens.length, 1, `nao achou por "${termo}"`);
+        assert.equal(r.data.itens[0].publicId, busca.pidGama);
+      }
+    });
+
+    test('apelido INEXISTENTE devolve lista vazia, e nao erro (§14)', async () => {
+      const r = await busca.alfa.buscar({ termo: 'ninguemsechamaassim' });
+      assert.deepEqual(r.data.itens, []);
+      assert.equal(r.data.truncado, false);
+    });
+
+    test('o PREFIXO alcança os dois apelidos, em ordem determinada (§6)', async () => {
+      const r = await busca.gama.buscar({ termo: RARO });
+      const ids = r.data.itens.map((i) => i.publicId);
+      assert.deepEqual(ids, [busca.pidAlfa, busca.pidBeta],
+        'ordenado por apelido normalizado: "quixote alfa" antes de "quixote beta"');
+      assert.equal(r.data.modo, 'prefixo');
+    });
+
+    test('o resultado e DETERMINISTICO entre chamadas (§14)', async () => {
+      const a = await busca.gama.buscar({ termo: RARO });
+      const b = await busca.gama.buscar({ termo: RARO });
+      assert.deepEqual(a.data, b.data);
+    });
+
+    test('prefixo NAO e infixo: buscar o meio do apelido nao acha', async () => {
+      // "Solitaria" e a segunda palavra de "Zarabatana Solitaria". A v1 ancora no
+      // comeco da chave — e isso e contrato, nao limitacao acidental.
+      const r = await busca.alfa.buscar({ termo: 'Solitaria' });
+      assert.equal(
+        r.data.itens.some((i) => i.publicId === busca.pidGama), false,
+      );
+    });
+
+    // ------------------------------------------------------- anti-enumeracao
+
+    test('§9 — termo curto demais e recusado com codigo estavel', async () => {
+      for (const curto of ['a', 'ab', '  ab  ']) {
+        await assert.rejects(
+          () => busca.alfa.buscar({ termo: curto }),
+          (e) => e.code === 'functions/invalid-argument'
+            && e.details?.recusa === 'consultaMuitoCurta',
+          `"${curto}" tinha que ser recusado`,
+        );
+      }
+    });
+
+    test('§9 — termo longo demais e recusado', async () => {
+      await assert.rejects(
+        () => busca.alfa.buscar({ termo: 'x'.repeat(25) }),
+        (e) => e.details?.recusa === 'consultaMuitoLonga',
+      );
+    });
+
+    test('§9 — termo vazio, ausente ou com controle e recusado', async () => {
+      // O override de bidirecionalidade vai como ESCAPE: colado literalmente ele
+      // some do diff e do terminal, que e justamente por que ele e recusado.
+      for (const ruim of [
+        undefined, '', '   ', 42, ['ana'], 'ana\nbia', 'a\u202Eb', 'ana\u200Bbia',
+      ]) {
+        await assert.rejects(
+          () => busca.alfa.buscar({ termo: ruim }),
+          (e) => e.details?.recusa === 'consultaInvalida',
+          `${JSON.stringify(ruim)} tinha que ser recusado`,
+        );
+      }
+    });
+
+    test('§9 — modo desconhecido e recusado, e nao vira o padrao', async () => {
+      await assert.rejects(
+        () => busca.alfa.buscar({ termo: RARO, modo: 'contem' }),
+        (e) => e.details?.recusa === 'consultaInvalida',
+      );
+    });
+
+    test('§9 — nao ha curinga: `*` e comparado como texto', async () => {
+      const r = await busca.alfa.buscar({ termo: '***' });
+      assert.deepEqual(r.data.itens, [],
+        'se `*` fosse curinga, isto devolveria a base inteira');
+    });
+
+    test('§9 — o limite tem teto e a pagina nao passa dele', async () => {
+      const r = await busca.alfa.buscar({ termo: RARO, limite: 100000 });
+      assert.ok(r.data.itens.length <= 20, 'o teto duro e 20');
+      const um = await busca.alfa.buscar({ termo: RARO, limite: 1 });
+      assert.equal(um.data.itens.length, 1);
+      assert.equal(um.data.truncado, true, 'havia mais do que coube');
+    });
+
+    test('§9 — NAO HA CURSOR: a busca nao percorre a base', async () => {
+      // A decisao antienumeracao central. `truncado` diz "refine o termo"; ele
+      // nao e um cursor e nao ha campo nenhum que sirva de cursor.
+      const r = await busca.alfa.buscar({ termo: RARO, limite: 1 });
+      assert.deepEqual(Object.keys(r.data).sort(), ['itens', 'modo', 'truncado']);
+      // E mandar um cursor nao muda nada: a Function nao le esse campo.
+      const comCursor = await busca.alfa.buscar({
+        termo: RARO, limite: 1, cursor: 'qualquer', proximoCursor: 'qualquer',
+      });
+      assert.deepEqual(comCursor.data, r.data);
+    });
+
+    test('§9 — nao existe rota que devolva todos os jogadores', async () => {
+      // As formas de pedir "tudo", uma por uma. Nenhuma passa.
+      for (const tentativa of [{}, { termo: '' }, { termo: '*' }, { termo: ' ' }]) {
+        await assert.rejects(
+          () => busca.alfa.buscar(tentativa),
+          (e) => e.code === 'functions/invalid-argument',
+          JSON.stringify(tentativa),
+        );
+      }
+    });
+
+    // --------------------------------------------------------------- vazamento
+
+    test('§3 — o resultado NAO carrega UID, e-mail nem campo interno', async () => {
+      const r = await busca.gama.buscar({ termo: RARO });
+      const bruto = JSON.stringify(r.data);
+      for (const uidReal of [busca.alfa.uid, busca.beta.uid, busca.gama.uid]) {
+        assert.equal(bruto.includes(uidReal), false, 'UID vazou na busca');
+      }
+      for (const proibido of [
+        'email', 'uid', 'userId', 'membros', 'pairKey', 'solicitanteUid',
+        'billing', 'vip', 'entitlement', 'playerModeration', 'sanctions',
+      ]) {
+        assert.equal(bruto.includes(proibido), false, `${proibido} vazou`);
+      }
+      // A allowlist pelo outro lado: exatamente estas chaves, e nada mais.
+      for (const item of r.data.itens) {
+        assert.deepEqual(Object.keys(item).sort(),
+          ['acoes', 'apelido', 'avatarRef', 'publicId', 'relacao']);
+      }
+    });
+
+    test('§7 — o perfil PRIVADO nao entra no resultado', async () => {
+      // Semeia dado privado em `users/{uid}` do alvo e confere que a busca — que
+      // le `publicProfiles` — continua devolvendo so a apresentacao publica.
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `users/${busca.gama.uid}`), {
+          email: 'gama@exemplo.com', vip: true, fichas: 9999,
+        });
+      });
+      const r = await busca.alfa.buscar({
+        termo: 'Zarabatana Solitaria', modo: 'exato',
+      });
+      const bruto = JSON.stringify(r.data);
+      assert.equal(r.data.itens.length, 1);
+      for (const privado of ['gama@exemplo.com', '9999', 'fichas']) {
+        assert.equal(bruto.includes(privado), false, `${privado} vazou`);
+      }
+    });
+
+    test('§7 — perfil INDISPONIVEL nao aparece na busca', async () => {
+      const oculto = 'PWWWWWWWWWWWW';
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        const d = ctx.firestore();
+        await setDoc(doc(d, `publicIdIndex/${oculto}`), {
+          publicId: oculto, uid: 'uidContaDesativadaBusca',
+        });
+        await setDoc(doc(d, `publicProfiles/${oculto}`), {
+          publicId: oculto,
+          apelido: 'Quixote Desativado',
+          apelidoOrdenacao: 'quixote desativado',
+          avatarRef: null,
+          estado: 'indisponivel',
+          criadoEm: new Date().toISOString(),
+          atualizadoEm: new Date().toISOString(),
+          esquema: 1,
+        });
+      });
+      const r = await busca.alfa.buscar({ termo: RARO });
+      assert.equal(r.data.itens.some((i) => i.publicId === oculto), false,
+        'conta desativada nao entra na descoberta');
+    });
+
+    // ---------------------------------------------------------- grafo social
+
+    test('§10 — o estado social acompanha o resultado, e segue o canonico', async () => {
+      // Sem relacao.
+      let r = await busca.alfa.buscar({ termo: 'Zarabatana Solitaria', modo: 'exato' });
+      assert.equal(r.data.itens[0].relacao, 'nenhuma');
+      assert.deepEqual(r.data.itens[0].acoes.sort(), ['adicionarAmigo', 'bloquear']);
+
+      // Solicitacao pendente, dos dois lados.
+      await busca.alfa.enviar({ publicId: busca.pidGama });
+      r = await busca.alfa.buscar({ termo: 'Zarabatana Solitaria', modo: 'exato' });
+      assert.equal(r.data.itens[0].relacao, 'solicitacaoEnviada');
+      assert.deepEqual(r.data.itens[0].acoes.sort(),
+        ['bloquear', 'cancelarSolicitacao']);
+
+      const visaoDoGama = await busca.gama.buscar({
+        termo: `${RARO} Alfa`, modo: 'exato',
+      });
+      assert.equal(visaoDoGama.data.itens[0].relacao, 'solicitacaoRecebida');
+
+      // Amizade.
+      await busca.gama.aceitar({ publicId: busca.pidAlfa });
+      r = await busca.alfa.buscar({ termo: 'Zarabatana Solitaria', modo: 'exato' });
+      assert.equal(r.data.itens[0].relacao, 'amigos');
+      assert.deepEqual(r.data.itens[0].acoes.sort(), ['bloquear', 'removerAmigo']);
+
+      // Desfeita: volta a ser "nenhuma". A busca nao guarda memoria.
+      await busca.alfa.remover({ publicId: busca.pidGama });
+      r = await busca.alfa.buscar({ termo: 'Zarabatana Solitaria', modo: 'exato' });
+      assert.equal(r.data.itens[0].relacao, 'nenhuma');
+    });
+
+    test('§10 — a busca nao e fonte de amizade: quem cria e a Function canonica', async () => {
+      // O resultado diz "adicionarAmigo", e isso e desenho de botao. A amizade so
+      // existe depois de `enviarSolicitacaoAmizade` + aceite — e o proprio
+      // resultado prova que ela ainda nao existe.
+      const r = await busca.alfa.buscar({ termo: 'Zarabatana Solitaria', modo: 'exato' });
+      assert.equal(r.data.itens[0].relacao, 'nenhuma');
+      assert.equal((await busca.alfa.listarAmigos({})).data.itens
+        .some((i) => i.publicId === busca.pidGama), false);
+    });
+
+    test('§10 — o proprio jogador aparece na propria busca, sem acao social', async () => {
+      const r = await busca.gama.buscar({ termo: 'Zarabatana Solitaria', modo: 'exato' });
+      assert.equal(r.data.itens[0].publicId, busca.pidGama);
+      assert.equal(r.data.itens[0].relacao, 'euMesmo');
+      assert.deepEqual(r.data.itens[0].acoes, ['editarPerfil']);
+    });
+
+    // -------------------------------------------------------------- bloqueio
+
+    test('§8 — quem me BLOQUEOU some da minha busca', async () => {
+      const a = await cliente('busca-bloqueio-a');
+      const b = await cliente('busca-bloqueio-b');
+      await a.identidade({});
+      const pidB = (await b.identidade({})).data.publicId;
+      await b.atualizar({ apelido: 'Berimbau Escondido' });
+
+      // Antes do bloqueio: encontravel.
+      let r = await a.buscar({ termo: 'Berimbau Escondido', modo: 'exato' });
+      assert.equal(r.data.itens.length, 1);
+      assert.equal(r.data.itens[0].publicId, pidB);
+
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `users/${b.uid}/blocks/${a.uid}`), {
+          bloqueadorUid: b.uid, bloqueadoUid: a.uid, criadoEm: new Date(), esquema: 1,
+        });
+      });
+
+      // Depois: some. Sem isso, a busca devolveria ao bloqueado o acesso que o
+      // bloqueio tirou — ele acharia a pessoa e tentaria a amizade.
+      r = await a.buscar({ termo: 'Berimbau Escondido', modo: 'exato' });
+      assert.deepEqual(r.data.itens, []);
+
+      // E a descoberta nao vira rota para contornar: nao ha publicId a usar, e
+      // usar o de outro caminho tambem nao passa.
+      await assert.rejects(
+        () => a.enviar({ publicId: pidB }),
+        (e) => e.details?.recusa === 'relacaoBloqueada',
+      );
+    });
+
+    test('§8 — quem EU bloqueei tambem some, e a ausencia e IGUAL nos dois casos', async () => {
+      const a = await cliente('busca-bloqueio-c');
+      const b = await cliente('busca-bloqueio-d');
+      await a.identidade({});
+      await b.identidade({});
+      await b.atualizar({ apelido: 'Cavaquinho Perdido' });
+
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `users/${a.uid}/blocks/${b.uid}`), {
+          bloqueadorUid: a.uid, bloqueadoUid: b.uid, criadoEm: new Date(), esquema: 1,
+        });
+      });
+
+      const r = await a.buscar({ termo: 'Cavaquinho Perdido', modo: 'exato' });
+      assert.deepEqual(r.data.itens, [],
+        'quem eu bloqueei nao volta pela descoberta');
+      // A resposta e indistinguivel da do caso anterior e da de "nao existe":
+      // uma lista vazia. Nada nela diz de que lado veio o bloqueio, nem se houve
+      // bloqueio.
+      const inexistente = await a.buscar({ termo: 'Naoexisteninguem', modo: 'exato' });
+      assert.deepEqual(r.data, inexistente.data);
+    });
+
+    test('§8 — o bloqueio some da busca antes de a faxina do gatilho rodar', async () => {
+      // A janela entre o bloqueio e a faxina assincrona. Durante ela o documento
+      // canonico ainda diz "amigos", e a busca ja nao pode exibir a pessoa.
+      const a = await cliente('busca-bloqueio-e');
+      const b = await cliente('busca-bloqueio-f');
+      const pidA = (await a.identidade({})).data.publicId;
+      const pidB = (await b.identidade({})).data.publicId;
+      await b.atualizar({ apelido: 'Pandeiro Fugidio' });
+
+      await a.enviar({ publicId: pidB });
+      await b.aceitar({ publicId: pidA });
+      assert.equal(
+        (await a.buscar({ termo: 'Pandeiro Fugidio', modo: 'exato' }))
+          .data.itens[0].relacao,
+        'amigos',
+      );
+
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `users/${b.uid}/blocks/${a.uid}`), {
+          bloqueadorUid: b.uid, bloqueadoUid: a.uid, criadoEm: new Date(),
+        });
+      });
+
+      // Sem espera: a busca le o bloqueio na hora, nao depende do gatilho.
+      assert.deepEqual(
+        (await a.buscar({ termo: 'Pandeiro Fugidio', modo: 'exato' })).data.itens,
+        [],
+      );
+    });
+
+    test('§8 — o bloqueio remove SO o bloqueado, e nao a busca inteira', async () => {
+      const r = await busca.alfa.buscar({ termo: RARO });
+      assert.ok(r.data.itens.length >= 2, 'os outros continuam la');
+    });
+
+    // ==========================================================================
+    // O CANDIDATO OCULTO NAO EXISTE — nem no metadado (§8)
+    //
+    // A §8 nao para na lista de itens. Se um candidato escondido pelo bloqueio
+    // puder mexer em QUALQUER campo observavel, a ausencia dele deixa de ser
+    // ausencia e vira sinal. Sao dois defeitos, pelo mesmo buraco, e uma
+    // consulta unica de `limite + 1` tem os dois:
+    //
+    //   `truncado` sobre o lote BRUTO ... um bloqueado na posicao limite+1
+    //                                     diria "havia mais" num resultado que,
+    //                                     para quem procura, esta completo.
+    //   vaga roubada .................... um bloqueado entre os primeiros
+    //                                     empurraria um jogador legitimo para
+    //                                     fora da janela lida.
+    //
+    // Estes testes provam os dois contra o emulador, que e o unico lugar onde a
+    // varredura de verdade acontece.
+    // ==========================================================================
+
+    describe('o candidato oculto nao existe, nem no `truncado`', () => {
+      const oculto = {};
+
+      /// Cria um jogador com apelido, e devolve `{cliente, publicId}`.
+      async function jogador(nome, apelido) {
+        const c = await cliente(nome);
+        const publicId = (await c.identidade({})).data.publicId;
+        await c.atualizar({ apelido });
+        return { c, publicId };
+      }
+
+      /// Semeia o bloqueio canonico. Escrito direto porque a suite pode rodar
+      /// sem o codebase de moderacao implantado — o social so LE este documento.
+      async function bloquear(bloqueadorUid, bloqueadoUid) {
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          await setDoc(
+            doc(ctx.firestore(), `users/${bloqueadorUid}/blocks/${bloqueadoUid}`),
+            {
+              bloqueadorUid, bloqueadoUid, criadoEm: new Date(), esquema: 1,
+            },
+          );
+        });
+      }
+
+      before(async () => {
+        oculto.quem = await cliente('oculto-buscador');
+        await oculto.quem.identidade({});
+        const eu = oculto.quem.uid;
+
+        // TROMBONE — a ordem por apelido normalizado e Aa < Bb < Cc < Dd, e o
+        // BLOQUEADO E O PRIMEIRO de proposito: e a posicao em que ele roubaria
+        // a vaga de outra pessoa.
+        oculto.aa = await jogador('oculto-trombone-aa', 'Trombone Aa');
+        oculto.bb = await jogador('oculto-trombone-bb', 'Trombone Bb');
+        oculto.cc = await jogador('oculto-trombone-cc', 'Trombone Cc');
+        oculto.dd = await jogador('oculto-trombone-dd', 'Trombone Dd');
+        await bloquear(oculto.aa.c.uid, eu);
+
+        // SANFONA — um unico candidato, e ele esta bloqueado.
+        oculto.sanfona = await jogador('oculto-sanfona', 'Sanfona Unica');
+        await bloquear(oculto.sanfona.c.uid, eu);
+
+        // RABECA — tres candidatos, todos bloqueados.
+        oculto.rabecas = [];
+        for (const sufixo of ['Um', 'Dois', 'Tres']) {
+          const j = await jogador(`oculto-rabeca-${sufixo}`, `Rabeca ${sufixo}`);
+          await bloquear(j.c.uid, eu);
+          oculto.rabecas.push(j);
+        }
+
+        // ZABUMBA — um bloqueou o buscador, o outro foi bloqueado por ele.
+        oculto.dele = await jogador('oculto-zabumba-dele', 'Zabumba Dele');
+        await bloquear(oculto.dele.c.uid, eu);
+        oculto.meu = await jogador('oculto-zabumba-meu', 'Zabumba Meu');
+        await bloquear(eu, oculto.meu.c.uid);
+      });
+
+      test('UM candidato bloqueado responde IGUAL a apelido inexistente', async () => {
+        const comBloqueado = await oculto.quem.buscar({ termo: 'Sanfona Unica', modo: 'exato' });
+        const inexistente = await oculto.quem.buscar({ termo: 'Sanfona Nenhuma', modo: 'exato' });
+        assert.deepEqual(comBloqueado.data, inexistente.data);
+        assert.deepEqual(comBloqueado.data,
+          { itens: [], truncado: false, modo: 'exato' });
+      });
+
+      test('VARIOS candidatos bloqueados respondem IGUAL a inexistente', async () => {
+        // Tres bloqueados. Se `truncado` ou a contagem reagissem ao numero de
+        // escondidos, "tres" e "nenhum" seriam distinguiveis.
+        const trinta = await oculto.quem.buscar({ termo: 'Rabeca' });
+        const inexistente = await oculto.quem.buscar({ termo: 'Rabequinha' });
+        assert.deepEqual(trinta.data, inexistente.data);
+        assert.deepEqual(trinta.data,
+          { itens: [], truncado: false, modo: 'prefixo' });
+      });
+
+      test('os OUTROS jogadores continuam achando quem bloqueou o buscador', async () => {
+        // A contraprova: os perfis existem e sao encontraveis. Sem ela, os dois
+        // testes acima passariam com uma busca simplesmente quebrada.
+        const terceiro = await cliente('oculto-terceiro');
+        await terceiro.identidade({});
+        const r = await terceiro.buscar({ termo: 'Sanfona Unica', modo: 'exato' });
+        assert.equal(r.data.itens.length, 1);
+        assert.equal(r.data.itens[0].publicId, oculto.sanfona.publicId);
+
+        const rabecas = await terceiro.buscar({ termo: 'Rabeca' });
+        assert.equal(rabecas.data.itens.length, 3);
+      });
+
+      test('o bloqueado NAO ROUBA A VAGA de um jogador legitimo', async () => {
+        // Faixa: [Aa bloqueado, Bb, Cc, Dd]. Com limite 2, uma consulta unica de
+        // tres documentos leria [Aa, Bb], filtraria Aa e devolveria UM item — o
+        // Cc ficaria de fora por causa de um bloqueio que nao e dele.
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 2 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [oculto.bb.publicId, oculto.cc.publicId]);
+        assert.equal(r.data.truncado, true, 'o Dd ainda esta la fora');
+      });
+
+      test('`truncado` conta os VISIVEIS, e nao o lote bruto', async () => {
+        // Tres visiveis (Bb, Cc, Dd) e um escondido (Aa). Com limite 3, a
+        // resposta esta COMPLETA e `truncado` tem que ser falso — calculado
+        // sobre o lote bruto de quatro, ele diria "havia mais", e essa diferenca
+        // e a existencia do Aa vazando por um metadado.
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 3 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [oculto.bb.publicId, oculto.cc.publicId, oculto.dd.publicId]);
+        assert.equal(r.data.truncado, false,
+          'nao ha mais nenhum Trombone visivel para este jogador');
+      });
+
+      test('e quem NAO foi bloqueado ve o quarto, e o `truncado` dele', async () => {
+        // O mesmo termo, o mesmo limite, outro observador: quatro candidatos,
+        // limite tres, `truncado` verdadeiro. Os dois `truncado` sao diferentes
+        // porque os dois MUNDOS sao diferentes — e nao porque um deles esta
+        // contando o lote bruto.
+        const terceiro = await cliente('oculto-terceiro-b');
+        await terceiro.identidade({});
+        const r = await terceiro.buscar({ termo: 'Trombone', limite: 3 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [oculto.aa.publicId, oculto.bb.publicId, oculto.cc.publicId]);
+        assert.equal(r.data.truncado, true);
+      });
+
+      test('bloqueio nos DOIS sentidos produz a mesma resposta', async () => {
+        const eleMeBloqueou = await oculto.quem.buscar({ termo: 'Zabumba Dele', modo: 'exato' });
+        const euOBloqueei = await oculto.quem.buscar({ termo: 'Zabumba Meu', modo: 'exato' });
+        const inexistente = await oculto.quem.buscar({ termo: 'Zabumba Nada', modo: 'exato' });
+
+        assert.deepEqual(eleMeBloqueou.data, euOBloqueei.data);
+        assert.deepEqual(eleMeBloqueou.data, inexistente.data);
+
+        // E o prefixo que casa com os dois tambem some por inteiro.
+        const prefixo = await oculto.quem.buscar({ termo: 'Zabumba' });
+        assert.deepEqual(prefixo.data,
+          { itens: [], truncado: false, modo: 'prefixo' });
+      });
+
+      test('a ausencia de cursor continua valendo, inclusive com truncado', async () => {
+        // A varredura avanca por um cursor INTERNO, que nasce e morre dentro da
+        // chamada. Nada dele aparece na resposta, e mandar um cursor no payload
+        // continua sem efeito.
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 2 });
+        assert.equal(r.data.truncado, true);
+        assert.deepEqual(Object.keys(r.data).sort(), ['itens', 'modo', 'truncado']);
+        for (const item of r.data.itens) {
+          assert.deepEqual(Object.keys(item).sort(),
+            ['acoes', 'apelido', 'avatarRef', 'publicId', 'relacao']);
+        }
+        const comCursor = await oculto.quem.buscar({
+          termo: 'Trombone', limite: 2, cursor: 'x', proximoCursor: 'x', depoisDe: 'x',
+        });
+        assert.deepEqual(comCursor.data, r.data);
+      });
+
+      test('a varredura nao vaza UID nem na resposta truncada', async () => {
+        const r = await oculto.quem.buscar({ termo: 'Trombone', limite: 2 });
+        const bruto = JSON.stringify(r.data);
+        for (const uidReal of [
+          oculto.quem.uid, oculto.aa.c.uid, oculto.bb.c.uid,
+          oculto.cc.c.uid, oculto.dd.c.uid,
+        ]) {
+          assert.equal(bruto.includes(uidReal), false, 'UID vazou na varredura');
+        }
+      });
+    });
+
+    // ==========================================================================
+    // ESTRESSE — a garantia nao pode ter teto
+    //
+    // Uma versao anterior parava a varredura em cinco rodadas. O teto
+    // reintroduzia a mesma classe de vazamento que a varredura fecha: parar sem
+    // ter esgotado a faixa fazia `truncado` depender de QUANTOS estavam ocultos,
+    // e deixava os candidatos legitimos que vinham DEPOIS dos ocultos fora da
+    // resposta — "roubo de vaga" em escala maior.
+    //
+    // Este bloco poe 300 ocultos na frente de tres legitimos. Com os limites
+    // usados aqui, cinco rodadas alcançavam 93 documentos; com o limite padrao,
+    // 265. Os 300 passam dos dois de folga, entao a suite falha se o teto voltar
+    // em qualquer forma.
+    //
+    // OS PERFIS SAO SEMEADOS DIRETO, e nao criados por conta anonima: a busca le
+    // `publicProfiles`, `publicIdIndex` e `users/{uid}/blocks`, e trezentas
+    // contas de verdade custariam novecentas chamadas de Function para provar
+    // uma propriedade que nao depende de nenhuma delas.
+    // ==========================================================================
+
+    describe('estresse: centenas de ocultos nao mudam a resposta', () => {
+      const { writeBatch } = require('firebase/firestore');
+
+      const TERMO = 'Enxame';
+      const OCULTOS = 300;
+      const estresse = {};
+
+      /// publicId valido: 'P' + 12 simbolos do alfabeto de Crockford. O corpo e
+      /// 'V' seguido de 11 digitos, todos dentro do alfabeto.
+      const pidOculto = (i) => `PV${String(i).padStart(11, '0')}`;
+      const uidOculto = (i) => `uidEnxameOculto${String(i).padStart(4, '0')}`;
+
+      /// Semeia N perfis ocultos, todos bloqueando quem procura.
+      ///
+      /// Os apelidos comecam com "A" para caírem ANTES dos visiveis na ordem —
+      /// que e a posicao em que eles atrapalham.
+      async function semearOcultos(de, ate, euUid) {
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          const db = ctx.firestore();
+          let lote = writeBatch(db);
+          let n = 0;
+          for (let i = de; i < ate; i++) {
+            const pid = pidOculto(i);
+            const uid = uidOculto(i);
+            const rotulo = String(i).padStart(4, '0');
+            lote.set(doc(db, `publicProfiles/${pid}`), {
+              publicId: pid,
+              apelido: `${TERMO} A${rotulo}`,
+              apelidoOrdenacao: `${TERMO.toLowerCase()} a${rotulo}`,
+              avatarRef: null,
+              estado: 'ativo',
+              criadoEm: '2026-01-01T00:00:00.000Z',
+              atualizadoEm: '2026-01-01T00:00:00.000Z',
+              esquema: 1,
+            });
+            lote.set(doc(db, `publicIdIndex/${pid}`), { publicId: pid, uid });
+            lote.set(doc(db, `users/${uid}/blocks/${euUid}`), {
+              bloqueadorUid: uid, bloqueadoUid: euUid, esquema: 1,
+            });
+            n += 3;
+            if (n >= 400) { await lote.commit(); lote = writeBatch(db); n = 0; }
+          }
+          if (n > 0) await lote.commit();
+        });
+      }
+
+      async function apagarOcultos(de, ate) {
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          const db = ctx.firestore();
+          let lote = writeBatch(db);
+          let n = 0;
+          for (let i = de; i < ate; i++) {
+            lote.delete(doc(db, `publicProfiles/${pidOculto(i)}`));
+            lote.delete(doc(db, `publicIdIndex/${pidOculto(i)}`));
+            n += 2;
+            if (n >= 400) { await lote.commit(); lote = writeBatch(db); n = 0; }
+          }
+          if (n > 0) await lote.commit();
+        });
+      }
+
+      before(async () => {
+        estresse.quem = await cliente('estresse-buscador');
+        await estresse.quem.identidade({});
+
+        // Os tres legitimos, DEPOIS dos ocultos na ordem ("z" > "a").
+        estresse.visiveis = [];
+        for (const sufixo of ['Z1', 'Z2', 'Z3']) {
+          const c = await cliente(`estresse-visivel-${sufixo}`);
+          const publicId = (await c.identidade({})).data.publicId;
+          await c.atualizar({ apelido: `${TERMO} ${sufixo}` });
+          estresse.visiveis.push(publicId);
+        }
+
+        await semearOcultos(0, OCULTOS, estresse.quem.uid);
+      });
+
+      test('os legitimos preenchem as vagas, atras de 300 ocultos', async () => {
+        // Cinco rodadas alcançavam 93 documentos com este limite. Se o teto
+        // voltar, esta chamada devolve lista vazia ou incompleta.
+        const r = await estresse.quem.buscar({ termo: TERMO, limite: 2 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId),
+          [estresse.visiveis[0], estresse.visiveis[1]]);
+        assert.equal(r.data.truncado, true, 'o terceiro visivel ainda esta la');
+      });
+
+      test('`truncado` depende SO dos visiveis, com 300 ocultos na frente', async () => {
+        // Tres visiveis, limite tres: a resposta esta completa. Qualquer termo
+        // sobre "como a varredura terminou" — teto, rodadas, lote bruto —
+        // colocaria `true` aqui, e esse `true` seria a existencia dos 300.
+        const r = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(r.data.itens.map((i) => i.publicId), estresse.visiveis);
+        assert.equal(r.data.truncado, false);
+      });
+
+      test('APAGAR ocultos nao altera nenhum campo observavel', async () => {
+        const antes = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        await apagarOcultos(0, 150);
+        const depois = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(depois.data, antes.data,
+          'metade dos ocultos sumiu e a resposta tem que ser identica');
+      });
+
+      test('ACRESCENTAR ocultos nao altera nenhum campo observavel', async () => {
+        const antes = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        await semearOcultos(OCULTOS, OCULTOS + 120, estresse.quem.uid);
+        const depois = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(depois.data, antes.data,
+          'mais 120 ocultos e a resposta tem que ser identica');
+
+        // E de volta ao inicio: a resposta e a mesma dos tres estados.
+        await apagarOcultos(OCULTOS, OCULTOS + 120);
+        const restaurado = await estresse.quem.buscar({ termo: TERMO, limite: 3 });
+        assert.deepEqual(restaurado.data, antes.data);
+      });
+
+      test('a mesma faixa, para quem NAO foi bloqueado, mostra os ocultos', async () => {
+        // A contraprova: os 150 perfis restantes existem e sao encontraveis.
+        // Sem ela, os testes acima passariam com uma busca simplesmente vazia.
+        const terceiro = await cliente('estresse-terceiro');
+        await terceiro.identidade({});
+        const r = await terceiro.buscar({ termo: TERMO, limite: 3 });
+        assert.equal(r.data.itens.length, 3);
+        assert.equal(r.data.truncado, true, 'para ele ha centenas de Enxame');
+        // E os que ele ve sao os "A", que vem antes dos visiveis na ordem.
+        assert.equal(
+          r.data.itens.every((i) => i.apelido.startsWith(`${TERMO} A`)), true,
+        );
+      });
+
+      test('e nada disso vaza UID ou expoe cursor', async () => {
+        const r = await estresse.quem.buscar({ termo: TERMO, limite: 2 });
+        assert.deepEqual(Object.keys(r.data).sort(), ['itens', 'modo', 'truncado']);
+        const bruto = JSON.stringify(r.data);
+        assert.equal(bruto.includes(estresse.quem.uid), false);
+        assert.equal(bruto.includes('uidEnxameOculto'), false);
+      });
+    });
+
+    // ---------------------------------------------------------- autenticacao
+
+    test('sem autenticacao, a busca e recusada', async () => {
+      const { initializeApp: init } = require('firebase/app');
+      const app = init({ projectId: PROJETO, apiKey: 'fake' }, 'busca-anonima');
+      const [host, porta] = (process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001').split(':');
+      const f = getFunctions(app, 'southamerica-east1');
+      connectFunctionsEmulator(f, host, Number(porta));
+      await assert.rejects(
+        () => httpsCallable(f, 'buscarJogadoresPorApelido')({ termo: RARO }),
+        (e) => e.code === 'functions/unauthenticated',
+      );
+    });
   });
 
   // ----------------------------------------------------------- autenticacao

@@ -63,6 +63,15 @@ bool _caractereProibido(int rune) {
   return false;
 }
 
+/// Há caractere proibido neste texto?
+///
+/// Extraída de [recusaDeApelido] para que a BUSCA por apelido aplique o mesmo
+/// crivo à consulta que a gravação aplica ao apelido — ver `busca_apelido.dart`.
+/// Um termo de busca com override de bidirecionalidade ou espaço de largura zero
+/// nunca casaria com apelido nenhum (a gravação já os recusa), mas recusá-lo na
+/// entrada é o que impede que ele chegue ao banco disfarçado de consulta.
+bool temCaractereProibido(String texto) => texto.runes.any(_caractereProibido);
+
 /// Normaliza um apelido: apara as bordas e colapsa espaços consecutivos (§7).
 ///
 /// NÃO recusa nada — normalizar e validar são passos separados de propósito. O
@@ -83,9 +92,7 @@ int comprimentoVisivel(String apelido) => apelido.runes.length;
 /// passar pelo mínimo por causa dos espaços.
 ErroSocial? recusaDeApelido(String apelidoNormalizado) {
   if (apelidoNormalizado.isEmpty) return ErroSocial.apelidoInvalido;
-  for (final r in apelidoNormalizado.runes) {
-    if (_caractereProibido(r)) return ErroSocial.apelidoInvalido;
-  }
+  if (temCaractereProibido(apelidoNormalizado)) return ErroSocial.apelidoInvalido;
   final n = comprimentoVisivel(apelidoNormalizado);
   if (n < kApelidoMinimo || n > kApelidoMaximo) {
     return ErroSocial.apelidoInvalido;
