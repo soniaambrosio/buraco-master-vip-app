@@ -144,6 +144,13 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS Saneamento produtivo da Central de Torneios: o atalho de gestao
+          # so existe sob autoridade assinada, a tela de gestao recusa quando
+          # construida direto por rota (que e o caminho que o botao escondido
+          # nao cobre), a sessao falha fechado em toda duvida, e a varredura de
+          # lib/ impede que o seletor de cenarios de laboratorio e o
+          # mostrarAdmin voltem por outra tela.
+          roda torneiosmk test/torneios/saneamento_mock_admin_test.dart
           # OS Integracao do Splash Rive Constelacao: o binario aprovado (tamanho,
           # cabecalho, SHA-256 e os nomes do artboard e da timeline DENTRO do
           # arquivo, lidos pelo bundle), o portao duplo animacao x bootstrap, a
@@ -369,7 +376,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud splash billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosmk splash billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

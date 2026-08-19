@@ -1204,13 +1204,46 @@ void main() {
             'aberturas alcançáveis são duas inicializações concorrentes',
       );
 
+      // 50 → 51 AO ENTRAR A PORTA DE PAPEL, e o um também tem nome.
+      //
+      // `sessao/papel_de_sessao.dart` é a porta por onde a interface pergunta
+      // se a sessão administra. Entrou no fecho porque é importada por
+      // `sessao_do_jogador.dart` e por `sessao_firebase.dart`, que já estavam
+      // aqui — e ela não arrasta nada: não tem import nenhum, de propósito.
+      //
+      // O ADAPTADOR NÃO ENTROU, e a ausência dele é informação, não esquecimento:
+      // `casca/autoridade_administrativa_de_producao.dart` existe e ainda não
+      // tem chamador, porque a Central de Torneios segue fora do caminho que
+      // nasce em `main()`. No dia em que ela for ligada, este fecho cresce de
+      // novo — e o número tem de acompanhar, com o nome declarado aqui.
+      const daPortaDePapel = ['lib/sessao/papel_de_sessao.dart'];
+      for (final caminho in daPortaDePapel) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — a interface perdeu a única porta por '
+              'onde consulta papel, e um `bool` no chamador volta a ser a '
+              'alternativa mais fácil',
+        );
+      }
+      expect(
+        alcancaveis,
+        isNot(contains('lib/casca/autoridade_administrativa_de_producao.dart')),
+        reason:
+            'o adaptador virou alcançável sem que a Central de Torneios tenha '
+            'sido ligada à casca: alguém o chamou de um lugar que esta '
+            'auditoria não previu',
+      );
+
       expect(
         alcancaveis,
         hasLength(
           40 +
               doRankingReal.length +
               daNavegacaoPublica.length +
-              daAberturaConstelacao.length -
+              daAberturaConstelacao.length +
+              daPortaDePapel.length -
               1,
         ),
       );

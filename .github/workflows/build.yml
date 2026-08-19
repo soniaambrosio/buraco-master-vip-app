@@ -315,6 +315,28 @@ jobs:
           flutter test test/casca --reporter expanded
           echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE AUTORIDADE — Central de Torneios sem ferramenta mock e admin protegido"
+        # Prova o que o portão da casca NÃO alcança. Aquele mede o fecho que
+        # nasce em main(), e a Central de Torneios está fora dele hoje — então
+        # a ausência do seletor mock e do mostrarAdmin: true passaria por ele
+        # sem ser medida, e voltaria no dia em que a Central for ligada.
+        #
+        # Aqui a prova é do COMPONENTE e da AUSÊNCIA: o atalho de gestão só
+        # aparece sob autoridade assinada, a tela de gestão recusa quando
+        # construída direto por rota, a sessão falha fechado em toda dúvida, e
+        # a varredura de lib/ impede que a ferramenta de laboratório reapareça
+        # por outra tela.
+        run: |
+          if [ ! -f app/test/torneios/saneamento_mock_admin_test.dart ]; then
+            echo "ERRO: saneamento_mock_admin_test.dart não encontrado — o portão de autoridade é OBRIGATÓRIO."
+            exit 1
+          fi
+          mkdir -p app_build/test/torneios
+          cp app/test/torneios/saneamento_mock_admin_test.dart app_build/test/torneios/
+          cd app_build
+          flutter test test/torneios/saneamento_mock_admin_test.dart --reporter expanded
+          echo "PORTÃO VERDE: Central de Torneios sem ferramenta mock e gestão sob autoridade, commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
         # validado por perfil de build, protocolo 2 no handshake, renovação de

@@ -13,6 +13,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'credencial_de_sessao.dart';
 import 'fonte_identidade.dart';
 import 'fonte_identidade_firebase.dart';
+import 'papel_de_sessao.dart';
 import 'sessao_do_jogador.dart';
 
 /// A credencial de produção: o ID Token de quem está logado no Firebase.
@@ -43,6 +44,47 @@ class CredencialDoFirebase implements FonteDeCredencial {
   }
 }
 
+/// O papel de produção: o custom claim `admin` do ID Token de quem está logado.
+///
+/// LÊ, NÃO DECIDE. O claim é gravado pelo backend com o Admin SDK e vem ASSINADO
+/// dentro do token — o cliente consegue conferi-lo e não consegue forjá-lo. É a
+/// mesma autoridade que `firebase/firestore.rules` exige em `ehAdmin()` e que
+/// `exigirAdmin()` das Cloud Functions confere; trazê-la até a interface é
+/// alinhar a tela ao portão que já existe, não criar um portão novo.
+///
+/// POR ISSO A INTERFACE NUNCA É O PORTÃO. Mesmo que este leitor errasse para
+/// mais, quem recusa a operação continua sendo a regra e a Function. O que a
+/// tela decide é só o que DESENHAR — e, por [ehAdministrador] falhar fechado,
+/// o pior erro possível dela é esconder de quem tinha direito.
+///
+/// `getIdTokenResult()` devolve o token em cache e só vai à rede quando ele
+/// expirou. Consequência que fica registrada: um claim concedido AGORA só
+/// aparece para o aplicativo na próxima renovação do token (ou depois de
+/// reentrar). Isso é comportamento do Firebase, não desta classe — e é o lado
+/// seguro do atraso: papel concedido demora a aparecer, papel revogado também
+/// demora a sumir da TELA, mas nunca do backend, que confere o claim a cada
+/// chamada.
+class PapelDoFirebase implements FonteDePapel {
+  const PapelDoFirebase();
+
+  @override
+  Future<bool> ehAdministrador() async {
+    try {
+      final u = FirebaseAuth.instance.currentUser;
+      if (u == null) return false;
+      final resultado = await u.getIdTokenResult();
+      // `== true` e não `as bool`: o claim pode vir ausente, nulo ou de outro
+      // tipo, e nenhum desses casos é uma autorização.
+      return resultado.claims?['admin'] == true;
+    } catch (_) {
+      // Firebase ausente ou indisponível vale como "não administra" — a mesma
+      // tolerância que [CredencialDoFirebase] pratica, e com o mesmo sinal:
+      // para o lado fechado.
+      return false;
+    }
+  }
+}
+
 /// Constrói a [SessaoDoJogador] de produção.
 ///
 /// TOLERA FIREBASE AUSENTE. `main()` já engole a falha de
@@ -67,5 +109,6 @@ SessaoDoJogador criarSessaoDoJogador({FonteDeIdentidade? fonte}) {
     uids: uids,
     uidInicial: uidInicial,
     credenciais: const CredencialDoFirebase(),
+    papeis: const PapelDoFirebase(),
   );
 }

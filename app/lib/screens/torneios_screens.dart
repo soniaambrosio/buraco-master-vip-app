@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../sessao/papel_de_sessao.dart';
 import 'torneios_models.dart';
 
 class TorneiosPalette {
@@ -324,8 +325,20 @@ class CentralTorneiosScreen extends StatefulWidget {
   final TorneiosCallbacks callbacks;
   final VoidCallback onVoltar;
   final VoidCallback? onAbrirAdmin;
-  final VoidCallback? onAbrirCenariosMock;
-  final bool mostrarAdmin;
+
+  /// Quem responde se esta sessao administra.
+  ///
+  /// SUBSTITUI O `bool mostrarAdmin`, e a troca e a substancia desta tela. O
+  /// booleano era uma afirmacao do CHAMADOR sobre o jogador: o host passava
+  /// `mostrarAdmin: true` escrito no codigo e, com isso, todo mundo que
+  /// instalasse o aplicativo via — e acionava — o atalho da area de gestao. Um
+  /// papel que o cliente escreve em si mesmo nao e papel.
+  ///
+  /// Agora a tela PERGUNTA, e quem responde e o custom claim `admin` assinado
+  /// pelo backend (ver `sessao/papel_de_sessao.dart`). O padrao e [SemPapel] —
+  /// quem nao passa autoridade nao recebe atalho —, entao o esquecimento erra
+  /// para o lado fechado.
+  final FonteDePapel autoridade;
 
   const CentralTorneiosScreen({
     super.key,
@@ -333,8 +346,7 @@ class CentralTorneiosScreen extends StatefulWidget {
     required this.callbacks,
     required this.onVoltar,
     this.onAbrirAdmin,
-    this.onAbrirCenariosMock,
-    this.mostrarAdmin = false,
+    this.autoridade = const SemPapel(),
   });
 
   @override
@@ -344,6 +356,46 @@ class CentralTorneiosScreen extends StatefulWidget {
 class _CentralTorneiosScreenState extends State<CentralTorneiosScreen> {
   SecaoCentral _secao = SecaoCentral.destaque;
   final Set<String> _filtros = {};
+
+  /// Comeca FECHADO e so abre com resposta afirmativa. Enquanto a consulta esta
+  /// em voo o atalho nao existe — desenhar primeiro e esconder depois faria a
+  /// area de gestao piscar na tela de quem nao a tem, e um toque rapido cabe
+  /// nesse piscar.
+  bool _podeAdministrar = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _consultarAutoridade();
+  }
+
+  @override
+  void didUpdateWidget(CentralTorneiosScreen anterior) {
+    super.didUpdateWidget(anterior);
+    // Trocar a fonte de autoridade e trocar de sessao. Reconsultar do zero — e
+    // voltando a FECHADO antes de perguntar — impede que o "sim" da conta
+    // anterior continue desenhado enquanto a nova resposta nao chega.
+    if (widget.autoridade != anterior.autoridade) {
+      setState(() => _podeAdministrar = false);
+      _consultarAutoridade();
+    }
+  }
+
+  Future<void> _consultarAutoridade() async {
+    final fonte = widget.autoridade;
+    bool resposta;
+    try {
+      resposta = await fonte.ehAdministrador();
+    } catch (_) {
+      // Uma fonte que escapa do contrato nao vira autoridade.
+      resposta = false;
+    }
+    // `fonte != widget.autoridade` cobre a troca de sessao durante o await: a
+    // resposta atrasada da conta anterior morre aqui.
+    if (!mounted || fonte != widget.autoridade) return;
+    if (resposta == _podeAdministrar) return;
+    setState(() => _podeAdministrar = resposta);
+  }
 
   List<TorneioCardVM> get _visiveis {
     var lista = widget.torneios.where((item) => _secao == SecaoCentral.destaque ? item.secao == SecaoCentral.destaque : item.secao == _secao).toList();
@@ -386,13 +438,12 @@ class _CentralTorneiosScreenState extends State<CentralTorneiosScreen> {
             child: const Icon(Icons.tune_rounded, color: TorneiosPalette.goldHi),
           ),
         ),
-        if (widget.onAbrirCenariosMock != null)
-          IconButton(
-            tooltip: 'Cenários mock',
-            onPressed: widget.onAbrirCenariosMock,
-            icon: const Icon(Icons.science_rounded, color: TorneiosPalette.warning),
-          ),
-        if (widget.mostrarAdmin)
+        // O seletor de cenarios de laboratorio morava aqui, e era uma
+        // ferramenta de desenvolvimento na barra de uma tela de produto. Saiu
+        // inteiro — o parametro, o botao e a folha — porque um atalho que so
+        // existe quando o host o liga volta sozinho no dia em que alguem religa
+        // o host.
+        if (_podeAdministrar)
           IconButton(
             tooltip: 'Administração',
             onPressed: widget.onAbrirAdmin,
@@ -1748,7 +1799,27 @@ class AdminTorneiosScreen extends StatefulWidget {
   final TorneiosCallbacks callbacks;
   final VoidCallback onVoltar;
 
-  const AdminTorneiosScreen({super.key, required this.torneios, required this.callbacks, required this.onVoltar});
+  /// Quem responde se esta sessao administra. OBRIGATORIO, e sem padrao.
+  ///
+  /// Esconder o botao na Central protege contra o TOQUE, e so. Uma rota e
+  /// alcancavel de outros jeitos — um `Navigator.push` escrito noutra tela, um
+  /// atalho de navegacao, um deep link no dia em que houver um. Se a protecao
+  /// morasse so na barra da Central, bastaria CONSTRUIR esta tela para entrar.
+  ///
+  /// Por isso a autoridade e exigida no CONSTRUTOR: nao existe forma de compilar
+  /// uma `AdminTorneiosScreen` sem dizer quem autoriza. O padrao foi omitido de
+  /// proposito — um `= const SemPapel()` aqui seria conveniente e transformaria
+  /// "esqueci de passar" em tela em branco silenciosa, em vez de erro de
+  /// compilacao.
+  final FonteDePapel autoridade;
+
+  const AdminTorneiosScreen({
+    super.key,
+    required this.torneios,
+    required this.callbacks,
+    required this.onVoltar,
+    required this.autoridade,
+  });
 
   @override
   State<AdminTorneiosScreen> createState() => _AdminTorneiosScreenState();
@@ -1757,8 +1828,85 @@ class AdminTorneiosScreen extends StatefulWidget {
 class _AdminTorneiosScreenState extends State<AdminTorneiosScreen> {
   bool _somenteAlertas = false;
 
+  /// `null` = ainda perguntando. Os tres estados sao distintos de proposito:
+  /// tratar "nao sei" como "nao" mostraria a recusa a quem TEM o papel, toda vez
+  /// que a tela abrisse; tratar como "sim" mostraria a gestao a quem nao tem.
+  bool? _autorizada;
+
+  @override
+  void initState() {
+    super.initState();
+    _consultarAutoridade();
+  }
+
+  @override
+  void didUpdateWidget(AdminTorneiosScreen anterior) {
+    super.didUpdateWidget(anterior);
+    if (widget.autoridade != anterior.autoridade) {
+      setState(() => _autorizada = null);
+      _consultarAutoridade();
+    }
+  }
+
+  Future<void> _consultarAutoridade() async {
+    final fonte = widget.autoridade;
+    bool resposta;
+    try {
+      resposta = await fonte.ehAdministrador();
+    } catch (_) {
+      resposta = false;
+    }
+    if (!mounted || fonte != widget.autoridade) return;
+    setState(() => _autorizada = resposta);
+  }
+
+  /// A casca da recusa — e da espera, que usa a MESMA casca de proposito.
+  ///
+  /// Se "verificando" e "negado" desenhassem quadros diferentes, o tempo de
+  /// resposta viraria um oraculo: quem observasse a tela saberia, pela demora,
+  /// se a conta tem papel antes mesmo de a resposta chegar. Aqui os dois estados
+  /// sao o mesmo quadro, e so a ultima linha muda quando a resposta e
+  /// definitiva.
+  Widget _semAutoridade() {
+    return TorneiosShell(
+      title: 'Gestão de torneios',
+      onBack: widget.onVoltar,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock_rounded, color: TorneiosPalette.textMuted, size: 40),
+              const SizedBox(height: 14),
+              const Text(
+                'Área restrita',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: TorneiosPalette.text, fontSize: 15, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                _autorizada == null
+                    ? 'Conferindo as permissões desta conta.'
+                    : 'Esta conta não administra torneios.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: TorneiosPalette.textMuted, fontSize: 11.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // A GUARDA VEM ANTES DE QUALQUER LEITURA DE `widget.torneios`. Nao e so
+    // estetica: o resumo administrativo e os cartoes carregam inscritos,
+    // alertas e premiacao de cada edicao, e desenhar isso atras de um aviso
+    // seria vazar o conteudo que a guarda existe para negar.
+    if (_autorizada != true) return _semAutoridade();
+
     final lista = _somenteAlertas ? widget.torneios.where((t) => t.alertas.isNotEmpty).toList() : widget.torneios;
     return TorneiosShell(
       title: 'Gestão de torneios',

@@ -46,6 +46,7 @@ import 'package:flutter/foundation.dart';
 
 import 'credencial_de_sessao.dart';
 import 'fonte_identidade.dart';
+import 'papel_de_sessao.dart';
 import 'identidade_publica_sessao.dart';
 
 /// Estado canônico da identidade pública do jogador autenticado.
@@ -65,13 +66,21 @@ class SessaoDoJogador extends ChangeNotifier {
   /// sessão de produção passa a de verdade (ver `sessao_firebase.dart`). Esse
   /// padrão é seguro: sem provedor, o transporte fica "não autenticado", que é
   /// a leitura honesta de uma sessão que não sabe emitir credencial.
+  ///
+  /// [papeis] é o provedor do PAPEL de quem está logado — hoje, uma pergunta
+  /// só: "esta sessão administra?". O padrão não tem papel nenhum para dar, e
+  /// essa é a resposta certa: uma sessão que não sabe consultar papel não é
+  /// administrativa. Quem monta a de produção passa a de verdade, que lê o
+  /// custom claim `admin` do ID Token (ver `sessao_firebase.dart`).
   SessaoDoJogador({
     required FonteDeIdentidade fonte,
     required Stream<String?> uids,
     String? uidInicial,
     FonteDeCredencial credenciais = const SemCredencial(),
+    FonteDePapel papeis = const SemPapel(),
   }) : _fonte = fonte,
-       _credenciais = credenciais {
+       _credenciais = credenciais,
+       _papeis = papeis {
     if (uidInicial != null) {
       // Estado montado à mão, sem passar por `_aplicarSessao`: o carregamento
       // fica para o microtask abaixo. Disparar dentro do construtor notificaria
@@ -94,6 +103,7 @@ class SessaoDoJogador extends ChangeNotifier {
 
   final FonteDeIdentidade _fonte;
   final FonteDeCredencial _credenciais;
+  final FonteDePapel _papeis;
   late final StreamSubscription<String?> _assinatura;
 
   EstadoIdentidadeSessao _estado = EstadoIdentidadeSessao.deslogado;
@@ -185,6 +195,48 @@ class SessaoDoJogador extends ChangeNotifier {
     if (_descartado || geracao != _geracao) return null;
     if (token == null || token.isEmpty) return null;
     return token;
+  }
+
+  // -------------------------------------------------------------------------
+  // Papel da sessão
+  // -------------------------------------------------------------------------
+
+  /// Esta sessão tem autoridade administrativa?
+  ///
+  /// ESTA É A ÚNICA PORTA, e ela existe pelo mesmo motivo que [obterCredencial]:
+  /// nenhuma tela fala com o provedor de autenticação por conta própria, porque
+  /// só aqui existe a geração que sabe se a resposta ainda vale.
+  ///
+  /// FALHA FECHADA em todos os caminhos que não sejam um "sim" assinado:
+  ///
+  ///   * a sessão não está autenticada (não há de quem consultar papel);
+  ///   * a sessão foi descartada;
+  ///   * o provedor falhou, escapou do contrato ou não tem claim;
+  ///   * **a sessão virou enquanto a resposta estava a caminho**.
+  ///
+  /// O último é a razão de a trava de geração estar aqui e não só na credencial.
+  /// Entre perguntar e receber há um await, e uma troca de conta cabe inteira
+  /// nele: sem a trava, a resposta que voltasse seria sobre o jogador que ACABOU
+  /// DE SAIR — e uma interface que já se reconstruiu para a conta nova abriria a
+  /// área de gestão para quem nunca teve o papel. É o mesmo vazamento entre
+  /// contas que a sessão impede do lado da identidade, entrando pela porta do
+  /// papel.
+  Future<bool> temAutoridadeAdministrativa() async {
+    if (_descartado || !_estado.autenticado) return false;
+
+    // O crachá da resposta, capturado ANTES do await.
+    final geracao = _geracao;
+
+    bool administra;
+    try {
+      administra = await _papeis.ehAdministrador();
+    } catch (_) {
+      // Um provedor que escapa do contrato não vira autoridade: vira "não".
+      return false;
+    }
+
+    if (_descartado || geracao != _geracao) return false;
+    return administra;
   }
 
   // -------------------------------------------------------------------------

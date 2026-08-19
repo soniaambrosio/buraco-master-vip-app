@@ -59,110 +59,23 @@ class _TorneiosPreviewPageState extends State<TorneiosPreviewPage> {
       torneios: TorneiosMockData.cards(),
       callbacks: _callbacks,
       onVoltar: () => Navigator.of(context).maybePop(),
-      mostrarAdmin: true,
-      onAbrirAdmin: _abrirAdmin,
-      onAbrirCenariosMock: _abrirCenariosMock,
+      // SEM `autoridade` e SEM `onAbrirAdmin`, e as duas ausências são a
+      // entrega desta OS neste arquivo.
+      //
+      // Aqui estava `mostrarAdmin: true` — um literal, no host, decidindo que
+      // quem abrisse a Central administrava torneios. E estava
+      // `onAbrirCenariosMock`, que punha na barra de uma tela de produto um
+      // atalho de laboratório com trinta e tantos estados encenados.
+      //
+      // Este host não tem sessão em escopo, logo não tem autoridade nenhuma a
+      // oferecer — e o padrão `SemPapel` da Central é exatamente essa verdade.
+      // Quando a Central for ligada à Casca de produção, quem a construir passa
+      // `autoridadeAdministrativaDe(sessao)` (ver
+      // `casca/autoridade_administrativa_de_producao.dart`); até lá, ninguém
+      // vê a área de gestão, que é o correto e não uma pendência.
     );
   }
 
-
-  void _abrirCenariosMock() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF130B08),
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.sizeOf(sheetContext).height * .78,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            children: [
-              const Text('Cenários de validação visual', style: TextStyle(color: TorneiosPalette.goldHi, fontSize: 18, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 5),
-              const Text('Disponíveis somente no host mock. O Claude substitui pelos estados reais.', style: TextStyle(color: TorneiosPalette.textMuted, fontSize: 10.5)),
-              const TorneioSectionTitle('Modal de inscrição'),
-              _cenarioTile(
-                sheetContext,
-                icon: Icons.person_rounded,
-                title: 'Inscrição individual',
-                subtitle: 'gratuita · regras obrigatórias',
-                onTap: () => _abrirInscricao('copa-rapida'),
-              ),
-              _cenarioTile(
-                sheetContext,
-                icon: Icons.groups_2_rounded,
-                title: 'Inscrição em dupla',
-                subtitle: 'escolha de parceiro online/offline',
-                onTap: () => _abrirInscricao('quarta-vulnerabilidade'),
-              ),
-              for (final motivo in MotivoInscricaoRecusada.values)
-                _cenarioTile(
-                  sheetContext,
-                  icon: Icons.block_rounded,
-                  title: 'Recusa: ${motivo.name}',
-                  subtitle: 'mensagem amigável recebida do Claude',
-                  onTap: () => showInscricaoTorneioModal(
-                    context: context,
-                    vm: TorneiosMockData.inscricao('quarta-vulnerabilidade', recusa: motivo),
-                    callbacks: _callbacks,
-                  ),
-                ),
-              const TorneioSectionTitle('Sala de espera · 9 estados'),
-              for (final status in StatusParticipante.values)
-                _cenarioTile(
-                  sheetContext,
-                  icon: Icons.hourglass_bottom_rounded,
-                  title: status.label,
-                  subtitle: 'estado oficial do participante',
-                  onTap: () => _abrirSalaComStatus('sexta-master-vip', status),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _cenarioTile(
-    BuildContext sheetContext, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: ListTile(
-        tileColor: TorneiosPalette.card,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(13),
-          side: const BorderSide(color: TorneiosPalette.border),
-        ),
-        leading: Icon(icon, color: TorneiosPalette.amethyst),
-        title: Text(title, style: const TextStyle(color: TorneiosPalette.text, fontSize: 11.5, fontWeight: FontWeight.w800)),
-        subtitle: Text(subtitle, style: const TextStyle(color: TorneiosPalette.textMuted, fontSize: 9.5)),
-        trailing: const Icon(Icons.chevron_right_rounded, color: TorneiosPalette.gold),
-        onTap: () {
-          Navigator.of(sheetContext).pop();
-          Future<void>.delayed(const Duration(milliseconds: 180), onTap);
-        },
-      ),
-    );
-  }
-
-  void _abrirSalaComStatus(String id, StatusParticipante status) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SalaEsperaTorneioScreen(
-          vm: TorneiosMockData.salaComStatus(id, status),
-          callbacks: _callbacks,
-          onVoltar: () => Navigator.of(context).pop(),
-          onVerClassificacao: () => _abrirClassificacao(id),
-        ),
-      ),
-    );
-  }
 
   void _abrirDetalhes(String id) {
     Navigator.of(context).push(
@@ -214,18 +127,6 @@ class _TorneiosPreviewPageState extends State<TorneiosPreviewPage> {
       MaterialPageRoute(
         builder: (_) => ResultadoTorneioScreen(
           vm: TorneiosMockData.resultado(id),
-          callbacks: _callbacks,
-          onVoltar: () => Navigator.of(context).pop(),
-        ),
-      ),
-    );
-  }
-
-  void _abrirAdmin() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AdminTorneiosScreen(
-          torneios: TorneiosMockData.admin(),
           callbacks: _callbacks,
           onVoltar: () => Navigator.of(context).pop(),
         ),
