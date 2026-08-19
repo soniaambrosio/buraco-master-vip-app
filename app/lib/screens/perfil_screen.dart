@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ranking/estado_ranking.dart';
+import '../widgets/alvo_minimo.dart';
 
 export '../ranking/estado_ranking.dart' show EstadoRanking, FaseRanking;
 
@@ -479,6 +480,13 @@ class PerfilScreen extends StatefulWidget {
   /// do próprio jogador para baixo por nada.
   final Widget? faixaSocial;
 
+  /// Os destinos da barra inferior que AINDA NÃO EXISTEM neste build.
+  ///
+  /// Mesma regra da Home: quem sabe o que tem tela é o host, porque é ele que
+  /// roteia o toque. A barra só ANUNCIA — ela continua repassando todos os
+  /// toques, inclusive os destes, porque é o toque que dispara o aviso.
+  final Set<NavDestino> navIndisponiveis;
+
   const PerfilScreen({
     super.key,
     required this.vm,
@@ -500,6 +508,7 @@ class PerfilScreen extends StatefulWidget {
     required this.onNavTap,
     this.onAbrirRanking,
     this.faixaSocial,
+    this.navIndisponiveis = const <NavDestino>{},
   });
 
   @override
@@ -624,12 +633,23 @@ class _PerfilScreenState extends State<PerfilScreen> {
     required VoidCallback onTap,
     required Widget child,
   }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 24,
-        child: SizedBox(width: 36, height: 36, child: Center(child: child)),
+    // O nome já vinha do `tooltip` — é assim que um botão só de ícone se
+    // apresenta. O que faltava era o PAPEL (o `InkResponse` não declara
+    // nenhum) e o tamanho: 36x36 num alvo colado no canto da tela.
+    //
+    // O ícone continua com o tamanho que tinha; o que cresce é a caixa.
+    return Semantics(
+      button: true,
+      enabled: true,
+      child: Tooltip(
+        message: tooltip,
+        child: InkResponse(
+          onTap: onTap,
+          radius: 24,
+          child: AlvoMinimo(
+            child: SizedBox(width: 36, height: 36, child: Center(child: child)),
+          ),
+        ),
       ),
     );
   }
@@ -741,29 +761,50 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   ),
                 ),
                 if (vm.ehMeuPerfil)
+                  // O DISCO CONTINUA COM 34, e o alvo passa a ter 48.
+                  //
+                  // `right: -6, top: -3` desloca a CAIXA, não o botão: são os 7
+                  // pontos que sobram de cada lado quando 34 vira 48, e o disco
+                  // dourado fica exatamente onde estava. O `Stack` já tinha
+                  // `clipBehavior: Clip.none`, então o transbordo é legítimo, e
+                  // o que ele cobre a mais é a borda do retrato — que não é
+                  // tocável, e por isso ninguém perde um toque para ele.
                   Positioned(
-                    right: 1,
-                    top: 4,
+                    right: -6,
+                    top: -3,
                     child: Material(
                       color: Colors.transparent,
-                      child: InkWell(
+                      child: Semantics(
+                        button: true,
+                        enabled: true,
+                        label: 'Trocar avatar',
+                        // O mesmo callback do gesto, e não um segundo: com
+                        // `excludeSemantics` a ação de toque do `InkWell` sai
+                        // da árvore, e sem repeti-la aqui o leitor de tela vê
+                        // um botão que não aperta.
                         onTap: widget.onTrocarAvatar,
-                        customBorder: const CircleBorder(),
-                        child: Container(
-                          width: 34,
-                          height: 34,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: const LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [_ouroClaro, Color(0xFFE0A83A)],
+                        excludeSemantics: true,
+                        child: InkWell(
+                          onTap: widget.onTrocarAvatar,
+                          customBorder: const CircleBorder(),
+                          child: AlvoMinimo(
+                            child: Container(
+                              width: 34,
+                              height: 34,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: const LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [_ouroClaro, Color(0xFFE0A83A)],
+                                ),
+                                border: Border.all(color: const Color(0xFF241812), width: 2),
+                                boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
+                              ),
+                              child: const Icon(Icons.photo_camera_rounded, color: Color(0xFF3A2606), size: 18),
                             ),
-                            border: Border.all(color: const Color(0xFF241812), width: 2),
-                            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
                           ),
-                          child: const Icon(Icons.photo_camera_rounded, color: Color(0xFF3A2606), size: 18),
                         ),
                       ),
                     ),
@@ -790,19 +831,30 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ),
               if (vm.ehMeuPerfil) ...[
                 const SizedBox(width: 8),
-                InkWell(
+                // 28x28 era o menor alvo da tela inteira, e ficava a 8 pontos
+                // do nome. O círculo continua com 28; a caixa é que vai a 48.
+                Semantics(
+                  button: true,
+                  enabled: true,
+                  label: 'Editar apelido',
                   onTap: widget.onEditarNick,
-                  customBorder: const CircleBorder(),
-                  child: Container(
-                    width: 28,
-                    height: 28,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.black.withValues(alpha: .33),
-                      border: Border.all(color: _borda),
+                  excludeSemantics: true,
+                  child: InkWell(
+                    onTap: widget.onEditarNick,
+                    customBorder: const CircleBorder(),
+                    child: AlvoMinimo(
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black.withValues(alpha: .33),
+                          border: Border.all(color: _borda),
+                        ),
+                        child: const Icon(Icons.edit_rounded, color: _ouro, size: 15),
+                      ),
                     ),
-                    child: const Icon(Icons.edit_rounded, color: _ouro, size: 15),
                   ),
                 ),
               ],
@@ -923,6 +975,9 @@ class _PerfilScreenState extends State<PerfilScreen> {
     // depois o que dá para fazer com ela, em vez de perder um dos dois.
     return Semantics(
       button: true,
+      // O Ranking abre de verdade a partir do Perfil — é o `abrir` conferido
+      // logo acima. Declarar isso é o par de declarar que a Loja não abre.
+      enabled: true,
       label: 'Ver o ranking completo',
       child: InkWell(
         onTap: abrir,
@@ -1128,12 +1183,21 @@ class _PerfilScreenState extends State<PerfilScreen> {
             ),
           ),
           if (acao != null)
-            InkWell(
-              onTap: onAcao,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-                child: Text(acao, style: const TextStyle(color: _textoSec, fontSize: 11)),
+            // 24 pontos de altura, ao lado de um título que não é tocável: o
+            // dedo que errava para a esquerda não pegava nada. O texto continua
+            // com o tamanho que tinha — quem cresce é a caixa.
+            Semantics(
+              button: true,
+              enabled: onAcao != null,
+              child: InkWell(
+                onTap: onAcao,
+                borderRadius: BorderRadius.circular(8),
+                child: AlvoMinimo(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                    child: Text(acao, style: const TextStyle(color: _textoSec, fontSize: 11)),
+                  ),
+                ),
               ),
             ),
         ],
@@ -1146,48 +1210,52 @@ class _PerfilScreenState extends State<PerfilScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Material(
         color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onVerUltimaConquista,
-          borderRadius: BorderRadius.circular(14),
-          child: Ink(
-            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: const LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                colors: [Color(0xFF2A1E0C), Color(0xFF191007)],
-              ),
-              border: Border.all(color: _ouro.withValues(alpha: .50), width: 1.4),
-              boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 14, offset: Offset(0, 3))],
-            ),
-            child: Row(
-              children: [
-                _imagem(conquista.imagem, 52),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '🏅 ${conquista.titulo}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: _ouroClaro, fontSize: 14, fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        conquista.subtitulo,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFFC9A86A), fontSize: 10.5, height: 1.25),
-                      ),
-                    ],
-                  ),
+        child: Semantics(
+          button: true,
+          enabled: true,
+          child: InkWell(
+            onTap: widget.onVerUltimaConquista,
+            borderRadius: BorderRadius.circular(14),
+            child: Ink(
+              padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                gradient: const LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [Color(0xFF2A1E0C), Color(0xFF191007)],
                 ),
-                const SizedBox(width: 6),
-                const Icon(Icons.chevron_right_rounded, color: _ouro, size: 25),
-              ],
+                border: Border.all(color: _ouro.withValues(alpha: .50), width: 1.4),
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 14, offset: Offset(0, 3))],
+              ),
+              child: Row(
+                children: [
+                  _imagem(conquista.imagem, 52),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '🏅 ${conquista.titulo}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: _ouroClaro, fontSize: 14, fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          conquista.subtitulo,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFFC9A86A), fontSize: 10.5, height: 1.25),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right_rounded, color: _ouro, size: 25),
+                ],
+              ),
             ),
           ),
         ),
@@ -1205,43 +1273,47 @@ class _PerfilScreenState extends State<PerfilScreen> {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       child: Material(
         color: Colors.transparent,
-        child: InkWell(
-          onTap: _abrirPresentes,
-          borderRadius: BorderRadius.circular(14),
-          child: Ink(
-            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: const LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                colors: [Color(0xFF2A1748), Color(0xFF1A1030)],
-              ),
-              border: Border.all(color: _roxoBorda, width: 1.4),
-              boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 14, offset: Offset(0, 3))],
-            ),
-            child: Row(
-              children: [
-                _imagem('assets/perfil/presentes_bau.webp', 54),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '🎁 Meus Presentes',
-                        style: TextStyle(color: Color(0xFFE6D0FF), fontSize: 14, fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'presentes que você recebeu · $quantos',
-                        style: const TextStyle(color: Color(0xFFC3B0E8), fontSize: 10.5),
-                      ),
-                    ],
-                  ),
+        child: Semantics(
+          button: true,
+          enabled: true,
+          child: InkWell(
+            onTap: _abrirPresentes,
+            borderRadius: BorderRadius.circular(14),
+            child: Ink(
+              padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                gradient: const LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [Color(0xFF2A1748), Color(0xFF1A1030)],
                 ),
-                const Icon(Icons.chevron_right_rounded, color: Color(0xFFD9C2FF), size: 25),
-              ],
+                border: Border.all(color: _roxoBorda, width: 1.4),
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 14, offset: Offset(0, 3))],
+              ),
+              child: Row(
+                children: [
+                  _imagem('assets/perfil/presentes_bau.webp', 54),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '🎁 Meus Presentes',
+                          style: TextStyle(color: Color(0xFFE6D0FF), fontSize: 14, fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'presentes que você recebeu · $quantos',
+                          style: const TextStyle(color: Color(0xFFC3B0E8), fontSize: 10.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: Color(0xFFD9C2FF), size: 25),
+                ],
+              ),
             ),
           ),
         ),
@@ -1290,29 +1362,33 @@ class _PerfilScreenState extends State<PerfilScreen> {
             opacity: conquista.desbloqueada ? 1 : .72,
             child: Material(
               color: Colors.transparent,
-              child: InkWell(
-                onTap: () => widget.onVerConquista(conquista.id),
-                borderRadius: BorderRadius.circular(14),
-                child: Ink(
-                  padding: const EdgeInsets.fromLTRB(3, 7, 3, 5),
-                  decoration: BoxDecoration(
-                    color: _card,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: _borda),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Expanded(child: Center(child: _imagem(conquista.icone, 46))),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${conquista.desbloqueada ? '' : '🔒 '}${conquista.label}',
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: _textoSec, fontSize: 8.5, height: 1.05),
-                      ),
-                    ],
+              child: Semantics(
+                button: true,
+                enabled: true,
+                child: InkWell(
+                  onTap: () => widget.onVerConquista(conquista.id),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Ink(
+                    padding: const EdgeInsets.fromLTRB(3, 7, 3, 5),
+                    decoration: BoxDecoration(
+                      color: _card,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _borda),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Expanded(child: Center(child: _imagem(conquista.icone, 46))),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${conquista.desbloqueada ? '' : '🔒 '}${conquista.label}',
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: _textoSec, fontSize: 8.5, height: 1.05),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1395,38 +1471,48 @@ class _PerfilScreenState extends State<PerfilScreen> {
   }) {
     final corConteudo = primario ? const Color(0xFF3A2606) : _ouro;
 
+    // 42 e 45 pontos de altura, e a diferença entre os dois vinha do
+    // `FittedBox`: quem tinha o texto mais largo encolhia mais. Nenhum dos dois
+    // era escolha, e nenhum dos dois chegava ao piso.
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            gradient: primario
-                ? const LinearGradient(colors: [Color(0xFFF6D77A), Color(0xFFE0A83A)])
-                : null,
-            border: primario ? null : Border.all(color: _ouro.withValues(alpha: .50), width: 1.4),
-          ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: corConteudo, size: 20),
-                const SizedBox(width: 7),
-                Text(
-                  label,
-                  maxLines: 1,
-                  style: TextStyle(
-                    color: corConteudo,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
+      child: Semantics(
+        button: true,
+        enabled: true,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: kAlvoMinimoDeToque),
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                gradient: primario
+                    ? const LinearGradient(colors: [Color(0xFFF6D77A), Color(0xFFE0A83A)])
+                    : null,
+                border: primario ? null : Border.all(color: _ouro.withValues(alpha: .50), width: 1.4),
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon, color: corConteudo, size: 20),
+                    const SizedBox(width: 7),
+                    Text(
+                      label,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: corConteudo,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -1450,25 +1536,39 @@ class _PerfilScreenState extends State<PerfilScreen> {
       child: Row(
         children: [
           for (final item in itens)
+            // 43 pontos de altura, e o número não era de ninguém: era o ícone
+            // mais o rótulo. `selected` diz "você está aqui" — antes só a cor
+            // dizia — e `enabled` lê a lista de destinos sem tela, a mesma que
+            // o host consulta para rotear.
             Expanded(
-              child: InkWell(
+              child: Semantics(
+                button: true,
+                enabled: !widget.navIndisponiveis.contains(item.$1),
+                selected: item.$1 == NavDestino.perfil,
+                label: item.$2,
                 onTap: () => widget.onNavTap(item.$1),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 1),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Opacity(opacity: item.$1 == NavDestino.perfil ? 1 : .42, child: _imagem(item.$3, 24)),
-                      const SizedBox(height: 2),
-                      Text(
-                        item.$2,
-                        style: TextStyle(
-                          color: item.$1 == NavDestino.perfil ? _ouro : Colors.white.withValues(alpha: .25),
-                          fontSize: 10.5,
-                          fontWeight: item.$1 == NavDestino.perfil ? FontWeight.w700 : FontWeight.w400,
-                        ),
+                excludeSemantics: true,
+                child: InkWell(
+                  onTap: () => widget.onNavTap(item.$1),
+                  child: AlvoMinimo(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 1),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Opacity(opacity: item.$1 == NavDestino.perfil ? 1 : .42, child: _imagem(item.$3, 24)),
+                          const SizedBox(height: 2),
+                          Text(
+                            item.$2,
+                            style: TextStyle(
+                              color: item.$1 == NavDestino.perfil ? _ouro : Colors.white.withValues(alpha: .25),
+                              fontSize: 10.5,
+                              fontWeight: item.$1 == NavDestino.perfil ? FontWeight.w700 : FontWeight.w400,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -1511,18 +1611,29 @@ class _PerfilScreenState extends State<PerfilScreen> {
                       style: TextStyle(color: Color(0xFFE6D0FF), fontSize: 16, fontWeight: FontWeight.w900),
                     ),
                   ),
-                  InkWell(
+                  // O único jeito de sair da folha pelo teclado ou pelo leitor
+                  // de tela, e ele era um "x" anônimo de 30x30.
+                  Semantics(
+                    button: true,
+                    enabled: true,
+                    label: 'Fechar presentes',
                     onTap: () => Navigator.of(context).pop(),
-                    customBorder: const CircleBorder(),
-                    child: Container(
-                      width: 30,
-                      height: 30,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.black.withValues(alpha: .33),
+                    excludeSemantics: true,
+                    child: InkWell(
+                      onTap: () => Navigator.of(context).pop(),
+                      customBorder: const CircleBorder(),
+                      child: AlvoMinimo(
+                        child: Container(
+                          width: 30,
+                          height: 30,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black.withValues(alpha: .33),
+                          ),
+                          child: const Icon(Icons.close_rounded, color: Color(0xFFD9C2FF), size: 18),
+                        ),
                       ),
-                      child: const Icon(Icons.close_rounded, color: Color(0xFFD9C2FF), size: 18),
                     ),
                   ),
                 ],

@@ -16,6 +16,7 @@ import '../services/perfil_service.dart';
 import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
+import '../widgets/alvo_minimo.dart';
 
 /// Controlador da tela de Perfil (camada de lógica — Claude).
 ///
@@ -328,6 +329,17 @@ class _PerfilPageState extends State<PerfilPage> {
     }
   }
 
+  /// Os destinos da barra inferior que não têm tela neste build, e o nome com
+  /// que o aviso os chama.
+  ///
+  /// UMA declaração, lida por dois lugares: `onNavTap` a consulta para decidir
+  /// o que o toque faz, e a barra a recebe para ANUNCIAR o estado. O Ranking
+  /// NÃO está aqui — daqui ele abre de verdade, e marcá-lo como indisponível
+  /// seria mentir na direção contrária.
+  static const Map<NavDestino, String> _navSemTela = {
+    NavDestino.loja: 'Loja VIP',
+  };
+
   /// Aviso curto para ações cuja tela ainda não existe (próximas fatias).
   void _breve(String o) {
     ScaffoldMessenger.of(context)
@@ -472,7 +484,16 @@ class _PerfilPageState extends State<PerfilPage> {
         EscopoRanking.talvezDe(context)?.recarregar();
         _carregar();
       },
+      navIndisponiveis: _navSemTela.keys.toSet(),
       onNavTap: (destino) {
+        // O que não tem tela sai por [_navSemTela] — a MESMA lista que a barra
+        // recebeu para anunciar. O `case` da Loja continua escrito porque o
+        // `switch` é exaustivo, e não porque é alcançável.
+        final semTela = _navSemTela[destino];
+        if (semTela != null) {
+          _breve(semTela);
+          return;
+        }
         switch (destino) {
           case NavDestino.inicio:
             Navigator.of(context).maybePop();
@@ -481,8 +502,7 @@ class _PerfilPageState extends State<PerfilPage> {
             _abrirRanking();
             break;
           case NavDestino.loja:
-            _breve('Loja VIP');
-            break;
+            break; // tratado acima
           case NavDestino.perfil:
             // já estamos no perfil
             break;
@@ -564,14 +584,22 @@ class _FaixaSocial extends StatelessWidget {
             for (final acao in acoes)
               ConstrainedBox(
                 // O piso das diretrizes de toque, e não só o tamanho do texto.
-                constraints: const BoxConstraints(minHeight: 40, minWidth: 88),
+                //
+                // Eram 40, e 40 não era o piso de lugar nenhum: é o que sobra
+                // de 48 quando `VisualDensity.compact` desconta os 8 pontos.
+                // Os dois foram embora juntos — o número virou
+                // [kAlvoMinimoDeToque], o mesmo das outras três telas, e a
+                // densidade compacta saiu para não descontar dele de novo.
+                constraints: const BoxConstraints(
+                  minHeight: kAlvoMinimoDeToque,
+                  minWidth: 88,
+                ),
                 child: OutlinedButton(
                   onPressed: () => onAgir(acao),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _ouroClaro,
                     side: const BorderSide(color: _borda),
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    visualDensity: VisualDensity.compact,
                   ),
                   child: Text(
                     verboDaAcao(acao),
