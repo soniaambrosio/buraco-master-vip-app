@@ -66,6 +66,18 @@ import 'navegacao_perfil_publico.dart';
 /// de texto mais um botão.
 const double kAlturaMinimaDaLinhaSocial = 56;
 
+/// O piso de ÁREA EFETIVA de qualquer controle desta superfície, em pontos.
+///
+/// 48 é o número de `kMinInteractiveDimension` e o alvo mínimo da WCAG 2.5.8.
+/// Ele NÃO manda no desenho: o ícone de voltar continua com 29 pontos, e o
+/// botão de ação continua com 40 de altura visual. O que este número governa é
+/// o retângulo que responde ao dedo.
+///
+/// Por isso ele convive com [kAlturaMinimaDaLinhaSocial], que é MAIOR: aquele
+/// é a altura de uma linha que carrega duas alturas de texto mais um botão,
+/// este é o chão de qualquer controle, inclusive dos que cabem num ícone.
+const double kAlvoMinimoDeToqueSocial = 48;
+
 class AmigosDeProducao extends StatefulWidget {
   const AmigosDeProducao({super.key});
 
@@ -218,9 +230,13 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
           child: InkResponse(
             onTap: () => Navigator.of(context).maybePop(),
             radius: 24,
+            // 48x48, e não os 44x44 de antes: o alvo do Voltar era o único
+            // controle desta tela abaixo do piso por FALTA DE CAIXA, e não
+            // por densidade. O ícone continua com 29 — o que cresceu foi a
+            // caixa que o `InkResponse` cobre.
             child: const SizedBox(
-              width: 44,
-              height: 44,
+              width: kAlvoMinimoDeToqueSocial,
+              height: kAlvoMinimoDeToqueSocial,
               child: Center(
                 child: Icon(
                   Icons.chevron_left_rounded,
@@ -555,7 +571,10 @@ class _Aba extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Container(
-            height: 40,
+            // A pastilha É o alvo: o `InkWell` cobre exatamente este
+            // `Container`, então aqui altura de desenho e área de toque são
+            // a mesma coisa, e 40 deixava as três abas abaixo do piso.
+            height: kAlvoMinimoDeToqueSocial,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
@@ -718,7 +737,11 @@ class _BotaoDeAcao extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     button: true,
     child: ConstrainedBox(
-      // O piso das diretrizes vale para o botão também, e não só para a linha.
+      // O DESENHO continua com 40 de altura: é o que cabe ao lado de duas
+      // linhas de texto sem esticar a linha inteira. Quem entrega os 48 de
+      // ÁREA é o `tapTargetSize` do Material, logo abaixo — e é por isso que
+      // este `ConstrainedBox` não foi promovido a 48. Um piso escrito AQUI
+      // não teria corrigido nada: o acréscimo do alvo acontece FORA dele.
       constraints: const BoxConstraints(minHeight: 40, minWidth: 44),
       child: OutlinedButton(
         onPressed: onTap,
@@ -726,7 +749,13 @@ class _BotaoDeAcao extends StatelessWidget {
           foregroundColor: AmigosDeProducao._ouroClaro,
           side: const BorderSide(color: AmigosDeProducao._borda),
           padding: const EdgeInsets.symmetric(horizontal: 10),
-          visualDensity: VisualDensity.compact,
+          // `visualDensity: compact` SAIU daqui, e a troca não é cosmética.
+          // Ela subtraía 8 do alvo que o `MaterialTapTargetSize.padded`
+          // monta, e era ELA — não a altura de 40 — que fazia Aceitar,
+          // Recusar, Remover, Cancelar e Adicionar medirem 40 de área
+          // efetiva. O `padded` fica escrito, e não herdado do tema: assim a
+          // garantia é deste arquivo, e não de uma decisão distante.
+          tapTargetSize: MaterialTapTargetSize.padded,
         ),
         child: Text(verboDaAcao(acao), style: const TextStyle(fontSize: 12.5)),
       ),

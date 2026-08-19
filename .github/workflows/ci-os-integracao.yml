@@ -143,6 +143,13 @@ jobs:
           # o avatar de quem estava olhando, e so um teste de identidade cruzada
           # com fixtures bem diferentes o denuncia.
           roda perfilvis  test/perfil/identidade_visitada_test.dart
+          # OS 17 A11Y — o piso de toque da superficie Amigos. Ele MEDE a
+          # arvore de acessibilidade que o Flutter produziu, e confere o hit
+          # test nas bordas novas: um alvo que crescesse so na anotacao passa
+          # na medida e reprova no toque. Entra no portao porque a regressao
+          # que ele fecha e silenciosa — `visualDensity: compact` de volta num
+          # botao nao quebra nada visivel, e derruba o alvo de 48 para 40.
+          roda a11yamigos test/amigos/a11y_alvos_amigos_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -310,7 +317,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -361,7 +368,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
