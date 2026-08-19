@@ -125,8 +125,12 @@ class OndeJogarScreen extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(6, 8, 14, 0),
                     child: Row(
                       children: [
+                        // `tooltip` é o nome acessível de um IconButton — ele
+                        // vira o rótulo do nó. Sem ele este botão era o único
+                        // alvo anônimo da tela: um "‹" desenhado, e silêncio.
                         IconButton(
                           onPressed: onVoltar,
+                          tooltip: 'Voltar',
                           icon: const Icon(Icons.chevron_left, color: _gold, size: 30),
                           splashRadius: 22,
                         ),
@@ -156,71 +160,125 @@ class OndeJogarScreen extends StatelessWidget {
   }
 
   Widget _cardOpcao(OpcaoMesa o) {
-    return GestureDetector(
+    // O cartão é um botão, e `bloqueado` é o que diz se ele leva a algum
+    // lugar. Este campo já existia em [OpcaoMesa] e não era lido por ninguém:
+    // o cadeado que a pessoa vê vem do texto de `nota`, e a decisão de barrar
+    // vem do host. Ligá-lo aqui não muda nem o desenho nem o destino — o toque
+    // continua saindo inteiro por `onEscolher`, porque é ele que dispara o
+    // aviso —, mas passa a dizer em voz alta o que a tela já sabia.
+    //
+    // `excludeSemantics` porque os fragmentos de dentro não formam uma frase:
+    // o ícone vira o nome de um objeto ("globo"), o `›` vira ruído e a `nota`
+    // repete, com outras palavras, o que `enabled: false` já anuncia.
+    return Semantics(
+      button: true,
+      enabled: !o.bloqueado,
+      label: _rotuloDaOpcao(o),
+      // `onTap` REPETE o callback do gesto, e a repetição é obrigatória:
+      // `excludeSemantics` tira a subárvore inteira da árvore de
+      // acessibilidade, e junto com a decoração ia a ação de toque que o
+      // `InkWell` anotava. Sem esta linha o nó ficava com papel de botão e
+      // nenhuma ação — um botão que o leitor de tela vê e não consegue
+      // acionar. É o MESMO callback, escrito na mesma chamada: o dedo entra
+      // pelo gesto, o leitor de tela entra por aqui, e os dois chegam no
+      // mesmo lugar.
       onTap: () => onEscolher(o.id),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: o.destaque ? _gold : _borda,
-            width: o.destaque ? 1.8 : 1,
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: () => onEscolher(o.id),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: o.destaque ? _gold : _borda,
+              width: o.destaque ? 1.8 : 1,
+            ),
+            boxShadow: o.destaque
+                ? [BoxShadow(color: _gold.withValues(alpha: 0.22), blurRadius: 16, spreadRadius: -2)]
+                : null,
           ),
-          boxShadow: o.destaque
-              ? [BoxShadow(color: _gold.withValues(alpha: 0.22), blurRadius: 16, spreadRadius: -2)]
-              : null,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A1C10),
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(color: const Color(0x55EFB94A)),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A1C10),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: const Color(0x55EFB94A)),
+                ),
+                alignment: Alignment.center,
+                child: Text(o.icone, style: const TextStyle(fontSize: 26)),
               ),
-              alignment: Alignment.center,
-              child: Text(o.icone, style: const TextStyle(fontSize: 26)),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(o.titulo,
-                            style: const TextStyle(
-                                color: _goldHi, fontSize: 15.5, fontWeight: FontWeight.w800)),
-                      ),
-                      if (o.badge != null) ...[
-                        const SizedBox(width: 8),
-                        _badge(o.badge!, o.corBadge),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(o.titulo,
+                              style: const TextStyle(
+                                  color: _goldHi, fontSize: 15.5, fontWeight: FontWeight.w800)),
+                        ),
+                        if (o.badge != null) ...[
+                          const SizedBox(width: 8),
+                          _badge(o.badge!, o.corBadge),
+                        ],
                       ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(o.descricao,
+                        style: const TextStyle(color: _texto, fontSize: 12, height: 1.3)),
+                    if (o.nota != null) ...[
+                      const SizedBox(height: 6),
+                      Text(o.nota!,
+                          style: const TextStyle(color: _mut, fontSize: 10.5, fontWeight: FontWeight.w600)),
                     ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(o.descricao,
-                      style: const TextStyle(color: _texto, fontSize: 12, height: 1.3)),
-                  if (o.nota != null) ...[
-                    const SizedBox(height: 6),
-                    Text(o.nota!,
-                        style: const TextStyle(color: _mut, fontSize: 10.5, fontWeight: FontWeight.w600)),
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            const Text('›', style: TextStyle(color: _mut, fontSize: 22, fontWeight: FontWeight.w900)),
-          ],
+              const SizedBox(width: 6),
+              const Text('›', style: TextStyle(color: _mut, fontSize: 22, fontWeight: FontWeight.w900)),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  /// O cartão inteiro, dito numa frase.
+  ///
+  /// São os mesmos textos que estão desenhados, na mesma ordem em que os olhos
+  /// os encontram: título, selo, descrição e a nota. Nada aqui é escrito de
+  /// novo — o que sai da leitura é só o que não é texto (a arte do ícone e o
+  /// `›` de avançar), porque nenhum dos dois acrescenta palavra.
+  static String _rotuloDaOpcao(OpcaoMesa o) {
+    final partes = <String>[o.titulo];
+    final badge = o.badge;
+    if (badge != null && badge.isNotEmpty) partes.add(badge);
+    partes.add(o.descricao);
+    // A NOTA SÓ ENTRA QUANDO ELA ACRESCENTA. Numa opção bloqueada ela é o
+    // cadeado — "🔒 Ainda não disponível" —, e é exatamente o que
+    // `enabled: false` já anuncia; dizer os dois é o anúncio duplicado.
+    // Numa opção liberada a nota carrega informação que não está em lugar
+    // nenhum ("🔒 Só VIP cria · convidados entram com código"), e sai da
+    // leitura seria esconder do ouvido o que está no olho.
+    final nota = o.nota;
+    if (!o.bloqueado && nota != null && nota.isNotEmpty) partes.add(nota);
+    // Sem ponto dobrado: a `descricao` já termina em ponto, e um leitor de
+    // tela lê "nesta versão ponto ponto" — exatamente o ruído que a leitura
+    // única veio tirar.
+    return partes
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .map((p) => p.endsWith('.') ? p.substring(0, p.length - 1) : p)
+        .join('. ');
   }
 
   Widget _badge(String txt, CorBadge cor) {
