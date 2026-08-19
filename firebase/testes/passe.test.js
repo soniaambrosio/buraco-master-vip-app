@@ -247,12 +247,39 @@ describe('PASSE-RULES/ESCRITA — ninguem se autoconcede nada', () => {
 describe('PASSE-RULES/FRONTEIRA — a assinatura paga nao se confunde com a cortesia', () => {
   test('PRF-01: `playerEntitlements` continua fora deste bloco', async () => {
     // §10 e §12.7. A cortesia nao mora na autoridade da assinatura, e o bloco
-    // do passe nao abriu nenhuma porta para ela — o fecho padrao do arquivo
-    // continua negando, como negava antes desta OS.
+    // do passe nao pode ter aberto nenhuma porta para ela.
+    //
+    // [COMPOSICAO canonica] ESTE CASO MUDOU DE MEDIDA, E NAO DE INTENCAO.
+    //
+    // Ele afirmava negacao UNIVERSAL — ninguem le `playerEntitlements` —, e
+    // aquilo era verdade so enquanto a colecao nao tinha bloco proprio: o que
+    // negava era o fecho padrao do arquivo, e nao uma decisao sobre
+    // assinatura. Na composicao a colecao TEM autoridade, e ela e do billing:
+    // `allow read: if ehDono(uid) || ehAdmin()`, provado em ENT-01..ENT-04 de
+    // `entitlement.test.js`, que roda no MESMO alvo integrado que este arquivo.
+    // O aplicativo depende disso — e por ali que `EscopoVip` sabe que alguem e
+    // VIP.
+    //
+    // Manter a assercao antiga exigiria FECHAR a leitura do dono, ou seja,
+    // quebrar a assinatura para provar uma fronteira do passe. O que este caso
+    // protege de verdade continua protegido, e agora e medido onde de fato
+    // mora: o bloco do passe nao concede NADA sobre `playerEntitlements` alem
+    // do que a autoridade da assinatura ja concedia.
+    const foraDoDono = [
+      ['um TERCEIRO autenticado', ambiente.authenticatedContext(ALHEIO)],
+      ['quem NAO esta autenticado', ambiente.unauthenticatedContext()],
+    ];
+    for (const [quem, ctx] of foraDoDono) {
+      await assertFails(getDoc(doc(ctx.firestore(), 'playerEntitlements', DONO)), quem);
+    }
+
+    // E a ESCRITA continua fechada para TODOS, inclusive o dono e o admin: so
+    // o Admin SDK escreve direito pago, e o passe nao abriu excecao nenhuma.
     for (const [quem, ctx] of contextos()) {
-      const db = ctx.firestore();
-      await assertFails(getDoc(doc(db, 'playerEntitlements', DONO)), quem);
-      await assertFails(setDoc(doc(db, 'playerEntitlements', DONO), { vip: true }), quem);
+      await assertFails(
+        setDoc(doc(ctx.firestore(), 'playerEntitlements', DONO), { vip: true }),
+        quem
+      );
     }
   });
 
