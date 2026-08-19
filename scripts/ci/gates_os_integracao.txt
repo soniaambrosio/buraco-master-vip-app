@@ -173,3 +173,24 @@ economiafn
 # gate daqui derruba `composneg`, e nao so silencia o portao.
 proveni
 composneg
+
+# --- 12. a COMPOSIÇÃO da Loja/Casca com as Functions canônicas -------------
+# As duas folhas divergiram do MESMO ponto e nunca se viram. Cada uma tinha
+# suíte própria e verde, e nenhuma das duas podia enxergar o que só existe
+# depois da união — a começar por ela ter mesmo acontecido.
+#
+# `composloja` é o gate que reprova se QUALQUER UM DOS DOIS LADOS for removido:
+# prova os dois SHAs de origem como ANCESTRAIS do HEAD (por isso o passo de
+# checkout do workflow passou a ser fundo), que nenhum lado entrou só como
+# documento, que as nove codebases e os 63 exports atravessaram inteiros, que
+# os gates das duas folhas sobreviveram à união DESTE arquivo, e que a Loja,
+# ao virar alcançável, não trouxe um segundo dono de sessão nem `.mock()` para
+# dentro de `app/lib/casca/`.
+#
+# `rkpagina` é CI-01 encontrado outra vez, e no pior lugar possível: o único
+# caso que monta `const RankingPage()` sem fonte — que é a construção REAL de
+# `hall_page.dart` e de `perfil_page.dart` — morava em
+# `test/ranking_page_test.dart`, e passo nenhum do workflow o rodava. A suíte
+# que guarda a invariante RANKING-01 podia ficar vermelha sem ninguém saber.
+rkpagina
+composloja

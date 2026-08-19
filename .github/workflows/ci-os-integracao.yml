@@ -107,6 +107,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # `fetch-depth: 0` é exigência do gate `composloja`, e não conforto:
+          # provar que as DUAS folhas de origem são ancestrais do HEAD só é
+          # possível com histórico. Num clone raso o `merge-base` responde
+          # "não é ancestral" para QUALQUER commit — e o gate reprova de
+          # propósito nesse caso, em vez de ficar verde onde não pode medir.
+          fetch-depth: 0
 
       - name: "0 — teste do PRÓPRIO portão (agregador + fonte única)"
         run: |
@@ -221,6 +228,14 @@ jobs:
           roda rkperfil     test/ranking/homologacao_perfil_publicavel_test.dart
           roda rkleitor     test/ranking/leitor_ranking_real_test.dart
           roda rkregressao  test/ranking/regressao_leitor_ranking_test.dart
+          # OS Composição Loja/Casca + Functions (CI-01, de novo e no mesmo
+          # lugar). `ranking_page_test.dart` guarda o caso que monta
+          # `const RankingPage()` SEM fonte — que é a construção real de
+          # `hall_page.dart` e de `perfil_page.dart` — e exige a frase "o
+          # ranking oficial ainda não está sendo publicado" no lugar de nome,
+          # liga e colocação inventados. Era a suíte que guarda RANKING-01, e
+          # passo nenhum a rodava.
+          roda rkpagina     test/ranking_page_test.dart
           # A união dos três arquivos da interseção da composição.
           roda composicao   test/composicao/composicao_perfil_ranking_test.dart
           # OS Chat Livre Seguro V1: a porta ÚNICA de envio de mensagem. Prova
@@ -615,6 +630,21 @@ jobs:
           echo "iniciado" > inicio_composneg
           node --test ferramentas/composicao/negativas.test.js 2>&1 | tee t_composneg.log
           echo ${PIPESTATUS[0]} > exit_composneg
+
+      - name: "4c — §6 gate da composição Loja/Casca ↔ Functions canônicas"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          # A costura de um nível acima do 4b: aquele guarda a união das NOVE
+          # codebases; este guarda a árvore em que a Loja publicável e as
+          # Functions canônicas passam a coexistir. Prova as duas folhas como
+          # ANCESTRAIS (é por isso que o checkout acima é fundo), que nenhum
+          # dos dois lados entrou só como documento, que os gates dos dois
+          # sobreviveram à união da fonte única, e que a Loja não trouxe de
+          # carona um segundo dono de sessão nem dado de maquete alcançável.
+          echo "iniciado" > inicio_composloja
+          node --test ferramentas/composicao/loja_functions.test.js 2>&1 | tee t_composloja.log
+          echo ${PIPESTATUS[0]} > exit_composloja
 
       - name: Publicar evidência na branch ci-evidencias
         if: always()

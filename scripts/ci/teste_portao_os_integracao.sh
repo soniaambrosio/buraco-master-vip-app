@@ -190,6 +190,41 @@ else
   printf '%s\n' "$intrusas" | sed 's/^/        | /'
 fi
 
+# OS COMPOSIÇÃO LOJA/CASCA + FUNCTIONS. Os DOIS lados editaram esta fonte
+# única, em hunks diferentes, e é aqui que um `ours`/`theirs` sobre o arquivo
+# inteiro apagaria os gates de um deles sem produzir conflito nenhum para
+# investigar. I8 quebra nos DOIS sentidos, de propósito: é o que faz o teste do
+# portão reprovar quando metade da composição some.
+faltando=""
+for g in cascaloja rkpagina composloja; do
+  contem_gate "$g" || faltando="$faltando $g"
+done
+if [ -z "$faltando" ]; then
+  ok "I8a — a composição da Loja é obrigatória (cascaloja/rkpagina/composloja)"
+else
+  nok "I8a — lado da LOJA amputado da fonte única:$faltando"
+fi
+
+faltando=""
+for g in contafn contaemu mesasfn economiafn proveni composneg; do
+  contem_gate "$g" || faltando="$faltando $g"
+done
+if [ -z "$faltando" ]; then
+  ok "I8b — a composição das Functions canônicas é obrigatória"
+else
+  nok "I8b — lado das FUNCTIONS amputado da fonte única:$faltando"
+fi
+
+# Produtor sem alvo é o degrau seguinte ao gate fantasma: o passo existe, o
+# agregador percorre, e a suíte que ele diz rodar não está mais lá.
+if grep -q 'ferramentas/composicao/loja_functions.test.js' "$YML" \
+   && grep -q 'roda rkpagina' "$YML" \
+   && grep -q 'fetch-depth: 0' "$YML"; then
+  ok "I8c — o YAML produz composloja/rkpagina, e o checkout é fundo"
+else
+  nok "I8c — falta o produtor da composição no YAML e/ou o checkout deixou de ser fundo"
+fi
+
 printf '\n== matriz do agregador ==\n'
 
 # 1 — todos os gates com exit 0 -> verde.
