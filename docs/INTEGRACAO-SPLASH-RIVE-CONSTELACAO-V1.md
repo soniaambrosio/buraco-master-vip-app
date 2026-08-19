@@ -428,3 +428,149 @@ o `pubspec.yaml` do repositório logo no começo, então a ordem já estava cert
 
 Sem merge em `main`, sem PR, sem tag, sem release, sem deploy, sem publicação na
 Play. Sem ampliação de permissões de workflow.
+
+---
+
+# ADENDO — Correção visual da constelação (V1)
+
+**Veredito: `PENDENTE — CONSTELAÇÃO COMPOSTA E MEDIDA; DUAS DECISÕES VISUAIS EM ABERTO`**
+
+Não é PASS. A composição está construída, provada e empacotada, mas duas
+constatações visuais caem exatamente na cláusula que manda parar em vez de
+maquiar. Elas estão na §A4.
+
+O `.riv` **não foi tocado**: `2.298.957` bytes, SHA-256
+`a5a7ca19…d4d67d`, conferido no bundle, no repositório e dentro do APK.
+
+## A1. O que foi feito
+
+Segundo asset visual autoritativo, sem uma linha de arte redesenhada:
+
+```
+app/assets/rive/constelacao_dourada_master_vip.svg
+  4.663 bytes · SHA-256 a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204
+  viewBox="0 0 1080 1920" — a MESMA área de referência da Rive
+```
+
+Composição na mesma `SplashConstelacaoScreen`, num `Stack`:
+
+| Camada | O quê |
+| --- | --- |
+| 1 | `ColoredBox(#050B1E)` — garante o primeiro quadro |
+| 2 | a Rive, `SplashConstelacao / entrada_splash`, `contain`, centralizada |
+| 3 | a constelação, `BoxFit.contain`, centralizada, dentro de `IgnorePointer` |
+
+**A constelação vai POR CIMA, e isso foi medido, não presumido.** O artboard da
+Rive pinta fundo opaco em toda a sua área: uma camada por baixo seria
+integralmente coberta, e o defeito continuaria — só que agora com um asset a
+mais no APK fingindo que foi resolvido.
+
+Animação: um `TweenAnimationBuilder` de opacidade 0 → 1 em `duração × 1/5`
+(600 ms). Não há `AnimationController` nosso, ele não conclui nada, não avisa
+ninguém e não move geometria. A timeline da Rive continua sendo a autoridade da
+duração. Com movimento reduzido o fade não existe — a camada entra direto, sem
+animar.
+
+Falha do SVG: a leitura é por `DefaultAssetBundle`, com `try/catch`. Sem a
+constelação a abertura perde brilho, não perde função.
+
+## A2. Provas
+
+`app/test/splash/splash_constelacao_test.dart`: **34 → 44 casos**.
+
+| Exigência da OS | Caso |
+| --- | --- |
+| 1. `.riv` mantém tamanho e SHA | `C01` (e `A05`) |
+| 2. SVG está no bundle | `C02`, `C03` |
+| 3. SVG aparece na Splash | `C04` |
+| 4. Rive continua presente | `C04`, `C08` |
+| 5. constelação não cria segunda conclusão | `C06` |
+| 6. falha do SVG não impede continuidade | `C07` |
+| 7. falha do Rive mantém comportamento anterior | `C08` (e `W05`) |
+| 8. autenticação continua decidida pela Casca | `C10` (e `R01`–`R03`) |
+| 9. primeiro frame permanece `#050B1E` | `L01` |
+| 10. movimento reduzido continua definido | `C09` (e `W09`) |
+
+Extras: `C04` prova a ORDEM das camadas, `C05` prova o `IgnorePointer` ativo.
+
+| Comando (overlay limpo, sem lib de desktop) | Resultado |
+| --- | --- |
+| `flutter analyze` | 103 — **idêntico byte a byte à base `089cb5e`** |
+| `flutter test test/splash` | **+44** |
+| `flutter test test/casca` | **+244** |
+| `flutter test` (glob) | **+1197** (era 1187; +10 da constelação) |
+| `flutter build apk --debug` | APK gerado |
+
+No APK: `.riv` `a5a7ca19…` e `.svg` `a87fc5ad…`, ambos byte a byte, mais as três
+`librive_native.so`. Zero rede em runtime.
+
+## A3. `flutter_svg`
+
+`^2.3.0` → 7 pacotes novos no lock, **nenhuma versão existente alterada**.
+
+Entrou porque o Flutter não desenha SVG sozinho, e a alternativa seria
+reimplementar a arte num `CustomPainter` — exatamente o "recriar" que a OS
+proíbe.
+
+## A4. AS DUAS DECISÕES QUE NÃO SÃO MINHAS
+
+### A4.1 Dois nós da constelação encostam na base do título
+
+Medido, e não olhado: o quadro final foi renderizado DUAS vezes — com e sem a
+constelação — e comparado pixel a pixel dentro da máscara da arte da Rive.
+
+| Máscara | Pixels | Alterados pela constelação | Caixa dos alterados |
+| --- | --- | --- | --- |
+| ≥ 40 (inclui a vinheta do artboard) | 419.027 | 5.457 (1,30%) | x 99..1018 · y 627..1536 |
+| ≥ 100 | 207.773 | 156 (0,075%) | **x 461..624 · y 1526..1536** |
+| ≥ 200 | 143.794 | 133 (0,093%) | x 461..623 · y 1526..1535 |
+| ≥ 300 | 90.210 | 126 (0,140%) | x 462..623 · y 1526..1535 |
+| ≥ 400 (só o ouro forte) | 58.305 | 120 (0,206%) | x 463..623 · y 1526..1535 |
+
+Lido em português:
+
+- **A coroa e o escudo não têm um único pixel alterado.** Assim que a máscara
+  deixa de incluir a vinheta suave do artboard, TODOS os pixels afetados caem
+  numa faixa de 163 × 11 px.
+- Essa faixa é o **rodapé das letras de "MASTER VIP"**. São os dois nós da
+  constelação em `(466,1532)` e `(617,1532)`, r=6, encostando na base dos
+  glifos.
+- Escala: 126 pixels em 90.210. **0,14%.**
+
+Isso é pouco, e é no título. A OS diz para não cortar nem editar o SVG para
+esconder, e para entregar para arbitragem. É o que está sendo feito.
+
+Opções, para a decisão — **nenhuma delas foi aplicada**:
+
+1. **Aceitar como está.** 126 px na base das letras; nas capturas ampliadas
+   `R2_base_titulo.png` dá para ver que os dois nós tangenciam o rodapé.
+2. **Máscara**: recortar a constelação na caixa do título antes de compor.
+   Não altera o SVG — é uma operação de composição no Flutter.
+3. **Z-order parcial**: a constelação por baixo apenas na faixa do título.
+   Mais caro e, na prática, equivale à opção 2.
+4. **Deslocar a camada** alguns pixels. Muda o enquadramento aprovado, e por
+   isso é a que menos recomendo.
+
+### A4.2 `flutter_svg` ignora os filtros de desfoque do SVG
+
+O renderizador emite, literalmente, `unhandled element <filter/>`.
+
+Os dois grupos que dependem de `feGaussianBlur` — `NuvemDeBrilho`
+(`stdDeviation 7`) e `Cintilacoes` (`stdDeviation 3`) — são desenhados **sem
+desfoque**. Eles aparecem, mas como discos de borda dura em vez de brilho
+difuso. Dá para ver em `R1_topo_coroa.png`, nos halos ao redor dos dois nós
+maiores.
+
+Não é defeito do SVG nem da composição: é limite conhecido do renderizador. As
+saídas possíveis — **nenhuma aplicada** — são aceitar como está, pedir uma
+exportação do SVG com o brilho já rasterizado nas formas, ou trocar o
+renderizador. Editar o SVG para "resolver" está fora do que me foi autorizado.
+
+## A5. O que continua não provado
+
+Tudo o que a §10 já listava segue valendo, e sem novidade: **cold start em
+aparelho não foi provado**, o build depende de rede para as libs nativas da
+Rive, e o `ci-os-integracao.yml` não é dispatchável fora de `main`.
+
+Nada foi publicado: os commits desta correção estão **apenas locais**, e o SHA
+`e246d54` continua sendo o topo publicado até a arbitragem.

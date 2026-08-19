@@ -152,7 +152,7 @@ jobs:
         # gradle do plugin dispara `dart run rive_native:setup`, que BAIXA a
         # biblioteca da plataforma. Por isso o build precisa de rede — a
         # execução no aparelho, não: o .riv viaja dentro do APK.
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences "rive:^0.14.11"
+        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences "rive:^0.14.11" "flutter_svg:^2.3.0"
 
       - name: Deps de TESTE (só dev — não entram no APK)
         # `stream_channel` e `fake_async` já vêm como dependências transitivas
@@ -511,6 +511,17 @@ jobs:
           test "$TAM" = "2298957" || { echo "ERRO: tamanho divergente ($TAM)"; exit 1; }
           test "$SHA" = "a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d" || { echo "ERRO: SHA-256 divergente"; exit 1; }
           test "$CAB" = "RIVE" || { echo "ERRO: cabeçalho divergente"; exit 1; }
+          # A constelação: segundo asset visual autoritativo. Ela está fora do
+          # .riv porque não entra na exportação da timeline, e entra como camada
+          # vetorial por cima. Mesma pasta, mesma declaração de pubspec.
+          cp app/assets/rive/constelacao_dourada_master_vip.svg app_build/assets/rive/
+          SVG=app_build/assets/rive/constelacao_dourada_master_vip.svg
+          TAM_SVG=$(wc -c < "$SVG")
+          SHA_SVG=$(sha256sum "$SVG" | cut -d' ' -f1)
+          echo "constelacao: $TAM_SVG bytes | sha256 $SHA_SVG"
+          test "$TAM_SVG" = "4663" || { echo "ERRO: tamanho do SVG divergente ($TAM_SVG)"; exit 1; }
+          test "$SHA_SVG" = "a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204" || { echo "ERRO: SHA-256 do SVG divergente"; exit 1; }
+          grep -q 'viewBox="0 0 1080 1920"' "$SVG" || { echo "ERRO: o SVG saiu da area de referencia 1080x1920"; exit 1; }
 
       - name: Configure dark native launch screen
         # A COR É A DA ARTE, e é isso que elimina o piscar: o Android pinta esta
@@ -752,6 +763,11 @@ jobs:
           echo "abertura no APK: $TAM bytes | sha256 $SHA"
           test "$TAM" = "2298957" || { echo "ERRO: o .riv dentro do APK tem tamanho divergente ($TAM)"; exit 1; }
           test "$SHA" = "a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d" || { echo "ERRO: o .riv dentro do APK não é o binário aprovado"; exit 1; }
+          unzip -p "$APK" assets/flutter_assets/assets/rive/constelacao_dourada_master_vip.svg > /tmp/constelacao.svg
+          TAM_SVG=$(wc -c < /tmp/constelacao.svg)
+          SHA_SVG=$(sha256sum /tmp/constelacao.svg | cut -d' ' -f1)
+          echo "constelacao no APK: $TAM_SVG bytes | sha256 $SHA_SVG"
+          test "$SHA_SVG" = "a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204" || { echo "ERRO: o SVG dentro do APK não é o aprovado"; exit 1; }
           echo "as libs nativas da Rive que foram empacotadas:"
           unzip -l "$APK" | grep -i 'rive' || { echo "ERRO: nenhuma biblioteca nativa da Rive no APK — a animação não teria como rodar"; exit 1; }
 
