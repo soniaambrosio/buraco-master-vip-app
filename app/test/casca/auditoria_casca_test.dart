@@ -547,4 +547,56 @@ void main() {
       );
     });
   });
+
+  // =========================================================================
+  // O PORTÃO DO A11Y DE COMO JOGAR EXISTE, E A AUSÊNCIA DELE REPROVA
+  // =========================================================================
+  //
+  // Mesma mecânica do bloco acima, e pelo mesmo motivo. `a11ycj` prova que a
+  // tela de regras é navegável por leitor de tela e que nenhuma regra do jogo
+  // mudou de texto; e é justamente por ser uma suíte de CONTEÚDO que ela some
+  // fácil — basta um arquivo apagado numa limpeza, e o portão passa a dizer NÃO
+  // EXECUTADO, que é verde.
+  //
+  // A guarda é NOMINAL, de propósito: cita `a11ycj` e o caminho da suíte, e não
+  // uma varredura de "todo gate declarado tem de existir". Uma varredura
+  // genérica tornaria obrigatórios, de repente, gates que a lista trata como
+  // opcionais por decisão antiga — e isso não é o que esta correção pede.
+  group('o portão do a11y de Como Jogar', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File('test/casca/a11y_como_jogar_test.dart').existsSync(),
+        isTrue,
+        reason: 'a suíte de acessibilidade de Como Jogar sumiu — apagá-la ou '
+            'renomeá-la silencia o gate a11ycj em vez de quebrá-lo',
+      );
+    });
+
+    test('o workflow a executa e a considera no portão', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+
+      expect(
+        RegExp(r'roda\s+a11ycj\s+test/casca/a11y_como_jogar_test\.dart')
+            .hasMatch(texto),
+        isTrue,
+        reason: 'o gate a11ycj não executa mais a suíte de Como Jogar',
+      );
+      // Nas DUAS listas, como em perfilvis: a da evidência publicada e a que
+      // decide verde/vermelho.
+      expect(
+        RegExp(r'GATES="[^"]*\ba11ycj\b').hasMatch(texto),
+        isTrue,
+        reason: 'a11ycj saiu da evidência publicada',
+      );
+      expect(
+        RegExp(r'for k in [^;]*\ba11ycj\b[^;]*; do').hasMatch(texto),
+        isTrue,
+        reason: 'a11ycj saiu do portão verde/vermelho — passaria a rodar sem '
+            'poder reprovar',
+      );
+    });
+  });
 }
