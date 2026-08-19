@@ -6,7 +6,11 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+// `OrdinalSortKey` — a ordem de leitura da mão é declarada, e não deduzida da
+// geometria. `material.dart` não a reexporta.
+import 'package:flutter/semantics.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'cartas/nome_falavel_da_carta.dart';
 import 'screens/resultado_partida_screen.dart';
 
 // ===================== MESA DE JOGO — VERDE + MOTOR (fatia 2) =====================
@@ -30,6 +34,17 @@ const _naipeSimb = {'copas': '♥', 'ouros': '♦', 'paus': '♣', 'espadas': '�
 bool _cartaVermelha(Carta c) => c.naipe == 'copas' || c.naipe == 'ouros';
 String _cartaSimb(Carta c) => c.ehCoringa && c.valor == 'JOKER' ? '★' : (_naipeSimb[c.naipe] ?? '');
 String _cartaRotulo(Carta c) => c.valor == 'JOKER' ? '★' : c.valor;
+
+// A carta em palavras, para quem joga de leitor de tela: "rei de espadas".
+// A convenção é UMA só — a mesma de `casca/mesa_online/arte_das_cartas.dart` —
+// e mora em `cartas/nome_falavel_da_carta.dart`. Um segundo mapa aqui divergiria
+// do online no dia em que alguém corrigisse só um dos dois.
+String _cartaEmPalavras(Carta c) =>
+    nomeFalavelDaCarta(valor: c.valor, naipe: c.naipe);
+
+// "1 carta", e não "1 cartas". O número é falado, e a concordância errada soa
+// como defeito para quem só tem a voz.
+String _emCartas(int n) => n == 1 ? '1 carta' : '$n cartas';
 
 // imagem real da carta (baralho enviado pela Sônia). JOKER alterna entre os dois
 // desenhos de curinga (usando o id pra dar variedade); dorso do baralho pro monte/mortos.
@@ -2387,6 +2402,12 @@ class _MesaScreenState extends State<MesaScreen> {
               glowing: monteGlow,
             ),
             onTap: _tapMonte,
+            // O estado que decide se o toque faz alguma coisa é o MESMO que
+            // `_tapMonte` confere antes de comprar. Anunciar "indisponível"
+            // quando a compra funcionaria — ou o contrário — seria pior do que
+            // não anunciar nada.
+            rotulo: 'monte, ${_emCartas(_j.monte.length)}',
+            habilitada: _minhaVezAtiva && !_j.jaComprou,
           ),
           const SizedBox(width: 5),
           Expanded(child: _discardPile(glowing: lixoGlow)),
@@ -2395,6 +2416,9 @@ class _MesaScreenState extends State<MesaScreen> {
             topLabel: 'MORTO',
             bottomLabel: '1',
             showCount: false,
+            rotulo: _j.mortos.isNotEmpty
+                ? 'morto 1, disponível'
+                : 'morto 1, já pego',
             child: _j.mortos.isNotEmpty
                 ? _backCard(width: cardWidth, height: cardHeight)
                 : _emptyCard(width: cardWidth, height: cardHeight),
@@ -2404,6 +2428,9 @@ class _MesaScreenState extends State<MesaScreen> {
             topLabel: 'MORTO',
             bottomLabel: '2',
             showCount: false,
+            rotulo: _j.mortos.length > 1
+                ? 'morto 2, disponível'
+                : 'morto 2, já pego',
             child: _j.mortos.length > 1
                 ? _backCard(width: cardWidth, height: cardHeight)
                 : _emptyCard(width: cardWidth, height: cardHeight),
@@ -2420,6 +2447,8 @@ class _MesaScreenState extends State<MesaScreen> {
     bool showCount = true,
     required Widget child,
     VoidCallback? onTap,
+    required String rotulo,
+    bool habilitada = false,
   }) {
     final content = Stack(
       clipBehavior: Clip.none,
@@ -2448,12 +2477,23 @@ class _MesaScreenState extends State<MesaScreen> {
       ],
     );
 
+    // O desenho inteiro sai da árvore falada: as tarjas "MONTE"/"MORTO"/"1" e o
+    // contador são texto de VISUAL, e sem isto o leitor de tela leria a pilha
+    // como "MONTE, 40, 1" — três pedaços soltos e nenhum nome. O que fala é o
+    // rótulo único abaixo, que já traz a contagem.
+    final corpo = ExcludeSemantics(child: content);
+
     return onTap == null
-        ? content
-        : GestureDetector(
-            onTap: onTap,
-            behavior: HitTestBehavior.opaque,
-            child: content,
+        ? Semantics(container: true, label: rotulo, child: corpo)
+        : Semantics(
+            label: rotulo,
+            button: true,
+            enabled: habilitada,
+            child: GestureDetector(
+              onTap: onTap,
+              behavior: HitTestBehavior.opaque,
+              child: corpo,
+            ),
           );
   }
 
@@ -2497,62 +2537,78 @@ class _MesaScreenState extends State<MesaScreen> {
         ? cardWidth
         : cardWidth + (cards.length - 1) * step;
 
-    return GestureDetector(
-      onTap: _tapLixo,
-      behavior: HitTestBehavior.opaque,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            height: cardHeight,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              border: glowing
-                  ? Border.all(color: _mPurpleHi, width: 1.2)
-                  : null,
-            ),
-            child: cards.isEmpty
-                ? _emptyCard(width: cardWidth, height: cardHeight)
-                : SingleChildScrollView(
-                    controller: aberto ? _discardScroll : null,
-                    scrollDirection: Axis.horizontal,
-                    physics: aberto
-                        ? const BouncingScrollPhysics()
-                        : const NeverScrollableScrollPhysics(),
-                    child: SizedBox(
-                      width: totalWidth,
-                      height: cardHeight,
-                      child: Stack(
-                        children: [
-                          for (var i = 0; i < cards.length; i++)
-                            Positioned(
-                              left: i * step,
-                              child: _frontCard(
-                                cards[i],
-                                width: cardWidth,
-                                height: cardHeight,
-                              ),
-                            ),
-                        ],
+    // O lixo é UM alvo, e não uma pilha de alvos: o toque nele compra a pilha
+    // ou descarta a carta escolhida, conforme o turno. Quem ouve precisa do
+    // nome, da contagem e — no aberto, onde o topo é público — de que carta
+    // está por cima, que é a informação com que se decide comprar.
+    final topo = _j.lixoTopo;
+    final rotuloDoLixo = StringBuffer(aberto ? 'lixo aberto' : 'lixo')
+      ..write(', ${_emCartas(_j.lixo.length)}');
+    if (topo != null) rotuloDoLixo.write(', topo ${_cartaEmPalavras(topo)}');
+
+    return Semantics(
+      label: rotuloDoLixo.toString(),
+      button: true,
+      enabled: _minhaVezAtiva,
+      child: GestureDetector(
+        onTap: _tapLixo,
+        behavior: HitTestBehavior.opaque,
+        child: ExcludeSemantics(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: cardHeight,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(7),
+                  border: glowing
+                      ? Border.all(color: _mPurpleHi, width: 1.2)
+                      : null,
+                ),
+                child: cards.isEmpty
+                    ? _emptyCard(width: cardWidth, height: cardHeight)
+                    : SingleChildScrollView(
+                        controller: aberto ? _discardScroll : null,
+                        scrollDirection: Axis.horizontal,
+                        physics: aberto
+                            ? const BouncingScrollPhysics()
+                            : const NeverScrollableScrollPhysics(),
+                        child: SizedBox(
+                          width: totalWidth,
+                          height: cardHeight,
+                          child: Stack(
+                            children: [
+                              for (var i = 0; i < cards.length; i++)
+                                Positioned(
+                                  left: i * step,
+                                  child: _frontCard(
+                                    cards[i],
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+              ),
+              Positioned(
+                left: 3,
+                right: 3,
+                bottom: 3,
+                child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
+              ),
+              // Contador do lixo — SOBRE a carta do topo (canto sup. dir. da carta),
+              // longe do monte e dos mortos pra não poluir aquele canto.
+              Positioned(
+                top: -6,
+                left: cardWidth - 22,
+                child: _countCircle(_j.lixo.length),
+              ),
+            ],
           ),
-          Positioned(
-            left: 3,
-            right: 3,
-            bottom: 3,
-            child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
-          ),
-          // Contador do lixo — SOBRE a carta do topo (canto sup. dir. da carta),
-          // longe do monte e dos mortos pra não poluir aquele canto.
-          Positioned(
-            top: -6,
-            left: cardWidth - 22,
-            child: _countCircle(_j.lixo.length),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -2879,36 +2935,51 @@ class _MesaScreenState extends State<MesaScreen> {
       children: [
         _railButton(Icons.chat_bubble_rounded, () {
           setState(() => _msg = 'Chat — ligação final com o Claude.');
-        }),
+        }, rotulo: 'chat'),
         const SizedBox(height: 7),
         _railButton(Icons.sentiment_satisfied_alt_rounded, () {
           setState(() => _msg = 'Expressões — ligação final com o Claude.');
-        }),
+        }, rotulo: 'expressões'),
         const SizedBox(height: 7),
         _railButton(
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
+          rotulo: 'som',
+          // O ícone é a única indicação de que o som está ligado, e ícone não
+          // se ouve. `ligado` faz o leitor de tela dizer o estado junto com o
+          // nome, em vez de anunciar um botão "som" que não diz o que faz.
+          ligado: _soundEnabled,
         ),
       ],
     );
   }
 
-  Widget _railButton(IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 38,
-        height: 38,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xEE0A0A0A),
-          border: Border.all(color: _mGold, width: 1),
-          boxShadow: const [
-            BoxShadow(color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
-          ],
+  Widget _railButton(
+    IconData icon,
+    VoidCallback onTap, {
+    required String rotulo,
+    bool? ligado,
+  }) {
+    return Semantics(
+      label: rotulo,
+      button: true,
+      toggled: ligado,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xEE0A0A0A),
+            border: Border.all(color: _mGold, width: 1),
+            boxShadow: const [
+              BoxShadow(color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
+            ],
+          ),
+          child: Icon(icon, color: _mGoldHi, size: 20),
         ),
-        child: Icon(icon, color: _mGoldHi, size: 20),
       ),
     );
   }
@@ -2949,24 +3020,72 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // A menor faixa de toque que uma carta pode ter, em pontos lógicos. É o piso
+  // da WCAG 2.5.8 (Target Size, Minimum, AA).
+  static const double _faixaMinimaDeToque = 24.0;
+  // O piso do Material Design, e a meta enquanto a largura permitir.
+  static const double _faixaConfortavelDeToque = 48.0;
+  // O respiro horizontal do rolamento da mão, de cada lado.
+  static const double _respiroDaMao = 14.0;
+
   Widget _hand() {
     final hand = _j.maos[0];
     final count = hand.length;
     if (count == 0) return const SizedBox();
 
+    // A largura REAL disponível decide o passo entre as cartas, e o passo é a
+    // faixa de toque de cada uma — ver `_maoNaLargura`. Sem medir, o passo
+    // seria uma fração fixa da carta, que é como ele chegou a 21,12 pontos.
+    return LayoutBuilder(
+      builder: (context, constraints) => _maoNaLargura(
+        hand,
+        count,
+        constraints.hasBoundedWidth ? constraints.maxWidth : 360.0,
+      ),
+    );
+  }
+
+  Widget _maoNaLargura(List<Carta> hand, int count, double larguraDisponivel) {
     // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
     const cardWidth = 66.0;
     const cardHeight = 100.0;
-    // Sobreposição compacta e AUTOMÁTICA conforme a quantidade: trecho visível
-    // de cada carta entre 32% (poucas cartas) e 25% (muitas) da largura, sem
-    // reduzir a carta. A última carta continua inteira (Stack) e a mão mantém
-    // scroll horizontal. Ajuste SÓ visual — não altera estado, seleção nem regras.
-    final double frac = count <= 12
-        ? 0.32
-        : count >= 24
-            ? 0.25
-            : 0.32 - (count - 12) * (0.07 / 12);
-    final double step = cardWidth * frac;
+
+    // ---------------------------------------------------------------------
+    // O PASSO É A FAIXA DE TOQUE, E NÃO UM ENFEITE
+    // ---------------------------------------------------------------------
+    //
+    // As cartas se sobrepõem: a de índice `i+1` cobre a de índice `i` a partir
+    // de `step` pontos. O que sobra descoberto de cada carta — e portanto o que
+    // o dedo consegue pegar sem pegar a vizinha — é EXATAMENTE `step`. Só a
+    // última fica inteira.
+    //
+    // Até aqui `step` era `66 * 0.32`, ou 21,12 pontos, em qualquer aparelho.
+    // A auditoria de acessibilidade de 19/08/2026 mediu isso: dez das onze
+    // cartas com uma faixa de 21 pontos, e a última com 66. É metade do piso da
+    // WCAG e menos da metade do piso do Material.
+    //
+    // Agora o passo é o maior que a largura comporta, limitado dos dois lados:
+    //
+    //   * NUNCA abaixo de 24 pontos. Onze cartas exigem 306 pontos de mão; onde
+    //     não couber, a mão ROLA na horizontal — o que ela já fazia. Rolar é um
+    //     custo pequeno perto de uma carta que não dá para acertar;
+    //   * NUNCA acima de 48. Passado o piso do Material, espalhar mais só
+    //     afastaria as cartas umas das outras sem ninguém ganhar nada.
+    //
+    // Num telefone de 360 pontos com a mão cheia, dá 26,6 — acima do piso da
+    // WCAG e abaixo do piso do Material. Os 48 não cabem: seriam 546 pontos de
+    // mão, uma mão inteiramente rolável em telefone nenhum onde ela caiba hoje.
+    // Esta é a justificativa técnica do alvo abaixo de 48.
+    final double espacoParaOsPassos =
+        larguraDisponivel - 2 * _respiroDaMao - cardWidth;
+    final double passoQueCabe = count > 1
+        ? espacoParaOsPassos / (count - 1)
+        : _faixaConfortavelDeToque;
+    final double step = passoQueCabe.clamp(
+      _faixaMinimaDeToque,
+      _faixaConfortavelDeToque,
+    );
+
     const selectedLift = 13.0;
     final active = _minhaVezAtiva;
     final totalWidth = cardWidth + (count - 1) * step;
@@ -2981,6 +3100,36 @@ class _MesaScreenState extends State<MesaScreen> {
         return a.compareTo(b);
       });
 
+    // -----------------------------------------------------------------------
+    // DUAS CAMADAS: A QUE SE VÊ E A QUE SE TOCA
+    // -----------------------------------------------------------------------
+    //
+    // Antes havia uma só. Cada carta era desenho, alvo de toque e nó de
+    // acessibilidade ao mesmo tempo, e a ordem dos filhos do `Stack` — que é a
+    // ordem de PINTURA — governava as três coisas de uma vez. Daí saíam os três
+    // defeitos que esta correção fecha:
+    //
+    //   * a carta seguinte cobria a anterior, então a área de toque de cada uma
+    //     era o passo, e nada mais;
+    //   * selecionar uma carta a manda para o fim de `order` (é assim que ela
+    //     sobe por cima das vizinhas). Como era o mesmo `Stack`, a leitura de
+    //     tela também a mandava para o fim — a mão inteira se reordenava na
+    //     boca do leitor quando o dedo escolhia uma carta. Pior: a selecionada,
+    //     agora no topo, cobria a vizinha por 66 pontos e a deixava intocável;
+    //   * a arte é uma imagem sem texto, e sem rótulo o leitor de tela parava em
+    //     cada carta e não dizia nada.
+    //
+    // Separadas, cada ordem serve a quem precisa dela:
+    //
+    //   * a CAMADA DE DESENHO segue `order` — a seleção continua subindo por
+    //     cima das vizinhas, exatamente como antes. Ela não recebe toque (a de
+    //     cima o intercepta antes) nem fala (`ExcludeSemantics`), então a
+    //     imagem não vira um nó vazio com foco;
+    //   * a CAMADA DE TOQUE E DE FALA segue a ordem lógica da mão, sempre, e
+    //     suas faixas NÃO SE SOBREPÕEM: a carta `i` recebe exatamente
+    //     `[i*step, (i+1)*step)`, e a última recebe o que sobra, que é a carta
+    //     inteira. Como ela não depende de `order`, nem a seleção nem a
+    //     recém-comprada mexem em quem pega o dedo ou em quem fala primeiro.
     final cards = SizedBox(
       width: totalWidth,
       height: cardHeight + selectedLift,
@@ -2991,8 +3140,7 @@ class _MesaScreenState extends State<MesaScreen> {
             Positioned(
               left: index * step,
               bottom: 0,
-              child: GestureDetector(
-                onTap: active ? () => _tapCard(index) : null,
+              child: ExcludeSemantics(
                 child: AnimatedSlide(
                   duration: const Duration(milliseconds: 180),
                   curve: Curves.easeOutCubic,
@@ -3012,10 +3160,47 @@ class _MesaScreenState extends State<MesaScreen> {
                 ),
               ),
             ),
+          for (var index = 0; index < count; index++)
+            Positioned(
+              left: index * step,
+              // A faixa vai do topo à base da mão, e não só da carta: a altura
+              // livre é de graça, e é onde a carta selecionada sobe.
+              top: 0,
+              bottom: 0,
+              width: index == count - 1 ? cardWidth : step,
+              child: Semantics(
+                // A ordem de leitura é declarada, e não deduzida da geometria:
+                // é o que garante que selecionar, trocar a seleção ou desfazer
+                // não reordenem a mão para quem ouve.
+                sortKey: OrdinalSortKey(index.toDouble()),
+                // A posição entra no nome porque a mão tem DOIS baralhos: duas
+                // cartas idênticas, uma ao lado da outra, seriam dois "rei de
+                // espadas" indistinguíveis para quem não vê a tela.
+                label: '${_cartaEmPalavras(hand[index])}, '
+                    'carta ${index + 1} de $count',
+                button: true,
+                enabled: active,
+                selected: _sel.contains(index),
+                // A ação de toque vem SÓ do gesto abaixo: declarar `onTap`
+                // aqui também daria duas ações de toque no mesmo nó.
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: active ? () => _tapCard(index) : null,
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
           Positioned(
             top: -7,
             right: -8,
-            child: _countCircle(count),
+            // O contador é desenho: não é alvo (sem isto ele fica por cima da
+            // faixa da última carta e rouba o canto dela) e não é fala — o
+            // total já vai em cada carta ("carta 3 de 11") e no rodapé
+            // ("VOCÊ • 11 cartas"). Um terceiro anúncio do mesmo número, solto
+            // no meio da mão, só atrapalha quem navega ouvindo.
+            child: ExcludeSemantics(
+              child: IgnorePointer(child: _countCircle(count)),
+            ),
           ),
         ],
       ),
@@ -3030,7 +3215,14 @@ class _MesaScreenState extends State<MesaScreen> {
           controller: _handScroll,
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(14, selectedLift, 14, 0),
+          // O mesmo respiro que entrou na conta do passo, lá em cima. Dois
+          // números digitados em lugares diferentes divergem.
+          padding: const EdgeInsets.fromLTRB(
+            _respiroDaMao,
+            selectedLift,
+            _respiroDaMao,
+            0,
+          ),
           child: cards,
         ),
       ),

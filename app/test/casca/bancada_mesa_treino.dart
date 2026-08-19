@@ -36,7 +36,14 @@
 // a posição na tela. Isso mantém a produção sem porta de teste e mede a coisa,
 // não a intenção.
 
+// `Tristate` mora em `dart:ui` e não é reexportado por `flutter/semantics.dart`.
+// O `show` é estreito de propósito: `dart:ui` também define `Rect` e `Offset`, e
+// importá-lo inteiro colidiria com o material.
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
+// `rendering.dart` traz junto `MatrixUtils` e a camada de semântica.
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:buraco_master_vip/mesa.dart';
@@ -109,15 +116,6 @@ Future<void> encerrarMesaDeTreino(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 5));
 }
 
-/// Os retângulos das cartas da mão, da esquerda para a direita.
-///
-/// A âncora é o `AnimatedContainer` de 66x100 de `_handCard`. O lixo também tem
-/// um `AnimatedContainer`, mas sem largura fixa; as cartas do lixo, do monte e
-/// dos mortos são `Container` comum. Este par de medidas é só da mão.
-///
-/// A ordem por `left` crescente É a ordem lógica da mão: `_hand` posiciona a
-/// carta de índice `i` em `left = i * step`, e a seleção muda a camada visual e
-/// a altura, nunca o `left`.
 /// A carta da mão: o `AnimatedContainer` de 66x100 de `_handCard`.
 ///
 /// Duas precisões que este `Finder` precisa ter, e cada uma custou uma medição
@@ -142,6 +140,26 @@ final Finder kCartaDaMao = find.descendant(
   ),
 );
 
+/// A janela por onde a mão é vista.
+///
+/// É o `SingleChildScrollView` horizontal que embala as cartas. O lixo também
+/// tem um, e por isso a busca parte das CARTAS e sobe: o primeiro ancestral
+/// desse tipo é o da mão, e nunca o do lixo.
+///
+/// Serve para separar duas coisas que parecem a mesma: a carta que está fora do
+/// alcance do dedo, que é defeito, e a carta que está fora da JANELA, que é
+/// rolagem — e rolar a mão é o que ela sempre fez.
+Rect viewportDaMao(WidgetTester tester) => tester.getRect(
+      find
+          .ancestor(of: kCartaDaMao, matching: find.byType(SingleChildScrollView))
+          .first,
+    );
+
+/// Os retângulos das cartas da mão, da esquerda para a direita.
+///
+/// A ordem por `left` crescente É a ordem lógica da mão: `_hand` posiciona a
+/// carta de índice `i` em `left = i * step`, e a seleção muda a camada de
+/// desenho e a altura, nunca o `left`.
 List<Rect> cartasDaMao(WidgetTester tester) {
   final rects = <Rect>[
     for (final w in tester.widgetList<AnimatedContainer>(kCartaDaMao))
@@ -228,39 +246,83 @@ Future<Set<int>> tocarEm(WidgetTester tester, Offset ponto) async {
 /// contaminaria: hoje a carta selecionada vai para o topo da pilha de desenho e
 /// passa a cobrir a vizinha, então o resultado do ponto seguinte dependeria do
 /// ponto anterior.
-Future<List<double>> medirFaixasEfetivas(
+Future<Varredura> medirFaixasEfetivas(
   WidgetTester tester, {
   double passo = 1.0,
 }) async {
   final rects = cartasDaMao(tester);
   expect(rects, isNotEmpty, reason: 'a mão não desenhou carta nenhuma');
 
+  // A seleção de partida não precisa estar vazia: o que se mede é o que CADA
+  // toque muda em relação a ela. É isto que permite varrer a mão com uma carta
+  // já escolhida — o caso que prova que a carta no topo da pilha de pintura não
+  // engole a faixa da vizinha.
+  final base = selecionadasNaMao(tester);
+
   final contagem = <int, int>{};
+  final mortos = <double>[];
   final y = rects.first.center.dy;
-  final inicio = rects.first.left;
-  final fim = rects.last.right;
+  // A varredura não passa da janela da mão. Onde a mão não cabe ela ROLA, e o
+  // pedaço fora do recorte não é faixa morta: é faixa que ainda não está à
+  // vista. Medi-la como morta transformaria rolagem em defeito.
+  final janela = viewportDaMao(tester);
+  final inicio =
+      rects.first.left > janela.left ? rects.first.left : janela.left;
+  final fim = rects.last.right < janela.right ? rects.last.right : janela.right;
 
   for (var x = inicio + passo / 2; x < fim; x += passo) {
     final ponto = Offset(x, y);
     final depois = await tocarEm(tester, ponto);
-    if (depois.isEmpty) continue;
+    final mudou = depois.difference(base).union(base.difference(depois));
+    if (mudou.isEmpty) {
+      mortos.add(x);
+      continue;
+    }
     expect(
-      depois,
+      mudou,
       hasLength(1),
       reason: 'um toque em $ponto mexeu em mais de uma carta',
     );
-    contagem[depois.single] = (contagem[depois.single] ?? 0) + 1;
+    contagem[mudou.single] = (contagem[mudou.single] ?? 0) + 1;
     final desfeito = await tocarEm(tester, ponto);
     expect(
       desfeito,
-      isEmpty,
-      reason: 'o segundo toque em $ponto não desfez a seleção',
+      base,
+      reason: 'o segundo toque em $ponto não desfez o que o primeiro fez',
     );
   }
 
-  return <double>[
-    for (var i = 0; i < rects.length; i++) (contagem[i] ?? 0) * passo,
-  ];
+  return Varredura(
+    faixas: <double>[
+      for (var i = 0; i < rects.length; i++) (contagem[i] ?? 0) * passo,
+    ],
+    pontosMortos: mortos,
+    larguraVarrida: fim - inicio,
+  );
+}
+
+/// O resultado de uma varredura da mão.
+class Varredura {
+  const Varredura({
+    required this.faixas,
+    required this.pontosMortos,
+    required this.larguraVarrida,
+  });
+
+  /// A faixa efetiva de cada carta, em pontos lógicos, na ordem da mão.
+  final List<double> faixas;
+
+  /// Os pontos em que o toque não pegou carta nenhuma.
+  ///
+  /// Buraco na mão é tão ruim quanto faixa curta: o dedo encosta na carta e não
+  /// acontece nada, e não há como saber por quê sem enxergar a tela.
+  final List<double> pontosMortos;
+
+  /// A largura total percorrida, da borda esquerda da primeira carta à borda
+  /// direita da última.
+  final double larguraVarrida;
+
+  double get menorFaixa => faixas.reduce((a, b) => a < b ? a : b);
 }
 
 /// O rótulo de cada nó da árvore semântica, na ordem em que um leitor de tela
@@ -278,3 +340,66 @@ final RegExp kMarcaDeCartaDaMao = RegExp(r', carta \d+ de \d+$');
 
 List<String> cartasNaOrdemDeLeitura(WidgetTester tester) =>
     ordemDeLeitura(tester).where(kMarcaDeCartaDaMao.hasMatch).toList();
+
+/// O retângulo de um nó semântico em coordenadas de tela.
+///
+/// `SemanticsNode.rect` é local ao nó, e `transform` leva do sistema dele ao do
+/// pai. Subir a cadeia aplicando uma matriz de cada vez é o que dá a posição na
+/// tela — é por aqui que se pergunta se um nó CAI SOBRE a mão, que é a pergunta
+/// que distingue um nó vazio do resto da mesa de um nó vazio dentro da mão.
+/// As bandeiras de um nó semântico — botão, habilitado, selecionado, ligado.
+///
+/// `SemanticsNode.hasFlag` está depreciado desde a 3.32, e o CI pina a 3.44.8:
+/// uma API que some entre uma versão e outra derrubaria o portão por motivo que
+/// não é o do teste. `flagsCollection` é a forma atual, e concentrar a leitura
+/// aqui deixa a próxima troca num lugar só.
+SemanticsFlags bandeirasDe(SemanticsNode no) =>
+    no.getSemanticsData().flagsCollection;
+
+/// O nó é anunciado como botão.
+bool ehBotao(SemanticsNode no) => bandeirasDe(no).isButton;
+
+/// O nó é uma imagem para o leitor de tela.
+bool ehImagem(SemanticsNode no) => bandeirasDe(no).isImage;
+
+// `habilitado`, `selecionado` e `ligado` são TERNÁRIOS na árvore semântica, e a
+// distinção importa: `Tristate.none` quer dizer "esta propriedade não se aplica
+// a este nó", que é diferente de "se aplica, e está falsa". Um botão sem estado
+// de habilitação e um botão desabilitado soam igual num teste que só olhe
+// booleano, e são coisas opostas para quem ouve.
+
+/// O nó diz que aceita interação agora.
+bool estaHabilitado(SemanticsNode no) =>
+    bandeirasDe(no).isEnabled == Tristate.isTrue;
+
+/// O nó diz que existe, e que NÃO aceita interação agora.
+bool estaDesabilitado(SemanticsNode no) =>
+    bandeirasDe(no).isEnabled == Tristate.isFalse;
+
+/// O nó está marcado como escolhido.
+bool estaSelecionado(SemanticsNode no) =>
+    bandeirasDe(no).isSelected == Tristate.isTrue;
+
+/// O nó tem estado de liga/desliga — sem dizer qual.
+bool temLigaDesliga(SemanticsNode no) =>
+    bandeirasDe(no).isToggled != Tristate.none;
+
+/// O nó está ligado.
+bool estaLigado(SemanticsNode no) =>
+    bandeirasDe(no).isToggled == Tristate.isTrue;
+
+Rect retanguloNaTela(SemanticsNode no) {
+  var rect = no.rect;
+  for (SemanticsNode? atual = no; atual != null; atual = atual.parent) {
+    final matriz = atual.transform;
+    if (matriz != null) rect = MatrixUtils.transformRect(matriz, rect);
+  }
+  return rect;
+}
+
+/// O retângulo que a mão ocupa na tela.
+Rect areaDaMao(WidgetTester tester) {
+  final rects = cartasDaMao(tester);
+  expect(rects, isNotEmpty, reason: 'a mão não desenhou carta nenhuma');
+  return rects.reduce((a, b) => a.expandToInclude(b));
+}
