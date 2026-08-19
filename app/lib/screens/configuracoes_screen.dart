@@ -601,6 +601,21 @@ class ConfiguracoesScreen extends StatelessWidget {
     );
   }
 
+  /// Uma linha que leva a outro lugar, com a fronteira semântica declarada.
+  ///
+  /// O rótulo desta linha nunca esteve vazio — o [InkWell] recolhe os dois
+  /// textos sozinho. O que ela não tinha era um NÓ PRÓPRIO garantido, e isso
+  /// só não aparecia porque as linhas vizinhas também não tinham: quando
+  /// várias anotações de toque disputam o mesmo nó de cima, o Flutter é
+  /// obrigado a separar todas. Bastou as preferências ao redor ganharem nós
+  /// declarados para a última linha implícita da seção parar de disputar e
+  /// escorregar para dentro do cabeçalho — "PRIVACIDADE Jogadores bloqueados
+  /// Rever ou desbloquear jogadores", um botão só, com o nome da seção colado.
+  ///
+  /// Declarar o nó tira a árvore da mão dessa heurística: cada linha desta
+  /// tela é um controle porque ela diz que é, e não porque as vizinhas
+  /// estavam brigando. [onTap] é o mesmo de sempre — a linha continua com um
+  /// caminho só para ser acionada.
   Widget _navTile({
     required IconData icone,
     required String titulo,
@@ -608,50 +623,92 @@ class ConfiguracoesScreen extends StatelessWidget {
     required VoidCallback onTap,
     bool destaque = false,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
-          child: Row(
-            children: [
-              _iconeTile(icone, destaque: destaque),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      titulo,
-                      style: TextStyle(
-                        color: destaque ? const Color(0xFFE2C9FF) : _texto,
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w800,
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      label: '$titulo. $subtitulo',
+      onTap: onTap,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+            child: Row(
+              children: [
+                _iconeTile(icone, destaque: destaque),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titulo,
+                        style: TextStyle(
+                          color: destaque ? const Color(0xFFE2C9FF) : _texto,
+                          fontSize: 13.2,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitulo,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: _textoSec,
-                        fontSize: 10.4,
-                        height: 1.25,
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitulo,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _textoSec,
+                          fontSize: 10.4,
+                          height: 1.25,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: _textoSec, size: 23),
-            ],
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: _textoSec,
+                  size: 23,
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  /// Uma preferência de liga/desliga — para os olhos e para o leitor de tela.
+  ///
+  /// ---------------------------------------------------------------------
+  /// POR QUE A LINHA INTEIRA VIRA UM NÓ SÓ
+  /// ---------------------------------------------------------------------
+  ///
+  /// Aos olhos esta linha é óbvia: o nome da preferência à esquerda, o
+  /// [Switch] à direita, e tocar em qualquer um dos dois alterna. Na árvore de
+  /// acessibilidade ela chegava partida em DOIS controles concorrentes, e
+  /// nenhum dos dois completo:
+  ///
+  ///   - o texto, dentro do [GestureDetector], virava um nó tocável chamado
+  ///     "Música / Trilha musical do aplicativo" que não dizia se a música
+  ///     estava ligada;
+  ///   - o [Switch], irmão dele, virava um segundo nó — este sabendo o estado,
+  ///     mas com rótulo VAZIO: "ativado", sobre o quê ninguém dizia.
+  ///
+  /// Quem navega por leitor de tela encontrava dezoito paradas para nove
+  /// preferências, metade delas anônimas. Nas de PRIVACIDADE isso não é
+  /// desconforto: a pessoa alterna se sua presença aparece, ou quem pode
+  /// falar com ela, sem ouvir o que está alternando.
+  ///
+  /// Por isso a linha inteira passa a ser UM nó com as três coisas que todo
+  /// controle precisa ter — nome, estado e ação. O `excludeSemantics` tira os
+  /// filhos da árvore: é o que impede o texto e o [Switch] de voltarem como
+  /// nós soltos ao lado deste. É a mesma régua de `perfil_screen.dart`.
+  ///
+  /// A semântica DESCREVE, não decide: `toggled` repete o [valor] que a linha
+  /// já recebeu para desenhar o [Switch], e alternar é a mesma função que o
+  /// toque no texto usa. O canal de acessibilidade não ganhou uma segunda
+  /// fonte de estado nem um segundo caminho de escrita.
   Widget _toggleTile({
     required IconData icone,
     required String titulo,
@@ -659,56 +716,81 @@ class ConfiguracoesScreen extends StatelessWidget {
     required bool valor,
     required ValueChanged<bool> onChanged,
   }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
-      child: Row(
-        children: [
-          _iconeTile(icone),
-          const SizedBox(width: 11),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onChanged(!valor),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      titulo,
-                      style: const TextStyle(
-                        color: _texto,
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w800,
+    // UM alternador para os dois canais. O [Switch] chama o mesmo [onChanged]
+    // por conta própria, com o valor que ele já sabe.
+    void alternar() => onChanged(!valor);
+
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      toggled: valor,
+      label: '$titulo. $subtitulo',
+      onTap: alternar,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
+        child: Row(
+          children: [
+            _iconeTile(icone),
+            const SizedBox(width: 11),
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: alternar,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titulo,
+                        style: const TextStyle(
+                          color: _texto,
+                          fontSize: 13.2,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitulo,
-                      style: const TextStyle(
-                        color: _textoSec,
-                        fontSize: 10.4,
-                        height: 1.25,
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitulo,
+                        style: const TextStyle(
+                          color: _textoSec,
+                          fontSize: 10.4,
+                          height: 1.25,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          Switch(
-            value: valor,
-            onChanged: onChanged,
-            activeThumbColor: const Color(0xFF2A1700),
-            activeTrackColor: _ouro,
-            inactiveThumbColor: const Color(0xFF8A806B),
-            inactiveTrackColor: const Color(0xFF3A3026),
-          ),
-        ],
+            Switch(
+              value: valor,
+              onChanged: onChanged,
+              activeThumbColor: const Color(0xFF2A1700),
+              activeTrackColor: _ouro,
+              inactiveThumbColor: const Color(0xFF8A806B),
+              inactiveTrackColor: const Color(0xFF3A3026),
+            ),
+          ],
+        ),
       ),
     );
   }
 
+  /// Uma preferência de valor entre poucos — e a mesma régua do [_toggleTile].
+  ///
+  /// Aqui o rótulo nunca esteve vazio: o [InkWell] recolhia os dois textos e
+  /// saía como "Mão dominante / Destro". O que faltava era a FRONTEIRA. Sem um
+  /// nó declarado, a anotação de toque do [InkWell] escorregava para o nó de
+  /// cima quando esta linha era a última da seção, e a pessoa ouvia
+  /// "JOGO Mão dominante Destro" como um botão só — o título da seção grudado
+  /// no controle.
+  ///
+  /// Declarar o nó resolve as duas coisas de uma vez: o controle passa a ter
+  /// nome próprio (o que a preferência é, e o valor que está valendo agora) e
+  /// para de invadir o que está em volta. `abrir` é uma função só, usada pelo
+  /// toque e pela ação de acessibilidade — a folha de escolha continua sendo o
+  /// único caminho para trocar o valor.
   Widget _choiceTile<T>({
     required BuildContext context,
     required IconData icone,
@@ -718,55 +800,71 @@ class ConfiguracoesScreen extends StatelessWidget {
     required List<T> opcoes,
     required ValueChanged<T> onChanged,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => _abrirEscolha<T>(
-          context: context,
-          titulo: titulo,
-          valor: valor,
-          opcoes: opcoes,
-          label: label,
-          onChanged: onChanged,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
-          child: Row(
-            children: [
-              _iconeTile(icone),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Text(
-                  titulo,
-                  style: const TextStyle(
-                    color: _texto,
-                    fontSize: 13.2,
-                    fontWeight: FontWeight.w800,
+    void abrir() => _abrirEscolha<T>(
+      context: context,
+      titulo: titulo,
+      valor: valor,
+      opcoes: opcoes,
+      label: label,
+      onChanged: onChanged,
+    );
+
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      label: '$titulo. ${label(valor)}',
+      onTap: abrir,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: abrir,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+            child: Row(
+              children: [
+                _iconeTile(icone),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Text(
+                    titulo,
+                    style: const TextStyle(
+                      color: _texto,
+                      fontSize: 13.2,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-              ),
-              Container(
-                constraints: const BoxConstraints(maxWidth: 150),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _cardSecundario,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _borda),
-                ),
-                child: Text(
-                  label(valor),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _ouroClaro,
-                    fontSize: 10.8,
-                    fontWeight: FontWeight.w800,
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 150),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _cardSecundario,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _borda),
+                  ),
+                  child: Text(
+                    label(valor),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _ouroClaro,
+                      fontSize: 10.8,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 3),
-              const Icon(Icons.expand_more_rounded, color: _textoSec, size: 21),
-            ],
+                const SizedBox(width: 3),
+                const Icon(
+                  Icons.expand_more_rounded,
+                  color: _textoSec,
+                  size: 21,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -811,44 +909,11 @@ class ConfiguracoesScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 for (final opcao in opcoes)
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(13),
-                      onTap: () => Navigator.of(context).pop(opcao),
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 3),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: opcao == valor
-                              ? _ouro.withValues(alpha: .14)
-                              : _cardSecundario,
-                          borderRadius: BorderRadius.circular(13),
-                          border: Border.all(
-                            color: opcao == valor ? _ouro : _borda,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                label(opcao),
-                                style: TextStyle(
-                                  color: opcao == valor ? _ouroClaro : _texto,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            if (opcao == valor)
-                              const Icon(Icons.check_rounded, color: _ouro, size: 21),
-                          ],
-                        ),
-                      ),
-                    ),
+                  _opcaoDaEscolha<T>(
+                    context: context,
+                    opcao: opcao,
+                    valor: valor,
+                    label: label,
                   ),
               ],
             ),
@@ -857,6 +922,78 @@ class ConfiguracoesScreen extends StatelessWidget {
       },
     );
     if (escolhido != null && escolhido != valor) onChanged(escolhido);
+  }
+
+  /// Uma opção da folha de escolha — e a marca de "esta é a que está valendo".
+  ///
+  /// ---------------------------------------------------------------------
+  /// TRÊS SINAIS VISUAIS, NENHUM DELES SEMÂNTICO
+  /// ---------------------------------------------------------------------
+  ///
+  /// Aos olhos, a opção corrente se distingue por fundo dourado, borda dourada
+  /// e um ✓ à direita. Nenhum dos três chega ao leitor de tela: cor e borda
+  /// não são semântica, e o ✓ é um [Icon] sem rótulo — decorativo por
+  /// construção. A folha era anunciada como botões idênticos, e quem não vê a
+  /// tela não tinha como saber qual estava valendo antes de trocar.
+  ///
+  /// `selected` é a marca que existe exatamente para isso, e ela não decide
+  /// nada: repete, no canal de acessibilidade, a mesma comparação
+  /// `opcao == valor` que pinta o fundo. A escolha continua saindo por
+  /// [Navigator.pop] — o mesmo `escolher` que o toque usa, e é por isso que
+  /// esta opção virou um método: para não existir uma segunda função de
+  /// escolher só para a acessibilidade chamar.
+  Widget _opcaoDaEscolha<T>({
+    required BuildContext context,
+    required T opcao,
+    required T valor,
+    required String Function(T) label,
+  }) {
+    final atual = opcao == valor;
+    void escolher() => Navigator.of(context).pop(opcao);
+
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      button: true,
+      selected: atual,
+      label: label(opcao),
+      onTap: escolher,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: escolher,
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+            decoration: BoxDecoration(
+              color: atual ? _ouro.withValues(alpha: .14) : _cardSecundario,
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: atual ? _ouro : _borda),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label(opcao),
+                    style: TextStyle(
+                      color: atual ? _ouroClaro : _texto,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (atual)
+                  const Icon(Icons.check_rounded, color: _ouro, size: 21),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _iconeTile(IconData icone, {bool destaque = false}) {
