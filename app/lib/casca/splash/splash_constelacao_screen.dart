@@ -39,6 +39,7 @@
 // explícito com saída.
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -271,10 +272,16 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
                   duracao: _movimentoReduzido
                       ? Duration.zero
                       : _fadeDaConstelacao,
-                  child: SvgPicture.memory(
-                    constelacao,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.center,
+                  // A MÁSCARA É SÓ DESTA CAMADA. Ela não toca a Rive, não
+                  // desloca nem redimensiona nada, e o `.svg` continua byte a
+                  // byte o aprovado — é recorte de composição, e só.
+                  child: ClipPath(
+                    clipper: const MascaraDaConstelacao(),
+                    child: SvgPicture.memory(
+                      constelacao,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.center,
+                    ),
                   ),
                 ),
               ),
@@ -291,6 +298,57 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
 
   @visibleForTesting
   bool get movimentoReduzido => _movimentoReduzido;
+}
+
+/// Onde a constelação não é desenhada.
+///
+/// Reproduz, na conta, exatamente o que `BoxFit.contain` faz com a arte: a
+/// mesma escala e o mesmo deslocamento centralizado. É isso que faz a exclusão
+/// continuar em cima das letras num telefone estreito, numa tela alta e numa
+/// tela larga — e não só nos 1080 × 1920 em que ela foi medida.
+///
+/// Ver [kExclusoesDaConstelacao] para a medição que definiu as caixas.
+class MascaraDaConstelacao extends CustomClipper<Path> {
+  const MascaraDaConstelacao();
+
+  @override
+  Path getClip(Size tamanho) {
+    // A MESMA conta do `contain` da arte: encaixa o canvas inteiro dentro da
+    // janela, preservando a proporção, e centraliza o que sobra.
+    final escala = math.min(
+      tamanho.width / kCanvasDaAbertura.width,
+      tamanho.height / kCanvasDaAbertura.height,
+    );
+    final desenhada = Size(
+      kCanvasDaAbertura.width * escala,
+      kCanvasDaAbertura.height * escala,
+    );
+    final origem = Offset(
+      (tamanho.width - desenhada.width) / 2,
+      (tamanho.height - desenhada.height) / 2,
+    );
+
+    var caminho = Path()..addRect(Offset.zero & tamanho);
+    for (final area in kExclusoesDaConstelacao) {
+      caminho = Path.combine(
+        PathOperation.difference,
+        caminho,
+        Path()
+          ..addRect(
+            Rect.fromLTRB(
+              origem.dx + area.left * escala,
+              origem.dy + area.top * escala,
+              origem.dx + area.right * escala,
+              origem.dy + area.bottom * escala,
+            ),
+          ),
+      );
+    }
+    return caminho;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 /// Um fade de entrada, e nada além disso.

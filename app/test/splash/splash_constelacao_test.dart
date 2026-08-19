@@ -477,6 +477,154 @@ void main() {
       expect(saidas(), 1);
     });
 
+    testWidgets('C11 a máscara é aplicada SÓ na camada da constelação', (
+      tester,
+    ) async {
+      await _montarAbertura(tester, fonte: AberturaFalsa(), chave: 'c11');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final recortes = tester.widgetList<ClipPath>(
+        find.ancestor(
+          of: find.byType(SvgPicture),
+          matching: find.byType(ClipPath),
+        ),
+      );
+      expect(
+        recortes.where((c) => c.clipper is MascaraDaConstelacao),
+        hasLength(1),
+      );
+
+      // E NÃO na Rive: o recorte existe para tirar dois nós de cima das
+      // letras, não para mexer na arte que já estava aprovada.
+      expect(
+        tester.widgetList<ClipPath>(
+          find.ancestor(
+            of: find.byKey(kChaveDaArteFalsa),
+            matching: find.byType(ClipPath),
+          ),
+        ).where((c) => c.clipper is MascaraDaConstelacao),
+        isEmpty,
+      );
+    });
+
+    test('C12 a máscara exclui exatamente as duas caixas medidas', () {
+      // AS CAIXAS SÃO AFIRMADAS UMA A UMA, e não só percorridas. A versão
+      // anterior deste caso iterava `kExclusoesDaConstelacao` e nada mais — com
+      // a lista vazia o laço não rodava, nenhuma expectativa era avaliada e o
+      // teste passava com a máscara desligada. Quem denunciou foi a campanha de
+      // mutação, não a leitura.
+      expect(kExclusoesDaConstelacao, hasLength(2));
+      expect(
+        kExclusoesDaConstelacao,
+        containsAll(const <Rect>[
+          Rect.fromLTRB(448, 1514, 484, 1550),
+          Rect.fromLTRB(599, 1514, 635, 1550),
+        ]),
+        reason:
+            'as caixas saíram das coordenadas medidas: elas cobrem os nós em '
+            '(466,1532) e (617,1532), que são os que encostavam nas letras',
+      );
+
+      // Em 1080 × 1920 a escala do `contain` é 1 e não há deslocamento: as
+      // caixas do contrato caem sobre si mesmas.
+      const mascara = MascaraDaConstelacao();
+      final caminho = mascara.getClip(kCanvasDaAbertura);
+
+      // Os dois pontos que a medição pixel a pixel acusou.
+      for (final encostava in const [Offset(466, 1532), Offset(617, 1532)]) {
+        expect(
+          caminho.contains(encostava),
+          isFalse,
+          reason: '$encostava voltou a ser desenhado sobre a base do título',
+        );
+      }
+
+      for (final area in kExclusoesDaConstelacao) {
+        expect(
+          caminho.contains(area.center),
+          isFalse,
+          reason: 'o centro de $area continua sendo desenhado',
+        );
+      }
+      // E o resto do canvas continua inteiro — inclusive logo acima e logo
+      // abaixo das caixas, que é onde as linhas da constelação seguem.
+      for (final ponto in const [
+        Offset(540, 100),
+        Offset(112, 286),
+        Offset(540, 960),
+        Offset(540, 1687),
+        Offset(466, 1600),
+        Offset(617, 1450),
+        Offset(1000, 1900),
+      ]) {
+        expect(
+          caminho.contains(ponto),
+          isTrue,
+          reason: 'a máscara comeu $ponto, que não é área de título',
+        );
+      }
+    });
+
+    testWidgets('C14 o fade da constelação dura 600 ms na abertura real', (
+      tester,
+    ) async {
+      // 3 s × 1/5. O valor não é escrito no código da tela: ele SAI da duração
+      // de autoria, e este caso é o que impede alguém trocar a proporção sem
+      // perceber que mudou o tempo da entrada.
+      await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(),
+        chave: 'c14',
+        duracao: kDuracaoDaAbertura,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final fade = tester.widget<TweenAnimationBuilder<double>>(
+        find.byType(TweenAnimationBuilder<double>),
+      );
+      expect(fade.duration, const Duration(milliseconds: 600));
+      expect(fade.tween.begin, 0);
+      expect(fade.tween.end, 1);
+    });
+
+    test('C13 a máscara acompanha o contain em outras proporções', () {
+      const mascara = MascaraDaConstelacao();
+
+      // Telefone estreito, tela alta e recortada, e uma tela larga: em todas,
+      // a arte é encaixada por `contain` e sobra faixa em UM dos eixos.
+      for (final janela in const [
+        Size(720, 1520),
+        Size(1080, 2400),
+        Size(1440, 2560),
+        Size(1200, 1200),
+      ]) {
+        final caminho = mascara.getClip(janela);
+        final escala = janela.width / kCanvasDaAbertura.width <
+                janela.height / kCanvasDaAbertura.height
+            ? janela.width / kCanvasDaAbertura.width
+            : janela.height / kCanvasDaAbertura.height;
+        final origem = Offset(
+          (janela.width - kCanvasDaAbertura.width * escala) / 2,
+          (janela.height - kCanvasDaAbertura.height * escala) / 2,
+        );
+
+        for (final area in kExclusoesDaConstelacao) {
+          final centro =
+              origem + Offset(area.center.dx * escala, area.center.dy * escala);
+          expect(
+            caminho.contains(centro),
+            isFalse,
+            reason:
+                'em $janela a exclusão saiu de cima do título — foi calculada '
+                'em pixels de tela em vez de coordenadas do canvas',
+          );
+          // Bem longe da caixa, a constelação continua desenhada.
+          final longe = origem + Offset(540 * escala, 300 * escala);
+          expect(caminho.contains(longe), isTrue);
+        }
+      }
+    });
+
     testWidgets('C10 a constelação não altera a ordem do portão duplo', (
       tester,
     ) async {

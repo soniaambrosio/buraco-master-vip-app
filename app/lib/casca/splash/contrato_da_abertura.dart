@@ -45,6 +45,47 @@ const String kAssetDaAbertura =
 const String kAssetDaConstelacao =
     'assets/rive/constelacao_dourada_master_vip.svg';
 
+/// A área de referência das DUAS camadas.
+///
+/// O artboard da Rive tem estes limites, e o `viewBox` do SVG é o mesmo. É essa
+/// coincidência que faz as duas se ajustarem à janela pelo mesmo `contain`, com
+/// a mesma escala e o mesmo deslocamento — em vez de escorregarem uma em
+/// relação à outra em toda tela que não seja exatamente 9:16.
+const Size kCanvasDaAbertura = Size(1080, 1920);
+
+/// Onde a constelação NÃO é desenhada.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE ESTAS DUAS CAIXAS, E NÃO OUTRAS
+/// ---------------------------------------------------------------------------
+///
+/// A composição foi medida, não estimada: o quadro final foi renderizado duas
+/// vezes — com e sem a constelação — e comparado pixel a pixel dentro da
+/// máscara da arte da Rive. Coroa e escudo saíram com ZERO pixels alterados.
+/// Todo o contato ficou numa faixa de 163 × 11 px, em `x 461..624`,
+/// `y 1526..1536`: são os dois nós em `(466,1532)` e `(617,1532)`, raio 6,
+/// encostando no rodapé das letras de "MASTER VIP".
+///
+/// Cada caixa abaixo cobre um desses nós com 18 px de folga em volta — o nó
+/// inteiro e a ponta das linhas que chegam nele. O efeito visual é o de a
+/// constelação passar POR TRÁS do título.
+///
+/// ---------------------------------------------------------------------------
+/// COORDENADAS DO CANVAS, E NÃO DA TELA
+/// ---------------------------------------------------------------------------
+///
+/// Elas são declaradas em [kCanvasDaAbertura] e convertidas pela MESMA conta do
+/// `contain`. Em pixels de tela a exclusão sairia do lugar em qualquer aparelho
+/// que não fosse 1080 × 1920 — e sairia de um jeito silencioso, que só
+/// apareceria no telefone de alguém.
+///
+/// O asset NÃO é tocado: isto é recorte de composição, no Flutter. O `.svg`
+/// continua byte a byte o aprovado, e o `.riv` também.
+const List<Rect> kExclusoesDaConstelacao = <Rect>[
+  Rect.fromLTRB(448, 1514, 484, 1550),
+  Rect.fromLTRB(599, 1514, 635, 1550),
+];
+
 /// Quanto dura o fade de entrada da constelação, em fração da abertura.
 ///
 /// 3 s × 1/5 = 600 ms, no começo. É um fade e nada mais: ele não move
