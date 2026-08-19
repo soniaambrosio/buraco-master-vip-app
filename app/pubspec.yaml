@@ -56,6 +56,13 @@ dependencies:
   # `package:rive` e importado num arquivo so do repositorio
   # (`lib/casca/splash/abertura_rive.dart`), e a suite afirma isso.
   rive: ^0.14.11
+
+  # flutter_svg: o renderizador da constelacao. O Flutter nao desenha SVG
+  # sozinho, e a alternativa seria reimplementar a arte num CustomPainter — que
+  # e exatamente o "recriar" que a OS proibe. Entra so por isso.
+  #
+  # Zero rede em runtime: o .svg viaja no bundle, como qualquer asset.
+  flutter_svg: ^2.3.0
   web_socket_channel: ^3.0.3
   shared_preferences: ^2.5.5
 

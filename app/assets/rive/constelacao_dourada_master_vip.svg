@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920" fill="none">
+  <title>Constelação dourada — Buraco Master VIP</title>
+  <desc>Camadas vetoriais transparentes para animação da splash vertical.</desc>
+
+  <defs>
+    <radialGradient id="goldNode" cx="50%" cy="42%" r="58%">
+      <stop offset="0" stop-color="#FFF8D5"/>
+      <stop offset="0.38" stop-color="#F4D27A"/>
+      <stop offset="1" stop-color="#B87916"/>
+    </radialGradient>
+    <filter id="softGlow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="fineGlow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+  </defs>
+
+  <g id="LinhasConstelacao" stroke="#D6A640" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.34">
+    <path d="M112 286 L276 188 L445 300 L637 190 L842 316 L961 220"/>
+    <path d="M112 286 L178 454 L82 616 L228 762 L112 978"/>
+    <path d="M961 220 L899 442 L989 614 L852 780 L965 988"/>
+    <path d="M228 762 L118 1168 L256 1326 L143 1512 L330 1641"/>
+    <path d="M852 780 L965 1168 L828 1326 L938 1514 L750 1641"/>
+    <path d="M330 1641 L466 1532 L540 1687 L617 1532 L750 1641"/>
+  </g>
+
+  <g id="NuvemDeBrilho" fill="#D6A640" opacity="0.13" filter="url(#softGlow)">
+    <circle cx="276" cy="188" r="28"/>
+    <circle cx="637" cy="190" r="24"/>
+    <circle cx="842" cy="316" r="22"/>
+    <circle cx="228" cy="762" r="24"/>
+    <circle cx="852" cy="780" r="24"/>
+    <circle cx="540" cy="1687" r="30"/>
+  </g>
+
+  <g id="NosConstelacao">
+    <circle cx="112" cy="286" r="7" fill="url(#goldNode)"/>
+    <circle cx="276" cy="188" r="10" fill="url(#goldNode)"/>
+    <circle cx="445" cy="300" r="6" fill="url(#goldNode)"/>
+    <circle cx="637" cy="190" r="9" fill="url(#goldNode)"/>
+    <circle cx="842" cy="316" r="8" fill="url(#goldNode)"/>
+    <circle cx="961" cy="220" r="6" fill="url(#goldNode)"/>
+    <circle cx="178" cy="454" r="5" fill="url(#goldNode)"/>
+    <circle cx="82" cy="616" r="7" fill="url(#goldNode)"/>
+    <circle cx="228" cy="762" r="9" fill="url(#goldNode)"/>
+    <circle cx="112" cy="978" r="6" fill="url(#goldNode)"/>
+    <circle cx="899" cy="442" r="5" fill="url(#goldNode)"/>
+    <circle cx="989" cy="614" r="7" fill="url(#goldNode)"/>
+    <circle cx="852" cy="780" r="9" fill="url(#goldNode)"/>
+    <circle cx="965" cy="988" r="6" fill="url(#goldNode)"/>
+    <circle cx="118" cy="1168" r="5" fill="url(#goldNode)"/>
+    <circle cx="256" cy="1326" r="8" fill="url(#goldNode)"/>
+    <circle cx="143" cy="1512" r="6" fill="url(#goldNode)"/>
+    <circle cx="330" cy="1641" r="8" fill="url(#goldNode)"/>
+    <circle cx="965" cy="1168" r="5" fill="url(#goldNode)"/>
+    <circle cx="828" cy="1326" r="8" fill="url(#goldNode)"/>
+    <circle cx="938" cy="1514" r="6" fill="url(#goldNode)"/>
+    <circle cx="750" cy="1641" r="8" fill="url(#goldNode)"/>
+    <circle cx="466" cy="1532" r="6" fill="url(#goldNode)"/>
+    <circle cx="540" cy="1687" r="10" fill="url(#goldNode)"/>
+    <circle cx="617" cy="1532" r="6" fill="url(#goldNode)"/>
+  </g>
+
+  <g id="EstrelasPrincipais" fill="#F8D77A" stroke="#FFF4C7" stroke-width="1.5">
+    <path d="M276 137 L286 178 L327 188 L286 198 L276 239 L266 198 L225 188 L266 178 Z"/>
+    <path d="M842 279 L850 308 L879 316 L850 324 L842 353 L834 324 L805 316 L834 308 Z"/>
+    <path d="M228 721 L237 753 L269 762 L237 771 L228 803 L219 771 L187 762 L219 753 Z"/>
+    <path d="M852 739 L861 771 L893 780 L861 789 L852 821 L843 789 L811 780 L843 771 Z"/>
+    <path d="M540 1635 L551 1676 L592 1687 L551 1698 L540 1739 L529 1698 L488 1687 L529 1676 Z"/>
+  </g>
+
+  <g id="EstrelasDeFundo" fill="#F4D27A" opacity="0.72">
+    <circle cx="71" cy="174" r="3"/>
+    <circle cx="193" cy="364" r="2.5"/>
+    <circle cx="359" cy="126" r="3"/>
+    <circle cx="535" cy="244" r="2.5"/>
+    <circle cx="728" cy="116" r="3"/>
+    <circle cx="934" cy="379" r="2.5"/>
+    <circle cx="56" cy="814" r="3"/>
+    <circle cx="1019" cy="826" r="3"/>
+    <circle cx="189" cy="1092" r="2.5"/>
+    <circle cx="886" cy="1104" r="2.5"/>
+    <circle cx="63" cy="1397" r="3"/>
+    <circle cx="1017" cy="1411" r="3"/>
+    <circle cx="251" cy="1774" r="2.5"/>
+    <circle cx="829" cy="1774" r="2.5"/>
+    <circle cx="540" cy="1812" r="3"/>
+  </g>
+
+  <g id="Cintilacoes" fill="#FFF8D5" opacity="0.8" filter="url(#fineGlow)">
+    <circle cx="276" cy="188" r="7"/>
+    <circle cx="842" cy="316" r="6"/>
+    <circle cx="228" cy="762" r="6"/>
+    <circle cx="852" cy="780" r="6"/>
+    <circle cx="540" cy="1687" r="8"/>
+  </g>
+</svg>
