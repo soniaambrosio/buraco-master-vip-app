@@ -111,6 +111,7 @@ const COLECOES = [
   "admissoesDeMesa",
   "economiaLedger",
   "salasPrivadas",
+  "playerCourtesyPass",
   C_DIARIO,
 ];
 
@@ -1008,5 +1009,36 @@ describe("jogador com mesas", () => {
     assert.equal(segunda.motivoRemocao, primeira.motivoRemocao);
     assert.equal(await existe("passesVip/" + ALVO), false);
     assert.equal(await existe("passesVip/" + TERCEIRO), true);
+  });
+});
+
+// ===========================================================================
+// PASSE DE CORTESIA QUINZENAL — chegou pelo codebase de ranking
+// ===========================================================================
+
+describe("jogador com passe de cortesia", () => {
+  test("o controle e o historico de ciclos somem, e o do terceiro fica", async () => {
+    await semearComum();
+    for (const uid of [ALVO, TERCEIRO]) {
+      await db.collection("playerCourtesyPass").doc(uid).set({ uid, cicloAtual: "2026-Q3" });
+      await db
+        .collection("playerCourtesyPass")
+        .doc(uid)
+        .collection("cycles")
+        .doc("2026-Q3")
+        .set({ uid, tentativaEntradaId: "te_1", admissaoId: "adm_1" });
+    }
+
+    await executar(ALVO);
+
+    assert.equal(await existe("playerCourtesyPass/" + ALVO), false);
+    assert.equal(
+      await existe("playerCourtesyPass/" + ALVO + "/cycles/2026-Q3"),
+      false,
+      "a subcolecao tem que sair EXPLICITAMENTE: apagar o pai nao apaga subcolecao"
+    );
+
+    assert.equal(await existe("playerCourtesyPass/" + TERCEIRO), true);
+    assert.equal(await existe("playerCourtesyPass/" + TERCEIRO + "/cycles/2026-Q3"), true);
   });
 });

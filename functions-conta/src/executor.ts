@@ -422,6 +422,14 @@ async function anonimizarRanking(ctx: Contexto): Promise<void> {
     for (const d of hall.docs) lote.update(d.ref, anonimo);
     await lote.commit();
   }
+
+  // PASSE DE CORTESIA — apagado, subcolecao antes da raiz.
+  //
+  // Estado operacional de UM jogador: o controle do ciclo e o historico de
+  // quinzenas, com as chaves de idempotencia do consumo. Nada disso e de mais
+  // ninguem, e a regra nega leitura ate ao dono.
+  await apagarSubcolecao(`playerCourtesyPass/${ctx.uid}`, "cycles");
+  await db().collection("playerCourtesyPass").doc(ctx.uid).delete();
 }
 
 /// Billing: o direito morre, o fato fiscal fica sem titular.

@@ -256,7 +256,14 @@ export const ETAPAS: readonly Etapa[] = [
   },
   {
     id: "ranking",
-    itens: ["ranking.rankingStandings", "ranking.rankingPlayers", "ranking.hallEntries"],
+    itens: [
+      "ranking.rankingStandings",
+      "ranking.rankingPlayers",
+      "ranking.hallEntries",
+      // A subcolecao ANTES da raiz: `delete` no pai nao apaga subcolecao.
+      "ranking.passeCortesiaCiclos",
+      "ranking.passeCortesia",
+    ],
     resumo:
       "Neutraliza a APRESENTACAO nas linhas competitivas — apelido e avatar viram o rotulo anonimo. As linhas ficam: apaga-las reescreveria a colocacao de quem jogou contra.",
   },

@@ -944,6 +944,33 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
     porque:
       "O DOCUMENTO-RAIZ do jogador, depois de esvaziada a subcolecao. Apagar a raiz sem apagar `items` antes deixaria a subcolecao orfa e viva no Firestore — que e o modo classico de a exclusao parecer completa e nao ser.",
   },
+
+  // =========================================================================
+  // PASSE DE CORTESIA QUINZENAL
+  // =========================================================================
+  //
+  // Chegou com a composicao, pelo codebase `ranking`. Mesma classe de
+  // `mesas.passesVip` e de `mesas.tentativasDeCodigo`: estado operacional DE UM
+  // jogador, sem finalidade compartilhada e sem integridade de terceiro a
+  // proteger.
+  {
+    id: "ranking.passeCortesiaCiclos",
+    caminho: "playerCourtesyPass/{uid}/cycles/{cicloId}",
+    dominio: "ranking",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "subcolecaoDoDono", raiz: "playerCourtesyPass", sub: "cycles" },
+    porque:
+      "O HISTORICO DE CICLOS DO PASSE, um documento por quinzena. Carrega `tentativaEntradaId` e `admissaoId` — as chaves de idempotencia do consumo —, e a propria regra nega leitura ATE ao dono. Nenhum outro jogador tem direito que dependa deste historico: apagar nao reescreve nada de ninguem. Reter seria guardar quando esta pessoa entrou e com que identidade, de uma conta que nao existe mais.",
+  },
+  {
+    id: "ranking.passeCortesia",
+    caminho: "playerCourtesyPass/{uid}",
+    dominio: "ranking",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "playerCourtesyPass" },
+    porque:
+      "O documento de CONTROLE do ciclo, depois de esvaziada a subcolecao. Apagar a raiz antes deixaria `cycles` viva e orfa — o mesmo acidente do `interno` do billing e dos `items` das conquistas.",
+  },
 ] as const;
 
 // ===========================================================================
