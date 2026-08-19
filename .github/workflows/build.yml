@@ -147,46 +147,145 @@ jobs:
           if [ "$N_SELOS" -ne 8 ]; then echo "ERRO: esperava EXATAMENTE 8 selos, veio $N_SELOS"; exit 1; fi
           ls -l app_build/assets/torneios/premiacao/coroas/ app_build/assets/torneios/premiacao/selos/
 
-      - name: Add Firebase + Google Sign-In + Audio deps
-        # `rive` é a abertura oficial (lib/casca/splash/). O runtime é NATIVO: o
-        # gradle do plugin dispara `dart run rive_native:setup`, que BAIXA a
-        # biblioteca da plataforma. Por isso o build precisa de rede — a
-        # execução no aparelho, não: o .riv viaja dentro do APK.
-        run: cd app_build && flutter pub add firebase_core firebase_auth "google_sign_in:^6.2.1" audioplayers web_socket_channel shared_preferences "rive:^0.14.11" "flutter_svg:^2.3.0"
-
-      - name: Deps de TESTE (só dev — não entram no APK)
-        # `stream_channel` e `fake_async` já vêm como dependências transitivas
-        # (de web_socket_channel e flutter_test), mas o portão de autenticação
-        # importa as duas diretamente: stream_channel para o canal WebSocket
-        # falso, fake_async para atravessar o backoff da reconexão sem esperar
-        # segundos de verdade. Declarar evita o aviso depend_on_referenced_packages.
-        #
-        # `crypto` entra pelo portão da abertura: ele confere o SHA-256 do .riv
-        # empacotado contra o binário aprovado. É dev, então não acrescenta um
-        # byte ao APK — a OS proíbe dependência de produção só para calcular hash.
-        run: cd app_build && flutter pub add dev:stream_channel dev:fake_async dev:crypto
-
-      - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
-        # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
-        # `kotlin { compilerOptions {...} }` no android/build.gradle que falha com
-        # "Could not find method kotlin()". O jni 1.0.0 tem build.gradle Groovy simples
-        # que compila, e a API é praticamente idêntica (só structs FFI internos mudaram).
-        # dependency_overrides força 1.0.0 independente de quem pede ^1.0.0.
+      - name: Copy VIP table preview assets
+        # `mesa_vip_preview_screen.dart` carrega `fundo_preto_vip.webp` e
+        # `dorso_vip.webp`. O pubspec do repositório declara a pasta; sem esta
+        # cópia o build para em "unable to find directory entry".
         run: |
-          cd app_build
-          python3 - <<'PY'
-          import re
-          p = 'pubspec.yaml'
-          s = open(p, encoding='utf-8').read()
-          if 'dependency_overrides:' not in s:
-              s = s.rstrip() + '\n\ndependency_overrides:\n  jni: 1.0.0\n'
-          elif 'jni:' not in s.split('dependency_overrides:')[1].split('\n\n')[0]:
-              s = s.replace('dependency_overrides:', 'dependency_overrides:\n  jni: 1.0.0', 1)
-          open(p, 'w', encoding='utf-8').write(s)
-          print('pubspec.yaml com dependency_overrides jni 1.0.0:')
-          print(s[s.find('dependency_overrides:'):])
-          PY
-          flutter pub get
+          mkdir -p app_build/assets/mesa_vip
+          cp app/assets/mesa_vip/*.webp app_build/assets/mesa_vip/
+          N=$(find app_build/assets/mesa_vip -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "assets da mesa VIP copiados: $N arquivos"
+          if [ "$N" -lt 2 ]; then echo "ERRO: esperava 2 assets da mesa VIP, veio $N"; exit 1; fi
+
+      - name: Copy Pioneiros 2026 collection assets
+        # A coleção do Kit Pioneiros. São PNG grandes (~26 MB somados): é o custo
+        # que o `app/pubspec.yaml` declara, e é ele que manda.
+        run: |
+          mkdir -p app_build/assets/colecoes/pioneiros_2026
+          cp app/assets/colecoes/pioneiros_2026/*.png app_build/assets/colecoes/pioneiros_2026/
+          N=$(find app_build/assets/colecoes/pioneiros_2026 -maxdepth 1 -type f -name '*.png' | wc -l)
+          echo "assets da coleção Pioneiros 2026 copiados: $N arquivos"
+          if [ "$N" -lt 10 ]; then echo "ERRO: esperava 10 assets da coleção, veio $N"; exit 1; fi
+
+      - name: Copy official animated splash assets
+        run: |
+          mkdir -p app_build/assets/splash
+          cp app/assets/splash/logo_splash_oficial.webp app_build/assets/splash/
+          cp app/assets/splash/splash_intro.mp3 app_build/assets/splash/
+          echo "assets da splash oficial:"
+          ls -lh app_build/assets/splash/
+          test -s app_build/assets/splash/logo_splash_oficial.webp
+          test -s app_build/assets/splash/splash_intro.mp3
+
+      - name: Copy Rive opening art (binário autoritativo)
+        # NÃO reexportar, NÃO recomprimir: o arquivo tem de chegar ao APK igual
+        # ao aprovado. Tamanho e SHA-256 são conferidos aqui e OUTRA VEZ dentro
+        # do portão da abertura, que lê pelo bundle do Flutter — é a diferença
+        # entre "o arquivo está no disco" e "o arquivo está no aplicativo".
+        run: |
+          mkdir -p app_build/assets/rive
+          cp app/assets/rive/splash_constelacao_master_vip_v2.riv app_build/assets/rive/
+          ARQ=app_build/assets/rive/splash_constelacao_master_vip_v2.riv
+          TAM=$(wc -c < "$ARQ")
+          SHA=$(sha256sum "$ARQ" | cut -d' ' -f1)
+          CAB=$(head -c 4 "$ARQ")
+          echo "abertura: $TAM bytes | sha256 $SHA | cabecalho $CAB"
+          test "$TAM" = "2298957" || { echo "ERRO: tamanho divergente ($TAM)"; exit 1; }
+          test "$SHA" = "a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d" || { echo "ERRO: SHA-256 divergente"; exit 1; }
+          test "$CAB" = "RIVE" || { echo "ERRO: cabeçalho divergente"; exit 1; }
+          # A constelação: segundo asset visual autoritativo. Ela está fora do
+          # .riv porque não entra na exportação da timeline, e entra como camada
+          # vetorial por cima. Mesma pasta, mesma declaração de pubspec.
+          cp app/assets/rive/constelacao_dourada_master_vip.svg app_build/assets/rive/
+          SVG=app_build/assets/rive/constelacao_dourada_master_vip.svg
+          TAM_SVG=$(wc -c < "$SVG")
+          SHA_SVG=$(sha256sum "$SVG" | cut -d' ' -f1)
+          echo "constelacao: $TAM_SVG bytes | sha256 $SHA_SVG"
+          test "$TAM_SVG" = "4663" || { echo "ERRO: tamanho do SVG divergente ($TAM_SVG)"; exit 1; }
+          test "$SHA_SVG" = "a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204" || { echo "ERRO: SHA-256 do SVG divergente"; exit 1; }
+          grep -q 'viewBox="0 0 1080 1920"' "$SVG" || { echo "ERRO: o SVG saiu da area de referencia 1080x1920"; exit 1; }
+
+      - name: Dependências versionadas (pubspec.yaml + pubspec.lock do repositório)
+        # ANTES daqui havia uma lista DIGITADA de pacotes em dois `flutter pub add`
+        # e um remendo Python que travava o jni. Os três sumiram: `app/pubspec.yaml`
+        # e `app/pubspec.lock` passam a ser a fonte da verdade, exatamente como já
+        # é feito no `ci-os-integracao.yml` — que por isso nunca sofreu deste mal.
+        #
+        # A lista digitada não era um esquecimento, era um defeito estrutural: um
+        # pacote novo no repositório só chegava ao APK se alguém lembrasse de
+        # editar TAMBÉM este arquivo. Foi assim que `cloud_firestore`,
+        # `cloud_functions` e `firebase_app_check` ficaram de fora e o APK deixou
+        # de sair por esta esteira ("FirebaseFunctions isn't defined").
+        #
+        # O `pubspec.lock` do repositório entra junto porque sem ele dois builds
+        # do MESMO commit podem resolver versões diferentes de pacote.
+        #
+        # O `dependency_overrides` do jni 1.0.0 continua valendo: ele mora no
+        # `app/pubspec.yaml` e chega aqui pela cópia.
+        run: |
+          cp app/pubspec.yaml app/pubspec.lock app_build/
+          cd app_build && flutter pub get
+
+      - name: "PORTÃO DE DEPENDÊNCIAS — a árvore resolvida é a que o repositório declara"
+        # A trava que impede o defeito de voltar: cada pacote declarado em
+        # app/pubspec.yaml tem de aparecer resolvido no package_config.json do
+        # scaffold. Não há lista digitada aqui — a lista é lida do repositório.
+        run: |
+          lista() {
+            awk -v bloco="$2" '
+              $0 ~ "^" bloco ":"            { dentro = 1; next }
+              /^[A-Za-z_]/                  { dentro = 0 }
+              dentro && /^  [A-Za-z0-9_]+:/ { sub(/:.*/, ""); gsub(/ /, ""); print }
+            ' "$1"
+          }
+          CFG=app_build/.dart_tool/package_config.json
+          test -f "$CFG" || { echo "ERRO: $CFG nao existe — o pub get nao rodou"; exit 1; }
+          FALTOU=0
+          for BLOCO in dependencies dev_dependencies dependency_overrides; do
+            for PKG in $(lista app/pubspec.yaml "$BLOCO"); do
+              if grep -q "\"name\": \"$PKG\"" "$CFG"; then
+                echo "  ok      $BLOCO/$PKG"
+              else
+                echo "  FALTOU  $BLOCO/$PKG"
+                FALTOU=1
+              fi
+            done
+          done
+          if [ "$FALTOU" -ne 0 ]; then
+            echo "ERRO: a árvore resolvida não contém tudo que app/pubspec.yaml declara."
+            exit 1
+          fi
+          echo "PORTÃO VERDE: toda dependência declarada no repositório está resolvida no scaffold."
+
+      - name: "PORTÃO DE ASSETS — toda pasta declarada existe e não está vazia"
+        # O irmão do portão acima, para o outro lado do mesmo problema. O
+        # app/pubspec.yaml declara as pastas de asset; os passos de cópia acima as
+        # preenchem. Se as duas listas divergirem, o Flutter não reprova a
+        # compilação — asset que falta vira erro só quando alguém abre a tela.
+        # Aqui a divergência quebra o build, que é onde ela custa barato.
+        run: |
+          DECLARADAS=$(awk '
+            /^flutter:/                  { dentro = 1; next }
+            /^[A-Za-z_]/                 { dentro = 0 }
+            dentro && /^ *- *assets\//   { sub(/^ *- */, ""); print }
+          ' app_build/pubspec.yaml)
+          test -n "$DECLARADAS" || { echo "ERRO: o pubspec do scaffold não declara asset nenhum"; exit 1; }
+          FALTOU=0
+          for D in $DECLARADAS; do
+            N=$(find "app_build/$D" -maxdepth 1 -type f 2>/dev/null | wc -l)
+            if [ "$N" -gt 0 ]; then
+              echo "  ok      $D ($N arquivos)"
+            else
+              echo "  VAZIA   $D"
+              FALTOU=1
+            fi
+          done
+          if [ "$FALTOU" -ne 0 ]; then
+            echo "ERRO: há pasta declarada no pubspec que não foi copiada para o scaffold."
+            exit 1
+          fi
+          echo "PORTÃO VERDE: toda pasta de asset declarada existe e tem conteúdo."
 
       - name: "PORTÃO DE QUALIDADE — testes do motor (bloqueia o APK se falhar)"
         run: |
@@ -485,44 +584,6 @@ jobs:
           PY
           grep -n "EnableImpeller" app_build/android/app/src/main/AndroidManifest.xml
 
-      - name: Copy official animated splash assets
-        run: |
-          mkdir -p app_build/assets/splash
-          cp app/assets/splash/logo_splash_oficial.webp app_build/assets/splash/
-          cp app/assets/splash/splash_intro.mp3 app_build/assets/splash/
-          echo "assets da splash oficial:"
-          ls -lh app_build/assets/splash/
-          test -s app_build/assets/splash/logo_splash_oficial.webp
-          test -s app_build/assets/splash/splash_intro.mp3
-
-      - name: Copy Rive opening art (binário autoritativo)
-        # NÃO reexportar, NÃO recomprimir: o arquivo tem de chegar ao APK igual
-        # ao aprovado. Tamanho e SHA-256 são conferidos aqui e OUTRA VEZ dentro
-        # do portão da abertura, que lê pelo bundle do Flutter — é a diferença
-        # entre "o arquivo está no disco" e "o arquivo está no aplicativo".
-        run: |
-          mkdir -p app_build/assets/rive
-          cp app/assets/rive/splash_constelacao_master_vip_v2.riv app_build/assets/rive/
-          ARQ=app_build/assets/rive/splash_constelacao_master_vip_v2.riv
-          TAM=$(wc -c < "$ARQ")
-          SHA=$(sha256sum "$ARQ" | cut -d' ' -f1)
-          CAB=$(head -c 4 "$ARQ")
-          echo "abertura: $TAM bytes | sha256 $SHA | cabecalho $CAB"
-          test "$TAM" = "2298957" || { echo "ERRO: tamanho divergente ($TAM)"; exit 1; }
-          test "$SHA" = "a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d" || { echo "ERRO: SHA-256 divergente"; exit 1; }
-          test "$CAB" = "RIVE" || { echo "ERRO: cabeçalho divergente"; exit 1; }
-          # A constelação: segundo asset visual autoritativo. Ela está fora do
-          # .riv porque não entra na exportação da timeline, e entra como camada
-          # vetorial por cima. Mesma pasta, mesma declaração de pubspec.
-          cp app/assets/rive/constelacao_dourada_master_vip.svg app_build/assets/rive/
-          SVG=app_build/assets/rive/constelacao_dourada_master_vip.svg
-          TAM_SVG=$(wc -c < "$SVG")
-          SHA_SVG=$(sha256sum "$SVG" | cut -d' ' -f1)
-          echo "constelacao: $TAM_SVG bytes | sha256 $SHA_SVG"
-          test "$TAM_SVG" = "4663" || { echo "ERRO: tamanho do SVG divergente ($TAM_SVG)"; exit 1; }
-          test "$SHA_SVG" = "a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204" || { echo "ERRO: SHA-256 do SVG divergente"; exit 1; }
-          grep -q 'viewBox="0 0 1080 1920"' "$SVG" || { echo "ERRO: o SVG saiu da area de referencia 1080x1920"; exit 1; }
-
       - name: Configure dark native launch screen
         # A COR É A DA ARTE, e é isso que elimina o piscar: o Android pinta esta
         # tela antes de existir engine de Flutter, e o primeiro quadro do
@@ -565,132 +626,6 @@ jobs:
               'esperava encontrar %s em contrato_da_abertura.dart' % (color, esperado)
           )
           print('Native launch screen configurada em %s, igual ao contrato da abertura.' % color)
-          PY
-
-      - name: Declare assets in pubspec (robusto)
-        run: |
-          python3 - <<'PY'
-          p = 'app_build/pubspec.yaml'
-          lines = open(p, encoding='utf-8').read().split('\n')
-          asset_block = [
-              '  assets:',
-              '    - assets/splash/',
-              '    - assets/sons/',
-              '    - assets/baralho/',
-              '    - assets/perfil/',
-              '    - assets/ranking/',
-              '    - assets/ranking/selos/',
-              '    - assets/hall/',
-              '    - assets/inicio/',
-              '    - assets/configurar_mesa/',
-              '    - assets/torneios/capas/',
-              '    - assets/torneios/premiacao/coroas/',
-              '    - assets/torneios/premiacao/selos/',
-          ]
-          joined = '\n'.join(lines)
-          if 'assets/baralho/' not in joined:
-              out = []
-              injected = False
-              for ln in lines:
-                  out.append(ln)
-                  # injeta o bloco de assets logo APÓS a linha 'flutter:' de nível 0
-                  # (a única com esse texto exato; 'sdk: flutter' e '  flutter:' não batem)
-                  if not injected and ln.rstrip() == 'flutter:':
-                      out.extend(asset_block)
-                      injected = True
-              if not injected:
-                  # não achou seção flutter: -> cria uma no fim
-                  out.extend(['flutter:', '  uses-material-design: true'] + asset_block)
-              lines = out
-          # Flutter does not include subdirectories recursively. If an older
-          # pubspec already had assets/ranking/, append the nested seals directory.
-          joined = '\n'.join(lines)
-          if 'assets/ranking/selos/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/ranking/':
-                      out.append('    - assets/ranking/selos/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/ranking/ para declarar assets/ranking/selos/')
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/hall/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/ranking/selos/':
-                      out.append('    - assets/hall/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/ranking/selos/ para declarar assets/hall/')
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/configurar_mesa/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/inicio/':
-                      out.append('    - assets/configurar_mesa/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/inicio/ para declarar assets/configurar_mesa/')
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/torneios/capas/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/configurar_mesa/':
-                      out.append('    - assets/torneios/capas/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/configurar_mesa/ para declarar assets/torneios/capas/')
-              lines = out
-          # Flutter nao inclui subdiretorios recursivamente: coroas/ e selos/
-          # precisam ser declarados um a um, logo apos as capas de torneio.
-          joined = '\n'.join(lines)
-          if 'assets/torneios/premiacao/coroas/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/torneios/capas/':
-                      out.append('    - assets/torneios/premiacao/coroas/')
-                      out.append('    - assets/torneios/premiacao/selos/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/torneios/capas/ para declarar a premiacao')
-              lines = out
-          joined = '\n'.join(lines)
-          if 'assets/torneios/premiacao/selos/' not in joined:
-              out = []
-              inserted = False
-              for ln in lines:
-                  out.append(ln)
-                  if ln.strip() == '- assets/torneios/premiacao/coroas/':
-                      out.append('    - assets/torneios/premiacao/selos/')
-                      inserted = True
-              if not inserted:
-                  raise AssertionError('nao encontrei assets/torneios/premiacao/coroas/ para declarar os selos')
-              lines = out
-          s = '\n'.join(lines)
-          open(p, 'w', encoding='utf-8').write(s)
-          print('----- pubspec.yaml (a partir de flutter:) -----')
-          print(s[s.find('\nflutter:'):] if '\nflutter:' in s else s)
-          # travas de segurança: exatamente UMA seção flutter: e todos os diretórios de assets declarados
-          top_flutter = sum(1 for l in lines if l.rstrip() == 'flutter:')
-          assert top_flutter == 1, f'esperava 1 secao flutter: de nivel 0, achei {top_flutter}'
-          for a in ('assets/splash/', 'assets/rive/', 'assets/sons/', 'assets/baralho/', 'assets/perfil/', 'assets/ranking/', 'assets/ranking/selos/', 'assets/hall/', 'assets/inicio/', 'assets/configurar_mesa/', 'assets/torneios/capas/', 'assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
-              assert a in s, f'FALTOU declarar {a} no pubspec!'
-          for a in ('assets/torneios/premiacao/coroas/', 'assets/torneios/premiacao/selos/'):
-              assert s.count(f'- {a}') == 1, f'{a} declarado mais de uma vez no pubspec!'
-          print('OK: 1 seção flutter: · splash oficial + som + sons + baralho + perfil + ranking + selos + hall + inicio + configurar_mesa + torneios/capas + torneios/premiacao (coroas e selos) declarados')
           PY
 
       - name: Conferir assets que serão empacotados
