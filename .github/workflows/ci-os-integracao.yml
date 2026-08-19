@@ -519,6 +519,98 @@ jobs:
             "cd firebase/testes && npm run test:integrado" 2>&1 | tee t_colecoesemu.log
           echo ${PIPESTATUS[0]} > exit_colecoesemu
 
+      # =====================================================================
+      # [COMPOSICAO canonica] AS TRES CODEBASES QUE O CI NUNCA CONHECEU
+      # =====================================================================
+      #
+      # `functions-conta`, `functions-mesas` e `functions-economia` sao
+      # IMPLANTAVEIS — estao em firebase.json, cada uma com codebase propria —
+      # e nao apareciam em passo nenhum deste arquivo. Nao e o mesmo defeito do
+      # CI-02 (aquele era gate que RODAVA e o agregador ignorava); e o degrau
+      # anterior: codebase que nem chegava a rodar. O efeito pratico e pior,
+      # porque nem evidencia havia.
+      #
+      # Elas so ficaram visiveis quando a composicao juntou as nove numa arvore
+      # so: nenhuma suite de folha podia enxergar isso, porque cada linhagem
+      # via apenas as codebases que ela mesma trouxe. E a prova PN-07.
+
+      - name: "3j — codebase CONTA (functions-conta): tsc + unitários"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_contafn
+          if [ ! -f functions-conta/package.json ]; then
+            echo "functions-conta/package.json ausente" > nao_contafn; exit 0
+          fi
+          ( cd functions-conta && npm install 2>&1 | tail -3 )
+          ( cd functions-conta && npm test ) 2>&1 | tee t_contafn.log
+          echo ${PIPESTATUS[0]} > exit_contafn
+
+      # A EXCLUSAO DE CONTA contra Firestore e Auth reais. Auth e obrigatorio e
+      # nao e conveniencia: as etapas `trancar` e `encerrar` chamam `updateUser`,
+      # `revokeRefreshTokens` e `deleteUser`. Sem o emulador de Auth a suite
+      # tentaria falar com o Google de verdade.
+      - name: "3j2 — EXCLUSÃO DE CONTA contra o Emulator Suite"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_contaemu
+          if [ ! -f functions-conta/package.json ]; then
+            echo "functions-conta/package.json ausente" > nao_contaemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          ( cd functions-conta && npm install 2>&1 | tail -3 )
+          ( cd functions-conta && npm run test:emulador ) 2>&1 | tee t_contaemu.log
+          echo ${PIPESTATUS[0]} > exit_contaemu
+
+      - name: "3k — codebase MESAS (functions-mesas): tsc + unitários"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_mesasfn
+          if [ ! -f functions-mesas/package.json ]; then
+            echo "functions-mesas/package.json ausente" > nao_mesasfn; exit 0
+          fi
+          ( cd functions-mesas && npm install 2>&1 | tail -3 )
+          ( cd functions-mesas && npm test ) 2>&1 | tee t_mesasfn.log
+          echo ${PIPESTATUS[0]} > exit_mesasfn
+
+      - name: "3l — codebase ECONOMIA (functions-economia): unitários"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_economiafn
+          if [ ! -f functions-economia/package.json ]; then
+            echo "functions-economia/package.json ausente" > nao_economiafn; exit 0
+          fi
+          ( cd functions-economia && npm install 2>&1 | tail -3 )
+          ( cd functions-economia && npm test ) 2>&1 | tee t_economiafn.log
+          echo ${PIPESTATUS[0]} > exit_economiafn
+
+      # =====================================================================
+      # §16 e §19 — proveniência do SHA e provas negativas da composição
+      # =====================================================================
+      #
+      # Rodam sobre o repositório inteiro (leem firebase.json, o firestore.rules,
+      # este próprio workflow e a fonte única de gates), e por isso não pertencem
+      # a nenhuma codebase. Não precisam de emulador, de Java nem de Flutter.
+
+      - name: "4a — §16 proveniência de SHA das Functions"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_proveni
+          node --test ferramentas/proveniencia/proveniencia.test.js 2>&1 | tee t_proveni.log
+          echo ${PIPESTATUS[0]} > exit_proveni
+
+      - name: "4b — §19 provas negativas da composição"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          echo "iniciado" > inicio_composneg
+          node --test ferramentas/composicao/negativas.test.js 2>&1 | tee t_composneg.log
+          echo ${PIPESTATUS[0]} > exit_composneg
+
       - name: Publicar evidência na branch ci-evidencias
         if: always()
         run: |
