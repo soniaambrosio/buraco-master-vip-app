@@ -520,9 +520,40 @@ describe('CL-10 — `playerCourtesyPass` sobrevivendo a exclusao de conta', () =
     const inv = A.codigo('functions-conta/src/inventario.ts');
     A.exigirAncora(assert, inv, /CLASSE\s*\.\s*APAGAR/, 'a matriz de retencao usa a classe APAGAR');
 
-    const bloco = inv.match(/playerCourtesyPass[\s\S]{0,800}?classe\s*:\s*CLASSE\.([A-Z]+)/);
-    assert.ok(bloco, 'ENTRADA AUSENTE: `playerCourtesyPass` saiu da matriz de retencao da exclusao.');
-    assert.equal(bloco[1], 'APAGAR', 'o passe de cortesia deixou de ser apagado na exclusao de conta.');
+    // Os caminhos vao entre ASPAS FECHADAS, de proposito. Casar por prefixo
+    // (`/playerCourtesyPass/`) sobreviveu a campanha de mutacao: renomear a
+    // colecao para `playerCourtesyPassDESLIGADO` deixava esta prova verde sobre
+    // uma entrada que ja apontava para outro lugar.
+    const CAMINHOS = ['"playerCourtesyPass/{uid}"', '"playerCourtesyPass/{uid}/cycles/{cicloId}"'];
+    for (const caminho of CAMINHOS) {
+      const i = inv.indexOf('caminho: ' + caminho);
+      assert.ok(
+        i >= 0,
+        `ENTRADA AUSENTE: ${caminho} saiu da matriz de retencao da exclusao de conta.`
+      );
+      const bloco = inv.slice(i, i + 400).match(/classe\s*:\s*CLASSE\.([A-Z]+)/);
+      assert.ok(bloco, `a entrada ${caminho} ficou sem classe de retencao`);
+      assert.equal(
+        bloco[1],
+        'APAGAR',
+        `${caminho} deixou de ser apagado na exclusao de conta.`
+      );
+    }
+
+    // E o EXECUTOR tem de alcancar a colecao pelo nome exato: uma entrada com o
+    // caminho certo e o `alcance` apontando para outro lugar apaga nada.
+    A.exigirAncora(
+      assert,
+      inv,
+      /raiz:\s*"playerCourtesyPass"/,
+      'a subcolecao de ciclos e alcancada pela raiz `playerCourtesyPass`'
+    );
+    A.exigirAncora(
+      assert,
+      inv,
+      /colecao:\s*"playerCourtesyPass"/,
+      'o documento de controle e alcancado na colecao `playerCourtesyPass`'
+    );
   });
 
   test('a suite de emulador da exclusao afirma a remocao, e preserva a de terceiro', () => {
