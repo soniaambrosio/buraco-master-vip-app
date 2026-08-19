@@ -44,6 +44,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'credencial_de_sessao.dart';
 import 'fonte_identidade.dart';
 import 'identidade_publica_sessao.dart';
 
@@ -59,23 +60,40 @@ class SessaoDoJogador extends ChangeNotifier {
   ///
   /// [uidInicial] cobre o caso de o app subir com sessão já restaurada, quando
   /// o stream ainda não emitiu.
+  /// [credenciais] é o provedor da credencial que o transporte apresenta ao
+  /// servidor. O padrão não tem credencial nenhuma para dar — quem monta a
+  /// sessão de produção passa a de verdade (ver `sessao_firebase.dart`). Esse
+  /// padrão é seguro: sem provedor, o transporte fica "não autenticado", que é
+  /// a leitura honesta de uma sessão que não sabe emitir credencial.
   SessaoDoJogador({
     required FonteDeIdentidade fonte,
     required Stream<String?> uids,
     String? uidInicial,
-  }) : _fonte = fonte {
+    FonteDeCredencial credenciais = const SemCredencial(),
+  }) : _fonte = fonte,
+       _credenciais = credenciais {
     if (uidInicial != null) {
       // Estado montado à mão, sem passar por `_aplicarSessao`: o carregamento
       // fica para o microtask abaixo. Disparar dentro do construtor notificaria
       // uma plateia que ainda não teve como se inscrever.
       _geracao++;
       _estado = EstadoIdentidadeSessao.naoCarregada(uidInicial);
+      // O app subiu com sessão já restaurada: o fluxo de autenticação não
+      // precisa se pronunciar para sabermos que há alguém.
+      _resolvida = true;
     }
-    _assinatura = uids.listen(_aplicarSessao);
+    // `onDone` e `onError` fecham o caso em que o fluxo NUNCA emite: sem
+    // Firebase configurado, `criarSessaoDoJogador` entrega um stream vazio, que
+    // termina de imediato. Sem isto a raiz esperaria para sempre por uma
+    // resposta que não vem, e a Splash ficaria eterna.
+    _assinatura = uids.listen(_aplicarSessao)
+      ..onDone(_marcarResolvida)
+      ..onError((Object _, StackTrace _) => _marcarResolvida());
     if (uidInicial != null) scheduleMicrotask(garantirCarregada);
   }
 
   final FonteDeIdentidade _fonte;
+  final FonteDeCredencial _credenciais;
   late final StreamSubscription<String?> _assinatura;
 
   EstadoIdentidadeSessao _estado = EstadoIdentidadeSessao.deslogado;
@@ -88,6 +106,19 @@ class SessaoDoJogador extends ChangeNotifier {
   Future<void>? _emVoo;
 
   bool _descartado = false;
+
+  /// O fluxo de autenticação já se pronunciou ao menos uma vez?
+  ///
+  /// EXISTE PARA A RAIZ DO APP DECIDIR PARA ONDE IR, e a distinção que ela
+  /// carrega é a que faltava: `estado.autenticado == false` significa as duas
+  /// coisas ao mesmo tempo — "não há ninguém logado" e "ainda não sabemos".
+  /// Tratar as duas como a mesma coisa faz um jogador com sessão salva ver a
+  /// tela de login piscar antes de a Home aparecer.
+  ///
+  /// Vira `true` uma única vez, e nunca volta: logout não desresolve nada — a
+  /// resposta "não há ninguém" continua sendo uma resposta.
+  bool get resolvida => _resolvida;
+  bool _resolvida = false;
 
   /// A fotografia atual. Imutável — quem lê não consegue alterar.
   EstadoIdentidadeSessao get estado => _estado;
@@ -103,17 +134,85 @@ class SessaoDoJogador extends ChangeNotifier {
   int get chamadasEmitidas => _chamadas;
   int _chamadas = 0;
 
+  /// A geração corrente da sessão.
+  ///
+  /// Sobe UMA vez por troca de sessão — login, logout, troca de jogador — e não
+  /// sobe quando só a fase da identidade muda (`carregando` → `disponivel`). É
+  /// o que permite a quem observa esta sessão distinguir "a identidade avançou"
+  /// de "o jogador é outro", e reagir só ao segundo. Ver
+  /// `services/ponte_sessao_online.dart`.
+  int get geracao => _geracao;
+
+  // -------------------------------------------------------------------------
+  // Credencial da sessão
+  // -------------------------------------------------------------------------
+
+  /// A credencial que o transporte apresenta ao servidor, ou `null`.
+  ///
+  /// ESTA É A ÚNICA PORTA. O cliente WebSocket não fala com o provedor de
+  /// autenticação: ele pede aqui, porque só aqui existe a geração que sabe se a
+  /// resposta ainda vale.
+  ///
+  /// Devolve `null` — nunca lança e nunca devolve token velho — em qualquer um
+  /// destes casos:
+  ///
+  ///   * a sessão não está autenticada (não há de quem emitir credencial);
+  ///   * o provedor falhou ou não tem token (rede fora, SDK ausente);
+  ///   * **a sessão virou enquanto o token estava a caminho**.
+  ///
+  /// O terceiro é a razão de este método existir. Entre pedir e receber há um
+  /// await, e um logout cabe inteiro nele. Sem a trava de geração, o token que
+  /// voltasse seria o do jogador que acabou de sair, e o transporte o
+  /// apresentaria como se nada tivesse acontecido — o mesmo vazamento entre
+  /// contas que a sessão já impede do lado da identidade, entrando pela porta
+  /// do transporte.
+  Future<String?> obterCredencial() async {
+    if (_descartado || !_estado.autenticado) return null;
+
+    // O crachá da resposta, capturado ANTES do await — igual ao que `_disparar`
+    // faz com a identidade.
+    final geracao = _geracao;
+
+    String? token;
+    try {
+      token = await _credenciais.obterToken();
+    } catch (_) {
+      // Um provedor que escapa do contrato não derruba a sessão: vira "sem
+      // credencial", que o transporte já sabe tratar.
+      return null;
+    }
+
+    if (_descartado || geracao != _geracao) return null;
+    if (token == null || token.isEmpty) return null;
+    return token;
+  }
+
   // -------------------------------------------------------------------------
   // Ciclo de vida da sessão
   // -------------------------------------------------------------------------
 
+  /// O fluxo de autenticação se pronunciou — venha ele com uid, sem uid, com
+  /// erro ou terminando sem nunca emitir.
+  void _marcarResolvida() {
+    if (_descartado || _resolvida) return;
+    _resolvida = true;
+    notifyListeners();
+  }
+
   /// Login, logout e troca de usuário entram todos por aqui.
   void _aplicarSessao(String? uid, {bool notificar = true}) {
     if (_descartado) return;
+    // A resolução é anotada ANTES de qualquer atalho: mesmo uma reemissão do
+    // mesmo uid é o fluxo se pronunciando, e é isso que a raiz espera.
+    final primeiroPronunciamento = !_resolvida;
+    _resolvida = true;
     // Reemissão do mesmo uid (o stream de auth repete em refresh de token) não
     // é troca de sessão: invalidar aqui jogaria fora um cache válido e faria
     // cada renovação de token virar uma chamada nova.
-    if (uid == _estado.uid && _geracao > 0) return;
+    if (uid == _estado.uid && _geracao > 0) {
+      if (primeiroPronunciamento && notificar) notifyListeners();
+      return;
+    }
 
     // A INVALIDAÇÃO É INCONDICIONAL e vem ANTES de qualquer coisa: a geração
     // sobe, o voo é solto e o estado é substituído. Nenhum resquício do jogador

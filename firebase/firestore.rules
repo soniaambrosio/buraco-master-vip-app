@@ -18,6 +18,12 @@ rules_version = '2';
 //   * MODERACAO                 <- claude/moderation-reports-blocking-social-08ef72
 //     reports, sanctions, playerModeration, moderationAudit, moderationTasks,
 //     users/{uid}/reportReceipts, users/{uid}/blocks, users/{uid}/mutes
+//   * CHAT LIVRE                <- OS de Arbitragem e Fundacao Canonica do Chat
+//     chatChannels, chatMessages
+//     (Entra DENTRO do bloco de MODERACAO, e nao como bloco proprio: o chat nao
+//      tem autoridade sua sobre bloqueio nem sancao — ele consome `avaliarContato`
+//      e `playerModeration`. Um bloco separado sugeriria uma segunda autoridade
+//      social, que e exatamente o que a OS proibe.)
 //   * IDENTIDADE PUBLICA / SOCIAL  <- OS de Identidade Publica e Grafo Social
 //     playerIdentities, publicIdIndex, publicProfiles, friendships,
 //     playerSocial, users/{uid}/friends, users/{uid}/friendRequests
@@ -732,6 +738,50 @@ service cloud.firestore {
     }
 
     match /moderationTasks/{chaveTarefa} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // CHAT LIVRE — canal e mensagem
+    // ---------------------------------------------------------------------
+    // NENHUM `allow write` VERDADEIRO NOS DOIS, e nenhuma leitura de cliente.
+    // As duas coisas sao a resposta da §4 e da §13 da OS do Chat Livre Seguro, e
+    // valem a pena explicar porque "chat que o cliente nao le" soa errado.
+    //
+    // ESCRITA. Mensagem de chat NAO nasce como documento gravavel pelo cliente.
+    // Se nascesse, quem escreve escolheria autor, `messageId`, horario, canal e
+    // visibilidade — e nao existiria porta onde consultar bloqueio e sancao. Quem
+    // grava e `enviarMensagemChat`, com o autor tirado de `req.auth.uid`, o
+    // instante do servidor e o `messageId` derivado pelo dominio. `chatChannels`
+    // e ainda mais restrito em espirito: quem o escreve e o motor de partidas
+    // (claim `motorDePartidas`), porque quem declara quem esta sentado nao pode
+    // ser quem vai falar — senao o filtro de bloqueio da §7 dependeria de uma
+    // lista escrita pelo proprio remetente.
+    //
+    // LEITURA. Os DOIS documentos carregam UID: `chatChannels.participantes` e a
+    // lista de quem esta na mesa, e `chatMessages` guarda `autorUid` e
+    // `destinatarios`. As regras liberam ou negam o DOCUMENTO INTEIRO — nao ha
+    // como permitir ler `conteudo` e esconder `autorUid`. Entregar o documento
+    // ao jogador publicaria a identidade interna da mesa e, pior,
+    // `destinatarios` diria a cada um quem NAO recebeu, que e o mesmo que
+    // publicar quem bloqueou quem.
+    //
+    // ENTAO COMO O JOGADOR RECEBE A MENSAGEM? Pela PROJECAO, nunca pelo
+    // documento: `projetarMensagem` monta a resposta por lista de permissao (sem
+    // `autorUid`, sem `destinatarios`) e a devolve na chamada. A distribuicao aos
+    // outros aparelhos e do transporte, que esta OS nao liga — e a razao de
+    // `destinatarios` ficar gravado e justamente para que a entrega, quando
+    // existir, nao precise redecidir bloqueio.
+    //
+    // Admin le os dois, porque e quem julga denuncia: a evidencia de uma
+    // mensagem denunciada e lida daqui (§12).
+    match /chatChannels/{canalId} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /chatMessages/{messageId} {
       allow read: if ehAdmin();
       allow write: if false;
     }

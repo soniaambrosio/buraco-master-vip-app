@@ -863,6 +863,87 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
     porque:
       "CONTADOR OPERACIONAL DE CURTISSIMO PRAZO — janela de dez minutos. Nao ha fato a preservar e nao ha integridade a proteger: um contador de uma conta inexistente nunca mais sera lido. Reter seria guardar 'quantas vezes esta pessoa errou um codigo' sem nenhuma finalidade.",
   },
+
+  // =========================================================================
+  // BILLING — a ponte opaca entre a conta e a compra
+  // =========================================================================
+  //
+  // As duas entraram com a correcao P0 da propriedade da compra, e formam um
+  // par: `playerBillingIdentity/{uid}` guarda a conta ofuscada, e
+  // `billingAccountIndex/{contaOfuscada}` faz o caminho de volta. Juntas, sao
+  // exatamente o caminho `uid -> compra` — e e por isso que as duas saem.
+  //
+  // A ORDEM IMPORTA e esta declarada: o indice e alcancado ATRAVES da
+  // identidade, entao ele vem primeiro. Apagar a identidade antes deixaria o
+  // indice orfao e inalcancavel — o pior resultado possivel, porque seria um
+  // vinculo remanescente que nenhuma varredura futura acharia.
+  //
+  // ISTO NAO APAGA A PROVA FINANCEIRA. `compras/{hash}` continua RETIDA pela
+  // sua propria linha: o que morre e a ponte para a PESSOA, nao o fato de a
+  // transacao ter existido.
+  {
+    id: "billing.indiceDeVinculo",
+    caminho: "billingAccountIndex/{contaOfuscada}",
+    dominio: "billing",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "chaveDerivada", colecao: "billingAccountIndex", de: "playerBillingIdentity" },
+    porque:
+      "E METADE DO CAMINHO `uid -> compra`, e a metade que aponta de volta. O documento nao guarda nada alem do uid: sem ele, a conta ofuscada deixa de resolver para pessoa nenhuma. Reter seria manter viva justamente a ponte que a exclusao existe para cortar, e sem finalidade — a autoridade de propriedade so precisa dela enquanto a conta existe. Vem ANTES de `billing.identidadeDeCompra` na matriz porque e por ela que este documento e encontrado.",
+  },
+  {
+    id: "billing.identidadeDeCompra",
+    caminho: "playerBillingIdentity/{uid}",
+    dominio: "billing",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "playerBillingIdentity" },
+    porque:
+      "A OUTRA METADE DO CAMINHO. Guarda a conta ofuscada emitida para ESTE jogador, e mais nada. Uma vez apagado o indice, este documento e um identificador opaco sem contraparte — e mante-lo seria reter um dado de pessoa cuja unica finalidade (resolver a propriedade de uma compra futura) nao existe mais para uma conta encerrada.",
+  },
+
+  // =========================================================================
+  // MODERACAO / CHAT
+  // =========================================================================
+  {
+    id: "moderacao.canaisDeChat",
+    caminho: "chatChannels/{canalId}",
+    dominio: "moderacao",
+    classe: CLASSE.DESVINCULAR,
+    campos: ["participantes"],
+    alcance: { modo: "consultaPorArray", colecao: "chatChannels", campo: "participantes" },
+    porque:
+      "O CANAL E DE UMA MESA, E A MESA E DE MAIS GENTE. Apaga-lo porque um dos participantes saiu destruiria o canal dos outros tres — a mesma quebra que a doutrina descreve para `matches`. Sai o UID de `participantes`; o canal continua existindo enquanto tiver finalidade compartilhada, e some sozinho quando nao tiver mais. O documento nao carrega apelido nem avatar: tirado o UID, nao sobra dado do excluido.",
+  },
+  {
+    id: "moderacao.mensagensDeChat",
+    caminho: "chatMessages/{messageId}",
+    dominio: "moderacao",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "consultaPorCampo", colecao: "chatMessages", campo: "autorUid" },
+    porque:
+      "MENSAGEM COMUM NAO E REGISTRO COMPARTILHADO: ela e fala DE UMA PESSOA, e o conteudo e dela. Apagar as mensagens do excluido nao derruba a conversa de ninguem — as dos outros participantes permanecem, porque a consulta e por `autorUid`. NAO se retem a colecao inteira por precaucao: evidencia ja vinculada a um caso de moderacao ou seguranca segue a politica daquele caso, com finalidade, prazo e fundamento proprios, e fica FORA do caminho normal do produto — nao e este item que a autoriza, e este item nao a alcanca.",
+  },
+
+  // =========================================================================
+  // CONQUISTAS
+  // =========================================================================
+  {
+    id: "rastreabilidade.conquistas",
+    caminho: "playerAchievements/{uid}/items/{itemId}",
+    dominio: "rastreabilidade",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "subcolecaoDoDono", raiz: "playerAchievements", sub: "items" },
+    porque:
+      "CONQUISTA E DO JOGADOR, E DE MAIS NINGUEM. Diferente de `matches` e do ledger, nenhum outro jogador tem pontuacao que dependa de uma conquista alheia: apagar nao reescreve o passado de terceiro. E o documento e chaveado pelo UID e descreve o que ESTA pessoa fez — reter seria guardar historico pessoal de uma conta encerrada, sem integridade a proteger.",
+  },
+  {
+    id: "rastreabilidade.conquistasRaiz",
+    caminho: "playerAchievements/{uid}",
+    dominio: "rastreabilidade",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "playerAchievements" },
+    porque:
+      "O DOCUMENTO-RAIZ do jogador, depois de esvaziada a subcolecao. Apagar a raiz sem apagar `items` antes deixaria a subcolecao orfa e viva no Firestore — que e o modo classico de a exclusao parecer completa e nao ser.",
+  },
 ] as const;
 
 // ===========================================================================

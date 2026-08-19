@@ -98,8 +98,10 @@ void main() {
     });
 
     test('contrato exige VIP nas cadeiras e admite Passe Convidado ocasional', () {
+      // `ehVip: true` DECLARADO: criar mesa privada exige VIP, e o mock não
+      // concede mais por omissão. Ver MOCK-04 em enforcement_vip_ui_test.dart.
       final contract = MesaConfigContract.fromVm(
-        ConfigMesaVM.mock(tipo: TipoMesa.privada),
+        ConfigMesaVM.mock(tipo: TipoMesa.privada, ehVip: true),
       );
 
       expect(contract.exigeVipDosParticipantes, isTrue);
@@ -128,7 +130,9 @@ void main() {
     });
 
     test('Passe Convidado VIP válido permite a cadeira promocional', () {
-      final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada);
+      // Quem CRIA a mesa é VIP (declarado); o que este caso mede é a cadeira
+      // do CONVIDADO, que entra sem VIP mas com passe promocional válido.
+      final vm = ConfigMesaVM.mock(tipo: TipoMesa.privada, ehVip: true);
       final cadeiras = List<CadeiraVM>.of(vm.cadeiras!);
       cadeiras[1] = cadeiras[1].copyWith(
         ehVip: false,
@@ -221,9 +225,7 @@ void main() {
         home: ConfigurarMesaScreen(
           vm: ConfigMesaVM.mock(tipo: TipoMesa.privada),
           onVoltar: () {},
-          onTipo: (_) {},
-          onTipoBloqueado: (_) {},
-          onModalidade: (_) {},
+          onTipo: (_) {},          onModalidade: (_) {},
           onVerRegras: () {},
           onModo: (_) {},
           onPontos: (_) {},
@@ -283,9 +285,7 @@ void main() {
         home: ConfigurarMesaScreen(
           vm: ConfigMesaVM.mock(tipo: TipoMesa.privada),
           onVoltar: () {},
-          onTipo: (_) {},
-          onTipoBloqueado: (_) {},
-          onModalidade: (_) {},
+          onTipo: (_) {},          onModalidade: (_) {},
           onVerRegras: () {},
           onModo: (_) {},
           onPontos: (_) {},
@@ -336,9 +336,7 @@ void main() {
         home: ConfigurarMesaScreen(
           vm: vm,
           onVoltar: () {},
-          onTipo: (_) {},
-          onTipoBloqueado: (_) {},
-          onModalidade: (_) {},
+          onTipo: (_) {},          onModalidade: (_) {},
           onVerRegras: () {},
           onModo: (_) {},
           onPontos: (_) {},

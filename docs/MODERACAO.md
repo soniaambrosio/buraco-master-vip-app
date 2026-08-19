@@ -244,12 +244,26 @@ Quatro camadas, e a primeira já bastaria:
 
 ### 4.6 Riscos conhecidos
 
-1. **Evidência de mensagem é atestada pelo cliente.** Não existe chat
-   servidor-lado neste projeto — o backend de partida é um servidor Node externo
-   (Railway), fora deste repositório. Enquanto o conteúdo da mensagem só existir
-   no aparelho, o registro grava `evidencia.origem = "cliente_atestada"`. Quando
-   o chat passar a ser servidor-lado, a Function preenche a mesma estrutura com
-   `origem: "servidor"` e o campo atestado deixa de ser aceito.
+1. ~~**Evidência de mensagem é atestada pelo cliente.**~~ **RESOLVIDO EM PARTE
+   pela OS do Chat Livre Seguro V1** — ver `docs/CHAT-LIVRE-SEGURO-V1.md`.
+
+   Passou a existir mensagem autoritativa em `chatMessages/{messageId}`, gravada
+   por `enviarMensagemChat` no próprio codebase de moderação. Quando o
+   `messageId` denunciado existe lá, `registrarDenuncia` lê o conteúdo do
+   documento e grava `evidencia.origem = "servidor"`, **descartando** a cópia
+   mandada pelo aparelho — e o autor da evidência sai do documento, não de
+   `denunciadoUid`.
+
+   `cliente_atestada` **continua existindo**, e a delimitação é esta: vale para as
+   superfícies que ainda não têm mensagem autoritativa (o saguão) e para a mesa
+   **enquanto o transporte não estiver ligado**, além do histórico já gravado, que
+   não se migra. O campo `origem` continua dizendo qual dos dois casos aconteceu,
+   que é o que permite à moderação humana saber o peso do que está lendo.
+
+   O QUE FALTA para fechar de vez: o servidor de partidas não declara nenhuma
+   dependência e não alcança o Firebase, então ninguém chama `definirCanalDeChat`
+   e nada distribui a mensagem aos aparelhos. Sem canal declarado, todo envio é
+   recusado (`canalDesconhecido`) — falha fechada.
 
 2. **O recorte de espectador não está ligado a nenhum servidor.**
    `VisaoEspectador` é a definição correta do payload, e está provada; mas quem

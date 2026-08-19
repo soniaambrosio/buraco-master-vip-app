@@ -65,7 +65,15 @@ class RankingHostDeTeste extends StatelessWidget {
   Widget build(BuildContext context) {
     final identidade = EscopoSessao.identidadeDe(context);
     return RankingScreen(
-      vm: RankingVM.mock(),
+      vm: const RankingVM(
+        aba: RankingAba.temporada,
+        faixaTempo: '',
+        mostrarHall: false,
+        divisao: null,
+        podio: [],
+        lista: [],
+        escadaLigas: [],
+      ),
       estado: switch (identidade.fase) {
         FaseIdentidade.carregando ||
         FaseIdentidade.naoCarregada => RankingEstado.carregando,

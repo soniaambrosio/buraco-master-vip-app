@@ -1,0 +1,108 @@
+# FONTE ÚNICA DOS GATES OBRIGATÓRIOS — workflow `ci-os-integracao.yml`.
+#
+# Este arquivo é lido por DOIS consumidores, e por nenhum outro caminho:
+#   1. o passo "Publicar evidência na branch ci-evidencias";
+#   2. `scripts/ci/portao_os_integracao.sh`, o agregador final.
+#
+# É PROIBIDO copiar esta relação para dentro do YAML. A divergência entre a
+# lista da evidência e a lista do agregador foi exatamente o defeito CI-02:
+# `rankingfn`, `rankingint`, `identint` e `auditident` apareciam na evidência,
+# podiam falhar, e o portão final continuava verde porque não os percorria.
+#
+# Formato aceito pelo agregador: um gate por linha; `[A-Za-z0-9_]` apenas;
+# linha em branco e linha iniciada por `#` são ignoradas; comentário no fim da
+# linha NÃO é aceito (vira nome inválido e reprova a fonte inteira).
+#
+# Ausência de resultado, marcador `nao_<gate>`, exit code vazio, ilegível ou
+# não numérico REPROVAM. Só `exit_<gate>` valendo exatamente `0` fica verde.
+#
+# `colevid` (gerador de PNG de evidência visual) NÃO entra aqui, por decisão
+# registrada no cabeçalho do próprio teste: ele depende de fonte do sistema e
+# não afirma regressão. Continua rodando e sendo reportado como informativo.
+
+# --- 1. analyze -------------------------------------------------------------
+analyze
+
+# --- 2. suítes Flutter que já eram portão -----------------------------------
+motor
+resil
+encerr
+torneios
+mtorneios
+integr
+colarte
+colfire
+colkit
+social
+casca
+cascaaud
+
+# --- 3. suítes Flutter de Mesa Online / Casca V2 (entram por esta OS) -------
+# Verdes localmente desde a homologação da ligação motor↔Casca V2, mas sem
+# gate próprio: podiam quebrar sem que o CI dissesse uma palavra.
+cascavisao
+cascamesaaud
+cascav2
+cascaligacao
+cascamesa
+cascaporta
+
+# --- 4. suítes Flutter de Ranking Real e Perfil Publicável (entram por esta OS)
+# `rkbarreira` é a barreira temporal V2; `rkestado` guarda `EstadoRanking` como
+# autoridade única (sem fallback Bronze/nível 1/#0/#1).
+rkbarreira
+rkestado
+rkperfil
+rkleitor
+rkregressao
+
+# --- 5. suíte da composição (entra por esta OS) -----------------------------
+composicao
+
+# --- 5b. domínio do CHAT LIVRE (entra pela OS do Chat Livre Seguro V1) ------
+# A porta única de envio: conteúdo, superfície, assento, idempotência, filtro de
+# bloqueio por par e a trava de projeção. É a suíte que reprova se alguém tirar o
+# `avaliarContato` do caminho, aceitar autoria vinda do payload ou soltar o
+# `messageId` derivado.
+chatdom
+
+# --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
+# Sem ele, o agregador é a única peça do CI que ninguém verifica.
+portaoci
+
+# --- 7. codebases Firebase / Node que já eram portão ------------------------
+billing
+torneiosfn
+socialdom
+socialfn
+socialemu
+regras
+
+# --- 8. codebases que EXECUTAVAM e eram ignorados pelo agregador (CI-02) ----
+# Estes quatro constavam da evidência desde a OS de integração de identidade,
+# rodavam de verdade, e o portão final não os percorria. Agora são fatais.
+rankingfn
+rankingint
+identint
+auditident
+
+# --- 9. codebase MODERAÇÃO (entra pela OS do Chat Livre Seguro V1) ----------
+# LACUNA QUE ESTA OS FECHOU, e que não era do chat: `functions-moderacao` NÃO
+# TINHA GATE NENHUM. A codebase que hospeda denúncia, bloqueio, sanção e
+# `consultarContato` podia deixar de compilar, ou ver a barreira de idempotência
+# quebrar, sem o CI dizer uma palavra — `npm test` dela existia e ninguém o
+# chamava. `moderacaofn` roda `tsc` + os testes puros (idempotência e chat).
+#
+# `chatemu` é a integração REAL contra o Emulator Suite: autenticação, anônimo
+# recusado, retry sob transação, concorrência, bloqueio nas duas direções e
+# sanção. É o único gate que prova que a decisão do domínio chega ao Firestore.
+moderacaofn
+chatemu
+
+# [COMPOSICAO canonica] Os dois gates de emulador que a linhagem de Billing/P0
+# entregou como OBRIGATORIOS e que esta fonte ainda nao conhecia. Eles existem no
+# workflow (produzem `exit_moderacaoemu` e `exit_colecoesemu`) desde aquela OS; o
+# que faltava era a fonte unica saber deles — e um gate que o portao nao le pode
+# falhar sem reprovar, que e o defeito CI-02 pelo outro lado.
+moderacaoemu
+colecoesemu

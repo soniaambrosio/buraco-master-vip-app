@@ -20,7 +20,6 @@
 // app inicializado e nao existe em `flutter test`.
 library;
 
-import 'package:firebase_auth/firebase_auth.dart';
 
 /// Quem esta logado agora.
 abstract class SessaoJogador {
@@ -32,13 +31,17 @@ abstract class SessaoJogador {
   String? get uid;
 }
 
-/// A implementacao real, sobre `firebase_auth`.
-class SessaoFirebase implements SessaoJogador {
-  const SessaoFirebase();
-
-  @override
-  String? get uid => FirebaseAuth.instance.currentUser?.uid;
-}
+/// LÁPIDE — `SessaoFirebase` foi REMOVIDA na composição canônica.
+///
+/// Ela lia `FirebaseAuth.instance.currentUser?.uid` daqui, e era o SEGUNDO dono
+/// de autenticação do aplicativo: a auditoria da casca de produção (`não existe
+/// segundo dono de autenticação`) a apontava nominalmente. Só a camada de sessão
+/// fala com `firebase_auth`.
+///
+/// Quem monta o billing passa o uid da sessão CANÔNICA — em produção,
+/// `EscopoSessao.identidadeDe(context).uid` — através de [SessaoFixa]. Não há
+/// mais valor padrão: o serviço exige a porta, e exigir é o que impede alguém de
+/// reabrir o atalho sem perceber.
 
 /// Sessao fixa, para teste e para composicao.
 class SessaoFixa implements SessaoJogador {

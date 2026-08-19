@@ -4,13 +4,21 @@ import 'perfil_screen.dart' show NavDestino;
 
 enum InicioEstado { carregando, normal, erro }
 
+/// O cabeçalho do jogador na tela inicial.
+///
+/// [moedas] e [liga] são NULOS QUANDO NÃO HÁ AUTORIDADE que os informe, e a
+/// tela omite a linha inteira nesse caso. Antes eram obrigatórios, e o preço
+/// disso era um zero ou um `''` ocupando o lugar do dado — que a pessoa lê como
+/// "tenho zero moedas", e não como "ainda não sei quantas". Um valor de tipo
+/// certo e origem nenhuma é pior do que espaço em branco: ele mente com cara de
+/// dado.
 class CabecalhoJogador {
   final String nome;
   final String email;
   final String avatar;
   final String? moldura;
-  final int moedas;
-  final String liga;
+  final int? moedas;
+  final String? liga;
 
   const CabecalhoJogador({
     required this.nome,
@@ -54,18 +62,31 @@ class MenuItem {
   final String icone;
   final String? badge;
 
+  /// O destino existe de verdade?
+  ///
+  /// `false` desenha o item apagado, com um selo, e o toque avisa em vez de
+  /// navegar. É a terceira via que §4.4 admite: melhor do que sumir com o item
+  /// (a pessoa não descobre que ele virá) e do que abrir uma maquete (a pessoa
+  /// acha que já existe).
+  final bool disponivel;
+
   const MenuItem({
     required this.id,
     required this.label,
     required this.icone,
     this.badge,
+    this.disponivel = true,
   });
 }
 
 class InicioVM {
   final CabecalhoJogador jogador;
   final TemporadaBanner? temporada;
-  final LobbyBanner lobby;
+
+  /// Nulo quando não há autoridade de saguão. Igual a [CabecalhoJogador.moedas]:
+  /// um banner com "0 online agora" é uma afirmação, e afirmação sem fonte não
+  /// entra numa tela de produção.
+  final LobbyBanner? lobby;
   final List<MenuItem> menu;
 
   const InicioVM({
@@ -75,11 +96,18 @@ class InicioVM {
     required this.menu,
   });
 
+  /// Dados de EXEMPLO, para desenhar a tela sem aplicativo em volta.
+  ///
+  /// NÃO É ALCANÇÁVEL PELA RAIZ DE PRODUÇÃO — quem monta a Home publicável é
+  /// `casca/home_de_producao.dart`, a partir da sessão. Este `mock` sobrevive
+  /// para o catálogo visual e para os testes da própria tela, e por isso os
+  /// valores aqui são sintéticos: o cabeçalho já carregou nome, e-mail e saldo
+  /// de uma pessoa real, escritos no código-fonte e embarcados em todo APK.
   factory InicioVM.mock() {
     return const InicioVM(
       jogador: CabecalhoJogador(
-        nome: 'Sônia Rainha',
-        email: 'soniia.ambrosio@gmail.com',
+        nome: 'Jogador de Exemplo',
+        email: 'exemplo@bmv.invalido',
         avatar: '👑',
         moldura: null,
         moedas: 1000,
@@ -241,8 +269,10 @@ class InicioScreen extends StatelessWidget {
                     onTap: onAbrirTemporada,
                   ),
                 ],
-                const SizedBox(height: 9),
-                _LobbyCard(lobby: vm.lobby, onTap: onAbrirLobby),
+                if (vm.lobby != null) ...[
+                  const SizedBox(height: 9),
+                  _LobbyCard(lobby: vm.lobby!, onTap: onAbrirLobby),
+                ],
                 SizedBox(height: compact ? 9 : 11),
                 _PlayButton(onTap: onJogar),
                 SizedBox(height: compact ? 17 : 21),
@@ -358,30 +388,34 @@ class _PlayerCard extends StatelessWidget {
                         fontSize: 11,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Image.asset(
-                          'assets/inicio/moeda.webp',
-                          width: 15,
-                          height: 15,
-                          errorBuilder: (_, __, ___) => const Text('🪙'),
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            '${_formatarInteiro(jogador.moedas)} · Liga ${jogador.liga}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: InicioScreen._goldHi,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
+                    // A linha só existe se houver o que dizer. Ver
+                    // [CabecalhoJogador.moedas].
+                    if (_resumoDeCarteira(jogador) case final resumo?) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Image.asset(
+                            'assets/inicio/moeda.webp',
+                            width: 15,
+                            height: 15,
+                            errorBuilder: (_, __, ___) => const Text('🪙'),
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              resumo,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: InicioScreen._goldHi,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -401,6 +435,19 @@ class _PlayerCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A linha "🪙 1.000 · Liga Diamante", ou `null` quando não há nem saldo nem
+/// liga a informar. Com só um dos dois, mostra só ele — meia verdade conhecida
+/// é melhor do que completar o resto por conta própria.
+String? _resumoDeCarteira(CabecalhoJogador jogador) {
+  final moedas = jogador.moedas;
+  final liga = jogador.liga;
+  final temLiga = liga != null && liga.isNotEmpty;
+  if (moedas == null && !temLiga) return null;
+  if (moedas == null) return 'Liga $liga';
+  if (!temLiga) return _formatarInteiro(moedas);
+  return '${_formatarInteiro(moedas)} · Liga $liga';
 }
 
 class _Avatar extends StatelessWidget {
@@ -690,6 +737,9 @@ class _MenuGrid extends StatelessWidget {
       ),
       itemBuilder: (context, index) {
         final item = items[index];
+        // Indisponível continua CLICÁVEL de propósito: o toque é o que dispara
+        // o aviso de que ainda não existe. Um item inerte deixaria a pessoa
+        // achando que o toque não pegou.
         return Material(
           color: Colors.transparent,
           child: InkWell(
@@ -699,38 +749,61 @@ class _MenuGrid extends StatelessWidget {
               decoration: BoxDecoration(
                 color: InicioScreen._card,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: InicioScreen._border),
+                border: Border.all(
+                  color: item.disponivel
+                      ? InicioScreen._border
+                      : Colors.white.withValues(alpha: .08),
+                ),
               ),
               child: Stack(
                 children: [
                   Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _AssetOrText(
-                          value: item.icone,
-                          width: compact ? 38 : 40,
-                          height: compact ? 38 : 40,
-                          textSize: 28,
-                        ),
-                        const SizedBox(height: 5),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 3),
-                          child: Text(
-                            item.label,
-                            maxLines: 2,
-                            textAlign: TextAlign.center,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: .70),
-                              fontSize: compact ? 10.4 : 11,
-                              height: 1.05,
+                    child: Opacity(
+                      opacity: item.disponivel ? 1 : .38,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _AssetOrText(
+                            value: item.icone,
+                            width: compact ? 38 : 40,
+                            height: compact ? 38 : 40,
+                            textSize: 28,
+                          ),
+                          const SizedBox(height: 5),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 3),
+                            child: Text(
+                              item.label,
+                              maxLines: 2,
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: .70),
+                                fontSize: compact ? 10.4 : 11,
+                                height: 1.05,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
+                  if (!item.disponivel)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 5,
+                      child: Text(
+                        'em breve',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: .34),
+                          fontSize: compact ? 8.4 : 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: .3,
+                        ),
+                      ),
+                    ),
                   if (item.badge != null)
                     Positioned(
                       top: 6,

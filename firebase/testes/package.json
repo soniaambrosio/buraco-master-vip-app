@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "//test": "Alvos explicitos, e nao `node --test` solto: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um arquivo renomeado sairia da suite em silencio.",
-    "test": "node --test seguranca.test.js moderacao.test.js social.test.js entitlement.test.js economia.test.js",
+    "test": "node --test seguranca.test.js moderacao.test.js social.test.js entitlement.test.js economia.test.js chat.test.js",
     "test:rastreabilidade": "node --test rastreabilidade.test.js",
     "//test:economia": "So a economia basica. Alvo estreito para quem mexeu apenas no bloco `economiaLedger` e nao quer subir as outras suites.",
     "//test:runner": "A logica do proprio portao: leitura de relatorio, deteccao de porta, trava com PID e o comportamento ponta a ponta do `com-functions.js`. Nao sobe emulador e nao precisa de java — se ESTE alvo depender do ambiente que ele existe para conferir, nao serve de rede.",
@@ -25,7 +25,7 @@
     "//test:social:functions": "Regras E chamadas reais as Cloud Functions. O runner CONFERE que o emulador de Functions esta atendendo e FALHA se nao estiver — `emulators:exec` nao exporta FUNCTIONS_EMULATOR_HOST, entao sem ele a suite ficaria permanentemente pulada com o portao verde (§37).",
     "test:social:functions": "node com-functions.js --codebase=social --esperado=67 social.test.js",
     "//test:integrado": "Uniao das SETE suites. E o alvo da homologacao P0 integrada: prova os blocos de firestore.rules no MESMO arquivo de regras, que e onde um bloco poderia afrouxar o do vizinho. Ranking e social entram JUNTOS desde a OS de integracao de identidade: sao os dois blocos que falam de `publicId`, e separa-los esconderia exatamente a regressao que a integracao existe para impedir. `entitlement` entra na mesma uniao desde a consolidacao das duas linhas (identidade/ranking + billing/RTDN) feita pela OS de exclusao de conta, e `economia` desde a composicao desta RC — a carteira que a economia move e a MESMA que o billing credita, entao os dois blocos precisam ser provados contra o mesmo arquivo de regras.",
-    "test:integrado": "node --test seguranca.test.js moderacao.test.js social.test.js rastreabilidade.test.js ranking.test.js entitlement.test.js economia.test.js conquistas.test.js",
+    "test:integrado": "node --test seguranca.test.js moderacao.test.js social.test.js rastreabilidade.test.js ranking.test.js entitlement.test.js economia.test.js conquistas.test.js chat.test.js",
     "//test:conquistas": "So o bloco `playerAchievements`. Prova REGRAS: quem le e quem escreve. Quem MERECE a conquista e decidido no dominio Dart, em app/test/conquistas/.",
     "test:conquistas": "node --test conquistas.test.js",
     "test:economia": "node --test economia.test.js",

@@ -66,12 +66,36 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 # Evidência (logs + exit codes + NÃO EXECUTADOs) é publicada na branch
 # `ci-evidencias`, auditável mesmo sem acesso à API do GitHub.
 #
+# A OS DE BLINDAGEM DO CI (composição Perfil + Mesa Online + Ranking Real V2)
+# corrigiu três defeitos deste arquivo, e nenhum gate foi removido ou afrouxado:
+#
+#   CI-01  Doze suítes Flutter verdes localmente não tinham gate: as seis de
+#          Mesa Online/Casca V2, as cinco de Ranking/Perfil Publicável e a da
+#          composição. Agora cada arquivo tem log e exit code próprios, e
+#          arquivo ausente vira `nao_<gate>`, que REPROVA.
+#   CI-02  `rankingfn`, `rankingint`, `identint` e `auditident` constavam da
+#          evidência, rodavam de verdade, e o agregador final não os percorria:
+#          podiam falhar com o portão verde. A causa era haver DUAS listas
+#          escritas à mão neste YAML — 23 gates na evidência, 19 no portão.
+#   CI-03  "NÃO EXECUTADO" contava como sucesso para gate obrigatório, e um
+#          exit code vazio ou ilegível também.
+#
+# A correção tirou a relação e a decisão de dentro do YAML:
+#   scripts/ci/gates_os_integracao.txt  — fonte ÚNICA dos gates obrigatórios,
+#                                          lida pela evidência E pelo portão.
+#   scripts/ci/portao_os_integracao.sh  — o agregador, que falha fechado.
+#   scripts/ci/teste_portao_os_integracao.sh — matriz do próprio agregador,
+#                                          registrada como o gate `portaoci`.
+# É PROIBIDO reintroduzir uma lista de gates neste arquivo: o caso I5 do teste
+# do portão reprova exatamente isso.
+#
 # NÃO gera APK, NÃO faz deploy, NÃO roda em main/master/consolidacao.
 
 on:
   push:
     branches:
       - integracao/os-final-backend-flutter
+      - correcao/ci-composicao-perfil-mesa-ranking-v2-v1
   workflow_dispatch:
 
 permissions:
@@ -84,11 +108,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: "0 — teste do PRÓPRIO portão (agregador + fonte única)"
+        run: |
+          set +e
+          # O agregador era a única peça do CI que ninguém verificava — e era
+          # justamente onde moravam CI-02 e CI-03. Roda primeiro, antes de
+          # Flutter e de emulador: um portão quebrado tem que aparecer como
+          # portão quebrado, e não como "os testes passaram".
+          if [ ! -f scripts/ci/teste_portao_os_integracao.sh ]; then
+            echo "scripts/ci/teste_portao_os_integracao.sh ausente" > nao_portaoci; exit 0
+          fi
+          bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
+          echo ${PIPESTATUS[0]} > exit_portaoci
+
       - name: Setup Java (exigido pelo emulador do Firestore)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Node (firebase-tools e testes das Functions)
         uses: actions/setup-node@v4
@@ -153,6 +190,40 @@ jobs:
           # publicId, estados da amizade, limites, paginacao). Autorizacao e
           # provada pelas Rules, no gate `colecoesemu`.
           roda social     test/social/teste_social.dart
+          # OS Casca de Produção: o roteamento por sessão (Splash → Login/Home),
+          # o logout que derruba socket e pilha, e a auditoria estrutural que
+          # impede a volta do segundo dono de autenticação, da rota que alcança
+          # maquete e do dado pessoal no código distribuído.
+          roda casca      test/casca/casca_producao_test.dart
+          roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS Mesa Online / Casca V2 (CI-01). Estas seis suítes eram verdes só
+          # na máquina de quem escreve: provam a porta ÚNICA de comandos, o
+          # adaptador da visão versionada, a caracterização da ligação
+          # motor↔casca e a homologação da própria Casca V2. Sem gate próprio,
+          # qualquer uma podia quebrar sem o CI dizer uma palavra.
+          roda cascavisao   test/casca/adaptador_visao_online_test.dart
+          roda cascamesaaud test/casca/auditoria_mesa_online_test.dart
+          roda cascav2      test/casca/homologacao_casca_v2_test.dart
+          roda cascaligacao test/casca/ligacao_mesa_caracterizacao_test.dart
+          roda cascamesa    test/casca/mesa_online_test.dart
+          roda cascaporta   test/casca/porta_de_comandos_online_test.dart
+          # OS Leitor Real de Ranking (barreira temporal V2) e Perfil
+          # Publicável (CI-01). `rkestado` é o que impede a volta do fallback
+          # Bronze / nível 1 / colocação #0 e #1; `rkbarreira` é a barreira
+          # temporal, que sem gate é a primeira coisa a apodrecer.
+          roda rkbarreira   test/ranking/barreira_temporal_ranking_test.dart
+          roda rkestado     test/ranking/estado_canonico_ranking_test.dart
+          roda rkperfil     test/ranking/homologacao_perfil_publicavel_test.dart
+          roda rkleitor     test/ranking/leitor_ranking_real_test.dart
+          roda rkregressao  test/ranking/regressao_leitor_ranking_test.dart
+          # A união dos três arquivos da interseção da composição.
+          roda composicao   test/composicao/composicao_perfil_ranking_test.dart
+          # OS Chat Livre Seguro V1: a porta ÚNICA de envio de mensagem. Prova
+          # que autoria não vem do payload, que o `messageId` é derivado e opaco,
+          # que bloqueio é filtrado por PAR nas duas direções consumindo
+          # `avaliarContato`, que espectador não fala nem recebe, e que a projeção
+          # não carrega UID, token, socket nem estado administrativo.
+          roda chatdom      test/chat/chat_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -294,6 +365,56 @@ jobs:
             2>&1 | tee t_auditident.log
           echo ${PIPESTATUS[0]} > exit_auditident
 
+      - name: "3h — codebase MODERACAO (functions-moderacao): dominio Dart, typecheck e testes puros"
+        run: |
+          set +e
+          # POR QUE ESTE PASSO NASCE AGORA, e nao com a OS de Moderacao:
+          # `functions-moderacao` nunca teve gate. A codebase que hospeda denuncia,
+          # bloqueio, sancao e `consultarContato` podia deixar de compilar sem o CI
+          # dizer nada — o `npm test` dela existia e ninguem o chamava.
+          if [ ! -f functions-moderacao/package.json ]; then
+            echo "functions-moderacao/package.json ausente" > nao_moderacaofn; exit 0
+          fi
+          # `--include=dev` explicito: sem ele o `tsc` pode nao ser instalado, e a
+          # falha aparece como "tsc: not found", que se confunde com PATH quebrado.
+          ( cd functions-moderacao && npm ci --include=dev 2>&1 | tail -3 || npm install --include=dev 2>&1 | tail -3 )
+          ( cd app && flutter pub get 2>&1 | tail -2 )
+          # O dominio Dart vira JS ANTES do tsc, como nas outras codebases. Este
+          # passo tambem e o que deixa o codebase `moderacao` CARREGAVEL pelo
+          # emulador do passo 3i — sem ele o Emulator Suite falha ao montar a
+          # Function, porque `domain.ts` lanca no CARREGAMENTO quando o bundle
+          # falta (e isso e deliberado: bundle ausente tem que derrubar o deploy).
+          ( cd functions-moderacao && npm run build:domain ) 2>&1 | tee t_moderacaodom.log
+          dom=${PIPESTATUS[0]}
+          if [ "$dom" != "0" ]; then
+            echo "build:domain da moderacao falhou (exit $dom)" > nao_moderacaofn; exit 0
+          fi
+          ( cd functions-moderacao && npm test ) 2>&1 | tee t_moderacaofn.log
+          echo ${PIPESTATUS[0]} > exit_moderacaofn
+
+      - name: "3i — CHAT LIVRE contra o Emulator Suite (chamadas reais)"
+        run: |
+          set +e
+          # Este gate existe porque nem a suite de dominio nem a de regras provam
+          # o que a §15 da OS do Chat pede no limite real: anonimo recusado, retry
+          # que NAO duplica sob transacao, concorrencia que NAO duplica, bloqueio
+          # nas duas direcoes lido do Firestore, e denuncia recuperando a evidencia
+          # server-side. Dominio prova a DECISAO; regra prova a AUTORIZACAO; so
+          # este prova que a decisao chega ao banco.
+          if [ ! -f functions-moderacao/lib/index.js ]; then
+            echo "functions-moderacao nao foi compilado no passo 3h" > nao_chatemu; exit 0
+          fi
+          if [ ! -f functions-moderacao/test/integracao.chat.emulador.test.js ]; then
+            echo "suite de integracao do chat ausente" > nao_chatemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          # O emulador carrega a codebase inteira e o bundle do dominio e grande;
+          # 10s de descoberta padrao estouram e a falha aparece como se a suite
+          # estivesse quebrada.
+          export FUNCTIONS_DISCOVERY_TIMEOUT=120
+          firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \
+            "cd functions-moderacao && node --test test/integracao.chat.emulador.test.js" 2>&1 | tee t_chatemu.log
+          echo ${PIPESTATUS[0]} > exit_chatemu
       # GATE OBRIGATÓRIO 2/3 (fail-closed no portão final).
       - name: "3h — codebase MODERACAO: Moderação com Firebase Emulator (chamadas reais)"
         if: ${{ !cancelled() }}
@@ -378,13 +499,30 @@ jobs:
       - name: Publicar evidência na branch ci-evidencias
         if: always()
         run: |
+          # ESTE PASSO RODA SOB `bash -e`. O agregador abaixo retorna 1 quando
+          # ha gate vermelho — que e o caso normal, nao um erro deste passo. Sem
+          # `set +e` o step aborta na primeira chamada e a evidencia NAO chega a
+          # ser escrita nem publicada, que foi o que aconteceu no run #13.
+          set +e
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          # Os três obrigatórios (socialemu, moderacaoemu, colecoesemu) entram na
-          # MESMA tabela dos demais: uma evidência que dissesse "NÃO EXECUTADO"
-          # onde o portão diz VERMELHO seria um documento contradizendo o
-          # resultado que ele existe para justificar.
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident moderacaoemu colecoesemu"
+          FONTE=scripts/ci/gates_os_integracao.txt
+          # A MESMA fonte que o agregador final lê. Era aqui que morava CI-02:
+          # esta lista estava escrita à mão no YAML e tinha quatro gates a mais
+          # do que a do portão, então `rankingfn`, `rankingint`, `identint` e
+          # `auditident` apareciam na evidência, podiam falhar, e o portão
+          # continuava verde. Copiar a relação para cá de novo é proibido.
+          if [ -f "$FONTE" ]; then
+            GATES="$(sed -e 's/\r$//' "$FONTE" \
+                     | awk '{ gsub(/^[ \t]+|[ \t]+$/, "") } NF && substr($0,1,1) != "#" { print }')"
+          else
+            GATES=""
+            echo "FONTE UNICA DE GATES AUSENTE: $FONTE" >&2
+          fi
+          # O veredito impresso na evidência é o do próprio agregador, executado
+          # aqui — e não uma segunda leitura que poderia discordar dele.
+          bash scripts/ci/portao_os_integracao.sh "$FONTE" . > portao.txt 2>&1
+          echo $? > portao_exit
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -392,18 +530,29 @@ jobs:
             echo "- commit: \`${SHA}\`"
             echo "- data UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo
+            echo "## Veredito do agregador (\`scripts/ci/portao_os_integracao.sh\`)"
+            echo
+            echo "Portão final: exit \`$(cat portao_exit 2>/dev/null || echo '?')\` — NÃO EXECUTADO reprova, exit vazio ou não numérico reprova."
+            echo
+            echo '```'; cat portao.txt 2>/dev/null; echo '```'
+            echo
             echo "## Resultado por gate"
+            echo
+            echo "Gates obrigatórios lidos de \`$FONTE\` — a mesma fonte do agregador."
             echo
             echo "| gate | status | exit |"
             echo "|---|---|---|"
             for k in $GATES; do
-              if [ -f "exit_$k" ]; then
-                v=$(cat "exit_$k")
-                [ "$v" = "0" ] && echo "| $k | EXECUTADO | $v |" || echo "| $k | **FALHOU** | $v |"
-              elif [ -f "nao_$k" ]; then
-                echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+              if [ -f "nao_$k" ]; then
+                echo "| $k | **NÃO EXECUTADO (reprova)** | $(tr '\r\n' '  ' < "nao_$k") |"
+              elif [ -f "exit_$k" ]; then
+                v=$(tr -d ' \t\r\n' < "exit_$k")
+                if [ "$v" = "0" ]; then echo "| $k | EXECUTADO | $v |"
+                elif [ -z "$v" ]; then echo "| $k | **EXIT VAZIO (reprova)** | — |"
+                else echo "| $k | **FALHOU** | $v |"
+                fi
               else
-                echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+                echo "| $k | **NÃO EXECUTADO (reprova)** | passo não chegou a rodar |"
               fi
             done
             if [ -f info_colevid ]; then
@@ -422,7 +571,15 @@ jobs:
           git config user.email "ci@bmv.local"
           git config user.name "CI BMV Evidencias"
           if git ls-remote --exit-code origin ci-evidencias >/dev/null 2>&1; then
-            git fetch --depth 1 origin ci-evidencias && git checkout ci-evidencias
+            # `-B ... FETCH_HEAD`, e nao `checkout ci-evidencias`: `git fetch`
+            # com refspec avulso popula o FETCH_HEAD e NAO cria a branch local,
+            # entao o checkout simples falhava com "pathspec did not match", o
+            # commit caia na `main` do clone temporario e o push morria em "src
+            # refspec does not match any". A branch `ci-evidencias` so tinha o
+            # `run-1.md`, do unico run que passou pelo caminho do orphan: toda
+            # evidencia posterior foi perdida em silencio, porque o step aborta
+            # sob `bash -e` antes de imprimir a causa.
+            git fetch --depth 1 origin ci-evidencias && git checkout -B ci-evidencias FETCH_HEAD
           else
             git checkout --orphan ci-evidencias && git rm -rf . >/dev/null 2>&1 || true
           fi
@@ -431,100 +588,13 @@ jobs:
           git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
           git push origin ci-evidencias
 
-      - name: Portão verde/vermelho (fail-closed nos três gates obrigatórios)
-        if: ${{ !cancelled() }}
+      - name: Portão verde/vermelho (fonte única; NÃO EXECUTADO reprova)
+        if: always()
         run: |
-          # ------------------------------------------------------------------
-          # POLÍTICA — OS "CI fail-closed dos gates de emulador".
-          #
-          # ANTES: qualquer gate sem recibo saía como "NÃO EXECUTADO" e NÃO
-          # reprovava. Bastava um passo obrigatório ser pulado — por uma condição
-          # `if:`, por um guard de artefato, por um erro de fluxo — para o portão
-          # ficar VERDE sem que a suíte tivesse rodado. Ausência de prova era
-          # lida como aprovação.
-          #
-          # AGORA, para os TRÊS GATES OBRIGATÓRIOS, vale o contrário:
-          #
-          #     ausência de evidência de sucesso NÃO é sucesso.
-          #
-          # Só é SUCESSO um recibo que exista, não esteja vazio, contenha um
-          # exit code e esse exit code seja 0. Todo o resto — sem recibo, recibo
-          # vazio, `banana`, `1`, `3`, `4`, `5`, `6` — reprova. Não há default:
-          # nada aqui usa `${v:-0}` nem equivalente, porque um default de zero é
-          # exatamente a construção que transforma ausência em aprovação.
-          #
-          # Os DEMAIS gates mantêm a política anterior de propósito: são
-          # verificações auxiliares (analyze, suítes Flutter, typechecks), e
-          # torná-las fail-closed é decisão de outra ordem de serviço, não desta.
-          # `rankingfn`, `rankingint`, `identint` e `auditident` entram aqui como
-          # DEMAIS porque foi assim que a linhagem de identidade os entregou —
-          # promovê-los a obrigatórios nesta composição seria endurecer gate sem
-          # OS que autorize, e a regra desta RC é não mexer no rigor herdado em
-          # nenhuma das duas direções.
-          # ------------------------------------------------------------------
-          OBRIGATORIOS="socialemu moderacaoemu colecoesemu"
-          DEMAIS="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social billing torneiosfn socialdom socialfn rankingfn rankingint identint auditident"
-
-          fail=0
-
-          echo "== gates OBRIGATÓRIOS (fail-closed: sem prova de sucesso, reprova) =="
-          for k in $OBRIGATORIOS; do
-            # 1. Sem recibo. Reprova, e a marca de presença diz qual dos dois
-            #    casos aconteceu — o passo nem começou, ou começou e morreu.
-            if [ ! -f "exit_$k" ]; then
-              if [ -f "nao_$k" ]; then
-                echo "gate $k = NÃO EXECUTADO — o passo saiu antes de rodar a suíte: $(cat "nao_$k")"
-              elif [ -f "inicio_$k" ]; then
-                echo "gate $k = NÃO EXECUTADO — o passo COMEÇOU e não chegou a registrar resultado (morreu no meio); veja t_$k.log"
-              else
-                echo "gate $k = NÃO EXECUTADO — o passo NEM COMEÇOU (pulado por condição, ou abortado antes de chegar a vez dele)"
-              fi
-              fail=1
-              continue
-            fi
-
-            # 2. Recibo existe. `tr -d` remove espaços e a quebra de linha do
-            #    `echo`, e também um \r que venha de shell de outra plataforma.
-            v=$(tr -d '[:space:]' < "exit_$k")
-
-            if [ -z "$v" ]; then
-              echo "gate $k = RESULTADO INVÁLIDO — exit_$k existe mas está vazio; ninguém escreveu um exit code ali"
-              fail=1
-              continue
-            fi
-
-            # 3. Tem que ser um número. `banana`, `0 ; rm`, `ok` — nada disso é
-            #    um exit code, e nada disso pode ser lido como aprovação.
-            case "$v" in
-              *[!0-9]*)
-                echo "gate $k = RESULTADO INVÁLIDO — exit_$k contém '$v', que não é um exit code"
-                fail=1
-                continue
-                ;;
-            esac
-
-            # 4. Numérico. Só zero passa.
-            if [ "$v" = "0" ]; then
-              echo "gate $k = OK (exit 0)"
-            else
-              echo "gate $k = FALHOU (exit $v)"
-              fail=1
-            fi
-          done
-
-          echo
-          echo "== demais gates (política anterior: NÃO EXECUTADO reporta, não reprova) =="
-          for k in $DEMAIS; do
-            if [ -f "exit_$k" ]; then
-              v=$(cat "exit_$k"); echo "gate $k = $v"
-              [ "$v" = "0" ] || fail=1
-            elif [ -f "nao_$k" ]; then
-              echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
-            else
-              echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
-            fi
-          done
-
-          echo
-          echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
-          exit $fail
+          # Sem lista embutida e sem lógica embutida: os dois defeitos desta OS
+          # nasceram de a decisão morar dentro do YAML, onde não se testa.
+          # A relação está em scripts/ci/gates_os_integracao.txt e a decisão em
+          # scripts/ci/portao_os_integracao.sh, que tem matriz própria no gate
+          # `portaoci`. Se o agregador sumir, `bash` sai não-zero e o portão
+          # fica vermelho — falha fechada, que é o comportamento desejado.
+          bash scripts/ci/portao_os_integracao.sh scripts/ci/gates_os_integracao.txt .

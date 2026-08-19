@@ -194,6 +194,34 @@ async function desvincularPorConsulta(
   }
 }
 
+/// Remove UM valor de um campo-array, sem tocar no resto da lista.
+///
+/// Existe porque `desvincularPorConsulta` apaga o CAMPO, e aqui o campo e
+/// compartilhado: `chatChannels.participantes` guarda os quatro da mesa. Apagar
+/// a lista removeria os outros tres junto com o excluido.
+async function removerDeArray(
+  consulta: Query,
+  campo: string,
+  valor: string
+): Promise<number> {
+  let total = 0;
+  for (;;) {
+    // Sem cursor, e de proposito: o documento tratado deixa de casar com o
+    // `array-contains`, entao a proxima pagina comeca ja sem ele.
+    const pagina = await consulta.limit(PAGINA).get();
+    if (pagina.empty) return total;
+
+    const lote = db().batch();
+    for (const doc of pagina.docs) {
+      lote.update(doc.ref, { [campo]: FieldValue.arrayRemove(valor) });
+    }
+    await lote.commit();
+
+    total += pagina.size;
+    if (pagina.size < PAGINA) return total;
+  }
+}
+
 /// Apaga uma subcolecao inteira de um documento conhecido.
 async function apagarSubcolecao(
   caminhoDoDono: string,
@@ -298,10 +326,43 @@ async function apagarModeracao(ctx: Contexto): Promise<void> {
   await apagarPorConsulta(
     db().collectionGroup("mutes").where("alvoUid", "==", ctx.uid)
   );
+
+  // CHAT — e as duas colecoes recebem tratamento DIFERENTE de proposito.
+  //
+  // MENSAGEM e fala de UMA pessoa: o conteudo e dela, e apagar as dela nao
+  // derruba a conversa de ninguem — as dos outros participantes continuam,
+  // porque a consulta e por `autorUid`.
+  await apagarPorConsulta(
+    db().collection("chatMessages").where("autorUid", "==", ctx.uid)
+  );
+
+  // CANAL e da MESA, e a mesa e de mais gente. Apaga-lo porque um participante
+  // saiu destruiria o canal dos outros tres. Sai so o UID de `participantes`; o
+  // canal continua enquanto tiver finalidade compartilhada.
+  //
+  // `arrayRemove` e nao `FieldValue.delete()`: o campo e uma lista compartilhada,
+  // e apagar a lista inteira removeria os OUTROS participantes junto — que e
+  // exatamente o "registro compartilhado apagado por consequencia" que a decisao
+  // de retencao proibe.
+  await removerDeArray(
+    db().collection("chatChannels").where("participantes", "array-contains", ctx.uid),
+    "participantes",
+    ctx.uid
+  );
 }
 
 async function apagarRastreabilidade(ctx: Contexto): Promise<void> {
   await apagarSubcolecao(`users/${ctx.uid}`, "matchHistory");
+
+  // CONQUISTAS. Diferente de `matches` e do ledger, nenhuma pontuacao de
+  // terceiro depende de conquista alheia — apagar nao reescreve o passado de
+  // ninguem.
+  //
+  // A SUBCOLECAO ANTES DA RAIZ, pelo mesmo motivo do `interno` do billing:
+  // `delete` num documento NAO apaga as subcolecoes dele, e a raiz apagada
+  // primeiro deixaria `items` viva e orfa.
+  await apagarSubcolecao(`playerAchievements/${ctx.uid}`, "items");
+  await db().collection("playerAchievements").doc(ctx.uid).delete();
 }
 
 async function apagarColecoes(ctx: Contexto): Promise<void> {
@@ -398,6 +459,26 @@ async function tratarBilling(ctx: Contexto): Promise<void> {
   );
 
   await db().collection("usuarios").doc(ctx.uid).delete();
+
+  // A PONTE OPACA ENTRE A CONTA E A COMPRA, cortada nos dois sentidos.
+  //
+  // `playerBillingIdentity/{uid}` guarda a conta ofuscada deste jogador, e
+  // `billingAccountIndex/{contaOfuscada}` faz o caminho de volta. Enquanto os
+  // dois existirem, existe caminho `uid -> compra`.
+  //
+  // O INDICE PRIMEIRO, e a ordem NAO e estilo: e pela identidade que se
+  // descobre qual e a conta ofuscada. Apagada a identidade antes, o indice
+  // ficaria vivo e INALCANCAVEL — um vinculo remanescente que varredura nenhuma
+  // acharia depois, porque a chave dele nao se deriva de mais nada.
+  const identidadeDeCompra = db().collection("playerBillingIdentity").doc(ctx.uid);
+  const vinculo = await identidadeDeCompra.get();
+  if (vinculo.exists) {
+    const conta = vinculo.data()?.contaOfuscada;
+    if (typeof conta === "string" && conta !== "") {
+      await db().collection("billingAccountIndex").doc(conta).delete();
+    }
+  }
+  await identidadeDeCompra.delete();
 }
 
 /// O corte do vinculo.

@@ -15,7 +15,7 @@ class OndeJogarVM {
 
   // O mock abre como VIP para a prévia conseguir navegar por todos os ambientes.
   // Na integração real, Claude deve passar explicitamente o status da conta.
-  factory OndeJogarVM.mock({bool ehVip = true}) => OndeJogarVM(
+  factory OndeJogarVM.mock({bool ehVip = false}) => OndeJogarVM(
         ehVip: ehVip,
         opcoes: const [
           OpcaoMesa(

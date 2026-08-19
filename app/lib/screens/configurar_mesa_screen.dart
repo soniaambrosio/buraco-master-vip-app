@@ -270,7 +270,18 @@ class ConfigurarMesaScreen extends StatelessWidget {
   final ConfigMesaVM vm;
   final VoidCallback onVoltar;
   final ValueChanged<TipoMesa> onTipo;
-  final ValueChanged<TipoMesa> onTipoBloqueado;
+  // LÁPIDE — `onTipoBloqueado` foi REMOVIDO na composição canônica.
+  //
+  // Ele existia de quando ESTA tela escolhia o tipo de mesa. A tela deixou de
+  // escolher: hoje ela CONFIGURA um tipo já escolhido (o título é "Configurar
+  // Mesa VIP"), e a seleção — com o bloqueio — vive em `OndeJogarScreen`.
+  //
+  // O callback continuava declarado, `required`, e passado por quem constrói a
+  // tela — e NUNCA era invocado. Um gate que ninguém dispara não protege nada;
+  // o que ele fazia era parecer que o bloqueio ainda morava aqui. A prova de UX
+  // mudou de endereço junto com a responsabilidade: `test/mesa/gate_vip_selecao_test.dart`.
+  //
+  // A autoridade final continua sendo `functions-mesas`, e nunca foi esta tela.
   final ValueChanged<ModalidadeJogo> onModalidade;
   final VoidCallback onVerRegras;
   final ValueChanged<ModoJogo> onModo;
@@ -291,7 +302,6 @@ class ConfigurarMesaScreen extends StatelessWidget {
     required this.vm,
     required this.onVoltar,
     required this.onTipo,
-    required this.onTipoBloqueado,
     required this.onModalidade,
     required this.onVerRegras,
     required this.onModo,

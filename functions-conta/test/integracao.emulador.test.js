@@ -66,6 +66,8 @@ const ALVO = "uid-do-jogador-que-sai";
 const AMIGO = "uid-do-amigo";
 const TERCEIRO = "uid-de-quem-fica";
 const PUBLIC_ID = "P0ALVO0000AA";
+const CONTA_OFUSCADA = "a1".repeat(16);
+const CANAL = "canal-da-mesa-1";
 const PUBLIC_AMIGO = "P0AMIGO000BB";
 
 // ---------------------------------------------------------------------------
@@ -172,6 +174,43 @@ async function semearVip(uid = ALVO) {
     .collection("billingEvents")
     .doc("msg-1")
     .set({ uid, messageId: "msg-1", estado: "concluido", token: "abc1" });
+}
+
+/// A ponte opaca da compra, o chat da mesa e as conquistas.
+///
+/// O canal e semeado com QUATRO participantes de proposito: e ele que prova que
+/// a saida de um nao apaga o registro compartilhado dos outros tres.
+async function semearComposicao(uid = ALVO) {
+  await db.collection("playerBillingIdentity").doc(uid).set({
+    uid,
+    contaOfuscada: CONTA_OFUSCADA,
+  });
+  await db.collection("billingAccountIndex").doc(CONTA_OFUSCADA).set({ uid });
+
+  await db.collection("chatChannels").doc(CANAL).set({
+    canalId: CANAL,
+    participantes: [uid, AMIGO, "uid-terceiro", "uid-quarto"],
+  });
+  await db.collection("chatMessages").doc("msg-do-alvo").set({
+    messageId: "msg-do-alvo",
+    canalId: CANAL,
+    autorUid: uid,
+    conteudo: "boa noite a todos",
+  });
+  await db.collection("chatMessages").doc("msg-do-amigo").set({
+    messageId: "msg-do-amigo",
+    canalId: CANAL,
+    autorUid: AMIGO,
+    conteudo: "boa noite",
+  });
+
+  await db.collection("playerAchievements").doc(uid).set({ uid });
+  await db
+    .collection("playerAchievements")
+    .doc(uid)
+    .collection("items")
+    .doc("primeira_batida_real")
+    .set({ uid, concedidaEm: "2026-08-01T00:00:00.000Z" });
 }
 
 async function semearRanqueado(uid = ALVO, publicId = PUBLIC_ID) {
@@ -709,5 +748,89 @@ describe("falha parcial e retomada", () => {
       await existe(`users/${ALVO}`),
       "convergir e NAO TOCAR EM NADA: o diario e a autoridade sobre o que ja foi feito"
     );
+  });
+});
+
+// ===========================================================================
+// A COMPOSIÇÃO CANÔNICA — as cinco coleções que só existem depois dela
+// ===========================================================================
+//
+// Elas entraram na matriz de retenção porque o guard de cobertura as acusou:
+// `billingAccountIndex`, `playerBillingIdentity`, `chatChannels`,
+// `chatMessages` e `playerAchievements` estavam declaradas em
+// `firestore.rules` e não em `inventario.ts`. Sem estas provas, a exclusão
+// passaria a deixar rastro exatamente onde as linhagens se encontraram.
+
+describe("jogador da composicao canonica", () => {
+  test("nao sobra caminho uid -> compra, nos DOIS sentidos", async () => {
+    await semearComum();
+    await semearComposicao();
+
+    await executar(ALVO);
+
+    assert.equal(
+      await existe(`playerBillingIdentity/${ALVO}`),
+      false,
+      "a identidade de compra sai"
+    );
+    assert.equal(
+      await existe(`billingAccountIndex/${CONTA_OFUSCADA}`),
+      false,
+      "e o indice de volta tambem — se ficasse, seria um vinculo vivo e INALCANCAVEL, porque a chave dele so se deriva da identidade que acabou de sumir"
+    );
+  });
+
+  test("nenhuma conquista continua vinculada ao UID", async () => {
+    await semearComum();
+    await semearComposicao();
+
+    await executar(ALVO);
+
+    assert.equal(await existe(`playerAchievements/${ALVO}`), false);
+    assert.equal(
+      await existe(`playerAchievements/${ALVO}/items/primeira_batida_real`),
+      false,
+      "a subcolecao tem que sair EXPLICITAMENTE: apagar o pai nao apaga subcolecao"
+    );
+  });
+
+  test("nenhuma mensagem comum do excluido permanece", async () => {
+    await semearComum();
+    await semearComposicao();
+
+    await executar(ALVO);
+
+    assert.equal(await existe("chatMessages/msg-do-alvo"), false);
+  });
+
+  test("o canal perde o UID e SOBREVIVE para os outros", async () => {
+    await semearComum();
+    await semearComposicao();
+
+    await executar(ALVO);
+
+    const canal = await dados(`chatChannels/${CANAL}`);
+    assert.ok(canal, "o canal e da MESA: apaga-lo derrubaria a conversa dos outros tres");
+    assert.equal(
+      canal.participantes.includes(ALVO),
+      false,
+      "e o UID do excluido nao pode continuar listado"
+    );
+    assert.deepEqual(
+      canal.participantes,
+      [AMIGO, "uid-terceiro", "uid-quarto"],
+      "os outros tres ficam inteiros — sair um nao pode apagar registro compartilhado por consequencia"
+    );
+  });
+
+  test("a mensagem de OUTRO jogador nao e apagada por consequencia", async () => {
+    await semearComum();
+    await semearComposicao();
+
+    await executar(ALVO);
+
+    const doAmigo = await dados("chatMessages/msg-do-amigo");
+    assert.ok(doAmigo, "a fala do amigo e dele, e continua sendo");
+    assert.equal(doAmigo.conteudo, "boa noite");
   });
 });

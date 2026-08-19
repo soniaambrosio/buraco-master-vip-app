@@ -52,13 +52,13 @@ class ServicoBilling {
   ServicoBilling({
     LojaPlay? loja,
     ValidadorDeCompra? validador,
-    SessaoJogador? sessao,
+    required SessaoJogador sessao,
     PreparadorDeCompra? preparador,
     CatalogoBilling catalogo = CatalogoBilling.oficial,
     void Function(String)? registrador,
   })  : _loja = loja ?? const LojaPlayReal(),
         _validador = validador ?? ValidadorFirebase(),
-        _sessao = sessao ?? const SessaoFirebase(),
+        _sessao = sessao,
         _preparador = preparador ?? PreparadorFirebase(),
         _catalogo = catalogo,
         _registrar = registrador ?? _registroPadrao;

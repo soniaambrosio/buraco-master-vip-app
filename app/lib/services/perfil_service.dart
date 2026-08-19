@@ -1,63 +1,39 @@
-import 'package:firebase_auth/firebase_auth.dart';
-
+import '../ranking/estado_ranking.dart';
 import '../screens/perfil_screen.dart';
 import '../sessao/identidade_publica_sessao.dart';
 
-/// O perfil pedido não pôde ser carregado por falta de fonte (jogador de fora,
-/// perfil removido, ou origem ainda não publicada).
-class PerfilIndisponivel implements Exception {
-  /// Texto curto, já em português e exibível ao jogador.
-  final String motivo;
-
-  const PerfilIndisponivel(this.motivo);
-
-  @override
-  String toString() => 'PerfilIndisponivel: $motivo';
-}
-
 /// Origem dos dados do Perfil (camada de lógica — Claude).
 ///
-/// FASE 1: identidade REAL (Firebase Auth) + arquitetura pronta. Como ainda não
-/// existe persistência (sem Cloud Firestore, a mesa não grava resultados), os
-/// NÚMEROS do perfil são de demonstração enquanto [statsDemo] = true — assim a
-/// tela aprovada continua cheia. Vire para false quando quiser o estado honesto
-/// de jogador novo (zerado).
+/// FASE 1: identidade REAL (sessão canônica) + arquitetura pronta. Como ainda
+/// não existe persistência (sem Cloud Firestore, a mesa não grava resultados),
+/// os NÚMEROS do perfil chegam AUSENTES — nulos, e não zerados. O que não tem
+/// fonte não é desenhado, e é a mesma regra que a Home de produção segue.
 ///
 /// FASE 2: trocar a origem por Firestore (`usuarios/{uid}`) dentro de [carregar],
 /// SEM mudar a assinatura nem o visual. O nome já é real desde a Fase 1.
 class PerfilService {
   const PerfilService();
 
-  /// true  = mostra os números de exemplo aprovados (marketing/screenshots).
-  /// false = estado real de jogador novo (nível 1, stats 0, conquistas travadas).
+  /// true  = mostra os números de exemplo (marketing/screenshots).
+  /// false = estado publicável, em que TUDO o que não tem fonte chega ausente.
   ///
-  /// DESLIGADO para a build de produção. Com `true`, o Perfil montava números
-  /// inventados (nível, vitórias, canastras, conquistas desbloqueadas) ao lado
-  /// do nome e da foto REAIS vindos do Firebase Auth — ou seja, o app afirmava
-  /// ao jogador um histórico que ele não tem. É exatamente o que a política de
-  /// *Misrepresentation* da Play trata, e não é uma questão de estilo: o dado
-  /// era apresentado como sendo dele.
+  /// DESLIGADO, e é decisão desta OS. Com ele ligado, qualquer pessoa que
+  /// instalasse o aplicativo abria o próprio perfil e via nível 24, título
+  /// "Rainha da Canastra", Liga Diamante, 342 vitórias, 1.204 partidas, quatro
+  /// conquistas desbloqueadas e doze presentes — números que não vieram de lugar
+  /// nenhum, apresentados como se fossem dela. Um perfil zerado é feio; um
+  /// perfil que mente é pior.
   ///
-  /// Com `false` a mesma tela mostra o estado honesto de jogador novo — a
-  /// própria classe já foi escrita para os dois casos ([_catalogoTravado] e
-  /// [_catalogoDemo]), então nada de visual muda de forma; muda o conteúdo.
-  ///
-  /// Quando a Fase 2 ligar a leitura no Firestore dentro de [carregar], esta
-  /// constante deixa de ter função e sai junto.
+  /// A chave permanece porque a tela precisa de um jeito de ser vista cheia para
+  /// aprovação visual. O que não pode é o aplicativo publicado usá-la.
   static const bool statsDemo = false;
 
-  /// Catálogo fixo de conquistas do jogo (definições). O `desbloqueada` real virá
-  /// dos dados na Fase 2. Aqui, tudo travado (jogador novo).
-  static const List<Conquista> _catalogoTravado = [
-    Conquista(id: 'primeiro_lugar', label: '1º lugar', icone: 'assets/perfil/conquista_1_lugar.webp', desbloqueada: false),
-    Conquista(id: 'sequencia_10', label: 'Sequência 10', icone: 'assets/perfil/conquista_sequencia_10.webp', desbloqueada: false),
-    Conquista(id: 'cem_canastras', label: '100 canastras', icone: 'assets/perfil/conquista_100_canastras.webp', desbloqueada: false),
-    Conquista(id: 'diamante', label: 'Chegou ao Diamante', icone: 'assets/perfil/conquista_diamante.webp', desbloqueada: false),
-    Conquista(id: 'campeao', label: 'Campeão', icone: 'assets/perfil/conquista_campeao.webp', desbloqueada: false),
-    Conquista(id: 'imortal', label: 'Imortal', icone: 'assets/perfil/conquista_imortal.webp', desbloqueada: false),
-    Conquista(id: 'lenda', label: 'Lenda', icone: 'assets/perfil/conquista_lenda.webp', desbloqueada: false),
-    Conquista(id: 'perfeito', label: 'Perfeito', icone: 'assets/perfil/conquista_perfeito.webp', desbloqueada: false),
-  ];
+  // O catálogo "tudo travado" que existia aqui foi retirado junto com o resto
+  // dos números sem fonte. Ele parecia inofensivo — oito troféus apagados —,
+  // mas afirmava que a pessoa não desbloqueou nenhum, e quem sabe isso é o
+  // backend de recompensas (`RecompensaConcessao`), que o cliente ainda não lê.
+  // A Fase 2 traz o catálogo com o `desbloqueada` de verdade; até lá a seção
+  // não é desenhada.
 
   static const List<Conquista> _catalogoDemo = [
     Conquista(id: 'primeiro_lugar', label: '1º lugar', icone: 'assets/perfil/conquista_1_lugar.webp', desbloqueada: true),
@@ -86,32 +62,18 @@ class PerfilService {
     Presente(id: 'diamante', nome: 'Diamante', icone: 'assets/perfil/presente_diamante.webp', quantidade: 2),
   ];
 
-  /// Nome do Firebase Auth — APRESENTAÇÃO, e só ela.
+  /// Rótulo de apresentação para quem ainda não tem apelido escolhido.
   ///
-  /// Serve de último recurso VISUAL quando o jogador ainda não escolheu apelido.
-  /// Não é identidade e não substitui `publicId` em lugar nenhum.
+  /// ANTES ISTO LIA `FirebaseAuth.instance.currentUser?.displayName`. Funcionava,
+  /// e mesmo assim era uma segunda fonte de nome: o `displayName` do Google e o
+  /// apelido de `publicProfiles` são autoridades diferentes, e na troca de conta
+  /// elas se atualizam em momentos diferentes — o perfil do jogador novo abriria
+  /// com o nome do anterior até o SDK acompanhar.
   ///
-  /// O `try` cobre o mesmo ambiente que `main()` já cobre: sem Firebase
-  /// inicializado (navegador de teste, teste de widget), o perfil abre com o
-  /// nome genérico em vez de explodir.
-  String _nomeDoAuth() {
-    try {
-      final n = FirebaseAuth.instance.currentUser?.displayName?.trim();
-      if (n != null && n.isNotEmpty) return n;
-    } catch (_) {
-      // Sem Firebase: segue com o nome genérico.
-    }
-    return 'Jogador(a)';
-  }
-
-  /// UID do jogador autenticado, ou `null` sem Firebase disponível.
-  String? uidAtual() {
-    try {
-      return FirebaseAuth.instance.currentUser?.uid;
-    } catch (_) {
-      return null; // Firebase indisponível (web de teste) — segue sem identidade.
-    }
-  }
+  /// 'Jogador(a)' é um RÓTULO, não um nome: ninguém consegue buscar por ele e
+  /// ele não é gravado em lugar nenhum. Fallback de apresentação não é fallback
+  /// de identidade.
+  static const String _rotuloSemApelido = 'Jogador(a)';
 
   /// Carrega o perfil. FASE 2: substituir o corpo por leitura no Firestore.
   ///
@@ -123,41 +85,46 @@ class PerfilService {
   /// O apelido de `publicProfiles` GANHA do `displayName` do Google, porque é o
   /// nome que os outros jogadores veem — é a autoridade sobre como este jogador
   /// se chama dentro do jogo.
-  ///
-  /// [jogadorId] é o seam aberto pela integração de Ranking/Hall: tocar num
-  /// jogador da lista chega aqui com o **identificador público** (UID), nunca
-  /// com e-mail. Quando ele aponta para outra pessoa, não há de onde ler — não
-  /// existe persistência de perfil de terceiro — e o método falha em vez de
-  /// devolver dado inventado. Ligar a fonte real é trocar só este trecho.
-  ///
-  /// Os dois parâmetros convivem porque respondem a perguntas diferentes:
-  /// `identidade` diz COMO este jogador se chama; `jogadorId` diz DE QUEM é o
-  /// perfil pedido. O nome canônico só se aplica ao perfil do próprio dono.
   Future<PerfilVM> carregar({
     bool ehMeuPerfil = true,
     IdentidadePublica? identidade,
-    String? jogadorId,
+    // O ranking chega PRONTO de fora, e este serviço não o consulta.
+    //
+    // Quem consulta é o leitor, uma vez, e Home e Perfil leem o mesmo
+    // resultado. Se o serviço chamasse a callable por conta própria, seriam
+    // duas consultas do mesmo fato e duas chances de as telas discordarem — que
+    // é a forma que o defeito do Bronze tomaria hoje.
+    //
+    // NULO é "ninguém me deu ranking", e não "sem ranking": montar o Perfil sem
+    // casca é legítimo (prévia, teste de widget), e nesse caso vale o que
+    // `_montar` já decidia — a constante da casca, ou a fixture da prévia
+    // quando a chave de demonstração está ligada.
+    EstadoRanking? ranking,
   }) async {
     await Future.delayed(const Duration(milliseconds: 350)); // simula I/O (Fase 2: await Firestore)
-
-    if (jogadorId != null && jogadorId.isNotEmpty && jogadorId != uidAtual()) {
-      throw const PerfilIndisponivel(
-        'O perfil deste jogador ainda não está disponível.',
-      );
-    }
-
     final apelido = identidade?.apelido.trim() ?? '';
+    // Sem apelido escolhido, o `publicId` é o que os outros jogadores veem —
+    // ele É o identificador público, e exibi-lo não vaza nada. O rótulo genérico
+    // fica para quando não há identidade nenhuma.
+    final publico = identidade?.publicId ?? '';
     return _montar(
       ehMeuPerfil: ehMeuPerfil,
-      nome: apelido.isNotEmpty ? apelido : _nomeDoAuth(),
+      nome: apelido.isNotEmpty
+          ? apelido
+          : (publico.isNotEmpty ? publico : _rotuloSemApelido),
       demo: statsDemo,
+      ranking: ranking,
     );
   }
 
   /// VM mínimo para o estado "carregando" (a tela mostra skeleton; nada é exibido).
-  PerfilVM vmPlaceholder() => _montar(ehMeuPerfil: true, nome: '…', demo: false);
+  ///
+  /// O ranking aqui é [FaseRanking.carregando], e não `indisponivel`: são
+  /// estados diferentes, e este VM existe justamente durante a consulta.
+  PerfilVM vmPlaceholder() =>
+      _montar(ehMeuPerfil: true, nome: '…', demo: false, ranking: const EstadoRanking.carregando());
 
-  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required bool demo}) {
+  PerfilVM _montar({required bool ehMeuPerfil, required String nome, required bool demo, EstadoRanking? ranking}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
       nome: nome,
@@ -166,16 +133,37 @@ class PerfilService {
       moldura: 'assets/perfil/vitrine_moldura.webp',
       dorso: 'assets/perfil/vitrine_dorso.webp',
       efeito: 'assets/perfil/vitrine_efeito.webp',
-      nivel: demo ? 24 : 1,
-      xpAtual: demo ? 3240 : 0,
-      xpProximo: demo ? 5000 : 1000,
-      titulo: demo ? 'Rainha da Canastra' : 'Novato(a)',
-      tituloEmoji: demo ? '👑' : '🃏',
-      liga: demo ? 'Diamante' : 'Bronze',
-      posicaoMundial: demo ? 128 : 0,
+      // NULO É A RESPOSTA CERTA AQUI, e não o zero.
+      //
+      // O caminho não-demo escrevia nível 1, XP 0/1000 e título 'Novato(a)'.
+      // Nenhum desses números veio de lugar nenhum: não existe sistema de XP e
+      // título é concedido, não presumido. Com nulo, a tela não desenha o
+      // elemento; quando a FASE 2 trouxer Firestore, é aqui que os valores
+      // passam a chegar, e a tela volta a mostrá-los sem precisar mudar.
+      nivel: demo ? 24 : null,
+      xpAtual: demo ? 3240 : null,
+      xpProximo: demo ? 5000 : null,
+      titulo: demo ? 'Rainha da Canastra' : null,
+      tituloEmoji: demo ? '👑' : null,
+      // AQUI NASCIA O DEFEITO: `liga: demo ? 'Diamante' : 'Bronze'` e
+      // `posicaoMundial: demo ? 128 : 0`. Com a chave de demonstração desligada
+      // — que é o estado publicável — todo jogador recebia Liga Bronze e
+      // colocação zero, e a tela desenhava os dois. Não vinham de lugar nenhum:
+      // eram o valor que os tipos `String` e `int` exigiam de um produtor que
+      // não tinha o dado.
+      //
+      // Com a chave LIGADA, liga e colocação continuam sendo afirmadas, porque
+      // aí são fixture declarada de prévia. Desligada, o Perfil lê a MESMA
+      // constante que a Home: não há autoridade de ranking nesta casca.
+      ranking: ranking ??
+          (demo
+              ? const EstadoRanking.disponivel(liga: 'Diamante', posicaoMundial: 128)
+              : rankingDaCascaPublicavel),
+      // Quatro zeros não são "o placar de quem ainda não jogou": são um placar
+      // sem placar nenhum atrás. Nada grava resultado de partida no cliente.
       stats: demo
           ? const PerfilStats(vitorias: 342, partidas: 1204, canastras: 89, aproveitamento: 68)
-          : const PerfilStats(vitorias: 0, partidas: 0, canastras: 0, aproveitamento: 0),
+          : null,
       ultimaConquista: demo
           ? const UltimaConquista(
               titulo: 'Primeira Batida Real',
@@ -184,8 +172,11 @@ class PerfilService {
               raridade: 'Comum Especial',
             )
           : null,
-      presentesCount: demo ? 12 : 0,
-      conquistas: demo ? _catalogoDemo : _catalogoTravado,
+      presentesCount: demo ? 12 : null,
+      // NULO, e não `const []`: nulo diz "não perguntei a ninguém", e a lista
+      // vazia diria "perguntei e a resposta foi nenhuma". Só a segunda autoriza
+      // o recado "ainda sem conquistas" — e ninguém perguntou nada.
+      conquistas: demo ? _catalogoDemo : null,
       vitrine: _vitrinePadrao,
       presentes: demo ? _presentesDemo : const [],
     );

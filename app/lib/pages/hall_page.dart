@@ -127,7 +127,7 @@ class _HallPageState extends State<HallPage> {
         }
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => PerfilPage(ehMeuPerfil: false, jogadorId: id),
+            builder: (_) => PerfilPage(ehMeuPerfil: false, publicIdVisitado: id),
           ),
         );
       },

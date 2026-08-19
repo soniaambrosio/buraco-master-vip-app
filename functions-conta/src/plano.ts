@@ -229,13 +229,23 @@ export const ETAPAS: readonly Etapa[] = [
       "moderacao.reportReceipts",
       "moderacao.blocksContraOExcluido",
       "moderacao.mutesContraOExcluido",
+      // CHAT. As mensagens do excluido saem; os canais apenas perdem o UID,
+      // porque a mesa e de mais gente.
+      "moderacao.mensagensDeChat",
+      "moderacao.canaisDeChat",
     ],
     resumo:
       "Bloqueios, silenciamentos e comprovantes de denuncia — as listas dele e as referencias a ele nas listas dos outros. Denuncias, sancoes e estado disciplinar NAO entram: sao retidos.",
   },
   {
     id: "rastreabilidadeDoJogador",
-    itens: ["rastreabilidade.matchHistory"],
+    itens: [
+      "rastreabilidade.matchHistory",
+      // A SUBCOLECAO ANTES DA RAIZ: `delete` no documento pai nao apaga
+      // subcolecao, e a raiz apagada primeiro deixaria `items` viva e orfa.
+      "rastreabilidade.conquistas",
+      "rastreabilidade.conquistasRaiz",
+    ],
     resumo:
       "So a projecao pessoal do historico de partidas. `matches`, `events`, `rankingLedger` e `fraudSignals` ficam — integridade competitiva.",
   },
@@ -253,6 +263,11 @@ export const ETAPAS: readonly Etapa[] = [
   {
     id: "billing",
     itens: [
+      // A PONTE OPACA PRIMEIRO, e nesta ordem: o indice e encontrado ATRAVES da
+      // identidade. Invertido, o indice ficaria orfao e inalcancavel — um
+      // vinculo remanescente que nenhuma varredura futura acharia.
+      "billing.indiceDeVinculo",
+      "billing.identidadeDeCompra",
       "billing.playerEntitlementsInterno",
       "billing.playerEntitlements",
       "billing.compras",

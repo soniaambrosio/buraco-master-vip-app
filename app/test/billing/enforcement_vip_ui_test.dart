@@ -201,83 +201,38 @@ void main() {
   });
 
   // =========================================================================
-  group('MESA — mesa VIP / ranqueada / privada (criterio de reprovacao 2)', () {
-    testWidgets('MESA-01 sem VIP, os tipos pagos vem BLOQUEADOS',
-        (tester) async {
-      await _telefone(tester);
-
-      final escolhidos = <TipoMesa>[];
-      final bloqueados = <TipoMesa>[];
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ConfigurarMesaScreen(
-            vm: ConfigMesaVM.mock(tipo: TipoMesa.publica),
-            onVoltar: () {},
-            onTipo: escolhidos.add,
-            onTipoBloqueado: bloqueados.add,
-            onModalidade: (_) {},
-            onVerRegras: () {},
-            onModo: (_) {},
-            onPontos: (_) {},
-            onAposta: (_) {},
-            onTempo: (_) {},
-            onChat: (_) {},
-            onEspectadores: (_) {},
-            onCopiar: () {},
-            onAlternarCadeira: (_) {},
-            onCriarMesa: () {},
-          ),
-        ),
-      );
-
-      _descartarOverflowDaFonteDeTeste(tester);
-
-      await tester.tap(find.text('VIP').first);
-      await tester.pump();
-
-      expect(escolhidos, isNot(contains(TipoMesa.vip)));
-      expect(bloqueados, contains(TipoMesa.vip));
-    });
-
-    testWidgets('MESA-02 com VIP, os tipos pagos sao escolhiveis',
-        (tester) async {
-      await _telefone(tester);
-
-      final escolhidos = <TipoMesa>[];
-      final bloqueados = <TipoMesa>[];
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ConfigurarMesaScreen(
-            vm: ConfigMesaVM.mock(tipo: TipoMesa.publica, ehVip: true),
-            onVoltar: () {},
-            onTipo: escolhidos.add,
-            onTipoBloqueado: bloqueados.add,
-            onModalidade: (_) {},
-            onVerRegras: () {},
-            onModo: (_) {},
-            onPontos: (_) {},
-            onAposta: (_) {},
-            onTempo: (_) {},
-            onChat: (_) {},
-            onEspectadores: (_) {},
-            onCopiar: () {},
-            onAlternarCadeira: (_) {},
-            onCriarMesa: () {},
-          ),
-        ),
-      );
-
-      _descartarOverflowDaFonteDeTeste(tester);
-
-      await tester.tap(find.text('VIP').first);
-      await tester.pump();
-
-      expect(escolhidos, contains(TipoMesa.vip));
-      expect(bloqueados, isEmpty);
-    });
-  });
+  // =========================================================================
+  // APOSENTADO — MESA-01 e MESA-02 (bloqueio de tipos pagos na tela)
+  // =========================================================================
+  //
+  // O QUE ELES PROTEGIAM, e continua protegido: sem VIP, os tipos pagos não
+  // podem ser escolhidos; com VIP, podem.
+  //
+  // POR QUE SAÍRAM DAQUI: eles tocavam em "VIP" dentro de `ConfigurarMesaScreen`
+  // e liam o callback `onTipoBloqueado`. Aquela tela deixou de ESCOLHER o tipo —
+  // hoje ela configura um tipo já escolhido, e o seu título é "Configurar Mesa
+  // VIP". O callback continuava declarado e nunca era invocado, então estes dois
+  // casos passaram a medir uma responsabilidade que mudou de endereço. Mantê-los
+  // verdes exigiria devolver o seletor para cá, que é justamente o que a
+  // composição decidiu não fazer.
+  //
+  // ONDE A PROVA VIVE AGORA, e são DUAS camadas:
+  //
+  //   UX ............. test/mesa/gate_vip_selecao_test.dart
+  //                    SEL-01 (sem VIP não prossegue), SEL-02 (com VIP prossegue),
+  //                    SEL-03 (o gate é da opção paga, não um cadeado geral),
+  //                    SEL-04 (mock não concede por omissão),
+  //                    SEL-05 (estado desconhecido falha fechado).
+  //
+  //   AUTORIDADE ..... functions-mesas/test/elegibilidade.test.js
+  //                    functions-mesas/test/decisao.test.js
+  //                    functions-mesas/test/politica.test.js
+  //                    É ela que recusa cliente adulterado, deep link e mensagem
+  //                    forjada — coisas que teste de widget nunca provou.
+  //
+  //   AS DUAS JUNTAS . CRUZ-01, no mesmo arquivo de UX.
+  //
+  // Nenhum teste de backend foi removido ou enfraquecido nesta migração.
 
   // =========================================================================
   group('ESCOPO — o portao visto pela arvore de widgets', () {

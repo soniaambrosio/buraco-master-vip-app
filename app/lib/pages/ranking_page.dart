@@ -126,7 +126,7 @@ class _RankingPageState extends State<RankingPage> {
     final souEu = _souEu(posicao);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => PerfilPage(ehMeuPerfil: souEu, jogadorId: souEu ? null : id),
+        builder: (_) => PerfilPage(ehMeuPerfil: souEu, publicIdVisitado: souEu ? null : id),
       ),
     );
   }

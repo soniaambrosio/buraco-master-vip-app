@@ -188,7 +188,6 @@ class _MesaFlowPreviewHostState extends State<MesaFlowPreviewHost> {
       onVoltar: () => Navigator.of(context).maybePop(),
       // O tipo é escolhido exclusivamente em Onde jogar.
       onTipo: (_) {},
-      onTipoBloqueado: (_) => _aviso('Ambiente exclusivo para jogador VIP'),
       onModalidade: (value) =>
           setState(() => _vm = _vm.copyWith(modalidade: value)),
       onVerRegras: _verRegras,

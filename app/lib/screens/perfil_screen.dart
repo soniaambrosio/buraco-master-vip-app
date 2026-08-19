@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../ranking/estado_ranking.dart';
+
+export '../ranking/estado_ranking.dart' show EstadoRanking, FaseRanking;
+
 enum PerfilEstado { carregando, normal, erro }
 
 enum NavDestino { inicio, ranking, loja, perfil }
@@ -84,17 +88,49 @@ class PerfilVM {
   final String moldura;
   final String dorso;
   final String efeito;
-  final int nivel;
-  final int xpAtual;
-  final int xpProximo;
-  final String titulo;
-  final String tituloEmoji;
-  final String liga;
-  final int posicaoMundial;
-  final PerfilStats stats;
+
+  // O QUE PODE SER NULO, E POR QUÊ.
+  //
+  // Progressão (nível/XP/título), estatísticas, presentes e conquistas são
+  // NULÁVEIS porque hoje não existe autoridade que os informe: nada grava
+  // resultado de partida no cliente, não há sistema de XP, título é concedido e
+  // quem sabe o que foi desbloqueado é o backend de recompensas, que o cliente
+  // ainda não lê. Nulo aqui quer dizer "não há fonte", e a tela responde não
+  // desenhando o elemento — a mesma regra que a Home de produção já seguia.
+  //
+  // O MOTIVO DE NÃO SEREM ZERO. `nivel: 1`, `stats: 0/0/0/0` e oito troféus
+  // apagados pareciam modéstia, e são o contrário: um zero desenhado é uma
+  // AFIRMAÇÃO. Diz que a pessoa jogou e não ganhou, que foi avaliada e ficou na
+  // base. Ninguém a avaliou. Um perfil vazio é feio; um perfil que inventa é
+  // pior.
+  //
+  // [conquistas] distingue os dois casos que a lista vazia colapsava: `null` é
+  // "não há fonte" e a seção inteira sai; `[]` é uma fonte que respondeu "nenhuma
+  // ainda", e aí o recado de estado vazio é legítimo. É a mesma separação que
+  // [FaseRanking] faz para liga e colocação.
+  final int? nivel;
+  final int? xpAtual;
+  final int? xpProximo;
+  final String? titulo;
+  final String? tituloEmoji;
+
+  /// O estado competitivo, como um valor só.
+  ///
+  /// ERA `String liga` + `int posicaoMundial`, e o preço eram dois campos
+  /// obrigatórios que o produtor tinha de preencher mesmo sem ter o dado — o
+  /// serviço preenchia com `'Bronze'` e `0`, e a tela desenhava os dois como se
+  /// fossem conquista e colocação. Um tipo que não sabe dizer "não sei" obriga
+  /// quem o constrói a mentir.
+  ///
+  /// Não é anulável, e isso é de propósito: [EstadoRanking] JÁ sabe dizer "não
+  /// sei" por dentro, com quatro fases distintas. Um `EstadoRanking?` teria dois
+  /// jeitos de escrever a mesma ausência, e a duplicidade é justamente o que
+  /// produziu o Bronze.
+  final EstadoRanking ranking;
+  final PerfilStats? stats;
   final UltimaConquista? ultimaConquista;
-  final int presentesCount;
-  final List<Conquista> conquistas;
+  final int? presentesCount;
+  final List<Conquista>? conquistas;
   final List<ItemVitrine> vitrine;
   final List<Presente> presentes;
 
@@ -111,8 +147,7 @@ class PerfilVM {
     required this.xpProximo,
     required this.titulo,
     required this.tituloEmoji,
-    required this.liga,
-    required this.posicaoMundial,
+    required this.ranking,
     required this.stats,
     required this.ultimaConquista,
     required this.presentesCount,
@@ -121,10 +156,39 @@ class PerfilVM {
     required this.presentes,
   });
 
+  /// O mesmo perfil, com outro estado competitivo.
+  ///
+  /// Existe porque o ranking é a única parte do VM que muda SOZINHA depois da
+  /// carga: o resto vem de uma consulta que já terminou, e ele vem de outra que
+  /// ainda pode estar em voo. Sem isto, a página teria de recarregar o perfil
+  /// inteiro para trocar uma liga — ou, pior, congelar o ranking no instante da
+  /// carga e nunca mais atualizá-lo.
+  PerfilVM comRanking(EstadoRanking outro) => PerfilVM(
+    ehMeuPerfil: ehMeuPerfil,
+    nome: nome,
+    avatar: avatar,
+    mascote: mascote,
+    moldura: moldura,
+    dorso: dorso,
+    efeito: efeito,
+    nivel: nivel,
+    xpAtual: xpAtual,
+    xpProximo: xpProximo,
+    titulo: titulo,
+    tituloEmoji: tituloEmoji,
+    ranking: outro,
+    stats: stats,
+    ultimaConquista: ultimaConquista,
+    presentesCount: presentesCount,
+    conquistas: conquistas,
+    vitrine: vitrine,
+    presentes: presentes,
+  );
+
   factory PerfilVM.mock({bool ehMeuPerfil = true}) {
     return PerfilVM(
       ehMeuPerfil: ehMeuPerfil,
-      nome: 'Sônia Rainha',
+      nome: 'Aurora',
       avatar: '👑',
       mascote: '🦊',
       moldura: 'assets/perfil/vitrine_moldura.webp',
@@ -135,8 +199,13 @@ class PerfilVM {
       xpProximo: 5000,
       titulo: 'Rainha da Canastra',
       tituloEmoji: '👑',
-      liga: 'Diamante',
-      posicaoMundial: 128,
+      // Maquete: liga e colocação são AFIRMADAS aqui porque este factory existe
+      // só para o protótipo visual. Nenhuma rota que nasça em `main()` o
+      // alcança — quem monta o Perfil publicável é o `PerfilService`.
+      ranking: const EstadoRanking.disponivel(
+        liga: 'Diamante',
+        posicaoMundial: 128,
+      ),
       stats: const PerfilStats(
         vitorias: 342,
         partidas: 1204,
@@ -358,12 +427,18 @@ class _PerfilScreenState extends State<PerfilScreen> {
                 _ultimaConquista(vm.ultimaConquista!),
               ],
               _presentes(),
-              _tituloSecao(
-                'CONQUISTAS',
-                acao: 'ver todas ›',
-                onAcao: widget.onVerTodasConquistas,
-              ),
-              _conquistas(),
+              // Sem fonte de conquistas, a seção inteira sai — título incluído.
+              // Deixar o título com um recado embaixo já seria afirmar: "ainda
+              // sem conquistas" é uma frase sobre a vida da pessoa, e ninguém
+              // conferiu isso. Com fonte que responde vazio, o recado volta.
+              if (vm.conquistas != null) ...[
+                _tituloSecao(
+                  'CONQUISTAS',
+                  acao: 'ver todas ›',
+                  onAcao: widget.onVerTodasConquistas,
+                ),
+                _conquistas(vm.conquistas!),
+              ],
               _tituloSecao(
                 'VITRINE EQUIPADA',
                 acao: vm.ehMeuPerfil ? 'trocar ›' : null,
@@ -480,33 +555,36 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   ),
                   child: Center(child: _icone(vm.avatar, 44)),
                 ),
-                Positioned(
-                  left: 0,
-                  bottom: 8,
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [_ouroClaro, Color(0xFFD5A84A)],
+                // Sem sistema de progressão ligado, não há nível para carimbar
+                // no avatar. O selo some inteiro em vez de mostrar "1".
+                if (vm.nivel != null)
+                  Positioned(
+                    left: 0,
+                    bottom: 8,
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [_ouroClaro, Color(0xFFD5A84A)],
+                        ),
+                        border: Border.all(color: const Color(0xFF3A2606), width: 2),
+                        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
                       ),
-                      border: Border.all(color: const Color(0xFF3A2606), width: 2),
-                      boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
-                    ),
-                    child: Text(
-                      '${vm.nivel}',
-                      style: const TextStyle(
-                        color: Color(0xFF3A2606),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
+                      child: Text(
+                        '${vm.nivel}',
+                        style: const TextStyle(
+                          color: Color(0xFF3A2606),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
                   ),
-                ),
                 Positioned(
                   right: 0,
                   bottom: 4,
@@ -594,49 +672,146 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ],
             ],
           ),
-          const SizedBox(height: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: const LinearGradient(colors: [Color(0xFF2A1E0C), Color(0xFF191007)]),
-              border: Border.all(color: _ouro.withValues(alpha: .30)),
-            ),
-            child: Text(
-              '${vm.tituloEmoji} ${vm.titulo}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFF0D99A),
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
+          // Título honorífico só existe se alguém o concedeu. Sem fonte, a
+          // faixa inteira sai — 'Novato(a)' também é um título inventado, e um
+          // que o jogo põe na pessoa sem ela ter feito nada para merecê-lo.
+          if (vm.titulo != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(colors: [Color(0xFF2A1E0C), Color(0xFF191007)]),
+                border: Border.all(color: _ouro.withValues(alpha: .30)),
+              ),
+              child: Text(
+                vm.tituloEmoji == null ? vm.titulo! : '${vm.tituloEmoji} ${vm.titulo}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFF0D99A),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
+          ],
           const SizedBox(height: 7),
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 6,
-            children: [
-              const Text('💎 Liga', style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12)),
-              Text(
-                vm.liga,
-                style: const TextStyle(color: Color(0xFF9FDCFF), fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                '· #${vm.posicaoMundial} no mundo',
-                style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
-              ),
-            ],
-          ),
+          // A LINHA COMPETITIVA.
+          //
+          // O rótulo e o valor da liga ficam sempre — sem liga, o valor é o
+          // travessão de [EstadoRanking.ligaParaExibicao], que é uma ausência
+          // admitida e não desloca o cabeçalho. Já a colocação SOME quando não
+          // existe: não há travessão que faça `#` parecer honesto, e o trecho
+          // é o último da linha, então tirá-lo não mexe em mais nada.
+          //
+          // O PREFIXO "Liga" SÓ APARECE DIANTE DE UMA LIGA. O backend usa o
+          // mesmo campo para o nome da Liga e para o estado de qualificação
+          // ("Em colocacao"), e distingue os dois por `ligaId`. Sem esta
+          // guarda, a tela escreveria "💎 Liga Em colocacao" — que não é
+          // português e, pior, faz um estado passar por conquista.
+          _linhaCompetitiva(vm.ranking),
         ],
       ),
     );
   }
 
+  /// A liga e a colocação, para os olhos e para o leitor de tela.
+  ///
+  /// ---------------------------------------------------------------------
+  /// POR QUE A SEMÂNTICA NÃO É O TEXTO VISÍVEL
+  /// ---------------------------------------------------------------------
+  ///
+  /// Lido em voz alta, o que está na tela vira lixo. "💎 Liga", "Ouro" e "·
+  /// #128 no mundo" chegam como três fragmentos soltos, o emoji é anunciado
+  /// como "diamante" — que parece o NOME de uma liga —, o `·` vira ruído e o
+  /// `#` costuma sair como "cerquilha". E o travessão da ausência, que aos
+  /// olhos se lê como "não tem", é anunciado como "traço".
+  ///
+  /// Por isso o bloco inteiro vira UM nó semântico com uma frase escrita para
+  /// ser ouvida, e os filhos saem da árvore de acessibilidade. Não é
+  /// duplicação: é a mesma informação dita de dois jeitos, cada um no seu
+  /// meio. O que não pode acontecer — e é o que `excludeSemantics` impede — é
+  /// o leitor de tela anunciar a frase E depois soletrar os fragmentos.
+  ///
+  /// Os estados não numéricos são anunciados como estados, e nunca como uma
+  /// liga vazia: "carregando" não é ausência de liga, e "ainda não
+  /// classificado" não é o mesmo que "não consegui carregar".
+  Widget _linhaCompetitiva(EstadoRanking ranking) {
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: _anuncioCompetitivo(ranking),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 6,
+        children: [
+          if (ranking.ehLigaDeVerdade || !ranking.temLiga)
+            const Text(
+              '💎 Liga',
+              style: TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+            ),
+          Text(
+            ranking.ligaParaExibicao,
+            style: const TextStyle(
+              color: Color(0xFF9FDCFF),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (ranking.temPosicao)
+            Text(
+              '· #${ranking.posicaoMundial} no mundo',
+              style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// A frase que o leitor de tela anuncia.
+  static String _anuncioCompetitivo(EstadoRanking ranking) {
+    switch (ranking.fase) {
+      case FaseRanking.carregando:
+        return 'Carregando sua classificação.';
+      case FaseRanking.falha:
+        return 'Não foi possível carregar sua classificação. '
+            'Use o botão de tentar novamente.';
+      // NEUTRO, e essa é a correção: a recusa pode ser de credencial OU de
+      // atestação (App Check), e daqui não dá para saber qual. A frase não
+      // acusa a sessão de nada e aponta para a única ação que pode funcionar.
+      case FaseRanking.acessoRecusado:
+        return 'Não foi possível acessar sua classificação. Tente novamente.';
+      case FaseRanking.sessaoInvalida:
+        return 'Classificação indisponível: entre na sua conta de novo.';
+      case FaseRanking.indisponivel:
+        return 'Classificação ainda não disponível.';
+      case FaseRanking.disponivel:
+        final liga = ranking.liga;
+        final posicao = ranking.posicaoMundial;
+        if (liga == null && posicao == null) return 'Ainda não classificado.';
+        // Liga sem `ligaId` é rótulo de qualificação, e é anunciado como ele
+        // é — "Em colocacao" —, sem a palavra Liga na frente.
+        final ligaDita = ranking.ehLigaDeVerdade
+            ? 'Liga $liga'
+            : (liga ?? 'Sem liga');
+        if (posicao == null) return '$ligaDita. Sem colocação no mundo.';
+        return '$ligaDita. Posição $posicao no mundo.';
+    }
+  }
+
   Widget _xp() {
-    final progresso = vm.xpProximo <= 0 ? 0.0 : (vm.xpAtual / vm.xpProximo).clamp(0.0, 1.0);
+    // Barra de XP sem sistema de XP seria uma barra vazia dizendo que a pessoa
+    // está no começo de uma jornada que o jogo ainda não conta. Os três campos
+    // andam juntos: meia barra é tão inventada quanto a barra inteira.
+    final nivel = vm.nivel;
+    final xpAtual = vm.xpAtual;
+    final xpProximo = vm.xpProximo;
+    if (nivel == null || xpAtual == null || xpProximo == null) {
+      return const SizedBox.shrink();
+    }
+    final progresso = xpProximo <= 0 ? 0.0 : (xpAtual / xpProximo).clamp(0.0, 1.0);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 13, 16, 0),
       child: Column(
@@ -648,7 +823,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   children: [
                     const TextSpan(text: 'Nível '),
                     TextSpan(
-                      text: '${vm.nivel}',
+                      text: '$nivel',
                       style: const TextStyle(color: _ouro, fontWeight: FontWeight.w800),
                     ),
                   ],
@@ -657,7 +832,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ),
               const Spacer(),
               Text(
-                '${_numero(vm.xpAtual)} / ${_numero(vm.xpProximo)} XP',
+                '${_numero(xpAtual)} / ${_numero(xpProximo)} XP',
                 style: const TextStyle(color: Color(0xFFC9BA99), fontSize: 11),
               ),
             ],
@@ -691,11 +866,16 @@ class _PerfilScreenState extends State<PerfilScreen> {
   }
 
   Widget _stats() {
+    // Vitórias, partidas e canastras vêm de resultado de partida gravado. Nada
+    // grava resultado no cliente hoje, então quatro zeros não seriam "o placar
+    // de quem ainda não jogou" — seriam um placar sem placar nenhum atrás.
+    final stats = vm.stats;
+    if (stats == null) return const SizedBox.shrink();
     final dados = [
-      (_numero(vm.stats.vitorias), 'Vitórias'),
-      (_numero(vm.stats.partidas), 'Partidas'),
-      (_numero(vm.stats.canastras), 'Canastras'),
-      ('${vm.stats.aproveitamento}%', 'Aproveit.'),
+      (_numero(stats.vitorias), 'Vitórias'),
+      (_numero(stats.partidas), 'Partidas'),
+      (_numero(stats.canastras), 'Canastras'),
+      ('${stats.aproveitamento}%', 'Aproveit.'),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
@@ -828,6 +1008,11 @@ class _PerfilScreenState extends State<PerfilScreen> {
   }
 
   Widget _presentes() {
+    // Presente é item de inventário, e não existe inventário ligado no cliente.
+    // Sem fonte, o baú não é desenhado — um baú que abre vazio é pior do que
+    // ele não estar ali.
+    final quantos = vm.presentesCount;
+    if (quantos == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       child: Material(
@@ -861,7 +1046,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        'presentes que você recebeu · ${vm.presentesCount}',
+                        'presentes que você recebeu · $quantos',
                         style: const TextStyle(color: Color(0xFFC3B0E8), fontSize: 10.5),
                       ),
                     ],
@@ -876,8 +1061,13 @@ class _PerfilScreenState extends State<PerfilScreen> {
     );
   }
 
-  Widget _conquistas() {
-    if (vm.conquistas.isEmpty) {
+  /// A grade de conquistas de uma fonte que RESPONDEU.
+  ///
+  /// Recebe a lista por parâmetro, e não por `vm.conquistas`, porque quem
+  /// decide se a seção existe é [_conteudo] — aqui a lista já é uma resposta, e
+  /// vazia significa "nenhuma ainda", que é um recado legítimo.
+  Widget _conquistas(List<Conquista> conquistas) {
+    if (conquistas.isEmpty) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 16),
         padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
@@ -897,7 +1087,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GridView.builder(
-        itemCount: vm.conquistas.length,
+        itemCount: conquistas.length,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -907,7 +1097,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
           childAspectRatio: 1,
         ),
         itemBuilder: (context, index) {
-          final conquista = vm.conquistas[index];
+          final conquista = conquistas[index];
           return Opacity(
             opacity: conquista.desbloqueada ? 1 : .72,
             child: Material(

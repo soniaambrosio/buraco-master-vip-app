@@ -183,7 +183,7 @@ void main() {
 
       final alvo = destino(tester);
       expect(alvo, isA<PerfilPage>());
-      expect((alvo as PerfilPage).jogadorId, 'uid-sete');
+      expect((alvo as PerfilPage).publicIdVisitado, 'uid-sete');
       expect(alvo.ehMeuPerfil, isFalse);
 
       await desmontarEDrenarTimers(tester);
@@ -204,7 +204,7 @@ void main() {
 
       final alvo = destino(tester) as PerfilPage;
       expect(alvo.ehMeuPerfil, isTrue);
-      expect(alvo.jogadorId, isNull);
+      expect(alvo.publicIdVisitado, isNull);
 
       await desmontarEDrenarTimers(tester);
     });
