@@ -11,7 +11,7 @@
     "build": "tsc",
     "lint": "tsc --noEmit",
     "//test": "Mesmo desenho de functions-moderacao: compila primeiro porque o alvo do teste e o modulo JA compilado em lib/. Os alvos sao explicitos, e nao um glob: um arquivo novo na pasta passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
-    "test": "tsc && node --test test/politica.test.js test/ligas.test.js test/ordenacao.test.js test/ledger.test.js test/temporadas.test.js test/apuracao.test.js test/projecao.test.js test/resultado.test.js test/elo.test.js test/competicao.test.js test/elegibilidade.test.js test/ciclo.test.js test/identidade.test.js test/passe.test.js",
+    "test": "tsc && node --test test/politica.test.js test/ligas.test.js test/ordenacao.test.js test/ledger.test.js test/temporadas.test.js test/apuracao.test.js test/projecao.test.js test/resultado.test.js test/elo.test.js test/competicao.test.js test/elegibilidade.test.js test/ciclo.test.js test/identidade.test.js test/passe.test.js test/estatisticas.test.js",
     "//test:emulador:passe": "INTEGRACAO DO PASSE DE CORTESIA contra o Firestore real. Separado do alvo abaixo porque sao dominios diferentes e falham por motivos diferentes: aquele prova ranking, este prova concessao. Um alvo unico faria a suite do passe ser lida como regressao de ranking.",
     "test:emulador:passe": "tsc && cd ../ && firebase emulators:exec --only firestore --project demo-bmv \"cd functions-ranking && node --test test/integracao.passe.emulador.test.js\"",
     "//test:emulador": "INTEGRACAO CONTRA O FIRESTORE REAL. Fecha a lacuna que a OS anterior declarou (transacao, concorrencia e paginacao nao exercitadas). Fora do `npm test` porque exige emulador; roda a partir de firebase/ para achar firebase.json.",
