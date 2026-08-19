@@ -34,6 +34,25 @@ import 'package:flutter/widgets.dart';
 const String kAssetDaAbertura =
     'assets/rive/splash_constelacao_master_vip_v2.riv';
 
+/// A constelação, o SEGUNDO asset visual autoritativo.
+///
+/// Ela existe fora do `.riv` por uma razão medida, não por gosto: no projeto de
+/// autoria a constelação está lá, mas ela NÃO entra na exportação da timeline
+/// `entrada_splash`. O binário não pode ser tocado, então a camada que faltava
+/// entra por cima, em vetor, com a MESMA área de referência 1080 × 1920 e o
+/// mesmo ajuste `contain` — é isso que faz as duas coincidirem em qualquer
+/// tela, em vez de "quase".
+const String kAssetDaConstelacao =
+    'assets/rive/constelacao_dourada_master_vip.svg';
+
+/// Quanto dura o fade de entrada da constelação, em fração da abertura.
+///
+/// 3 s × 1/5 = 600 ms, no começo. É um fade e nada mais: ele não move
+/// geometria, não conclui a abertura e não disputa autoridade com a timeline.
+/// Proporcional pelo mesmo motivo do relógio de segurança — os testes encurtam
+/// a abertura, e um valor fixo faria cada caso esperar por nada.
+const double kProporcaoDoFadeDaConstelacao = 1 / 5;
+
 /// O artboard, escolhido pelo NOME.
 ///
 /// Nunca por posição: um reexport da arte pode reordenar os artboards, e a

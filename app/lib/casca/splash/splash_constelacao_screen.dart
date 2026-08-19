@@ -39,10 +39,12 @@
 // explícito com saída.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart' show Scaffold;
 import 'package:flutter/widgets.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import 'abertura_rive.dart';
 import 'contrato_da_abertura.dart';
@@ -87,6 +89,9 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
   AberturaCarregada? _arte;
   FalhaDaAbertura? _falha;
 
+  /// Os bytes do SVG da constelação. Nulo = não entrou, e a abertura segue.
+  Uint8List? _constelacao;
+
   /// A plataforma pediu movimento reduzido nesta execução.
   bool _movimentoReduzido = false;
 
@@ -105,6 +110,9 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
   Duration get _janelaDeMovimentoReduzido =>
       widget.duracao * kProporcaoDeMovimentoReduzido;
 
+  Duration get _fadeDaConstelacao =>
+      widget.duracao * kProporcaoDoFadeDaConstelacao;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -115,6 +123,11 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
     _comecou = true;
 
     _movimentoReduzido = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+    // A constelação é carregada nos DOIS ramos, inclusive com movimento
+    // reduzido: ela é imagem parada, não animação. O que o movimento reduzido
+    // desliga é o fade, não a camada.
+    unawaited(_carregarConstelacao());
 
     if (_movimentoReduzido) {
       // Sem laço e sem animação: o fundo estável fica no ar por uma janela
@@ -156,6 +169,33 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
       // esta base não tem observabilidade alcançável pela raiz, e a OS proíbe
       // criar uma coletora concorrente só para isto.
       setState(() => _falha = falha);
+    }
+  }
+
+  /// Lê o SVG da constelação pelo bundle da árvore.
+  ///
+  /// Por `DefaultAssetBundle`, e não pelo `rootBundle`: é a costura padrão do
+  /// Flutter para trocar o bundle num teste, e é ela que torna provável — em
+  /// vez de afirmável — que um SVG ausente ou corrompido NÃO impede a abertura
+  /// de terminar. Sem isso, o único jeito de exercitar essa falha seria apagar
+  /// o arquivo do repositório.
+  Future<void> _carregarConstelacao() async {
+    try {
+      final dados = await DefaultAssetBundle.of(
+        context,
+      ).load(kAssetDaConstelacao);
+      if (!mounted) return;
+      setState(() {
+        _constelacao = dados.buffer.asUint8List(
+          dados.offsetInBytes,
+          dados.lengthInBytes,
+        );
+      });
+    } catch (_) {
+      // A constelação é camada COMPLEMENTAR. Sem ela a abertura perde brilho,
+      // não perde função: o relógio, a timeline e o portão duplo seguem iguais.
+      // Nada é escrito em registro — ver a nota sobre observabilidade no
+      // carregamento da arte.
     }
   }
 
@@ -201,13 +241,45 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
   @override
   Widget build(BuildContext context) {
     final arte = _arte;
+    final constelacao = _constelacao;
+
     return Scaffold(
       // Sem AppBar, sem indicador de carregamento e sem texto: durante a
       // abertura não existe nada além da arte.
       backgroundColor: kFundoDaAbertura,
       body: ColoredBox(
         color: kFundoDaAbertura,
-        child: SizedBox.expand(child: arte?.desenhar()),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (arte != null) arte.desenhar(),
+
+            // A CONSTELAÇÃO VAI POR CIMA, e não por baixo. Não é preferência:
+            // o artboard da Rive pinta fundo opaco em toda a sua área, então
+            // uma camada por baixo seria coberta e o defeito continuaria — só
+            // que agora com um asset a mais no APK fingindo que foi resolvido.
+            //
+            // `IgnorePointer` porque a abertura não é interativa: a camada não
+            // pode passar a engolir toque nenhum.
+            //
+            // Mesma caixa da Rive: viewBox 1080 × 1920, `contain`, centralizado.
+            // É o que faz as duas coincidirem em qualquer proporção de tela em
+            // vez de escorregarem uma em relação à outra.
+            if (constelacao != null)
+              IgnorePointer(
+                child: _ComFadeSutil(
+                  duracao: _movimentoReduzido
+                      ? Duration.zero
+                      : _fadeDaConstelacao,
+                  child: SvgPicture.memory(
+                    constelacao,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -219,4 +291,34 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
 
   @visibleForTesting
   bool get movimentoReduzido => _movimentoReduzido;
+}
+
+/// Um fade de entrada, e nada além disso.
+///
+/// Não é uma segunda animação controladora: ele não tem `AnimationController`
+/// nosso, não guarda estado de apresentação, não avisa ninguém quando termina e
+/// não move um pixel de geometria. A autoridade da duração da abertura continua
+/// sendo a timeline da Rive — este widget só evita que a constelação apareça
+/// num corte seco.
+///
+/// Com `Duration.zero` (movimento reduzido) ele entrega opacidade cheia no
+/// primeiro quadro, sem animar nada.
+class _ComFadeSutil extends StatelessWidget {
+  const _ComFadeSutil({required this.duracao, required this.child});
+
+  final Duration duracao;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (duracao == Duration.zero) return child;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: duracao,
+      curve: Curves.easeOut,
+      builder: (_, opacidade, filho) =>
+          Opacity(opacity: opacidade, child: filho),
+      child: child,
+    );
+  }
 }
