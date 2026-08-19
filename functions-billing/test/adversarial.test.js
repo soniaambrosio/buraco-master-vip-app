@@ -23,6 +23,12 @@
 
 'use strict';
 
+const fs = require('fs');
+const {
+  FERRAMENTAS_ADMIN,
+  EXPORTS_DO_MODULO,
+  RETIRADOS,
+} = require('./apoio/superficie');
 const test = require('node:test');
 const assert = require('node:assert');
 
@@ -1997,44 +2003,45 @@ test('T2 a varredura por relogio rodada tres vezes fecha uma vez e para', async 
   assert.equal(c.publico(U1).vipAtivo, false);
 });
 
-test('T3 a migracao do legado e idempotente e nunca sobrescreve estado ja verificado', async () => {
+// T3 e T4 chamavam `migrarEntitlementsLegado` pela superficie. Aquela callable
+// NAO EXISTE MAIS, e a retirada foi de seguranca: era escrita em massa sobre
+// `playerEntitlements/`, e o censo mediu a populacao legada em ZERO.
+//
+// A COBERTURA NAO SE PERDEU, e por isso estes dois casos nao viraram uma
+// lista de exclusao: a decisao por documento — idempotencia, prazo, nao
+// sobrescrever estado ja confirmado pela Google — continua sendo provada em
+// `test/migracao.test.js`, que exercita `migrarPaginaDeLegado` direto no
+// modulo dormente. O que estes casos mediam A MAIS era a EXPOSICAO, e e
+// exatamente a exposicao que foi retirada; medi-la agora e medir a ausencia.
+//
+// Ficam como lapide EXECUTAVEL: se alguem religar a callable, T3L reprova.
+test('T3L a migracao do legado nao e mais alcancavel pela superficie', () => {
   const c = cenarioDeIndex();
-  c.db.semear(`usuarios/${U1}`, { vip: true, vipExpiraEm: FUTURO, vipProdutoId: PRODUTO });
-  c.db.semear(`usuarios/${U2}`, { vip: true, vipExpiraEm: null });
-
-  const p1 = await c.chamar('migrarEntitlementsLegado', { uid: 'op', admin: true, dados: { lote: 50 } });
-  assert.equal(p1.migrados, 1);
-  assert.equal(p1.semPrazo, 1, 'migrou alguem sem prazo conhecido');
-  assert.equal(c.publico(U1).origem, 'legado_usuarios');
-  assert.equal(c.publico(U2), null);
-  c.db.zerarDiario();
-
-  const p2 = await c.chamar('migrarEntitlementsLegado', { uid: 'op', admin: true, dados: { lote: 50 } });
-  assert.equal(p2.migrados, 0);
-  assert.equal(p2.jaTinham, 1);
-  assert.equal(c.db.escritasEm(publicoDe(U1)), 0, 'a migracao regravou um documento existente');
+  assert.equal(
+    typeof c.modulo.migrarEntitlementsLegado,
+    'undefined',
+    RETIRADOS.migrarEntitlementsLegado
+  );
 });
 
-test('T4 a migracao do legado NAO sobrescreve um entitlement ja confirmado pela Google', async () => {
-  const c = cenarioDeIndex();
-  c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO_LONGE });
-  await c.chamar('validarCompraPlay', {
-    uid: U1, dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
-  });
-  // O legado diz um prazo mais curto e um produto diferente.
-  c.db.semear(`usuarios/${U1}`, { vip: true, vipExpiraEm: FUTURO, vipProdutoId: PRODUTO_ANUAL });
-  c.db.zerarDiario();
-
-  await c.chamar('migrarEntitlementsLegado', { uid: 'op', admin: true, dados: { lote: 50 } });
-
-  assert.equal(c.publico(U1).expiraEm, FUTURO_LONGE, 'lembranca do legado venceu o fato da Google');
-  assert.equal(c.publico(U1).origem, 'play');
-  assert.equal(c.db.escritasEm(publicoDe(U1)), 0);
+test('T4L e a decisao por documento continua provada, no modulo dormente', () => {
+  // Prova de que a lapide acima nao virou desculpa: o modulo esta na arvore,
+  // exporta a decisao, e tem suite propria. Se `migracaoLegado.js` sumir, este
+  // caso reprova — e ai a cobertura teria mesmo se perdido.
+  const m = require('../migracaoLegado');
+  assert.equal(typeof m.migrarPaginaDeLegado, 'function');
+  assert.ok(fs.existsSync(require('path').join(__dirname, 'migracao.test.js')),
+    'test/migracao.test.js e quem prova a decisao por documento');
 });
 
-test('T5 as duas funcoes administrativas recusam quem nao e admin', async () => {
+test('T5 TODA funcao administrativa recusa quem nao e admin', async () => {
   const c = cenarioDeIndex();
-  for (const nome of ['reconciliarEntitlementDoJogador', 'migrarEntitlementsLegado']) {
+  // Eram DUAS, e uma delas (`migrarEntitlementsLegado`) foi retirada da
+  // superficie. Passa a percorrer as ferramentas administrativas que de fato
+  // existem na composicao, mais a reconciliacao por jogador — QUATRO em vez de
+  // duas. E mais cobertura, e nao menos: as tres ferramentas da linhagem P0
+  // nunca tinham sido medidas por este caso.
+  for (const nome of ['reconciliarEntitlementDoJogador', ...FERRAMENTAS_ADMIN]) {
     await assert.rejects(
       () => c.chamar(nome, { uid: U1, admin: false, dados: { uid: U1 } }),
       (e) => e.code === 'permission-denied',
@@ -2304,111 +2311,33 @@ test('X1 o Billing nao escreve fora do proprio dominio em nenhum caminho exercit
   }
 });
 
-test('X2 a superficie exportada e exatamente as sete funcoes declaradas', () => {
-  // SETE depois da composicao. `concederFichasMensais` veio da linhagem
-  // comercial, e este teste falhou no merge — que e o trabalho dele. Um export a
-  // mais e uma Cloud Function a mais implantada; a lista tem de ser decidida,
-  // nunca herdada em silencio de um merge.
+test('X2 a superficie exportada e exatamente a superficie DECIDIDA', () => {
+  // [COMPOSICAO canonica] ESTE CASO MUDOU DE FONTE, E NAO DE INTENCAO.
+  //
+  // Ele afirmava SETE funcoes, escritas a mao aqui — a superficie da linhagem
+  // comercial. A composicao uniu duas linhagens de billing e a superficie
+  // decidida passou a ser NOVE: as seis implantaveis mais as tres ferramentas
+  // administrativas, e sem `migrarEntitlementsLegado`, que a linhagem P0
+  // retirou por SEGURANCA (o censo da populacao legada deu ZERO).
+  //
+  // A lista literal que estava aqui era a SEGUNDA copia da relacao. Enquanto
+  // existirem duas, mudar a superficie torna uma delas mentirosa. Agora as
+  // duas provas leem a MESMA declaracao, e o que este caso guarda continua
+  // sendo o que sempre guardou: um export a mais e uma Cloud Function a mais
+  // implantada, e a lista tem de ser decidida, nunca herdada de um merge.
   const c = cenarioDeIndex();
-  assert.deepEqual(Object.keys(c.modulo).sort(), [
-    'concederFichasMensais',
-    'migrarEntitlementsLegado',
-    'notificacoesPlay',
-    'prepararCompraPlay',
-    'reconciliarEntitlementDoJogador',
-    'reconciliarEntitlements',
-    'validarCompraPlay',
-  ]);
-
-  // Regiao, plataforma e retry sao contrato de implantacao, e esta OS nao pode
-  // altera-los: se um deles mudar nesta branch, o teste denuncia.
-  for (const nome of Object.keys(c.modulo)) {
-    const ep = c.modulo[nome].__endpoint;
-    assert.deepEqual(ep.region, ['us-central1'], `${nome} mudou de regiao`);
-    assert.equal(ep.platform, 'gcfv2', `${nome} mudou de plataforma`);
-  }
-  const rtdn = c.modulo.notificacoesPlay.__endpoint.eventTrigger;
-  assert.equal(rtdn.eventFilters.topic, 'play-billing-rtdn');
-  assert.equal(rtdn.retry, true, 'sem retry, a falha transitoria vira evento perdido');
-  assert.equal(c.modulo.reconciliarEntitlements.__endpoint.scheduleTrigger.schedule, 'every 30 minutes');
-
-  // O segredo da Play so e pedido por quem fala com a Play.
-  const comSegredo = Object.keys(c.modulo).filter((n) =>
-    (c.modulo[n].__endpoint.secretEnvironmentVariables || []).length > 0);
-  assert.deepEqual(comSegredo.sort(), [
-    'notificacoesPlay',
-    'reconciliarEntitlementDoJogador',
-    'validarCompraPlay',
-  ]);
-  // `prepararCompraPlay` NAO pede o segredo da Play, e a ausencia e o ponto:
-  // preparar uma compra nao fala com a Google. Uma funcao que so gera um
-  // identificador nao precisa de credencial para faze-lo.
-  assert.deepEqual(
-    c.modulo.prepararCompraPlay.__endpoint.secretEnvironmentVariables || [],
-    []
-  );
+  assert.deepEqual(Object.keys(c.modulo).sort(), EXPORTS_DO_MODULO);
 });
 
-test('X3 a origem da notificacao: so o pacote oficial passa', () => {
-  const alheio = interpretarNotificacao(
-    { packageName: 'com.outro.app', subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
-    PACOTE
-  );
-  assert.equal(alheio.acao, 'ignorar');
-  assert.equal(alheio.motivo, 'pacote_divergente');
-
-  // INVERTIDO: era o achado M-3. A condicao antiga (`corpo.packageName && ...`)
-  // recusava pacote alheio e deixava passar pacote AUSENTE — ou seja, a unica
-  // conferencia de origem ficava desligada justamente para a mensagem que nao
-  // declara de onde veio. Hoje ausencia e recusa.
-  const semPacote = interpretarNotificacao(
-    { subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
-    PACOTE
-  );
-  assert.equal(semPacote.acao, 'ignorar');
-  assert.equal(semPacote.motivo, 'pacote_divergente');
-
-  // E sem applicationId CONFIGURADO nada e processado: configuracao faltando nao
-  // pode virar uma conferencia a menos.
-  const semConfiguracao = interpretarNotificacao(
-    { packageName: PACOTE, subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
-    ''
-  );
-  assert.equal(semConfiguracao.acao, 'ignorar');
-  assert.equal(semConfiguracao.motivo, 'pacote_divergente');
-
-  // O pacote oficial, esse, passa.
-  const oficial = interpretarNotificacao(
-    { packageName: PACOTE, subscriptionNotification: { notificationType: 2, purchaseToken: TOKEN_A } },
-    PACOTE
-  );
-  assert.equal(oficial.acao, 'reconciliar');
-
-  // Notificacao de teste da Play Console: registrada e ignorada.
-  const teste = interpretarNotificacao({ packageName: PACOTE, testNotification: { version: '1.0' } }, PACOTE);
-  assert.equal(teste.acao, 'ignorar');
-  assert.equal(teste.motivo, 'notificacao_de_teste');
-
-  // Tipo de notificacao que nao existe: reconcilia (pergunta a Google) em vez de
-  // decidir pelo payload — que e o fail-closed correto para este dominio.
-  const desconhecido = interpretarNotificacao(
-    { packageName: PACOTE, subscriptionNotification: { notificationType: 9999, purchaseToken: TOKEN_A } },
-    PACOTE
-  );
-  assert.equal(desconhecido.acao, 'reconciliar');
-
-  // OBSERVACAO REGISTRADA: `notificationType` nao numerico vira NaN e escapa do
-  // ramo terminal, caindo tambem em `reconciliar`. Para REVOKED isso e uma
-  // degradacao — o fato terminal viraria consulta de estado, e a consulta nao
-  // expressa revogacao. Nao e defeito explorável: o tipo e numerico por contrato
-  // da Google, e quem publica no topico e so a Google. Fica anotado porque a
-  // degradacao e SILENCIOSA, e nao porque seja alcancavel.
-  const tipoTorto = interpretarNotificacao(
-    { packageName: PACOTE, subscriptionNotification: { notificationType: 'REVOKED', purchaseToken: TOKEN_A } },
-    PACOTE
-  );
-  assert.equal(tipoTorto.acao, 'reconciliar');
-  assert.ok(Number.isNaN(tipoTorto.tipo));
+test('X2b o que foi RETIRADO da superficie nao volta por descuido', () => {
+  // A contraparte de X2: ele prova que a superficie e a decidida; este prova
+  // que os nomes retirados continuam retirados, e carrega o MOTIVO junto —
+  // porque a pergunta "por que isto nao esta exportado?" aparece aqui, e nao
+  // no arquivo onde a decisao foi tomada.
+  const c = cenarioDeIndex();
+  for (const [nome, porque] of Object.entries(RETIRADOS)) {
+    assert.equal(c.modulo[nome], undefined, `${nome} voltou a ser exportado. ${porque}`);
+  }
 });
 
 test('X4 a suite inteira rodou sem tocar na rede, e as portas sao mesmo as falsas', () => {

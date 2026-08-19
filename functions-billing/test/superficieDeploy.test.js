@@ -43,45 +43,12 @@ const CAMINHO_PACOTE = path.join(__dirname, '..', 'package.json');
 const fonteIndex = fs.readFileSync(CAMINHO_INDEX, 'utf8');
 const pacote = JSON.parse(fs.readFileSync(CAMINHO_PACOTE, 'utf8'));
 
-/**
- * As cinco funcoes que PODEM existir no projeto implantado.
- *
- * Mudar esta lista e uma decisao de produto, nao de arrumacao: cada entrada e
- * uma unidade que recebe trafego real de pagante ou escreve no direito VIP.
- */
-const SUPERFICIE_PRODUCAO = [
-  // [COMPOSICAO canonica] DECISAO DE SUPERFICIE, e nao heranca de merge.
-  //
-  // `prepararCompraPlay` chegou com a correcao P0 da propriedade da compra. Ela
-  // e quem EMITE o identificador opaco que o cliente entrega a Play como
-  // `obfuscatedAccountId`, e sem o qual a Google nao devolve vinculo nenhum na
-  // resposta autoritativa. Deixa-la fora do deploy nao seria 'menos superficie':
-  // seria toda compra chegando sem dono e `validarCompraPlay` recusando com
-  // `vinculo_ausente` — a loja parada, e por um motivo que ninguem ligaria ao
-  // alvo de deploy.
-  //
-  // Nao e credencial e nao e escolhivel pelo cliente (o payload da chamada nem e
-  // lido), entao expo-la nao devolve poder a quem tem o token.
-  'prepararCompraPlay',
-  'validarCompraPlay',
-  'notificacoesPlay',
-  'reconciliarEntitlements',
-  'concederFichasMensais',
-  'reconciliarEntitlementDoJogador',
-];
-
-/**
- * Ferramentas administrativas: existem no fonte, NAO sao implantadas.
- *
- * Todas exigem `claim` de admin, e o backfill exige ainda uma frase de
- * confirmacao. Mesmo assim ficam fora do projeto: o portao de admin protege
- * quem chama, e nao remove a superficie de quem nunca deveria estar exposto.
- */
-const FERRAMENTAS_ADMIN = [
-  'diagnosticarPopulacaoVip',
-  'backfillPurchaseTokenHash',
-  'diagnosticarMetadadosLegados',
-];
+// A relacao NAO mora mais aqui: ela e uma so, em test/apoio/superficie.js.
+// Antes desta correcao existiam DUAS listas escritas a mao para a mesma
+// superficie — esta e a do caso `X2` de adversarial.test.js —, e a segunda
+// ainda descrevia a linhagem comercial. Duas autoridades para a mesma coisa
+// e o defeito; qual das duas mente nao e decidivel lendo o codigo.
+const { SUPERFICIE_PRODUCAO, FERRAMENTAS_ADMIN } = require('./apoio/superficie');
 
 /** Remove comentarios e literais de string, que produzem falso positivo. */
 function corpoExecutavel(fonte) {
