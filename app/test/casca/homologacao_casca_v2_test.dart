@@ -434,7 +434,15 @@ void main() {
       // Sair da tela do lobby NÃO é sair do jogo online: o transporte é da raiz
       // e continua de pé. Voltar dispara outro `conectar()` — e ele precisa ser
       // inerte, porque já estamos conectados.
-      await tester.pageBack();
+      // O botão de retorno POR TIPO, e não `tester.pageBack()`.
+      //
+      // `pageBack()` localiza o botão por `find.byTooltip('Back')` — o rótulo
+      // em INGLÊS, escrito dentro do `flutter_test`. Desde que a raiz produtiva
+      // passou a carregar a localização oficial em pt-BR, esse mesmo botão se
+      // anuncia como "Voltar", e o auxiliar do framework deixa de achá-lo. O
+      // gesto continua sendo o real — é o `BackButton` que a `AppBar` do lobby
+      // monta sozinha —, só que localizado por algo que não é texto de idioma.
+      await tester.tap(find.byType(BackButton));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Mesa por código'));
       await tester.pumpAndSettle();

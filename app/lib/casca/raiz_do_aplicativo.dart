@@ -36,6 +36,7 @@
 // injeta é dono do que injetou — a raiz só descarta o que ela mesma criou.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../amigos/escopo_social.dart';
 import '../amigos/leitor_social.dart';
@@ -230,6 +231,33 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
                   key: ValueKey<int>(_sessao.geracao),
                   title: 'Buraco Master VIP',
                   debugShowCheckedModeBanner: false,
+                  // O IDIOMA DAS STRINGS QUE O FRAMEWORK ESCREVE SOZINHO.
+                  //
+                  // Todo texto NOSSO já estava em português — mas nem todo texto
+                  // da tela é nosso. O botão de retorno da `AppBar`, o rótulo da
+                  // barreira que fecha um diálogo e o menu de recortar/copiar/
+                  // colar são escritos pelo Material, e sem estes delegados ele
+                  // cai em `DefaultMaterialLocalizations`, que só fala inglês.
+                  // Quem usa leitor de tela ouvia "Back" e "Dismiss" no meio de
+                  // um aplicativo em português.
+                  //
+                  // A correção é a localização OFICIAL do SDK, e não uma tabela
+                  // nossa: remendar `tooltip: 'Voltar'` tela a tela deixaria de
+                  // fora tudo que o framework instancia sem passar por nós — a
+                  // barra de seleção de texto, entre outros —, e obrigaria toda
+                  // tela futura a lembrar do remendo.
+                  localizationsDelegates: const [
+                    GlobalMaterialLocalizations.delegate,
+                    GlobalWidgetsLocalizations.delegate,
+                    GlobalCupertinoLocalizations.delegate,
+                  ],
+                  // UMA locale suportada, de propósito. O aplicativo é escrito
+                  // em português do Brasil de ponta a ponta: não existe versão
+                  // em inglês para um telefone em inglês cair. Com a lista de um
+                  // item, a resolução do Flutter devolve `pt_BR` para QUALQUER
+                  // idioma do aparelho, em vez de devolver o texto do framework
+                  // em inglês por cima da nossa interface em português.
+                  supportedLocales: const [Locale('pt', 'BR')],
                   theme: ThemeData(
                     useMaterial3: true,
                     brightness: Brightness.dark,
