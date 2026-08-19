@@ -134,6 +134,35 @@ const double kProporcaoDoFallback = 7 / 6;
 /// libera a tela seguinte é o bootstrap, como sempre.
 const double kProporcaoDeMovimentoReduzido = 1 / 5;
 
+/// O QUE A ABERTURA DIZ, para quem não a vê.
+///
+/// Antes desta linha a abertura era MUDA: a árvore semântica saía com quatro
+/// nós e nenhum rótulo — só o `scopesRoute` que a rota do Material cria
+/// sozinha. Um leitor de tela abria o aplicativo e não anunciava nada, por
+/// segundos, sem nada para tocar.
+///
+/// A frase é curta de propósito, e é UMA. Não se anuncia estrela, partícula,
+/// quadro, progresso inventado nem estado interno da máquina da Rive: nada
+/// disso é acionável, e tudo isso seria falado por cima da própria abertura.
+/// Ela também NÃO é região viva — ver [kRotuloDePular] e a nota de
+/// `explicitChildNodes` na tela.
+const String kRotuloDaAbertura = 'Buraco Master VIP, abrindo o aplicativo';
+
+/// O nome acessível da ação de pular, EXATAMENTE como ele é falado.
+///
+/// A mesma string é o rótulo visível do botão. Não é repetição por descuido: é
+/// o que faz o nome falado e o nome lido coincidirem, e é o que permite acionar
+/// a abertura por comando de voz dizendo o que está escrito na tela.
+const String kRotuloDePular = 'Pular abertura';
+
+/// O lado mínimo do alvo de toque da ação de pular, em dp.
+///
+/// 48 é o piso, e ele é medido no que RECEBE o toque — não na área pintada.
+/// A abertura anterior deste repositório errava exatamente aqui: a única saída
+/// era tocar a arte inteira, e só depois de 74% da animação. Um alvo que não
+/// existe nos primeiros segundos é um alvo que não existe.
+const double kAlvoMinimoDePular = 48;
+
 /// Por que a arte não entrou no ar.
 ///
 /// Existe para o teste poder afirmar QUAL falha aconteceu. Não vai para log

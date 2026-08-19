@@ -27,6 +27,7 @@
 // real é construída num lugar só, e o padrão continua sendo a fonte real.
 
 import 'dart:io';
+import 'dart:ui' show Tristate;
 
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
 import 'package:buraco_master_vip/casca/login_de_producao.dart';
@@ -35,6 +36,7 @@ import 'package:buraco_master_vip/casca/splash/contrato_da_abertura.dart';
 import 'package:buraco_master_vip/casca/splash/splash_constelacao_screen.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -365,8 +367,21 @@ void main() {
             )
             .first,
       );
+      // A camada da arte é procurada pela SUBÁRVORE, e não pela chave do
+      // filho direto: a arte é decoração e viaja embrulhada em
+      // `ExcludeSemantics`, então a chave do dublê não está mais no topo da
+      // camada. O que se mede continua sendo o mesmo: em que posição da
+      // pilha a arte entra, e se a constelação vem depois dela.
       final indiceDaArte = pilha.children.indexWhere(
-        (w) => w.key == kChaveDaArteFalsa,
+        (w) =>
+            w.key == kChaveDaArteFalsa ||
+            find
+                .descendant(
+                  of: find.byWidget(w),
+                  matching: find.byKey(kChaveDaArteFalsa),
+                )
+                .evaluate()
+                .isNotEmpty,
       );
       expect(indiceDaArte, isNonNegative);
       expect(
@@ -451,7 +466,11 @@ void main() {
 
       expect(find.byKey(kChaveDaArteFalsa), findsNothing);
       expect(find.byType(SvgPicture), findsOneWidget);
-      expect(find.byType(Text), findsNothing);
+      // O ÚNICO texto da tela continua sendo o rótulo de pular. Não é
+      // afrouxamento do que este caso exigia: o que ele proíbe — texto
+      // técnico, nome de falha, mensagem de erro — continua proibido, e
+      // agora está dito pelo conteúdo, e não só pela contagem.
+      expect(_textosDaTela(tester), [kRotuloDePular]);
 
       await tester.pump(const Duration(milliseconds: 300));
       expect(saidas(), 1);
@@ -740,10 +759,15 @@ void main() {
           );
 
           await tester.pump(const Duration(milliseconds: 10));
-          // Nada de arte, nada de texto técnico, nada de indicador: só o fundo.
+          // Nada de arte, nada de texto técnico, nada de indicador: o fundo e
+          // a única ação que a abertura oferece.
           expect(find.byKey(kChaveDaArteFalsa), findsNothing);
-          expect(find.byType(Text), findsNothing);
           expect(find.byType(CircularProgressIndicator), findsNothing);
+          // O nome da falha NÃO chega à tela — e o único texto é o rótulo.
+          expect(_textosDaTela(tester), [kRotuloDePular]);
+          for (final texto in _textosDaTela(tester)) {
+            expect(texto, isNot(contains(motivo.name)));
+          }
           expect(
             tester
                 .state<State<SplashConstelacaoScreen>>(
@@ -892,16 +916,112 @@ void main() {
       );
     });
 
-    testWidgets('L02 não há AppBar, texto nem controle durante a abertura', (
+    // ELE JÁ EXIGIU O CONTRÁRIO, e é por isso que este comentário existe.
+    //
+    // Até a auditoria de acessibilidade, L02 afirmava "não há AppBar, texto
+    // nem controle durante a abertura" — e a última linha dele,
+    // `expect(find.byType(TextButton), findsNothing)`, era literalmente o
+    // portão que impedia a abertura de ter o que apertar. A abertura saía
+    // MUDA para o leitor de tela e sem saída para quem não quer esperar, e
+    // a suíte protegia esse estado.
+    //
+    // O que sobreviveu do caso antigo é o que ele queria de fato dizer: a
+    // abertura não tem cromo, não tem indicador de progresso e não tem texto
+    // técnico. O que entrou é o que faltava — a ação, com nome, papel,
+    // estado, alvo medido, acionamento real e uma transição só.
+    testWidgets('L02 a abertura oferece "Pular abertura" como botão real', (
       tester,
     ) async {
-      await _montarAbertura(tester, fonte: AberturaFalsa());
+      // Dispensado no fim do CORPO, e não por `addTearDown`: o framework
+      // confere os manipuladores abertos antes de rodar os tearDowns.
+      final manipulador = tester.ensureSemantics();
+
+      final saidas = await _montarAbertura(tester, fonte: AberturaFalsa());
       await tester.pump();
+
+      // O que a abertura continua NÃO tendo.
       expect(find.byType(AppBar), findsNothing);
-      expect(find.byType(Text), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.byType(ElevatedButton), findsNothing);
+      expect(
+        _textosDaTela(tester),
+        [kRotuloDePular],
+        reason: 'a abertura ganhou texto que não é a ação de pular',
+      );
+
+      // 1. A AÇÃO EXISTE, e é uma só.
+      final botao = find.byType(TextButton);
+      expect(
+        botao,
+        findsOneWidget,
+        reason: 'a abertura voltou a não ter o que apertar',
+      );
+
+      // 2. O NOME é exatamente o do contrato, e é o mesmo que está escrito.
+      final dados = tester.getSemantics(botao).getSemanticsData();
+      expect(
+        dados.label,
+        kRotuloDePular,
+        reason: 'o nome acessível da ação deixou de ser "$kRotuloDePular"',
+      );
+      expect(_textosDaTela(tester).single, dados.label);
+      expect(find.bySemanticsLabel(kRotuloDePular), findsOneWidget);
+
+      // 3. O PAPEL é de botão, e 4. o estado é habilitado.
+      //
+      // `isEnabled` é tri-estado de propósito nesta versão: `none` significa
+      // "nem se aplica" — um rótulo solto, sem papel — e é exatamente o que
+      // uma área sensível com `Semantics` pendurado devolveria.
+      final marcas = dados.flagsCollection;
+      expect(
+        marcas.isButton,
+        isTrue,
+        reason: 'a ação perdeu o papel de botão',
+      );
+      expect(
+        marcas.isEnabled,
+        Tristate.isTrue,
+        reason: 'a ação existe mas não se declara habilitada',
+      );
+      expect(
+        marcas.isFocused,
+        isNot(Tristate.none),
+        reason: 'a ação não é focável — teclado e leitor de tela não chegam',
+      );
+      expect(dados.hasAction(SemanticsAction.tap), isTrue);
+
+      // 5. O ALVO É MEDIDO no que recebe o toque, nunca na pintura.
+      final alvo = tester.getSize(botao);
+      expect(
+        alvo.width,
+        greaterThanOrEqualTo(kAlvoMinimoDePular),
+        reason: 'alvo de $alvo — abaixo do piso de $kAlvoMinimoDePular dp',
+      );
+      expect(
+        alvo.height,
+        greaterThanOrEqualTo(kAlvoMinimoDePular),
+        reason: 'alvo de $alvo — abaixo do piso de $kAlvoMinimoDePular dp',
+      );
+
+      // 6. ACIONAMENTO REAL, e 7. UMA transição só.
+      expect(saidas(), 0);
+      await tester.tap(botao);
+      await tester.pump();
+      expect(
+        saidas(),
+        1,
+        reason: 'tocar a ação não encerrou a abertura',
+      );
+
+      // E a ação sai da árvore: não sobra controle que não faz nada.
       expect(find.byType(TextButton), findsNothing);
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        saidas(),
+        1,
+        reason: 'o relógio de segurança produziu uma segunda saída',
+      );
+      manipulador.dispose();
     });
 
     testWidgets('L03 a arte ocupa a janela inteira em quatro superfícies', (
@@ -961,6 +1081,307 @@ void main() {
             'a abertura não tem texto do Flutter: a escala do sistema não '
             'pode deformar a arte',
       );
+    });
+  });
+
+  // =========================================================================
+  // ACESSIBILIDADE — o que a auditoria reprovou, e o que passou a valer
+  // =========================================================================
+  //
+  // A abertura auditada saía com QUATRO nós semânticos e NENHUM rótulo: só
+  // o `scopesRoute` que a rota do Material cria sozinha. Um leitor de tela
+  // abria o aplicativo, ficava em silêncio por segundos, e não havia nada
+  // para tocar — tocar a arte não produzia saída nenhuma, em lugar nenhum
+  // da tela, em momento nenhum.
+  group('ACESSIBILIDADE — a abertura fala, e tem o que apertar', () {
+    testWidgets('S01 a abertura tem estado semântico, e é UM', (
+      tester,
+    ) async {
+      // Dispensado no fim do CORPO, e não por `addTearDown`: o framework
+      // confere os manipuladores abertos antes de rodar os tearDowns.
+      final manipulador = tester.ensureSemantics();
+      await _montarAbertura(tester, fonte: AberturaFalsa());
+      await tester.pump();
+
+      expect(
+        find.bySemanticsLabel(kRotuloDaAbertura),
+        findsOneWidget,
+        reason: 'a abertura voltou a ser muda para o leitor de tela',
+      );
+      expect(kRotuloDaAbertura, contains('Buraco Master VIP'));
+      manipulador.dispose();
+    });
+
+    testWidgets('S02 partícula nenhuma entra na leitura', (tester) async {
+      // Dispensado no fim do CORPO, e não por `addTearDown`: o framework
+      // confere os manipuladores abertos antes de rodar os tearDowns.
+      final manipulador = tester.ensureSemantics();
+      await _montarAbertura(tester, fonte: AberturaFalsa());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // A árvore inteira tem DOIS rótulos, nesta ordem: o estado da
+      // abertura e a ação. Arte, constelação, máscara e fade não aparecem.
+      expect(
+        find.semantics
+            .byPredicate((no) => no.label.isNotEmpty)
+            .evaluate()
+            .map((no) => no.label)
+            .toList(),
+        [kRotuloDaAbertura, kRotuloDePular],
+        reason: 'a decoração vazou para a árvore semântica',
+      );
+
+      // E nada é região viva: a árvore muda a cada quadro do fade, e uma
+      // região viva faria a abertura se reanunciar por cima de si mesma.
+      expect(
+        find.semantics.byPredicate(
+          (no) => no.getSemanticsData().flagsCollection.isLiveRegion,
+        ),
+        findsNothing,
+        reason: 'o estado da abertura se reanuncia a cada quadro',
+      );
+      manipulador.dispose();
+    });
+
+    testWidgets('S03 a ação existe desde o primeiro quadro', (tester) async {
+      // A arte demora a carregar DE PROPÓSITO: é exatamente a janela em que
+      // a abertura auditada não tinha nada para apertar.
+      final saidas = await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(
+          atrasoDoCarregamento: const Duration(milliseconds: 120),
+        ),
+      );
+      // SEM `pump` extra: o primeiro quadro.
+      expect(find.byKey(kChaveDaArteFalsa), findsNothing);
+      expect(
+        find.byType(TextButton),
+        findsOneWidget,
+        reason: 'a ação só aparece depois de a arte carregar',
+      );
+
+      await tester.tap(find.byType(TextButton));
+      await tester.pump();
+      expect(saidas(), 1);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(saidas(), 1);
+    });
+
+    testWidgets('S04 a ação funciona pela árvore semântica', (tester) async {
+      // Dispensado no fim do CORPO, e não por `addTearDown`: o framework
+      // confere os manipuladores abertos antes de rodar os tearDowns.
+      final manipulador = tester.ensureSemantics();
+      final saidas = await _montarAbertura(tester, fonte: AberturaFalsa());
+      await tester.pump();
+
+      // É ESTE o caminho do TalkBack: a ação chega pela árvore, e não por um
+      // toque em coordenada. Um controle que só responde ao dedo passa no
+      // teste de toque e continua inacessível.
+      tester.semantics.performAction(
+        find.semantics.byLabel(kRotuloDePular),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      expect(
+        saidas(),
+        1,
+        reason: 'a ação semântica não encerra a abertura',
+      );
+      manipulador.dispose();
+    });
+
+    testWidgets('S05 a ação funciona por teclado', (tester) async {
+      final saidas = await _montarAbertura(tester, fonte: AberturaFalsa());
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final foco = tester.binding.focusManager.primaryFocus;
+      expect(
+        find.ancestor(
+          of: find.byWidget(foco!.context!.widget),
+          matching: find.byType(TextButton),
+        ),
+        findsOneWidget,
+        reason: 'o tabulador não alcança a ação de pular',
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(saidas(), 1);
+    });
+
+    testWidgets('S06 pular leva ao destino da sessão, e só a ele', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      _telefone(tester);
+      await tester.pumpWidget(
+        RaizDoAplicativo(
+          sessao: b.sessao,
+          autenticacao: b.autenticacao,
+          online: b.online,
+          duracaoDaSplash: const Duration(seconds: 3),
+          somNaSplash: false,
+          fonteDaAbertura: AberturaFalsa(),
+          limiteDeResolucao: const Duration(seconds: 8),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byType(SplashConstelacaoScreen), findsOneWidget);
+      expect(find.byType(HomeDeProducao), findsNothing);
+
+      // A timeline dura três segundos e NÃO terminou. Quem encerra é ela.
+      await tester.tap(find.byType(TextButton));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.byType(HomeDeProducao),
+        findsOneWidget,
+        reason: 'pular não levou ao destino que a sessão decidiu',
+      );
+      expect(find.byType(LoginDeProducao), findsNothing);
+      expect(find.byType(SplashConstelacaoScreen), findsNothing);
+    });
+
+    testWidgets('S07 toque duplo não monta a Casca duas vezes', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      _telefone(tester);
+      await tester.pumpWidget(
+        RaizDoAplicativo(
+          sessao: b.sessao,
+          autenticacao: b.autenticacao,
+          online: b.online,
+          duracaoDaSplash: const Duration(seconds: 3),
+          somNaSplash: false,
+          fonteDaAbertura: AberturaFalsa(),
+          limiteDeResolucao: const Duration(seconds: 8),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // DOIS toques no MESMO quadro, antes de qualquer reconstrução.
+      final botao = find.byType(TextButton);
+      await tester.tap(botao, warnIfMissed: false);
+      await tester.tap(botao, warnIfMissed: false);
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(HomeDeProducao), findsOneWidget);
+      expect(find.byType(SplashConstelacaoScreen), findsNothing);
+      await tester.pump(const Duration(seconds: 5));
+      expect(
+        find.byType(HomeDeProducao),
+        findsOneWidget,
+        reason: 'a Casca foi montada mais de uma vez',
+      );
+    });
+
+    testWidgets('S08 callback tardio depois de pular não navega de novo', (
+      tester,
+    ) async {
+      final fonte = AberturaFalsa();
+      final saidas = await _montarAbertura(
+        tester,
+        fonte: fonte,
+        duracao: const Duration(milliseconds: 300),
+      );
+      await tester.pump();
+      await tester.tap(find.byType(TextButton));
+      await tester.pump();
+      expect(saidas(), 1);
+
+      // A timeline avisa DEPOIS, e o relógio de segurança venceria em
+      // seguida. Nenhum dos dois pode virar uma segunda saída.
+      fonte.ultima!.concluirAgora();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      expect(
+        saidas(),
+        1,
+        reason: 'um aviso tardio produziu uma segunda saída',
+      );
+    });
+
+    testWidgets('S09 o foco não fica preso na abertura removida', (
+      tester,
+    ) async {
+      final saidas = await _montarAbertura(tester, fonte: AberturaFalsa());
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(tester.binding.focusManager.primaryFocus, isNotNull);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(saidas(), 1);
+
+      // A ação saiu da árvore, e o foco saiu junto: um nó de foco que morre
+      // montado deixa o leitor de tela apontando para o que não existe.
+      expect(find.byType(TextButton), findsNothing);
+      final foco = tester.binding.focusManager.primaryFocus;
+      if (foco?.context != null) {
+        expect(
+          find.ancestor(
+            of: find.byWidget(foco!.context!.widget),
+            matching: find.byType(TextButton),
+          ),
+          findsNothing,
+          reason: 'o foco continua no botão que saiu da tela',
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('S10 não pular continua funcionando igual', (tester) async {
+      final fonte = AberturaFalsa(
+        duracaoDaTimeline: const Duration(milliseconds: 120),
+      );
+      final saidas = await _montarAbertura(tester, fonte: fonte);
+      await tester.pump();
+      expect(find.byType(TextButton), findsOneWidget);
+
+      // Ninguém toca em nada. A timeline encerra sozinha, como sempre.
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(saidas(), 1);
+      expect(
+        find.byType(TextButton),
+        findsNothing,
+        reason: 'sobrou um botão de pular numa abertura já encerrada',
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(saidas(), 1);
+    });
+
+    testWidgets('S11 arte que não carrega não prende ninguém', (
+      tester,
+    ) async {
+      // Dispensado no fim do CORPO, e não por `addTearDown`: o framework
+      // confere os manipuladores abertos antes de rodar os tearDowns.
+      final manipulador = tester.ensureSemantics();
+      final saidas = await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(falha: FalhaDaAbertura.arteNaoCarregou),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+
+      // Sem arte, a abertura continua falando e continua tendo saída — e a
+      // saída é imediata, não a espera do relógio.
+      expect(find.bySemanticsLabel(kRotuloDaAbertura), findsOneWidget);
+      expect(find.byType(TextButton), findsOneWidget);
+      await tester.tap(find.byType(TextButton));
+      await tester.pump();
+      expect(saidas(), 1);
+      await tester.pump(const Duration(seconds: 1));
+      expect(saidas(), 1);
+      manipulador.dispose();
     });
   });
 
@@ -1216,3 +1637,13 @@ bool _contem(Uint8List bytes, String texto) {
   }
   return false;
 }
+
+/// Todo o texto desenhado na tela, na ordem da árvore.
+///
+/// Existe porque `find.byType(Text), findsNothing` deixou de servir: a
+/// abertura passou a ter UM texto legítimo — o rótulo da ação de pular — e a
+/// pergunta que importa virou QUAL texto está lá, não QUANTOS.
+List<String> _textosDaTela(WidgetTester tester) => tester
+    .widgetList<Text>(find.byType(Text))
+    .map((t) => t.data ?? t.textSpan?.toPlainText() ?? '')
+    .toList();
