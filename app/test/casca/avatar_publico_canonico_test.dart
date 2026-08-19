@@ -1261,13 +1261,36 @@ void main() {
         reason: 'a maquete de Amigos entrou no fecho de produção',
       );
 
+      // 55 → 56 COM A MESA DE TREINO AUDÍVEL, e o único também tem nome.
+      //
+      // A convenção que transforma uma carta em palavras — "rei de espadas" —
+      // já existia dentro de `casca/mesa_online/arte_das_cartas.dart`, privada.
+      // Quando a Mesa de Treino precisou dela, a escolha foi entre copiar o mapa
+      // para `lib/mesa.dart` e tirá-lo de lá. Copiar daria dois dicionários que
+      // divergem no dia em que alguém acertar um só, e a divergência apareceria
+      // na boca do leitor de tela. O fecho cresce em UM arquivo, sem dependência
+      // nenhuma, e o que ele evita é uma segunda autoridade.
+      const daMesaAudivel = [
+        'lib/cartas/nome_falavel_da_carta.dart',
+      ];
+      for (final caminho in daMesaAudivel) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — o nome falável da carta deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+
       expect(
         alcancaveis,
         hasLength(
           40 +
               doRankingReal.length +
               daNavegacaoPublica.length +
-              daDescobertaSocial.length,
+              daDescobertaSocial.length +
+              daMesaAudivel.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
