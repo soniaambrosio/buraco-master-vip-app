@@ -45,6 +45,7 @@ import 'estado_ui.dart';
 import 'loja_play.dart';
 import 'sessao.dart';
 import 'vinculo.dart';
+import 'vinculo_firebase.dart';
 import 'validacao.dart';
 import 'validacao_firebase.dart';
 

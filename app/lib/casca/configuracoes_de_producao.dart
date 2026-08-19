@@ -39,6 +39,7 @@ import '../sessao/escopo_sessao.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
 import 'escopo_autenticacao.dart';
+import 'loja_de_producao.dart';
 
 /// Versão exibida nos Ajustes. Vem da configuração do build; o padrão acompanha
 /// a `version` do `pubspec.yaml`.
@@ -169,8 +170,13 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
         onAlterar: _salvar,
         onEditarPerfil: () =>
             _aviso('Editar perfil ainda não está disponível.'),
-        onAssinaturaVip: () =>
-            _aviso('A assinatura VIP ainda não está disponível.'),
+        // A SEGUNDA porta para a Loja, e ela existe porque é aqui que a pessoa
+        // vem procurar a própria assinatura. Não é um atalho decorativo: quem
+        // abre Ajustes para ver o VIP não deveria ter de voltar à Home e achar
+        // o item da grade.
+        onAssinaturaVip: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const LojaDeProducao()),
+        ),
         onMoedasCompras: () =>
             _aviso('A compra de moedas ainda não está disponível.'),
         onBloqueados: () =>

@@ -4,9 +4,24 @@ import 'perfil_screen.dart' show NavDestino;
 
 enum LojaCategoria { dorsos, molduras, avatares, mascotes, efeitos, emojis }
 
+/// O modelo de exibição da Loja.
+///
+/// TODOS OS CAMPOS DE ACERVO SÃO OMISSÍVEIS, e isso é o que permite a mesma
+/// tela servir à maquete e ao aplicativo publicável. A maquete ([LojaVM.mock])
+/// preenche tudo; a Loja de produção preenche só o que tem autoridade — hoje o
+/// selo VIP (`playerEntitlements/{uid}`) e os planos (`formattedPrice` da Play).
+///
+/// [moedas] e [gemas] são NULÁVEIS pela mesma razão que `CabecalhoJogador.moedas`
+/// é na Home: não há autoridade de economia alcançável pelo cliente, e um `0`
+/// desenhado não é modéstia — é a afirmação de que alguém consultou a carteira
+/// e ela estava vazia. Nulo faz o elemento sair da tela.
+///
+/// As listas vazias têm o mesmo efeito: sem pacote, sem categoria e sem amigo,
+/// a seção inteira não é desenhada. Uma vitrine de cosméticos com preço, sem
+/// catálogo e sem saldo por trás, seria uma promessa comercial sem produto.
 class LojaVM {
-  final int moedas;
-  final int gemas;
+  final int? moedas;
+  final int? gemas;
   final bool ehVip;
   final List<PlanoVipLoja> planos;
   final List<String> beneficiosVip;
@@ -15,14 +30,14 @@ class LojaVM {
   final List<AmigoPresente> amigos;
 
   const LojaVM({
-    required this.moedas,
-    required this.gemas,
+    this.moedas,
+    this.gemas,
     required this.ehVip,
-    required this.planos,
-    required this.beneficiosVip,
-    required this.pacotes,
-    required this.categorias,
-    required this.amigos,
+    this.planos = const <PlanoVipLoja>[],
+    this.beneficiosVip = const <String>[],
+    this.pacotes = const <PacoteMoedas>[],
+    this.categorias = const <CategoriaCosmetico>[],
+    this.amigos = const <AmigoPresente>[],
   });
 
   factory LojaVM.mock({bool ehVip = false}) {
@@ -259,6 +274,14 @@ class LojaScreen extends StatefulWidget {
   final ValueChanged<String> onBuscarPresenteado;
   final void Function(String itemId, String jogadorId) onEnviarPresente;
 
+  /// O que dizer quando não há nada a oferecer.
+  ///
+  /// Aparece no lugar da grade de planos quando o jogador não é VIP e a Play não
+  /// devolveu plano nenhum. Sem isto, a vitrine ficaria com o cabeçalho da
+  /// assinatura e um vazio embaixo — que se lê como falha do aplicativo, e não
+  /// como "não há oferta agora".
+  final String? avisoDaVitrine;
+
   const LojaScreen({
     super.key,
     required this.vm,
@@ -272,6 +295,7 @@ class LojaScreen extends StatefulWidget {
     required this.onPresentear,
     required this.onBuscarPresenteado,
     required this.onEnviarPresente,
+    this.avisoDaVitrine,
   });
 
   @override
@@ -311,6 +335,9 @@ class _LojaScreenState extends State<LojaScreen> {
     }
     return widget.vm.planos.isNotEmpty ? widget.vm.planos.first : null;
   }
+
+  String? _formatarOpcional(int? valor) =>
+      valor == null ? null : _formatarInteiro(valor);
 
   String _formatarInteiro(int valor) {
     final texto = valor.toString();
@@ -401,7 +428,7 @@ class _LojaScreenState extends State<LojaScreen> {
               child: Column(
                 children: [
                   _TopBar(
-                    moedas: _formatarInteiro(widget.vm.moedas),
+                    moedas: _formatarOpcional(widget.vm.moedas),
                     onVoltar: widget.onVoltar,
                     onCarteira: _rolarParaMoedas,
                   ),
@@ -414,6 +441,7 @@ class _LojaScreenState extends State<LojaScreen> {
                           _VipShowcase(
                             vm: widget.vm,
                             selectedPlanId: _planoSelecionado,
+                            avisoDaVitrine: widget.avisoDaVitrine,
                             onPlanoTap: _selecionarPlano,
                             onPresentear: () {
                               final id = _planoSelecionado ?? 'mensal';
@@ -427,55 +455,65 @@ class _LojaScreenState extends State<LojaScreen> {
                               );
                             },
                           ),
-                          const SizedBox(height: 24),
-                          _SectionTitle(key: _moedasKey, label: 'MOEDAS'),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            height: 262,
-                            child: ListView.separated(
-                              scrollDirection: Axis.horizontal,
-                              clipBehavior: Clip.none,
-                              itemCount: widget.vm.pacotes.length,
-                              separatorBuilder: (_, __) => const SizedBox(width: 12),
-                              itemBuilder: (context, index) {
-                                final pacote = widget.vm.pacotes[index];
-                                return _PacoteCard(
-                                  pacote: pacote,
-                                  moedas: _formatarInteiro(pacote.moedas),
-                                  onComprar: () => _abrirCompra(pacote),
-                                  onPresentear: () => _abrirPresente(
-                                    itemId: pacote.id,
-                                    titulo: '${_formatarInteiro(pacote.moedas)} moedas',
-                                    emoji: pacote.emoji,
-                                  ),
+                          // SEÇÃO SEM ACERVO NÃO É DESENHADA. Um título "MOEDAS"
+                          // com uma faixa vazia embaixo lê-se como erro de
+                          // carregamento; e um título com pacotes de maquete
+                          // lê-se como oferta. Sem pacote, a seção inteira sai.
+                          if (widget.vm.pacotes.isNotEmpty) ...[
+                            const SizedBox(height: 24),
+                            _SectionTitle(key: _moedasKey, label: 'MOEDAS'),
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              height: 262,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                clipBehavior: Clip.none,
+                                itemCount: widget.vm.pacotes.length,
+                                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                                itemBuilder: (context, index) {
+                                  final pacote = widget.vm.pacotes[index];
+                                  return _PacoteCard(
+                                    pacote: pacote,
+                                    moedas: _formatarInteiro(pacote.moedas),
+                                    onComprar: () => _abrirCompra(pacote),
+                                    onPresentear: () => _abrirPresente(
+                                      itemId: pacote.id,
+                                      titulo: '${_formatarInteiro(pacote.moedas)} moedas',
+                                      emoji: pacote.emoji,
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                          if (widget.vm.categorias.isNotEmpty) ...[
+                            const SizedBox(height: 24),
+                            const _SectionTitle(label: 'COSMÉTICOS'),
+                            const SizedBox(height: 10),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final spacing = 10.0;
+                                final itemWidth =
+                                    (constraints.maxWidth - spacing * 2) / 3;
+                                return Wrap(
+                                  spacing: spacing,
+                                  runSpacing: spacing,
+                                  children: [
+                                    for (final categoria in widget.vm.categorias)
+                                      SizedBox(
+                                        width: itemWidth,
+                                        height: 126,
+                                        child: _CategoriaCard(
+                                          categoria: categoria,
+                                          onTap: () =>
+                                              widget.onAbrirCategoria(categoria.id),
+                                        ),
+                                      ),
+                                  ],
                                 );
                               },
                             ),
-                          ),
-                          const SizedBox(height: 24),
-                          const _SectionTitle(label: 'COSMÉTICOS'),
-                          const SizedBox(height: 10),
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final spacing = 10.0;
-                              final itemWidth = (constraints.maxWidth - spacing * 2) / 3;
-                              return Wrap(
-                                spacing: spacing,
-                                runSpacing: spacing,
-                                children: [
-                                  for (final categoria in widget.vm.categorias)
-                                    SizedBox(
-                                      width: itemWidth,
-                                      height: 126,
-                                      child: _CategoriaCard(
-                                        categoria: categoria,
-                                        onTap: () => widget.onAbrirCategoria(categoria.id),
-                                      ),
-                                    ),
-                                ],
-                              );
-                            },
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -492,7 +530,9 @@ class _LojaScreenState extends State<LojaScreen> {
 }
 
 class _TopBar extends StatelessWidget {
-  final String moedas;
+  /// O saldo já formatado, ou `null` quando não há autoridade de carteira — e
+  /// aí a pastilha inteira, com o `+` que leva aos pacotes, não é desenhada.
+  final String? moedas;
   final VoidCallback onVoltar;
   final VoidCallback onCarteira;
 
@@ -536,7 +576,8 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          InkWell(
+          if (moedas != null)
+            InkWell(
             onTap: onCarteira,
             borderRadius: BorderRadius.circular(24),
             child: Container(
@@ -552,7 +593,7 @@ class _TopBar extends StatelessWidget {
                   const Text('🪙', style: TextStyle(fontSize: 20)),
                   const SizedBox(width: 6),
                   Text(
-                    moedas,
+                    moedas!,
                     style: const TextStyle(
                       color: LojaScreen.goldHi,
                       fontSize: 17,
@@ -591,6 +632,7 @@ class _TopBar extends StatelessWidget {
 class _VipShowcase extends StatelessWidget {
   final LojaVM vm;
   final String? selectedPlanId;
+  final String? avisoDaVitrine;
   final ValueChanged<PlanoVipLoja> onPlanoTap;
   final VoidCallback onPresentear;
 
@@ -599,6 +641,7 @@ class _VipShowcase extends StatelessWidget {
     required this.selectedPlanId,
     required this.onPlanoTap,
     required this.onPresentear,
+    this.avisoDaVitrine,
   });
 
   @override
@@ -654,7 +697,7 @@ class _VipShowcase extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          if (vm.beneficiosVip.isNotEmpty) const SizedBox(height: 14),
           Wrap(
             spacing: 8,
             runSpacing: 7,
@@ -712,25 +755,52 @@ class _VipShowcase extends StatelessWidget {
                 ],
               ),
             )
-          else
+          else if (vm.planos.isNotEmpty)
             _PlanosGrid(
               planos: vm.planos,
               selectedPlanId: selectedPlanId,
               onTap: onPlanoTap,
+            )
+          // Sem plano nenhum a oferecer, o lugar da grade recebe a explicação —
+          // e não um vazio, que se lê como tela quebrada.
+          else if (avisoDaVitrine != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              decoration: BoxDecoration(
+                color: const Color(0xAA1D1107),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: const Color(0x338F6B23)),
+              ),
+              child: Text(
+                avisoDaVitrine!,
+                style: const TextStyle(
+                  color: Color(0xFFD8C69E),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                ),
+              ),
             ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: onPresentear,
-            icon: const Text('🎁', style: TextStyle(fontSize: 18)),
-            label: const Text('Presentear assinatura VIP'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: LojaScreen.goldHi,
-              side: const BorderSide(color: Color(0xFF9A7521)),
-              padding: const EdgeInsets.symmetric(vertical: 11),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+          // PRESENTEAR EXIGE A QUEM. A folha de amigos alimenta a lista do
+          // seletor; sem ela o botão abriria uma folha vazia e prometeria um
+          // envio que não existe.
+          if (vm.amigos.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: onPresentear,
+              icon: const Text('🎁', style: TextStyle(fontSize: 18)),
+              label: const Text('Presentear assinatura VIP'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: LojaScreen.goldHi,
+                side: const BorderSide(color: Color(0xFF9A7521)),
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                shape:
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                textStyle:
+                    const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

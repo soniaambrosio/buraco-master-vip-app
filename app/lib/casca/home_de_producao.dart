@@ -21,11 +21,18 @@
 // MENU: O QUE EXISTE E O QUE AINDA NÃO
 // ---------------------------------------------------------------------------
 //
-// Quatro destinos são reais: Perfil, Jogar, Como jogar e Ajustes. Os outros
-// quatro apontavam para prévias visuais — Ranking, Recompensas, Amigos e Loja
+// Cinco destinos são reais: Perfil, Jogar, Como jogar, Ajustes e a Loja VIP.
+// Os outros três apontavam para prévias visuais — Ranking, Recompensas e Amigos
 // mostram dados inventados e nenhum deles tem backend ligado no cliente. Eles
 // continuam na grade, apagados e com selo, e o toque avisa. Sumir com o item
 // esconderia o plano; abrir a prévia venderia maquete como funcionalidade.
+//
+// A LOJA MUDOU DE LADO, e o que mudou não foi a tela: foi o host. Ela apontava
+// para `_LojaPreviewHost`, que desenhava `LojaVM.mock()` — 1.000 moedas, cinco
+// pacotes com preço e seis categorias de cosmético inventadas. Agora aponta
+// para `LojaDeProducao`, que só desenha o que tem autoridade: o selo VIP vindo
+// de `playerEntitlements/{uid}` e os planos que a Play devolveu. Ver
+// `loja_de_producao.dart`.
 
 import 'package:flutter/material.dart';
 
@@ -42,6 +49,7 @@ import '../screens/perfil_screen.dart' show NavDestino;
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
 import 'configuracoes_de_producao.dart';
+import 'loja_de_producao.dart';
 import 'onde_jogar_de_producao.dart';
 
 class HomeDeProducao extends StatelessWidget {
@@ -151,7 +159,6 @@ class HomeDeProducao extends StatelessWidget {
           id: 'loja',
           label: 'Loja VIP',
           icone: 'assets/inicio/menu_loja_vip.webp',
-          disponivel: false,
         ),
         MenuItem(
           id: 'jogar',
@@ -214,7 +221,7 @@ class HomeDeProducao extends StatelessWidget {
       case 'amigos':
         _aindaNao(context, 'Amigos');
       case 'loja':
-        _aindaNao(context, 'Loja VIP');
+        _abrirLoja(context);
       default:
         _aindaNao(context, id);
     }
@@ -229,7 +236,7 @@ class HomeDeProducao extends StatelessWidget {
       case NavDestino.ranking:
         _aindaNao(context, 'Ranking');
       case NavDestino.loja:
-        _aindaNao(context, 'Loja VIP');
+        _abrirLoja(context);
     }
   }
 
@@ -240,6 +247,12 @@ class HomeDeProducao extends StatelessWidget {
   void _abrirOndeJogar(BuildContext context) => Navigator.of(
     context,
   ).push(MaterialPageRoute<void>(builder: (_) => const OndeJogarDeProducao()));
+
+  /// A Loja. Empurrada SOBRE a Home — é o que faz o `‹` dela voltar para cá, e
+  /// o que mantém a Home viva embaixo em vez de reconstruí-la na volta.
+  void _abrirLoja(BuildContext context) => Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const LojaDeProducao()));
 
   void _abrirComoJogar(BuildContext context) {
     Navigator.of(context).push(

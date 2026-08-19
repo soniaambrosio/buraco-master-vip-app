@@ -38,7 +38,6 @@
 
 library;
 
-import 'package:cloud_functions/cloud_functions.dart';
 
 /// Formato do identificador que a autoridade emite: hexadecimal, 32 a 64.
 ///
@@ -62,43 +61,6 @@ abstract class PreparadorDeCompra {
   /// Devolver `null` e uma resposta legitima e frequente — sem rede, sem sessao,
   /// funcao ainda nao publicada. O chamador NAO deve abrir a compra nesse caso.
   Future<String?> preparar();
-}
-
-/// A implementacao real, sobre a callable `prepararCompraPlay`.
-class PreparadorFirebase implements PreparadorDeCompra {
-  PreparadorFirebase({
-    String regiao = 'us-central1',
-    String nomeDaFuncao = 'prepararCompraPlay',
-    FirebaseFunctions? funcoes,
-  })  : _regiao = regiao,
-        _nomeDaFuncao = nomeDaFuncao,
-        _funcoes = funcoes;
-
-  final String _regiao;
-  final String _nomeDaFuncao;
-  final FirebaseFunctions? _funcoes;
-
-  FirebaseFunctions get _instancia =>
-      _funcoes ?? FirebaseFunctions.instanceFor(region: _regiao);
-
-  @override
-  Future<String?> preparar() async {
-    try {
-      // SEM PAYLOAD, e isso e a regra e nao economia. A callable ignora o corpo
-      // da requisicao de proposito: aceitar um identificador vindo daqui
-      // devolveria ao cliente exatamente o poder que a correcao P0 tirou dele.
-      final resposta = await _instancia
-          .httpsCallable(_nomeDaFuncao)
-          .call<Map<String, dynamic>>();
-
-      final valor = resposta.data['contaOfuscada'];
-      return valor is String ? valor : null;
-    } catch (_) {
-      // Nem o tipo do erro sobe: quem chama so precisa saber que nao ha vinculo,
-      // e a decisao — nao abrir a compra — e a mesma para toda causa.
-      return null;
-    }
-  }
 }
 
 /// Preparador fixo, para teste e para composicao.

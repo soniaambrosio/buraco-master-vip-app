@@ -47,6 +47,17 @@ cascaligacao
 cascamesa
 cascaporta
 
+# --- 3b. a Loja ligada à Casca V2 (entra pela OS da Ligação Produtiva) ------
+# Prova as duas coisas que só um teste pode manter verdadeiras depois que a OS
+# fechar: que existe caminho da Home publicável até a Loja (era este o buraco —
+# o Billing do cliente estava completo e inalcançável, porque o único host
+# morava no `main.dart` de prévias que a Casca V2 apagou), e que a Loja de
+# produção não desenha carteira, pacote de moedas nem cosmético inventado.
+#
+# O caso `tocar em assinar NÃO acende o VIP` é o que impede a volta do defeito
+# comercial: um `setState` local acendia o selo sem nenhum servidor envolvido.
+cascaloja
+
 # --- 4. suítes Flutter de Ranking Real e Perfil Publicável (entram por esta OS)
 # `rkbarreira` é a barreira temporal V2; `rkestado` guarda `EstadoRanking` como
 # autoridade única (sem fallback Bronze/nível 1/#0/#1).

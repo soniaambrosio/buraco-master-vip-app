@@ -600,7 +600,17 @@ void main() {
   // =========================================================================
   // §4.5 — "Em breve" não tem rota
   // =========================================================================
-  testWidgets('os quatro bloqueados avisam, e nenhum deles navega', (
+  //
+  // ERAM QUATRO, E VIRARAM TRÊS. A Loja saiu desta lista quando ganhou
+  // destino de produção: ela deixou de apontar para a maquete de
+  // `_LojaPreviewHost` e passou a abrir `LojaDeProducao`, que só desenha o
+  // selo VIP de `playerEntitlements/{uid}` e os planos que a Play devolveu.
+  // O que provava que ela NÃO navegava agora prova o contrário, e mudou de
+  // arquivo: `test/casca/loja_de_producao_test.dart`.
+  //
+  // Os três que sobraram continuam sem backend ligado no cliente, e o caso
+  // continua sendo o que impede que qualquer um deles vire rota por descuido.
+  testWidgets('os três bloqueados avisam, e nenhum deles navega', (
     tester,
   ) async {
     final b = _Bancada(uidInicial: 'uid-A');
@@ -609,7 +619,7 @@ void main() {
     await _abrirAplicativo(tester, b);
     await _passarAAbertura(tester);
 
-    for (final rotulo in ['Ranking', 'Recompensas', 'Amigos', 'Loja VIP']) {
+    for (final rotulo in ['Ranking', 'Recompensas', 'Amigos']) {
       final alvo = find.text(rotulo).first;
       await tester.ensureVisible(alvo);
       await tester.pumpAndSettle();

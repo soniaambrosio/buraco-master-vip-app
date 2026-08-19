@@ -207,6 +207,11 @@ jobs:
           roda cascaligacao test/casca/ligacao_mesa_caracterizacao_test.dart
           roda cascamesa    test/casca/mesa_online_test.dart
           roda cascaporta   test/casca/porta_de_comandos_online_test.dart
+          # OS Ligação Produtiva da Loja à Casca V2. O caminho Home → Loja, a
+          # volta, o descarte no logout, e a prova de que a Loja publicável não
+          # exibe saldo, pacote nem cosmético de maquete — nem acende VIP sem o
+          # backend.
+          roda cascaloja    test/casca/loja_de_producao_test.dart
           # OS Leitor Real de Ranking (barreira temporal V2) e Perfil
           # Publicável (CI-01). `rkestado` é o que impede a volta do fallback
           # Bronze / nível 1 / colocação #0 e #1; `rkbarreira` é a barreira

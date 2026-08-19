@@ -614,11 +614,17 @@ void main() {
       expect(menu['jogar'], isTrue);
       expect(menu['tutorial'], isTrue);
       expect(menu['ajustes'], isTrue);
-      // Estes quatro só têm prévia visual, e a prévia não é destino.
+      // A Loja passou para cá quando ganhou host de produção: o item deixou
+      // de abrir a maquete e passou a abrir `LojaDeProducao`, que só exibe o
+      // que tem autoridade — o selo VIP do backend e os planos da Play. O
+      // comportamento dela é provado em `loja_de_producao_test.dart`; aqui
+      // interessa só que a grade parou de apagá-la, porque enquanto
+      // `disponivel` era `false` nenhum dedo alcançava a rota nova.
+      expect(menu['loja'], isTrue);
+      // Estes três só têm prévia visual, e a prévia não é destino.
       expect(menu['ranking'], isFalse);
       expect(menu['recompensas'], isFalse);
       expect(menu['amigos'], isFalse);
-      expect(menu['loja'], isFalse);
     });
 
     testWidgets('tocar num item indisponível avisa e não navega', (
