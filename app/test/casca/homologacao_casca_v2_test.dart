@@ -37,6 +37,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:buraco_master_vip/casca/amigos_de_producao.dart';
 import 'package:buraco_master_vip/casca/configuracoes_de_producao.dart';
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
 import 'package:buraco_master_vip/casca/lobby_online.dart';
@@ -50,6 +51,8 @@ import 'package:buraco_master_vip/sessao/credencial_de_sessao.dart';
 import 'package:buraco_master_vip/sessao/fonte_identidade.dart';
 import 'package:buraco_master_vip/sessao/identidade_publica_sessao.dart';
 import 'package:buraco_master_vip/sessao/sessao_do_jogador.dart';
+
+import '../amigos/bancada_social.dart';
 
 // ===========================================================================
 // Pontas do mundo
@@ -90,8 +93,9 @@ class _AutenticacaoFalsa implements ComandosDeAutenticacao {
   int saidas = 0;
 
   @override
-  List<ProvedorDeLogin> get provedoresDisponiveis =>
-      const [ProvedorDeLogin.google];
+  List<ProvedorDeLogin> get provedoresDisponiveis => const [
+    ProvedorDeLogin.google,
+  ];
 
   @override
   Future<ResultadoDeLogin> entrar(ProvedorDeLogin provedor) async {
@@ -194,10 +198,16 @@ class _Bancada {
 
   _CanalFalso get canal => canais.last;
 
+  /// O transporte social. Injetado para que a tela de Amigos possa ser aberta
+  /// sem Firebase — e para que a bancada consiga PROVAR que abrir a tela emite
+  /// consulta, coisa que um transporte que sempre falha não deixaria afirmar.
+  final social = TransporteSocialFalso();
+
   Widget get aplicativo => RaizDoAplicativo(
     sessao: sessao,
     autenticacao: autenticacao,
     online: online,
+    transporteSocial: social,
     duracaoDaSplash: const Duration(milliseconds: 20),
     somNaSplash: false,
     limiteDeResolucao: const Duration(seconds: 8),
@@ -358,7 +368,8 @@ void main() {
       expect(
         find.byType(LoginDeProducao),
         findsNothing,
-        reason: 'quadro $i: a tela pública também é uma resposta, e ainda não '
+        reason:
+            'quadro $i: a tela pública também é uma resposta, e ainda não '
             'houve resposta',
       );
     }
@@ -557,8 +568,10 @@ void main() {
         isNull,
         reason: 'o recado do estado terminal não pode estourar a linha',
       );
-      expect(find.text('servidor em atualização — tente mais tarde'),
-          findsOneWidget);
+      expect(
+        find.text('servidor em atualização — tente mais tarde'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('descartar a raiz solta o ouvinte da ponte', (tester) async {
@@ -595,7 +608,12 @@ void main() {
   // =========================================================================
   // §4.5 — "Em breve" não tem rota
   // =========================================================================
-  testWidgets('os quatro bloqueados avisam, e nenhum deles navega', (
+  // AMIGOS SAIU DESTA LISTA, e é a única mudança: ele deixou de ser "em breve"
+  // e passou a ter destino real (`AmigosDeProducao`). A prova de que ele NAVEGA
+  // — e de que continua sem maquete no caminho — mora no teste logo abaixo, e
+  // não é a ausência daqui: um item que sumisse desta lista sem ganhar prova
+  // própria teria deixado de ser verificado em vez de ter sido promovido.
+  testWidgets('os três bloqueados avisam, e nenhum deles navega', (
     tester,
   ) async {
     final b = _Bancada(uidInicial: 'uid-A');
@@ -604,7 +622,7 @@ void main() {
     await _abrirAplicativo(tester, b);
     await _passarAAbertura(tester);
 
-    for (final rotulo in ['Ranking', 'Recompensas', 'Amigos', 'Loja VIP']) {
+    for (final rotulo in ['Ranking', 'Recompensas', 'Loja VIP']) {
       final alvo = find.text(rotulo).first;
       await tester.ensureVisible(alvo);
       await tester.pumpAndSettle();
@@ -627,5 +645,41 @@ void main() {
       // sobra deste.
       await tester.pumpAndSettle(const Duration(seconds: 2));
     }
+  });
+
+  // =========================================================================
+  // Amigos SAIU do "em breve" — e a prova é esta
+  // =========================================================================
+  testWidgets('Amigos navega, e o que abre consulta a autoridade', (
+    tester,
+  ) async {
+    final b = _Bancada(uidInicial: 'uid-A');
+    addTearDown(b.fechar);
+    b.social.respostaAmigos = paginaFalsa([
+      jogadorFalso('P0AMIGO000001', apelido: 'Bia'),
+    ]);
+
+    await _abrirAplicativo(tester, b);
+    await _passarAAbertura(tester);
+
+    final alvo = find.text('Amigos').first;
+    await tester.ensureVisible(alvo);
+    await tester.pumpAndSettle();
+    await tester.tap(alvo);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AmigosDeProducao), findsOneWidget);
+    expect(
+      find.textContaining('ainda não está disponível'),
+      findsNothing,
+      reason: 'Amigos ainda avisa "em breve" depois de ter destino',
+    );
+
+    // O NOME VEIO DA AUTORIDADE, e não do arquivo. Se algum dia a maquete
+    // voltar ao caminho, é aqui que aparece: 'Cláudia' e 'Beto' são dela.
+    expect(find.text('Bia'), findsOneWidget);
+    expect(find.text('Cláudia'), findsNothing);
+    expect(find.text('Beto'), findsNothing);
+    expect(b.social.chamadasDe('listarAmigos'), 1);
   });
 }

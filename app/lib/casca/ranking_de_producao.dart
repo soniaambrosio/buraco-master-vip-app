@@ -277,7 +277,8 @@ class _LinhaJogador extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: () => abrirPerfilDoJogador(context, jogador),
+            onTap: () =>
+                abrirPerfilDoJogador(context, AlvoDePerfil.doRanking(jogador)),
             child: Container(
               constraints: const BoxConstraints(
                 minHeight: kAlturaMinimaDaLinha,

@@ -609,10 +609,15 @@ void main() {
       expect(menu['jogar'], isTrue);
       expect(menu['tutorial'], isTrue);
       expect(menu['ajustes'], isTrue);
-      // Estes quatro só têm prévia visual, e a prévia não é destino.
+      // AMIGOS DEIXOU DE SER PRÉVIA. Ele entra aqui, junto dos quatro de cima,
+      // porque passou a ter destino de verdade — `AmigosDeProducao`, alimentada
+      // por `listarAmigos`, `listarSolicitacoes*` e `buscarJogadoresPorApelido`.
+      // O que a maquete `screens/amigos_screen.dart` continua sendo é catálogo
+      // visual inalcançável, e as auditorias N12/C16 continuam provando isso.
+      expect(menu['amigos'], isTrue);
+      // Estes três só têm prévia visual, e a prévia não é destino.
       expect(menu['ranking'], isFalse);
       expect(menu['recompensas'], isFalse);
-      expect(menu['amigos'], isFalse);
       expect(menu['loja'], isFalse);
     });
 

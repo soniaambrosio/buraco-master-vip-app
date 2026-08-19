@@ -42,6 +42,7 @@ import '../screens/perfil_screen.dart' show NavDestino;
 import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
+import 'amigos_de_producao.dart';
 import 'configuracoes_de_producao.dart';
 import 'onde_jogar_de_producao.dart';
 
@@ -153,7 +154,6 @@ class HomeDeProducao extends StatelessWidget {
           id: 'amigos',
           label: 'Amigos',
           icone: 'assets/inicio/menu_amigos.webp',
-          disponivel: false,
         ),
         MenuItem(
           id: 'loja',
@@ -220,7 +220,7 @@ class HomeDeProducao extends StatelessWidget {
       case 'recompensas':
         _aindaNao(context, 'Recompensas');
       case 'amigos':
-        _aindaNao(context, 'Amigos');
+        _abrirAmigos(context);
       case 'loja':
         _aindaNao(context, 'Loja VIP');
       default:
@@ -244,6 +244,15 @@ class HomeDeProducao extends StatelessWidget {
   void _abrirPerfil(BuildContext context) => Navigator.of(
     context,
   ).push(MaterialPageRoute<void>(builder: (_) => const PerfilPage()));
+
+  /// A porta produtiva para Amigos e para a descoberta social.
+  ///
+  /// Só empurra rota: não consulta nada. Quem consulta é a tela aberta, e ela
+  /// lê o escopo social que a raiz já mantém — abrir e fechar Amigos dez vezes
+  /// não emite dez consultas, do mesmo jeito que abrir o Ranking não emite.
+  void _abrirAmigos(BuildContext context) => Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const AmigosDeProducao()));
 
   void _abrirOndeJogar(BuildContext context) => Navigator.of(
     context,

@@ -63,7 +63,11 @@ const String kAvatarValido = 'coruja_dourada';
 /// A contagem é a testemunha de que nem a Home nem o Perfil pedem identidade:
 /// só o login e o `recarregar()` explícito movem este número.
 class FonteEspia implements FonteDeIdentidade {
-  FonteEspia({this.publicId = kPublicIdA, this.avatarRef, this.apelido = 'Ana'});
+  FonteEspia({
+    this.publicId = kPublicIdA,
+    this.avatarRef,
+    this.apelido = 'Ana',
+  });
 
   String publicId;
   String? avatarRef;
@@ -286,7 +290,10 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
-      EscopoSessao(sessao: sessao, child: MaterialApp(home: tela)),
+      EscopoSessao(
+        sessao: sessao,
+        child: MaterialApp(home: tela),
+      ),
     );
     await tester.pumpAndSettle();
   }
@@ -386,7 +393,12 @@ void main() {
       // `avatarRef` não-string nunca chega ao resolvedor: `IdentidadePublica`
       // o converte em `null` ao hidratar a resposta da callable. Sem esta
       // trava, o cliente teria de decidir o que fazer com um número.
-      for (final bruto in <Object?>[42, true, <String, Object?>{}, <int>[1]]) {
+      for (final bruto in <Object?>[
+        42,
+        true,
+        <String, Object?>{},
+        <int>[1],
+      ]) {
         final id = IdentidadePublica.doWire({
           'publicId': kPublicIdA,
           'perfil': {'apelido': 'Ana', 'avatarRef': bruto},
@@ -396,12 +408,15 @@ void main() {
       }
     });
 
-    test('M04 ausência de identidade e ausência de avatar dão o mesmo valor', () {
-      expect(avatarPublicoDaIdentidade(null), kAvatarPublicoFallback);
-      expect(avatarPublicoDe(null), kAvatarPublicoFallback);
-      expect(avatarPublicoEhFallback(kAvatarPublicoFallback), isTrue);
-      expect(avatarPublicoEhFallback(kAvatarValido), isFalse);
-    });
+    test(
+      'M04 ausência de identidade e ausência de avatar dão o mesmo valor',
+      () {
+        expect(avatarPublicoDaIdentidade(null), kAvatarPublicoFallback);
+        expect(avatarPublicoDe(null), kAvatarPublicoFallback);
+        expect(avatarPublicoEhFallback(kAvatarPublicoFallback), isTrue);
+        expect(avatarPublicoEhFallback(kAvatarValido), isFalse);
+      },
+    );
 
     test('o formato espelha, caractere a caractere, o do domínio social', () {
       // A cópia é deliberada — `auditoria_identidade_test.dart` proíbe o
@@ -494,18 +509,19 @@ void main() {
       }
     });
 
-    testWidgets('M04b avatarRef ausente usa o mesmo fallback nos dois lugares', (
-      tester,
-    ) async {
-      fonte.avatarRef = null;
-      await login(tester);
+    testWidgets(
+      'M04b avatarRef ausente usa o mesmo fallback nos dois lugares',
+      (tester) async {
+        fonte.avatarRef = null;
+        await login(tester);
 
-      await montar(tester, const HomeDeProducao());
-      expect(avatarDaHome(tester), kAvatarPublicoFallback);
+        await montar(tester, const HomeDeProducao());
+        expect(avatarDaHome(tester), kAvatarPublicoFallback);
 
-      await montarPerfil(tester);
-      expect(avatarDoPerfil(tester), kAvatarPublicoFallback);
-    });
+        await montarPerfil(tester);
+        expect(avatarDoPerfil(tester), kAvatarPublicoFallback);
+      },
+    );
 
     testWidgets('M07c referência desconhecida não derruba nenhuma das telas', (
       tester,
@@ -797,7 +813,11 @@ void main() {
       tester,
     ) async {
       final lenta = _FonteQueNuncaResponde();
-      sessao = SessaoDoJogador(fonte: lenta, uids: auth.stream, uidInicial: 'uid-A');
+      sessao = SessaoDoJogador(
+        fonte: lenta,
+        uids: auth.stream,
+        uidInicial: 'uid-A',
+      );
       addTearDown(sessao.dispose);
 
       tester.view.physicalSize = const Size(1080, 2340);
@@ -1054,16 +1074,43 @@ void main() {
     test('a autoridade do avatar é UMA, e mora no resolvedor', () {
       // Nenhum consumidor pode decidir por conta própria o que fazer com um
       // `avatarRef`: quem lê o campo tem de chamar o resolvedor.
+      //
+      // ---------------------------------------------------------------------
+      // POR QUE A REGRA DEIXOU DE SER "NINGUÉM MAIS PODE NOMEAR O CAMPO"
+      // ---------------------------------------------------------------------
+      //
+      // Ela era `infratores, isEmpty` com uma exceção escrita à mão para o
+      // portador. Funcionava enquanto havia UM portador e um consumidor que,
+      // por acaso, não precisava nomear o campo — a Home chama
+      // `avatarPublicoDaIdentidade(identidade)` e nunca escreve `avatarRef`.
+      //
+      // A descoberta social trouxe um segundo portador (`JogadorPublico`, que
+      // declara `avatarRef` do mesmo jeito que a identidade da sessão) e um
+      // consumidor que PRECISA nomear o campo, porque o valor lhe chega solto:
+      // `avatarPublicoDe(jogador.avatarRef)`. Sob a regra antiga, esse
+      // consumidor — que faz exatamente o certo — seria reprovado, e o jeito
+      // de "consertar" seria esconder o nome do campo atrás de um atalho no
+      // portador. Isso é o oposto do que a auditoria quer: seria uma segunda
+      // regra de avatar, escrita onde ninguém procuraria.
+      //
+      // A regra agora diz o que sempre quis dizer: LEU, CHAMOU O RESOLVEDOR.
+      // Ela continua reprovando o defeito de verdade (alguém escrever
+      // `avatarRef ?? '👑'`), e o teste seguinte — o do literal único — fecha o
+      // cerco pelo outro lado.
+      const portadores = [
+        // Declaram o campo e não desenham nada com ele.
+        'lib/sessao/identidade_publica_sessao.dart',
+        'lib/amigos/estado_social.dart',
+      ];
       final infratores = <String>[];
       for (final caminho in alcancaveis) {
         if (caminho == 'lib/sessao/avatar_publico.dart') continue;
+        if (portadores.contains(caminho)) continue;
         final f = File(caminho);
         if (!f.existsSync()) continue;
         final conteudo = _codigo(f);
         if (!conteudo.contains('avatarRef')) continue;
-        // `identidade_publica_sessao.dart` DECLARA o campo — é o portador, não
-        // um consumidor que decide o que desenhar.
-        if (caminho == 'lib/sessao/identidade_publica_sessao.dart') continue;
+        if (conteudo.contains('avatarPublicoDe(')) continue;
         infratores.add(caminho);
       }
       expect(
@@ -1073,6 +1120,16 @@ void main() {
             'quem lê avatarRef fora do resolvedor está escrevendo a segunda '
             'regra: $infratores',
       );
+
+      // E os portadores continuam sendo portadores: nenhum dos dois desenha.
+      for (final caminho in portadores) {
+        final conteudo = _codigo(File(caminho));
+        expect(
+          conteudo,
+          isNot(contains(kAvatarPublicoFallback)),
+          reason: '$caminho passou a decidir o que desenhar',
+        );
+      }
     });
 
     test('o fallback é literal em um lugar só do fecho alcançável', () {
@@ -1143,7 +1200,8 @@ void main() {
         expect(
           alcancaveis,
           contains(caminho),
-          reason: '$caminho saiu do fecho — o Ranking Real deixou de ser '
+          reason:
+              '$caminho saiu do fecho — o Ranking Real deixou de ser '
               'alcançável a partir da raiz',
         );
       }
@@ -1164,14 +1222,50 @@ void main() {
         expect(
           alcancaveis,
           contains(caminho),
-          reason: '$caminho saiu do fecho — a navegação ao Perfil público '
+          reason:
+              '$caminho saiu do fecho — a navegação ao Perfil público '
               'deixou de ser alcançável a partir da raiz',
         );
       }
 
+      // 48 → 54 AO ENTRAR A DESCOBERTA SOCIAL, e os seis também têm nome.
+      //
+      // Cinco são o módulo do grafo social (o estado canônico, a porta, o
+      // adaptador de Firebase, o leitor e o escopo — a mesma divisão que o
+      // Ranking Real já tinha) e o sexto é a tela produtiva de Amigos. A
+      // maquete `lib/screens/amigos_screen.dart` continua FORA do fecho, e é
+      // isso que C16 e N12 provam.
+      const daDescobertaSocial = [
+        'lib/amigos/estado_social.dart',
+        'lib/amigos/transporte_social.dart',
+        'lib/amigos/transporte_social_firebase.dart',
+        'lib/amigos/leitor_social.dart',
+        'lib/amigos/escopo_social.dart',
+        'lib/casca/amigos_de_producao.dart',
+      ];
+      for (final caminho in daDescobertaSocial) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — a descoberta social deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
       expect(
         alcancaveis,
-        hasLength(40 + doRankingReal.length + daNavegacaoPublica.length),
+        isNot(contains('lib/screens/amigos_screen.dart')),
+        reason: 'a maquete de Amigos entrou no fecho de produção',
+      );
+
+      expect(
+        alcancaveis,
+        hasLength(
+          40 +
+              doRankingReal.length +
+              daNavegacaoPublica.length +
+              daDescobertaSocial.length,
+        ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
       final resolvedor = _codigo(File('lib/sessao/avatar_publico.dart'));
@@ -1205,10 +1299,11 @@ void main() {
 
     test('M18 authStateChanges continua com um assinante só', () {
       final assinantes = <String>[];
-      for (final f in Directory('lib')
-          .listSync(recursive: true)
-          .whereType<File>()
-          .where((f) => f.path.endsWith('.dart'))) {
+      for (final f
+          in Directory('lib')
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.dart'))) {
         final n = _barras(f.path);
         if (n.contains('/social/') || n.contains('/moderacao/')) continue;
         if (n.endsWith('js_bridge.dart')) continue;
