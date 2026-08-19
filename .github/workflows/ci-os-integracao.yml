@@ -136,6 +136,12 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # A11Y: as strings que o FRAMEWORK escreve sozinho. Sem os delegados de
+          # localização no MaterialApp produtivo, o Material cai em
+          # `DefaultMaterialLocalizations` e anuncia "Back", "Dismiss" e
+          # "Cut/Copy/Paste" no meio de um aplicativo em português. O caso é
+          # observado na árvore montada, nas telas reais — não por busca de texto.
+          roda cascaloc   test/casca/localizacao_ptbr_test.dart
           # OS Identidade do Perfil Publico Visitado: quando A abre o perfil de
           # B, os QUATRO campos — nome, avatar, liga e numeros — vem do
           # `publicId` de B. O defeito que este gate fecha nao quebrava nada:
@@ -310,7 +316,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascaloc perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -361,7 +367,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascaloc perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
