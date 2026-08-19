@@ -108,6 +108,35 @@ jobs:
           # O widget_test.dart do scaffold tem erro pré-existente conhecido.
           rm -f app_build/test/widget_test.dart
 
+      - name: "0 — suítes obrigatórias presentes (falha FECHADA, antes dos gates)"
+        run: |
+          # POR QUE ESTE PASSO EXISTE, E POR QUE ELE VEM ANTES.
+          #
+          # O auxiliar `roda` do passo seguinte escreve `nao_<chave>` quando a
+          # suite nao esta no disco, e o portao trata `nao_<chave>` como NAO
+          # EXECUTADO — que nao reprova. Para os gates que dependem de codebase
+          # Firebase opcional isso e a decisao certa, e ela NAO muda aqui.
+          #
+          # O preco era que `rm` numa suite obrigatoria deixava o run verde. O
+          # verificador le `app/test/suites_obrigatorias.txt` e reprova so o que
+          # esta naquela lista — nenhum outro NAO EXECUTADO vira falha.
+          #
+          # Ele sai com codigo proprio em vez de so registrar `exit_suites`: um
+          # verificador que depende de outro passo para virar vermelho herda o
+          # defeito que veio consertar. O `exit_suites` fica junto para a linha
+          # aparecer na tabela de evidencia, e nao no lugar do exit.
+          # `set +e` na mao: o shell padrao dos passos e `bash -e` SEM pipefail,
+          # mas quem escrever `shell: bash` um dia liga o pipefail junto, e ai o
+          # `-e` abortaria o passo antes de `exit_suites` existir. O job ficaria
+          # vermelho do mesmo jeito, e a tabela de evidencia mentiria dizendo
+          # NAO EXECUTADO. Capturar o status explicitamente vale nos dois casos.
+          set +e
+          bash scripts/ci/verificar_suites_obrigatorias.sh app_build .github/workflows/ci-os-integracao.yml 2>&1 | tee t_suites.log
+          st=${PIPESTATUS[0]}
+          set -e
+          echo "$st" > exit_suites
+          exit "$st"
+
       - name: "1+2 — analyze + suítes Flutter (captura exit codes sem abortar)"
         run: |
           set +e
@@ -150,6 +179,12 @@ jobs:
           # que ele fecha e silenciosa — `visualDensity: compact` de volta num
           # botao nao quebra nada visivel, e derruba o alvo de 48 para 40.
           roda a11yamigos test/amigos/a11y_alvos_amigos_test.dart
+          # A metade RAPIDA da guarda de instrumentacao: o mesmo manifesto do
+          # passo 0, lido em Dart, para o vermelho aparecer em `flutter test` na
+          # maquina de quem edita. Ele nao substitui o passo 0 — apagar ESTE
+          # arquivo tambem daria NAO EXECUTADO, e quem pega isso e o passo 0,
+          # porque o manifesto lista a si mesmo.
+          roda suitesobrig test/ci/suites_obrigatorias_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -317,7 +352,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -368,7 +403,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
