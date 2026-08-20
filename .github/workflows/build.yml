@@ -285,7 +285,7 @@ jobs:
           flutter test test/sessao --reporter expanded
           echo "PORTÃO VERDE: sessão canônica validada no commit ${GITHUB_SHA}."
 
-      - name: "PORTÃO DAS GUARDAS — as suítes obrigatórias continuam no disco"
+      - name: "PORTÃO DAS GUARDAS — as suítes obrigatórias continuam inteiras"
         # ENTRAR NUM DIRETÓRIO DÁ EXECUÇÃO, NUNCA SOBREVIVÊNCIA.
         #
         # O passo abaixo roda `flutter test test/casca`, e por isso qualquer
@@ -294,11 +294,18 @@ jobs:
         # uma suíte tirava dezenas de casos do run e deixava este portão verde,
         # sem uma linha a menos no log.
         #
+        # E ESTAR NO DISCO NÃO É PROVAR. A rehomologação mediu o resto do
+        # buraco: esvaziar a suíte de Ajustes até um único `expect(1, 1)`, com
+        # nome e caminho intactos, também deixava tudo verde. Por isso o
+        # manifesto passou a carregar, por suíte, a assinatura do conteúdo, o
+        # piso de provas e os blocos obrigatórios.
+        #
         # `app/test/suites_obrigatorias.txt` é a lista das suítes para as quais
-        # sumir é falha. O verificador confere o arquivo no disco e o REGISTRO
-        # no agregador — tirar a chave de uma das duas listas de gate de lá
-        # desliga o gate tão bem quanto apagar o teste. Ele reprova por conta
-        # própria, e vem antes de qualquer teste rodar.
+        # sumir — ou esvaziar — é falha. O verificador confere o arquivo no
+        # disco, o CONTEÚDO dele e o REGISTRO no agregador; tirar a chave de uma
+        # das duas listas de gate de lá desliga o gate tão bem quanto apagar o
+        # teste. Ele reprova por conta própria, e vem antes de qualquer teste
+        # rodar.
         run: |
           chmod +x scripts/ci/verificar_suites_obrigatorias.sh
           scripts/ci/verificar_suites_obrigatorias.sh app .github/workflows/ci-os-integracao.yml

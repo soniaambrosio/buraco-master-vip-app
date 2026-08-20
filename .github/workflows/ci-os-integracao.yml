@@ -122,7 +122,13 @@ jobs:
       # desliga o gate tão bem quanto apagar o arquivo. Um verificador que
       # dependesse de ser somado no portão lá na frente herdaria o defeito que
       # veio consertar; por isso ele reprova sozinho, aqui.
-      - name: "0 — suítes obrigatórias continuam no disco e registradas"
+      #
+      # OS 30-C2: e confere também o CONTEÚDO. Uma suíte esvaziada até um
+      # `expect(1, 1)`, com o nome e o caminho intactos, passava por tudo isto
+      # e saía `exit_<chave>=0` com trinta e quatro provas a menos. O manifesto
+      # carrega, por suíte, a assinatura, o piso de provas e os blocos que têm
+      # de continuar lá — conferidos aqui, sem executar a suíte e antes dela.
+      - name: "0 — suítes obrigatórias: no disco, registradas e íntegras"
         run: |
           chmod +x scripts/ci/verificar_suites_obrigatorias.sh
           scripts/ci/verificar_suites_obrigatorias.sh app_build .github/workflows/ci-os-integracao.yml

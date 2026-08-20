@@ -1,4 +1,5 @@
-# suites_obrigatorias.txt — as suites que NAO podem sumir sem o CI ficar vermelho.
+# suites_obrigatorias.txt — as suites que NAO podem sumir, nem ser esvaziadas,
+# sem o CI ficar vermelho.
 #
 # ---------------------------------------------------------------------------
 # POR QUE ESTE ARQUIVO EXISTE
@@ -16,31 +17,106 @@
 #
 # Este arquivo e a lista das suites para as quais a tolerancia NAO vale.
 #
-# Quem o le:
-#   * `scripts/ci/verificar_suites_obrigatorias.sh`, num passo que falha
-#     FECHADO antes de qualquer teste rodar — e que nao depende de gate nenhum
-#     para reprovar, porque ele proprio sai com codigo diferente de zero;
-#   * `test/ci/suites_obrigatorias_test.dart`, que da o mesmo vermelho na
-#     maquina de quem edita, sem esperar pelo Actions.
+# ---------------------------------------------------------------------------
+# E POR QUE ELE PASSOU A GUARDAR O CONTEUDO — OS 30-C2
+# ---------------------------------------------------------------------------
+#
+# Provar que o ARQUIVO esta no disco nao prova que ele ainda PROVA. A
+# rehomologacao da OS 30 mediu o buraco: trocar o corpo de
+# `acessibilidade_configuracoes_test.dart` por um unico `expect(1, 1)` —
+# mantendo nome, caminho, sufixo `_test.dart` e o registro nas duas listas do
+# workflow — deixava os cinco portoes VERDES, com trinta e quatro provas a
+# menos no run e `exit_a11yconf` igual a zero.
+#
+# A assinatura do contrato mora AQUI, e nao dentro da suite: uma guarda que
+# vive no arquivo que ela guarda some junto com ele. Ela e versionada com o
+# resto do repositorio, e por isso alterar a suite de verdade passa a exigir
+# alterar esta lista de proposito — o que aparece no diff, que e o ponto.
 #
 # ---------------------------------------------------------------------------
 # FORMATO
 # ---------------------------------------------------------------------------
 #
 #   <chave do gate><espacos><caminho relativo a raiz do app>
+#       sha256   <64 hex do conteudo, com todo CR removido>
+#       provas   <piso de declaracoes `test(` / `testWidgets(`>
+#       exige    <literal de codigo que tem de continuar na suite>
 #
-# Linha vazia e linha comecando com `#` sao ignoradas. Duas colunas exatas —
-# uma terceira e erro, para que um caminho com espaco nao passe despercebido.
+# Linha vazia e linha comecando com `#` sao ignoradas. A linha de ENTRADA fica
+# na margem e tem duas colunas exatas — uma terceira e erro, para que um
+# caminho com espaco nao passe despercebido. As linhas do CONTRATO vem
+# indentadas logo abaixo da entrada a que pertencem; `exige` pode repetir,
+# `sha256` e `provas` nao.
+#
+# A assinatura e sobre o conteudo com TODO CR removido, porque o indice do git
+# guarda LF, a arvore de trabalho no Windows tem CRLF (`core.autocrlf=true`) e
+# o runner do Actions ve LF — assinar os bytes crus valeria numa plataforma e
+# mentiria na outra.
+#
+# O `provas` e contagem ESTATICA, de proposito: a guarda precisa reprovar sem
+# executar a suite que ela guarda, e antes dela. O `exige` casa por literal de
+# codigo INCLUINDO o parentese da chamada, e a busca IGNORA linhas de
+# comentario — repetir o texto num comentario nao satisfaz o contrato. Valores
+# sao aparados nas pontas: nao use espaco no fim.
+#
+# Quem le tudo isto:
+#   * `scripts/ci/verificar_suites_obrigatorias.sh`, num passo que falha
+#     FECHADO antes de qualquer teste rodar — e que nao depende de gate nenhum
+#     para reprovar, porque ele proprio sai com codigo diferente de zero;
+#   * `test/ci/suites_obrigatorias_test.dart`, que da o mesmo vermelho na
+#     maquina de quem edita, sem esperar pelo Actions.
 #
 # O verificador exige de cada entrada:
 #   * o arquivo existe no disco;
 #   * o workflow tem uma linha `roda <chave> <caminho>` igualzinha;
 #   * a <chave> esta nas DUAS listas de gate do workflow (a da evidencia e a
-#     do portao) — sem isso o gate roda, falha, e ninguem olha.
+#     do portao) — sem isso o gate roda, falha, e ninguem olha;
+#   * o contrato esta completo (sha256 + provas + ao menos um exige);
+#   * a assinatura confere, a contagem nao caiu abaixo do piso e todos os
+#     blocos exigidos continuam la.
+#
+# ---------------------------------------------------------------------------
+# MUDOU A SUITE DE PROPOSITO? ENTAO ATUALIZE A ASSINATURA
+# ---------------------------------------------------------------------------
+#
+# O verificador imprime o digest que achou no disco. Copie-o para `sha256` no
+# MESMO commit da alteracao, e ajuste `provas`/`exige` se o contrato mudou.
+# Nao ha atalho automatico de proposito: se atualizar a assinatura fosse um
+# efeito colateral de rodar o gate, ela nao guardaria nada.
 #
 # ENTRAR AQUI E UMA DECISAO. Significa que a suite passou a ser obrigatoria, e
-# que remove-la exige remover tambem a linha daqui — o que aparece no diff, que
-# e exatamente o ponto: o desligamento deixa de ser silencioso.
+# que remove-la ou esvazia-la exige mexer aqui — o que aparece no diff.
 
-a11yconf     test/casca/acessibilidade_configuracoes_test.dart
-suitesobrig  test/ci/suites_obrigatorias_test.dart
+a11yconf    test/casca/acessibilidade_configuracoes_test.dart
+    sha256   00fc0528512c4f5fe046fe2fccfce0874aaa294049bebf5b850b549e7cbf0795
+    provas   35
+    exige    ('cada preferência é UM controle com nome, estado e ação'
+    exige    ('alternar pelo canal do leitor de tela'
+    exige    ('a árvore inteira, sem lista de controles conhecidos'
+    exige    ('a folha de escolha marca a opção corrente'
+    exige    ('o toque com o dedo continua igual'
+    exige    ('a superfície existe antes de qualquer conclusão sobre ela'
+    exige    ('cada controle expõe o contrato de interação inteiro'
+    exige    ('P1
+    exige    ('P2
+    exige    ('I1
+    exige    ('I2
+    exige    ('I3
+    exige    ('I4
+    exige    ('I5
+    exige    ('I6
+
+suitesobrig test/ci/suites_obrigatorias_test.dart
+    sha256   eeddc02c6e404389c4022277382641c4c5122220e53d85f08d9b02aff90586d5
+    provas   9
+    exige    ('as suítes obrigatórias continuam no disco'
+    exige    ('as suítes obrigatórias continuam PROVANDO'
+    exige    ('S1
+    exige    ('S2
+    exige    ('S3
+    exige    ('S4
+    exige    ('S5
+    exige    ('S6
+    exige    ('S7
+    exige    ('S8
+    exige    ('S9
