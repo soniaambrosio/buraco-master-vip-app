@@ -285,6 +285,25 @@ jobs:
           flutter test test/sessao --reporter expanded
           echo "PORTÃO VERDE: sessão canônica validada no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DAS GUARDAS — as suítes obrigatórias continuam no disco"
+        # ENTRAR NUM DIRETÓRIO DÁ EXECUÇÃO, NUNCA SOBREVIVÊNCIA.
+        #
+        # O passo abaixo roda `flutter test test/casca`, e por isso qualquer
+        # suíte nova de casca é EXECUTADA sem ninguém precisar registrá-la. O
+        # que um diretório não faz é reclamar do que falta dentro dele: apagar
+        # uma suíte tirava dezenas de casos do run e deixava este portão verde,
+        # sem uma linha a menos no log.
+        #
+        # `app/test/suites_obrigatorias.txt` é a lista das suítes para as quais
+        # sumir é falha. O verificador confere o arquivo no disco e o REGISTRO
+        # no agregador — tirar a chave de uma das duas listas de gate de lá
+        # desliga o gate tão bem quanto apagar o teste. Ele reprova por conta
+        # própria, e vem antes de qualquer teste rodar.
+        run: |
+          chmod +x scripts/ci/verificar_suites_obrigatorias.sh
+          scripts/ci/verificar_suites_obrigatorias.sh app .github/workflows/ci-os-integracao.yml
+          echo "PORTÃO VERDE: guardas obrigatórias no lugar no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE PRODUÇÃO — casca real (roteamento, mocks, dados pessoais)"
         # Prova que o APK não abre numa bancada de prévias: partida fria decide
         # entre Login e Home pela sessão, o logout derruba socket e pilha de
@@ -299,6 +318,13 @@ jobs:
           fi
           if [ ! -f app/test/casca/auditoria_casca_test.dart ]; then
             echo "ERRO: auditoria_casca_test.dart não encontrado — é ela que prova a AUSÊNCIA."
+            exit 1
+          fi
+          # Nomeada, e não só varrida pelo diretório: é ela que prova que cada
+          # preferência de Ajustes é UM controle com nome, papel, estado,
+          # `enabled`, ação e foco de entrada. Ver o portão das guardas acima.
+          if [ ! -f app/test/casca/acessibilidade_configuracoes_test.dart ]; then
+            echo "ERRO: acessibilidade_configuracoes_test.dart não encontrado — é ela que prova os CONTROLES de Ajustes."
             exit 1
           fi
           mkdir -p app_build/test/casca

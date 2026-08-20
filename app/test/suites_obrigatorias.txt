@@ -1,0 +1,46 @@
+# suites_obrigatorias.txt — as suites que NAO podem sumir sem o CI ficar vermelho.
+#
+# ---------------------------------------------------------------------------
+# POR QUE ESTE ARQUIVO EXISTE
+# ---------------------------------------------------------------------------
+#
+# O agregador do `ci-os-integracao.yml` roda cada suite por CAMINHO, e o
+# auxiliar `roda` escreve `nao_<chave>` quando o arquivo nao esta la. O portao
+# trata `nao_<chave>` como NAO EXECUTADO, e NAO EXECUTADO nao reprova.
+#
+# Essa tolerancia e DELIBERADA e continua valendo: metade dos gates depende de
+# codebase Firebase que pode legitimamente nao existir na branch em que o CI
+# roda, e transformar toda ausencia em falha deixaria o portao vermelho por
+# motivo que nao e regressao. O efeito colateral e que APAGAR ou RENOMEAR uma
+# suite a desliga em SILENCIO, e o run continua verde.
+#
+# Este arquivo e a lista das suites para as quais a tolerancia NAO vale.
+#
+# Quem o le:
+#   * `scripts/ci/verificar_suites_obrigatorias.sh`, num passo que falha
+#     FECHADO antes de qualquer teste rodar — e que nao depende de gate nenhum
+#     para reprovar, porque ele proprio sai com codigo diferente de zero;
+#   * `test/ci/suites_obrigatorias_test.dart`, que da o mesmo vermelho na
+#     maquina de quem edita, sem esperar pelo Actions.
+#
+# ---------------------------------------------------------------------------
+# FORMATO
+# ---------------------------------------------------------------------------
+#
+#   <chave do gate><espacos><caminho relativo a raiz do app>
+#
+# Linha vazia e linha comecando com `#` sao ignoradas. Duas colunas exatas —
+# uma terceira e erro, para que um caminho com espaco nao passe despercebido.
+#
+# O verificador exige de cada entrada:
+#   * o arquivo existe no disco;
+#   * o workflow tem uma linha `roda <chave> <caminho>` igualzinha;
+#   * a <chave> esta nas DUAS listas de gate do workflow (a da evidencia e a
+#     do portao) — sem isso o gate roda, falha, e ninguem olha.
+#
+# ENTRAR AQUI E UMA DECISAO. Significa que a suite passou a ser obrigatoria, e
+# que remove-la exige remover tambem a linha daqui — o que aparece no diff, que
+# e exatamente o ponto: o desligamento deixa de ser silencioso.
+
+a11yconf     test/casca/acessibilidade_configuracoes_test.dart
+suitesobrig  test/ci/suites_obrigatorias_test.dart

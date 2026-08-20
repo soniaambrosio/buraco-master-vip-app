@@ -616,6 +616,25 @@ class ConfiguracoesScreen extends StatelessWidget {
   /// tela é um controle porque ela diz que é, e não porque as vizinhas
   /// estavam brigando. [onTap] é o mesmo de sempre — a linha continua com um
   /// caminho só para ser acionada.
+  ///
+  /// ---------------------------------------------------------------------
+  /// POR QUE [MergeSemantics], E NÃO `excludeSemantics`
+  /// ---------------------------------------------------------------------
+  ///
+  /// Os dois produzem UM nó, e é aí que param de ser equivalentes.
+  /// `excludeSemantics` **descarta** a subárvore: junto com os dois textos ia
+  /// embora o [Focus] que o [InkWell] carrega dentro dele, e com ele a ação
+  /// `SemanticsAction.focus` e as marcas de focável/focado. A linha continuava
+  /// legível para o leitor de tela e sumia do canal de foco de entrada —
+  /// teclado, D-pad, varredura por acionador —, que passava a existir no widget
+  /// sem ser anunciado a ninguém.
+  ///
+  /// [MergeSemantics] **funde** em vez de descartar: o `tap` e o foco reais do
+  /// [InkWell] sobem para o mesmo nó que carrega o nome. O único fragmento que
+  /// ainda precisa sair é o texto, e por um motivo estreito — ele já está
+  /// dentro de [label], e deixá-lo entrar duplicaria o título na fala. Daí o
+  /// [ExcludeSemantics] apertado em volta do conteúdo pintado, e não em volta
+  /// do controle.
   Widget _navTile({
     required IconData icone,
     required String titulo,
@@ -623,54 +642,58 @@ class ConfiguracoesScreen extends StatelessWidget {
     required VoidCallback onTap,
     bool destaque = false,
   }) {
-    return Semantics(
-      container: true,
-      excludeSemantics: true,
-      button: true,
-      label: '$titulo. $subtitulo',
-      onTap: onTap,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
-            child: Row(
-              children: [
-                _iconeTile(icone, destaque: destaque),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        titulo,
-                        style: TextStyle(
-                          color: destaque ? const Color(0xFFE2C9FF) : _texto,
-                          fontSize: 13.2,
-                          fontWeight: FontWeight.w800,
-                        ),
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        label: '$titulo. $subtitulo',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+                child: Row(
+                  children: [
+                    _iconeTile(icone, destaque: destaque),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            titulo,
+                            style: TextStyle(
+                              color: destaque
+                                  ? const Color(0xFFE2C9FF)
+                                  : _texto,
+                              fontSize: 13.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitulo,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _textoSec,
+                              fontSize: 10.4,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitulo,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _textoSec,
-                          fontSize: 10.4,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: _textoSec,
+                      size: 23,
+                    ),
+                  ],
                 ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: _textoSec,
-                  size: 23,
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -701,14 +724,32 @@ class ConfiguracoesScreen extends StatelessWidget {
   /// falar com ela, sem ouvir o que está alternando.
   ///
   /// Por isso a linha inteira passa a ser UM nó com as três coisas que todo
-  /// controle precisa ter — nome, estado e ação. O `excludeSemantics` tira os
-  /// filhos da árvore: é o que impede o texto e o [Switch] de voltarem como
-  /// nós soltos ao lado deste. É a mesma régua de `perfil_screen.dart`.
+  /// controle precisa ter — nome, estado e ação. É a mesma régua de
+  /// `perfil_screen.dart`.
   ///
-  /// A semântica DESCREVE, não decide: `toggled` repete o [valor] que a linha
-  /// já recebeu para desenhar o [Switch], e alternar é a mesma função que o
-  /// toque no texto usa. O canal de acessibilidade não ganhou uma segunda
-  /// fonte de estado nem um segundo caminho de escrita.
+  /// ---------------------------------------------------------------------
+  /// QUEM DIZ CADA COISA — E POR QUE NÃO É ESTE MÉTODO
+  /// ---------------------------------------------------------------------
+  ///
+  /// [MergeSemantics] funde a linha num nó só sem apagar ninguém, e essa
+  /// diferença decide quem é a autoridade de cada campo:
+  ///
+  ///   - o **nome** é a única coisa que este método declara, porque é a única
+  ///     que não existe em lugar nenhum: o [Switch] não sabe do que ele é o
+  ///     interruptor;
+  ///   - **estado, ação, `enabled` e foco** sobem do próprio [Switch]. Ele já
+  ///     publica `toggled` a partir do mesmo [valor] que o desenha, `enabled`
+  ///     a partir do seu [onChanged], `tap` que chama esse [onChanged], e o
+  ///     [Focus] que o torna alcançável por teclado e por acionador.
+  ///
+  /// Declarar `toggled` aqui de novo criaria uma segunda fonte para um estado
+  /// que já tem dono, e um `enabled` fixo mentiria no dia em que o interruptor
+  /// pudesse ser desabilitado. O canal de acessibilidade descreve o controle
+  /// real; ele não monta um controle paralelo ao lado.
+  ///
+  /// O [ExcludeSemantics] é apertado de propósito: cerca só o texto pintado —
+  /// que já está dentro de [label] e duplicaria o título na fala — e deixa o
+  /// [Switch] inteiro de fora da exclusão.
   Widget _toggleTile({
     required IconData icone,
     required String titulo,
@@ -716,62 +757,62 @@ class ConfiguracoesScreen extends StatelessWidget {
     required bool valor,
     required ValueChanged<bool> onChanged,
   }) {
-    // UM alternador para os dois canais. O [Switch] chama o mesmo [onChanged]
-    // por conta própria, com o valor que ele já sabe.
+    // O toque no texto alterna igual ao toque no interruptor. Continua sendo
+    // gesto, não semântica: quem responde ao leitor de tela é o [Switch].
     void alternar() => onChanged(!valor);
 
-    return Semantics(
-      container: true,
-      excludeSemantics: true,
-      toggled: valor,
-      label: '$titulo. $subtitulo',
-      onTap: alternar,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
-        child: Row(
-          children: [
-            _iconeTile(icone),
-            const SizedBox(width: 11),
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: alternar,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        titulo,
-                        style: const TextStyle(
-                          color: _texto,
-                          fontSize: 13.2,
-                          fontWeight: FontWeight.w800,
-                        ),
+    return MergeSemantics(
+      child: Semantics(
+        label: '$titulo. $subtitulo',
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
+          child: Row(
+            children: [
+              _iconeTile(icone),
+              const SizedBox(width: 11),
+              Expanded(
+                child: ExcludeSemantics(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: alternar,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            titulo,
+                            style: const TextStyle(
+                              color: _texto,
+                              fontSize: 13.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitulo,
+                            style: const TextStyle(
+                              color: _textoSec,
+                              fontSize: 10.4,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitulo,
-                        style: const TextStyle(
-                          color: _textoSec,
-                          fontSize: 10.4,
-                          height: 1.25,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            Switch(
-              value: valor,
-              onChanged: onChanged,
-              activeThumbColor: const Color(0xFF2A1700),
-              activeTrackColor: _ouro,
-              inactiveThumbColor: const Color(0xFF8A806B),
-              inactiveTrackColor: const Color(0xFF3A3026),
-            ),
-          ],
+              Switch(
+                value: valor,
+                onChanged: onChanged,
+                activeThumbColor: const Color(0xFF2A1700),
+                activeTrackColor: _ouro,
+                inactiveThumbColor: const Color(0xFF8A806B),
+                inactiveTrackColor: const Color(0xFF3A3026),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -788,9 +829,10 @@ class ConfiguracoesScreen extends StatelessWidget {
   ///
   /// Declarar o nó resolve as duas coisas de uma vez: o controle passa a ter
   /// nome próprio (o que a preferência é, e o valor que está valendo agora) e
-  /// para de invadir o que está em volta. `abrir` é uma função só, usada pelo
-  /// toque e pela ação de acessibilidade — a folha de escolha continua sendo o
-  /// único caminho para trocar o valor.
+  /// para de invadir o que está em volta. `abrir` é o mesmo e único caminho
+  /// para trocar o valor, e ele continua saindo do [InkWell] — que é também
+  /// quem carrega o foco desta linha, preservado pelo [MergeSemantics] como
+  /// no [_navTile].
   Widget _choiceTile<T>({
     required BuildContext context,
     required IconData icone,
@@ -809,61 +851,63 @@ class ConfiguracoesScreen extends StatelessWidget {
       onChanged: onChanged,
     );
 
-    return Semantics(
-      container: true,
-      excludeSemantics: true,
-      button: true,
-      label: '$titulo. ${label(valor)}',
-      onTap: abrir,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: abrir,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
-            child: Row(
-              children: [
-                _iconeTile(icone),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Text(
-                    titulo,
-                    style: const TextStyle(
-                      color: _texto,
-                      fontSize: 13.2,
-                      fontWeight: FontWeight.w800,
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        label: '$titulo. ${label(valor)}',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: abrir,
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+                child: Row(
+                  children: [
+                    _iconeTile(icone),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Text(
+                        titulo,
+                        style: const TextStyle(
+                          color: _texto,
+                          fontSize: 13.2,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                Container(
-                  constraints: const BoxConstraints(maxWidth: 150),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _cardSecundario,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _borda),
-                  ),
-                  child: Text(
-                    label(valor),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _ouroClaro,
-                      fontSize: 10.8,
-                      fontWeight: FontWeight.w800,
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 150),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _cardSecundario,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _borda),
+                      ),
+                      child: Text(
+                        label(valor),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: _ouroClaro,
+                          fontSize: 10.8,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 3),
+                    const Icon(
+                      Icons.expand_more_rounded,
+                      color: _textoSec,
+                      size: 21,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 3),
-                const Icon(
-                  Icons.expand_more_rounded,
-                  color: _textoSec,
-                  size: 21,
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -951,44 +995,46 @@ class ConfiguracoesScreen extends StatelessWidget {
     final atual = opcao == valor;
     void escolher() => Navigator.of(context).pop(opcao);
 
-    return Semantics(
-      container: true,
-      excludeSemantics: true,
-      button: true,
-      selected: atual,
-      label: label(opcao),
-      onTap: escolher,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(13),
-          onTap: escolher,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 3),
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
-            ),
-            decoration: BoxDecoration(
-              color: atual ? _ouro.withValues(alpha: .14) : _cardSecundario,
-              borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: atual ? _ouro : _borda),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label(opcao),
-                    style: TextStyle(
-                      color: atual ? _ouroClaro : _texto,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        selected: atual,
+        label: label(opcao),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(13),
+            onTap: escolher,
+            child: ExcludeSemantics(
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 3),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
                 ),
-                if (atual)
-                  const Icon(Icons.check_rounded, color: _ouro, size: 21),
-              ],
+                decoration: BoxDecoration(
+                  color: atual ? _ouro.withValues(alpha: .14) : _cardSecundario,
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: atual ? _ouro : _borda),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label(opcao),
+                        style: TextStyle(
+                          color: atual ? _ouroClaro : _texto,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (atual)
+                      const Icon(Icons.check_rounded, color: _ouro, size: 21),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -1020,7 +1066,27 @@ class ConfiguracoesScreen extends StatelessWidget {
     );
   }
 
+  /// O único caminho de saída — e o único controle desta tela que a varredura
+  /// pegava sem papel e sem habilitação.
+  ///
+  /// Ele nunca esteve anônimo: o texto dentro do [InkWell] já dava o nome. O
+  /// que faltava era o resto do contrato, e a varredura de I1/I2 é cega de
+  /// propósito — ela olha TODO nó acionável, e não uma lista de controles
+  /// conhecidos. Deixar este de fora exigiria uma exceção escrita na suíte, e
+  /// uma varredura com lista de exceções é a que deixa passar o próximo.
   Widget _sairButton() {
+    // Sem `label`: o nome já vem do texto pintado, e a fusão o traz junto.
+    // Declarar aqui de novo o diria duas vezes na fala.
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        child: _sairInterno(),
+      ),
+    );
+  }
+
+  Widget _sairInterno() {
     return Material(
       color: Colors.transparent,
       child: InkWell(

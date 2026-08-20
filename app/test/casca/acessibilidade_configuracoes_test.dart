@@ -115,6 +115,42 @@ const _titulosDeSecao = <String>[
   'GERAL',
 ];
 
+// ---------------------------------------------------------------------------
+// O PISO DA SUPERFÍCIE
+// ---------------------------------------------------------------------------
+//
+// Uma varredura do tipo "nenhum controle viola X" é VERDADEIRA quando não há
+// controle nenhum. Trocar o `build` por um `SizedBox.shrink()` deixava duas
+// delas verdes — e é exatamente o tipo de verde que não significa nada.
+//
+// As listas abaixo são o piso: o que esta tela tem de ter ANTES de qualquer
+// conclusão universal ser tirada sobre ela. Elas não substituem a varredura;
+// elas são a pré-condição dela, e por isso são conferidas DENTRO de cada
+// varredura, e não só num caso vizinho que poderia estar sozinho no vermelho.
+
+/// As três escolhas que moram na própria tela, com o valor padrão anunciado.
+const _escolhasDaTela = <String>[
+  'Mão dominante. Destro',
+  'Quem pode me convidar. Todos',
+  'Idioma. Português (Brasil)',
+];
+
+/// As oito linhas que levam a outro lugar, no perfil padrão da bancada.
+const _linhasDeNavegacao = <String>[
+  'Editar perfil. Apelido, foto e informações públicas',
+  'Assinatura VIP. Conheça os benefícios da assinatura',
+  'Moedas e compras. Pacotes de moedas e histórico',
+  'Jogadores bloqueados. Rever ou desbloquear jogadores',
+  'Regras e como jogar. Aberto, Fechado e STBL',
+  'Suporte. Fale com a equipe do aplicativo',
+  'Termos e privacidade. Documentos e políticas do serviço',
+  'Avaliar o aplicativo. Conte sua experiência na loja',
+];
+
+/// As âncoras que a suíte usa em outros casos e que, se sumirem, tirariam o
+/// chão de tudo o mais sem que ninguém reclamasse.
+const _ancoras = <String>['Voltar', 'Sair da conta'];
+
 const _padrao = Configuracoes(versaoApp: '1.0.0');
 
 const _tudoLigado = Configuracoes(
@@ -265,6 +301,24 @@ Tristate _selecao(SemanticsNode no) =>
 bool _ehBotao(SemanticsNode no) =>
     no.getSemanticsData().flagsCollection.isButton;
 
+/// `Tristate.none` aqui quer dizer "este nó não diz se está habilitado" — que é
+/// como as linhas de navegação e as opções da folha chegavam, e o que faz um
+/// leitor de tela não ter o que anunciar sobre a disponibilidade do controle.
+Tristate _habilitacao(SemanticsNode no) =>
+    no.getSemanticsData().flagsCollection.isEnabled;
+
+/// `Tristate.none` quer dizer "este nó não participa do foco de entrada".
+///
+/// Não existe `isFocusable` na coleção: quem responde é `isFocused`, e o
+/// tri-estado carrega as duas informações de uma vez — `none` é "não é
+/// focável", `isFalse` é "é focável e não está com o foco", `isTrue` é "está
+/// com o foco agora".
+Tristate _foco(SemanticsNode no) =>
+    no.getSemanticsData().flagsCollection.isFocused;
+
+bool _aceitaFoco(SemanticsNode no) =>
+    no.getSemanticsData().hasAction(SemanticsAction.focus);
+
 List<SemanticsNode> _nosComRotulo(WidgetTester tester, String rotulo) =>
     _todosOsNos(
       tester,
@@ -297,6 +351,52 @@ Future<void> _acionar(
 ]) async {
   no.owner!.performAction(no.id, acao);
   await tester.pumpAndSettle();
+}
+
+/// Todos os controles que esta tela promete, num lugar só.
+List<String> get _superficieEsperada => <String>[
+  ..._preferencias.map((p) => p.rotulo),
+  ..._escolhasDaTela,
+  ..._linhasDeNavegacao,
+  ..._ancoras,
+];
+
+/// A pré-condição de toda conclusão universal desta suíte.
+///
+/// Reprova quando a superfície encolheu — inclusive quando ela encolheu até
+/// zero, que é o caso que uma varredura do tipo "nenhum viola X" não pega
+/// sozinha. Chamada DENTRO de cada varredura, e não ao lado dela: uma guarda
+/// que mora num caso vizinho deixa o caso guardado passar verde.
+void _exigirPiso(WidgetTester tester) {
+  final nos = _todosOsNos(tester);
+
+  expect(
+    nos.where(_acionavel),
+    isNotEmpty,
+    reason:
+        'a árvore não tem NENHUM controle acionável — qualquer conclusão do '
+        'tipo "nenhum controle viola X" seria verdadeira por vacuidade',
+  );
+
+  for (final rotulo in _superficieEsperada) {
+    final achados = nos
+        .where((no) => _nomeAcessivel(no) == rotulo)
+        .where(_acionavel)
+        .toList();
+    expect(
+      achados,
+      hasLength(1),
+      reason:
+          'o piso da superfície não fecha: esperava UM controle acionável '
+          'chamado "$rotulo", achei ${achados.length}',
+    );
+  }
+
+  expect(
+    nos.where((no) => _alternancia(no) != Tristate.none),
+    hasLength(_preferencias.length),
+    reason: 'o piso da superfície não fecha: alternadores fora de nove',
+  );
 }
 
 void main() {
@@ -515,6 +615,7 @@ void main() {
     testWidgets('nenhum nó acionável fica sem nome', (tester) async {
       final handle = tester.ensureSemantics();
       await _montar(tester);
+      _exigirPiso(tester);
 
       final anonimos = _todosOsNos(tester)
           .where(_acionavel)
@@ -556,6 +657,7 @@ void main() {
     testWidgets('nenhum título de seção gruda num controle', (tester) async {
       final handle = tester.ensureSemantics();
       await _montar(tester);
+      _exigirPiso(tester);
 
       for (final no in _todosOsNos(tester).where(_acionavel)) {
         final nome = _nomeAcessivel(no);
@@ -824,6 +926,213 @@ void main() {
       await tester.pump();
 
       expect(bancada.visitas, equals(<String>['sair']));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // O PISO, SOZINHO
+  // -------------------------------------------------------------------------
+  //
+  // O piso já é conferido dentro das varreduras — é lá que ele impede o verde
+  // por vacuidade. Aqui ele ganha um caso próprio para que a mensagem de falha
+  // aponte para a causa ("a tela encolheu") em vez de para o sintoma.
+  group('a superfície existe antes de qualquer conclusão sobre ela', () {
+    testWidgets('P1 — os vinte e dois controles esperados estão na árvore', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await _montar(tester);
+
+      _exigirPiso(tester);
+      expect(_superficieEsperada, hasLength(22));
+
+      handle.dispose();
+    });
+
+    testWidgets('P2 — uma tela vazia reprova o piso', (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await tester.pumpAndSettle();
+
+      // O piso é a única coisa entre uma varredura universal e um verde que não
+      // significa nada. Se este caso passar a não lançar, as varreduras
+      // voltaram a aprovar o vazio.
+      expect(() => _exigirPiso(tester), throwsA(isA<TestFailure>()));
+
+      handle.dispose();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // O CONTRATO DE INTERAÇÃO
+  // -------------------------------------------------------------------------
+  //
+  // Agrupar a linha num nó só resolveu o nome e o estado, e cobrou um preço que
+  // não estava na conta: descartar a subárvore levava junto o [Focus] que mora
+  // dentro do `InkWell` e do `Switch`. O controle continuava legível e sumia do
+  // canal de foco de entrada — teclado, D-pad, varredura por acionador —, e
+  // nenhum caso reclamava, porque nenhum caso olhava.
+  //
+  // Estes casos olham. E olham pelo mecanismo REAL: acionar `focus` e conferir
+  // que o nó passou a se declarar focado só é possível se a ação tiver chegado
+  // a um `FocusNode` de verdade. Um `onFocus` de fachada, escrito para encher
+  // contagem, aceitaria a ação e deixaria o nó exatamente como estava.
+  group('cada controle expõe o contrato de interação inteiro', () {
+    testWidgets('I1 — todo controle acionável se declara habilitado', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await _montar(tester);
+      _exigirPiso(tester);
+
+      final mudos = _todosOsNos(tester)
+          .where(_acionavel)
+          .where((no) => _habilitacao(no) != Tristate.isTrue)
+          .map(_nomeAcessivel)
+          .toList();
+
+      expect(
+        mudos,
+        isEmpty,
+        reason:
+            'controles que não dizem se estão habilitados: $mudos — o leitor '
+            'de tela não tem o que anunciar sobre a disponibilidade deles',
+      );
+
+      handle.dispose();
+    });
+
+    testWidgets('I2 — todo controle acionável participa do foco de entrada', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await _montar(tester);
+      _exigirPiso(tester);
+
+      final fora = _todosOsNos(tester)
+          .where(_acionavel)
+          .where((no) => _foco(no) == Tristate.none || !_aceitaFoco(no))
+          .map(_nomeAcessivel)
+          .toList();
+
+      expect(
+        fora,
+        isEmpty,
+        reason:
+            'controles fora do canal de foco de entrada: $fora — eles existem '
+            'no widget e não são anunciados a teclado nem a acionador',
+      );
+
+      handle.dispose();
+    });
+
+    testWidgets('I3 — focar pelo canal semântico move o foco DE VERDADE', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await _montar(tester);
+
+      // Um de cada família: interruptor, escolha e navegação.
+      for (final rotulo in <String>[
+        'Música. Trilha musical do aplicativo',
+        'Mão dominante. Destro',
+        'Termos e privacidade. Documentos e políticas do serviço',
+      ]) {
+        final antes = _noUnico(tester, rotulo);
+        expect(
+          _foco(antes),
+          Tristate.isFalse,
+          reason: '$rotulo: já deveria ser focável e ainda não estar focado',
+        );
+        final focadoAntes = tester.binding.focusManager.primaryFocus;
+
+        await _acionar(tester, antes, SemanticsAction.focus);
+
+        expect(
+          _foco(_noUnico(tester, rotulo)),
+          Tristate.isTrue,
+          reason:
+              '$rotulo: a ação de foco foi aceita e o nó continua dizendo que '
+              'não está focado — sinal de que ela não chegou a um FocusNode',
+        );
+        expect(
+          tester.binding.focusManager.primaryFocus,
+          isNot(same(focadoAntes)),
+          reason: '$rotulo: o foco primário do aplicativo não se moveu',
+        );
+      }
+
+      handle.dispose();
+    });
+
+    testWidgets('I4 — focar um controle não altera preferência nenhuma', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      final bancada = await _montar(tester);
+
+      await _acionar(
+        tester,
+        _noUnico(tester, 'Mostrar quando estou online. Amigos poderão ver sua presença'),
+        SemanticsAction.focus,
+      );
+
+      expect(
+        bancada.alteracoes,
+        isEmpty,
+        reason: 'focar não é acionar: nenhuma preferência pode ter mudado',
+      );
+
+      handle.dispose();
+    });
+
+    testWidgets('I5 — nenhum controle voltou a se partir em dois nós', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await _montar(tester);
+      _exigirPiso(tester);
+
+      // O defeito original era o nome num nó e o estado noutro. O defeito
+      // GÊMEO, que uma fusão mal feita produz, é o mesmo conteúdo em dois nós
+      // aninhados — o leitor de tela para duas vezes na mesma linha.
+      final porRotulo = <String, int>{};
+      for (final no in _todosOsNos(tester).where(_acionavel)) {
+        final nome = _nomeAcessivel(no);
+        if (nome.isEmpty) continue;
+        porRotulo[nome] = (porRotulo[nome] ?? 0) + 1;
+      }
+
+      final repetidos = porRotulo.entries
+          .where((e) => e.value > 1)
+          .map((e) => '"${e.key}" ×${e.value}')
+          .toList();
+
+      expect(
+        repetidos,
+        isEmpty,
+        reason: 'o mesmo controle aparece mais de uma vez na árvore: $repetidos',
+      );
+
+      handle.dispose();
+    });
+
+    testWidgets('I6 — as opções da folha também têm habilitação e foco', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await _montar(tester);
+      await _acionar(tester, _noUnico(tester, 'Quem pode me convidar. Todos'));
+
+      for (final rotulo in <String>['Todos', 'Só amigos', 'Ninguém']) {
+        final no = _noUnico(tester, rotulo);
+        expect(_habilitacao(no), Tristate.isTrue, reason: '$rotulo sem enabled');
+        expect(_aceitaFoco(no), isTrue, reason: '$rotulo não aceita foco');
+        expect(_foco(no), isNot(Tristate.none), reason: '$rotulo não é focável');
+        expect(_ehBotao(no), isTrue, reason: '$rotulo sem papel de botão');
+      }
+
+      handle.dispose();
     });
   });
 }

@@ -108,6 +108,25 @@ jobs:
           # O widget_test.dart do scaffold tem erro pré-existente conhecido.
           rm -f app_build/test/widget_test.dart
 
+      # Este passo vem ANTES dos gates de propósito, e sai com código próprio.
+      #
+      # O auxiliar `roda`, logo abaixo, escreve `nao_<chave>` quando a suíte não
+      # está no disco, e o portão trata `nao_<chave>` como NÃO EXECUTADO — que
+      # não reprova. Essa tolerância é deliberada e continua valendo para os
+      # gates que dependem de codebase Firebase opcional. O efeito colateral é
+      # que apagar ou renomear uma suíte a desliga em SILÊNCIO.
+      #
+      # `test/suites_obrigatorias.txt` é a lista para a qual a tolerância NÃO
+      # vale, e este verificador é quem a lê. Ele confere o arquivo no disco E o
+      # registro no workflow — tirar a chave de uma das duas listas de gate
+      # desliga o gate tão bem quanto apagar o arquivo. Um verificador que
+      # dependesse de ser somado no portão lá na frente herdaria o defeito que
+      # veio consertar; por isso ele reprova sozinho, aqui.
+      - name: "0 — suítes obrigatórias continuam no disco e registradas"
+        run: |
+          chmod +x scripts/ci/verificar_suites_obrigatorias.sh
+          scripts/ci/verificar_suites_obrigatorias.sh app_build .github/workflows/ci-os-integracao.yml
+
       - name: "1+2 — analyze + suítes Flutter (captura exit codes sem abortar)"
         run: |
           set +e
@@ -136,6 +155,15 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS 30-C1: os controles de Ajustes. Cada preferência é UM nó com
+          # nome, papel, estado, `enabled`, ação e foco de entrada — e a
+          # varredura cega que prova isso exige um piso da superfície antes de
+          # concluir, para que uma tela vazia não passe por vacuidade.
+          roda a11yconf   test/casca/acessibilidade_configuracoes_test.dart
+          # A guarda das guardas: lê `test/suites_obrigatorias.txt` e reprova na
+          # máquina de quem edita, sem esperar o Actions. A metade que reprova
+          # FECHADO no CI é o passo "0", acima.
+          roda suitesobrig test/ci/suites_obrigatorias_test.dart
           # OS Identidade do Perfil Publico Visitado: quando A abre o perfil de
           # B, os QUATRO campos — nome, avatar, liga e numeros — vem do
           # `publicId` de B. O defeito que este gate fecha nao quebrava nada:
@@ -310,7 +338,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yconf suitesobrig perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -361,7 +389,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yconf suitesobrig perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
@@ -371,5 +399,40 @@ jobs:
               echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
             fi
           done
+          # A TRAVA DAS OBRIGATÓRIAS.
+          #
+          # O laço acima tolera NÃO EXECUTADO, e essa tolerância é deliberada:
+          # metade dos gates depende de codebase Firebase que pode legitimamente
+          # não existir na branch em que o CI roda. Para as suítes do manifesto
+          # ela NÃO vale — e é aqui que ela deixa de valer, porque o passo "0"
+          # prova que o arquivo está no disco e que a chave está registrada, e
+          # não prova que o gate CHEGOU A RODAR. Um passo que morre antes da
+          # hora reabriria tudo pela porta dos fundos.
+          #
+          # A lista vem do manifesto, não daqui: gate novo entra editando
+          # `app/test/suites_obrigatorias.txt`, e uma segunda lista digitada
+          # neste YAML voltaria a divergir da primeira.
+          manifesto=app_build/test/suites_obrigatorias.txt
+          if [ ! -f "$manifesto" ]; then
+            echo "OBRIGATÓRIAS: manifesto ausente em '$manifesto'"
+            fail=1
+          else
+            obrigatorias=$(grep -vE '^[[:space:]]*(#|$)' "$manifesto" | awk '{print $1}')
+            if [ -z "$obrigatorias" ]; then
+              echo "OBRIGATÓRIAS: manifesto sem nenhuma entrada"
+              fail=1
+            fi
+            for k in $obrigatorias; do
+              if [ ! -f "exit_$k" ]; then
+                echo "OBRIGATÓRIAS: gate '$k' não deixou marcador — NÃO EXECUTADO não vale para ele"
+                fail=1
+              elif [ "$(cat "exit_$k")" != "0" ]; then
+                echo "OBRIGATÓRIAS: gate '$k' rodou e falhou"
+                fail=1
+              else
+                echo "OBRIGATÓRIAS: gate '$k' executado e verde"
+              fi
+            done
+          fi
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
           exit $fail
