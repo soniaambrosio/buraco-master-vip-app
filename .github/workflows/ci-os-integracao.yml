@@ -143,10 +143,80 @@ jobs:
           # o avatar de quem estava olhando, e so um teste de identidade cruzada
           # com fixtures bem diferentes o denuncia.
           roda perfilvis  test/perfil/identidade_visitada_test.dart
+          # OS A11Y do Ranking: os tres cabecalhos reais (`Ranking`, `PODIO`,
+          # `CLASSIFICACAO`) e SO eles, a frase falada da linha inteira, e a
+          # tabela sobrevivendo a 100%, 150% e 200% sem estouro nem corte —
+          # mais a invariante RANKING-01, provada por comportamento: sem fonte
+          # real a tela diz que nao ha publicacao, e nao inventa jogador.
+          #
+          # A SOBREVIVENCIA DESTE GATE NAO MORA AQUI. `roda` escreve
+          # `nao_<gate>` quando o arquivo sumiu, e NAO EXECUTADO nao reprova:
+          # apagar a suite deixaria o CI verde. Quem fecha isso e o passo
+          # "2b — GUARDA", logo abaixo.
+          roda a11yrank   test/ranking/a11y_ranking_cabecalho_escala_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
           ( cd app_build && flutter test test/colecoes/evidencias_visuais_test.dart ) 2>&1 | tee t_colevid.log; echo ${PIPESTATUS[0]} > info_colevid
+
+      - name: "2b — GUARDA de sobrevivência do gate A11Y do Ranking"
+        if: always()
+        run: |
+          set +e
+          # ---------------------------------------------------------------
+          # POR QUE ESTA GUARDA EXISTE
+          # ---------------------------------------------------------------
+          #
+          # `roda()` escreve `nao_<gate>` quando o arquivo nao existe, e o
+          # portao verde/vermelho trata NAO EXECUTADO como "nao falhou". As
+          # duas coisas juntas dao EXECUCAO sem SOBREVIVENCIA: apagar ou
+          # renomear a suite faria o gate sumir da conta e o CI continuaria
+          # VERDE, anunciando aprovacao de uma prova que ninguem rodou.
+          #
+          # E POR QUE ELA NAO PODE MORAR DENTRO DA SUITE: uma guarda escrita
+          # em `a11y_ranking_cabecalho_escala_test.dart` desapareceria junto
+          # com o arquivo que ela deveria guardar. O caminho canonico esta
+          # escrito AQUI, no workflow, que e o que sobrevive a remocao.
+          #
+          # Ela NAO substitui o gate `a11yrank`: aquele prova que os casos
+          # passam, este prova que os casos EXISTEM e continuam sendo 35.
+          ALVO="app/test/ranking/a11y_ranking_cabecalho_escala_test.dart"
+          MINIMO=35
+          st=0
+
+          if [ ! -f "$ALVO" ]; then
+            echo "AUSENTE OU RENOMEADA: \`$ALVO\` nao existe no repositorio."
+            st=1
+          elif [ ! -f "app_build/${ALVO#app/}" ]; then
+            echo "NAO CHEGOU AO OVERLAY: app_build/${ALVO#app/}"
+            st=1
+          else
+            echo "presente: $ALVO"
+            # A CONTAGEM E DE CASOS EXECUTADOS, e nao de linhas `testWidgets`:
+            # o bloco de escala declara 4 casos que o laco expande em 12 (tres
+            # escalas), entao contar declaracao no fonte daria 27 e mediria a
+            # coisa errada. Quem sabe quantos casos existem de verdade e o
+            # relatorio da execucao.
+            if [ ! -f t_a11yrank.log ]; then
+              echo "SEM LOG DE EXECUCAO: o gate a11yrank nao produziu t_a11yrank.log"
+              st=1
+            else
+              n=$(grep -oE "\+[0-9]+" t_a11yrank.log | tail -1 | tr -d '+')
+              n=${n:-0}
+              echo "casos executados: $n (minimo $MINIMO)"
+              if [ "$n" -lt "$MINIMO" ]; then
+                echo "A SUITE ENCOLHEU: $n casos, minimo $MINIMO."
+                st=1
+              fi
+            fi
+          fi
+
+          # SEMPRE grava exit_, e nunca nao_: um `nao_` aqui seria lido como
+          # NAO EXECUTADO e devolveria exatamente o buraco que esta guarda
+          # existe para fechar.
+          echo $st > exit_a11yguard
+          echo "guarda a11y = $st"
+          exit 0
 
       - name: "3a — codebase BILLING (functions-billing), sem emulador"
         run: |
@@ -310,7 +380,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yrank a11yguard billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -361,7 +431,12 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          # `a11yrank` e `a11yguard` entram AQUI, e mais nada entra junto: os
+          # gates historicos que estao na evidencia e nao nesta lista
+          # (`rankingfn`, `rankingint`, `identint`, `auditident`) continuam
+          # exatamente como estavam. Tornar obrigatorio "por tabela" o que so
+          # era reportado seria uma mudanca de escopo que esta OS nao pediu.
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yrank a11yguard billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
@@ -371,5 +446,17 @@ jobs:
               echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
             fi
           done
+          # A GUARDA NAO PODE SUMIR EM SILENCIO.
+          #
+          # Neste portao NAO EXECUTADO nunca reprova — e para `a11yguard` essa
+          # regra reabriria o buraco que ela fecha: bastaria apagar o passo da
+          # guarda para que a suite pudesse ser apagada em seguida, com o CI
+          # verde nas duas vezes. Por isso, e SO para ela, a AUSENCIA do
+          # resultado e falha. O passo roda com `if: always()`, entao nao ha
+          # caso legitimo em que ele deixe de gravar `exit_a11yguard`.
+          if [ ! -f exit_a11yguard ]; then
+            echo "gate a11yguard = AUSENTE — a guarda de sobrevivência não rodou"
+            fail=1
+          fi
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
           exit $fail
