@@ -547,4 +547,65 @@ void main() {
       );
     });
   });
+
+  // =========================================================================
+  // O PORTÃO DA ACESSIBILIDADE DO RESULTADO EXISTE, E A AUSÊNCIA DELE REPROVA
+  // =========================================================================
+  //
+  // Mesma disciplina do grupo acima, e pelo mesmo motivo: apagar um arquivo de
+  // suíte SILENCIA o gate dele — ausência vira NÃO EXECUTADO, e NÃO EXECUTADO
+  // não derruba o portão. A garantia mora fora do que ela garante.
+  //
+  // O que esta suíte protege é um defeito que não quebra nada: a tela de fim de
+  // partida continua mostrando o placar certo com um botão de 27 pt e texto de
+  // 6,6 pt. Nenhum teste funcional reclama disso. Só a medida reclama.
+  group('o portão da acessibilidade do Resultado', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File('test/casca/a11y_resultado_partida_test.dart').existsSync(),
+        isTrue,
+        reason: 'a suíte que mede alvo tocável e tipografia da tela de '
+            'Resultado sumiu — e some em silêncio',
+      );
+    });
+
+    test('o workflow a executa e a considera no portão', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+
+      expect(
+        texto,
+        contains('roda a11yres    test/casca/a11y_resultado_partida_test.dart'),
+        reason: 'o gate a11yres não executa mais a suíte',
+      );
+      expect(
+        RegExp(r'GATES="[^"]*\ba11yres\b').hasMatch(texto),
+        isTrue,
+        reason: 'a11yres saiu da evidência publicada',
+      );
+      expect(
+        RegExp(r'for k in [^;]*\ba11yres\b[^;]*; do').hasMatch(texto),
+        isTrue,
+        reason: 'a11yres saiu do portão verde/vermelho — passaria a rodar '
+            'sem poder reprovar',
+      );
+    });
+
+    test('o portão obrigatório da casca a alcança pelo diretório', () {
+      // O `build.yml` roda `flutter test test/casca` inteiro, e é ele que
+      // bloqueia o APK. Enquanto a suíte morar neste diretório, ela entra
+      // nesse portão sem precisar de nome no workflow.
+      final build = File('../.github/workflows/build.yml');
+      if (!build.existsSync()) return;
+      final texto = build.readAsStringSync();
+      expect(
+        texto,
+        contains('flutter test test/casca --reporter expanded'),
+        reason: 'o portão da casca deixou de rodar o diretório inteiro, e a '
+            'suíte de acessibilidade do Resultado saiu do gate do APK',
+      );
+    });
+  });
 }
