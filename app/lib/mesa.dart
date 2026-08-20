@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 // geometria. `material.dart` não a reexporta.
 import 'package:flutter/semantics.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'cartas/disposicao_da_mao.dart';
 import 'cartas/nome_falavel_da_carta.dart';
 import 'screens/resultado_partida_screen.dart';
 
@@ -1262,6 +1263,11 @@ const _mPanel = Color(0xEE101010);
 const _mRed = Color(0xFFB3262D);
 const _mBlack = Color(0xFF121212);
 
+// Os quatro estados visuais que uma carta da mao pode ter. Sao mutuamente
+// exclusivos de proposito: dois destaques na mesma carta seriam dois recados
+// concorrendo, e a pessoa nao saberia qual obedecer.
+enum _DestaqueDaCarta { nenhum, selecionada, comprada, obrigatoria }
+
 Color _corCarta(Carta c) =>
     c.valor == 'JOKER' ? _mGold : (_cartaVermelha(c) ? _mRed : _mBlack);
 
@@ -1993,7 +1999,35 @@ class _MesaScreenState extends State<MesaScreen> {
         // Núcleo central deliberadamente compacto. A altura economizada é
         // devolvida principalmente à área de jogos da dupla de baixo.
         const centralHeight = 118.0;
-        const playerDockHeight = 180.0;
+        // ---------------------------------------------------------------
+        // O RODAPÉ DO JOGADOR CRESCE COM A MÃO, E NÃO O CONTRÁRIO
+        // ---------------------------------------------------------------
+        //
+        // Enquanto o passo era um enfeite, 180 dava para tudo. Agora o passo
+        // é o piso de toque e a mão pode precisar de duas fileiras — e duas
+        // fileiras pedem `elevação + piso + altura da carta` de altura, que
+        // não cabe em 180. Reservar sempre o maior seria tirar da área de
+        // jogos uma altura que a mão de uma fileira não usa.
+        //
+        // A largura útil da mão é a largura do tabuleiro menos as bordas que
+        // ficam entre ela e o `constraints` daqui: margem 3+3, padding 2+2 e
+        // a borda de 1,5+1,5 do feltro. O respiro dos lados é descontado
+        // depois, dentro do módulo, porque é ele quem também o aplica como
+        // padding — um número só, num lugar só.
+        const double bordasDoTabuleiro = 13.0;
+        final double larguraUtilDaMao = max(
+          0.0,
+          constraints.maxWidth - bordasDoTabuleiro - 2 * kRespiroDaMao,
+        );
+        final disposicaoDaMao = DisposicaoDaMao.calcular(
+          cartas: _j.maos[0].length,
+          larguraDisponivel: larguraUtilDaMao,
+        );
+        // 52 é a faixa do avatar e do rótulo "VOCÊ • N cartas"; o resto é a
+        // mão. O piso de 180 preserva o desenho de hoje para a mão de uma
+        // fileira, que é o caso comum.
+        final double playerDockHeight =
+            max(180.0, 52.0 + disposicaoDaMao.altura + 4.0);
         return Container(
           margin: const EdgeInsets.fromLTRB(3, 0, 3, 3),
           padding: const EdgeInsets.all(2),
@@ -2032,7 +2066,7 @@ class _MesaScreenState extends State<MesaScreen> {
                         flex: 12,
                         child: _meldArea('nos', top: false),
                       ),
-                      const SizedBox(height: playerDockHeight),
+                      SizedBox(height: playerDockHeight),
                     ],
                   ),
                 ),
@@ -2062,7 +2096,7 @@ class _MesaScreenState extends State<MesaScreen> {
                   right: 0,
                   bottom: 0,
                   height: playerDockHeight,
-                  child: _playerDock(),
+                  child: _playerDock(disposicaoDaMao),
                 ),
                 if (_msg != null)
                   Positioned(
@@ -2281,6 +2315,50 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // O nome de um jogo baixado, para quem não vê a mesa.
+  //
+  // A auditoria mediu, no lugar de cada jogo, um nó TOCÁVEL com rótulo vazio —
+  // ou, quando havia curinga ou tarja, o pedaço de texto que por acaso estava
+  // desenhado ali ("★", "LIMPA · 200"). Nada disso é o jogo.
+  //
+  // O que entra no nome é só o que a mesa já mostra: de quem é, quantas cartas
+  // tem, a tarja quando existe, e as cartas em ordem. Nada é inventado — não há
+  // "sequência de copas do 4 ao 9" aqui, porque isso seria uma leitura do jogo
+  // que a tela não faz e que erraria no dia em que o motor mudasse de critério.
+  String _rotuloDoJogoBaixado(
+    String dupla,
+    int index,
+    List<Carta> cartas,
+    Sash sash,
+  ) {
+    final dono = dupla == 'nos' ? 'nós' : 'eles';
+    final partes = <String>[
+      'jogo ${index + 1} de $dono',
+      _emCartas(cartas.length),
+      if (sash != Sash.nenhuma) _sashEmPalavras(sash),
+    ];
+    final composicao = cartas.map(_cartaEmPalavras).join(', ');
+    return '${partes.join(', ')}: $composicao';
+  }
+
+  // A mesma informação da tarja, dita em palavras. A tarja desenhada usa "·"
+  // como separador e caixa alta — "LIMPA · 200" é um enfeite tipográfico que um
+  // leitor de tela soletra mal.
+  String _sashEmPalavras(Sash sash) {
+    switch (sash) {
+      case Sash.limpa:
+        return 'canastra limpa, 200 pontos';
+      case Sash.suja:
+        return 'canastra suja, 100 pontos';
+      case Sash.n500:
+        return 'canastra de 500 pontos';
+      case Sash.n1000:
+        return 'canastra de 1000 pontos';
+      case Sash.nenhuma:
+        return '';
+    }
+  }
+
   Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
     cartas = _j.ordenarMeld(cartas); // jogo baixado em ordem crescente
     final subs = _j.substitutosMeld(cartas); // #9: coringa mostra a carta que ocupa
@@ -2293,43 +2371,65 @@ class _MesaScreenState extends State<MesaScreen> {
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        if (dupla == 'nos' &&
-            _sel.isNotEmpty &&
-            _minhaVezAtiva &&
-            _j.jaComprou) {
-          _estender(index);
-        } else {
-          _showMeldZoom(dupla, index);
-        }
-      },
-      child: SizedBox(
-        width: totalWidth,
-        height: cardHeight,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            for (var i = 0; i < count; i++)
-              Positioned(
-                left: i * step,
-                top: 0,
-                child: _meldCardFace(
-                  cartas[i],
-                  subs[i],
-                  width: cardWidth,
-                  height: cardHeight,
-                ),
-              ),
-            if (sash != Sash.nenhuma)
-              Positioned(
-                left: 1,
-                right: 1,
-                bottom: 0,
-                child: _canastraRibbon(sash, false),
-              ),
-          ],
+    // A MESMA expressão decide a ação e o que é anunciado.
+    //
+    // Duas cópias desta condição — uma no `onTap`, outra no texto — divergem no
+    // primeiro ajuste, e o anúncio passa a prometer uma ação que o toque não
+    // faz. Uma variável só, lida pelos dois, torna isso impossível.
+    final estende = dupla == 'nos' &&
+        _sel.isNotEmpty &&
+        _minhaVezAtiva &&
+        _j.jaComprou;
+
+    return Semantics(
+      label: _rotuloDoJogoBaixado(dupla, index, cartas, sash),
+      // A dica descreve o que ESTE toque faz agora, e muda com o estado —
+      // porque a ação muda com o estado.
+      hint: estende
+          ? 'estender com as cartas escolhidas'
+          : 'ampliar o jogo',
+      button: true,
+      enabled: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (estende) {
+            _estender(index);
+          } else {
+            _showMeldZoom(dupla, index);
+          }
+        },
+        // As cartas, os curingas e a tarja são o DESENHO do jogo. Sem esta
+        // exclusão o leitor de tela leria o rótulo montado acima e, logo em
+        // seguida, os cacos de texto que sobraram na pintura.
+        child: ExcludeSemantics(
+          child: SizedBox(
+            width: totalWidth,
+            height: cardHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (var i = 0; i < count; i++)
+                  Positioned(
+                    left: i * step,
+                    top: 0,
+                    child: _meldCardFace(
+                      cartas[i],
+                      subs[i],
+                      width: cardWidth,
+                      height: cardHeight,
+                    ),
+                  ),
+                if (sash != Sash.nenhuma)
+                  Positioned(
+                    left: 1,
+                    right: 1,
+                    bottom: 0,
+                    child: _canastraRibbon(sash, false),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -2760,6 +2860,39 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // Quem é quem na mesa, dito em palavras.
+  //
+  // A auditoria mediu três nós tocáveis anunciados só como "11" — que é o
+  // número de cartas na mão do adversário, sem dizer de quem, nem que aquilo é
+  // um assento, nem que dá para tocar. O que entra aqui é só o que o motor
+  // sabe: o apelido, o lado da dupla, quem joga agora e quantas cartas restam.
+  //
+  // O que NÃO entra, porque não existe na mesa de treino: presença e ausência.
+  // Ninguém cai desta partida — o estado nem é modelado. Anunciar "presente"
+  // seria inventar uma informação que não tem fonte, e no dia em que a queda
+  // existisse o anúncio já estaria mentindo.
+  String _rotuloDoAssento(int seat) {
+    final apelido = _j.apelidos[seat];
+    // §3.2: o assento 0 é de quem joga; 1, 2 e 3 são conduzidos pelo motor.
+    // `_duplaKey` é quem decide a dupla — par é "nós", ímpar é "eles" —, e ler
+    // dali evita uma segunda tabela de parceria dentro da tela.
+    final minhaDupla = seat.isEven;
+    // O assento 0 é de quem está jogando, e o apelido dele JÁ é "você":
+    // repetir o papel daria "você, você, 11 cartas".
+    final papel = seat == 0
+        ? null
+        : minhaDupla
+            ? 'seu parceiro, robô'
+            : 'adversário, robô';
+    final partes = <String>[
+      apelido,
+      ?papel,
+      _emCartas(_j.maos[seat].length),
+      if (_j.vez == seat && !_j.rodadaEncerrada) 'jogando agora',
+    ];
+    return partes.join(', ');
+  }
+
   Widget _sidePlayer(int seat, {required bool left}) {
     final active = _j.vez == seat && !_j.rodadaEncerrada;
     final count = _j.maos[seat].length;
@@ -2767,8 +2900,8 @@ class _MesaScreenState extends State<MesaScreen> {
     // Fora do turno o assento não reserva largura da mesa: somente uma pequena
     // aba fica visível na borda. O avatar abre apenas no turno ou por toque.
     if (!active) {
-      return GestureDetector(
-        onTap: () => setState(() => _expandedAvatarSeat = seat),
+      return _assentoTocavel(
+        seat,
         child: SizedBox(
           width: 12,
           height: 46,
@@ -2821,8 +2954,8 @@ class _MesaScreenState extends State<MesaScreen> {
       );
     }
 
-    return GestureDetector(
-      onTap: () => setState(() => _expandedAvatarSeat = seat),
+    return _assentoTocavel(
+      seat,
       child: Container(
         width: 58,
         padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
@@ -2852,6 +2985,27 @@ class _MesaScreenState extends State<MesaScreen> {
             _turnBadge(compact: true),
           ],
         ),
+      ),
+    );
+  }
+
+  // UM nó por jogador, e não um por pedaço do jogador.
+  //
+  // Dentro do assento aberto há avatar, apelido, contador e a marca da vez —
+  // quatro fragmentos que o leitor de tela leria soltos, na ordem em que foram
+  // desenhados. Agrupar num nó só e excluir o desenho é o que transforma isso
+  // numa frase. É também o que impede o avatar de virar um SEGUNDO nó do mesmo
+  // jogador: ele é decoração dentro de um assento que já tem nome.
+  Widget _assentoTocavel(int seat, {required Widget child}) {
+    return Semantics(
+      label: _rotuloDoAssento(seat),
+      hint: 'ver o jogador',
+      button: true,
+      enabled: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _expandedAvatarSeat = seat),
+        child: ExcludeSemantics(child: child),
       ),
     );
   }
@@ -2936,11 +3090,9 @@ class _MesaScreenState extends State<MesaScreen> {
         _railButton(Icons.chat_bubble_rounded, () {
           setState(() => _msg = 'Chat — ligação final com o Claude.');
         }, rotulo: 'chat'),
-        const SizedBox(height: 7),
         _railButton(Icons.sentiment_satisfied_alt_rounded, () {
           setState(() => _msg = 'Expressões — ligação final com o Claude.');
         }, rotulo: 'expressões'),
-        const SizedBox(height: 7),
         _railButton(
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
@@ -2954,21 +3106,41 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // O disco desenhado do controle lateral. Ele NÃO é o alvo — ver abaixo.
+  static const double _discoDoControleLateral = 38.0;
+
   Widget _railButton(
     IconData icon,
     VoidCallback onTap, {
     required String rotulo,
     bool? ligado,
+    bool habilitado = true,
   }) {
-    return Semantics(
-      label: rotulo,
-      button: true,
-      toggled: ligado,
-      child: GestureDetector(
-        onTap: onTap,
+    // ---------------------------------------------------------------------
+    // O ALVO É MAIOR QUE O DISCO, E DE PROPÓSITO
+    // ---------------------------------------------------------------------
+    //
+    // A OS 29 mediu estes três em 38 × 38: nomeados, mas abaixo do piso. Crescer
+    // o DISCO para 48 mudaria o desenho da mesa por um motivo que não é visual —
+    // e a lateral é discreta de propósito, para não competir com o feltro.
+    //
+    // Então o que cresce é a REGIÃO ACIONÁVEL: uma caixa de 48 × 48, opaca ao
+    // toque, com o disco de 38 centrado dentro. É a mesma solução que o
+    // `IconButton` do Material usa, e é por isso que ele tem `constraints` de 48
+    // com um ícone de 24 no meio.
+    //
+    // As caixas se encostam sem se sobrepor: `_actionRail` empilha três de 48
+    // sem espaçador, então cada uma ocupa exatamente `[k*48, (k+1)*48)`. Um
+    // `SizedBox` de folga entre elas devolveria buraco morto entre alvos; folga
+    // menor que a diferença de tamanho faria as caixas se cruzarem e mandaria o
+    // toque para o vizinho.
+    final corpo = SizedBox(
+      width: kPisoDeToque,
+      height: kPisoDeToque,
+      child: Center(
         child: Container(
-          width: 38,
-          height: 38,
+          width: _discoDoControleLateral,
+          height: _discoDoControleLateral,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
@@ -2982,202 +3154,174 @@ class _MesaScreenState extends State<MesaScreen> {
         ),
       ),
     );
-  }
 
-  Widget _playerDock() {
-    final active = _j.vez == 0 && !_j.rodadaEncerrada;
-    return Column(
-      children: [
-        SizedBox(
-          height: 52,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              GestureDetector(
-                onTap: () => setState(() => _expandedAvatarSeat = 0),
-                child: _avatarCircle(0, size: 50, active: active),
-              ),
-              const SizedBox(width: 7),
-              Text(
-                'VOCÊ  •  ${_j.maos[0].length} cartas',
-                style: TextStyle(
-                  color: active ? _mPurpleHi : _mGoldHi,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              if (active) ...[
-                const SizedBox(width: 10),
-                _turnBadge(compact: true),
-              ],
-              // Chat/expressões/som agora ficam numa coluna vertical à direita
-              // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
-            ],
-          ),
-        ),
-        Expanded(child: _hand()),
-      ],
-    );
-  }
-
-  // A menor faixa de toque que uma carta pode ter, em pontos lógicos. É o piso
-  // da WCAG 2.5.8 (Target Size, Minimum, AA).
-  static const double _faixaMinimaDeToque = 24.0;
-  // O piso do Material Design, e a meta enquanto a largura permitir.
-  static const double _faixaConfortavelDeToque = 48.0;
-  // O respiro horizontal do rolamento da mão, de cada lado.
-  static const double _respiroDaMao = 14.0;
-
-  Widget _hand() {
-    final hand = _j.maos[0];
-    final count = hand.length;
-    if (count == 0) return const SizedBox();
-
-    // A largura REAL disponível decide o passo entre as cartas, e o passo é a
-    // faixa de toque de cada uma — ver `_maoNaLargura`. Sem medir, o passo
-    // seria uma fração fixa da carta, que é como ele chegou a 21,12 pontos.
-    return LayoutBuilder(
-      builder: (context, constraints) => _maoNaLargura(
-        hand,
-        count,
-        constraints.hasBoundedWidth ? constraints.maxWidth : 360.0,
+    return Semantics(
+      label: rotulo,
+      button: true,
+      // `enabled` faltava. Sem ele o nó sai com `Tristate.none` — "esta
+      // propriedade não se aplica" —, e um leitor de tela não tem como dizer se
+      // o controle aceita toque agora. Os três aceitam sempre, e é isso que o
+      // valor declara; o dia em que um deles depender de estado, é aqui que o
+      // estado entra, e o gesto abaixo respeita o mesmo booleano.
+      enabled: habilitado,
+      toggled: ligado,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: habilitado ? onTap : null,
+        child: corpo,
       ),
     );
   }
 
-  Widget _maoNaLargura(List<Carta> hand, int count, double larguraDisponivel) {
-    // #2: mão no MESMO tamanho da mesa/monte/lixo (medida única em todo o jogo).
-    const cardWidth = 66.0;
-    const cardHeight = 100.0;
-
-    // ---------------------------------------------------------------------
-    // O PASSO É A FAIXA DE TOQUE, E NÃO UM ENFEITE
-    // ---------------------------------------------------------------------
-    //
-    // As cartas se sobrepõem: a de índice `i+1` cobre a de índice `i` a partir
-    // de `step` pontos. O que sobra descoberto de cada carta — e portanto o que
-    // o dedo consegue pegar sem pegar a vizinha — é EXATAMENTE `step`. Só a
-    // última fica inteira.
-    //
-    // Até aqui `step` era `66 * 0.32`, ou 21,12 pontos, em qualquer aparelho.
-    // A auditoria de acessibilidade de 19/08/2026 mediu isso: dez das onze
-    // cartas com uma faixa de 21 pontos, e a última com 66. É metade do piso da
-    // WCAG e menos da metade do piso do Material.
-    //
-    // Agora o passo é o maior que a largura comporta, limitado dos dois lados:
-    //
-    //   * NUNCA abaixo de 24 pontos. Onze cartas exigem 306 pontos de mão; onde
-    //     não couber, a mão ROLA na horizontal — o que ela já fazia. Rolar é um
-    //     custo pequeno perto de uma carta que não dá para acertar;
-    //   * NUNCA acima de 48. Passado o piso do Material, espalhar mais só
-    //     afastaria as cartas umas das outras sem ninguém ganhar nada.
-    //
-    // Num telefone de 360 pontos com a mão cheia, dá 26,6 — acima do piso da
-    // WCAG e abaixo do piso do Material. Os 48 não cabem: seriam 546 pontos de
-    // mão, uma mão inteiramente rolável em telefone nenhum onde ela caiba hoje.
-    // Esta é a justificativa técnica do alvo abaixo de 48.
-    final double espacoParaOsPassos =
-        larguraDisponivel - 2 * _respiroDaMao - cardWidth;
-    final double passoQueCabe = count > 1
-        ? espacoParaOsPassos / (count - 1)
-        : _faixaConfortavelDeToque;
-    final double step = passoQueCabe.clamp(
-      _faixaMinimaDeToque,
-      _faixaConfortavelDeToque,
+  Widget _playerDock(DisposicaoDaMao disposicaoDaMao) {
+    final active = _j.vez == 0 && !_j.rodadaEncerrada;
+    return Column(
+      children: [
+        // O rodapé do jogador é UM nó, e não quatro.
+        //
+        // A auditoria mediu aqui o avatar como um nó tocável chamado "👑" — o
+        // emoji do desenho — e, do lado, o texto "VOCÊ • 11 cartas" como um
+        // segundo nó, solto e mudo sobre quem era. São dois nós para a mesma
+        // pessoa, e nenhum deles diz que dá para tocar. `_assentoTocavel` é o
+        // mesmo agrupamento dos outros três assentos: uma frase, um alvo, um
+        // callback — o mesmo que já existia.
+        SizedBox(
+          height: 52,
+          child: _assentoTocavel(
+            0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _avatarCircle(0, size: 50, active: active),
+                const SizedBox(width: 7),
+                Text(
+                  'VOCÊ  •  ${_j.maos[0].length} cartas',
+                  style: TextStyle(
+                    color: active ? _mPurpleHi : _mGoldHi,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (active) ...[
+                  const SizedBox(width: 10),
+                  _turnBadge(compact: true),
+                ],
+                // Chat/expressões/som agora ficam numa coluna vertical à direita
+                // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: _hand(disposicaoDaMao)),
+      ],
     );
+  }
 
-    const selectedLift = 13.0;
+  // A mão inteira — desenho, toque e fala — a partir da geometria que
+  // `DisposicaoDaMao` decidiu. Nenhum número de layout nasce aqui: o piso de
+  // toque, o passo, o número de fileiras e a altura vêm de um módulo puro, que
+  // é o mesmo que a OS 33 vai usar nas outras mesas.
+  Widget _hand(DisposicaoDaMao disposicao) {
+    final hand = _j.maos[0];
+    final count = hand.length;
+    if (count == 0) return const SizedBox();
+    return _maoDisposta(hand, count, disposicao);
+  }
+
+  Widget _maoDisposta(List<Carta> hand, int count, DisposicaoDaMao d) {
     final active = _minhaVezAtiva;
-    final totalWidth = cardWidth + (count - 1) * step;
+    // A obrigação do topo do lixo é do MOTOR, e é por INSTÂNCIA: `Jogo` guarda o
+    // `id` da carta que precisa ser usada, nasce em `comprarLixo` e só morre
+    // quando `baixar`/`estender` a consomem ou quando a vez passa. A tela lê, e
+    // não decide — se decidisse, haveria duas autoridades sobre a mesma regra.
+    final idObrigatorio = _j.lixoTopoObrigatorio;
 
-    final order = List<int>.generate(count, (i) => i)
+    // A ordem de PINTURA, e só ela. Duas coisas mandam, nesta ordem:
+    //
+    //   1. a fileira: a de baixo é desenhada por cima da de cima, que é o que
+    //      deixa a de cima mostrando exatamente o piso de toque;
+    //   2. dentro da fileira, a selecionada vai para o fim, para subir por cima
+    //      das vizinhas — exatamente como antes desta correção.
+    //
+    // Nada disto atravessa para o toque ou para a fala: a camada de baixo segue
+    // a ordem lógica da mão, sempre.
+    final order = [for (var i = 0; i < count; i++) i]
       ..sort((a, b) {
-        final priorityA = (_sel.contains(a) ? 2 : 0) +
-            (_recentlyBoughtIds.contains(hand[a].id) ? 1 : 0);
-        final priorityB = (_sel.contains(b) ? 2 : 0) +
-            (_recentlyBoughtIds.contains(hand[b].id) ? 1 : 0);
-        if (priorityA != priorityB) return priorityA.compareTo(priorityB);
+        final fa = d.faixas[a].fileira;
+        final fb = d.faixas[b].fileira;
+        if (fa != fb) return fa.compareTo(fb);
+        final sa = _sel.contains(a) ? 1 : 0;
+        final sb = _sel.contains(b) ? 1 : 0;
+        if (sa != sb) return sa.compareTo(sb);
         return a.compareTo(b);
       });
 
-    // -----------------------------------------------------------------------
-    // DUAS CAMADAS: A QUE SE VÊ E A QUE SE TOCA
-    // -----------------------------------------------------------------------
-    //
-    // Antes havia uma só. Cada carta era desenho, alvo de toque e nó de
-    // acessibilidade ao mesmo tempo, e a ordem dos filhos do `Stack` — que é a
-    // ordem de PINTURA — governava as três coisas de uma vez. Daí saíam os três
-    // defeitos que esta correção fecha:
-    //
-    //   * a carta seguinte cobria a anterior, então a área de toque de cada uma
-    //     era o passo, e nada mais;
-    //   * selecionar uma carta a manda para o fim de `order` (é assim que ela
-    //     sobe por cima das vizinhas). Como era o mesmo `Stack`, a leitura de
-    //     tela também a mandava para o fim — a mão inteira se reordenava na
-    //     boca do leitor quando o dedo escolhia uma carta. Pior: a selecionada,
-    //     agora no topo, cobria a vizinha por 66 pontos e a deixava intocável;
-    //   * a arte é uma imagem sem texto, e sem rótulo o leitor de tela parava em
-    //     cada carta e não dizia nada.
-    //
-    // Separadas, cada ordem serve a quem precisa dela:
-    //
-    //   * a CAMADA DE DESENHO segue `order` — a seleção continua subindo por
-    //     cima das vizinhas, exatamente como antes. Ela não recebe toque (a de
-    //     cima o intercepta antes) nem fala (`ExcludeSemantics`), então a
-    //     imagem não vira um nó vazio com foco;
-    //   * a CAMADA DE TOQUE E DE FALA segue a ordem lógica da mão, sempre, e
-    //     suas faixas NÃO SE SOBREPÕEM: a carta `i` recebe exatamente
-    //     `[i*step, (i+1)*step)`, e a última recebe o que sobra, que é a carta
-    //     inteira. Como ela não depende de `order`, nem a seleção nem a
-    //     recém-comprada mexem em quem pega o dedo ou em quem fala primeiro.
     final cards = SizedBox(
-      width: totalWidth,
-      height: cardHeight + selectedLift,
+      width: d.largura,
+      height: d.altura,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
+          // ---------------- CAMADA DE DESENHO ----------------
           for (final index in order)
             Positioned(
-              left: index * step,
-              bottom: 0,
+              left: d.posicaoDeDesenho(index).esquerda,
+              top: d.posicaoDeDesenho(index).topo,
               child: ExcludeSemantics(
                 child: AnimatedSlide(
+                  // A chave é o `id` da carta, e não o índice: é o que faz o
+                  // Flutter carregar o estado da MESMA carta quando a mão se
+                  // reorganiza ou troca de fileira. Sem ela, ordenar a mão faria
+                  // a animação de uma carta continuar valendo para outra.
+                  key: ValueKey('mao-desenho-${hand[index].id}'),
                   duration: const Duration(milliseconds: 180),
                   curve: Curves.easeOutCubic,
                   offset: Offset(
                     0,
                     // Mão sempre RETA: só a carta selecionada sobe. As recém-compradas
                     // ficam alinhadas (o destaque delas é a moldura dourada, não a altura).
-                    _sel.contains(index) ? -selectedLift / cardHeight : 0,
+                    _sel.contains(index) ? -d.elevacao / d.alturaDaCarta : 0,
                   ),
                   child: _handCard(
                     hand[index],
                     selected: _sel.contains(index),
                     purchased: _recentlyBoughtIds.contains(hand[index].id),
-                    width: cardWidth,
-                    height: cardHeight,
+                    obrigatoria: idObrigatorio != null &&
+                        hand[index].id == idObrigatorio,
+                    width: d.larguraDaCarta,
+                    height: d.alturaDaCarta,
                   ),
                 ),
               ),
             ),
+          // ---------------- CAMADA DE TOQUE E DE FALA ----------------
+          //
+          // Uma faixa por carta, na ordem lógica da mão, com o piso de toque
+          // garantido nos dois eixos e SEM sobreposição entre elas — nem dentro
+          // da fileira, nem entre as duas fileiras. É `DisposicaoDaMao` quem
+          // garante isso, e há prova por varredura para as duas afirmações.
           for (var index = 0; index < count; index++)
             Positioned(
-              left: index * step,
-              // A faixa vai do topo à base da mão, e não só da carta: a altura
-              // livre é de graça, e é onde a carta selecionada sobe.
-              top: 0,
-              bottom: 0,
-              width: index == count - 1 ? cardWidth : step,
+              left: d.faixas[index].esquerda,
+              top: d.faixas[index].topo,
+              width: d.faixas[index].largura,
+              height: d.faixas[index].altura,
               child: Semantics(
+                key: ValueKey('mao-faixa-${hand[index].id}'),
                 // A ordem de leitura é declarada, e não deduzida da geometria:
-                // é o que garante que selecionar, trocar a seleção ou desfazer
-                // não reordenem a mão para quem ouve.
+                // com duas fileiras a geometria sozinha ainda daria a ordem
+                // certa, mas passaria a DEPENDER de onde cada fileira caiu.
                 sortKey: OrdinalSortKey(index.toDouble()),
                 // A posição entra no nome porque a mão tem DOIS baralhos: duas
                 // cartas idênticas, uma ao lado da outra, seriam dois "rei de
                 // espadas" indistinguíveis para quem não vê a tela.
-                label: '${_cartaEmPalavras(hand[index])}, '
-                    'carta ${index + 1} de $count',
+                label: _rotuloDaCartaDaMao(
+                  hand[index],
+                  posicao: index + 1,
+                  total: count,
+                  obrigatoria: idObrigatorio != null &&
+                      hand[index].id == idObrigatorio,
+                ),
                 button: true,
                 enabled: active,
                 selected: _sel.contains(index),
@@ -3215,27 +3359,61 @@ class _MesaScreenState extends State<MesaScreen> {
           controller: _handScroll,
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
-          // O mesmo respiro que entrou na conta do passo, lá em cima. Dois
-          // números digitados em lugares diferentes divergem.
-          padding: const EdgeInsets.fromLTRB(
-            _respiroDaMao,
-            selectedLift,
-            _respiroDaMao,
-            0,
-          ),
+          // O respiro é o mesmo que saiu da conta da largura útil, em `_board`.
+          // Dois números digitados em lugares diferentes divergem: este é o do
+          // módulo, e é de lá que a largura útil também o desconta.
+          padding: const EdgeInsets.symmetric(horizontal: kRespiroDaMao),
           child: cards,
         ),
       ),
     );
   }
 
+  // O nome falado de uma carta da mão.
+  //
+  // A obrigação do topo do lixo entra no NOME, e não num `hint`: hint é
+  // secundário, e vários leitores de tela só o anunciam depois de uma pausa —
+  // alguns nem isso. Uma carta que a pessoa é OBRIGADA a usar antes de
+  // descartar não pode depender disso para ser encontrada.
+  String _rotuloDaCartaDaMao(
+    Carta carta, {
+    required int posicao,
+    required int total,
+    required bool obrigatoria,
+  }) {
+    final base = '${_cartaEmPalavras(carta)}, carta $posicao de $total';
+    return obrigatoria ? '$base, obrigatória do lixo' : base;
+  }
+
+  // A cor da obrigação do topo do lixo. É vermelha e é a única coisa vermelha
+  // na mão: a compra recente é dourada e a seleção é roxa, e confundir os três
+  // seria pior do que não destacar nada.
+  static const Color _corDaObrigacao = Color(0xFFFF3B30);
+
   Widget _handCard(
     Carta carta, {
     required bool selected,
     required bool purchased,
+    required bool obrigatoria,
     required double width,
     required double height,
   }) {
+    // A PRECEDÊNCIA IMPORTA, e é obrigação > compra > seleção.
+    //
+    // Quem pega o lixo no fechado recebe a carta do topo E ela é, no mesmo
+    // instante, uma carta recém-comprada: os dois estados caem sobre a MESMA
+    // carta, e o dourado da compra é temporário (1,85 s) enquanto a obrigação
+    // dura até o motor declará-la cumprida. Se o dourado ganhasse, o destaque
+    // que interessa sumiria sozinho dois segundos depois — e a pessoa ficaria
+    // com uma jogada obrigatória sem nenhuma indicação de qual carta é.
+    final destaque = obrigatoria
+        ? _DestaqueDaCarta.obrigatoria
+        : purchased
+            ? _DestaqueDaCarta.comprada
+            : selected
+                ? _DestaqueDaCarta.selecionada
+                : _DestaqueDaCarta.nenhum;
+
     return AnimatedScale(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutBack,
@@ -3244,14 +3422,35 @@ class _MesaScreenState extends State<MesaScreen> {
         duration: const Duration(milliseconds: 220),
         width: width,
         height: height,
-        padding: EdgeInsets.all(selected || purchased ? 2 : 0),
+        padding: EdgeInsets.all(destaque == _DestaqueDaCarta.nenhum ? 0 : 2),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(11),
-          gradient: purchased
-              ? const LinearGradient(colors: [_mGoldHi, _mPurpleHi, _mGold])
-              : (selected
-                  ? const LinearGradient(colors: [_mPurpleHi, _mGoldHi, _mPurple])
-                  : null),
+          gradient: switch (destaque) {
+            _DestaqueDaCarta.obrigatoria => const LinearGradient(
+                colors: [_corDaObrigacao, Color(0xFFFF8A80), _corDaObrigacao],
+              ),
+            _DestaqueDaCarta.comprada => const LinearGradient(
+                colors: [_mGoldHi, _mPurpleHi, _mGold],
+              ),
+            _DestaqueDaCarta.selecionada => const LinearGradient(
+                colors: [_mPurpleHi, _mGoldHi, _mPurple],
+              ),
+            _DestaqueDaCarta.nenhum => null,
+          },
+          // A "leve elevação" da obrigação é SOMBRA, e não deslocamento. Subir a
+          // carta alguns pontos a tiraria de dentro da própria faixa de toque —
+          // o desenho voltaria a mandar na geometria, que é a raiz de tudo o que
+          // a OS 29 mediu. A sombra eleva aos olhos sem mover nada.
+          boxShadow: destaque == _DestaqueDaCarta.obrigatoria
+              ? const [
+                  BoxShadow(
+                    color: Color(0x99FF3B30),
+                    blurRadius: 12,
+                    spreadRadius: 1,
+                    offset: Offset(0, 3),
+                  ),
+                ]
+              : null,
         ),
         child: Stack(
           children: [
@@ -3265,7 +3464,7 @@ class _MesaScreenState extends State<MesaScreen> {
                 ),
               ),
             ),
-            if (purchased)
+            if (destaque == _DestaqueDaCarta.comprada)
               Positioned(
                 top: 4,
                 right: 4,
@@ -3282,6 +3481,37 @@ class _MesaScreenState extends State<MesaScreen> {
                     Icons.auto_awesome_rounded,
                     size: 10,
                     color: Color(0xFF4E2D05),
+                  ),
+                ),
+              ),
+            // A orientação curta. Ela é DESENHO: quem ouve já recebe
+            // "obrigatória do lixo" no nome da carta, e um segundo anúncio da
+            // mesma coisa, solto, só atrapalharia a navegação.
+            if (destaque == _DestaqueDaCarta.obrigatoria)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: ExcludeSemantics(
+                  child: Container(
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(vertical: 1),
+                    decoration: const BoxDecoration(
+                      color: _corDaObrigacao,
+                      borderRadius:
+                          BorderRadius.vertical(bottom: Radius.circular(8)),
+                    ),
+                    child: const Text(
+                      'USE ESTA',
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 7.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
                   ),
                 ),
               ),

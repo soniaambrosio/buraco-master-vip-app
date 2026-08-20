@@ -140,6 +140,30 @@ final Finder kCartaDaMao = find.descendant(
   ),
 );
 
+
+/// Um ponto GARANTIDAMENTE dentro da faixa de toque da carta [indice].
+///
+/// Enquanto a mão tinha uma fileira, o centro da carta servia. Com duas, não
+/// serve mais: a fileira de baixo cobre a de cima a partir do piso de toque, e
+/// o centro VISUAL de uma carta de cima cai dentro da carta de baixo. Tocar ali
+/// seleciona a de baixo — corretamente, porque é ela que está pintada naquele
+/// pixel. Um caso que tocasse no centro estaria medindo a carta errada e
+/// acusando um defeito que não existe.
+///
+/// O ponto certo é o começo da faixa: alguns pontos à direita da borda esquerda
+/// (que é onde a faixa começa) e, quando a fileira é coberta, na parte de cima,
+/// que é a que fica à mostra.
+Offset pontoDeToqueDaCarta(WidgetTester tester, int indice) {
+  final rects = cartasDaMao(tester);
+  final fileiras = fileirasDaMao(tester);
+  final ultima = fileiras.reduce((a, b) => a > b ? a : b);
+  final r = rects[indice];
+  final coberta = fileiras[indice] < ultima;
+  return Offset(
+    r.left + 2,
+    coberta ? r.top + r.height / 6 : r.center.dy,
+  );
+}
 /// A janela por onde a mão é vista.
 ///
 /// É o `SingleChildScrollView` horizontal que embala as cartas. O lixo também
@@ -155,33 +179,104 @@ Rect viewportDaMao(WidgetTester tester) => tester.getRect(
           .first,
     );
 
-/// Os retângulos das cartas da mão, da esquerda para a direita.
+/// Onde a carta REPOUSA na vertical, sem a subida da seleção.
 ///
-/// A ordem por `left` crescente É a ordem lógica da mão: `_hand` posiciona a
-/// carta de índice `i` em `left = i * step`, e a seleção muda a camada de
-/// desenho e a altura, nunca o `left`.
-List<Rect> cartasDaMao(WidgetTester tester) {
-  final rects = <Rect>[
-    for (final w in tester.widgetList<AnimatedContainer>(kCartaDaMao))
-      tester.getRect(find.byWidget(w)),
+/// A OS 29-C1 trouxe a segunda fileira, e com ela a necessidade de dizer a que
+/// fileira uma carta pertence. O topo pintado não serve para isso: a carta
+/// selecionada sobe treze pontos, e uma carta da fileira de baixo, selecionada,
+/// pinta mais alto do que uma da fileira de cima em repouso. As duas trocariam
+/// de fileira aos olhos de quem mede.
+///
+/// A subida é uma `AnimatedSlide` com `offset.dy = -elevação / altura da carta`,
+/// então desfazê-la é multiplicar de volta pela altura — sem precisar saber
+/// quanto vale a elevação, que é justamente o número que as mutações mexem.
+double _topoEmRepouso(WidgetTester tester, AnimatedContainer carta) {
+  final alvo = find.byWidget(carta);
+  final subida = tester
+      .widgetList<AnimatedSlide>(
+        find.ancestor(of: alvo, matching: find.byType(AnimatedSlide)),
+      )
+      .first;
+  return tester.getRect(alvo).top - subida.offset.dy * kAlturaDaCarta;
+}
+
+/// A ordem lógica da mão, lida da tela: de cima para baixo, e da esquerda para
+/// a direita dentro de cada fileira.
+///
+/// Com uma fileira é a ordem por `left`, como sempre foi. Com duas, ordenar só
+/// por `left` embaralharia as duas fileiras — a carta 7 (primeira da fileira de
+/// baixo) começa no mesmo `left` da carta 1.
+int _compararNaMao(
+  ({double repouso, Rect rect}) a,
+  ({double repouso, Rect rect}) b,
+) {
+  // Meio ponto de tolerância: as fileiras distam o piso de toque inteiro, então
+  // qualquer diferença real é de dezenas de pontos.
+  if ((a.repouso - b.repouso).abs() > 0.5) {
+    return a.repouso.compareTo(b.repouso);
+  }
+  return a.rect.left.compareTo(b.rect.left);
+}
+
+List<({double repouso, Rect rect, AnimatedContainer widget})> _maoLida(
+  WidgetTester tester,
+) {
+  final cartas = <({double repouso, Rect rect, AnimatedContainer widget})>[];
+  for (final w in tester.widgetList<AnimatedContainer>(kCartaDaMao)) {
+    cartas.add((
+      repouso: _topoEmRepouso(tester, w),
+      rect: tester.getRect(find.byWidget(w)),
+      widget: w,
+    ));
+  }
+  cartas.sort((a, b) => _compararNaMao(
+        (repouso: a.repouso, rect: a.rect),
+        (repouso: b.repouso, rect: b.rect),
+      ));
+  return cartas;
+}
+
+/// Os retângulos das cartas da mão, NA ORDEM LÓGICA.
+///
+/// `_hand` posiciona a carta de índice `i` em `left = j * passo` dentro da sua
+/// fileira, e a seleção muda a camada de desenho e a altura pintada, nunca a
+/// posição de repouso. Por isso a ordem por (fileira, `left`) É a ordem da mão.
+List<Rect> cartasDaMao(WidgetTester tester) =>
+    [for (final c in _maoLida(tester)) c.rect];
+
+/// A que fileira cada carta pertence, na ordem lógica da mão.
+///
+/// `0` é a de cima. Uma mão de uma fileira só devolve zeros.
+List<int> fileirasDaMao(WidgetTester tester) {
+  final cartas = _maoLida(tester);
+  if (cartas.isEmpty) return const <int>[];
+  final repousos = <double>[];
+  for (final c in cartas) {
+    if (repousos.every((r) => (r - c.repouso).abs() > 0.5)) {
+      repousos.add(c.repouso);
+    }
+  }
+  repousos.sort();
+  return [
+    for (final c in cartas)
+      repousos.indexWhere((r) => (r - c.repouso).abs() <= 0.5),
   ];
-  rects.sort((a, b) => a.left.compareTo(b.left));
-  return rects;
 }
 
 /// As cartas da mão na ordem em que aparecem na ÁRVORE, e não na tela.
 ///
-/// Cada valor é o `left` global do retângulo. A ordem da lista é a ordem de
-/// profundidade da árvore de widgets — que é a ordem de desenho do `Stack` e,
-/// quando existe semântica nas próprias cartas, também a ordem em que um leitor
-/// de tela as visitaria.
+/// Cada valor identifica a POSIÇÃO de repouso da carta — fileira e `left` —,
+/// que é o que distingue uma carta da outra quando as duas fileiras repetem os
+/// mesmos `left`. A ordem da lista é a ordem de profundidade da árvore de
+/// widgets, que é a ordem de desenho do `Stack`.
 ///
-/// É por aqui que se enxerga o reembaralhamento: `_hand` ordena os filhos do
-/// `Stack` por prioridade de seleção, então selecionar uma carta a manda para o
-/// fim da lista.
-List<double> ordemDeDesenho(WidgetTester tester) => <double>[
+/// É por aqui que se enxerga o reembaralhamento da pintura: `_maoDisposta`
+/// ordena os filhos do `Stack` por fileira e, dentro dela, por prioridade de
+/// seleção — então selecionar uma carta a manda para o fim da sua fileira.
+List<String> ordemDeDesenho(WidgetTester tester) => <String>[
       for (final w in tester.widgetList<AnimatedContainer>(kCartaDaMao))
-        tester.getRect(find.byWidget(w)).left,
+        '${_topoEmRepouso(tester, w).toStringAsFixed(1)}'
+            '@${tester.getRect(find.byWidget(w)).left.toStringAsFixed(1)}',
     ];
 
 /// Quais cartas da mão estão selecionadas.
@@ -198,7 +293,7 @@ List<double> ordemDeDesenho(WidgetTester tester) => <double>[
 /// continuava aparecendo treze pontos acima — o teste media o quadro anterior.
 /// O `offset` do widget é o valor declarado por este `build`, sem defasagem.
 Set<int> selecionadasNaMao(WidgetTester tester) {
-  final cartas = <({double esquerda, bool selecionada})>[];
+  final cartas = <({double repouso, Rect rect, bool selecionada})>[];
   for (final w in tester.widgetList<AnimatedContainer>(kCartaDaMao)) {
     final alvo = find.byWidget(w);
     final subida = tester
@@ -207,11 +302,18 @@ Set<int> selecionadasNaMao(WidgetTester tester) {
         )
         .first;
     cartas.add((
-      esquerda: tester.getRect(alvo).left,
+      repouso: tester.getRect(alvo).top - subida.offset.dy * kAlturaDaCarta,
+      rect: tester.getRect(alvo),
       selecionada: subida.offset.dy != 0,
     ));
   }
-  cartas.sort((a, b) => a.esquerda.compareTo(b.esquerda));
+  // A MESMA ordem de `cartasDaMao`: fileira e depois `left`. Duas listas com
+  // ordens diferentes fariam "a carta 3" querer dizer coisas diferentes em
+  // lugares diferentes do mesmo caso de teste.
+  cartas.sort((a, b) => _compararNaMao(
+        (repouso: a.repouso, rect: a.rect),
+        (repouso: b.repouso, rect: b.rect),
+      ));
   return <int>{
     for (var i = 0; i < cartas.length; i++)
       if (cartas[i].selecionada) i,
@@ -252,6 +354,7 @@ Future<Varredura> medirFaixasEfetivas(
 }) async {
   final rects = cartasDaMao(tester);
   expect(rects, isNotEmpty, reason: 'a mão não desenhou carta nenhuma');
+  final fileiras = fileirasDaMao(tester);
 
   // A seleção de partida não precisa estar vazia: o que se mede é o que CADA
   // toque muda em relação a ela. É isto que permite varrer a mão com uma carta
@@ -261,35 +364,64 @@ Future<Varredura> medirFaixasEfetivas(
 
   final contagem = <int, int>{};
   final mortos = <double>[];
-  final y = rects.first.center.dy;
   // A varredura não passa da janela da mão. Onde a mão não cabe ela ROLA, e o
   // pedaço fora do recorte não é faixa morta: é faixa que ainda não está à
   // vista. Medi-la como morta transformaria rolagem em defeito.
   final janela = viewportDaMao(tester);
-  final inicio =
-      rects.first.left > janela.left ? rects.first.left : janela.left;
-  final fim = rects.last.right < janela.right ? rects.last.right : janela.right;
+  var larguraVarrida = 0.0;
 
-  for (var x = inicio + passo / 2; x < fim; x += passo) {
-    final ponto = Offset(x, y);
-    final depois = await tocarEm(tester, ponto);
-    final mudou = depois.difference(base).union(base.difference(depois));
-    if (mudou.isEmpty) {
-      mortos.add(x);
-      continue;
+  // UMA PASSADA POR FILEIRA.
+  //
+  // Enquanto a mão tinha uma fileira só, uma linha horizontal no meio das
+  // cartas cruzava todas elas. Com duas, essa mesma linha cruza uma fileira e
+  // ignora a outra por inteiro — e a outra apareceria com faixa zero, que é
+  // exatamente o defeito que esta varredura existe para pegar. Um falso
+  // positivo desses seria pior do que não medir.
+  final quantasFileiras =
+      fileiras.isEmpty ? 0 : fileiras.reduce((a, b) => a > b ? a : b) + 1;
+  for (var fileira = 0; fileira < quantasFileiras; fileira++) {
+    final naFileira = <int>[
+      for (var i = 0; i < rects.length; i++)
+        if (fileiras[i] == fileira) i,
+    ];
+    if (naFileira.isEmpty) continue;
+
+    // A altura em que esta fileira é tocada. A carta de cima é coberta pela de
+    // baixo, então tocar no CENTRO dela pegaria a vizinha de baixo: a linha
+    // sobe para o terço superior, que é a parte que fica à mostra.
+    final primeiro = rects[naFileira.first];
+    final y = fileira == 0 && quantasFileiras > 1
+        ? primeiro.top + primeiro.height / 6
+        : primeiro.center.dy;
+
+    final esquerda = rects[naFileira.first].left;
+    final direita = rects[naFileira.last].right;
+    final inicio = esquerda > janela.left ? esquerda : janela.left;
+    final fim = direita < janela.right ? direita : janela.right;
+    if (fim <= inicio) continue;
+    larguraVarrida += fim - inicio;
+
+    for (var x = inicio + passo / 2; x < fim; x += passo) {
+      final ponto = Offset(x, y);
+      final depois = await tocarEm(tester, ponto);
+      final mudou = depois.difference(base).union(base.difference(depois));
+      if (mudou.isEmpty) {
+        mortos.add(x);
+        continue;
+      }
+      expect(
+        mudou,
+        hasLength(1),
+        reason: 'um toque em $ponto mexeu em mais de uma carta',
+      );
+      contagem[mudou.single] = (contagem[mudou.single] ?? 0) + 1;
+      final desfeito = await tocarEm(tester, ponto);
+      expect(
+        desfeito,
+        base,
+        reason: 'o segundo toque em $ponto não desfez o que o primeiro fez',
+      );
     }
-    expect(
-      mudou,
-      hasLength(1),
-      reason: 'um toque em $ponto mexeu em mais de uma carta',
-    );
-    contagem[mudou.single] = (contagem[mudou.single] ?? 0) + 1;
-    final desfeito = await tocarEm(tester, ponto);
-    expect(
-      desfeito,
-      base,
-      reason: 'o segundo toque em $ponto não desfez o que o primeiro fez',
-    );
   }
 
   return Varredura(
@@ -297,7 +429,7 @@ Future<Varredura> medirFaixasEfetivas(
       for (var i = 0; i < rects.length; i++) (contagem[i] ?? 0) * passo,
     ],
     pontosMortos: mortos,
-    larguraVarrida: fim - inicio,
+    larguraVarrida: larguraVarrida,
   );
 }
 
@@ -336,7 +468,11 @@ List<String> ordemDeLeitura(WidgetTester tester) => <String>[
 ///
 /// A marca é o sufixo de posição — `, carta 3 de 11` —, que é o que distingue
 /// uma carta da mão de qualquer outro texto da tela.
-final RegExp kMarcaDeCartaDaMao = RegExp(r', carta \d+ de \d+$');
+// A obrigação do topo do lixo vem DEPOIS da posição no rótulo — "carta 3 de
+// 12, obrigatória do lixo". Exigir fim de string aqui deixaria justamente a
+// carta obrigatória de fora da leitura da mão, e a contagem cairia de 12 para
+// 11 sem nenhum caso reclamar.
+final RegExp kMarcaDeCartaDaMao = RegExp(r', carta \d+ de \d+(,|$)');
 
 List<String> cartasNaOrdemDeLeitura(WidgetTester tester) =>
     ordemDeLeitura(tester).where(kMarcaDeCartaDaMao.hasMatch).toList();
@@ -402,4 +538,204 @@ Rect areaDaMao(WidgetTester tester) {
   final rects = cartasDaMao(tester);
   expect(rects, isNotEmpty, reason: 'a mão não desenhou carta nenhuma');
   return rects.reduce((a, b) => a.expandToInclude(b));
+}
+
+// ===========================================================================
+// A OBRIGAÇÃO DO TOPO DO LIXO
+// ===========================================================================
+//
+// No FECHADO e no SBTL, quem pega o lixo fica OBRIGADO a usar a carta que
+// estava no topo antes de descartar. Quem guarda essa obrigação é o motor —
+// `Jogo.lixoTopoObrigatorio`, o `id` da carta —, e ela só morre quando a carta
+// entra num jogo ou quando a vez passa.
+//
+// Chegar a esse estado por fora do motor exigiria uma porta nova na produção só
+// para o teste existir. Chegar por dentro dele depende do baralho: no FECHADO a
+// compra só é permitida quando o topo tem uso imediato, e isso acontece em
+// pouco menos de dois terços dos negócios. A saída é jogar de verdade e
+// insistir com baralhos diferentes até um deles permitir — e falhar alto quando
+// nenhum permitir, que é o único desfecho em que este auxiliar estaria mentindo.
+
+/// O rótulo que a carta obrigatória do lixo carrega, e nenhuma outra.
+const String kMarcaDaObrigacao = 'obrigatória do lixo';
+
+/// Abre a Mesa de Treino no FECHADO e compra o lixo, deixando a obrigação viva.
+///
+/// Devolve o rótulo da carta obrigatória. A mesa fica montada e a vez continua
+/// no assento 0 — quem chamou pode reorganizar, selecionar e redesenhar.
+Future<String> abrirComObrigacaoDoLixo(
+  WidgetTester tester, {
+  Size superficie = kSuperficieDaAuditoria,
+  int tentativas = 14,
+}) async {
+  for (var tentativa = 0; tentativa < tentativas; tentativa++) {
+    tester.view.physicalSize = superficie;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MesaScreen(
+          // Chave nova a cada tentativa: é o que faz o `initState` rodar de
+          // novo e um baralho diferente ser sorteado.
+          key: ValueKey('obrigacao-$tentativa'),
+          variant: MesaVariant.publica,
+          modalidade: 'FECHADO',
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var i = 0; i < 16; i++) {
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    final antes = cartasDaMao(tester).length;
+    await tester.tap(find.bySemanticsLabel(RegExp('^lixo')));
+    await tester.pump();
+    if (cartasDaMao(tester).length > antes) {
+      final obrigatorias = tester.semantics
+          .simulatedAccessibilityTraversal()
+          .where((n) => n.label.contains(kMarcaDaObrigacao))
+          .map((n) => n.label)
+          .toList();
+      expect(
+        obrigatorias,
+        hasLength(1),
+        reason: 'comprou o lixo no FECHADO e a obrigação não apareceu na mão',
+      );
+      return obrigatorias.single;
+    }
+    await encerrarMesaDeTreino(tester);
+  }
+  fail(
+    'nenhum de $tentativas baralhos permitiu comprar o lixo no FECHADO — '
+    'a trava do topo mudou, ou o sorteio deixou de variar',
+  );
+}
+
+/// Todos os nós da árvore semântica, com a garantia de que existe árvore.
+///
+/// Boa parte das afirmações de acessibilidade tem a forma "não existe nó com
+/// tal defeito" — nenhum tocável sem nome, nenhuma faixa abaixo do piso. Toda
+/// afirmação dessa forma passa trivialmente sobre uma árvore VAZIA, e verde por
+/// vazio é o pior resultado possível num portão de acessibilidade: ele fica
+/// verde exatamente no dia em que a tela parou de montar.
+List<SemanticsNode> arvoreDaMesa(WidgetTester tester) {
+  final nos = tester.semantics.simulatedAccessibilityTraversal().toList();
+  expect(
+    nos.length,
+    greaterThan(10),
+    reason: 'a varredura precisa ter árvore para ler — vieram ${nos.length} nós',
+  );
+  return nos;
+}
+
+/// O retângulo do nó, em pontos lógicos.
+///
+/// `retanguloNaTela` acumula as matrizes até a raiz, e a matriz da raiz traz a
+/// densidade da tela junto: o retângulo sai em pixels FÍSICOS. Dividir pela
+/// densidade é o que devolve os pontos lógicos, que são a unidade em que a WCAG
+/// e o Material escrevem os pisos — e a unidade em que a OS 29 mediu.
+Rect retanguloEmPontos(WidgetTester tester, SemanticsNode no) {
+  final r = retanguloNaTela(no);
+  final d = tester.view.devicePixelRatio;
+  return Rect.fromLTWH(r.left / d, r.top / d, r.width / d, r.height / d);
+}
+
+/// O nó da mesa cujo rótulo é exatamente [rotulo].
+SemanticsNode noDaMesa(WidgetTester tester, String rotulo) =>
+    arvoreDaMesa(tester).singleWhere(
+      (n) => n.label == rotulo,
+      orElse: () => throw TestFailure('nenhum nó chamado "$rotulo" na mesa'),
+    );
+
+/// O nó oferece a ação de toque.
+bool ofereceToqueNoNo(SemanticsNode no) =>
+    no.getSemanticsData().hasAction(SemanticsAction.tap);
+
+// ===========================================================================
+// UM JOGO BAIXADO NA MESA
+// ===========================================================================
+//
+// A auditoria mediu, na área dos jogos da dupla, um nó TOCÁVEL sem nome. Provar
+// que ele passou a falar exige um jogo baixado de verdade — e baixar exige
+// cartas que formem jogo.
+//
+// No ABERTO só sequência vale, e três cartas do mesmo naipe em ordem não caem
+// numa mão qualquer. No FECHADO a trinca vale, e três cartas do mesmo VALOR
+// aparecem com folga numa mão de doze tirada de dois baralhos. Por isso este
+// auxiliar joga no FECHADO: não é uma modalidade escolhida por conveniência de
+// teste, é a única em que a jogada existe sem depender de sorte grande.
+//
+// O caminho é o de quem joga: comprar no monte, escolher as três cartas na mão
+// e tocar no feltro da própria dupla — que é como `_meldArea` baixa.
+
+/// Abre a Mesa de Treino e baixa um jogo, devolvendo o rótulo dele.
+Future<String> abrirComJogoBaixado(
+  WidgetTester tester, {
+  Size superficie = kSuperficieDaAuditoria,
+  int tentativas = 14,
+}) async {
+  for (var tentativa = 0; tentativa < tentativas; tentativa++) {
+    tester.view.physicalSize = superficie;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MesaScreen(
+          key: ValueKey('baixada-$tentativa'),
+          variant: MesaVariant.publica,
+          modalidade: 'FECHADO',
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var i = 0; i < 16; i++) {
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    // Comprar primeiro: sem compra o motor recusa a baixada.
+    await tester.tap(find.bySemanticsLabel(RegExp('^monte')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Três cartas do mesmo valor, lidas do próprio anúncio da mão. O valor é o
+    // que vem antes do " de " — "dama de espadas" vira "dama"; o curinga não
+    // tem naipe e fica de fora, porque uma trinca de curingas não é jogo.
+    final mao = cartasNaOrdemDeLeitura(tester);
+    final porValor = <String, List<int>>{};
+    for (var i = 0; i < mao.length; i++) {
+      final nome = mao[i].replaceAll(kMarcaDeCartaDaMao, '');
+      final corte = nome.indexOf(' de ');
+      if (corte < 0) continue;
+      porValor.putIfAbsent(nome.substring(0, corte), () => <int>[]).add(i);
+    }
+    final trinca = porValor.values.where((v) => v.length >= 3).toList();
+    if (trinca.isEmpty) {
+      await encerrarMesaDeTreino(tester);
+      continue;
+    }
+
+    for (final i in trinca.first.take(3)) {
+      await tocarEm(tester, pontoDeToqueDaCarta(tester, i));
+    }
+
+    // O feltro da dupla de baixo. A tarja "NÓS" é decoração dentro dele, e
+    // serve de referência: tocar logo abaixo dela cai na área de jogos.
+    final tarja = tester.getRect(find.text('NÓS').first);
+    await tester.tapAt(tarja.center + const Offset(0, 40));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final jogos = tester.semantics
+        .simulatedAccessibilityTraversal()
+        .where((n) => RegExp(r'^jogo \d+ de ').hasMatch(n.label))
+        .map((n) => n.label)
+        .toList();
+    if (jogos.isNotEmpty) return jogos.first;
+    await encerrarMesaDeTreino(tester);
+  }
+  fail(
+    'nenhum de $tentativas baralhos permitiu baixar um jogo no FECHADO — '
+    'a trinca deixou de valer, ou a área de jogos deixou de aceitar o toque',
+  );
 }

@@ -65,14 +65,15 @@ void main() {
     testWidgets('tocar seleciona, tocar de novo desfaz', (tester) async {
       await abrirMesaDeTreino(tester);
 
-      final rects = cartasDaMao(tester);
-      // A última carta é a única que hoje aparece inteira, e por isso é a única
-      // em que um toque no centro é garantido antes da correção.
-      final centro = rects.last.center;
+      // A última carta da mão. O ponto vem de `pontoDeToqueDaCarta`, e não do
+      // centro: com duas fileiras o centro visual de uma carta coberta cai
+      // dentro da carta que a cobre, e o toque acertaria a vizinha.
+      final ultima = cartasDaMao(tester).length - 1;
+      final ponto = pontoDeToqueDaCarta(tester, ultima);
 
       expect(selecionadasNaMao(tester), isEmpty);
-      expect(await tocarEm(tester, centro), <int>{rects.length - 1});
-      expect(await tocarEm(tester, centro), isEmpty);
+      expect(await tocarEm(tester, ponto), <int>{ultima});
+      expect(await tocarEm(tester, ponto), isEmpty);
 
       await encerrarMesaDeTreino(tester);
     });
@@ -140,11 +141,17 @@ void main() {
     ) async {
       await abrirMesaDeTreino(tester);
 
+      // O passo é constante DENTRO DE CADA FILEIRA. A OS 29-C1 trouxe a
+      // segunda fileira: entre a última carta de cima e a primeira de baixo o
+      // `left` volta a zero, e comparar as duas daria um "passo" negativo que
+      // não é passo de coisa nenhuma.
       final rects = cartasDaMao(tester);
+      final fileiras = fileirasDaMao(tester);
       final passos = <double>[
         for (var i = 1; i < rects.length; i++)
-          rects[i].left - rects[i - 1].left,
+          if (fileiras[i] == fileiras[i - 1]) rects[i].left - rects[i - 1].left,
       ];
+      expect(passos, isNotEmpty);
       for (final p in passos) {
         expect(
           p,
@@ -153,10 +160,15 @@ void main() {
         );
       }
       expect(passos.first, greaterThan(0));
+      // E toda fileira começa no mesmo lugar: a mão é um bloco, não um degrau.
+      for (var i = 0; i < rects.length; i++) {
+        if (i == 0 || fileiras[i] != fileiras[i - 1]) {
+          expect(rects[i].left, closeTo(rects.first.left, 0.01));
+        }
+      }
 
       await encerrarMesaDeTreino(tester);
     });
-
     testWidgets('selecionar não move a posição lógica de carta nenhuma', (
       tester,
     ) async {

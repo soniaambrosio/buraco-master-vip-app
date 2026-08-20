@@ -1283,6 +1283,29 @@ void main() {
         );
       }
 
+      // 56 → 57 COM OS ALVOS REAIS (OS 29-C1), e o único também tem razão de
+      // existir sozinho.
+      //
+      // A regra que decide onde cada carta da mão fica — e que faixa dela o dedo
+      // alcança — saiu de dentro de `_MesaScreenState` para um módulo puro. Ela
+      // vale para a Mesa de Treino hoje e para a Pública, a VIP/Ranqueada e a
+      // Privada quando a OS 33 as ligar; deixá-la dentro da tela faria cada mesa
+      // nova copiar o piso de toque, e o número divergiria na primeira correção.
+      // O módulo não importa Flutter nem `Carta`: recebe quantas cartas há e
+      // quanta largura existe, e devolve geometria.
+      const daMesaComAlvosReais = [
+        'lib/cartas/disposicao_da_mao.dart',
+      ];
+      for (final caminho in daMesaComAlvosReais) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — a disposição da mão deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+
       expect(
         alcancaveis,
         hasLength(
@@ -1290,7 +1313,8 @@ void main() {
               doRankingReal.length +
               daNavegacaoPublica.length +
               daDescobertaSocial.length +
-              daMesaAudivel.length,
+              daMesaAudivel.length +
+              daMesaComAlvosReais.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.

@@ -308,7 +308,9 @@ jobs:
           # formato — do `auditoria_casca_test.dart` logo acima.
           for obrigatoria in \
             app/test/casca/mesa_treino_caracterizacao_test.dart \
-            app/test/casca/mesa_treino_acessivel_test.dart; do
+            app/test/casca/mesa_treino_acessivel_test.dart \
+            app/test/casca/mesa_treino_alvos_reais_test.dart \
+            app/test/cartas/disposicao_da_mao_test.dart; do
             if [ ! -f "$obrigatoria" ]; then
               echo "ERRO: $obrigatoria não encontrado — a suíte da Mesa de Treino é OBRIGATÓRIA."
               echo "Ela foi apagada ou renomeada. Se a remoção for deliberada, é esta"
@@ -316,10 +318,14 @@ jobs:
               exit 1
             fi
           done
-          mkdir -p app_build/test/casca
+          mkdir -p app_build/test/casca app_build/test/cartas
           cp -R app/test/casca/. app_build/test/casca/
+          # `test/cartas` não cai dentro de `test/casca`, então o comando abaixo
+          # não o alcançaria sozinho. A regra da mão é o que sustenta o piso de
+          # toque de toda carta: ela roda no MESMO portão que produz o APK.
+          cp -R app/test/cartas/. app_build/test/cartas/
           cd app_build
-          flutter test test/casca --reporter expanded
+          flutter test test/casca test/cartas --reporter expanded
           echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
 
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"

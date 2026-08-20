@@ -214,7 +214,7 @@ void main() {
       expect(estaSelecionada(alvo), isFalse);
 
       final rects = cartasDaMao(tester);
-      final ponto = Offset(rects[3].left + 2, rects[3].center.dy);
+      final ponto = pontoDeToqueDaCarta(tester, 3);
       expect(await tocarEm(tester, ponto), <int>{3});
       expect(
         estaSelecionada(alvo),
@@ -433,10 +433,23 @@ void main() {
         (tester) async {
       await abrirMesaDeTreino(tester, superficie: kSuperficieMinima);
 
+      // Com duas fileiras a carta mais à DIREITA não é a última da mão: é a
+      // última da fileira mais cheia. É ela que sai da janela, e é ela que a
+      // rolagem tem de trazer de volta.
+      int maisADireita(WidgetTester t) {
+        final r = cartasDaMao(t);
+        var alvo = 0;
+        for (var i = 1; i < r.length; i++) {
+          if (r[i].right > r[alvo].right) alvo = i;
+        }
+        return alvo;
+      }
+
       final antes = cartasDaMao(tester);
       final janela = viewportDaMao(tester);
+      final fora = maisADireita(tester);
       expect(
-        antes.last.right,
+        antes[fora].right,
         greaterThan(janela.right),
         reason: 'a mão coube inteira — este caso não tem o que provar aqui',
       );
@@ -450,15 +463,15 @@ void main() {
 
       final depois = cartasDaMao(tester);
       expect(
-        depois.last.right,
+        depois[fora].right,
         lessThanOrEqualTo(janela.right + 0.5),
-        reason: 'rolar não trouxe a última carta para dentro da janela',
+        reason: 'rolar não trouxe a carta mais à direita para dentro da janela',
       );
 
       // E ela responde ao toque, com a carta inteira à mostra.
       expect(
-        await tocarEm(tester, depois.last.center),
-        <int>{depois.length - 1},
+        await tocarEm(tester, pontoDeToqueDaCarta(tester, fora)),
+        <int>{fora},
       );
 
       await encerrarMesaDeTreino(tester);
@@ -507,12 +520,20 @@ void main() {
     testWidgets('a última carta não é a única confortável', (tester) async {
       await abrirMesaDeTreino(tester);
       final varredura = await medirFaixasEfetivas(tester);
+      final fileiras = fileirasDaMao(tester);
 
       // O defeito antigo tinha uma assinatura: dez faixas de 21 e uma de 66. A
-      // dispersão entre as dez primeiras é o que denuncia o retorno dele.
-      final semAUltima = varredura.faixas.take(10).toList();
-      final menor = semAUltima.reduce((a, b) => a < b ? a : b);
-      final maior = semAUltima.reduce((a, b) => a > b ? a : b);
+      // dispersão entre as cartas COBERTAS é o que denuncia o retorno dele.
+      // A última de cada fileira aparece inteira e é confortável por
+      // construção — com duas fileiras são duas, e não uma.
+      final cobertas = <double>[
+        for (var i = 0; i < varredura.faixas.length; i++)
+          if (i + 1 < fileiras.length && fileiras[i + 1] == fileiras[i])
+            varredura.faixas[i],
+      ];
+      expect(cobertas, isNotEmpty);
+      final menor = cobertas.reduce((a, b) => a < b ? a : b);
+      final maior = cobertas.reduce((a, b) => a > b ? a : b);
       expect(maior - menor, lessThanOrEqualTo(2.0));
       expect(menor, greaterThanOrEqualTo(kFaixaMinimaDeToque));
 
@@ -529,7 +550,7 @@ void main() {
       // pintura, ela passaria a cobrir a vizinha por 66 pontos e a deixaria
       // inalcançável enquanto a seleção durasse.
       final rects = cartasDaMao(tester);
-      final ponto = Offset(rects[4].left + 2, rects[4].center.dy);
+      final ponto = pontoDeToqueDaCarta(tester, 4);
       expect(await tocarEm(tester, ponto), <int>{4});
 
       final varredura = await medirFaixasEfetivas(tester);
@@ -571,7 +592,7 @@ void main() {
 
       final antes = cartasNaOrdemDeLeitura(tester);
       final rects = cartasDaMao(tester);
-      Offset naCarta(int i) => Offset(rects[i].left + 2, rects[i].center.dy);
+      Offset naCarta(int i) => pontoDeToqueDaCarta(tester, i);
 
       // Selecionar.
       expect(await tocarEm(tester, naCarta(2)), <int>{2});
@@ -600,7 +621,7 @@ void main() {
       final leituraAntes = cartasNaOrdemDeLeitura(tester);
 
       final rects = cartasDaMao(tester);
-      await tocarEm(tester, Offset(rects[5].left + 2, rects[5].center.dy));
+      await tocarEm(tester, pontoDeToqueDaCarta(tester, 5));
 
       expect(ordemDeDesenho(tester), isNot(orderedEquals(desenhoAntes)));
       expect(cartasNaOrdemDeLeitura(tester), orderedEquals(leituraAntes));
