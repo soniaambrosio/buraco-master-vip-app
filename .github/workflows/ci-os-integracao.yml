@@ -117,6 +117,32 @@ jobs:
             if [ ! -f "app_build/$t" ]; then echo "ausente: $t" > "nao_$k"; return; fi
             ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
           }
+          # MESMA COISA, COM UMA DIFERENCA: aqui a ausencia do arquivo NAO e
+          # NAO EXECUTADO — e reprovacao.
+          #
+          # `roda` acima trata caminho inexistente como "nao se aplica", que e a
+          # leitura certa para suite que pode nao existir naquele ref. Para um
+          # portao de acessibilidade e a leitura errada: apagar o arquivo, ou so
+          # renomea-lo, faria o gate sumir da conta em silencio e o run continuar
+          # verde. Quem apaga um teste nao devia ganhar um CI mais facil.
+          #
+          # Escrevendo `exit_$k` com valor nao-zero — em vez de `nao_$k` — a
+          # ausencia entra na MESMA maquinaria dos outros: aparece como FALHOU na
+          # tabela de evidencia e derruba o portao verde/vermelho.
+          roda_obrigatorio() { # roda_obrigatorio <chave> <caminho>
+            local k="$1" t="$2"
+            if [ ! -f "app_build/$t" ]; then
+              {
+                echo "ERRO: $t nao encontrado."
+                echo "Este gate e OBRIGATORIO: ausencia ou renomeacao reprova o run,"
+                echo "e nao vira NAO EXECUTADO. Se o arquivo mudou de nome, atualize"
+                echo "o caminho aqui no mesmo commit que o renomeou."
+              } | tee "t_$k.log"
+              echo 1 > "exit_$k"
+              return
+            fi
+            ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
+          }
           roda motor      test/teste_motor.dart
           roda resil      test/teste_motor_resiliencia.dart
           roda encerr     test/teste_encerramento.dart
@@ -136,6 +162,16 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS 20 — Estados terminais da casca com semantica: os dois estados
+          # sem saida visual (sessao que nao responde dentro do teto, e casca
+          # sem sessao montada acima) lidos por quem nao ve a tela — emoji
+          # decorativo fora da arvore, titulo como cabecalho, acao com nome,
+          # papel e estado, e a transicao anunciada UMA vez.
+          #
+          # OBRIGATORIO de proposito: o defeito que ele fecha e invisivel para
+          # quem enxerga a tela, entao ninguem tropeca nele por acidente. Um
+          # gate assim so vale se a propria ausencia dele doer.
+          roda_obrigatorio a11yterm test/casca/a11y_estados_terminais_test.dart
           # OS Identidade do Perfil Publico Visitado: quando A abre o perfil de
           # B, os QUATRO campos — nome, avatar, liga e numeros — vem do
           # `publicId` de B. O defeito que este gate fecha nao quebrava nada:
@@ -310,7 +346,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yterm perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -361,7 +397,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yterm perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
@@ -369,6 +405,16 @@ jobs:
               echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
             else
               echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+            fi
+          done
+          # O laco acima perdoa gate SEM MARCADOR NENHUM, tratando-o como nao
+          # executado. Para os obrigatorios isso reabriria pela porta dos fundos
+          # exatamente o que `roda_obrigatorio` fechou: bastaria o passo que os
+          # roda morrer antes da hora para o run seguir verde sem eles.
+          for k in a11yterm; do
+            if [ ! -f "exit_$k" ]; then
+              echo "gate OBRIGATORIO $k nao deixou marcador de execucao — reprovado."
+              fail=1
             fi
           done
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"

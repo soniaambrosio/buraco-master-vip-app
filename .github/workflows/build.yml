@@ -301,6 +301,18 @@ jobs:
             echo "ERRO: auditoria_casca_test.dart não encontrado — é ela que prova a AUSÊNCIA."
             exit 1
           fi
+          # O comando abaixo é `flutter test test/casca` — um DIRETÓRIO. Ele fica
+          # verde com o diretório inteiro vazio, e não tem como reclamar de um
+          # arquivo que deixou de existir: apagar ou renomear a suíte de
+          # acessibilidade dos estados terminais não deixa rastro nenhum no
+          # resultado. Por isso o caminho é conferido aqui, um por um, antes.
+          if [ ! -f app/test/casca/a11y_estados_terminais_test.dart ]; then
+            echo "ERRO: a11y_estados_terminais_test.dart não encontrado — é ele que"
+            echo "prova que os estados terminais da casca são operáveis por quem não"
+            echo "vê a tela. Se o arquivo mudou de nome, atualize este caminho no"
+            echo "MESMO commit que o renomeou."
+            exit 1
+          fi
           mkdir -p app_build/test/casca
           cp -R app/test/casca/. app_build/test/casca/
           cd app_build
