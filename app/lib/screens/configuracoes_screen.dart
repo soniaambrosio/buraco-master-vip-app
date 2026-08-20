@@ -1069,50 +1069,51 @@ class ConfiguracoesScreen extends StatelessWidget {
   /// O único caminho de saída — e o único controle desta tela que a varredura
   /// pegava sem papel e sem habilitação.
   ///
-  /// Ele nunca esteve anônimo: o texto dentro do [InkWell] já dava o nome. O
-  /// que faltava era o resto do contrato, e a varredura de I1/I2 é cega de
-  /// propósito — ela olha TODO nó acionável, e não uma lista de controles
-  /// conhecidos. Deixar este de fora exigiria uma exceção escrita na suíte, e
-  /// uma varredura com lista de exceções é a que deixa passar o próximo.
+  /// Ele nunca esteve anônimo: o texto dentro do [InkWell] já dava o nome, e o
+  /// [InkWell] já recolhia o toque e o foco no mesmo nó. O que faltava era o
+  /// resto do contrato — e é só isso que a anotação acrescenta.
+  ///
+  /// Sem [MergeSemantics], ao contrário dos quatro auxiliares acima, e a
+  /// diferença é de posição na árvore: as linhas das seções são filhas de um
+  /// `Semantics` de seção e precisam da fusão para virar um nó só; este botão é
+  /// filho direto do [ListView] e já é um nó só. Pedir a fusão aqui só
+  /// acrescentava uma fronteira vazia do tamanho do botão.
+  ///
+  /// A varredura de I1/I2 é cega de propósito — ela olha TODO nó acionável, e
+  /// não uma lista de controles conhecidos. Deixar este de fora exigiria uma
+  /// exceção escrita na suíte, e uma varredura com lista de exceções é a que
+  /// deixa passar o próximo.
   Widget _sairButton() {
-    // Sem `label`: o nome já vem do texto pintado, e a fusão o traz junto.
-    // Declarar aqui de novo o diria duas vezes na fala.
-    return MergeSemantics(
-      child: Semantics(
-        button: true,
-        enabled: true,
-        child: _sairInterno(),
-      ),
-    );
-  }
-
-  Widget _sairInterno() {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: callbacks.onSair,
-        borderRadius: BorderRadius.circular(15),
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2A0E0E),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFF8C3535)),
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.logout_rounded, color: Color(0xFFFFA2A2), size: 20),
-              SizedBox(width: 8),
-              Text(
-                'Sair da conta',
-                style: TextStyle(
-                  color: Color(0xFFFFC2C2),
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w900,
+    return Semantics(
+      button: true,
+      enabled: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: callbacks.onSair,
+          borderRadius: BorderRadius.circular(15),
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A0E0E),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: const Color(0xFF8C3535)),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.logout_rounded, color: Color(0xFFFFA2A2), size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Sair da conta',
+                  style: TextStyle(
+                    color: Color(0xFFFFC2C2),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
