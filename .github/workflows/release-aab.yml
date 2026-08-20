@@ -194,6 +194,17 @@ jobs:
           echo "--- versoes de Billing resolvidas ---"
           flutter pub deps --style=compact 2>/dev/null | grep -iE "in_app_purchase|cloud_functions|firebase_auth" || true
 
+      - name: "Assets de dados declarados no pubspec (catalogo de colecoes)"
+        # O pubspec copiado no passo acima declara assets que NAO sao pasta de
+        # arte - hoje, `data/colecoes/catalogo.seed.json`. O portao de assets
+        # logo abaixo so confere pastas `assets/.../`, entao um arquivo avulso
+        # ausente passaria por ele e derrubaria `flutter build appbundle` com
+        # "Failed to build asset bundle".
+        #
+        # Este e o unico pipeline oficial de publicacao Android: ele nao pode ser
+        # o ultimo a saber que o pubspec ganhou um asset.
+        run: bash tools/ci/copiar_assets_de_dados.sh . app_build
+
       - name: Ferramentas Android do repositorio
         run: dart pub get --directory tools/android
 

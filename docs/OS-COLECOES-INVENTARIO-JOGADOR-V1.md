@@ -201,3 +201,75 @@ teste passaria por sorte). Cinco casos em `inventario_page_test.dart`:
 Mutação: **removida a trava de geração, 4 dos 5 casos quebram.**
 
 Total do portão de coleções: **140 casos, verdes.**
+
+---
+
+## OS 27-C1 — asset produtivo do catálogo e portão real do Inventário
+
+A arbitragem da OS 27 confirmou a autoridade de identidade (a cadeia
+`FirebaseAuth.authStateChanges → SessaoDoJogador → EscopoSessao → InventarioService`,
+sem segunda autoridade e sem leitura direta de `currentUser`), mas reprovou a
+folha por **regressão de build** e por **portão que não alcançava a entrega**.
+
+### 1. O catálogo era declarado em um lugar e copiado em outro
+
+`app/pubspec.yaml` passou a declarar `data/colecoes/catalogo.seed.json` — um
+asset **fora de `assets/`**. O passo de cópia entrou só no `build.yml`. As outras
+três superfícies de montagem copiam o pubspec versionado e conferem a declaração
+com um `sed` que exige prefixo `assets/` **e** barra final, de modo que um
+arquivo avulso some das três ao mesmo tempo, em silêncio:
+
+| Superfície | Antes | Consequência |
+| --- | --- | --- |
+| `tools/ci/montar_app.sh` | não copiava | `tamanho-aab.yml` — o **único** workflow que dispara em `claude/**` — quebrava |
+| `release-aab.yml` | não copiava | o **único pipeline oficial de publicação** quebrava |
+| `web.yml` | não copiava | `flutter build web` quebrava |
+
+Reproduzido: `No file or variants found for asset: data/colecoes/catalogo.seed.json`
+/ `Failed to build asset bundle`. Removida a declaração, o bundle volta a montar —
+ou seja, o defeito nasceu com a declaração.
+
+A correção **não** foi um quarto `cp` digitado à mão, porque o defeito É a lista
+paralela. `tools/ci/copiar_assets_de_dados.sh` lê o bloco `assets:` do pubspec,
+copia toda entrada que seja ARQUIVO e reprova se a fonte não existir. As quatro
+superfícies passam a chamá-lo, e `overlay_local.ps1` aplica a mesma regra.
+Declarar no pubspec passa a bastar.
+
+### 2. O portão não alcançava a entrega
+
+As duas suítes do Inventário entraram só no `build.yml`, que dispara em
+`main/master/codex/inicio-ui`. Nas folhas quem roda é o `tamanho-aab.yml`, e ele
+rodava a lista antiga de três suítes: **a prova de troca A→B nunca executou em
+CI**. A causa era a mesma — duas listas digitadas (uma no `cp`, outra no
+`flutter test`) que divergiram sem que nada acusasse.
+
+Agora os dois portões **derivam** a lista do diretório, excluem o gerador de
+evidências e são fail-closed. Provas negativas, com `exit=1` em todas:
+
+| Sabotagem | Resultado |
+| --- | --- |
+| suíte obrigatória trocada por outra (contagem intacta) | reprova nomeando a suíte perdida |
+| contagem abaixo de 5 | reprova |
+| diretório de suítes vazio | reprova |
+
+### 3. Cobertura que media desenho, não comportamento
+
+A arbitragem mostrou que três proteções podiam ser **apagadas** com a suíte
+inteira verde. Os casos que faltavam foram escritos, e a matriz de mutação
+fechou:
+
+| Mutação | Antes | Agora |
+| --- | --- | --- |
+| trava de geração em `carregar` | morre (4 de 5) | morre |
+| guarda do caminho de erro | morre | morre |
+| guarda pós-escrita de `equipar` | **sobrevivia** | morre |
+| checagem de dono na entrada de `equipar` | **sobrevivia** | morre |
+| página lê o UID do campo, não da sessão no toque | **sobrevivia** | morre |
+
+A janela da guarda pós-escrita só é alcançável com a conta virando no meio da
+gravação, então o repositório de teste ganhou portão de ESCRITA e o sinal
+`escritaComecou`: sem ele, `carregar` do outro UID esquece o inventário antes de
+`equipar` lê-lo, e o teste mediria a guarda de entrada.
+
+Total do portão de coleções: **143 casos, verdes**. `flutter analyze`: 117 issues,
+**0 erros** — idêntico à base.

@@ -119,6 +119,14 @@ jobs:
           cp app/pubspec.lock app_build/pubspec.lock
           cd app_build && flutter pub get
 
+      - name: "Assets de dados declarados no pubspec (catalogo de colecoes)"
+        # Mesmo motivo do build.yml e do release-aab.yml: o passo de conferencia
+        # logo abaixo so varre pastas `assets/.../`, e um asset avulso declarado
+        # no pubspec (hoje `data/colecoes/catalogo.seed.json`) passaria batido
+        # por ele para morrer em `flutter build web` com "Failed to build asset
+        # bundle". A copia le a declaracao, e nao uma lista digitada aqui.
+        run: bash tools/ci/copiar_assets_de_dados.sh . app_build
+
       - name: Conferir a declaração de assets do pubspec versionado
         # A injeção por script saiu daqui: as pastas agora são declaradas em
         # app/pubspec.yaml. O que resta é conferir que toda pasta DECLARADA

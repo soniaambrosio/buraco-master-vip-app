@@ -122,6 +122,28 @@ class RepositorioComPortao implements ColecaoRepositorio {
 
   void soltar(String uid) => _portoes.remove(uid)?.complete();
 
+  /// Portao da ESCRITA de equipagem.
+  ///
+  /// A leitura ja tinha o seu; a escrita nao tinha, e por isso a janela em que a
+  /// conta vira NO MEIO da gravacao nunca era exercitada por ninguem.
+  Completer<void>? _portaoDeEscrita;
+
+  /// Completa quando `aplicarEquipagem` COMECOU, antes de prender.
+  ///
+  /// Sem este sinal o teste da troca durante a gravacao ficaria refem de
+  /// temporizacao: `carregar` do outro uid ESQUECE o inventario em memoria, e
+  /// se isso acontecer antes de `equipar` le-lo, o que se mede e a guarda de
+  /// entrada — nao a guarda pos-escrita, que e a que se quer provar.
+  final Completer<void> escritaComecou = Completer<void>();
+
+  void prenderEscrita() => _portaoDeEscrita = Completer<void>();
+
+  void soltarEscrita() {
+    final portao = _portaoDeEscrita;
+    _portaoDeEscrita = null;
+    portao?.complete();
+  }
+
   @override
   Future<InventarioUsuario> carregarInventario({
     required String uid,
@@ -140,6 +162,10 @@ class RepositorioComPortao implements ColecaoRepositorio {
     required String itemIdEquipado,
     required List<String> itemIdsDesequipados,
   }) async {
+    if (!escritaComecou.isCompleted) escritaComecou.complete();
+    final portao = _portaoDeEscrita;
+    if (portao != null) await portao.future;
+
     equipagens.add((
       uid: uid,
       equipado: itemIdEquipado,
@@ -481,6 +507,120 @@ void main() {
       // Sem a trava, este `await` lancaria e a tela de B mostraria "sem conexao"
       // por causa de um pedido que nao e mais dela.
       expect(await futuroA, isNull);
+    });
+  });
+
+  group('identidade na ESCRITA, e nao so na leitura', () {
+    // A leitura ja estava provada pelo grupo acima. Estes casos cobrem o outro
+    // lado, que nao estava: as duas guardas de `equipar` podiam ser APAGADAS sem
+    // que uma unica asercao caisse. Cobertura assim mede desenho, nao
+    // comportamento — e o desenho certo de hoje e o refactor distraido de
+    // amanha.
+
+    late RepositorioComPortao repo;
+    late InventarioService service;
+
+    setUp(() {
+      repo = RepositorioComPortao([
+        _item(ColecaoItemIds.pioneerCrown, userId: 'uid_a'),
+        _item(ColecaoItemIds.pioneerEmblem, userId: 'uid_b'),
+      ]);
+      service = InventarioService(
+        repositorio: repo,
+        lerAsset: (_) async => catalogoBruto,
+      );
+    });
+
+    test('equipar em nome de OUTRO uid para antes do dominio e do servidor',
+        () async {
+      await service.carregar('uid_a');
+
+      // O inventario em memoria e de A, e quem pede e B. Sem a checagem de dono
+      // na entrada, a peca de A seria avaliada pelo dominio e gravada com o uid
+      // de B — posse atravessada, com o servidor obedecendo.
+      await expectLater(
+        service.equipar('uid_b', ColecaoItemIds.pioneerCrown),
+        throwsA(isA<InventarioIndisponivel>()),
+      );
+      expect(repo.equipagens, isEmpty);
+    });
+
+    test('conta que vira DURANTE a gravacao nao vira estado de B', () async {
+      await service.carregar('uid_a');
+
+      // A escrita de A comeca e fica presa no servidor.
+      repo.prenderEscrita();
+      final equipagemDeA = service.equipar('uid_a', ColecaoItemIds.pioneerCrown);
+      await repo.escritaComecou.future;
+
+      // A conta vira para B com a gravacao de A ainda em voo. A partir daqui o
+      // estado em memoria e de B.
+      await service.carregar('uid_b');
+
+      repo.soltarEscrita();
+
+      // A gravacao de A aconteceu e estava CERTA: era item de A, no caminho de
+      // A. O que nao pode e o resultado dela virar o estado em memoria de B.
+      await expectLater(
+        equipagemDeA,
+        throwsA(isA<InventarioIndisponivel>()),
+      );
+
+      // A prova de que a memoria continua sendo a de B: o Emblema e de B, e B
+      // consegue equipa-lo. Se o inventario de A tivesse sobrescrito, o dominio
+      // responderia que esta peca nao e dele.
+      final deB = await service.equipar('uid_b', ColecaoItemIds.pioneerEmblem);
+      expect(
+        deB.aceita,
+        isTrue,
+        reason: 'o acervo em memoria tem de ser o de B, e nao o que a escrita '
+            'de A devolveu depois da troca',
+      );
+      expect(repo.equipagens.last.uid, 'uid_b');
+    });
+
+    testWidgets('o toque usa a sessao do instante, e nao o uid desenhado antes',
+        (tester) async {
+      usarTelefoneRetrato(tester);
+      ignorarOverflowDaFonteDeTeste();
+
+      final uids = StreamController<String?>();
+      addTearDown(uids.close);
+      final sessao = SessaoDoJogador(
+        fonte: FonteFixa('uid_a'),
+        uids: uids.stream,
+        uidInicial: 'uid_a',
+      );
+      addTearDown(sessao.dispose);
+
+      await tester.pumpWidget(EscopoSessao(
+        sessao: sessao,
+        child: MaterialApp(home: InventarioPage(serviceParaTeste: service)),
+      ));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Coroa dos Pioneiros'), findsOneWidget);
+
+      // A conta vira. `idle()` entrega o evento da sessao SEM construir quadro:
+      // e exatamente a janela em que a tela ainda tem o uid antigo no campo e um
+      // toque ja pode chegar.
+      uids.add('uid_b');
+      await tester.idle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Equipar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // Nada foi ao servidor: o pedido saiu com o dono ATUAL, e o inventario em
+      // memoria e do anterior, entao o servico recusou. Se o toque tivesse
+      // usado o uid desenhado antes, a peca de A teria sido gravada com a
+      // sessao ja em B.
+      expect(
+        repo.equipagens,
+        isEmpty,
+        reason: 'equipagem nao pode sair no nome de quem ja saiu da sessao',
+      );
     });
   });
 }

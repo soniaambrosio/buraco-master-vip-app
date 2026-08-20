@@ -101,19 +101,49 @@ jobs:
           echo "--- resumo por severidade ---"
           grep -oE "^\s*(error|warning|info)" /tmp/analyze.txt | tr -d ' ' | sort | uniq -c || true
 
-      - name: "PORTÃO - testes do Kit Pioneiros"
+      - name: "PORTÃO - testes de coleções e do Inventário do jogador"
         run: |
           cd "$RUNNER_TEMP/app_depois"
-          mkdir -p test/colecoes/data
-          cp "$GITHUB_WORKSPACE"/app/test/colecoes/kit_pioneiros_test.dart test/colecoes/
-          cp "$GITHUB_WORKSPACE"/app/test/colecoes/colecao_arte_test.dart test/colecoes/
-          cp "$GITHUB_WORKSPACE"/app/test/colecoes/colecao_firebase_test.dart test/colecoes/
+          COL="$GITHUB_WORKSPACE/app/test/colecoes"
+          mkdir -p test/colecoes/data test/suporte
+
+          # A lista de suites e DERIVADA do diretorio, e nao digitada duas vezes.
+          # Era essa divergencia - uma lista no `cp`, outra no `flutter test`, e
+          # uma terceira no build.yml - que deixava este portao rodar tres suites
+          # enquanto o build.yml rodava cinco. As duas do Inventario do jogador,
+          # que carregam a prova de troca de conta A->B, nunca chegavam aqui: e
+          # este e o unico workflow que dispara em `claude/**`, ou seja, o unico
+          # que roda nas folhas antes de qualquer composicao.
+          #
+          # `evidencias_visuais_test.dart` fica de fora de proposito: escreve PNG
+          # de evidencia, nao afirma invariante (ver o cabecalho do arquivo).
+          SUITES=$(cd "$COL" && ls *_test.dart | grep -v '^evidencias_visuais_test\.dart$')
+          for s in $SUITES; do cp "$COL/$s" test/colecoes/; done
+          cp "$GITHUB_WORKSPACE"/app/test/suporte/seeds.dart test/suporte/
+          cp "$GITHUB_WORKSPACE"/app/test/superficie_de_teste.dart test/
           cp "$GITHUB_WORKSPACE"/app/data/colecoes/*.json test/colecoes/data/
-          flutter test \
-            test/colecoes/kit_pioneiros_test.dart \
-            test/colecoes/colecao_arte_test.dart \
-            test/colecoes/colecao_firebase_test.dart \
-            --reporter expanded
+
+          # FAIL-CLOSED. Derivar a lista resolve a divergencia mas abre outra
+          # porta: com o diretorio vazio, `SUITES` fica vazio e `flutter test`
+          # nao receberia arquivo nenhum. Apagar suite tem de REPROVAR, nunca
+          # emverdecer.
+          N=$(echo "$SUITES" | grep -c .)
+          echo "suites de colecoes no portao: $N"
+          if [ "$N" -lt 5 ]; then
+            echo "ERRO: esperava ao menos 5 suites de colecoes, encontrei $N."
+            exit 1
+          fi
+          for obrigatoria in inventario_vm_test.dart inventario_page_test.dart; do
+            if [ ! -f "test/colecoes/$obrigatoria" ]; then
+              echo "ERRO: o portao do Inventario perdeu $obrigatoria."
+              exit 1
+            fi
+          done
+
+          ALVOS=""
+          for s in $SUITES; do ALVOS="$ALVOS test/colecoes/$s"; done
+          flutter test $ALVOS --reporter expanded
+          echo "PORTÃO VERDE: coleções e Inventário validados no commit ${GITHUB_SHA}."
 
       # ---------------------------------------------------------------------
       # Os dois AABs

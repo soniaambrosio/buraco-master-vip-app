@@ -49,6 +49,13 @@ fi
 cp "$REPO/app/pubspec.yaml" "$DESTINO/pubspec.yaml"
 cp "$REPO/app/pubspec.lock" "$DESTINO/pubspec.lock"
 
+# Assets DECLARADOS que sao arquivo, e nao pasta (ex.: o catalogo de
+# colecoes). O laco de pastas abaixo nao os enxerga, e o pubspec que acabou de
+# ser copiado os declara: sem esta linha o build morre em "Failed to build
+# asset bundle", num passo bem depois daqui. Le a declaracao em vez de repetir
+# a lista - ver o cabecalho do script.
+bash "$(dirname "${BASH_SOURCE[0]}")/copiar_assets_de_dados.sh" "$REPO" "$DESTINO"
+
 # Toda pasta declarada precisa EXISTIR, senao o build falha com uma mensagem que
 # nao diz qual e. Criar vazia aqui transforma isso num aviso do proprio Flutter.
 while read -r dir; do

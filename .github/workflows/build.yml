@@ -172,25 +172,20 @@ jobs:
           du -sh app_build/assets/colecoes/pioneiros_2026
           ls -l app_build/assets/colecoes/pioneiros_2026/
 
-      - name: Copy collections catalog seed (catalogo canonico para o runtime)
+      - name: "Assets de dados declarados no pubspec (catalogo de colecoes)"
         # A ARTE sozinha nao basta. O catalogo diz QUAL peca e qual: nome, slot,
         # ordem e o caminho do PNG. Sem ele em app_build/, o aplicativo levanta o
         # inventario do Firestore e nao sabe desenhar nem o nome de um item.
         #
         # E um passo separado, e nao uma linha no passo acima, porque isto NAO e
         # asset de arte: nao entra em app_build/assets/ e nao e conferido pelo
-        # portao de pastas do pubspec (que so varre `assets/.../`). O destino
-        # espelha o caminho do repositorio (`data/colecoes/`) porque e assim que
-        # `pubspec.yaml` o declara e que `InventarioService` o pede ao rootBundle.
+        # portao de pastas do pubspec (que so varre `assets/.../`).
         #
-        # Sem este passo o proprio `flutter build` quebraria: o pubspec copiado
-        # declara o arquivo, e asset declarado que nao existe e erro de build.
-        run: |
-          mkdir -p app_build/data/colecoes
-          cp app/data/colecoes/catalogo.seed.json app_build/data/colecoes/
-          test -s app_build/data/colecoes/catalogo.seed.json
-          echo "catalogo de colecoes copiado:"
-          ls -l app_build/data/colecoes/
+        # A copia sai de `tools/ci/copiar_assets_de_dados.sh`, e nao de um `cp`
+        # escrito aqui, porque este mesmo passo faltava em `montar_app.sh`,
+        # `release-aab.yml` e `web.yml`: quatro listas digitadas divergem, uma
+        # declaracao lida nao diverge. Declarar no pubspec passa a bastar.
+        run: bash tools/ci/copiar_assets_de_dados.sh . app_build
 
       # NOTA DE COMPOSIÇÃO DA RC. Aqui viviam dois passos da linhagem de
       # WS-auth que saíram nesta união, e nenhum dos dois se perdeu:
@@ -331,45 +326,54 @@ jobs:
           flutter test test/torneios/reward_grants_test.dart --reporter expanded
           echo "PORTÃO VERDE: domínio de recompensas de torneios validado no commit ${GITHUB_SHA}."
 
-      - name: "PORTÃO DE QUALIDADE — Kit Pioneiros 2026 (catálogo, resgate, inventário)"
-        # Mesmo padrão do portão de torneios: roda SOMENTE este arquivo, porque o
-        # test/widget_test.dart vindo do `flutter create` tem erro pré-existente
-        # e derrubaria a suíte inteira.
+      - name: "PORTÃO DE QUALIDADE — coleções e Inventário do jogador"
+        # Roda SOMENTE as suítes de coleções, porque o test/widget_test.dart
+        # vindo do `flutter create` tem erro pré-existente e derrubaria a suíte
+        # inteira.
         #
         # Os seeds REAIS de produção são copiados para dentro do teste: o portão
         # valida a configuração que vai para a loja, não uma fixture paralela.
+        #
+        # A lista de suítes é DERIVADA do diretório, e não digitada duas vezes
+        # (uma no `cp`, outra no `flutter test`). Era essa divergência que
+        # deixava este portão com cinco suítes e o `tamanho-aab.yml` — o único
+        # que dispara em `claude/**` — com três, sem que nada acusasse.
+        # `evidencias_visuais_test.dart` fica FORA de propósito: escreve imagem
+        # em vez de asserir, e leva minutos por estado.
         run: |
-          if [ ! -f app/test/colecoes/kit_pioneiros_test.dart ]; then
-            echo "ERRO: app/test/colecoes/kit_pioneiros_test.dart não encontrado — o portão da coleção é OBRIGATÓRIO."
-            exit 1
-          fi
-          mkdir -p app_build/test/colecoes/data
-          cp app/test/colecoes/kit_pioneiros_test.dart app_build/test/colecoes/
-          cp app/test/colecoes/colecao_arte_test.dart app_build/test/colecoes/
-          cp app/test/colecoes/colecao_firebase_test.dart app_build/test/colecoes/
-          # Inventário do jogador: a projeção de posse e a tela que a consome.
+          SUITES=$(cd app/test/colecoes && ls *_test.dart | grep -v '^evidencias_visuais_test\.dart$')
+          mkdir -p app_build/test/colecoes/data app_build/test/suporte
+          for s in $SUITES; do cp "app/test/colecoes/$s" app_build/test/colecoes/; done
           # `inventario_page_test.dart` sobe widget e precisa da arte já copiada
           # pelo passo "Copy Kit Pioneiros 2026 assets" e do catálogo declarado
           # no pubspec — os dois passos ficam acima deste, de propósito.
-          cp app/test/colecoes/inventario_vm_test.dart app_build/test/colecoes/
-          cp app/test/colecoes/inventario_page_test.dart app_build/test/colecoes/
-          mkdir -p app_build/test/suporte
           cp app/test/suporte/seeds.dart app_build/test/suporte/
           cp app/test/superficie_de_teste.dart app_build/test/
           cp app/data/colecoes/*.json app_build/test/colecoes/data/
+
+          # FAIL-CLOSED. Derivar a lista resolve a divergência mas abriria outra
+          # porta: diretório vazio daria `SUITES` vazio, e `flutter test` sem
+          # arquivo nenhum. Apagar suíte tem de REPROVAR, nunca emverdecer.
+          N=$(echo "$SUITES" | grep -c .)
+          echo "suítes de coleções no portão: $N"
+          if [ "$N" -lt 5 ]; then
+            echo "ERRO: esperava ao menos 5 suítes de coleções, encontrei $N."
+            exit 1
+          fi
+          for obrigatoria in kit_pioneiros_test.dart inventario_vm_test.dart inventario_page_test.dart; do
+            if [ ! -f "app_build/test/colecoes/$obrigatoria" ]; then
+              echo "ERRO: o portão da coleção perdeu $obrigatoria — é OBRIGATÓRIA."
+              exit 1
+            fi
+          done
           echo "seeds disponíveis para o teste:"
           ls -l app_build/test/colecoes/data/
+
           cd app_build
-          # O gerador de evidências (evidencias_visuais_test.dart) fica FORA:
-          # ele escreve imagem em vez de asserir, e leva minutos por estado.
-          flutter test \
-            test/colecoes/kit_pioneiros_test.dart \
-            test/colecoes/colecao_arte_test.dart \
-            test/colecoes/colecao_firebase_test.dart \
-            test/colecoes/inventario_vm_test.dart \
-            test/colecoes/inventario_page_test.dart \
-            --reporter expanded
-          echo "PORTÃO VERDE: Kit Pioneiros 2026 validado no commit ${GITHUB_SHA}."
+          ALVOS=""
+          for s in $SUITES; do ALVOS="$ALVOS test/colecoes/$s"; done
+          flutter test $ALVOS --reporter expanded
+          echo "PORTÃO VERDE: coleções e Inventário validados no commit ${GITHUB_SHA}."
 
       - name: "PORTÃO DE SEGURANÇA — identidade da conexão online"
         # Prova que o app NÃO declara quem é: pega a credencial antes de abrir o

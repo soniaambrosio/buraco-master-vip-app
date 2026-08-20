@@ -44,15 +44,29 @@ Copiar (Join-Path $app 'data\torneios') (Join-Path $build 'test\torneios\data')
 # test/suporte/seeds.dart, que procura primeiro em test/<dominio>/data/.
 Copiar (Join-Path $app 'data\colecoes') (Join-Path $build 'test\colecoes\data')
 
-# O catalogo de colecoes tambem viaja como ASSET declarado no pubspec
-# (data/colecoes/catalogo.seed.json): e dele que InventarioService tira os nomes
-# e a arte em tempo de execucao. Sem esta copia, asset declarado nao existe e
-# `flutter test` falha ao montar o bundle - nao no assert, no carregamento.
-$catalogoDe = Join-Path $app 'data\colecoes\catalogo.seed.json'
-$catalogoPara = Join-Path $build 'data\colecoes'
-if (Test-Path $catalogoDe) {
-  New-Item -ItemType Directory -Force -Path $catalogoPara | Out-Null
-  Copy-Item $catalogoDe $catalogoPara -Force
+# Assets DECLARADOS no pubspec que sao ARQUIVO, e nao pasta - hoje o catalogo de
+# colecoes. Mesma regra de tools/ci/copiar_assets_de_dados.sh, e pelo mesmo
+# motivo: lista digitada em cinco lugares diverge, declaracao lida nao. Sem esta
+# copia, asset declarado nao existe e `flutter test` falha ao montar o bundle -
+# nao no assert, no carregamento.
+$dentroDeAssets = $false
+foreach ($linha in (Get-Content (Join-Path $app 'pubspec.yaml'))) {
+  if ($linha -match '^\s*assets:\s*$') { $dentroDeAssets = $true; continue }
+  if ($dentroDeAssets -and $linha -match '^\s*-\s*(\S+)\s*$') {
+    $entrada = $Matches[1]
+    if ($entrada.EndsWith('/')) { continue }
+    $relativo = $entrada -replace '/', '\'
+    $de = Join-Path $app $relativo
+    if (-not (Test-Path $de)) {
+      throw "pubspec declara o asset '$entrada', que nao existe em app/."
+    }
+    $para = Join-Path $build (Split-Path $relativo -Parent)
+    New-Item -ItemType Directory -Force -Path $para | Out-Null
+    Copy-Item $de $para -Force
+    Write-Host "  asset de dados: $entrada"
+    continue
+  }
+  if ($dentroDeAssets -and $linha -match '^\s*[^\s#-]') { $dentroDeAssets = $false }
 }
 
 # O widget_test.dart que vem do `flutter create` tem erro pre-existente e
