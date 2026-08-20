@@ -58,6 +58,23 @@ cascaporta
 # comercial: um `setState` local acendia o selo sem nenhum servidor envolvido.
 cascaloja
 
+# --- 3c. acessibilidade e segurança comercial da Loja (OS 14-C1) ------------
+# A auditoria da OS 14 achou quatro P0, e DOIS deles não eram de leitura de
+# tela — eram de cobrança: tocar num card de plano abria o fluxo de pagamento
+# no mesmo gesto que selecionava, e o resultado da compra (recusa, erro,
+# pendência) nunca chegava a ninguém.
+#
+# Nenhum dos dois era observável no aplicativo publicado, porque `master_vip`
+# ainda não existe na Play Console e a vitrine vem vazia. Eles disparariam
+# sozinhos, sem uma linha mudar, no dia da publicação — que é a única razão de
+# esta suíte montar a vitrine COM planos.
+#
+# `lojaa11y` reprova se: selecionar voltar a comprar, a trava de intenção sair,
+# o resultado deixar de chegar à tela, o anúncio de transição sumir, algum
+# controle perder nome, algum alvo cair abaixo de 48 dp, a altura fixa voltar
+# ao card de plano, ou o contraste do desconto voltar ao valor auditado.
+lojaa11y
+
 # --- 4. suítes Flutter de Ranking Real e Perfil Publicável (entram por esta OS)
 # `rkbarreira` é a barreira temporal V2; `rkestado` guarda `EstadoRanking` como
 # autoridade única (sem fallback Bronze/nível 1/#0/#1).

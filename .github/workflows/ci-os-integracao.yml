@@ -219,6 +219,12 @@ jobs:
           # exibe saldo, pacote nem cosmético de maquete — nem acende VIP sem o
           # backend.
           roda cascaloja    test/casca/loja_de_producao_test.dart
+          # OS 14-C1: acessibilidade e segurança de acionamento comercial da
+          # Loja. `cascaloja`, acima, prova que a Loja é ALCANÇÁVEL e honesta;
+          # esta prova que ela é OPERÁVEL e que o acionamento comercial não
+          # dispara sozinho. As duas coisas quebram por caminhos diferentes, e
+          # é por isso que são dois gates e não um.
+          roda lojaa11y     test/casca/loja_a11y_comercial_test.dart
           # OS Leitor Real de Ranking (barreira temporal V2) e Perfil
           # Publicável (CI-01). `rkestado` é o que impede a volta do fallback
           # Bronze / nível 1 / colocação #0 e #1; `rkbarreira` é a barreira

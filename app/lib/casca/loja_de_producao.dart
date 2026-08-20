@@ -235,33 +235,16 @@ class _LojaDeProducaoState extends State<LojaDeProducao> {
     );
   }
 
-  /// Texto honesto para cada situação do fluxo.
-  ///
-  /// `aguardandoRevalidacao` é o que merece mais cuidado: é o caso em que a
-  /// pessoa PAGOU e o servidor ainda não confirmou. Dizer "erro" faria parecer
-  /// que o dinheiro sumiu; dizer "pronto" seria mentira.
-  String? get _avisoDoEstado {
-    switch (_painel.compra) {
-      case EstadoCompra.aguardandoValidacao:
-        return 'Confirmando sua assinatura com o servidor…';
-      case EstadoCompra.aguardandoRevalidacao:
-        return 'Sua compra foi registrada e será confirmada em instantes. '
-            'Não é preciso comprar de novo.';
-      case EstadoCompra.validada:
-        return 'Assinatura confirmada. Liberando seu VIP…';
-      case EstadoCompra.recusada:
-        return 'Não foi possível validar esta compra.';
-      case EstadoCompra.pendente:
-        return 'Pagamento pendente de aprovação.';
-      case EstadoCompra.cancelada:
-        return 'Compra cancelada.';
-      case EstadoCompra.erroDaPlay:
-        return 'A Play Store não conseguiu concluir a compra.';
-      case EstadoCompra.emAndamento:
-      case EstadoCompra.ociosa:
-        return null;
-    }
-  }
+  // AQUI MORAVA `_avisoDoEstado`, e ele saiu inteiro.
+  //
+  // Os oito textos eram bons — inclusive o mais delicado, o de quem PAGOU e
+  // ainda não foi confirmado. O que estava errado era o momento: ele só era lido
+  // logo depois de disparar `_assinar()`, que não é aguardado, e portanto
+  // reportava o estado anterior ao toque. No primeiro toque, `ociosa`: nada.
+  //
+  // O texto agora é de `EstadoDaCompraNaLoja.mensagem`, ao lado do estado que o
+  // escolhe, e é a tela que decide quando falar. Mantê-lo nos dois lugares
+  // criaria duas redações para a mesma situação, e uma delas ficaria para trás.
 
   /// O que a vitrine diz quando não há plano nenhum para oferecer.
   ///
@@ -326,16 +309,29 @@ class _LojaDeProducaoState extends State<LojaDeProducao> {
       // deles — nulo e lista vazia — é o que apaga as seções.
       vm: LojaVM(ehVip: _ehVip, planos: planosParaLoja(_planos)),
       avisoDaVitrine: _avisoDaVitrine,
+      // O ESTADO DA COMPRA CHEGA À TELA, e é a correção do defeito que a
+      // auditoria chamou de "o resultado nunca chega a ninguém".
+      //
+      // Ele era lido UMA vez, síncrono, logo depois de disparar `_assinar()` —
+      // que não é aguardado. O painel vem por `stream`, então naquele instante
+      // ainda era o estado ANTERIOR: no primeiro toque, `ociosa`, que não tem
+      // texto. Recusa, erro da Play e pendência eram silenciosos.
+      //
+      // Agora ele é um campo do quadro. A tela desenha a faixa e anuncia a
+      // transição; este widget continua só repassando o que o serviço publicou.
+      estadoDaCompra: estadoDaCompraParaLoja(_painel.compra),
       onVoltar: () => Navigator.of(context).maybePop(),
       onNav: _navegar,
+      // Selecionar um plano não é comprar. Este callback existe para a tela
+      // poder provar isso de fora, e aqui ele não tem efeito comercial nenhum.
+      onSelecionarPlano: (_) {},
       // NENHUM `_ehVip = true` aqui, e essa ausência é o ponto: este callback só
       // ABRE o fluxo da Play. O selo acende quando o backend gravar o
       // entitlement e o `snapshots()` trouxer a mudança.
-      onAssinar: (basePlanId) {
-        _assinar(basePlanId);
-        final texto = _avisoDoEstado;
-        if (texto != null) _aviso(texto);
-      },
+      //
+      // Ele agora só é alcançado pelo "Continuar" da folha de confirmação — a
+      // tela não o chama mais a partir do toque no card.
+      onAssinar: _assinar,
       // As quatro superfícies abaixo não são alcançáveis com as listas vazias:
       // sem pacote não há carteira nem grade de moedas, sem categoria não há
       // cosmético e sem amigo não há presente. Continuam preenchidas porque

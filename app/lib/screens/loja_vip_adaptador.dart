@@ -13,8 +13,46 @@
 // ninguem aprovou e que estaria errado para qualquer jogador fora do Brasil.
 library;
 
+import '../billing/estado_ui.dart';
 import '../billing/plano_vip.dart';
 import 'loja_screen.dart';
+
+/// Traduz o estado do Billing para o estado que a TELA sabe desenhar.
+///
+/// Este e o lugar certo, e nao a tela: `lib/screens/` nao importa
+/// `lib/billing/`, e e por isso que `LojaScreen` continua montavel sem plugin,
+/// sem Firebase e sem Play — o que mantem toda a suite de acessibilidade capaz
+/// de rodar sem tocar em plataforma nenhuma.
+///
+/// DOIS ESTADOS DO BILLING VIRAM UM SO. `aguardandoValidacao` e
+/// `aguardandoRevalidacao` pedem a MESMA coisa de quem le: esperar, sem comprar
+/// de novo. A diferenca entre eles e operacional (houve veredito? a rede caiu?)
+/// e importa para o log, nao para a frase na tela.
+///
+/// `validada` NAO vira "voce e VIP", e a distincao esta documentada em
+/// `estado_ui.dart`: quem acende o selo e `playerEntitlements/{uid}`, e uma
+/// compra validada com assinatura em `ON_HOLD` e exatamente este caso sem VIP.
+EstadoDaCompraNaLoja estadoDaCompraParaLoja(EstadoCompra estado) {
+  switch (estado) {
+    case EstadoCompra.ociosa:
+      return EstadoDaCompraNaLoja.ociosa;
+    case EstadoCompra.emAndamento:
+      return EstadoDaCompraNaLoja.iniciando;
+    case EstadoCompra.pendente:
+      return EstadoDaCompraNaLoja.pendente;
+    case EstadoCompra.aguardandoValidacao:
+    case EstadoCompra.aguardandoRevalidacao:
+      return EstadoDaCompraNaLoja.aguardandoConfirmacao;
+    case EstadoCompra.validada:
+      return EstadoDaCompraNaLoja.concluida;
+    case EstadoCompra.cancelada:
+      return EstadoDaCompraNaLoja.cancelada;
+    case EstadoCompra.recusada:
+      return EstadoDaCompraNaLoja.recusada;
+    case EstadoCompra.erroDaPlay:
+      return EstadoDaCompraNaLoja.erro;
+  }
+}
 
 /// Nome de exibicao do plano, a partir do periodo que a Play informou.
 ///

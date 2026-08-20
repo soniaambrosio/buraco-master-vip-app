@@ -1,8 +1,88 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import 'perfil_screen.dart' show NavDestino;
 
 enum LojaCategoria { dorsos, molduras, avatares, mascotes, efeitos, emojis }
+
+/// O andamento da compra, na linguagem da TELA.
+///
+/// POR QUE NÃO É O `EstadoCompra` DO BILLING. `lib/screens/` não importa
+/// `lib/billing/`, e a direção da dependência é de propósito: a tela conhece o
+/// Billing pelo adaptador, o Billing não conhece a tela. Quem traduz é
+/// `loja_vip_adaptador.dart`, do mesmo jeito que já traduz os planos.
+///
+/// A tradução também é decisão de produto, e não só de camada: `aguardandoValidacao`
+/// e `aguardandoRevalidacao` viram UM estado aqui porque pedem a mesma coisa de
+/// quem lê — esperar, sem comprar de novo. E nenhum deles pode virar "você é
+/// VIP": ver [EstadoDaCompraNaLoja.concluida], que é o mais perigoso da lista.
+enum EstadoDaCompraNaLoja {
+  /// Nada em curso. É o único estado em que assinar fica disponível.
+  ociosa,
+
+  /// O fluxo da Play foi aberto e a pessoa está decidindo.
+  iniciando,
+
+  /// A Play aceitou o pedido e o pagamento ainda não se concretizou.
+  pendente,
+
+  /// Pagou, e o servidor ainda não confirmou. Não há direito nenhum aqui.
+  aguardandoConfirmacao,
+
+  /// O servidor aceitou a compra e gravou o que ela concede.
+  ///
+  /// ISTO NÃO É "O JOGADOR É VIP", e o texto correspondente não pode dizer que
+  /// é. O selo responde a `playerEntitlements/{uid}` e só a ele — ver
+  /// `PainelBilling.mostrarComoVip`. Uma compra validada com assinatura em
+  /// `ON_HOLD` é exatamente este estado, sem VIP nenhum.
+  concluida,
+
+  /// A pessoa desistiu.
+  cancelada,
+
+  /// O servidor recusou de forma definitiva. Nada foi concedido.
+  recusada,
+
+  /// A Play devolveu erro, ou não houve veredito do servidor.
+  erro,
+}
+
+extension EstadoDaCompraNaLojaTexto on EstadoDaCompraNaLoja {
+  /// O que dizer a quem está olhando. `null` quando não há nada a dizer.
+  ///
+  /// NENHUM destes textos afirma direito. O mais próximo é o de
+  /// [EstadoDaCompraNaLoja.concluida], e ele fala de liberação EM CURSO, não de
+  /// acesso obtido: quem acende o selo é o backend, e a tela não sabe antes dele.
+  String? get mensagem => switch (this) {
+    EstadoDaCompraNaLoja.ociosa => null,
+    EstadoDaCompraNaLoja.iniciando => 'Abrindo o pagamento na Google Play…',
+    EstadoDaCompraNaLoja.pendente =>
+      'Pagamento aguardando aprovação. Assim que for aprovado, sua assinatura é '
+          'liberada.',
+    EstadoDaCompraNaLoja.aguardandoConfirmacao =>
+      'Compra registrada. Estamos confirmando com o servidor — não é preciso '
+          'comprar de novo.',
+    EstadoDaCompraNaLoja.concluida =>
+      'Compra confirmada. Seu acesso VIP é liberado assim que o servidor '
+          'terminar de registrar.',
+    EstadoDaCompraNaLoja.cancelada => 'Compra cancelada. Nada foi cobrado.',
+    EstadoDaCompraNaLoja.recusada =>
+      'Não foi possível validar esta compra. Nada foi concedido.',
+    EstadoDaCompraNaLoja.erro =>
+      'A Google Play não conseguiu concluir a compra. Tente de novo em '
+          'instantes.',
+  };
+
+  /// Há uma tentativa VIVA? Enquanto houver, assinar fica indisponível.
+  ///
+  /// [EstadoDaCompraNaLoja.pendente] entra aqui, e é a inclusão que mais importa:
+  /// pagamento em aprovação é compra viva, e oferecer "assinar" ali é convidar a
+  /// pessoa a pagar duas vezes pela mesma assinatura.
+  bool get emCurso =>
+      this == EstadoDaCompraNaLoja.iniciando ||
+      this == EstadoDaCompraNaLoja.pendente ||
+      this == EstadoDaCompraNaLoja.aguardandoConfirmacao;
+}
 
 /// O modelo de exibição da Loja.
 ///
@@ -266,7 +346,23 @@ class LojaScreen extends StatefulWidget {
   final VoidCallback onVoltar;
   final ValueChanged<NavDestino> onNav;
   final VoidCallback onComprarMoedas;
+
+  /// A INTENÇÃO COMERCIAL CONFIRMADA. Quem chama isto abre o fluxo da Play.
+  ///
+  /// Este callback já existia, e o que mudou foi QUEM o chama. Ele nascia do
+  /// toque no card de plano — selecionar e comprar eram o mesmo gesto, e três
+  /// toques abriam três cobranças. Agora ele só é alcançado pelo botão
+  /// "Continuar" da folha de confirmação, depois de a pessoa ter visto plano,
+  /// preço e periodicidade.
   final ValueChanged<String> onAssinar;
+
+  /// Escolher um plano na vitrine. NÃO compra nada.
+  ///
+  /// Existe separado de [onAssinar] justamente para que a separação seja
+  /// verificável de fora: um teste consegue provar que tocar no card produz
+  /// seleção e nenhuma intenção comercial.
+  final ValueChanged<String>? onSelecionarPlano;
+
   final ValueChanged<String> onComprarPacote;
   final ValueChanged<String> onConfirmarCompra;
   final ValueChanged<LojaCategoria> onAbrirCategoria;
@@ -282,6 +378,13 @@ class LojaScreen extends StatefulWidget {
   /// como "não há oferta agora".
   final String? avisoDaVitrine;
 
+  /// Em que pé está a compra, para exibir E para travar a ação.
+  ///
+  /// O padrão é [EstadoDaCompraNaLoja.ociosa] para que a maquete e os testes
+  /// visuais continuem montando a tela sem saber de Billing. Quem tem a verdade
+  /// é `LojaDeProducao`, que a repassa a cada quadro.
+  final EstadoDaCompraNaLoja estadoDaCompra;
+
   const LojaScreen({
     super.key,
     required this.vm,
@@ -295,7 +398,9 @@ class LojaScreen extends StatefulWidget {
     required this.onPresentear,
     required this.onBuscarPresenteado,
     required this.onEnviarPresente,
+    this.onSelecionarPlano,
     this.avisoDaVitrine,
+    this.estadoDaCompra = EstadoDaCompraNaLoja.ociosa,
   });
 
   @override
@@ -305,6 +410,18 @@ class LojaScreen extends StatefulWidget {
 class _LojaScreenState extends State<LojaScreen> {
   final GlobalKey _moedasKey = GlobalKey();
   String? _planoSelecionado;
+
+  /// A TRAVA LOCAL DE INTENÇÃO, e por que ela existe além de [_travado].
+  ///
+  /// O estado da compra chega por `stream`, e stream não entrega no mesmo
+  /// quadro: entre confirmar e o `iniciando` aparecer há uma janela em que
+  /// `widget.estadoDaCompra` ainda diz `ociosa`. É exatamente nessa janela que
+  /// moram os três toques rápidos. Esta variável a fecha SINCRONAMENTE.
+  ///
+  /// Ela não substitui a trava por estado, e nem poderia: quem reabre o
+  /// aplicativo no meio de um pagamento pendente chega com `pendente` sem nunca
+  /// ter tocado em nada nesta sessão.
+  bool _intencaoEnviada = false;
 
   @override
   void initState() {
@@ -320,7 +437,62 @@ class _LojaScreenState extends State<LojaScreen> {
       _planoSelecionado = _planoDestaque?.id ??
           (widget.vm.planos.isNotEmpty ? widget.vm.planos.first.id : null);
     }
+
+    // A tentativa terminou (deu certo, deu errado ou foi cancelada): a trava
+    // local sai do caminho e a pessoa pode tentar de novo. Enquanto o estado for
+    // `emCurso`, quem segura é `_travado`, não esta variável.
+    if (_intencaoEnviada && !widget.estadoDaCompra.emCurso) {
+      _intencaoEnviada = false;
+    }
+
+    _anunciarTransicoes(oldWidget);
   }
+
+  // -------------------------------------------------------------------------
+  // Anúncio
+  // -------------------------------------------------------------------------
+
+  /// Fala UMA VEZ por transição, e só na transição.
+  ///
+  /// POR QUE `announce` E NÃO UMA REGIÃO VIVA. Região viva anuncia quando o nó é
+  /// atualizado, e a Loja reconstrói a cada quadro — `_ehVip` é recalculado
+  /// contra o relógio em `LojaDeProducao`. Uma região viva sobre a faixa de
+  /// status repetiria a mesma frase sem que nada tivesse mudado, e uma sobre a
+  /// tela inteira releria a vitrine junto. Comparar o widget anterior com o atual
+  /// é o que dá "uma vez por transição" de verdade.
+  ///
+  /// A faixa de status continua existindo na tela e na árvore semântica: quem
+  /// perdeu o anúncio a encontra explorando, em vez de depender de tê-lo ouvido.
+  void _anunciarTransicoes(LojaScreen anterior) {
+    if (widget.estadoDaCompra != anterior.estadoDaCompra) {
+      final texto = widget.estadoDaCompra.mensagem;
+      if (texto != null) _falar(texto);
+    }
+
+    // O selo VIP não é consequência da compra: ele vem de
+    // `playerEntitlements/{uid}`, e pode acender numa sessão que não comprou
+    // nada. Por isso o anúncio é da MUDANÇA do direito, e não do fim do fluxo.
+    if (widget.vm.ehVip && !anterior.vm.ehVip) {
+      _falar('Seu acesso VIP está ativo.');
+    }
+  }
+
+  /// `sendAnnouncement`, e não o `announce` que está depreciado desde a 3.35.
+  ///
+  /// A janela vem do `View` desta árvore, e não do `implicitView` global — que é
+  /// exatamente a incompatibilidade com múltiplas janelas que a depreciação
+  /// aponta.
+  void _falar(String texto) {
+    final direcao = Directionality.maybeOf(context) ?? TextDirection.ltr;
+    SemanticsService.sendAnnouncement(View.of(context), texto, direcao);
+  }
+
+  // -------------------------------------------------------------------------
+  // Intenção comercial
+  // -------------------------------------------------------------------------
+
+  /// Assinar está disponível agora?
+  bool get _travado => _intencaoEnviada || widget.estadoDaCompra.emCurso;
 
   PlanoVipLoja? get _planoDestaque {
     for (final plano in widget.vm.planos) {
@@ -363,9 +535,49 @@ class _LojaScreenState extends State<LojaScreen> {
     }
   }
 
+  /// Escolher um plano. NÃO COMPRA — e a ausência da chamada é o ponto.
+  ///
+  /// Aqui morava `widget.onAssinar(plano.id)`, uma linha abaixo do `setState`.
+  /// Era ela que fazia o gesto de explorar a vitrine abrir o diálogo de cobrança
+  /// da Play, sem confirmação e sem limite de repetição.
   void _selecionarPlano(PlanoVipLoja plano) {
     setState(() => _planoSelecionado = plano.id);
-    widget.onAssinar(plano.id);
+    widget.onSelecionarPlano?.call(plano.id);
+  }
+
+  /// A confirmação, que é o único caminho até [LojaScreen.onAssinar].
+  ///
+  /// Mostra o que a OS exige antes de encaminhar à Play: qual plano, o preço que
+  /// a PLAY formatou, a periodicidade, e as duas saídas. Nenhum desses valores
+  /// nasce aqui — todos vêm do [PlanoVipLoja] que o adaptador montou.
+  Future<void> _abrirConfirmacaoDeAssinatura(PlanoVipLoja plano) async {
+    if (_travado) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) => _ConfirmacaoAssinaturaSheet(
+        plano: plano,
+        onCancelar: () => Navigator.of(sheetContext).pop(),
+        onContinuar: () {
+          // Fecha ANTES de emitir. A folha some do caminho no mesmo quadro, e o
+          // segundo toque numa folha que já não existe não tem onde cair.
+          Navigator.of(sheetContext).pop();
+          _emitirIntencao(plano.id);
+        },
+      ),
+    );
+  }
+
+  /// O ÚNICO ponto do arquivo que chama [LojaScreen.onAssinar].
+  ///
+  /// A trava é conferida de novo aqui, e não só no botão: um botão desabilitado
+  /// é uma afirmação sobre o quadro em que foi pintado, e esta função é o lugar
+  /// onde a intenção de fato sai.
+  void _emitirIntencao(String basePlanId) {
+    if (_travado) return;
+    setState(() => _intencaoEnviada = true);
+    widget.onAssinar(basePlanId);
   }
 
   Future<void> _abrirCompra(PacoteMoedas pacote) async {
@@ -442,7 +654,16 @@ class _LojaScreenState extends State<LojaScreen> {
                             vm: widget.vm,
                             selectedPlanId: _planoSelecionado,
                             avisoDaVitrine: widget.avisoDaVitrine,
+                            estadoDaCompra: widget.estadoDaCompra,
+                            travado: _travado,
                             onPlanoTap: _selecionarPlano,
+                            onAssinarSelecionado: () {
+                              final id = _planoSelecionado;
+                              if (id == null) return;
+                              final plano = _planoPorId(id);
+                              if (plano == null) return;
+                              _abrirConfirmacaoDeAssinatura(plano);
+                            },
                             onPresentear: () {
                               final id = _planoSelecionado ?? 'mensal';
                               final plano = _planoPorId(id);
@@ -548,36 +769,66 @@ class _TopBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 16, 4),
       child: Row(
         children: [
-          InkResponse(
+          // VOLTAR, e não "‹". O glifo continua sendo o desenho; o nome
+          // acessível agora é uma palavra.
+          //
+          // O NOME É `label`, E NÃO `tooltip`. Um `IconButton(tooltip: …)`
+          // parece resolver e não resolve do mesmo jeito: o texto vai para
+          // `SemanticsData.tooltip`, o `label` continua VAZIO, e o nó fica
+          // sendo um botão sem nome para qualquer leitura que pergunte pelo
+          // nome. É o mesmo padrão dos cards e da navegação — um nó, um nome,
+          // uma ação — e é o que torna a regra "nenhum acionável sem nome"
+          // verificável de uma vez só.
+          Semantics(
+            button: true,
+            label: 'Voltar',
             onTap: onVoltar,
-            radius: 25,
-            child: const SizedBox(
-              width: 35,
-              height: 42,
-              child: Center(
-                child: Text(
-                  '‹',
-                  style: TextStyle(
-                    color: LojaScreen.gold,
-                    fontSize: 36,
-                    height: .9,
-                    fontWeight: FontWeight.w300,
+            excludeSemantics: true,
+            child: InkResponse(
+              onTap: onVoltar,
+              radius: 26,
+              child: const SizedBox(
+                // Era 35×42. Reprovava nas duas dimensões.
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: Text(
+                    '‹',
+                    style: TextStyle(
+                      color: LojaScreen.gold,
+                      fontSize: 36,
+                      height: .9,
+                      fontWeight: FontWeight.w300,
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-          const Text(
-            'Loja',
-            style: TextStyle(
-              color: LojaScreen.goldHi,
-              fontSize: 25,
-              fontWeight: FontWeight.w800,
+          // O título é o nome da tela. Marcado como cabeçalho, ele vira ponto de
+          // salto para quem navega por cabeçalhos, e é o que o leitor de tela
+          // encontra primeiro ao explorar.
+          Semantics(
+            header: true,
+            child: const Text(
+              'Loja',
+              style: TextStyle(
+                color: LojaScreen.goldHi,
+                fontSize: 25,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
           const Spacer(),
           if (moedas != null)
-            InkWell(
+            Semantics(
+              button: true,
+              // O emoji, o número e o `+` eram três nós sem verbo. Um nome
+              // explícito diz o saldo E o que o toque faz.
+              label: 'Saldo: ${moedas!} moedas. Comprar mais moedas',
+              excludeSemantics: true,
+              onTap: onCarteira,
+              child: InkWell(
             onTap: onCarteira,
             borderRadius: BorderRadius.circular(24),
             child: Container(
@@ -623,6 +874,7 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ),
+            ),
         ],
       ),
     );
@@ -633,16 +885,29 @@ class _VipShowcase extends StatelessWidget {
   final LojaVM vm;
   final String? selectedPlanId;
   final String? avisoDaVitrine;
+  final EstadoDaCompraNaLoja estadoDaCompra;
+  final bool travado;
   final ValueChanged<PlanoVipLoja> onPlanoTap;
+  final VoidCallback onAssinarSelecionado;
   final VoidCallback onPresentear;
 
   const _VipShowcase({
     required this.vm,
     required this.selectedPlanId,
     required this.onPlanoTap,
+    required this.onAssinarSelecionado,
     required this.onPresentear,
+    required this.estadoDaCompra,
+    required this.travado,
     this.avisoDaVitrine,
   });
+
+  PlanoVipLoja? get _selecionado {
+    for (final p in vm.planos) {
+      if (p.id == selectedPlanId) return p;
+    }
+    return vm.planos.isEmpty ? null : vm.planos.first;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -755,12 +1020,21 @@ class _VipShowcase extends StatelessWidget {
                 ],
               ),
             )
-          else if (vm.planos.isNotEmpty)
+          else if (vm.planos.isNotEmpty) ...[
             _PlanosGrid(
               planos: vm.planos,
               selectedPlanId: selectedPlanId,
               onTap: onPlanoTap,
-            )
+            ),
+            const SizedBox(height: 14),
+            // A AÇÃO INEQUÍVOCA. Ela nomeia o plano escolhido, então quem a ouve
+            // sabe o que vai assinar sem ter de lembrar em qual card estava.
+            _AcaoAssinar(
+              plano: _selecionado,
+              travado: travado,
+              onAssinar: onAssinarSelecionado,
+            ),
+          ]
           // Sem plano nenhum a oferecer, o lugar da grade recebe a explicação —
           // e não um vazio, que se lê como tela quebrada.
           else if (avisoDaVitrine != null)
@@ -781,6 +1055,13 @@ class _VipShowcase extends StatelessWidget {
                 ),
               ),
             ),
+          // A FAIXA FICA FORA DO if/else DE PROPÓSITO. Um pagamento pendente
+          // sobrevive ao fechamento do aplicativo: quem reabre no meio dele
+          // chega com o catálogo ainda carregando e sem plano nenhum na tela —
+          // e é justamente aí que precisa ler "não é preciso comprar de novo".
+          // Presa ao ramo dos planos, a explicação sumiria no único caso em que
+          // ela é indispensável.
+          _FaixaDeStatus(estado: estadoDaCompra),
           // PRESENTEAR EXIGE A QUEM. A folha de amigos alimenta a lista do
           // seletor; sem ela o botão abriria uma folha vazia e prometeria um
           // envio que não existe.
@@ -807,6 +1088,269 @@ class _VipShowcase extends StatelessWidget {
   }
 }
 
+// ===========================================================================
+// A ação comercial, e o que ela diz de si mesma
+// ===========================================================================
+
+/// O botão que assume a compra, separado da vitrine que a escolhe.
+///
+/// O nome muda com o plano selecionado — "Assinar plano anual", e não "Assinar".
+/// É o que permite a quem chegou aqui pelo leitor de tela, sem ver a grade,
+/// saber o que está prestes a contratar.
+class _AcaoAssinar extends StatelessWidget {
+  final PlanoVipLoja? plano;
+  final bool travado;
+  final VoidCallback onAssinar;
+
+  const _AcaoAssinar({
+    required this.plano,
+    required this.travado,
+    required this.onAssinar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = plano;
+    if (p == null) return const SizedBox.shrink();
+    final rotulo = 'Assinar plano ${p.nome.toLowerCase()}';
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton(
+        // `null` é o que produz `hasEnabledState` SEM `isEnabled` na árvore —
+        // o desabilitado vira estado anunciado, e não só um botão mais claro.
+        onPressed: travado ? null : onAssinar,
+        style: FilledButton.styleFrom(
+          backgroundColor: LojaScreen.gold,
+          foregroundColor: const Color(0xFF3D2705),
+          // 3,49:1 sobre o fundo da vitrine: acima da régua de 3:1 para
+          // elemento gráfico, que é o que um botão desabilitado precisa
+          // continuar sendo — visível, e claramente fora de uso.
+          disabledBackgroundColor: const Color(0xFF6B5526),
+          disabledForegroundColor: const Color(0xFFE8DCC0),
+          minimumSize: const Size.fromHeight(48),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+        ),
+        child: Text(
+          travado ? 'Aguarde…' : rotulo,
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+/// O andamento da compra, escrito na tela.
+///
+/// Existe além do anúncio porque anúncio não deixa rastro: quem chegou depois
+/// dele, quem estava com o foco em outro lugar, ou quem simplesmente não ouviu,
+/// precisa de um lugar onde a informação ainda esteja.
+class _FaixaDeStatus extends StatelessWidget {
+  final EstadoDaCompraNaLoja estado;
+
+  const _FaixaDeStatus({required this.estado});
+
+  @override
+  Widget build(BuildContext context) {
+    final texto = estado.mensagem;
+    if (texto == null) return const SizedBox.shrink();
+
+    final problema = estado == EstadoDaCompraNaLoja.recusada ||
+        estado == EstadoDaCompraNaLoja.erro;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Semantics(
+        container: true,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: problema ? const Color(0xFF3A1512) : const Color(0xFF14251D),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color:
+                  problema ? const Color(0xFFC2705F) : const Color(0xFF3E7A63),
+            ),
+          ),
+          child: Text(
+            texto,
+            style: TextStyle(
+              // 8,93:1 e 9,41:1 sobre os fundos acima.
+              color: problema
+                  ? const Color(0xFFFFD9D2)
+                  : const Color(0xFFCFEBDD),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A confirmação que falta entre escolher e pagar.
+///
+/// Ela existe para que a compra tenha DOIS gestos deliberados, e para que o
+/// segundo mostre o que o primeiro não mostrava: o preço e a periodicidade lado
+/// a lado, na mesma frase que a ação.
+///
+/// NENHUM VALOR NASCE AQUI. `preco` é o `formattedPrice` que a Play devolveu,
+/// `porMes` é aritmética sobre ele, e `nome` vem do período que a própria Play
+/// informou. Ver `loja_vip_adaptador.dart`.
+class _ConfirmacaoAssinaturaSheet extends StatefulWidget {
+  final PlanoVipLoja plano;
+  final VoidCallback onContinuar;
+  final VoidCallback onCancelar;
+
+  const _ConfirmacaoAssinaturaSheet({
+    required this.plano,
+    required this.onContinuar,
+    required this.onCancelar,
+  });
+
+  @override
+  State<_ConfirmacaoAssinaturaSheet> createState() =>
+      _ConfirmacaoAssinaturaSheetState();
+}
+
+class _ConfirmacaoAssinaturaSheetState
+    extends State<_ConfirmacaoAssinaturaSheet> {
+  /// A terceira trava, e a mais local de todas.
+  ///
+  /// `_travado` protege a tela e `_intencaoEnviada` protege a sessão; esta
+  /// protege o quadro. Entre o toque em "Continuar" e a folha sair da árvore há
+  /// um intervalo em que um segundo toque ainda encontra o botão vivo.
+  bool _confirmado = false;
+
+  void _continuar() {
+    if (_confirmado) return;
+    setState(() => _confirmado = true);
+    widget.onContinuar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.plano;
+    final economia = p.selo;
+    return _SheetShell(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SheetHeader(
+            title: 'Confirmar assinatura',
+            subtitle: 'Revise antes de continuar',
+            rotuloFechar: 'Fechar confirmação de assinatura',
+          ),
+          const SizedBox(height: 16),
+          Semantics(
+            container: true,
+            // Um nó só, na ordem em que a frase faz sentido falada. Solto, o
+            // preço seria lido sem saber de qual plano, e a periodicidade sem
+            // saber de qual preço.
+            label: 'Plano ${p.nome}. '
+                'Preço ${p.preco}. '
+                'Cobrança ${p.porMes}.'
+                '${economia == null ? '' : ' Economia de ${_soDigitos(economia)} por cento.'}',
+            excludeSemantics: true,
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF150E09),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: LojaScreen.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Plano ${p.nome}',
+                    style: const TextStyle(
+                      color: LojaScreen.goldHi,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    p.preco,
+                    style: const TextStyle(
+                      color: LojaScreen.gold,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    p.porMes,
+                    style: const TextStyle(
+                      color: Color(0xFFC9B78C),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Você será levado à Google Play para concluir o pagamento. '
+            'O acesso VIP é liberado depois que o servidor confirmar a compra.',
+            style: TextStyle(
+              color: Color(0xFFCBBB95),
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _confirmado ? null : _continuar,
+            style: FilledButton.styleFrom(
+              backgroundColor: LojaScreen.gold,
+              foregroundColor: const Color(0xFF3D2705),
+              disabledBackgroundColor: const Color(0xFF6B5526),
+              disabledForegroundColor: const Color(0xFFE8DCC0),
+              minimumSize: const Size.fromHeight(48),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              textStyle:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+            child: const Text('Continuar para o pagamento'),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _confirmado ? null : widget.onCancelar,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFE4D6B0),
+              minimumSize: const Size.fromHeight(48),
+              textStyle:
+                  const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
+            ),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// `-37%` vira `37`, para a frase falada não começar por "menos".
+String _soDigitos(String selo) {
+  final b = StringBuffer();
+  for (final c in selo.split('')) {
+    if (c.codeUnitAt(0) >= 0x30 && c.codeUnitAt(0) <= 0x39) b.write(c);
+  }
+  final s = b.toString();
+  return s.isEmpty ? selo : s;
+}
+
 class _PlanosGrid extends StatelessWidget {
   final List<PlanoVipLoja> planos;
   final String? selectedPlanId;
@@ -818,31 +1362,59 @@ class _PlanosGrid extends StatelessWidget {
     required this.onTap,
   });
 
+  /// AQUI MORAVA `height: 132`.
+  ///
+  /// A altura fixa cortava o conteúdo do card em 200%: os dois cards com selo
+  /// estouravam 52 e 53 pontos, e o que saía da caixa era o fim da pilha — o
+  /// "por mês" e o desconto. Quem aumenta a fonte perdia exatamente a informação
+  /// de economia.
+  ///
+  /// A troca é `Wrap` por linhas de `IntrinsicHeight`: os cards de uma mesma
+  /// linha continuam com a MESMA altura — que era o que a altura fixa comprava —
+  /// só que agora essa altura é a do card mais alto, e não um número escrito
+  /// aqui. Em 100% o desenho é o mesmo; em 200% a linha cresce.
   @override
   Widget build(BuildContext context) {
     if (planos.isEmpty) return const SizedBox.shrink();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = planos.length <= 3 ? planos.length : 2;
-        final spacing = 8.0;
-        final width = (constraints.maxWidth - spacing * (columns - 1)) / columns;
-        return Wrap(
-          spacing: spacing,
-          runSpacing: 10,
-          children: [
-            for (final plano in planos)
-              SizedBox(
-                width: width,
-                height: 132,
-                child: _PlanoCard(
-                  plano: plano,
-                  selected: plano.id == selectedPlanId,
-                  onTap: () => onTap(plano),
-                ),
-              ),
-          ],
-        );
-      },
+    const espaco = 8.0;
+    final colunas = planos.length <= 3 ? planos.length : 2;
+
+    final linhas = <List<PlanoVipLoja>>[];
+    for (var i = 0; i < planos.length; i += colunas) {
+      linhas.add(planos.sublist(
+        i,
+        i + colunas > planos.length ? planos.length : i + colunas,
+      ));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var l = 0; l < linhas.length; l++) ...[
+          if (l > 0) const SizedBox(height: 10),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var c = 0; c < colunas; c++) ...[
+                  if (c > 0) const SizedBox(width: espaco),
+                  Expanded(
+                    child: c < linhas[l].length
+                        ? _PlanoCard(
+                            plano: linhas[l][c],
+                            selected: linhas[l][c].id == selectedPlanId,
+                            onTap: () => onTap(linhas[l][c]),
+                          )
+                        // Buraco de linha incompleta: ocupa a coluna para os
+                        // cards restantes não esticarem.
+                        : const SizedBox.shrink(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -858,14 +1430,46 @@ class _PlanoCard extends StatelessWidget {
     required this.onTap,
   });
 
+  /// O rótulo falado do card, montado dos MESMOS campos que ele desenha.
+  ///
+  /// A ordem é a da frase, não a do layout, e o desconto vira "economia de 37
+  /// por cento" em vez de "menos trinta e sete por cento" — que é como um leitor
+  /// de tela pronuncia `-37%`, e que diz a coisa errada.
+  ///
+  /// O estado de escolha NÃO entra aqui: quem o comunica é o `selected` da
+  /// árvore, e repeti-lo no texto faria o leitor dizer duas vezes.
+  String get _rotulo {
+    final selo = plano.selo;
+    final economia = selo == null
+        ? ''
+        : ' Economia de ${_soDigitos(selo)} por cento.';
+    return 'Plano ${plano.nome}. ${plano.preco}. ${plano.porMes}.$economia';
+  }
+
   @override
   Widget build(BuildContext context) {
     final highlight = plano.destaque || selected;
-    return Stack(
+    // UM NÓ SÓ, e o `excludeSemantics` é o que garante isso: sem ele, o nome, o
+    // preço, o "por mês" e o selo continuariam sendo quatro textos que o
+    // compilador de semântica junta por acaso, e o `selected` moraria num nó
+    // diferente do que carrega a ação.
+    //
+    // A ação declarada aqui é SELECIONAR. Era `onAssinar`, e trocá-la é o
+    // conserto: o duplo-toque do leitor de tela sobre um card de vitrine deixa
+    // de abrir uma cobrança.
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: _rotulo,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Stack(
       clipBehavior: Clip.none,
       children: [
-        Positioned.fill(
-          child: Material(
+        // O CARD É O FILHO QUE DIMENSIONA A PILHA, e não mais um
+        // `Positioned.fill` dentro de uma caixa de altura escrita à mão. É esta
+        // troca que faz o conteúdo mandar na altura.
+        Material(
             color: Colors.transparent,
             child: InkWell(
               onTap: onTap,
@@ -896,13 +1500,13 @@ class _PlanoCard extends StatelessWidget {
                       : null,
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(7, 20, 7, 8),
+                  padding: const EdgeInsets.fromLTRB(7, 20, 7, 10),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         plano.nome,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: highlight ? const Color(0xFF5A3A06) : const Color(0xFFD7C9A9),
@@ -925,11 +1529,15 @@ class _PlanoCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         plano.porMes,
-                        maxLines: 1,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
+                          // Era `#6D4A12`: 4,21:1 sobre a base do gradiente,
+                          // abaixo da régua. `#4E3208` fica no mesmo marrom da
+                          // identidade e dá 6,22:1 no pior extremo.
                           color: highlight
-                              ? const Color(0xFF6D4A12)
+                              ? const Color(0xFF4E3208)
                               : const Color(0xFFAE9E79),
                           fontSize: 10.2,
                           fontWeight: FontWeight.w700,
@@ -941,8 +1549,18 @@ class _PlanoCard extends StatelessWidget {
                           plano.selo!.contains('·')
                               ? plano.selo!.split('·').last.trim()
                               : plano.selo!,
-                          style: const TextStyle(
-                            color: Color(0xFF5BE0A2),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            // O PIOR PAR DA AUDITORIA: verde-menta sobre
+                            // dourado dava 1,14:1 — o desconto era invisível
+                            // justamente no card em destaque, que é o que
+                            // sempre carrega o maior desconto. `#0F3D2A` é o
+                            // mesmo verde, escurecido até 6,45:1 no pior
+                            // extremo do gradiente. Fora do destaque, o
+                            // verde-menta original já passava com folga e fica.
+                            color: highlight
+                                ? const Color(0xFF0F3D2A)
+                                : const Color(0xFF5BE0A2),
                             fontSize: 10.5,
                             fontWeight: FontWeight.w900,
                           ),
@@ -954,7 +1572,6 @@ class _PlanoCard extends StatelessWidget {
               ),
             ),
           ),
-        ),
         if (plano.selo != null && plano.selo!.contains('MELHOR'))
           Positioned(
             top: -9,
@@ -980,6 +1597,7 @@ class _PlanoCard extends StatelessWidget {
             ),
           ),
       ],
+    ),
     );
   }
 }
@@ -1200,6 +1818,7 @@ class _CompraSheet extends StatelessWidget {
           const _SheetHeader(
             title: 'Confirmar compra',
             subtitle: 'Revise antes de comprar',
+            rotuloFechar: 'Fechar confirmação de compra',
           ),
           const SizedBox(height: 16),
           Container(
@@ -1310,6 +1929,7 @@ class _PresenteSheetState extends State<_PresenteSheet> {
           _SheetHeader(
             title: '🎁 Presentear · ${widget.titulo}',
             subtitle: 'Escolha quem vai receber',
+            rotuloFechar: 'Fechar seleção de presente',
           ),
           const SizedBox(height: 13),
           TextField(
@@ -1461,7 +2081,19 @@ class _SheetHeader extends StatelessWidget {
   final String title;
   final String subtitle;
 
-  const _SheetHeader({required this.title, required this.subtitle});
+  /// O nome acessível do "X".
+  ///
+  /// Ele era um `IconButton` com `Icons.close` e sem `tooltip`: o nó existia,
+  /// tinha papel de botão e 48×48 — e rótulo VAZIO. Cada folha passa um nome
+  /// contextual, porque "Fechar" sozinho não diz o que se está fechando quando
+  /// há mais de uma folha na tela ao longo do fluxo.
+  final String rotuloFechar;
+
+  const _SheetHeader({
+    required this.title,
+    required this.subtitle,
+    this.rotuloFechar = 'Fechar',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1482,27 +2114,44 @@ class _SheetHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: LojaScreen.goldHi,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: LojaScreen.goldHi,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: const TextStyle(color: LojaScreen.muted, fontSize: 12),
+                    // Era `LojaScreen.muted` (#8A7C5E): 4,35:1, logo abaixo da
+                    // régua. Mesma família, dois tons acima.
+                    style: const TextStyle(
+                      color: Color(0xFFAB9C78),
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
             ),
-            IconButton(
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.close, color: LojaScreen.goldHi),
+            // Mesmo motivo do Voltar: o nome é `label`. Com `tooltip` o rótulo
+            // ficaria vazio, que é exatamente o estado auditado.
+            Semantics(
+              button: true,
+              label: rotuloFechar,
+              onTap: () => Navigator.of(context).pop(),
+              excludeSemantics: true,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                icon: const Icon(Icons.close, color: LojaScreen.goldHi),
+              ),
             ),
           ],
         ),
@@ -1536,30 +2185,64 @@ class _BottomNav extends StatelessWidget {
 
   Widget _item(NavDestino destino, String label, String asset, bool active) {
     return Expanded(
-      child: InkWell(
+      // Um nó por destino: papel de botão, nome, e o `selected` que diz qual
+      // aba é a de agora. Antes NENHUM item carregava `selected` — nem o
+      // próprio "Loja", que é a tela em que a pessoa está —, e a distinção
+      // existia só na cor e no peso da fonte.
+      child: Semantics(
+        button: true,
+        selected: active,
+        label: label,
         onTap: () => onTap(destino),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Image.asset(
-                asset,
-                width: 28,
-                height: 28,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const SizedBox(width: 28, height: 28),
-              ),
-              const SizedBox(height: 1),
-              Text(
-                label,
-                style: TextStyle(
-                  color: active ? LojaScreen.gold : Colors.white.withValues(alpha: .26),
-                  fontSize: 11,
-                  fontWeight: active ? FontWeight.w800 : FontWeight.w400,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: () => onTap(destino),
+          child: ConstrainedBox(
+            // 90×47 era o tamanho medido, e 47 reprova por um ponto. O mínimo
+            // agora é declarado, e não uma consequência do conteúdo.
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // A MARCA DA ABA ATUAL, que não é cor. Um traço dourado sobre o
+                // item ativo dá 11,11:1 contra a barra — acima da régua de 3:1
+                // para elemento gráfico — e continua legível para quem não
+                // distingue o dourado do branco acinzentado.
+                Container(
+                  height: 3,
+                  width: 22,
+                  decoration: BoxDecoration(
+                    color: active ? LojaScreen.gold : Colors.transparent,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 3),
+                Image.asset(
+                  asset,
+                  width: 26,
+                  height: 26,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      const SizedBox(width: 26, height: 26),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    // Era branco a 26% de opacidade: 2,20:1 sobre a barra, para
+                    // três dos quatro destinos, o tempo todo. A 55% dá 6,27:1.
+                    color: active
+                        ? LojaScreen.gold
+                        : Colors.white.withValues(alpha: .55),
+                    fontSize: 11,
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
