@@ -244,6 +244,11 @@ jobs:
           # `avaliarContato`, que espectador não fala nem recebe, e que a projeção
           # não carrega UID, token, socket nem estado administrativo.
           roda chatdom      test/chat/chat_test.dart
+          # OS 24-C2: a matriz da Comunicação Controlada V1. `chatdom` acima
+          # guarda a porta do TEXTO; esta guarda o AMBIENTE — quem pode dizer o
+          # quê em cada superfície —, e o grupo ESP, que é o único lugar onde o
+          # espectador é barrado no caminho CATALOGADO.
+          roda comunicacao  test/comunicacao/comunicacao_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.

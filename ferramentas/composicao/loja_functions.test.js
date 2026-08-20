@@ -212,9 +212,17 @@ const EXPORTS = {
   'functions-economia': [
     'aoRegistrarPartida', 'garantirBonusDeBoasVindas', 'reprocessarResultadoDaPartida',
   ],
+  // As DUAS ultimas entraram com a Comunicacao Controlada V1, e entram aqui como
+  // DECISAO DE PRODUTO — que e exatamente o que esta lista existe para exigir.
+  // `emitirEventoDeSistema` e a UNICA porta por onde nasce evento sem autor (§8:
+  // usuario comum nao fabrica "Voce recebeu um presente"), e
+  // `consultarCatalogoDeComunicacao` e a leitura do catalogo autoritativo, que a
+  // UI precisa para desenhar fala pronta sem inventar texto. O contrato
+  // compartilhado ja as nomeia em `funcoes.eventoDeSistema` e `funcoes.catalogo`.
   'functions-moderacao': [
-    'aplicarSancao', 'bloquearJogador', 'consultarContato', 'definirCanalDeChat',
-    'desbloquearJogador', 'enviarMensagemChat', 'enviarMensagemChatPeloMotor',
+    'aplicarSancao', 'bloquearJogador', 'consultarCatalogoDeComunicacao',
+    'consultarContato', 'definirCanalDeChat', 'desbloquearJogador',
+    'emitirEventoDeSistema', 'enviarMensagemChat', 'enviarMensagemChatPeloMotor',
     'registrarDenuncia', 'revogarSancao',
   ],
   'functions-ranking': [
@@ -324,6 +332,30 @@ describe('CL-05 — um lado perdendo os gates na uniao da fonte unica', () => {
       DAS_FUNCTIONS.filter((g) => !gates.has(g)),
       [],
       'LADO DAS FUNCTIONS AMPUTADO: a fonte unica perdeu gate que so aquela folha trazia.'
+    );
+  });
+
+  /**
+   * O que so a COMUNICACAO CONTROLADA V1 traz (OS 24-C2).
+   *
+   * PN-11 e PN-12 (negativas.test.js) ja reconciliam fonte unica x workflow nos
+   * dois sentidos — mas as duas ficam VERDES se alguem apagar o registro E o
+   * passo na mesma edicao: os conjuntos continuam iguais, so que menores. Foi
+   * assim que `comunicacao` conseguiu nao existir ate a OS 24-C2, com a suite
+   * verde no disco e portao nenhum a executando.
+   *
+   * Esta ancora e o que impede a repeticao: o nome tem de estar na fonte, e
+   * apaga-lo reprova AQUI mesmo que o workflow seja apagado junto.
+   */
+  const DA_COMUNICACAO = ['chatdom', 'comunicacao'];
+
+  test('os gates da Comunicacao Controlada V1 continuam obrigatorios', () => {
+    const gates = new Set(gatesDaFonte());
+    assert.deepEqual(
+      DA_COMUNICACAO.filter((g) => !gates.has(g)),
+      [],
+      'COMUNICACAO AMPUTADA: a fonte unica perdeu o gate da matriz de comunicacao. ' +
+        'A suite pode ficar vermelha sem que o portao diga uma palavra.'
     );
   });
 

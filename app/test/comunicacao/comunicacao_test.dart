@@ -690,6 +690,118 @@ void main() {
   });
 
   // =========================================================================
+  // ESPECTADOR — a linha de baixo da matriz do §2
+  // =========================================================================
+  //
+  // POR QUE ESTE GRUPO EXISTE, e por que PRI-24 não bastava.
+  //
+  // PRI-24 prova que o espectador não envia TEXTO na Mesa Privada. Só que texto
+  // é barrado DUAS vezes: por esta porta e, mais fundo, por `avaliarEnvio`
+  // (app/lib/chat/porta.dart), que tem checagem de papel própria desde o Chat
+  // Livre Seguro V1. Consequência medida na OS 24-R1: desligando a checagem de
+  // papel DESTA porta, PRI-24 continuava verde — e o espectador passava a mandar
+  // FALA PRONTA em Mesa Pública, Mesa VIP e Mesa Privada sem que nenhuma suíte
+  // do repositório reclamasse.
+  //
+  // O caminho catalogado não tem a segunda tranca. É por aqui, e só por aqui,
+  // que ele é fechado — e é por isso que o CONTROLE abaixo importa tanto quanto
+  // as recusas: ele prova que o MESMO item, no MESMO canal, passa para quem está
+  // sentado. Sem ele, uma recusa por item inválido se disfarçaria de recusa por
+  // papel e o grupo inteiro ficaria verde pelo motivo errado.
+  group('ESP — espectador não fala em ambiente nenhum', () {
+    // Os três ambientes de mesa da matriz. Treino fica fora: lá não há
+    // comunicação para papel nenhum, e a recusa viria de
+    // `ambienteSemComunicacao` antes de chegar ao papel — provaria outra coisa.
+    const mesas = <String, AmbienteDeComunicacao>{
+      'Mesa Pública': AmbienteDeComunicacao.mesaPublica,
+      'Mesa VIP': AmbienteDeComunicacao.mesaVip,
+      'Mesa Privada': AmbienteDeComunicacao.mesaPrivada,
+    };
+
+    // Um por espécie catalogada. Os três valem em todo ambiente online e não
+    // exigem direito nenhum — se a recusa viesse de `itemForaDoAmbiente` ou de
+    // `entitlementAusente`, o caso não estaria falando de papel.
+    const catalogados = <String, String>{
+      'fala_catalogada': 'provocar_agora_complicou_01',
+      'reacao_catalogada': 'reacao_aplauso_01',
+      'emoji_catalogado': 'emoji_joia_01',
+    };
+
+    // Em cada mesa, o modo MAIS permissivo que ela admite. Recusar no modo mais
+    // generoso é o que torna a prova forte — no restrito, a recusa poderia estar
+    // vindo do modo, e não do papel.
+    ModoDeComunicacao modoDe(AmbienteDeComunicacao a) =>
+        a == AmbienteDeComunicacao.mesaPrivada
+            ? ModoDeComunicacao.completo
+            : ModoDeComunicacao.apenasEmotes;
+
+    for (final mesa in mesas.entries) {
+      for (final especie in catalogados.entries) {
+        test('ESP-01 espectador não envia ${especie.key} em ${mesa.key}', () {
+          final v = pedir(
+            tipo: especie.key,
+            itemId: especie.value,
+            canal: canalDe(
+              ambiente: mesa.value,
+              modo: modoDe(mesa.value),
+              autorEspectador: true,
+            ),
+          );
+          expect(v.aceita, isFalse);
+          expect(v.recusa, 'papelSemDireitoDeFala');
+        });
+      }
+
+      test(
+          'ESP-02 CONTROLE: o mesmo item passa para quem está SENTADO em ${mesa.key}',
+          () {
+        for (final especie in catalogados.entries) {
+          final v = pedir(
+            tipo: especie.key,
+            itemId: especie.value,
+            canal: canalDe(ambiente: mesa.value, modo: modoDe(mesa.value)),
+          );
+          expect(v.aceita, isTrue,
+              reason: '${especie.key} devia passar para jogador sentado em '
+                  '${mesa.key}, e foi recusada por ${v.recusa} — a recusa do '
+                  'espectador estaria vindo do ITEM, e não do PAPEL');
+        }
+      });
+    }
+
+    test('ESP-03 espectador não envia texto livre em mesa nenhuma', () {
+      for (final mesa in mesas.entries) {
+        final v = pedir(
+          tipo: 'texto_privado',
+          itemId: null,
+          conteudo: 'me deixem falar',
+          canal: canalDe(
+            ambiente: mesa.value,
+            modo: modoDe(mesa.value),
+            autorEspectador: true,
+          ),
+        );
+        expect(v.aceita, isFalse, reason: 'texto livre em ${mesa.key}');
+      }
+    });
+
+    test('ESP-04 espectador não recebe: não entra em destinatários', () {
+      // A outra direção da linha do §2. Quem não ocupa assento não é candidato
+      // à entrega — e é `destinatarios` que o transporte percorre.
+      final v = pedir(
+        canal: canalDe(
+          ambiente: AmbienteDeComunicacao.mesaPublica,
+          modo: ModoDeComunicacao.apenasEmotes,
+          espectadores: const ['uidPlateia'],
+        ),
+      );
+      expect(v.aceita, isTrue);
+      expect(v.destinatarios, isNot(contains('uidPlateia')));
+      expect(v.destinatarios, contains(outro));
+    });
+  });
+
+  // =========================================================================
   // §14.3 — BLOQUEIO E SILENCIAMENTO
   // =========================================================================
   group('BLQ — bloqueio e silêncio (§14.3)', () {

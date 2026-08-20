@@ -77,6 +77,25 @@ composicao
 # `messageId` derivado.
 chatdom
 
+# --- 5c. COMUNICAÇÃO CONTROLADA V1 (entra pela OS 24-C2) --------------------
+# A matriz do §2 mora em UM lugar (`permissaoDe`, em app/lib/comunicacao/
+# ambiente.dart) e é esta suíte que a percorre inteira: seis ambientes × três
+# modos, e a exigência de que a lista de pares com texto livre seja exatamente
+# `["mesa_privada/completo"]`. Traz também o grupo ESP, único lugar onde o
+# espectador é barrado no caminho CATALOGADO — o do texto tem segunda tranca em
+# `avaliarEnvio`, o catalogado não tem.
+#
+# ENTRA AQUI PORQUE NÃO ESTAVA. A suíte existia, verde, desde a entrega da
+# Comunicação Controlada V1 — e passo nenhum a executava. A rehomologação OS
+# 24-R1 mediu o preço: de treze mutações obrigatórias, SEIS (pública com texto
+# livre, Saguão com texto livre, tipo de mesa aceito do cliente, fala pronta
+# aceitando texto arbitrário, matriz esvaziada e um ambiente sumindo da matriz)
+# eram detectadas SÓ por ela. Sem gate, as seis subiriam verdes.
+#
+# É o mesmo remédio que `cascavisao`..`cascaporta` receberam na seção 3: suíte
+# verde localmente e sem portão próprio é suíte que pode quebrar em silêncio.
+comunicacao
+
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
 # Sem ele, o agregador é a única peça do CI que ninguém verifica.
 portaoci
