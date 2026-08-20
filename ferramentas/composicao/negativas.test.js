@@ -414,12 +414,17 @@ describe('PN-06 — direito pago escrito por caminho paralelo', () => {
 // PN-07 · PN-10 · PN-12 — as TRÊS direções do mesmo defeito de portão
 // ---------------------------------------------------------------------------
 
-/** Os gates da fonte única. */
+/**
+ * Os gates da fonte única — pelo leitor ÚNICO de `arvore.js`.
+ *
+ * Havia uma cópia desta leitura aqui e outra em `loja_functions.test.js`, ambas
+ * gêmeas do `sed | awk` que vivia no agregador. Desde a OS 32 a fonte carrega
+ * também o contrato de conteúdo em linhas indentadas, e três leitores com três
+ * opiniões sobre o que é indentação seriam três relações diferentes de gates.
+ * PN-16 prova que o leitor JS e o produtor canônico enxergam a MESMA relação.
+ */
 function gatesDaFonte() {
-  return A.ler('scripts/ci/gates_os_integracao.txt')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#'));
+  return A.gatesDaFonte();
 }
 
 /** Quem o workflow de fato produz: `exit_<gate>` e as chamadas `roda <gate>`. */
@@ -503,6 +508,29 @@ describe('PN-12 — gate que roda e o agregador nao percorre (CI-02)', () => {
       produzidos.filter((g) => !gates.has(g)),
       [],
       'CI-02: a suite roda, pode ficar vermelha, e o portao final nao a percorre.'
+    );
+  });
+});
+
+describe('PN-16 — dois leitores da fonte unica com relacoes diferentes', () => {
+  // invariante ...... o leitor JS e o produtor canônico veem a MESMA relação
+  // autoridade ...... scripts/ci/portao_os_integracao.sh --listar
+  // proibido ........ um leitor que discorde do que o portão percorre. É o
+  //                   CI-02 um degrau mais fundo: a fonte é única e a LEITURA
+  //                   não é, então cada consumidor guarda um conjunto diferente
+  // prova ........... a relação é lida das duas formas e os conjuntos são
+  //                   comparados como conjuntos fechados, nos dois sentidos
+  test('o leitor JS e o produtor canonico veem a mesma relacao de gates', () => {
+    const emJs = A.gatesDaFonte();
+    const doProdutor = A.gatesDoProdutor();
+    assert.ok(emJs.length >= 40, `ANCORA PERDIDA: o leitor JS achou so ${emJs.length} gates`);
+    assert.deepEqual(
+      emJs,
+      doProdutor,
+      'DOIS LEITORES, DUAS RELACOES: o que este arquivo guarda deixou de ser o ' +
+        'que o portao percorre. Contrato indentado lido como gate, ou gate lido ' +
+        'como contrato — em qualquer dos dois sentidos o resultado e uma ' +
+        'segunda autoridade sobre quais gates existem.'
     );
   });
 });

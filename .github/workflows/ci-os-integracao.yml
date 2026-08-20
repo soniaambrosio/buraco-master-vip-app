@@ -118,6 +118,12 @@ jobs:
       - name: "0 — teste do PRÓPRIO portão (agregador + fonte única)"
         run: |
           set +e
+          # O CARIMBO DESTE RUN, escrito antes de qualquer log existir. É por
+          # ele que `verificar_contrato_suites.sh` distingue evidência PRODUZIDA
+          # aqui de evidência remanescente de outra execução: um `t_<gate>.log`
+          # mais velho que este arquivo não é evidência deste run.
+          date -u +%Y-%m-%dT%H:%M:%SZ > carimbo_execucao
+          echo "run ${{ github.run_id }} / ${{ github.run_number }} @ ${{ github.sha }}" >> carimbo_execucao
           # O agregador era a única peça do CI que ninguém verificava — e era
           # justamente onde moravam CI-02 e CI-03. Roda primeiro, antes de
           # Flutter e de emulador: um portão quebrado tem que aparecer como
@@ -127,6 +133,31 @@ jobs:
           fi
           bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
           echo ${PIPESTATUS[0]} > exit_portaoci
+
+      - name: "0b — teste do VERIFICADOR de contrato das suítes protegidas"
+        run: |
+          set +e
+          # Mesma razão do passo acima, um degrau adiante: o verificador de
+          # conteúdo decide se as suítes protegidas ainda PROVAM, e sem esta
+          # matriz ele seria a segunda peça do CI que ninguém verifica.
+          if [ ! -f scripts/ci/teste_contrato_suites.sh ]; then
+            echo "scripts/ci/teste_contrato_suites.sh ausente" > nao_contratosui; exit 0
+          fi
+          bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
+          echo ${PIPESTATUS[0]} > exit_contratosui
+
+      - name: "0c — CONTRATO DE CONTEÚDO das suítes protegidas (falha fechada)"
+        run: |
+          # SEM `set +e`, e de propósito. O Actions roda cada `run:` com
+          # `bash -e {0}`: se o verificador sair diferente de zero, o passo
+          # aborta e o job vai a pique aqui — sem depender de ser somado num
+          # portão lá na frente. Um verificador cuja reprovação precisa de
+          # outro passo para virar vermelho herda o defeito que veio consertar.
+          #
+          # FASE A: estática. Roda antes de Flutter, de Node e de emulador,
+          # porque uma suíte esvaziada tem de aparecer como suíte esvaziada, e
+          # não como "os testes passaram".
+          bash scripts/ci/verificar_contrato_suites.sh . .github/workflows/ci-os-integracao.yml
 
       - name: Setup Java (exigido pelo emulador do Firestore)
         uses: actions/setup-java@v4
@@ -667,13 +698,17 @@ jobs:
           # do que a do portão, então `rankingfn`, `rankingint`, `identint` e
           # `auditident` apareciam na evidência, podiam falhar, e o portão
           # continuava verde. Copiar a relação para cá de novo é proibido.
-          if [ -f "$FONTE" ]; then
-            GATES="$(sed -e 's/\r$//' "$FONTE" \
-                     | awk '{ gsub(/^[ \t]+|[ \t]+$/, "") } NF && substr($0,1,1) != "#" { print }')"
-          else
-            GATES=""
-            echo "FONTE UNICA DE GATES AUSENTE: $FONTE" >&2
-          fi
+          # `--listar` é o produtor canônico: a MESMA leitura que o veredito
+          # percorre, e não uma segunda cópia dela. Aqui moravam um `sed | awk`
+          # gêmeo do que vivia dentro do agregador E um ramo `else` que zerava a
+          # relação quando a fonte sumia — dois leitores são duas autoridades em
+          # potencial, e foi de duas listas que o CI-02 nasceu.
+          #
+          # Sem ramo alternativo de propósito: se a fonte não estiver lá,
+          # `--listar` imprime a causa em stderr e sai 2, `GATES` fica vazio, e o
+          # agregador logo abaixo registra o mesmo 2 em `portao_exit`. A evidência
+          # continua sendo publicada — com a falha à vista, que é o ponto.
+          GATES="$(bash scripts/ci/portao_os_integracao.sh --listar "$FONTE")"
           # O veredito impresso na evidência é o do próprio agregador, executado
           # aqui — e não uma segunda leitura que poderia discordar dele.
           bash scripts/ci/portao_os_integracao.sh "$FONTE" . > portao.txt 2>&1
@@ -752,4 +787,11 @@ jobs:
           # scripts/ci/portao_os_integracao.sh, que tem matriz própria no gate
           # `portaoci`. Se o agregador sumir, `bash` sai não-zero e o portão
           # fica vermelho — falha fechada, que é o comportamento desejado.
+          # FASE B do contrato de conteúdo: o log. Fecha as duas formas de
+          # ficar verde sem ter rodado — marcador FABRICADO (um `exit_<gate>`
+          # com `0` dentro e nenhum log ao lado) e evidência de OUTRA EXECUÇÃO
+          # (log mais velho que o carimbo escrito no passo "0"). Também é aqui
+          # que o piso de casos EXECUTADOS é conferido: contagem estática não
+          # vê caso gerado em laço.
+          bash scripts/ci/verificar_contrato_suites.sh . .github/workflows/ci-os-integracao.yml .
           bash scripts/ci/portao_os_integracao.sh scripts/ci/gates_os_integracao.txt .

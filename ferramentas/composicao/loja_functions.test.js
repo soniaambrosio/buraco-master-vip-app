@@ -77,10 +77,11 @@ function git(...args) {
 
 /** Os gates da fonte única (mesma leitura de PN-10/PN-12). */
 function gatesDaFonte() {
-  return A.ler('scripts/ci/gates_os_integracao.txt')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#'));
+  // Leitor ÚNICO, em `arvore.js`. A cópia que vivia aqui não sabia que, desde a
+  // OS 32, a fonte carrega contrato de conteúdo em linhas indentadas — e leria
+  // `sha256 …` como se fosse nome de gate. PN-16 prova que ele concorda com o
+  // produtor canônico.
+  return A.gatesDaFonte();
 }
 
 /** Todo arquivo `.dart` sob um diretório da árvore composta. */

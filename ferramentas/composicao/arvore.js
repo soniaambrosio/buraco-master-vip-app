@@ -131,4 +131,61 @@ function fontesDe(source) {
   return achados;
 }
 
-module.exports = { RAIZ, ler, codigo, semComentarios, exigirAncora, codebases, fontesDe };
+/**
+ * OS DOIS LEITORES DA FONTE ÚNICA, E POR QUE ELES TÊM DE CONCORDAR.
+ *
+ * A relação de gates obrigatórios mora em `scripts/ci/gates_os_integracao.txt`,
+ * e desde a OS 32 esse arquivo carrega também o CONTRATO DE CONTEÚDO das suítes
+ * protegidas, em linhas INDENTADAS sob o gate a que pertencem. A margem continua
+ * sendo a autoridade sobre quais gates existem; o indentado é atributo.
+ *
+ * Quem decide isso no CI é `portao_os_integracao.sh --listar`, o produtor
+ * canônico. Este módulo precisa da mesma relação em JS — e um segundo leitor é
+ * uma segunda autoridade em potencial, que é a forma original do CI-02 um degrau
+ * mais fundo: a fonte era única e a LEITURA não era.
+ *
+ * Por isso são duas funções, e não uma:
+ *
+ *   gatesDaFonte()      lê em JS, e é o que os casos usam;
+ *   gatesDoProdutor()   executa o produtor canônico e devolve o que ELE viu.
+ *
+ * O caso que as compara está em `negativas.test.js` (PN-16). Enquanto as duas
+ * concordarem, ter um leitor em JS não cria autoridade nenhuma; no dia em que
+ * discordarem, o gate fica vermelho em vez de escolher uma delas em silêncio.
+ */
+function gatesDaFonte() {
+  return ler('scripts/ci/gates_os_integracao.txt')
+    .split(/\r?\n/)
+    .filter((l) => !/^[ \t]/.test(l))
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+}
+
+function gatesDoProdutor() {
+  const { execFileSync } = require('node:child_process');
+  const saida = execFileSync(
+    'bash',
+    [
+      path.join(RAIZ, 'scripts/ci/portao_os_integracao.sh'),
+      '--listar',
+      path.join(RAIZ, 'scripts/ci/gates_os_integracao.txt'),
+    ],
+    { encoding: 'utf8' }
+  );
+  return saida
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+module.exports = {
+  RAIZ,
+  ler,
+  codigo,
+  semComentarios,
+  exigirAncora,
+  codebases,
+  fontesDe,
+  gatesDaFonte,
+  gatesDoProdutor,
+};

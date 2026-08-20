@@ -39,11 +39,16 @@ falhou=0
 ok()  { passou=$((passou + 1)); printf '  ok    %s\n' "$1"; }
 nok() { falhou=$((falhou + 1)); printf '  FALHA %s\n' "$1"; }
 
-# Mesma regra de leitura do agregador: sem comentário de fim de linha, sem CR,
-# aparando início e fim. Se divergir do agregador, os casos 1 e 13 quebram.
+# A relação vem do PRODUTOR CANÔNICO, e não de uma segunda leitura da fonte.
+# Até a OS 32 este `sed | awk` era gêmeo do que vivia dentro do agregador e do
+# que vivia no passo de evidência do YAML: três leitores da mesma fonte, e três
+# oportunidades de divergir. Divergência entre leitores é a forma original do
+# CI-02, só que um degrau mais fundo — a fonte era única e a LEITURA não era.
+#
+# `--listar` devolve exatamente a relação que o veredito percorre. Se ele
+# recusar a fonte, aqui não há como fingir que leu: a matriz inteira aborta.
 gates_da_fonte() {
-  sed -e 's/\r$//' "$FONTE" \
-    | awk '{ gsub(/^[ \t]+|[ \t]+$/, "") } NF && substr($0,1,1) != "#" { print }'
+  bash "$PORTAO" --listar "$FONTE"
 }
 
 # Lido UMA vez: `reset_verde` roda a cada caso, e reabrir sed+awk vinte vezes
@@ -223,6 +228,64 @@ if grep -q 'ferramentas/composicao/loja_functions.test.js' "$YML" \
   ok "I8c — o YAML produz composloja/rkpagina, e o checkout é fundo"
 else
   nok "I8c — falta o produtor da composição no YAML e/ou o checkout deixou de ser fundo"
+fi
+
+# -----------------------------------------------------------------------------
+# OS 32 — a fonte única passou a carregar CONTRATO DE CONTEÚDO, e o YAML deixou
+# de ter até a forma de uma segunda autoridade.
+# -----------------------------------------------------------------------------
+
+# I5 pega a lista literal. I9 pega o degrau anterior: a CONSTRUÇÃO. Uma
+# atribuição `GATES=` que não derive do produtor canônico, ou um `for k in` que
+# itere qualquer coisa que não seja a expansão de uma variável, é o YAML voltando
+# a decidir quais gates existem — mesmo que a lista ainda esteja curta hoje.
+mau_gates="$(grep -nE '^[[:space:]]*GATES=' "$YML" | grep -vE 'GATES="\$\(' || true)"
+mau_laco="$(grep -nE '^[[:space:]]*for k in ' "$YML" | grep -vE 'for k in \$[A-Za-z_]' || true)"
+if [ -z "$mau_gates" ] && [ -z "$mau_laco" ]; then
+  ok "I9 — no YAML, \`GATES=\` deriva do produtor e \`for k in\` itera variável"
+else
+  nok "I9 — o YAML voltou a construir a relação de gates por conta própria:"
+  printf '%s\n' "$mau_gates" "$mau_laco" | grep . | sed 's/^/        | /'
+fi
+
+# O produtor canônico tem de ser QUEM o YAML chama. Sem isto, I9 ficaria verde
+# num workflow que não lê a fonte de jeito nenhum.
+if grep -q 'portao_os_integracao.sh --listar' "$YML"; then
+  ok "I9b — a evidência lê a fonte pelo produtor canônico (\`--listar\`)"
+else
+  nok "I9b — o passo de evidência não chama mais \`portao_os_integracao.sh --listar\`"
+fi
+
+# O verificador de CONTEÚDO e a matriz dele. `contratosui` sem produtor seria
+# gate fantasma; produtor sem gate seria CI-02 outra vez.
+faltando=""
+contem_gate contratosui || faltando=" contratosui-fora-da-fonte"
+grep -q 'bash scripts/ci/teste_contrato_suites.sh' "$YML" || faltando="$faltando matriz-sem-passo"
+[ "$(grep -c 'scripts/ci/verificar_contrato_suites\.sh' "$YML")" -ge 2 ] \
+  || faltando="$faltando verificador-sem-as-duas-fases"
+grep -qE 'verificar_contrato_suites\.sh [^|]*\.github/workflows/ci-os-integracao\.yml \.$' "$YML" \
+  || faltando="$faltando fase-B-ausente"
+if [ -z "$faltando" ]; then
+  ok "I10 — o contrato de conteúdo tem gate, matriz e as duas fases no YAML"
+else
+  nok "I10 — a guarda de conteúdo foi desligada:$faltando"
+fi
+
+# E a fonte única tem de continuar carregando o contrato das suítes protegidas.
+# Esta é a metade textual da garantia; a comportamental é o gate `contratosui`.
+sem_contrato=""
+for g in comunicacao chatdom portaoci contratosui; do
+  awk -v alvo="$g" '
+    $0 == alvo { dentro = 1; next }
+    dentro && /^[[:blank:]]+suite[[:blank:]]/ { achou = 1 }
+    dentro && /^[^[:blank:]#]/ { dentro = 0 }
+    END { exit(achou ? 0 : 1) }
+  ' "$FONTE" || sem_contrato="$sem_contrato $g"
+done
+if [ -z "$sem_contrato" ]; then
+  ok "I11 — as quatro suítes protegidas continuam com contrato na fonte única"
+else
+  nok "I11 — suíte protegida sem contrato de conteúdo na fonte única:$sem_contrato"
 fi
 
 printf '\n== matriz do agregador ==\n'

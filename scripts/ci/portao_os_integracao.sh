@@ -35,11 +35,23 @@ PROG="$(basename "$0")"
 
 erro() { printf '%s: %s\n' "$PROG" "$1" >&2; }
 
+# `--listar` devolve, uma linha por gate, a MESMA relacao que o veredito
+# percorre. Existe para que nenhum outro consumidor precise reimplementar a
+# leitura da fonte unica: o passo de evidencia do YAML, o teste do proprio
+# portao e o verificador de contrato invocam ESTE modo em vez de repetir o
+# `sed | awk` que antes vivia dentro de cada um deles. Segundo leitor e segunda
+# autoridade em potencial — foi de duas listas escritas a mao que CI-02 nasceu.
+modo_listar=0
+if [ "${1:-}" = "--listar" ]; then
+  modo_listar=1
+  shift
+fi
+
 arquivo_gates="${1:-}"
 dir_resultados="${2:-}"
 
-if [ -z "$arquivo_gates" ] || [ -z "$dir_resultados" ]; then
-  erro "uso: $PROG <arquivo-de-gates> <diretorio-de-resultados>"
+if [ -z "$arquivo_gates" ] || { [ "$modo_listar" -eq 0 ] && [ -z "$dir_resultados" ]; }; then
+  erro "uso: $PROG [--listar] <arquivo-de-gates> <diretorio-de-resultados>"
   exit 2
 fi
 
@@ -48,7 +60,7 @@ if [ ! -f "$arquivo_gates" ] || [ ! -r "$arquivo_gates" ]; then
   exit 2
 fi
 
-if [ ! -d "$dir_resultados" ]; then
+if [ "$modo_listar" -eq 0 ] && [ ! -d "$dir_resultados" ]; then
   erro "diretório de resultados ausente: $dir_resultados"
   exit 2
 fi
@@ -62,14 +74,57 @@ n=0
 
 while IFS= read -r linha || [ -n "$linha" ]; do
   n=$((n + 1))
-  linha="${linha%$'\r'}"
+  bruta="${linha%$'\r'}"
   # apara início e fim, sem tocar no miolo: espaço no meio de um nome é erro,
   # e tem que ser visto como erro.
-  linha="${linha#"${linha%%[![:space:]]*}"}"
+  linha="${bruta#"${bruta%%[![:space:]]*}"}"
   linha="${linha%"${linha##*[![:space:]]}"}"
 
   [ -z "$linha" ] && continue
   case "$linha" in '#'*) continue ;; esac
+
+  # -------------------------------------------------------------------------
+  # LINHA INDENTADA = ATRIBUTO DO CONTRATO da entrada de cima, e NAO um gate.
+  #
+  # A margem continua sendo a autoridade sobre QUAIS gates existem; este laco
+  # nao mudou de opiniao sobre isso. O que a OS 32 acrescentou a fonte unica e
+  # o CONTRATO DE CONTEUDO das suites protegidas, e ele vive indentado logo
+  # abaixo do gate a que pertence.
+  #
+  # Aqui o contrato e apenas ATRAVESSADO, e so a FORMA e conferida: quem o
+  # INTERPRETA e `scripts/ci/verificar_contrato_suites.sh`, dono do vocabulario.
+  # O agregador nao conhece nome de atributo nenhum DE PROPOSITO — se
+  # conhecesse, o vocabulario estaria escrito em dois lugares, que e exatamente
+  # o defeito que esta fonte existe para nao ter.
+  #
+  # FALHA FECHADO nas tres formas de um contrato malformado passar despercebido:
+  # atributo solto antes de qualquer gate, nome de atributo fora de `[a-z0-9_]`
+  # e atributo sem valor. Um gate escrito por engano com espaco a esquerda cai
+  # na segunda — e sumiria da relacao em silencio —, e e por isso que ela
+  # reprova em vez de ignorar.
+  # -------------------------------------------------------------------------
+  case "$bruta" in
+    [[:space:]]*)
+      if [ "${#gates[@]}" -eq 0 ]; then
+        erro "atributo de contrato antes de qualquer gate em $arquivo_gates linha $n"
+        exit 2
+      fi
+      nome_attr="${linha%%[[:space:]]*}"
+      case "$nome_attr" in
+        *[!a-z0-9_]*)
+          erro "nome de atributo invalido em $arquivo_gates linha $n: $nome_attr"
+          exit 2
+          ;;
+      esac
+      valor_attr="${linha#"$nome_attr"}"
+      valor_attr="${valor_attr#"${valor_attr%%[![:space:]]*}"}"
+      if [ -z "$valor_attr" ]; then
+        erro "atributo de contrato sem valor em $arquivo_gates linha $n: $nome_attr"
+        exit 2
+      fi
+      continue
+      ;;
+  esac
 
   case "$linha" in
     *[!A-Za-z0-9_]*)
@@ -91,6 +146,13 @@ done < "$arquivo_gates"
 if [ "${#gates[@]}" -eq 0 ]; then
   erro "fonte única não declara nenhum gate obrigatório — portão sem lista é portão inexistente"
   exit 2
+fi
+
+# `--listar` para aqui: quem pediu a relacao recebe a relacao, e nenhuma
+# decisao sobre resultados e tomada.
+if [ "$modo_listar" -eq 1 ]; then
+  printf '%s\n' "${gates[@]}"
+  exit 0
 fi
 
 eh_obrigatorio() {

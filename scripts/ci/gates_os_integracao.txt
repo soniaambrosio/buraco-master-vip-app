@@ -9,9 +9,48 @@
 # `rankingfn`, `rankingint`, `identint` e `auditident` apareciam na evidência,
 # podiam falhar, e o portão final continuava verde porque não os percorria.
 #
-# Formato aceito pelo agregador: um gate por linha; `[A-Za-z0-9_]` apenas;
-# linha em branco e linha iniciada por `#` são ignoradas; comentário no fim da
-# linha NÃO é aceito (vira nome inválido e reprova a fonte inteira).
+# Formato aceito pelo agregador: um gate por linha, NA MARGEM; `[A-Za-z0-9_]`
+# apenas; linha em branco e linha iniciada por `#` são ignoradas; comentário no
+# fim da linha NÃO é aceito (vira nome inválido e reprova a fonte inteira).
+#
+# A MARGEM É A AUTORIDADE SOBRE QUAIS GATES EXISTEM. Linha INDENTADA é atributo
+# do CONTRATO do gate acima dela — nunca um gate. Um nome escrito por engano com
+# espaço à esquerda não some da relação em silêncio: ele vira atributo sem valor,
+# e o agregador reprova a fonte inteira com exit 2.
+#
+# --- O CONTRATO DE CONTEÚDO (OS 32) ----------------------------------------
+#
+# Esta fonte respondia duas das três perguntas que um portão precisa fazer sobre
+# uma suíte obrigatória — o arquivo está lá? ela foi executada? — e não fazia a
+# terceira: ELA AINDA PROVA? Trocar o corpo de uma suíte protegida por um único
+# `expect(1, 1)`, mantendo nome, caminho e registro, deixava todos os portões
+# verdes com dezenas de provas a menos no run. Era o buraco medido na
+# rehomologação da OS 30, em outra linhagem, e ele valia aqui igual.
+#
+# O contrato mora AQUI, indentado sob o gate, e não dentro da suíte: uma guarda
+# que vive no arquivo que ela guarda some junto com ele. Atualizar a suíte de
+# verdade passa a exigir atualizar estas linhas de propósito — o que aparece no
+# diff, que é o ponto.
+#
+#   <gate>
+#       suite      <caminho relativo à raiz do repo>
+#       executor   <trecho literal que o workflow tem de conter>
+#       sha256     <64 hex do conteúdo, com TODO CR removido>
+#       provas     <piso ESTÁTICO de declarações de caso>
+#       conta      <ERE das declarações>      (opcional; padrão = Dart)
+#       casos      <piso de casos EXECUTADOS, lido do log>   (opcional)
+#       contador   <ERE com número, no log>   (opcional; padrão = `+N` do Flutter)
+#       exige      <literal de código que tem de continuar lá>   (repetível)
+#
+# Quem INTERPRETA o contrato é `scripts/ci/verificar_contrato_suites.sh`, que
+# falha por conta própria antes de qualquer teste rodar, e cuja matriz é o gate
+# `contratosui`. O agregador só atravessa o contrato e confere a FORMA — se ele
+# conhecesse o vocabulário, o vocabulário estaria escrito em dois lugares.
+#
+# MUDOU A SUÍTE DE PROPÓSITO? Atualize `sha256` (o verificador imprime o digest
+# que achou) e, se o contrato mudou, `provas`/`casos`/`exige`, no MESMO commit.
+# Não há atalho automático de propósito: se atualizar a assinatura fosse efeito
+# colateral de rodar o gate, ela não guardaria nada.
 #
 # Ausência de resultado, marcador `nao_<gate>`, exit code vazio, ilegível ou
 # não numérico REPROVAM. Só `exit_<gate>` valendo exatamente `0` fica verde.
@@ -76,6 +115,16 @@ composicao
 # `avaliarContato` do caminho, aceitar autoria vinda do payload ou soltar o
 # `messageId` derivado.
 chatdom
+    suite      app/test/chat/chat_test.dart
+    executor   roda chatdom test/chat/chat_test.dart
+    sha256     d0aac4775d2026a1f6cf12bef5e877924449a0b2e1dc6afde026281ef70b1a33
+    provas     60
+    exige      group('AUT
+    exige      group('BLQ
+    exige      group('PRJ
+    exige      group('SAN
+    exige      ('AUT-01
+    exige      ('BLQ-01
 
 # --- 5c. COMUNICAÇÃO CONTROLADA V1 (entra pela OS 24-C2) --------------------
 # A matriz do §2 mora em UM lugar (`permissaoDe`, em app/lib/comunicacao/
@@ -95,10 +144,58 @@ chatdom
 # É o mesmo remédio que `cascavisao`..`cascaporta` receberam na seção 3: suíte
 # verde localmente e sem portão próprio é suíte que pode quebrar em silêncio.
 comunicacao
+    suite      app/test/comunicacao/comunicacao_test.dart
+    executor   roda comunicacao test/comunicacao/comunicacao_test.dart
+    sha256     94af3e9b5bbeaf8944d65579bc243adf336ab9edf5af647cc3b1757fa15b3666
+    provas     71
+    casos      81
+    exige      group('MAT
+    exige      group('CTR
+    exige      group('PRI
+    exige      group('ESP
+    exige      ('MAT-01
+    exige      ('CTR-02
+    exige      ('PRI-19
+    exige      ('ESP-01
+    exige      'ESP-02 CONTROLE
+    exige      ['mesa_privada/completo']
 
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
 # Sem ele, o agregador é a única peça do CI que ninguém verifica.
 portaoci
+    suite      scripts/ci/teste_portao_os_integracao.sh
+    executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
+    sha256     0ae02bb66558b78dce60d8aa9fb2f01a4eb22bdb6346f66cf22f578e47ba0195
+    provas     49
+    conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
+    casos      38
+    contador   casos ok: [0-9]+
+    exige      HERDADOS=
+    exige      GATES="[a-z]+ [a-z]+
+    exige      for k in [a-z]+ [a-z]+ [a-z]+
+    exige      esperar 0 "C01
+    exige      esperar 1 "C09
+    exige      ok "C14
+
+# --- 6b. o CONTRATO DE CONTEUDO das suites protegidas (entra pela OS 32) -----
+# `portaoci` prova o AGREGADOR; este prova o VERIFICADOR DE CONTEUDO, a peca
+# que responde a terceira pergunta — "a suite ainda PROVA?" — que ate a OS 32
+# ninguem fazia. Sem ele, `verificar_contrato_suites.sh` seria a segunda peca
+# do CI que ninguem verifica.
+contratosui
+    suite      scripts/ci/teste_contrato_suites.sh
+    executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
+    sha256     77966085e9f0205a03faaa1dc6be827a24a76d49ca85f5e13653616fc3b4aaa1
+    provas     37
+    conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
+    casos      34
+    contador   casos ok: [0-9]+
+    exige      T01 CONTROLE
+    exige      T08 — suite trocada por expect(1, 1)
+    exige      T21 — TODOS os contratos removidos
+    exige      T28 — marcador fabricado, sem log
+    exige      T29 — log ANTERIOR ao carimbo
+    exige      T34 CONTROLE
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
