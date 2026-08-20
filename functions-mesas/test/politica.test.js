@@ -20,6 +20,7 @@ const {
   PONTOS_CANONICOS,
   PONTOS_LEGADOS,
   RECUSA_CONFIG,
+  chatsPermitidos,
   CAMPO,
   camposPermitidos,
   campoPermitido,
@@ -31,7 +32,11 @@ const {
   validarConfiguracao,
 } = require("../lib/politica");
 
-const BASE = { modalidade: "stbl", jogadores: 4, pontos: 1500, tempo: 45, chat: "completo" };
+// A base usa `apenas_emotes` porque ela e a configuracao valida nos TRES tipos
+// online. Ate a OS de Comunicacao Controlada esta linha dizia `completo`, e
+// passava — que era justamente o defeito: a Mesa Publica aceitava texto livre
+// na configuracao. Os casos POL-15..POL-18 abaixo provam a regra nova.
+const BASE = { modalidade: "stbl", jogadores: 4, pontos: 1500, tempo: 45, chat: "apenas_emotes" };
 
 describe("POL — os valores canonicos", () => {
   test("POL-01 os pontos sao 1.500, 2.000 e 3.000", () => {
@@ -243,5 +248,91 @@ describe("POL-NEG — nao basta alterar no cliente (secao 13 da OS)", () => {
       assert.equal(r.ok, false, `${tipo} aceitou codigo do cliente`);
       assert.equal(campoPermitido(tipo, "codigo"), false);
     }
+  });
+});
+
+// ===========================================================================
+// POL-CHAT — `completo` e exclusivo da Mesa Privada
+// ===========================================================================
+//
+// A decisao de produto e da OS de Comunicacao Controlada, §2:
+//
+//     SOMENTE A MESA PRIVADA ADMITE TEXTO DIGITADO LIVREMENTE.
+//
+// Ela e aplicada em DOIS lugares, de proposito, e este arquivo cobre o
+// primeiro: aqui a mesa nao pode ser CONFIGURADA com texto livre. O segundo e
+// a autoridade de comunicacao, que recusa o ENVIO mesmo que um documento
+// antigo ja carregue o valor errado (app/lib/comunicacao/ambiente.dart).
+//
+// Uma trava so nao bastaria: sem esta, a configuracao gravaria `completo` numa
+// Publica e a recusa apareceria depois, no meio da partida, para o jogador que
+// nao configurou nada.
+describe("POL-CHAT — texto livre so na Mesa Privada", () => {
+  test("POL-15 `completo` e aceito na Privada", () => {
+    const r = validarConfiguracao(TIPO_MESA.PRIVADA, {
+      ...BASE,
+      chat: "completo",
+      cadeiras: ["liberada", "liberada", "liberada", "liberada"],
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.configuracao.chat, "completo");
+  });
+
+  test("POL-16 `completo` e RECUSADO na Publica e na VIP/Ranqueada", () => {
+    for (const tipo of [TIPO_MESA.PUBLICA, TIPO_MESA.VIP_RANQUEADA]) {
+      const r = validarConfiguracao(tipo, { ...BASE, chat: "completo" });
+      assert.equal(r.ok, false, `${tipo} aceitou chat completo`);
+      assert.equal(r.campo, "chat");
+      assert.equal(r.motivo, RECUSA_CONFIG.CHAT_INVALIDO);
+    }
+  });
+
+  test("POL-17 `apenas_emotes` e `desligado` valem nos tres tipos online", () => {
+    for (const tipo of [TIPO_MESA.PUBLICA, TIPO_MESA.VIP_RANQUEADA, TIPO_MESA.PRIVADA]) {
+      for (const chat of ["apenas_emotes", "desligado"]) {
+        const extra =
+          tipo === TIPO_MESA.PRIVADA
+            ? { cadeiras: ["liberada", "liberada", "liberada", "liberada"] }
+            : {};
+        const r = validarConfiguracao(tipo, { ...BASE, ...extra, chat });
+        assert.equal(r.ok, true, `${tipo} recusou ${chat}`);
+        assert.equal(r.configuracao.chat, chat);
+      }
+    }
+  });
+
+  test("POL-18 sem escolha explicita o padrao e `apenas_emotes`", () => {
+    // O padrao anterior era `completo`, e ele concedia texto livre a quem nao
+    // pediu nada — inclusive na Publica. Um padrao que concede o privilegio
+    // maior e o avesso da regra.
+    const semChat = { ...BASE };
+    delete semChat.chat;
+    const r = validarConfiguracao(TIPO_MESA.PUBLICA, semChat);
+    assert.equal(r.ok, true);
+    assert.equal(r.configuracao.chat, "apenas_emotes");
+  });
+
+  test("POL-19 a lista permitida por tipo, inteira", () => {
+    assert.deepEqual([...chatsPermitidos(TIPO_MESA.PRIVADA)], [
+      "completo",
+      "apenas_emotes",
+      "desligado",
+    ]);
+    for (const tipo of [TIPO_MESA.PUBLICA, TIPO_MESA.VIP_RANQUEADA]) {
+      assert.deepEqual([...chatsPermitidos(tipo)], ["apenas_emotes", "desligado"]);
+    }
+    // Treino nao tem o campo `chat`, entao nao tem valor permitido nenhum.
+    assert.deepEqual([...chatsPermitidos(TIPO_MESA.TREINO)], []);
+  });
+
+  test("POL-20 o Treino continua recusando o campo `chat`", () => {
+    const r = validarConfiguracao(TIPO_MESA.TREINO, {
+      modalidade: "stbl",
+      pontos: 1500,
+      tempo: 45,
+      chat: "desligado",
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.motivo, RECUSA_CONFIG.CAMPO_NAO_PERMITIDO);
   });
 });

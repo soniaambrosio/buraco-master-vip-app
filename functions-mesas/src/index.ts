@@ -53,7 +53,7 @@ import { onRequest } from "firebase-functions/v2/https";
 import { randomBytes } from "node:crypto";
 
 import { TIPO_MESA } from "./tipos";
-import { ESTADO_CADEIRA, temProprietarioDeCadeiras } from "./politica";
+import { ESTADO_CADEIRA, chatsPermitidos, temProprietarioDeCadeiras } from "./politica";
 import { BYTES_NECESSARIOS, VALIDADE_CODIGO_MS, cunharCodigo, redigirCodigo } from "./salas";
 import { storePadrao } from "./firestore";
 
@@ -315,10 +315,29 @@ export const registrarMesaPrivada = onCall(opcoesCliente, async (req) => {
     }
   }
 
+  // A CONFIGURACAO DE CHAT DA SALA (§7.3 da OS de Comunicacao Controlada).
+  //
+  // POR QUE ELA E GRAVADA AQUI, e nao no canal de chat: "A escolha devera ser
+  // validada pela autoridade. O estado nao podera ser alterado pelo convidado."
+  // Quem escolhe e o anfitriao, no momento de criar a mesa; quem valida e a
+  // autoridade dos tipos, que e este codebase. A autoridade de comunicacao LE
+  // este campo quando declara o canal — ela nao o recebe de quem chama, e por
+  // isso um convidado (ou um servidor adulterado) nao consegue ligar o teclado
+  // numa sala que o dono deixou em balões.
+  //
+  // AUSENTE NAO E `completo`: sem escolha explicita a sala nasce em
+  // `apenas_emotes`, o mesmo padrao de `validarConfiguracao`.
+  const chatBruto = dados.chat;
+  const chat = chatBruto === undefined ? "apenas_emotes" : chatBruto;
+  if (typeof chat !== "string" || !chatsPermitidos(TIPO_MESA.PRIVADA).includes(chat)) {
+    throw new HttpsError("invalid-argument", "configuracao de chat invalida.");
+  }
+
   const codigoConvite = cunharCodigo(randomBytes(BYTES_NECESSARIOS));
   const expiraEm = new Date(Date.now() + VALIDADE_CODIGO_MS).toISOString();
 
   const r = await storePadrao().registrarMesaPrivada({
+    modoDeChat: chat,
     uid,
     codigoDaSala,
     codigoConvite,

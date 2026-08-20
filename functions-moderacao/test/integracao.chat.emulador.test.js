@@ -34,7 +34,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { test, before, describe } = require("node:test");
+const { test, before, beforeEach, describe } = require("node:test");
 
 const path = require("node:path");
 
@@ -292,9 +292,19 @@ before(async () => {
   }
 
   // O canal, escrito como o motor de partidas o escreveria.
+  // [COMUNICACAO CONTROLADA] O canal agora declara AMBIENTE e MODO, e este
+  // arquivo prova o CHAT LIVRE — que passou a existir num lugar so. Por isso o
+  // canal desta suite e uma MESA PRIVADA com chat completo: e o unico ambiente
+  // em que os casos abaixo (texto, tamanho, caractere de controle, bloqueio por
+  // par) descrevem comportamento real.
+  //
+  // O que acontece com os MESMOS casos noutro ambiente esta em
+  // integracao.comunicacao.emulador.test.js, e a resposta la e recusa.
   await gravar(`chatChannels/${CANAL}`, {
     canalId: txt(CANAL),
     superficie: txt("mesa_de_partida"),
+    ambiente: txt("mesa_privada"),
+    modo: txt("completo"),
     aberto: bool(true),
     participantes: {
       arrayValue: {
@@ -307,6 +317,29 @@ before(async () => {
       },
     },
   });
+});
+
+// [COMUNICACAO CONTROLADA] O RITMO ZERA ENTRE CASOS, e isso nao e um atalho.
+//
+// A partir da OS de Comunicacao Controlada existe anti-spam de verdade: quem
+// manda duas linhas em menos de 700 ms leva `ritmoExcedido`. Esta suite dispara
+// dezenas de envios do MESMO autor em sequencia, sem pausa — e o freio,
+// funcionando, reprovaria casos que nao tem nada a ver com ritmo.
+//
+// A saida NAO foi afrouxar o limite nem criar porta de teste no codigo de
+// producao: e limpar o ESTADO entre casos, que e o que um arnes faz com
+// qualquer estado. Cada caso volta a ser o que ele descreve — um jogador que
+// nao falou ainda.
+//
+// O freio continua provado, e provado CONTRA o banco: em
+// integracao.comunicacao.emulador.test.js, onde os casos de ritmo NAO limpam
+// nada e medem exatamente a acumulacao.
+beforeEach(async () => {
+  await Promise.all(
+    [AUTOR, COLEGA, TERCEIRO, PLATEIA, MOTOR].map((uid) =>
+      apagar(`chatRitmo/${uid}`)
+    )
+  );
 });
 
 // ===========================================================================
@@ -558,18 +591,37 @@ describe("INT-C — idempotencia", () => {
     // O contrario dos dois acima: se a idempotencia colapsasse mensagens
     // distintas, o chat perderia falas — e um teste que so provasse "nao duplica"
     // ficaria verde com um chat que grava uma linha e ignora o resto.
-    const antes = await contar("chatMessages");
-    await chamar(
+    // A medicao e por ID, e nao por contagem da colecao: `contar` pagina em 300
+    // documentos, e uma suite que ja gravou muito passaria a comparar dois
+    // numeros saturados — a assercao ficaria verde sem medir nada.
+    const um = await chamar(
       "enviarMensagemChat",
       { intentId: intent("c03a"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "primeira" },
       AUTOR
     );
-    await chamar(
+    assert.equal(um.status, 200, um.texto);
+
+    // [COMUNICACAO CONTROLADA] A ESPERA E O ANTI-SPAM FUNCIONANDO, e nao um
+    // contorno: duas linhas do mesmo jogador com menos de 700 ms entre elas sao
+    // recusadas por cooldown desde esta OS. Este caso mede IDEMPOTENCIA, e nao
+    // ritmo — entao ele respeita o ritmo em vez de fingir que ele nao existe.
+    await new Promise((r) => setTimeout(r, 900));
+
+    const dois = await chamar(
       "enviarMensagemChat",
       { intentId: intent("c03b"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "segunda" },
       AUTOR
     );
-    assert.equal((await contar("chatMessages")) - antes, 2);
+    assert.equal(dois.status, 200, dois.texto);
+
+    assert.notEqual(
+      um.json.result.mensagem.messageId,
+      dois.json.result.mensagem.messageId,
+      "duas falas diferentes viraram a mesma mensagem"
+    );
+    for (const id of [um.json.result.mensagem.messageId, dois.json.result.mensagem.messageId]) {
+      assert.ok(await ler(`chatMessages/${id}`), "mensagem " + id + " nao foi gravada");
+    }
   });
 
   test("INT-C-04 intencao REAPROVEITADA com outro texto e CONFLITO", async () => {
@@ -670,6 +722,8 @@ describe("INT-D — bloqueio", () => {
     await gravar(`chatChannels/${canal2}`, {
       canalId: txt(canal2),
       superficie: txt("mesa_de_partida"),
+      ambiente: txt("mesa_privada"),
+      modo: txt("completo"),
       aberto: bool(true),
       participantes: {
         arrayValue: {
@@ -819,14 +873,58 @@ describe("INT-F — canal e papel", () => {
     assert.equal(await ler("chatChannels/salaQueNaoExiste"), null);
   });
 
-  test("INT-F-04 SAGUAO nao aceita texto livre", async () => {
-    const r = await chamar(
+  test("INT-F-04 SAGUAO nao aceita texto livre, e ACEITA fala catalogada", async () => {
+    // [COMUNICACAO CONTROLADA] O caso mudou de forma porque o saguao mudou de
+    // estado: ele deixou de ser "decisao de produto ausente" e passou a ser um
+    // ambiente com comunicacao CATALOGADA (§2).
+    //
+    // A afirmacao antiga — mandar `superficie: saguao_publico` no payload de um
+    // canal de mesa — deixou de medir o que dizia medir: a superficie nao vem
+    // mais do pedido, e o payload e simplesmente ignorado. Um caso que continua
+    // verde medindo outra coisa e pior que um caso removido.
+    //
+    // Entao aqui existe um canal de SAGUAO de verdade, e as duas metades da §2
+    // sao afirmadas nele: texto NAO, catalogo SIM.
+    const saguao = "salaSaguaoReal";
+    await gravar(`chatChannels/${saguao}`, {
+      canalId: txt(saguao),
+      superficie: txt("saguao_publico"),
+      ambiente: txt("saguao_publico"),
+      modo: txt("apenas_emotes"),
+      aberto: bool(true),
+      participantes: {
+        arrayValue: {
+          values: [participante(AUTOR, "presente"), participante(COLEGA, "presente")],
+        },
+      },
+    });
+
+    const texto = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f04"), canalId: CANAL, superficie: "saguao_publico", conteudo: "oi saguao" },
+      { intentId: intent("f04a"), canalId: saguao, conteudo: "oi saguao" },
       AUTOR
     );
-    assert.notEqual(r.status, 200);
-    assert.match(r.texto, /superficieNaoAceitaChat|canalInvalido/);
+    assert.notEqual(texto.status, 200);
+    assert.match(texto.texto, /textoLivreNaoPermitidoNoAmbiente/);
+
+    const fala = await chamar(
+      "enviarMensagemChat",
+      {
+        intentId: intent("f04b"),
+        canalId: saguao,
+        tipo: "fala_catalogada",
+        itemId: "convite_dupla_01",
+      },
+      AUTOR
+    );
+    assert.equal(fala.status, 200, fala.texto);
+    assert.equal(fala.json.result.mensagem.itemId, "convite_dupla_01");
+    // A FRASE NAO VIAJA: o que chega e a chave, e o cliente localiza.
+    assert.equal("conteudo" in fala.json.result.mensagem, false);
+    assert.equal(
+      fala.json.result.mensagem.chaveDeLocalizacao,
+      "comunicacao.fala.convite_dupla_01"
+    );
   });
 
   test("INT-F-05 canal FECHADO nao aceita fala", async () => {
@@ -834,6 +932,8 @@ describe("INT-F — canal e papel", () => {
     await gravar(`chatChannels/${fechado}`, {
       canalId: txt(fechado),
       superficie: txt("mesa_de_partida"),
+      ambiente: txt("mesa_privada"),
+      modo: txt("completo"),
       aberto: bool(false),
       participantes: {
         arrayValue: {
@@ -859,7 +959,8 @@ describe("INT-F — canal e papel", () => {
       "definirCanalDeChat",
       {
         canalId: "salaDoJogador",
-        superficie: "mesa_de_partida",
+        tipoPartida: "publica",
+        categoriaCompetitiva: "casual",
         participantes: [{ uid: AUTOR, papel: "jogador_sentado" }],
         aberto: true,
       },
@@ -874,7 +975,10 @@ describe("INT-F — canal e papel", () => {
       "definirCanalDeChat",
       {
         canalId: "salaDoMotor",
-        superficie: "mesa_de_partida",
+        // [COMUNICACAO CONTROLADA] O canal declara as DUAS DIMENSOES da mesa, e
+        // nao a superficie: a autoridade traduz e deriva. Ver contrato v2.
+        tipoPartida: "publica",
+        categoriaCompetitiva: "casual",
         participantes: [
           { uid: AUTOR, papel: "jogador_sentado" },
           { uid: COLEGA, papel: "jogador_sentado" },
@@ -886,29 +990,87 @@ describe("INT-F — canal e papel", () => {
     );
     assert.equal(comClaim.status, 200, comClaim.texto);
 
-    // E o canal que ele abriu funciona.
+    // E o canal que ele abriu funciona — com o que aquele ambiente admite. Ele
+    // e uma MESA PUBLICA (`publica` x `casual`), entao a comunicacao ali e
+    // catalogada; texto livre seria recusado, e isso esta em INT-F-04.
     const envio = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f06"), canalId: "salaDoMotor", superficie: "mesa_de_partida", conteudo: "canal do motor" },
+      {
+        intentId: intent("f06"),
+        canalId: "salaDoMotor",
+        tipo: "reacao_catalogada",
+        itemId: "reacao_aplauso_01",
+      },
       AUTOR
     );
     assert.equal(envio.status, 200, envio.texto);
+    assert.equal(envio.json.result.mensagem.ambiente, "mesa_publica");
   });
 
-  test("INT-F-07 o motor nao abre canal em superficie sem chat", async () => {
-    const r = await chamar(
+  test("INT-F-07 o motor nao abre canal onde NAO HA comunicacao", async () => {
+    // [COMUNICACAO CONTROLADA] A PREMISSA DESTE CASO MUDOU POR DECISAO DE
+    // PRODUTO, e o caso foi reescrito em vez de apagado.
+    //
+    // Ele afirmava que o SAGUAO nao aceitava canal — verdade enquanto "chat"
+    // significava so texto livre, e o saguao estava sem decisao de produto. A
+    // §2 decidiu: o saguao tem comunicacao, e ela e CATALOGADA. Manter o caso
+    // como estava seria afirmar uma politica que o produto revogou.
+    //
+    // O invariante equivalente — e mais forte, porque cobre os dois lados — e
+    // este: o motor nao abre canal onde nao existe comunicacao NENHUMA (Treino),
+    // e nao abre canal com TEXTO LIVRE fora da Mesa Privada.
+    const treino = await chamar(
       "definirCanalDeChat",
       {
-        canalId: "salaSaguao",
-        superficie: "saguao_publico",
+        canalId: "salaTreino",
+        tipoPartida: "simulada",
+        categoriaCompetitiva: "casual",
         participantes: [{ uid: AUTOR, papel: "jogador_sentado" }],
         aberto: true,
       },
       MOTOR,
       { motorDePartidas: true }
     );
-    assert.notEqual(r.status, 200);
-    assert.match(r.texto, /superficieNaoAceitaChat/);
+    assert.notEqual(treino.status, 200);
+    assert.match(treino.texto, /ambienteSemComunicacao|modoNaoPermitido/);
+    assert.equal(await ler("chatChannels/salaTreino"), null);
+
+    // `completo` numa Mesa Publica: recusa NOMEADA, e nao degradacao silenciosa.
+    const publicaComTeclado = await chamar(
+      "definirCanalDeChat",
+      {
+        canalId: "salaPublicaComTeclado",
+        tipoPartida: "publica",
+        categoriaCompetitiva: "casual",
+        modo: "completo",
+        participantes: [
+          { uid: AUTOR, papel: "jogador_sentado" },
+          { uid: COLEGA, papel: "jogador_sentado" },
+        ],
+        aberto: true,
+      },
+      MOTOR,
+      { motorDePartidas: true }
+    );
+    assert.notEqual(publicaComTeclado.status, 200);
+    assert.match(publicaComTeclado.texto, /modoNaoPermitidoNoAmbiente/);
+    assert.equal(await ler("chatChannels/salaPublicaComTeclado"), null);
+
+    // E a combinacao que a taxonomia recusa: sala fechada alimentando o Ranking.
+    const privadaRanqueada = await chamar(
+      "definirCanalDeChat",
+      {
+        canalId: "salaPrivadaRanqueada",
+        tipoPartida: "privada",
+        categoriaCompetitiva: "vip_ranqueada",
+        participantes: [{ uid: AUTOR, papel: "jogador_sentado" }],
+        aberto: true,
+      },
+      MOTOR,
+      { motorDePartidas: true }
+    );
+    assert.notEqual(privadaRanqueada.status, 200);
+    assert.match(privadaRanqueada.texto, /ambienteDesconhecido/);
   });
 });
 
@@ -1150,6 +1312,8 @@ describe("INT-H — adaptadores da autoridade", () => {
     await gravar(`chatChannels/${fechado}`, {
       canalId: txt(fechado),
       superficie: txt("mesa_de_partida"),
+      ambiente: txt("mesa_privada"),
+      modo: txt("completo"),
       aberto: bool(false),
       participantes: {
         arrayValue: {

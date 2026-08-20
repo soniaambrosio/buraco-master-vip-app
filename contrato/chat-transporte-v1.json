@@ -1,48 +1,103 @@
 {
-  "//": "CONTRATO CANONICO DO TRANSPORTE DE CHAT V1. Este arquivo existe IDENTICO nos dois repositorios (buraco-master-vip-app e buraco-servidor). Os dois lados afirmam o MESMO digest em teste: editar uma copia e nao a outra reprova as duas suites. E o que impede nome de Function, regiao, campo de pedido, campo de resposta e codigo de recusa de divergirem em silencio.",
+  "//": "CONTRATO CANONICO DO TRANSPORTE DE COMUNICACAO. Este arquivo existe IDENTICO nos dois repositorios (buraco-master-vip-app e buraco-servidor). Os dois lados afirmam o MESMO digest em teste: editar uma copia e nao a outra reprova as duas suites. E o que impede nome de Function, regiao, campo de pedido, campo de resposta e codigo de recusa de divergirem em silencio.",
   "//digest": "O digest esperado NAO mora aqui (seria circular). Ele mora nas duas suites: functions-moderacao/test/contrato.test.js e test/chat_contrato.test.js.",
-  "versao": 1,
+  "//versao-2": "A OS de Comunicacao Controlada elevou este contrato de 1 para 2. O NOME DO ARQUIVO nao mudou de proposito: ele e a chave de comparacao entre os dois repositorios, e renomea-lo faria as duas suites deixarem de comparar coisa nenhuma — passariam por ausencia. O que mudou esta listado em `mudancasDaVersao2`.",
+  "versao": 2,
+  "mudancasDaVersao2": [
+    "definirCanal deixa de receber `superficie` e passa a receber as DUAS DIMENSOES que o servidor ja tem (`tipoPartida`, `categoriaCompetitiva`) mais `codigoDaSala` na Mesa Privada. A superficie passa a ser DERIVADA do ambiente pela autoridade.",
+    "enviarPeloMotor aceita `tipo` e `itemId`. `tipo` ausente vale `texto_privado`, que e o comportamento da versao 1.",
+    "a resposta de enviarPeloMotor ganha `silenciados`: UIDs que silenciaram o autor e por isso nao recebem a entrega. Nunca atravessam ate o jogador.",
+    "a projecao publica ganha `ambiente`, `tipo`, `itemId`, `chaveDeLocalizacao`, `fallbackOficial`, `versaoDoCatalogo` e `versaoDoContrato`; `superficie` sai dela (o ambiente responde melhor a mesma pergunta) e `conteudo` passa a existir SO em texto privado.",
+    "novas Functions: emitirEventoDeSistema (§8) e consultarCatalogoDeComunicacao (§6.2).",
+    "novos codigos de recusa no fio para comunicacao nao permitida e para ritmo."
+  ],
   "funcoes": {
     "//": "Nomes exatos das Cloud Functions e a regiao. O servidor monta a URL com estes valores; a Function e exportada com estes nomes.",
     "regiao": "southamerica-east1",
     "definirCanal": "definirCanalDeChat",
     "enviarPeloMotor": "enviarMensagemChatPeloMotor",
-    "ingressoDiretoDoJogador": "enviarMensagemChat"
+    "ingressoDiretoDoJogador": "enviarMensagemChat",
+    "eventoDeSistema": "emitirEventoDeSistema",
+    "catalogo": "consultarCatalogoDeComunicacao"
   },
   "pedidoDefinirCanal": {
     "//": "Quem chama precisa do claim motorDePartidas ou admin.",
-    "campos": ["canalId", "superficie", "participantes", "aberto"],
+    "//ambiente": "O AMBIENTE NAO E ENVIADO. O servidor manda as duas dimensoes que ele ja tem fixadas na construcao do processo, e a autoridade traduz. Mandar o ambiente pronto faria a Mesa Privada — o unico lugar com texto livre — ser concedida por um campo de quem chama.",
+    "//codigoDaSala": "SO na topologia `privada`, e USADO E DESCARTADO: localiza `salasPrivadas/{codigo}` e os assentos admitidos, e NAO e gravado no canal. Ele e a chave de entrada da Mesa Privada.",
+    "campos": [
+      "canalId",
+      "tipoPartida",
+      "categoriaCompetitiva",
+      "codigoDaSala",
+      "modo",
+      "participantes",
+      "aberto"
+    ],
     "participante": ["uid", "papel"]
   },
   "pedidoEnviarPeloMotor": {
     "//": "`autorUid` e legitimo AQUI e proibido no ingresso do jogador: o UID autenticado da chamada e o do motor, nao o do autor.",
-    "campos": ["autorUid", "intentId", "canalId", "superficie", "conteudo"]
+    "//tipo": "Ausente vale `texto_privado`. Item catalogado manda `tipo` + `itemId` e NAO manda `conteudo` — texto no lugar do id e recusa (`textoNoLugarDoItem`).",
+    "campos": ["autorUid", "intentId", "canalId", "tipo", "itemId", "conteudo"]
   },
   "respostaEnviarPeloMotor": {
-    "//": "`destinatarios` sao UIDs e existem SO para o roteamento interno do transporte. Nunca atravessam o fio ate o jogador.",
-    "campos": ["enviada", "jaEnviada", "mensagem", "destinatarios"]
+    "//": "`destinatarios` e `silenciados` sao UIDs e existem SO para o roteamento interno do transporte. Nunca atravessam o fio ate o jogador.",
+    "campos": ["enviada", "jaEnviada", "mensagem", "destinatarios", "silenciados"]
+  },
+  "pedidoEventoDeSistema": {
+    "//": "Exige o mesmo claim de definirCanal. Nao ha autor: evento de sistema nao tem dono.",
+    "campos": ["canalId", "intentId", "eventoId"]
   },
   "projecaoPublica": {
-    "//": "O unico formato que chega ao jogador. Lista FECHADA: um campo a mais reprova nas duas suites.",
+    "//": "O unico formato que chega ao jogador. Lista FECHADA: um campo a mais reprova nas duas suites. Campos opcionais so aparecem quando ha valor — `conteudo` so em texto privado, `itemId`/`chaveDeLocalizacao`/`fallbackOficial` so em catalogo e evento, `autorPublicId` ausente em evento de sistema.",
     "campos": [
       "messageId",
       "autorPublicId",
-      "superficie",
+      "ambiente",
       "canalId",
+      "tipo",
+      "itemId",
+      "chaveDeLocalizacao",
+      "fallbackOficial",
       "conteudo",
       "enviadaEm",
+      "versaoDoCatalogo",
+      "versaoDoContrato",
       "esquema"
     ]
   },
   "protocoloWebSocket": {
     "//": "Vocabulario do fio. Segue o padrao existente do servidor: `tipo` em snake/camel curto, sem envelope aninhado alem de `dados`.",
     "pedidoDoCliente": "chat_enviar",
-    "camposDoPedidoDoCliente": ["intentId", "texto"],
+    "//especie": "O campo do fio chama-se `especie`, e NAO `tipo`: no protocolo deste servidor `tipo` ja e o nome do ENVELOPE (`chat_enviar`, `criarMesa`). Reusar a palavra faria o servidor ler `chat_enviar` como especie de comunicacao — e foi exatamente o que aconteceu na primeira tentativa. Na chamada a autoridade o campo volta a se chamar `tipo`, porque la nao ha envelope.",
+    "camposDoPedidoDoCliente": ["intentId", "texto", "especie", "itemId"],
     "entregaAoDestinatario": "chat_mensagem",
     "reciboAoRemetente": "chat_ack"
   },
+  "ambientes": {
+    "//": "A matriz da §2 da OS de Comunicacao Controlada. SOMENTE `mesa_privada` admite texto digitado.",
+    "saguaoPublico": "saguao_publico",
+    "salaoVip": "salao_vip",
+    "mesaPublica": "mesa_publica",
+    "mesaVip": "mesa_vip",
+    "mesaPrivada": "mesa_privada",
+    "treino": "treino"
+  },
+  "modosDeChat": {
+    "//": "A configuracao da mesa, validada pela autoridade dos tipos. `completo` so existe na Mesa Privada.",
+    "completo": "completo",
+    "apenasEmotes": "apenas_emotes",
+    "desligado": "desligado"
+  },
+  "tiposDeComunicacao": {
+    "falaCatalogada": "fala_catalogada",
+    "reacaoCatalogada": "reacao_catalogada",
+    "emojiCatalogado": "emoji_catalogado",
+    "textoPrivado": "texto_privado",
+    "eventoDeSistema": "evento_de_sistema"
+  },
   "superficies": {
-    "//": "Preserva o veredito da fundacao. Espectador nao fala e nao recebe; saguao esta fora desta OS.",
+    "//": "Preserva o veredito da fundacao. Espectador nao fala e nao recebe. A superficie continua existindo como CANAL; o ambiente e a POLITICA daquele canal.",
     "mesa": "mesa_de_partida",
     "espectador": "espectador_de_mesa",
     "saguao": "saguao_publico"
@@ -50,6 +105,7 @@
   "papeis": {
     "sentado": "jogador_sentado",
     "espectador": "espectador",
+    "presente": "presente",
     "fora": "fora_do_canal"
   },
   "ack": {
@@ -67,6 +123,10 @@
     "canalFechado": "canal_fechado",
     "intencaoInvalida": "intencao_invalida",
     "intencaoReutilizada": "intencao_reutilizada",
-    "indisponivelTemporario": "tente_de_novo"
+    "indisponivelTemporario": "tente_de_novo",
+    "//comunicacaoNaoPermitida": "O ambiente nao admite o que se pediu — texto livre fora da Mesa Privada, item fora do catalogo daquele lugar, chat desligado. UM codigo para todos, porque a diferenca entre eles nao muda o que o jogador faz a seguir.",
+    "comunicacaoNaoPermitida": "comunicacao_nao_permitida",
+    "//ritmo": "Cooldown, limite por janela, repeticao, rajada e o freio automatico por abuso. O detalhe (quanto falta) vem em `liberaEmMs`, que e informacao sobre o proprio remetente.",
+    "ritmo": "muito_rapido"
   }
 }

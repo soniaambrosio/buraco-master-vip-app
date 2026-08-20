@@ -26,8 +26,7 @@ import { logger } from "firebase-functions";
 import { HttpsError, CallableRequest, onCall } from "firebase-functions/v2/https";
 
 import {
-  CanalDeChat,
-  ParDeContato,
+  CanalDeComunicacao,
   dominio,
   agoraUtc,
 } from "./domain";
@@ -38,8 +37,19 @@ import {
   C_MENSAGENS,
   DocumentoMensagem,
   evidenciaDeMensagem,
-  projetarMensagem,
 } from "./chat";
+import {
+  C_ASSENTOS_ADMITIDOS,
+  C_ENTITLEMENTS,
+  C_RITMO,
+  C_SALAS_PRIVADAS,
+  DocumentoComunicacao,
+  evidenciaDeItemCatalogado,
+  expiraEmDe,
+  projetarComunicacao,
+  registroSeguro,
+  tipoDe,
+} from "./comunicacao";
 
 initializeApp();
 
@@ -86,6 +96,15 @@ const COL_DENUNCIAS = "reports";
 const COL_SANCOES = "sanctions";
 const COL_ESTADO = "playerModeration";
 const COL_AUDITORIA = "moderationAudit";
+
+/// O mapa reverso `publicId -> uid`, escrito por functions-social.
+///
+/// ESTE CODEBASE SO LE, e le por UM motivo: as telas do jogador nao conhecem
+/// UID, entao uma denuncia vinda delas chega com `publicId`. Sem esta leitura,
+/// ou nao existe botao "Denunciar" fora do chat, ou o UID de terceiro passa a
+/// aparecer no aparelho — e a segunda opcao e a que a autoridade de identidade
+/// publica existe para impedir.
+const C_INDICE_PUBLICO = "publicIdIndex";
 
 /// Trilha administrativa. Nunca guarda o conteudo denunciado nem o comentario:
 /// so quem fez o que, sobre quem, e quando. O conteudo vive no registro da
@@ -141,7 +160,8 @@ export const registrarDenuncia = onCall(opcoesCliente, async (req) => {
   const denuncianteUid = exigirAutenticacao(req);
 
   const {
-    denunciadoUid,
+    denunciadoUid: denunciadoUidPedido,
+    denunciadoPublicId,
     tipo,
     categoria,
     reportIntentId,
@@ -152,16 +172,68 @@ export const registrarDenuncia = onCall(opcoesCliente, async (req) => {
     evidenciaMensagem,
   } = req.data ?? {};
 
-  if (
-    typeof denunciadoUid !== "string" ||
-    typeof tipo !== "string" ||
-    typeof categoria !== "string" ||
-    typeof reportIntentId !== "string"
-  ) {
+  if (typeof tipo !== "string" || typeof categoria !== "string" ||
+      typeof reportIntentId !== "string") {
     throw new HttpsError(
       "invalid-argument",
-      "denunciadoUid, tipo, categoria e reportIntentId sao obrigatorios."
+      "tipo, categoria e reportIntentId sao obrigatorios."
     );
+  }
+
+  // ------------------------------------------------------------------------
+  // QUEM E O DENUNCIADO — e por que o cliente nem sempre pode dizer
+  // ------------------------------------------------------------------------
+  //
+  // TRES caminhos, nesta ordem de autoridade (§9.3: "Nao aceitar identidade
+  // denunciada livremente quando ela puder ser resolvida pelo evento original"):
+  //
+  //   1. PELO EVENTO. Se ha `messageId` e o documento existe, o alvo e o AUTOR
+  //      GRAVADO. Vence qualquer coisa que o pedido tenha dito — sem isso,
+  //      denunciar a mensagem de A afirmando que ela e de B geraria um registro
+  //      acusando B do que A escreveu.
+  //
+  //   2. PELO `publicId`. As telas do jogador (Ranking, Hall, Perfil, mesa)
+  //      NAO conhecem UID — e isso e decisao da autoridade de identidade
+  //      publica, nao limitacao. A resolucao publicId -> uid acontece AQUI,
+  //      pelo indice reverso `publicIdIndex`, que e negado a todo cliente. E
+  //      o que permite existir um botao "Denunciar" sem expor UID de terceiro.
+  //
+  //   3. PELO UID. Continua aceito, para os chamadores internos que ja o tem.
+  //
+  // ESTE BLOCO NAO CRIA UMA SEGUNDA AUTORIDADE DE IDENTIDADE: ele LE o indice
+  // que functions-social escreve, e a normalizacao do id vem da mesma funcao
+  // Dart que aquele codebase usa.
+  let denunciadoUid =
+    typeof denunciadoUidPedido === "string" ? denunciadoUidPedido : "";
+
+  const docMensagem =
+    typeof messageId === "string" && messageId
+      ? await db().collection(C_MENSAGENS).doc(messageId).get()
+      : null;
+
+  const comunicacaoDenunciada =
+    docMensagem && docMensagem.exists
+      ? (docMensagem.data() as DocumentoComunicacao)
+      : null;
+
+  if (comunicacaoDenunciada && typeof comunicacaoDenunciada.autorUid === "string") {
+    denunciadoUid = comunicacaoDenunciada.autorUid;
+  } else if (!denunciadoUid && typeof denunciadoPublicId === "string") {
+    const normalizado = dominio.normalizarPublicId(denunciadoPublicId).publicId;
+    if (normalizado) {
+      const indice = await db().collection(C_INDICE_PUBLICO).doc(normalizado).get();
+      const uid = indice.data()?.uid;
+      if (typeof uid === "string") denunciadoUid = uid;
+    }
+  }
+
+  if (!denunciadoUid) {
+    // RESPOSTA NEUTRA: nao diz se o publicId existe. Diferenciar "nao existe" de
+    // "existe mas nao resolvi" transformaria esta porta num verificador de
+    // identidades validas.
+    throw new HttpsError("invalid-argument", "alvoNaoResolvido", {
+      recusa: "alvoNaoResolvido",
+    });
   }
 
   const texto = textoOpcional(comentario, 500);
@@ -224,11 +296,6 @@ export const registrarDenuncia = onCall(opcoesCliente, async (req) => {
   //
   // A regra mora em `chat.ts` (pura, testada por `test/chat.test.js` sem
   // emulador); aqui fica somente a LEITURA que ela precisa.
-  const docMensagem =
-    tipo === "mensagem" && typeof messageId === "string"
-      ? await db().collection(C_MENSAGENS).doc(messageId).get()
-      : null;
-
   const atestada =
     evidenciaMensagem && typeof evidenciaMensagem === "object"
       ? {
@@ -245,17 +312,61 @@ export const registrarDenuncia = onCall(opcoesCliente, async (req) => {
         }
       : null;
 
-  const evidencia = evidenciaDeMensagem(
-    {
-      messageId: typeof messageId === "string" ? messageId : null,
-      roomId: typeof roomId === "string" ? roomId : null,
-      denunciadoUid,
-      atestadaPeloCliente: tipo === "mensagem" ? atestada : null,
-    },
-    docMensagem && docMensagem.exists
-      ? (docMensagem.data() as DocumentoMensagem)
-      : null
-  );
+  // A EVIDENCIA MINIMA (§9.5), e ela e DIFERENTE por especie de comunicacao.
+  //
+  //   TEXTO ............ a mensagem exata, o autor, o horario, a sala.
+  //   ITEM CATALOGADO .. o `itemId`, a VERSAO do catalogo, e a QUANTIDADE e o
+  //                      PADRAO de repeticao.
+  //
+  // A razao da diferenca e o abuso ser outro. Uma fala do catalogo nunca e
+  // ofensiva por si — ela foi aprovada. O que ofende e a REPETICAO, e uma
+  // evidencia que guardasse so "usou tal fala" nao mostraria o abuso.
+  //
+  // A JANELA DA REPETICAO E ESTREITA de proposito (uma hora antes do evento
+  // denunciado). Varrer a conversa inteira seria a "retencao indiscriminada"
+  // que a §9.5 proibe; uma hora e o que basta para distinguir uso de inundacao.
+  const ehItemCatalogado =
+    comunicacaoDenunciada !== null &&
+    tipoDe(comunicacaoDenunciada) !== "texto_privado";
+
+  let evidencia: Record<string, unknown>;
+
+  if (ehItemCatalogado) {
+    const doc = comunicacaoDenunciada as DocumentoComunicacao;
+    const desdeRepeticao = new Date(
+      Date.parse(doc.enviadaEm) - 60 * 60 * 1000
+    ).toISOString();
+
+    const repeticoes = await db()
+      .collection(C_MENSAGENS)
+      .where("canalId", "==", doc.canalId)
+      .where("itemId", "==", doc.itemId)
+      .where("enviadaEm", ">=", desdeRepeticao)
+      .where("enviadaEm", "<=", doc.enviadaEm)
+      .limit(50)
+      .get();
+
+    evidencia = evidenciaDeItemCatalogado(
+      doc,
+      repeticoes.docs
+        .map((d) => d.data() as DocumentoComunicacao)
+        // O autor sai do DOCUMENTO em cada linha: o canal e compartilhado, e
+        // contar as falas dos outros como repeticao do denunciado seria acusar
+        // um pelo volume de quatro.
+        .filter((d) => d.autorUid === doc.autorUid)
+        .map((d) => ({ enviadaEm: d.enviadaEm }))
+    ) as unknown as Record<string, unknown>;
+  } else {
+    evidencia = evidenciaDeMensagem(
+      {
+        messageId: typeof messageId === "string" ? messageId : null,
+        roomId: typeof roomId === "string" ? roomId : null,
+        denunciadoUid,
+        atestadaPeloCliente: tipo === "mensagem" ? atestada : null,
+      },
+      comunicacaoDenunciada as DocumentoMensagem | null
+    ) as unknown as Record<string, unknown>;
+  }
 
   const resultado = await executarUmaVez(
     reportId,
@@ -646,34 +757,38 @@ function exigirMotorOuAdmin(req: CallableRequest): string {
 /// `enviarMensagemChat` recusa TODA mensagem. Falha fechada.
 export const definirCanalDeChat = onCall(opcoesCliente, async (req) => {
   const responsavel = exigirMotorOuAdmin(req);
-  const { canalId, superficie, participantes, aberto } = req.data ?? {};
+  const dados = (req.data ?? {}) as Record<string, unknown>;
 
-  const id = exigirIdSeguro(canalId, "canalId");
+  const id = exigirIdSeguro(dados.canalId, "canalId");
 
-  if (typeof superficie !== "string") {
-    throw new HttpsError("invalid-argument", "superficie e obrigatoria.");
-  }
+  // O AMBIENTE NAO VEM PRONTO. O que chega sao as DUAS DIMENSOES que o servidor
+  // de mesas ja fala (topologia e natureza competitiva), ambas fixadas na
+  // construcao do processo dele e nunca escolhidas por um jogador. A traducao
+  // para um tipo canonico — e dele para o ambiente — e do dominio, que espelha
+  // `functions-mesas/src/tipos.ts`.
+  const resolucao = dominio.resolverAmbiente({
+    tipoPartida: dados.tipoPartida,
+    categoriaCompetitiva: dados.categoriaCompetitiva,
+    modo: dados.modo,
+  });
 
-  // A superficie precisa ser uma que o DOMINIO conheca e libere. Aceitar string
-  // qualquer aqui deixaria o motor abrir canal fora da classificacao da §11, e a
-  // §11 seria letra morta.
-  const politicas = dominio.politicaDeSuperficies();
-  const politica = politicas.superficies.find((s) => s.superficie === superficie);
-  if (!politica) {
-    throw new HttpsError("invalid-argument", "superficie desconhecida.");
-  }
-  if (!politica.aceitaTextoLivre) {
-    throw new HttpsError("failed-precondition", "superficieNaoAceitaChat", {
-      recusa: "superficieNaoAceitaChat",
-      superficie,
+  if (!resolucao.ambiente) {
+    // Combinacao que a taxonomia nao reconhece — inclusive `privada` x
+    // `vip_ranqueada`, que seria sala fechada alimentando o Ranking.
+    throw new HttpsError("invalid-argument", "ambienteDesconhecido", {
+      recusa: "ambienteDesconhecido",
     });
   }
+  // NADA DE JULGAR COMUNICACAO AINDA. O modo definitivo so e conhecido depois —
+  // na Mesa Privada ele vem do documento da sala, e nos demais ambientes ele
+  // tem padrao. Julgar aqui, com o modo do pedido (que pode nem ter vindo),
+  // recusaria por `desligado` um canal que o padrao abriria.
 
-  if (!Array.isArray(participantes)) {
+  if (!Array.isArray(dados.participantes)) {
     throw new HttpsError("invalid-argument", "participantes e obrigatorio.");
   }
 
-  const normalizados = participantes.map((p) => {
+  let participantes = (dados.participantes as unknown[]).map((p) => {
     const item = (p ?? {}) as Record<string, unknown>;
     return {
       uid: exigirIdSeguro(item.uid, "participantes[].uid"),
@@ -681,26 +796,148 @@ export const definirCanalDeChat = onCall(opcoesCliente, async (req) => {
     };
   });
 
+  // ------------------------------------------------------------------------
+  // A MESA PRIVADA PRECISA EXISTIR NA AUTORIDADE DOS TIPOS DE MESA
+  // ------------------------------------------------------------------------
+  //
+  // Este bloco e a razao pela qual "declarar `privada`" nao concede texto
+  // livre. A §3 manda CONSUMIR a classificacao autoritativa da mesa, e e o que
+  // acontece aqui: a sala tem de estar registrada em `salasPrivadas/{codigo}`
+  // por `functions-mesas`, que so a registra para quem tem ASSINATURA ATIVA.
+  //
+  // Uma instancia de servidor mal configurada — ou adulterada — consegue
+  // declarar a topologia `privada`. Ela nao consegue inventar uma sala
+  // registrada por um assinante, e e por isso que a prova mora aqui e nao no
+  // campo que ela envia.
+  //
+  // O CODIGO DA SALA E USADO E DESCARTADO. Ele localiza a sala e o assento, e
+  // NAO e gravado no canal: o codigo e a chave de entrada da Mesa Privada, e um
+  // canal que o carregasse o entregaria a quem lesse o documento — inclusive
+  // dentro de uma denuncia. Por isso tambem ele nunca vai para o log.
+  let modo = typeof dados.modo === "string" ? dados.modo : "apenas_emotes";
+
+  if (resolucao.exigeSalaRegistrada) {
+    const codigo = exigirIdSeguro(dados.codigoDaSala, "codigoDaSala");
+
+    const sala = await db().collection(C_SALAS_PRIVADAS).doc(codigo).get();
+    if (!sala.exists) {
+      throw new HttpsError("failed-precondition", "salaPrivadaNaoRegistrada", {
+        recusa: "salaPrivadaNaoRegistrada",
+      });
+    }
+    const salaDados = sala.data() as Record<string, unknown>;
+    if (salaDados.encerradaEm) {
+      throw new HttpsError("failed-precondition", "salaPrivadaEncerrada", {
+        recusa: "salaPrivadaEncerrada",
+      });
+    }
+
+    // O MODO VEM DA SALA, e nao do pedido (§7.3: "A escolha devera ser validada
+    // pela autoridade. O estado nao podera ser alterado pelo convidado"). Quem
+    // escolheu foi o anfitriao, no momento de registrar a mesa, e a escolha foi
+    // validada la contra a politica dos tipos.
+    //
+    // AUSENTE NAO E `completo`: sala registrada antes desta OS nao tem o campo,
+    // e o dominio le ausencia como `desligado`. Chat fechado numa sala antiga e
+    // o desfecho correto — a alternativa seria conceder texto livre a partir de
+    // um campo que ninguem escreveu.
+    modo = typeof salaDados.modoDeChat === "string" ? salaDados.modoDeChat : "";
+
+    // E OS ASSENTOS PRECISAM SER ADMITIDOS. `assentosAdmitidos/{codigo}__{uid}`
+    // e a ancora que a autoridade dos tipos grava quando alguem passa pelo gate
+    // VIP. Quem nao tem essa ancora nao esta sentado para efeito de comunicacao:
+    // vira `fora_do_canal`, que nao fala e nao recebe.
+    //
+    // NAO se recusa o canal inteiro por causa de um assento: isso calaria a mesa
+    // por causa de uma pessoa. Rebaixa-se a pessoa.
+    const conferidos = await Promise.all(
+      participantes.map(async (p) => {
+        if (p.papel !== "jogador_sentado") return p;
+        const admitido = await db()
+          .collection(C_ASSENTOS_ADMITIDOS)
+          .doc(codigo + "__" + p.uid)
+          .get();
+        return admitido.exists ? p : { uid: p.uid, papel: "fora_do_canal" };
+      })
+    );
+    const rebaixados = conferidos.filter(
+      (p, k) => p.papel !== participantes[k].papel
+    ).length;
+    participantes = conferidos;
+    if (rebaixados > 0) {
+      logger.warn("assento sem admissao na mesa privada", {
+        canalId: id,
+        rebaixados,
+      });
+    }
+  }
+
+  // O modo declarado tem de ser POSSIVEL neste ambiente. `completo` fora da Mesa
+  // Privada e recusa nomeada, e nao degradacao silenciosa: a §7.3 pede que a
+  // escolha seja validada, e validar e poder recusar.
+  const conferencia = dominio.resolverAmbiente({
+    tipoPartida: dados.tipoPartida,
+    categoriaCompetitiva: dados.categoriaCompetitiva,
+    modo,
+  });
+  if (!conferencia.modoPermitidoNoAmbiente) {
+    throw new HttpsError("failed-precondition", "modoNaoPermitidoNoAmbiente", {
+      recusa: "modoNaoPermitidoNoAmbiente",
+      ambiente: resolucao.ambiente,
+      modo,
+    });
+  }
+  // E o canal so nasce se ele admitir ALGUMA comunicacao. Treino cai aqui, e
+  // tambem a mesa cujo anfitriao escolheu `desligado`: um canal que nao aceita
+  // nada e um documento que so serve para ser recusado depois, mensagem a
+  // mensagem. Recusar a DECLARACAO e mais barato e mais honesto.
+  if (!conferencia.aceitaComunicacao) {
+    throw new HttpsError("failed-precondition", "ambienteSemComunicacao", {
+      recusa: "ambienteSemComunicacao",
+      ambiente: resolucao.ambiente,
+      modo,
+    });
+  }
+
+  const politicas = dominio.politicaDeAmbientes();
+
   await db()
     .collection(C_CANAIS)
     .doc(id)
     .set({
       canalId: id,
-      superficie,
-      participantes: normalizados,
-      // Ausente vira FECHADO, igual ao dominio: um canal so aceita fala se alguem
-      // disser explicitamente que ele esta aberto.
-      aberto: aberto === true,
+      // A superficie DERIVA do ambiente, e nao e mais aceita do pedido. Sem
+      // isso, um canal poderia declarar `superficie: mesa_de_partida` com
+      // `ambiente: saguao_publico` e as duas classificacoes passariam a
+      // discordar sobre o mesmo canal.
+      superficie: resolucao.superficie,
+      ambiente: resolucao.ambiente,
+      modo,
+      participantes,
+      // Ausente vira FECHADO, igual ao dominio: um canal so aceita fala se
+      // alguem disser explicitamente que ele esta aberto.
+      aberto: dados.aberto === true,
       atualizadoEm: agoraUtc(),
       atualizadoPor: responsavel,
+      versaoDoCatalogo: politicas.versaoDoCatalogo,
+      versaoDoContrato: politicas.versaoDoContrato,
       esquema: politicas.esquema,
     });
 
-  logger.info("canal de chat declarado", {
+  logger.info(
+    "canal de comunicacao declarado",
+    registroSeguro({
+      canalId: id,
+      ambiente: resolucao.ambiente,
+      tipo: modo,
+    })
+  );
+  return {
+    definido: true,
     canalId: id,
-    aberto: aberto === true,
-  });
-  return { definido: true, canalId: id };
+    ambiente: resolucao.ambiente,
+    modo,
+  };
 });
 
 
@@ -729,8 +966,23 @@ export const definirCanalDeChat = onCall(opcoesCliente, async (req) => {
 interface ResultadoEnvio {
   enviada: true;
   jaEnviada: boolean;
-  mensagem: ReturnType<typeof projetarMensagem>;
+  mensagem: ReturnType<typeof projetarComunicacao>;
   destinatarios: string[];
+  /// Quem silenciou o autor. Vai para o transporte junto com `destinatarios`
+  /// porque o transporte precisa saber a quem NAO entregar — e nao vai para o
+  /// jogador por nenhum caminho.
+  silenciados: string[];
+}
+
+/// Le o estado de ritmo do autor.
+///
+/// Documento ausente e estado VAZIO, que e o estado de quem nunca falou. Nao ha
+/// caminho pelo qual a ausencia vire "ja falou demais" nem "esta bloqueado":
+/// dado que nao existe nao restringe, e dado ilegivel tambem nao — o dominio
+/// (`EstadoDeRitmo.fromJson`) devolve vazio para os dois casos.
+async function lerRitmo(uid: string): Promise<unknown> {
+  const doc = await db().collection(C_RITMO).doc(uid).get();
+  return doc.exists ? doc.data() : null;
 }
 
 async function executarEnvioDeMensagem(
@@ -743,22 +995,103 @@ async function executarEnvioDeMensagem(
 
   const usuarios = db().collection("users");
 
-  // LEITURA 1: canal, identidade publica e estado disciplinar do autor. Em
+  // A REPETICAO E RECONHECIDA ANTES DE TUDO.
+  //
+  // `messageId` deriva de autor + intencao (o dominio calcula; este arquivo nao
+  // faz digest nenhum). Se o documento JA EXISTE e descreve O MESMO PEDIDO, isto
+  // e um retry — e um retry converge no que foi gravado, sem passar pelo freio
+  // de ritmo, sem reler bloqueio e sem gravar nada.
+  //
+  // A ORDEM E O PONTO. Com o anti-spam antes, uma reconexao 200 ms depois
+  // levaria `ritmoExcedido` para uma mensagem que ja estava no banco: o cliente
+  // acharia que falhou, tentaria de novo, e a cada tentativa o freio apertaria.
+  // Quem repete nao esta inundando a mesa.
+  //
+  // "MESMO PEDIDO" e conferido campo a campo, e nao assumido: canal, tipo e o
+  // que foi dito. Um `intentId` REAPROVEITADO com outro conteudo NAO cai aqui —
+  // ele segue o caminho inteiro e encontra o conflito de idempotencia, que e a
+  // resposta certa para "voce ja usou esta intencao para outra coisa".
+  const { messageId: idPrevisto } = dominio.idDeMensagem({ autorUid, intentId });
+  const jaGravado = await db().collection(C_MENSAGENS).doc(idPrevisto).get();
+  if (jaGravado.exists) {
+    const doc = jaGravado.data() as DocumentoComunicacao;
+    const mesmoPedido =
+      doc.canalId === canalId &&
+      tipoDe(doc) === (typeof dados.tipo === "string" && dados.tipo
+        ? dados.tipo
+        : "texto_privado") &&
+      (doc.itemId ?? null) ===
+        (typeof dados.itemId === "string" ? dados.itemId : null) &&
+      (doc.conteudo ?? null) ===
+        (typeof dados.conteudo === "string" ? dados.conteudo.trim() : null);
+
+    if (mesmoPedido) {
+      logger.info(
+        "comunicacao repetida",
+        registroSeguro({
+          canalId,
+          ambiente: doc.ambiente,
+          tipo: tipoDe(doc),
+        })
+      );
+      return {
+        enviada: true,
+        jaEnviada: true,
+        mensagem: projetarComunicacao(doc),
+        destinatarios: Array.isArray(doc.destinatarios) ? doc.destinatarios : [],
+        silenciados: Array.isArray(doc.silenciados) ? doc.silenciados : [],
+      };
+    }
+
+    // MESMA INTENCAO, OUTRO PEDIDO. Nao e repeticao e nao e inundacao: e uma
+    // intencao gasta descrevendo outra coisa. Responder sucesso faria a
+    // mensagem pedida desaparecer com uma confirmacao na mao de quem pediu; e
+    // responder "muito rapido" (o que o freio diria, se chegasse antes)
+    // esconderia um defeito de cliente atras de um conselho de esperar.
+    //
+    // A barreira de `executarUmaVez` diz a MESMA coisa mais adiante, e continua
+    // valendo para a corrida entre duas chamadas simultaneas. Esta aqui e a que
+    // responde antes de qualquer leitura cara.
+    logger.info(
+      "intencao reaproveitada",
+      registroSeguro({ canalId, ambiente: doc.ambiente, tipo: tipoDe(doc) })
+    );
+    throw new HttpsError("failed-precondition", "intencaoReutilizada", {
+      recusa: "intencaoReutilizada",
+      familia: "forma",
+    });
+  }
+
+  // TIPO AUSENTE E `texto_privado`, e isso e compatibilidade deliberada com o
+  // transporte que ja existe: o servidor de partidas manda `conteudo` sem
+  // `tipo` desde a OS do Transporte. O que MUDA para ele nao e o formato do
+  // pedido — e a resposta, porque texto agora so passa na Mesa Privada.
+  const tipo =
+    typeof dados.tipo === "string" && dados.tipo ? dados.tipo : "texto_privado";
+  const ehCatalogado = tipo !== "texto_privado";
+
+  // LEITURA 1: canal, identidade publica, estado disciplinar e ritmo. Em
   // paralelo porque nenhuma depende da outra.
-  const [canalSnap, identidadeSnap, estadoSnap] = await Promise.all([
+  const [canalSnap, identidadeSnap, estadoSnap, ritmo] = await Promise.all([
     db().collection(C_CANAIS).doc(canalId).get(),
     db().collection(C_IDENTIDADES).doc(autorUid).get(),
     db().collection(COL_ESTADO).doc(autorUid).get(),
+    lerRitmo(autorUid),
   ]);
 
   const canalBruto = canalSnap.exists
     ? (canalSnap.data() as Record<string, unknown>)
     : null;
 
-  const canal: CanalDeChat | null = canalBruto
+  const canal: CanalDeComunicacao | null = canalBruto
     ? {
         canalId: String(canalBruto.canalId ?? canalId),
         superficie: String(canalBruto.superficie ?? ""),
+        // AUSENTE FICA AUSENTE. Um canal declarado antes desta OS nao tem
+        // ambiente, e o dominio recusa canal sem ambiente. Preencher aqui um
+        // padrao seria escolher, no TypeScript, a politica que a §2 decide.
+        ambiente: String(canalBruto.ambiente ?? ""),
+        modo: String(canalBruto.modo ?? ""),
         aberto: canalBruto.aberto === true,
         participantes: Array.isArray(canalBruto.participantes)
           ? (canalBruto.participantes as Record<string, unknown>[]).map((p) => ({
@@ -774,75 +1107,152 @@ async function executarEnvioDeMensagem(
     typeof publicIdBruto === "string" ? publicIdBruto : null;
 
   // O RELOGIO E CONGELADO AQUI, uma vez. Duas leituras do relogio na mesma
-  // operacao fariam a primeira checagem dizer "silenciado" e a segunda,
-  // milissegundos depois, dizer "livre" — o cuidado que o cabecalho de sancao.dart
-  // declara.
+  // operacao fariam a checagem de sancao dizer "silenciado" e a de ritmo, alguns
+  // milissegundos depois, medir outra janela.
   const agora = agoraUtc();
   const est = estadoSnap.data() ?? {};
   const vigente = (campo: string): boolean =>
     typeof est[campo] === "string" && agora < (est[campo] as string);
 
-  // LEITURA 2: bloqueio nas DUAS direcoes, por assento. Somente para quem esta
-  // sentado e nao e o autor — espectador nao recebe, entao nao ha par a consultar.
-  const assentos = (canal?.participantes ?? [])
-    .filter((p) => p.papel === "jogador_sentado" && p.uid !== autorUid)
+  // LEITURA 2: bloqueio nas DUAS direcoes e SILENCIO, por candidato.
+  //
+  // Numa mesa os candidatos sao os assentos; num saguao, os presentes. A lista
+  // sai do CANAL, nunca do pedido.
+  const candidatos = (canal?.participantes ?? [])
+    .filter(
+      (p) =>
+        (p.papel === "jogador_sentado" || p.papel === "presente") &&
+        p.uid !== autorUid
+    )
     .map((p) => p.uid);
 
-  const contatos: ParDeContato[] = await Promise.all(
-    assentos.map(async (uid) => {
-      const [ida, volta] = await Promise.all([
-        usuarios.doc(autorUid).collection("blocks").doc(uid).get(),
-        usuarios.doc(uid).collection("blocks").doc(autorUid).get(),
-      ]);
-      return { uid, autorBloqueou: ida.exists, bloqueouOAutor: volta.exists };
-    })
-  );
+  const [contatos, silenciaramOAutor] = await Promise.all([
+    Promise.all(
+      candidatos.map(async (uid) => {
+        const [ida, volta] = await Promise.all([
+          usuarios.doc(autorUid).collection("blocks").doc(uid).get(),
+          usuarios.doc(uid).collection("blocks").doc(autorUid).get(),
+        ]);
+        return { uid, autorBloqueou: ida.exists, bloqueouOAutor: volta.exists };
+      })
+    ),
+    // SILENCIO E DO OUVINTE. A pergunta e "este candidato silenciou o autor?",
+    // e por isso a leitura e em `users/{candidato}/mutes/{autor}` — a direcao
+    // inversa da que se leria por engano. O contrario ("o autor silenciou este
+    // candidato") e uma preferencia do autor sobre o que ELE ve, e nao tem
+    // efeito nenhum sobre o que ele manda.
+    Promise.all(
+      candidatos.map(async (uid) => {
+        const mute = await usuarios
+          .doc(uid)
+          .collection("mutes")
+          .doc(autorUid)
+          .get();
+        return mute.exists ? uid : null;
+      })
+    ).then((lista) => lista.filter((uid): uid is string => uid !== null)),
+  ]);
 
-  // A DECISAO. Nenhum `if` de politica antes desta linha decidiu se a mensagem
-  // existe: o que veio antes foi leitura e forma.
-  const veredito = dominio.avaliarEnvioChat({
+  // LEITURA 3: o direito VIP, SO quando o pedido e de item catalogado. Texto
+  // livre nao tem item premium, e ler o documento a toa acrescentaria uma
+  // leitura por linha de conversa.
+  //
+  // O DOCUMENTO ATRAVESSA INTEIRO E SEM INTERPRETACAO. Quem responde "tem VIP
+  // agora?" e `EntitlementVip.vigenteEm`, no dominio — a definicao unica do
+  // projeto. Um `doc.vipAtivo === true` aqui seria um segundo leitor de
+  // assinatura, e ele erraria no caso que mais importa: assinatura cancelada
+  // vigente tem `vipAtivo: true` ate o dia em que `expiraEm` fica no passado,
+  // sem que ninguem escreva nada.
+  const entitlement = ehCatalogado
+    ? ((await db().collection(C_ENTITLEMENTS).doc(autorUid).get()).data() ??
+      null)
+    : null;
+
+  // A DECISAO. Nenhum `if` de politica antes desta linha decidiu se a
+  // comunicacao existe: o que veio antes foi leitura e forma.
+  const veredito = dominio.avaliarComunicacao({
     autorUid,
     intentId,
+    tipo,
+    itemId: dados.itemId,
     conteudo: dados.conteudo,
-    superficie: dados.superficie,
     canal,
     sancao: {
       chatSilenciado: vigente("chatSilenciadoAte"),
       restricaoSocial: vigente("socialRestritoAte"),
-      // §8: suspensao TEMPORARIA tambem cala. `TipoSancao.suspensaoTemporaria`
-      // esta documentada como "impede entrar na aplicacao por um prazo", e quem
-      // nao entra nao fala. Ver `SancaoDoAutor.suspenso` no dominio para a lacuna
-      // que isto NAO fecha nas rotas sociais.
+      // §10: suspensao TEMPORARIA tambem cala. Ver `SancaoDoAutor.suspenso` no
+      // dominio para a lacuna que isto NAO fecha nas rotas sociais.
       suspenso: vigente("suspensoAte") || est.suspensaoPermanente === true,
     },
+    agora,
     contatos,
+    silenciaramOAutor,
     camposDoPayload,
     autorPublicId,
+    entitlement: entitlement as Record<string, unknown> | null,
+    ritmo,
   });
 
+  // O ESTADO DE RITMO E GRAVADO NOS DOIS DESFECHOS.
+  //
+  // Se so o aceito gravasse, uma rajada de pedidos RECUSADOS nao contaria como
+  // abuso — e o freio automatico da §6.5 nunca dispararia, porque nenhuma
+  // tentativa recusada teria deixado rastro. Quem inunda a mesa com pedidos
+  // invalidos inunda igual.
+  if (veredito.proximoRitmo) {
+    await db()
+      .collection(C_RITMO)
+      .doc(autorUid)
+      .set({ ...veredito.proximoRitmo, atualizadoEm: agora });
+  }
+
   if (!veredito.aceita) {
-    logger.info("mensagem de chat recusada", {
-      canalId,
-      recusa: veredito.recusa,
-      motivoContato: veredito.motivoContato,
-    });
+    logger.info(
+      "comunicacao recusada",
+      registroSeguro({
+        canalId,
+        ambiente: canal?.ambiente,
+        tipo,
+        recusa: veredito.recusa,
+        motivoDeRitmo: veredito.motivoDeRitmo,
+      })
+    );
     throw new HttpsError("failed-precondition", veredito.recusa ?? "recusada", {
       recusa: veredito.recusa,
+      // O motivo CATEGORICO, para quem traduz a recusa no fio sem conhecer cada
+      // nome. Ver `FamiliaDeRecusa` no dominio.
+      familia: veredito.familia,
       motivoContato: veredito.motivoContato,
+      motivoDeRitmo: veredito.motivoDeRitmo,
       camposProibidos: veredito.camposProibidos,
+      // Informacao sobre QUEM PEDIU, e so sobre ele: quando a propria tentativa
+      // volta a ser aceita. Nao revela nada de terceiro.
+      liberaEmMs: veredito.liberaEmMs,
     });
   }
 
   const messageId = veredito.messageId as string;
-  const documento: DocumentoMensagem = {
+  const canalConfirmado = canal as CanalDeComunicacao;
+  const documento: DocumentoComunicacao = {
     messageId,
-    canalId: (canal as CanalDeChat).canalId,
-    superficie: (canal as CanalDeChat).superficie,
+    canalId: canalConfirmado.canalId,
+    superficie: canalConfirmado.superficie,
+    ambiente: canalConfirmado.ambiente,
+    tipo: veredito.tipo as string,
     autorUid,
     autorPublicId: autorPublicId as string,
-    conteudo: veredito.conteudo as string,
+    conteudo: veredito.conteudo ?? null,
+    itemId: veredito.itemId ?? null,
+    chaveDeLocalizacao: veredito.chaveDeLocalizacao ?? null,
+    fallbackOficial: veredito.fallbackOficial ?? null,
     destinatarios: veredito.destinatarios ?? [],
+    silenciados: veredito.silenciados ?? [],
     enviadaEm: agora,
+    // §7.5. O campo e a metade do mecanismo de retencao; a outra e a politica de
+    // TTL do projeto, que e configuracao e nao deploy de codigo.
+    expiraEm: expiraEmDe(agora),
+    versaoDoCatalogo: veredito.versaoDoCatalogo,
+    versaoDoContrato: veredito.versaoDoContrato,
     esquema: veredito.esquema,
   };
 
@@ -852,10 +1262,10 @@ async function executarEnvioDeMensagem(
       tarefa: "enviarMensagemChat",
       ator: autorUid,
       alvo: documento.canalId,
-      // O que a chave NAO carrega. Sem isto, o mesmo `intentId` reaproveitado com
-      // OUTRO texto encontraria a chave reservada e a autoridade responderia
-      // sucesso sem gravar a mensagem nova — a mensagem pedida desapareceria com
-      // uma confirmacao na mao de quem pediu.
+      // O que a chave NAO carrega. Sem isto, o mesmo `intentId` reaproveitado
+      // com OUTRO item encontraria a chave reservada e a autoridade responderia
+      // sucesso sem gravar nada — o pedido sumiria com uma confirmacao na mao de
+      // quem pediu.
       impressao: veredito.impressao as string,
     },
     async (tx) => {
@@ -864,14 +1274,14 @@ async function executarEnvioDeMensagem(
     }
   );
 
-  // REPETICAO: a mensagem ja existia. Devolver `documento` (montado agora) seria
-  // devolver um `enviadaEm` diferente do gravado, e o cliente veria a mesma
-  // mensagem com dois horarios. Lemos o que esta gravado e projetamos AQUELE.
+  // REPETICAO: a comunicacao ja existia. Devolver `documento` (montado agora)
+  // seria devolver um `enviadaEm` diferente do gravado, e o cliente veria a
+  // mesma mensagem com dois horarios. Lemos o que esta gravado e projetamos
+  // AQUELE.
   //
-  // O `destinatarios` tambem sai do GRAVADO, e nao do veredito recem-calculado:
-  // um retry depois de alguem bloquear teria uma lista nova, e reentregar por ela
-  // faria a MESMA mensagem alcancar um conjunto diferente de pessoas. A entrega
-  // repetida segue a decisao da vez em que a mensagem nasceu (§15).
+  // `destinatarios` e `silenciados` tambem saem do GRAVADO: um retry depois de
+  // alguem bloquear (ou silenciar) teria listas novas, e reentregar por elas
+  // faria a MESMA mensagem alcancar um conjunto diferente de pessoas.
   if (!resultado.executou) {
     const gravado = await db().collection(C_MENSAGENS).doc(messageId).get();
     if (!gravado.exists) {
@@ -881,28 +1291,37 @@ async function executarEnvioDeMensagem(
       logger.error("reserva de chat sem mensagem gravada", { messageId });
       throw new HttpsError("internal", "mensagem reservada e ausente.");
     }
-    const doc = gravado.data() as DocumentoMensagem;
+    const doc = gravado.data() as DocumentoComunicacao;
     return {
       enviada: true,
       jaEnviada: true,
-      mensagem: projetarMensagem(doc),
+      mensagem: projetarComunicacao(doc),
       destinatarios: Array.isArray(doc.destinatarios) ? doc.destinatarios : [],
+      silenciados: Array.isArray(doc.silenciados) ? doc.silenciados : [],
     };
   }
 
-  logger.info("mensagem de chat gravada", {
-    canalId: documento.canalId,
-    destinatarios: documento.destinatarios.length,
-  });
+  logger.info(
+    "comunicacao gravada",
+    registroSeguro({
+      canalId: documento.canalId,
+      ambiente: documento.ambiente,
+      tipo: tipoDe(documento),
+      itemId: documento.itemId ?? undefined,
+      destinatarios: documento.destinatarios.length,
+      silenciados: (documento.silenciados ?? []).length,
+    })
+  );
 
   return {
     enviada: true,
     jaEnviada: false,
-    // `projetarMensagem` e lista de PERMISSAO e passa por `exigirEntregaSegura`:
-    // `autorUid` e `destinatarios` nao saem daqui, e um campo novo no documento
-    // nao vaza por esquecimento.
-    mensagem: projetarMensagem(documento),
+    // `projetarComunicacao` e lista de PERMISSAO e passa por
+    // `exigirEntregaSegura`: `autorUid`, `destinatarios` e `silenciados` nao
+    // saem daqui, e um campo novo no documento nao vaza por esquecimento.
+    mensagem: projetarComunicacao(documento),
     destinatarios: documento.destinatarios,
+    silenciados: documento.silenciados ?? [],
   };
 }
 
@@ -980,5 +1399,186 @@ export const enviarMensagemChatPeloMotor = onCall(opcoesCliente, async (req) => 
     jaEnviada: r.jaEnviada,
     mensagem: r.mensagem,
     destinatarios: r.destinatarios,
+    // Quem silenciou o autor. E lista de UID e existe pelo mesmo motivo de
+    // `destinatarios`: o transporte precisa saber a quem nao entregar. As duas
+    // param no servidor — o pacote que chega ao jogador e somente `mensagem`.
+    silenciados: r.silenciados,
   };
 });
+
+
+// ================================================== EVENTO DE SISTEMA (§8)
+//
+// "Usuario comum nao podera fabricar 'Voce recebeu um presente', 'Sou
+// moderador', 'Jogador foi banido', 'Pegue seu presente'."
+//
+// A garantia NAO e uma checagem de texto: e a inexistencia de caminho. O
+// pedido do jogador (`enviarMensagemChatPeloMotor`) nao tem campo `eventoId`,
+// e o dominio recusa `tipo: evento_de_sistema` vindo dele
+// (`eventoDeSistemaSemAutoridade`). O evento so nasce por ESTA porta, que exige
+// o claim, e so com um id que existe no catalogo de eventos.
+//
+// O EVENTO NAO TEM AUTOR. `autorUid` e `autorPublicId` sao `null` no documento
+// e ausentes na projecao — e essa ausencia e o que o cliente le para saber que
+// nao ha uma pessoa por tras. Um evento com autor seria indistinguivel de uma
+// fala, e a §8 seria decorativa.
+//
+// ESTA OS NAO CRIA PRESENTE, nao move carteira e nao concede assinatura. Quem
+// produz o FATO e a autoridade de Presentes, de Moderacao ou de Salas; o que
+// nasce aqui e o AVISO daquele fato, localizado pelo cliente.
+export const emitirEventoDeSistema = onCall(opcoesCliente, async (req) => {
+  exigirMotorOuAdmin(req);
+  const dados = (req.data ?? {}) as Record<string, unknown>;
+
+  const intentId = exigirIdSeguro(dados.intentId, "intentId");
+  const canalId = exigirIdSeguro(dados.canalId, "canalId");
+
+  const canalSnap = await db().collection(C_CANAIS).doc(canalId).get();
+  const canalBruto = canalSnap.exists
+    ? (canalSnap.data() as Record<string, unknown>)
+    : null;
+
+  const canal: CanalDeComunicacao | null = canalBruto
+    ? {
+        canalId: String(canalBruto.canalId ?? canalId),
+        superficie: String(canalBruto.superficie ?? ""),
+        ambiente: String(canalBruto.ambiente ?? ""),
+        modo: String(canalBruto.modo ?? ""),
+        aberto: canalBruto.aberto === true,
+        participantes: Array.isArray(canalBruto.participantes)
+          ? (canalBruto.participantes as Record<string, unknown>[]).map((x) => ({
+              uid: String(x?.uid ?? ""),
+              papel: String(x?.papel ?? "fora_do_canal"),
+            }))
+          : [],
+      }
+    : null;
+
+  const veredito = dominio.avaliarEventoDeSistema({
+    eventoId: dados.eventoId,
+    canal,
+    intentId,
+    // Decidido AQUI, contra o claim que `exigirMotorOuAdmin` ja conferiu. Nao
+    // e lido do payload em caminho nenhum.
+    autoridadeConfirmada: true,
+  });
+
+  if (!veredito.aceita) {
+    logger.info(
+      "evento de sistema recusado",
+      registroSeguro({
+        canalId,
+        ambiente: canal?.ambiente,
+        recusa: veredito.recusa,
+      })
+    );
+    throw new HttpsError("failed-precondition", veredito.recusa ?? "recusado", {
+      recusa: veredito.recusa,
+    });
+  }
+
+  const agora = agoraUtc();
+  const messageId = veredito.messageId as string;
+  const canalConfirmado = canal as CanalDeComunicacao;
+
+  const documento: DocumentoComunicacao = {
+    messageId,
+    canalId: canalConfirmado.canalId,
+    superficie: canalConfirmado.superficie,
+    ambiente: canalConfirmado.ambiente,
+    tipo: veredito.tipo as string,
+    // SEM DONO. Ver o cabecalho deste bloco.
+    autorUid: null,
+    autorPublicId: null,
+    conteudo: null,
+    itemId: veredito.itemId ?? null,
+    chaveDeLocalizacao: veredito.chaveDeLocalizacao ?? null,
+    fallbackOficial: veredito.fallbackOficial ?? null,
+    destinatarios: veredito.destinatarios ?? [],
+    silenciados: [],
+    enviadaEm: agora,
+    expiraEm: expiraEmDe(agora),
+    versaoDoCatalogo: veredito.versaoDoCatalogo,
+    versaoDoContrato: veredito.versaoDoContrato,
+    esquema: veredito.esquema,
+  };
+
+  const resultado = await executarUmaVez(
+    messageId,
+    {
+      tarefa: "emitirEventoDeSistema",
+      ator: "sistema",
+      alvo: documento.canalId,
+      impressao: veredito.impressao as string,
+    },
+    async (tx) => {
+      tx.create(db().collection(C_MENSAGENS).doc(messageId), documento);
+      return { messageId };
+    }
+  );
+
+  if (!resultado.executou) {
+    const gravado = await db().collection(C_MENSAGENS).doc(messageId).get();
+    if (!gravado.exists) {
+      logger.error("reserva de evento sem documento gravado", { messageId });
+      throw new HttpsError("internal", "evento reservado e ausente.");
+    }
+    const doc = gravado.data() as DocumentoComunicacao;
+    return {
+      emitido: true,
+      jaEmitido: true,
+      mensagem: projetarComunicacao(doc),
+      destinatarios: Array.isArray(doc.destinatarios) ? doc.destinatarios : [],
+    };
+  }
+
+  logger.info(
+    "evento de sistema emitido",
+    registroSeguro({
+      canalId: documento.canalId,
+      ambiente: documento.ambiente,
+      tipo: documento.tipo,
+      itemId: documento.itemId ?? undefined,
+      destinatarios: documento.destinatarios.length,
+    })
+  );
+
+  return {
+    emitido: true,
+    jaEmitido: false,
+    mensagem: projetarComunicacao(documento),
+    destinatarios: documento.destinatarios,
+  };
+});
+
+// ====================================================== CATALOGO (§6.2)
+//
+/// O catalogo autoritativo e a matriz de ambientes, para o cliente.
+///
+/// SO LEITURA, e sem filtro vindo do pedido. Duas razoes para devolver o
+/// catalogo INTEIRO em vez de "o que voce pode usar":
+///
+///   1. o que o jogador PODE usar depende do ambiente em que ele estiver
+///      daqui a um minuto, e de um direito que pode expirar no meio da
+///      partida. Uma lista personalizada seria uma foto que envelhece;
+///   2. a decisao continua sendo tomada no ENVIO, contra o direito vigente
+///      naquele instante. Se a tela mostrar um item premium a quem nao tem
+///      VIP, o pior que acontece e uma recusa nomeada — e nao um envio.
+///
+/// O cliente e quem decide como apresentar. Esta OS nao desenha tela.
+export const consultarCatalogoDeComunicacao = onCall(
+  opcoesCliente,
+  async (req) => {
+    exigirAutenticacao(req);
+    const catalogo = dominio.catalogo();
+    const politica = dominio.politicaDeAmbientes();
+    return {
+      versao: catalogo.versao,
+      itens: catalogo.itens,
+      eventosDeSistema: catalogo.eventosDeSistema,
+      ambientes: politica.ambientes,
+      ritmo: politica.ritmo,
+      versaoDoContrato: politica.versaoDoContrato,
+    };
+  }
+);

@@ -642,6 +642,25 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "//": "Denuncia de fala catalogada: as repeticoes do MESMO item no MESMO canal, numa janela estreita em volta do evento denunciado. A §9.5 da OS de Comunicacao Controlada pede quantidade E padrao de repeticao como evidencia minima — uma fala do catalogo nunca e ofensiva por si, o que ofende e a inundacao. O autor NAO entra no indice: ele e filtrado em memoria sobre um teto de 50 documentos, porque acrescentar um quarto campo encareceria a escrita de TODA mensagem para servir a uma consulta que so acontece quando alguem denuncia. [origem: comunicacao-controlada/denuncia]",
+      "collectionGroup": "chatMessages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "canalId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "itemId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "enviadaEm",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "//fieldOverrides": "ERA VAZIO DE PROPOSITO, e deixou de ser pela OS de Exclusao de Conta. O raciocinio original continua valendo e vale a pena preserva-lo: as consultas de campo unico que a rastreabilidade usa — historico do jogador ordenado por `data` em users/{uid}/matchHistory, eventos de uma partida ordenados por `emServidor` em matches/{id}/events, e sinais de uma partida por `matchId` — sao servidas pelos indices automaticos de campo unico do Firestore, e declara-las aqui seria criar indice que o Firestore ja mantem. O QUE MUDOU: a exclusao de conta precisa achar as referencias ao jogador excluido dentro das contas de OUTRAS pessoas, e essas consultas sao COLLECTION GROUP sobre subcolecao. O indice automatico de campo unico cobre o escopo de colecao; o de grupo de colecao NAO e garantido por ele, e uma consulta sem indice e recusada em producao — a exclusao falharia na etapa de moderacao, em producao, e so ali. As duas entradas abaixo existem para que isso nao aconteca. Ver docs/OS-RASTREABILIDADE-PARTIDAS.md, secao Indices, para os indices RECOMENDADOS que nao foram criados porque a consulta correspondente ainda nao existe.",

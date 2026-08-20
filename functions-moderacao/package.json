@@ -11,9 +11,10 @@
     "build": "tsc",
     "lint": "tsc --noEmit",
     "//test": "Compila primeiro porque o alvo do teste e o JA compilado (lib/idempotency.js, lib/chat.js). Nao precisa do domain_bundle: os testes nao carregam index.js, so os modulos PUROS. Alvos explicitos, e nao `node --test test/`: um arquivo novo passaria a rodar sem ninguem decidir, e um renomeado sairia da suite em silencio.",
-    "test": "tsc && node --test test/idempotencia.test.js test/chat.test.js test/contrato.test.js",
+    "test": "tsc && node --test test/idempotencia.test.js test/chat.test.js test/contrato.test.js test/comunicacao.test.js test/espelho.test.js",
+    "//test-concurrency": "EM SERIE, e nao por gosto: os dois arquivos gravam em `chatMessages`, e ha casos que medem a colecao ANTES e DEPOIS de uma rajada (INT-C-02). Em paralelo, a mensagem de um arquivo cai no meio da medicao do outro e a concorrencia parece ter duplicado. O node roda arquivos em paralelo por padrao.",
     "//test:emulador": "A integracao REAL: autenticacao, transacao, retry e concorrencia de `enviarMensagemChat`. Exige `npm run build:domain` antes (o index.js carrega o bundle do dominio) e sobe Firestore + Auth + Functions. Fica FORA de `npm test` de proposito: `npm test` nao pode depender de emulador nem de `dart compile js`.",
-    "test:emulador": "cd .. && firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \"cd functions-moderacao && node --test test/integracao.chat.emulador.test.js\"",
+    "test:emulador": "cd .. && firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \"cd functions-moderacao && node --test --test-concurrency=1 test/integracao.chat.emulador.test.js test/integracao.comunicacao.emulador.test.js\"",
     "serve": "npm run build && firebase emulators:start --only functions:moderacao",
     "deploy": "firebase deploy --only functions:moderacao"
   },

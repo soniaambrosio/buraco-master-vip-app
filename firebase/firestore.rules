@@ -787,6 +787,37 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // RITMO DE COMUNICACAO — o freio anti-spam (§6.5 da OS de Comunicacao
+    // Controlada)
+    // ---------------------------------------------------------------------
+    // NEM LEITURA, NEM ESCRITA, nem para o dono do documento.
+    //
+    // ESCRITA e obvia: quem pudesse gravar aqui zeraria o proprio contador de
+    // rajada, e o freio inteiro viraria decoracao.
+    //
+    // LEITURA e menos obvia, e igualmente decidida. O documento guarda o
+    // historico recente de ENVIOS do jogador (instante e id de item), e parece
+    // inofensivo porque e dele mesmo. So que a autoridade tambem grava aqui o
+    // bloqueio temporario por abuso — e liberar a leitura entregaria ao cliente
+    // o instante exato em que o freio solta, que e o que transforma um freio num
+    // cronometro para automatizar em volta dele.
+    //
+    // O QUE O JOGADOR PRECISA SABER volta na RESPOSTA da chamada, no campo
+    // `liberaEmMs`: e informacao sobre o proprio pedido dele, e chega sem abrir
+    // a colecao para ninguem.
+    //
+    // COLECAO PROPRIA, e nao um campo em `playerModeration`: aquele documento e
+    // o estado DISCIPLINAR, com responsavel e motivo. Contagem de rajada nao e
+    // disciplina, e guardar as duas coisas juntas faria toda fala reescrever o
+    // registro disciplinar do jogador.
+    //
+    // Admin le, porque investigar abuso e ler o padrao de envio.
+    match /chatRitmo/{uid} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
     // Relacao social do jogador — subcolecoes de `users/{uid}`
     // ---------------------------------------------------------------------
     // Este e um SEGUNDO bloco `match /users/{uid}`, e nao um acrescimo ao do

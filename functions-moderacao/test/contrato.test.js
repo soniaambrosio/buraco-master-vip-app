@@ -48,7 +48,7 @@ const FONTE = fs.readFileSync(path.join(__dirname, "..", "src", "index.ts"), "ut
  * Normalizado em LF: sem isso a mesma arvore reprovaria no Windows (CRLF do
  * autocrlf) e passaria no CI.
  */
-const DIGEST_CONTRATO = "08365398cad454c18f04c6270db4152b022df32bf50d8d9f194d9cde6ed74ced";
+const DIGEST_CONTRATO = "a3ccdbab0730d807c8e954eee3e47d3e2c7b48933fcc1abcac01b5d09c2a2c23";
 
 const contrato = JSON.parse(fs.readFileSync(CAMINHO_CONTRATO, "utf8"));
 
@@ -104,24 +104,78 @@ test("CTA-A-03 a regiao das Functions e a do contrato", () => {
 });
 
 test("CTA-A-04 a projecao publica tem EXATAMENTE os campos do contrato", () => {
-  // A lista fechada mora em `chat.ts` (`projetarMensagem`). O contrato a repete
+  // A lista fechada mora em `comunicacao.ts` (`projetarComunicacao`), que e a
+  // projecao PRODUTIVA desde a OS de Comunicacao Controlada. O contrato a repete
   // para o servidor poder afirmar o formato do fio; as duas nao podem divergir.
-  const { projetarMensagem } = require("../lib/chat.js");
-  const projecao = projetarMensagem({
+  //
+  // O documento de teste e o CASO MAXIMO de proposito — texto E item, autor E
+  // catalogo — porque a lista do contrato e a uniao dos campos possiveis. Um
+  // documento minimo omitiria campos opcionais e a comparacao passaria por
+  // ausencia, que e o modo classico de uma assercao de igualdade mentir.
+  const { projetarComunicacao } = require("../lib/comunicacao.js");
+  const projecao = projetarComunicacao({
     messageId: "m",
     canalId: "c",
-    superficie: "s",
+    superficie: "mesa_de_partida",
+    ambiente: "mesa_privada",
+    tipo: "texto_privado",
     autorUid: "uidInterno",
     autorPublicId: "PUB",
     conteudo: "t",
+    itemId: "elogiar_boa_jogada_01",
+    chaveDeLocalizacao: "comunicacao.fala.elogiar_boa_jogada_01",
+    fallbackOficial: "Boa jogada!",
     destinatarios: ["uidOutro"],
+    silenciados: ["uidTerceiro"],
     enviadaEm: "2026-01-01T00:00:00.000Z",
+    expiraEm: "2026-01-31T00:00:00.000Z",
+    versaoDoCatalogo: 1,
+    versaoDoContrato: 1,
     esquema: 1,
   });
   assert.deepEqual(
     Object.keys(projecao).sort(),
     contrato.projecaoPublica.campos.slice().sort()
   );
+});
+
+test("CTA-A-05 a projecao NAO carrega o que e interno", () => {
+  // O espelho do caso acima, e o que importa de verdade: a lista do contrato e
+  // fechada, mas uma lista pode estar certa e a funcao ainda vazar por um campo
+  // que ninguem pensou em listar. Aqui a pergunta e a inversa — nenhum dos tres
+  // campos internos aparece, em nenhum tipo de comunicacao.
+  const { projetarComunicacao } = require("../lib/comunicacao.js");
+  for (const tipo of ["texto_privado", "fala_catalogada", "evento_de_sistema"]) {
+    const p = projetarComunicacao({
+      messageId: "m",
+      canalId: "c",
+      superficie: "mesa_de_partida",
+      ambiente: "mesa_publica",
+      tipo,
+      autorUid: tipo === "evento_de_sistema" ? null : "uidInterno",
+      autorPublicId: tipo === "evento_de_sistema" ? null : "PUB",
+      conteudo: "t",
+      itemId: "emoji_joia_01",
+      destinatarios: ["uidOutro"],
+      silenciados: ["uidTerceiro"],
+      enviadaEm: "2026-01-01T00:00:00.000Z",
+      versaoDoCatalogo: 1,
+      versaoDoContrato: 1,
+      esquema: 1,
+    });
+    for (const proibido of ["autorUid", "destinatarios", "silenciados", "expiraEm"]) {
+      assert.equal(proibido in p, false, tipo + " vazou " + proibido);
+    }
+    // Evento de sistema nao tem dono, e a AUSENCIA e o contrato.
+    assert.equal(
+      "autorPublicId" in p,
+      tipo !== "evento_de_sistema",
+      tipo + ": autorPublicId no lugar errado"
+    );
+    // Conteudo so em texto: numa fala catalogada a frase pronta mataria a
+    // localizacao, porque o cliente renderizaria o texto que chegou.
+    assert.equal("conteudo" in p, tipo === "texto_privado");
+  }
 });
 
 // ===========================================================================
@@ -144,12 +198,16 @@ test("CTA-B-02 nenhum adaptador reimplementa a decisao", () => {
   // ajuste feito de um lado so.
   const proibidos = [
     'collection("blocks")',
+    'collection("mutes")',
     "avaliarEnvioChat",
+    "avaliarComunicacao",
     "C_MENSAGENS",
     "executarUmaVez",
     "projetarMensagem",
+    "projetarComunicacao",
     "COL_ESTADO",
     "C_CANAIS",
+    "C_RITMO",
   ];
   for (const nome of [
     contrato.funcoes.enviarPeloMotor,
@@ -173,12 +231,18 @@ test("CTA-B-03 o nucleo e quem le bloqueio, sancao, canal e identidade", () => {
   const nucleo = CODIGO.slice(i, CODIGO.indexOf("export const ", i));
   for (const esperado of [
     'collection("blocks")',
-    "avaliarEnvioChat",
+    // `avaliarComunicacao` e a porta que ENVOLVE `avaliarEnvioChat` desde a OS
+    // de Comunicacao Controlada. Exigir a antiga aqui seria exigir que o nucleo
+    // chamasse o dominio do chat DIRETO — pulando a matriz da §2, que e a unica
+    // coisa que impede texto livre fora da Mesa Privada.
+    "avaliarComunicacao",
+    'collection("mutes")',
     "C_CANAIS",
     "C_IDENTIDADES",
     "COL_ESTADO",
+    "C_RITMO",
     "executarUmaVez",
-    "projetarMensagem",
+    "projetarComunicacao",
   ]) {
     assert.ok(nucleo.includes(esperado), "o nucleo deveria conter " + esperado);
   }

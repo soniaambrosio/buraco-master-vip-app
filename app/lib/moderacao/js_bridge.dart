@@ -25,6 +25,12 @@ import 'dart:js_interop_unsafe';
 import '../chat/mensagem.dart';
 import '../chat/porta.dart';
 import '../chat/superficie.dart';
+import '../comunicacao/ambiente.dart';
+import '../comunicacao/catalogo.dart';
+import '../comunicacao/evento.dart';
+import '../comunicacao/limites.dart';
+import '../comunicacao/porta.dart';
+import '../social/identidade_publica.dart';
 import 'denuncia.dart';
 import 'relacao_social.dart';
 import 'sancao.dart';
@@ -310,6 +316,231 @@ String politicaDeSuperficiesJson(String json) => jsonEncode({
       'esquema': kEsquemaChat,
     });
 
+// -------------------------------------------------------------- comunicacao
+//
+// A OS de Comunicacao Controlada acrescenta QUATRO portas a esta ponte, e
+// nenhuma delas decide coisa alguma aqui: a decisao inteira mora em
+// app/lib/comunicacao/porta.dart, e o que existe abaixo e conversao de tipo.
+//
+// A porta do chat livre (`avaliarEnvioChat`) CONTINUA exportada e continua sendo
+// chamada — ela e a autoridade sobre texto, e `avaliarComunicacao` a consome. Nao
+// se remove um ingresso provado para pendurar outro no lugar.
+
+/// Reconstroi o canal COM AMBIENTE.
+///
+/// `null` quando o documento nao existe, quando a superficie e desconhecida ou
+/// quando o AMBIENTE e desconhecido — e as tres viram
+/// `RecusaMensagem.canalDesconhecido` na porta. Ambiente ilegivel nao vira
+/// "publica": um canal cujo ambiente ninguem sabe ler nao autoriza nada.
+CanalDeComunicacao? _canalDeComunicacao(Object? bruto) {
+  if (bruto is! Map) return null;
+  final m = bruto.cast<String, Object?>();
+
+  final base = _canal(bruto);
+  if (base == null) return null;
+
+  final ambiente = AmbienteDeComunicacao.porWire(m['ambiente']);
+  if (ambiente == null) return null;
+
+  return CanalDeComunicacao(
+    canal: base,
+    ambiente: ambiente,
+    // Ausente e desconhecido viram `desligado` (ver `modoPorWire`). Um canal sem
+    // modo declarado nao concede comunicacao nenhuma.
+    modo: modoPorWire(m['modo']),
+  );
+}
+
+DateTime _agora(Object? v) {
+  if (v is String) {
+    final t = DateTime.tryParse(v);
+    if (t != null) return t.toUtc();
+  }
+  // Sem instante nao ha decisao temporal possivel — e inventar `DateTime.now()`
+  // aqui furaria a disciplina de relogio unico da operacao. A epoca faz toda
+  // janela de ritmo parecer vencida e todo direito parecer expirado: o desfecho
+  // conservador nas duas contas.
+  return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+}
+
+String avaliarComunicacaoJson(String json) {
+  final e = _entrada(json);
+
+  final contatos = <ParDeContato>[];
+  for (final item in (e['contatos'] as List?) ?? const []) {
+    if (item is! Map) continue;
+    final c = item.cast<String, Object?>();
+    final uid = c['uid'];
+    if (uid is! String) continue;
+    contatos.add(ParDeContato(
+      uid: uid,
+      autorBloqueou: c['autorBloqueou'] == true,
+      bloqueouOAutor: c['bloqueouOAutor'] == true,
+    ));
+  }
+
+  final silenciaram = <String>[];
+  for (final uid in (e['silenciaramOAutor'] as List?) ?? const []) {
+    if (uid is String) silenciaram.add(uid);
+  }
+
+  final campos = <String>[];
+  for (final k in (e['camposDoPayload'] as List?) ?? const []) {
+    if (k is String) campos.add(k);
+  }
+
+  final s = (e['sancao'] as Map?)?.cast<String, Object?>() ?? const {};
+
+  final veredito = avaliarComunicacao(
+    autorUid: (e['autorUid'] as String?) ?? '',
+    intentId: (e['intentId'] as String?) ?? '',
+    tipoPedido: e['tipo'],
+    itemIdPedido: e['itemId'],
+    conteudoBruto: e['conteudo'],
+    canal: _canalDeComunicacao(e['canal']),
+    sancao: SancaoDoAutor(
+      chatSilenciado: s['chatSilenciado'] == true,
+      restricaoSocial: s['restricaoSocial'] == true,
+      suspenso: s['suspenso'] == true,
+    ),
+    agora: _agora(e['agora']),
+    contatos: contatos,
+    silenciaramOAutor: silenciaram,
+    camposDoPayload: campos,
+    autorPublicId: e['autorPublicId'] as String?,
+    // O documento de `playerEntitlements/{uid}` COMO ESTA. Quem decide vigencia
+    // e `EntitlementVip.vigenteEm`, dentro da porta.
+    entitlementBruto: (e['entitlement'] as Map?)?.cast<String, Object?>(),
+    ritmo: EstadoDeRitmo.fromJson(e['ritmo']),
+    versaoDeCatalogoDoCliente:
+        (e['versaoDeCatalogoDoCliente'] as num?)?.toInt() ?? kVersaoDoCatalogo,
+  );
+
+  return jsonEncode(veredito.toJson());
+}
+
+String avaliarEventoDeSistemaJson(String json) {
+  final e = _entrada(json);
+  return jsonEncode(avaliarEventoDeSistema(
+    eventoIdPedido: e['eventoId'],
+    canal: _canalDeComunicacao(e['canal']),
+    intentId: (e['intentId'] as String?) ?? '',
+    // Decidido pelo EXECUTOR (claim `motorDePartidas` ou `admin`), nunca lido do
+    // payload de um jogador. Ausente e `false`.
+    autoridadeConfirmada: e['autoridadeConfirmada'] == true,
+  ).toJson());
+}
+
+/// A MATRIZ da §2, exposta inteira.
+///
+/// Existe para que o teste do TypeScript e o laudo leiam a MESMA tabela que a
+/// porta aplica, em vez de uma segunda copia em prosa — o mesmo motivo de
+/// [politicaDeSuperficiesJson].
+String politicaDeAmbientesJson(String json) => jsonEncode({
+      'ambientes': [
+        for (final a in AmbienteDeComunicacao.values)
+          {
+            'ambiente': a.wire,
+            'ehMesa': a.ehMesa,
+            'ehSaguao': a.ehSaguao,
+            'modos': [
+              for (final m in ModoDeComunicacao.values)
+                {
+                  'modo': m.wire,
+                  'permitidoNoAmbiente': modoPermitidoNoAmbiente(a, m),
+                  ...permissaoDe(a, m).toJson(),
+                },
+            ],
+          },
+      ],
+      'tiposDeMesa': {
+        for (final t in const [
+          kTipoMesaPublica,
+          kTipoMesaVipRanqueada,
+          kTipoMesaPrivada,
+          kTipoMesaTreino,
+        ])
+          t: ambienteDeTipoDeMesa(t)?.wire,
+      },
+      'ritmo': ConfiguracaoDeRitmo.padrao.toJson(),
+      'versaoDoCatalogo': kVersaoDoCatalogo,
+      'versaoDoContrato': kVersaoContratoComunicacao,
+      'esquema': kEsquemaComunicacao,
+    });
+
+/// O `messageId` derivado de autor + intencao, e nada mais.
+///
+/// EXISTE PARA A REPETICAO, e nao por conveniencia. O executor precisa saber,
+/// ANTES de decidir qualquer coisa, se este pedido ja virou mensagem — porque
+/// um retry nao pode ser barrado pelo anti-spam.
+///
+/// A derivacao continua sendo do dominio: o executor nao calcula digest nenhum.
+String idDeMensagemJson(String json) {
+  final e = _entrada(json);
+  return jsonEncode({
+    'messageId': mensagemIdDe(
+      autorUid: (e['autorUid'] as String?) ?? '',
+      intentId: (e['intentId'] as String?) ?? '',
+    ),
+  });
+}
+
+/// Resolve o AMBIENTE a partir do que o servidor de mesas declara.
+///
+/// Existe para que `definirCanalDeChat` (TypeScript) nao carregue uma copia da
+/// tabela de traducao. O TypeScript le documentos e grava; a tabela mora no
+/// dominio, e o teste de espelho a amarra a `functions-mesas/src/tipos.ts`.
+///
+/// Devolve tambem `exigeSalaRegistrada`: quando o ambiente resolvido for a Mesa
+/// Privada, o executor AINDA precisa encontrar a sala em `salasPrivadas` antes
+/// de conceder o ambiente. Sinalizar isso aqui evita que o executor precise
+/// saber qual ambiente e especial.
+String resolverAmbienteJson(String json) {
+  final e = _entrada(json);
+  final tipoDeMesa = tipoDeMesaDoServidor(
+    tipoPartida: e['tipoPartida'],
+    categoriaCompetitiva: e['categoriaCompetitiva'],
+  );
+  final ambiente = ambienteDeTipoDeMesa(tipoDeMesa);
+  final modo = modoPorWire(e['modo']);
+
+  return jsonEncode({
+    'tipoDeMesa': tipoDeMesa,
+    'ambiente': ambiente?.wire,
+    'superficie': ambiente == null ? null : superficieDe(ambiente).wire,
+    'exigeSalaRegistrada': ambiente == AmbienteDeComunicacao.mesaPrivada,
+    'modoPermitidoNoAmbiente':
+        ambiente != null && modoPermitidoNoAmbiente(ambiente, modo),
+    'aceitaComunicacao':
+        ambiente != null && permissaoDe(ambiente, modo).algumaCoisa,
+  });
+}
+
+/// Normaliza um  digitado ou copiado, para que a autoridade de
+/// moderacao possa RESOLVER o alvo pelo indice reverso (§9.3).
+///
+/// A funcao vem de app/lib/social/identidade_publica.dart — a mesma que
+/// functions-social usa. NAO ha copia: o arquivo entra neste bundle por import,
+/// e um reparo de digitacao corrigido la vale aqui no mesmo commit.
+String normalizarPublicIdJson(String json) {
+  final e = _entrada(json);
+  return jsonEncode({'publicId': normalizarIdPublico(e['publicId'])});
+}
+
+/// O catalogo autoritativo, para leitura.
+///
+/// Serve ao cliente (que precisa saber o que oferecer), ao teste e ao laudo. Nao
+/// aceita filtro do cliente: quem pergunta recebe o catalogo inteiro, e a decisao
+/// de aceitar ou nao um item premium continua sendo tomada no ENVIO, contra o
+/// direito vigente naquele instante.
+String catalogoJson(String json) => jsonEncode({
+      'versao': kVersaoDoCatalogo,
+      'itens': [for (final i in catalogoV1) i.toJson()],
+      'eventosDeSistema': [
+        for (final ev in catalogoDeEventosDeSistema) ev.toJson(),
+      ],
+    });
+
 void main() {
   final api = <String, _Ponte>{
     'avaliarDenuncia': avaliarDenunciaJson,
@@ -321,6 +552,13 @@ void main() {
     'consolidarSancoes': consolidarSancoesJson,
     'avaliarEnvioChat': avaliarEnvioChatJson,
     'politicaDeSuperficies': politicaDeSuperficiesJson,
+    'avaliarComunicacao': avaliarComunicacaoJson,
+    'avaliarEventoDeSistema': avaliarEventoDeSistemaJson,
+    'politicaDeAmbientes': politicaDeAmbientesJson,
+    'resolverAmbiente': resolverAmbienteJson,
+    'idDeMensagem': idDeMensagemJson,
+    'normalizarPublicId': normalizarPublicIdJson,
+    'catalogo': catalogoJson,
   };
 
   final exportado = JSObject();

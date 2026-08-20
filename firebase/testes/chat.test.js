@@ -319,3 +319,83 @@ describe('CHAT-V — vizinhança', () => {
     await assertSucceeds(getDoc(doc(comoAutor(), `playerModeration/${AUTOR}`)));
   });
 });
+
+// ===========================================================================
+// CHAT-RIT — o RITMO da comunicação (OS de Comunicação Controlada, §6.5)
+// ===========================================================================
+//
+// `chatRitmo/{uid}` guarda o histórico recente de envios do jogador e o
+// bloqueio temporário por abuso. As duas portas ficam fechadas, e a de LEITURA
+// é a que surpreende: o documento é do próprio dono.
+//
+// A razão é o freio. Quem lê aqui sabe o instante exato em que o bloqueio
+// solta — e um freio com cronômetro legível é um freio em volta do qual se
+// automatiza. O que o jogador precisa saber (quanto falta para a PRÓPRIA
+// tentativa passar) volta na resposta da chamada, em `liberaEmMs`.
+describe('CHAT-RIT — o ritmo não é do cliente', () => {
+  test('CHAT-RIT-01 o dono NÃO lê o próprio ritmo', async () => {
+    await assertFails(getDoc(doc(comoAutor(), `chatRitmo/${AUTOR}`)));
+  });
+
+  test('CHAT-RIT-02 ninguém escreve, nem o dono, nem o motor', async () => {
+    // Escrever aqui zeraria o próprio contador de rajada, e o anti-spam
+    // inteiro viraria decoração. O claim do motor não muda nada: ele tem
+    // autoridade nas Functions e nenhuma nas regras.
+    for (const db of [comoAutor(), comoEstranho(), comoMotor(), comoAdmin()]) {
+      await assertFails(
+        setDoc(doc(db, `chatRitmo/${AUTOR}`), { recentes: [], recusasSeguidas: 0 })
+      );
+    }
+  });
+
+  test('CHAT-RIT-03 estranho não lê o ritmo alheio', async () => {
+    await assertFails(getDoc(doc(comoEstranho(), `chatRitmo/${AUTOR}`)));
+  });
+
+  test('CHAT-RIT-04 admin lê, porque investigar abuso é ler o padrão de envio', async () => {
+    await assertSucceeds(getDoc(doc(comoAdmin(), `chatRitmo/${AUTOR}`)));
+  });
+});
+
+// ===========================================================================
+// CHAT-SIL — o SILÊNCIO pessoal, e por que ele é diferente do bloqueio
+// ===========================================================================
+//
+// Aqui o cliente ESCREVE, e a diferença em relação a `blocks` é deliberada:
+// mute não afeta ninguém além de quem o configurou. As regras já existiam —
+// esta OS passou a CONSUMI-LAS na entrega, e o que se afirma abaixo é que o
+// consumo não afrouxou nenhuma delas.
+describe('CHAT-SIL — silêncio é preferência, e continua sendo', () => {
+  test('CHAT-SIL-01 o dono silencia e desfaz', async () => {
+    await assertSucceeds(
+      setDoc(doc(comoAutor(), `users/${AUTOR}/mutes/${COLEGA}`), {
+        alvoUid: COLEGA,
+        criadoEm: new Date(),
+      })
+    );
+  });
+
+  test('CHAT-SIL-02 ninguém silencia pela lista de outro', async () => {
+    await assertFails(
+      setDoc(doc(comoEstranho(), `users/${AUTOR}/mutes/${COLEGA}`), {
+        alvoUid: COLEGA,
+        criadoEm: new Date(),
+      })
+    );
+  });
+
+  test('CHAT-SIL-03 o alvo NÃO descobre que foi silenciado', async () => {
+    // A §9.1 proíbe notificar o alvo. A lista é legível só pelo dono — e a
+    // projeção da mensagem tampouco carrega `silenciados`.
+    await assertFails(getDoc(doc(comoColega(), `users/${AUTOR}/mutes/${COLEGA}`)));
+  });
+
+  test('CHAT-SIL-04 auto-silêncio é recusado', async () => {
+    await assertFails(
+      setDoc(doc(comoAutor(), `users/${AUTOR}/mutes/${AUTOR}`), {
+        alvoUid: AUTOR,
+        criadoEm: new Date(),
+      })
+    );
+  });
+});

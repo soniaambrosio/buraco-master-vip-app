@@ -106,6 +106,11 @@ export type SalaPrivada = {
   encerradaEm: string | null;
   /// Estado de cada cadeira, na ordem dos assentos. So o dono muda isto.
   cadeiras: readonly string[];
+  /// A configuracao de chat escolhida pelo anfitriao ao criar a mesa, ja
+  /// validada contra `chatsPermitidos`. Opcional porque sala registrada ANTES
+  /// da OS de Comunicacao Controlada nao tem o campo — e a autoridade de
+  /// comunicacao le ausencia como chat DESLIGADO, nunca como completo.
+  modoDeChat?: string;
 };
 
 /// A admissao que este jogador ja tem nesta sala, se tiver.

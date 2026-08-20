@@ -65,11 +65,41 @@ export const MODALIDADES_CANONICAS: readonly string[] = Object.freeze([
 export const JOGADORES_CANONICOS: readonly number[] = Object.freeze([2, 4]);
 
 /// Configuracao de chat.
+///
+/// O VOCABULARIO INTEIRO. Que valor cada tipo aceita e outra pergunta, e ela
+/// tem resposta propria em [chatsPermitidos] — ver o bloco logo abaixo.
 export const CHATS_CANONICOS: readonly string[] = Object.freeze([
   "completo",
   "apenas_emotes",
   "desligado",
 ]);
+
+/// Os valores de chat que ESTE tipo de mesa aceita.
+///
+/// ===========================================================================
+/// `completo` SO NA MESA PRIVADA
+/// ===========================================================================
+///
+/// Ate a OS de Comunicacao Controlada, `CHATS_CANONICOS` valia igual para os
+/// tres tipos online: uma Mesa Publica podia ser configurada com `completo`, e
+/// o valor era aceito e gravado. Isso contradiz a decisao de produto congelada
+/// na §2 daquela OS:
+///
+///     SOMENTE A MESA PRIVADA ADMITE TEXTO DIGITADO LIVREMENTE.
+///
+/// A correcao mora AQUI, e nao na autoridade de comunicacao, por um motivo de
+/// dono: quem responde "que configuracao e valida para este tipo de mesa" e
+/// este arquivo. A autoridade de comunicacao aplica a matriz na hora de FALAR
+/// (app/lib/comunicacao/ambiente.dart, `permissaoDe`), e as duas travas existem
+/// de proposito — uma impede configurar, a outra impede falar mesmo que um
+/// documento antigo ja carregue o valor errado.
+///
+/// TREINO fica de fora: ele nao tem o campo `chat`, e nunca teve.
+export function chatsPermitidos(tipo: TipoDeMesa): readonly string[] {
+  if (!campoPermitido(tipo, CAMPO.CHAT)) return Object.freeze([]);
+  if (tipo === TIPO_MESA.PRIVADA) return CHATS_CANONICOS;
+  return Object.freeze(["apenas_emotes", "desligado"]);
+}
 
 // ===========================================================================
 // OS CAMPOS
@@ -315,10 +345,19 @@ export function validarConfiguracao(
     tempo = v;
   }
 
-  let chat = tem(CAMPO.CHAT) ? "completo" : "desligado";
+  // O PADRAO E `apenas_emotes`, e nao `completo`.
+  //
+  // O padrao anterior concedia texto livre a QUALQUER mesa cujo tipo tivesse o
+  // campo — inclusive a Publica — sem que ninguem tivesse escolhido nada. Um
+  // padrao que concede o privilegio maior e o avesso da regra: quem quer chat
+  // completo tem de pedir, e so a Mesa Privada pode pedir.
+  let chat = tem(CAMPO.CHAT) ? "apenas_emotes" : "desligado";
   if (tem(CAMPO.CHAT) && bruta[CAMPO.CHAT] !== undefined) {
     const v = bruta[CAMPO.CHAT];
-    if (typeof v !== "string" || !CHATS_CANONICOS.includes(v)) {
+    // A lista consultada e a DO TIPO, e nao o vocabulario inteiro: `completo`
+    // numa Mesa Publica e recusa nomeada (`CHAT_INVALIDO`), e nao um valor
+    // aceito e ignorado depois.
+    if (typeof v !== "string" || !chatsPermitidos(tipo).includes(v)) {
       return { ok: false, campo: CAMPO.CHAT, motivo: RECUSA_CONFIG.CHAT_INVALIDO };
     }
     chat = v;

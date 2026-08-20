@@ -117,6 +117,19 @@ enum PapelNoCanal {
   /// Assiste, sem assento.
   espectador('espectador'),
 
+  /// Está num ambiente SEM assentos — um saguão.
+  ///
+  /// ACRESCENTADO PELA OS DE COMUNICAÇÃO CONTROLADA, e não por simetria: o
+  /// saguão não tem cadeira, então nem `jogadorSentado` nem `espectador`
+  /// descrevem quem está lá. Reaproveitar `jogadorSentado` faria
+  /// `assentosExceto` — que é a lista de entrega de uma MESA — devolver gente
+  /// que não está em partida nenhuma.
+  ///
+  /// Este papel NÃO abre texto livre em lugar nenhum: quem decide isso é o
+  /// AMBIENTE (app/lib/comunicacao/ambiente.dart), e nos dois saguões a resposta
+  /// é não. Aqui ele só diz "esta pessoa está presente, e pode receber".
+  presenteNoAmbiente('presente'),
+
   /// Não está no canal. Inclui quem já saiu.
   foraDoCanal('fora_do_canal');
 

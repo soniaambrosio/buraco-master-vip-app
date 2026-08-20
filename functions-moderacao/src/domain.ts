@@ -23,6 +23,13 @@ interface PonteModeracao {
   consolidarSancoes: PonteJs;
   avaliarEnvioChat: PonteJs;
   politicaDeSuperficies: PonteJs;
+  avaliarComunicacao: PonteJs;
+  avaliarEventoDeSistema: PonteJs;
+  politicaDeAmbientes: PonteJs;
+  resolverAmbiente: PonteJs;
+  idDeMensagem: PonteJs;
+  normalizarPublicId: PonteJs;
+  catalogo: PonteJs;
 }
 
 const ponte = (globalThis as unknown as { bmvModeracao?: PonteModeracao })
@@ -128,6 +135,67 @@ export interface VereditoEnvioChat {
   esquema: number;
 }
 
+// ---------------------------------------------------- comunicacao controlada
+
+/// O canal COM o ambiente que a autoridade resolveu.
+///
+/// Estende `CanalDeChat` em vez de substitui-lo: o documento gravado e o MESMO
+/// (`chatChannels/{canalId}`), e os dois campos novos sao acrescimo. Um canal
+/// declarado antes desta OS nao tem `ambiente`, e o dominio trata a ausencia
+/// como canal ilegivel — recusa, nunca "trate como publica".
+export interface CanalDeComunicacao extends CanalDeChat {
+  ambiente: string;
+  modo: string;
+}
+
+export interface VereditoComunicacao {
+  aceita: boolean;
+  recusa: string | null;
+  motivoContato: string | null;
+  motivoDeRitmo: string | null;
+  /// O motivo CATEGORICO (§7.4). E o que o servidor de partidas traduz para o
+  /// fio, em vez de conhecer o vocabulario inteiro desta autoridade.
+  familia?: string;
+  camposProibidos: string[];
+  liberaEmMs?: number;
+  /// So quando aceita.
+  messageId?: string;
+  impressao?: string;
+  tipo?: string;
+  ambiente?: string;
+  itemId?: string;
+  chaveDeLocalizacao?: string;
+  fallbackOficial?: string;
+  conteudo?: string;
+  destinatarios?: string[];
+  /// Quem silenciou o autor. NAO e recusa: a mensagem existe e foi gravada.
+  silenciados?: string[];
+  /// O estado de ritmo a gravar. Vem nos DOIS desfechos.
+  proximoRitmo?: Record<string, unknown>;
+  versaoDoCatalogo: number;
+  versaoDoContrato: number;
+  esquema: number;
+}
+
+export interface PoliticaDeAmbientes {
+  ambientes: {
+    ambiente: string;
+    ehMesa: boolean;
+    ehSaguao: boolean;
+    modos: {
+      modo: string;
+      permitidoNoAmbiente: boolean;
+      textoLivre: boolean;
+      catalogado: boolean;
+    }[];
+  }[];
+  tiposDeMesa: Record<string, string | null>;
+  ritmo: Record<string, unknown>;
+  versaoDoCatalogo: number;
+  versaoDoContrato: number;
+  esquema: number;
+}
+
 // ------------------------------------------------------------------ chamadas
 
 export const dominio = {
@@ -197,6 +265,93 @@ export const dominio = {
     camposDoPayload: string[];
     autorPublicId?: string | null;
   }): VereditoEnvioChat => chamar(ponte.avaliarEnvioChat, e),
+
+  /// A PORTA UNICA DE TODA COMUNICACAO (OS de Comunicacao Controlada).
+  ///
+  /// Ela ENVOLVE `avaliarEnvioChat`, e nao a substitui: texto continua sendo
+  /// decidido pelo dominio do chat. O que esta porta acrescenta e a pergunta
+  /// anterior — TEXTO PODE EXISTIR AQUI? —, que so o ambiente responde.
+  ///
+  /// `canal.ambiente` e `canal.modo` NAO vem do pedido do jogador: sao gravados
+  /// em `chatChannels/{canalId}` quando o canal e declarado, a partir da
+  /// autoridade dos tipos de mesa. Ver `definirCanalDeChat` em index.ts.
+  avaliarComunicacao: (e: {
+    autorUid: string;
+    intentId: string;
+    tipo: unknown;
+    itemId?: unknown;
+    conteudo?: unknown;
+    canal: CanalDeComunicacao | null;
+    sancao: {
+      chatSilenciado?: boolean;
+      restricaoSocial?: boolean;
+      suspenso?: boolean;
+    };
+    agora: string;
+    contatos: ParDeContato[];
+    silenciaramOAutor: string[];
+    camposDoPayload: string[];
+    autorPublicId?: string | null;
+    /// `playerEntitlements/{uid}` COMO ESTA. A vigencia e decidida no dominio,
+    /// por `EntitlementVip.vigenteEm` — este arquivo nao opina sobre VIP.
+    entitlement?: Record<string, unknown> | null;
+    ritmo?: unknown;
+    versaoDeCatalogoDoCliente?: number;
+  }): VereditoComunicacao => chamar(ponte.avaliarComunicacao, e),
+
+  /// Emissao de evento de sistema (§8). `autoridadeConfirmada` e decidido pelo
+  /// EXECUTOR, contra o claim do chamador, e nunca lido do payload.
+  avaliarEventoDeSistema: (e: {
+    eventoId: unknown;
+    canal: CanalDeComunicacao | null;
+    intentId: string;
+    autoridadeConfirmada: boolean;
+  }): VereditoComunicacao => chamar(ponte.avaliarEventoDeSistema, e),
+
+  /// A matriz da §2, lida do dominio em vez de recopiada aqui.
+  politicaDeAmbientes: (): PoliticaDeAmbientes =>
+    chamar(ponte.politicaDeAmbientes, {}),
+
+  /// Resolve o AMBIENTE a partir das duas dimensoes que o servidor declara.
+  ///
+  /// A tabela de traducao mora no dominio (espelho de
+  /// functions-mesas/src/tipos.ts, amarrado por test/espelho.test.js). Este
+  /// arquivo nao a copia.
+  resolverAmbiente: (e: {
+    tipoPartida: unknown;
+    categoriaCompetitiva: unknown;
+    modo?: unknown;
+  }): {
+    tipoDeMesa: string | null;
+    ambiente: string | null;
+    superficie: string | null;
+    exigeSalaRegistrada: boolean;
+    modoPermitidoNoAmbiente: boolean;
+    aceitaComunicacao: boolean;
+  } => chamar(ponte.resolverAmbiente, e),
+
+  /// Normaliza um publicId digitado, para resolver o alvo pelo indice reverso.
+  ///
+  /// A funcao mora em app/lib/social/identidade_publica.dart e e a MESMA que
+  /// functions-social usa. Este codebase nao copia o alfabeto nem o reparo de
+  /// digitacao: ele importa a decisao pelo bundle.
+  normalizarPublicId: (publicId: unknown): { publicId: string | null } =>
+    chamar(ponte.normalizarPublicId, { publicId }),
+
+  /// O `messageId` derivado de autor + intencao, SEM decidir nada.
+  ///
+  /// Serve a UMA pergunta, feita antes de tudo: este pedido ja virou mensagem?
+  /// Um retry precisa convergir no documento gravado em vez de esbarrar no
+  /// anti-spam — quem repete nao esta inundando, esta reconectando.
+  idDeMensagem: (e: { autorUid: string; intentId: string }): { messageId: string } =>
+    chamar(ponte.idDeMensagem, e),
+
+  /// O catalogo autoritativo.
+  catalogo: (): {
+    versao: number;
+    itens: Record<string, unknown>[];
+    eventosDeSistema: Record<string, unknown>[];
+  } => chamar(ponte.catalogo, {}),
 
   /// A classificacao da §11, lida do dominio em vez de recopiada aqui.
   politicaDeSuperficies: (): {

@@ -415,6 +415,10 @@ export function criarStore({ db, agora }: { db: Firestore; agora: () => string }
       codigoConvite: string;
       cadeiras: readonly string[];
       expiraEm: string;
+      /// A configuracao de chat escolhida pelo anfitriao e JA VALIDADA contra
+      /// `chatsPermitidos`. Fica no documento da sala porque e a autoridade de
+      /// comunicacao que a le — ver §7.3 da OS de Comunicacao Controlada.
+      modoDeChat?: string;
     }): Promise<{ ok: true } | { ok: false; motivo: string }> {
       const instante = agora();
       const impressao = impressaoDoCodigo(entrada.codigoConvite);
@@ -437,6 +441,7 @@ export function criarStore({ db, agora }: { db: Firestore; agora: () => string }
           criadaEm: instante,
           encerradaEm: null,
           cadeiras: entrada.cadeiras,
+          modoDeChat: entrada.modoDeChat ?? "apenas_emotes",
         };
         tx.set(ref.sala(entrada.codigoDaSala), sala);
 
