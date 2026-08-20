@@ -301,6 +301,21 @@ jobs:
             echo "ERRO: auditoria_casca_test.dart não encontrado — é ela que prova a AUSÊNCIA."
             exit 1
           fi
+          # As suítes da Mesa de Treino audível e tocável (OS A11Y-1). Este passo
+          # roda `test/casca` no diretório inteiro, então APAGAR uma delas não
+          # deixa rastro nenhum: a contagem cai e o portão segue verde. Nomear o
+          # caminho é o que faz o sumiço doer. Mesma disciplina — e mesmo
+          # formato — do `auditoria_casca_test.dart` logo acima.
+          for obrigatoria in \
+            app/test/casca/mesa_treino_caracterizacao_test.dart \
+            app/test/casca/mesa_treino_acessivel_test.dart; do
+            if [ ! -f "$obrigatoria" ]; then
+              echo "ERRO: $obrigatoria não encontrado — a suíte da Mesa de Treino é OBRIGATÓRIA."
+              echo "Ela foi apagada ou renomeada. Se a remoção for deliberada, é esta"
+              echo "lista que se atualiza — de propósito, e não de passagem."
+              exit 1
+            fi
+          done
           mkdir -p app_build/test/casca
           cp -R app/test/casca/. app_build/test/casca/
           cd app_build

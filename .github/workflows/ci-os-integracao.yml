@@ -117,6 +117,39 @@ jobs:
             if [ ! -f "app_build/$t" ]; then echo "ausente: $t" > "nao_$k"; return; fi
             ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
           }
+          # exige() é roda() com UMA diferença: arquivo ausente é FALHA, e não
+          # "NÃO EXECUTADO".
+          #
+          # POR QUE AS DUAS FUNÇÕES COEXISTEM. `roda` está certa para o que ela
+          # cobre: "NÃO EXECUTADO" é reservado à ausência real do artefato, e há
+          # suítes neste portão que nasceram depois de branches que não as têm —
+          # transformar toda ausência histórica em vermelho reprovaria trabalho
+          # que nunca prometeu tê-las. Mas isso abre um buraco para quem chega
+          # DEPOIS: apagar ou renomear a suíte é indistinguível, para o portão,
+          # de uma branch antiga que nunca a teve. O gate que existe para vigiar
+          # uma correção some junto com o arquivo que ele vigia, e o portão sai
+          # verde exatamente no caso que ele existia para pegar.
+          #
+          # `exige` fecha isso SÓ para as suítes listadas com ela. A verificação
+          # é do próprio workflow e olha o CAMINHO no disco — não pergunta nada à
+          # suíte, que é o que a torna válida justamente quando a suíte não está
+          # mais lá. Renomear também derruba: o caminho declarado aqui é o
+          # contrato, e um arquivo com outro nome não o satisfaz.
+          exige() { # exige <chave> <caminho>
+            local k="$1" t="$2"
+            if [ ! -f "app_build/$t" ]; then
+              {
+                echo "SUÍTE OBRIGATÓRIA AUSENTE: $t"
+                echo "Ela foi apagada ou renomeada. Este gate é obrigatório: se a"
+                echo "suíte deixou de existir de propósito, é a lista de exige()"
+                echo "em ci-os-integracao.yml que se atualiza — de propósito, e"
+                echo "não de passagem."
+              } | tee "t_$k.log"
+              echo 1 > "exit_$k"
+              return
+            fi
+            ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
+          }
           roda motor      test/teste_motor.dart
           roda resil      test/teste_motor_resiliencia.dart
           roda encerr     test/teste_encerramento.dart
@@ -149,8 +182,12 @@ jobs:
           # toque TOCANDO ponto a ponto e lê a árvore semântica compilada — não
           # procura `Semantics` no código, que é o teste que passa com um
           # `Semantics` vazio.
-          roda mesacar    test/casca/mesa_treino_caracterizacao_test.dart
-          roda mesaa11y   test/casca/mesa_treino_acessivel_test.dart
+          #
+          # As duas entram por `exige`, e não por `roda`: são os gates de uma
+          # correção de acessibilidade, e um gate de correção que desaparece
+          # junto com o próprio arquivo não vigia nada.
+          exige mesacar    test/casca/mesa_treino_caracterizacao_test.dart
+          exige mesaa11y   test/casca/mesa_treino_acessivel_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
