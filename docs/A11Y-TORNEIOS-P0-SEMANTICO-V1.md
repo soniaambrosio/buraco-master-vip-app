@@ -156,6 +156,9 @@ portão irmão do saneamento, e o alvo `torneiosa11y` em
 listas** — a da evidência e a do veredito. Só a do veredito faz o portão ficar
 vermelho; sem a da evidência, o alvo roda e não aparece no relatório.
 
+Estar na lista do veredito, porém, ainda não bastava: era possível desligar o
+portão apagando o arquivo de teste. Ver a §8.
+
 A prova lê a árvore semântica real e exerce o toque pelo `SemanticsOwner` — o
 caminho que a tecnologia assistiva usa —, e não por hit-test de pixel. Nenhuma
 afirmação depende de busca textual pelo reparo.
@@ -174,7 +177,75 @@ base que mantenha timer próprio.
 
 ---
 
-## 8. Provas negativas — 12 mutações, 12 detectadas
+## 8. O veredito obrigatório — o portão podia ser desligado apagando o teste
+
+Estar no veredito não bastava. A função `roda` do `ci-os-integracao.yml`
+escreve `nao_<chave>` quando o **arquivo** não existe, e o laço do veredito
+tratava `nao_<chave>` como neutro — "NÃO EXECUTADO", sem somar no `fail`.
+
+Isso é deliberado para a maior parte da lista: alvos de emulador e de Node
+dependem de serviço externo, e um passo que nem chegou a rodar não é evidência
+de regressão do código. Só que o mesmo tratamento deixava **apagar a suíte**
+ser a maneira mais barata de voltar ao verde — a única forma de "consertar" um
+portão vermelho sem consertar nada.
+
+`torneiosa11y` passou a ser **obrigatório**: ausência é FALHA nos três
+caminhos — arquivo ausente, marcador de execução ausente, e passo que não
+chegou a rodar. E a lista do veredito saiu do literal do `for` para uma
+variável, porque declarar uma chave obrigatória não vale nada se ela puder ser
+apagada da lista: uma conferência final exige que todo obrigatório esteja
+realmente sendo percorrido.
+
+O relatório de evidência foi alinhado junto. Sem isso ele marcaria "NÃO
+EXECUTADO" — neutro — para o gate que acabou de deixar o portão vermelho, e
+quem lesse a evidência procuraria a causa no lugar errado.
+
+### A prova
+
+Os scripts não foram digitados para o teste: `veredito_antes.sh`,
+`veredito_depois.sh` e a função `roda` foram **extraídos do YAML** — o de antes
+de `c8971e7`, o de depois da árvore de trabalho. A prova exercita o script que
+vai rodar no CI. No cenário "apagada", quem produz o marcador é a **função
+`roda` real**, e não uma suposição sobre qual marcador ela escreveria: a cadeia
+arquivo ausente → `nao_<chave>` → veredito está provada ponta a ponta.
+
+| cenário | `c8971e7` (antes) | agora |
+|---|---|---|
+| suíte presente e verde | VERDE `exit 0` | VERDE `exit 0` |
+| **suíte apagada** | **VERDE `exit 0`** | **VERMELHO `exit 1`** |
+| **passo não chegou a rodar** | **VERDE `exit 0`** | **VERMELHO `exit 1`** |
+| chave apagada da `LISTA` do laço | — | **VERMELHO `exit 1`** |
+
+O caminho verde continua verde: o endurecimento não reprova quem não deve.
+
+### O que não mudou
+
+`gatilhos`, `permissions`, `jobs` e a **contagem de passos** dos três workflows
+são idênticos antes e depois, conferidos por parse de YAML e não por leitura:
+
+```
+ci-os-integracao.yml  push:[integracao/os-final-backend-flutter] + workflow_dispatch
+                      permissions {contents: write}   jobs=validar   passos=20
+build.yml             push:[main, master, codex/inicio-ui] + workflow_dispatch
+                      permissions {contents: write}   jobs=build     passos=47
+web.yml               workflow_dispatch
+                      permissions {contents: read, pages: write, id-token: write}
+                      jobs=build,deploy               passos=19
+```
+
+Mudaram apenas corpos de `run:` e um nome de passo. `app/lib` não foi tocado.
+
+### Uma folga que fica registrada, e não é desta OS
+
+`torneiosmk` — o portão de saneamento de mock e admin — **continua não
+obrigatório**, e continua fora da lista da evidência. Apagar
+`saneamento_mock_admin_test.dart` ainda deixa o agregador verde. É o mesmo
+defeito, na suíte da OS anterior; fechá-lo é decisão de quem arbitra aquela
+entrega, e a mudança é uma palavra na variável `OBRIGATORIOS`.
+
+---
+
+## 9. Provas negativas — 12 mutações, 12 detectadas
 
 Cada mutação foi injetada sozinha, removendo ou distorcendo **um** reparo, com
 a suíte rodada em seguida sobre um overlay igual ao do CI.
@@ -201,7 +272,7 @@ reconstruídas a partir do arquivo pristino de `c65a61b` e detectadas de fato.
 
 ---
 
-## 9. Medições
+## 10. Medições
 
 ### `flutter analyze --no-fatal-infos --no-fatal-warnings lib test`
 
@@ -249,7 +320,7 @@ e `regras`. Nenhum arquivo de Functions, Rules ou servidor foi alterado.
 
 ---
 
-## 10. Estado
+## 11. Estado
 
 Árvore limpa, `local == remoto`, sem `--force`. A OS 12.2 permanece bloqueada
 até a arbitragem formal desta entrega.

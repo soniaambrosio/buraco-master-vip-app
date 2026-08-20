@@ -333,6 +333,10 @@ jobs:
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
           GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosa11y splash billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          # Mesma lista do veredito. Cada passo é um shell próprio, então a
+          # declaração se repete — e a conferência que impede as duas de
+          # divergirem mora no veredito, que é quem reprova.
+          OBRIGATORIOS="torneiosa11y"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -349,9 +353,15 @@ jobs:
                 v=$(cat "exit_$k")
                 [ "$v" = "0" ] && echo "| $k | EXECUTADO | $v |" || echo "| $k | **FALHOU** | $v |"
               elif [ -f "nao_$k" ]; then
-                echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+                case " $OBRIGATORIOS " in
+                  *" $k "*) echo "| $k | **FALHOU (OBRIGATÓRIO, NÃO EXECUTOU)** | $(cat "nao_$k") |" ;;
+                  *) echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |" ;;
+                esac
               else
-                echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+                case " $OBRIGATORIOS " in
+                  *" $k "*) echo "| $k | **FALHOU (OBRIGATÓRIO, NÃO EXECUTOU)** | passo não chegou a rodar |" ;;
+                  *) echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |" ;;
+                esac
               fi
             done
             if [ -f info_colevid ]; then
@@ -379,19 +389,64 @@ jobs:
           git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
           git push origin ci-evidencias
 
-      - name: Portão verde/vermelho (só falha em gate que REALMENTE rodou e falhou)
+      - name: Portão verde/vermelho (gate que falhou, e gate OBRIGATÓRIO que não rodou)
         if: always()
         run: |
+          # A lista do veredito mora numa variável, e não literal no `for`,
+          # para que a conferência lá embaixo leia a MESMA lista que o laço usa.
+          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosmk torneiosa11y splash billing torneiosfn socialdom socialfn socialemu regras"
+
+          # Gates que NÃO PODEM deixar de executar.
+          #
+          # O laço trata "não executou" como neutro, e isso é deliberado para a
+          # maior parte da lista: alvos de emulador e de Node dependem de
+          # serviço externo, e um passo que nem chegou a rodar não é evidência
+          # de regressão do código.
+          #
+          # Só que o mesmo tratamento abre um buraco por onde cabe a suíte
+          # inteira: `roda` escreve `nao_<chave>` quando o ARQUIVO não existe, e
+          # `nao_<chave>` não soma no `fail`. Ou seja, APAGAR o teste deixava o
+          # portão verde — a única maneira de "consertar" um portão vermelho sem
+          # consertar nada. Para as chaves listadas aqui, ausência é FALHA, nos
+          # três caminhos: arquivo ausente, marcador de execução ausente, e
+          # passo que não chegou a rodar.
+          OBRIGATORIOS="torneiosa11y"
+          obrigatorio() {
+            case " $OBRIGATORIOS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+          }
+
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosmk torneiosa11y splash billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in $LISTA; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
             elif [ -f "nao_$k" ]; then
-              echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
+              if obrigatorio "$k"; then
+                echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k")) — OBRIGATÓRIO: portão VERMELHO"
+                fail=1
+              else
+                echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
+              fi
             else
-              echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+              if obrigatorio "$k"; then
+                echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar) — OBRIGATÓRIO: portão VERMELHO"
+                fail=1
+              else
+                echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+              fi
             fi
           done
+
+          # Declarar uma chave obrigatória não vale nada se ela puder sair do
+          # laço. Sem esta conferência, apagar `torneiosa11y` de `LISTA` faria o
+          # gate deixar de ser conferido EM SILÊNCIO — o mesmo defeito que o
+          # bloco acima fecha, só que uma camada acima.
+          for k in $OBRIGATORIOS; do
+            case " $LISTA " in
+              *" $k "*) ;;
+              *) echo "ERRO: gate obrigatório $k não está na lista do veredito"; fail=1 ;;
+            esac
+          done
+
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
           exit $fail
