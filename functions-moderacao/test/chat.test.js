@@ -50,7 +50,7 @@ function documento(extra = {}) {
   return {
     messageId: MSG_ID,
     canalId: "sala7",
-    superficie: "mesa_de_partida",
+    superficie: "mesa_privada",
     autorUid: AUTOR,
     autorPublicId: "BMV-7K2M",
     conteudo: "boa jogada",

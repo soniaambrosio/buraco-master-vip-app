@@ -66,7 +66,7 @@ before(async () => {
 
     await setDoc(doc(db, `chatChannels/${CANAL}`), {
       canalId: CANAL,
-      superficie: 'mesa_de_partida',
+      superficie: 'mesa_privada',
       participantes: [
         { uid: AUTOR, papel: 'jogador_sentado' },
         { uid: COLEGA, papel: 'jogador_sentado' },
@@ -81,7 +81,7 @@ before(async () => {
     await setDoc(doc(db, `chatMessages/${MSG}`), {
       messageId: MSG,
       canalId: CANAL,
-      superficie: 'mesa_de_partida',
+      superficie: 'mesa_privada',
       autorUid: AUTOR,
       autorPublicId: 'BMV-7K2M',
       conteudo: 'boa jogada',
@@ -119,7 +119,7 @@ describe('CHAT-W — mensagem não nasce do cliente', () => {
       setDoc(doc(comoAutor(), 'chatMessages/forjada1'), {
         messageId: 'forjada1',
         canalId: CANAL,
-        superficie: 'mesa_de_partida',
+        superficie: 'mesa_privada',
         autorUid: AUTOR,
         autorPublicId: 'BMV-7K2M',
         conteudo: 'gravei sozinho',
@@ -222,7 +222,7 @@ describe('CHAT-C — canal', () => {
     await assertFails(
       setDoc(doc(comoAutor(), 'chatChannels/salaInventada'), {
         canalId: 'salaInventada',
-        superficie: 'mesa_de_partida',
+        superficie: 'mesa_privada',
         participantes: [{ uid: AUTOR, papel: 'jogador_sentado' }],
         aberto: true,
       })

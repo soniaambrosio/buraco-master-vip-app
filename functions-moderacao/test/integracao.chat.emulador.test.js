@@ -294,7 +294,7 @@ before(async () => {
   // O canal, escrito como o motor de partidas o escreveria.
   await gravar(`chatChannels/${CANAL}`, {
     canalId: txt(CANAL),
-    superficie: txt("mesa_de_partida"),
+    superficie: txt("mesa_privada"),
     aberto: bool(true),
     participantes: {
       arrayValue: {
@@ -319,7 +319,7 @@ describe("INT-A — autenticacao", () => {
       {
         intentId: intent("a01"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "boa jogada",
       },
       AUTOR
@@ -337,7 +337,7 @@ describe("INT-A — autenticacao", () => {
       {
         intentId: intent("a02"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "sem login",
       },
       null
@@ -354,7 +354,7 @@ describe("INT-A — autenticacao", () => {
       {
         intentId: intent("a03"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "olha a resposta",
       },
       AUTOR
@@ -391,7 +391,7 @@ describe("INT-A — autenticacao", () => {
         autorUid: "uidQueNuncaSentou",
         intentId: intent("a04"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "falando por estranho",
       },
       MOTOR,
@@ -408,7 +408,7 @@ describe("INT-A — autenticacao", () => {
         {
           intentId: intent(`a05-${campo}`),
           canalId: CANAL,
-          superficie: "mesa_de_partida",
+          superficie: "mesa_privada",
           conteudo: "escolhi eu",
           [campo]: campo === "enviadaEm" ? "1999-01-01T00:00:00.000Z" : "id-meu",
         },
@@ -426,7 +426,7 @@ describe("INT-A — autenticacao", () => {
       {
         intentId: intent("a06"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "que hora e",
       },
       AUTOR
@@ -443,7 +443,7 @@ describe("INT-A — autenticacao", () => {
 describe("INT-B — conteudo", () => {
   const base = () => ({
     canalId: CANAL,
-    superficie: "mesa_de_partida",
+    superficie: "mesa_privada",
   });
 
   test("INT-B-01 mensagem vazia e recusada", async () => {
@@ -509,7 +509,7 @@ describe("INT-C — idempotencia", () => {
     const pedido = {
       intentId: id,
       canalId: CANAL,
-      superficie: "mesa_de_partida",
+      superficie: "mesa_privada",
       conteudo: "mandei duas vezes",
     };
 
@@ -534,7 +534,7 @@ describe("INT-C — idempotencia", () => {
     const pedido = {
       intentId: id,
       canalId: CANAL,
-      superficie: "mesa_de_partida",
+      superficie: "mesa_privada",
       conteudo: "cinco ao mesmo tempo",
     };
 
@@ -561,12 +561,12 @@ describe("INT-C — idempotencia", () => {
     const antes = await contar("chatMessages");
     await chamar(
       "enviarMensagemChat",
-      { intentId: intent("c03a"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "primeira" },
+      { intentId: intent("c03a"), canalId: CANAL, superficie: "mesa_privada", conteudo: "primeira" },
       AUTOR
     );
     await chamar(
       "enviarMensagemChat",
-      { intentId: intent("c03b"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "segunda" },
+      { intentId: intent("c03b"), canalId: CANAL, superficie: "mesa_privada", conteudo: "segunda" },
       AUTOR
     );
     assert.equal((await contar("chatMessages")) - antes, 2);
@@ -579,14 +579,14 @@ describe("INT-C — idempotencia", () => {
     const id = intent("c04");
     const um = await chamar(
       "enviarMensagemChat",
-      { intentId: id, canalId: CANAL, superficie: "mesa_de_partida", conteudo: "texto A" },
+      { intentId: id, canalId: CANAL, superficie: "mesa_privada", conteudo: "texto A" },
       AUTOR
     );
     assert.equal(um.status, 200, um.texto);
 
     const dois = await chamar(
       "enviarMensagemChat",
-      { intentId: id, canalId: CANAL, superficie: "mesa_de_partida", conteudo: "texto B" },
+      { intentId: id, canalId: CANAL, superficie: "mesa_privada", conteudo: "texto B" },
       AUTOR
     );
     assert.notEqual(dois.status, 200);
@@ -596,7 +596,7 @@ describe("INT-C — idempotencia", () => {
   test("INT-C-05 o messageId gravado e OPACO", async () => {
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("c05"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "opaco" },
+      { intentId: intent("c05"), canalId: CANAL, superficie: "mesa_privada", conteudo: "opaco" },
       AUTOR
     );
     assert.equal(r.status, 200, r.texto);
@@ -613,7 +613,7 @@ describe("INT-D — bloqueio", () => {
   test("INT-D-01 sem bloqueio: permitido", async () => {
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("d01"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "sem bloqueio" },
+      { intentId: intent("d01"), canalId: CANAL, superficie: "mesa_privada", conteudo: "sem bloqueio" },
       AUTOR
     );
     assert.equal(r.status, 200, r.texto);
@@ -628,7 +628,7 @@ describe("INT-D — bloqueio", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("d02"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "so o terceiro le" },
+      { intentId: intent("d02"), canalId: CANAL, superficie: "mesa_privada", conteudo: "so o terceiro le" },
       AUTOR
     );
     assert.equal(r.status, 200, r.texto);
@@ -651,7 +651,7 @@ describe("INT-D — bloqueio", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("d03"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "ele me bloqueou" },
+      { intentId: intent("d03"), canalId: CANAL, superficie: "mesa_privada", conteudo: "ele me bloqueou" },
       AUTOR
     );
     assert.equal(r.status, 200, r.texto);
@@ -669,7 +669,7 @@ describe("INT-D — bloqueio", () => {
     const canal2 = "salaDeDois";
     await gravar(`chatChannels/${canal2}`, {
       canalId: txt(canal2),
-      superficie: txt("mesa_de_partida"),
+      superficie: txt("mesa_privada"),
       aberto: bool(true),
       participantes: {
         arrayValue: {
@@ -689,7 +689,7 @@ describe("INT-D — bloqueio", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("d04"), canalId: canal2, superficie: "mesa_de_partida", conteudo: "ninguem le" },
+      { intentId: intent("d04"), canalId: canal2, superficie: "mesa_privada", conteudo: "ninguem le" },
       AUTOR
     );
     assert.notEqual(r.status, 200);
@@ -699,7 +699,7 @@ describe("INT-D — bloqueio", () => {
     await apagar(`users/${COLEGA}/blocks/${AUTOR}`);
     const depois = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("d04b"), canalId: canal2, superficie: "mesa_de_partida", conteudo: "agora le" },
+      { intentId: intent("d04b"), canalId: canal2, superficie: "mesa_privada", conteudo: "agora le" },
       AUTOR
     );
     assert.equal(depois.status, 200, depois.texto);
@@ -722,7 +722,7 @@ describe("INT-E — sancao", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("e01"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "estou calado" },
+      { intentId: intent("e01"), canalId: CANAL, superficie: "mesa_privada", conteudo: "estou calado" },
       AUTOR
     );
     assert.notEqual(r.status, 200);
@@ -741,7 +741,7 @@ describe("INT-E — sancao", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("e02"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "ja posso falar" },
+      { intentId: intent("e02"), canalId: CANAL, superficie: "mesa_privada", conteudo: "ja posso falar" },
       AUTOR
     );
     assert.equal(r.status, 200, r.texto);
@@ -759,7 +759,7 @@ describe("INT-E — sancao", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("e03"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "suspenso falando" },
+      { intentId: intent("e03"), canalId: CANAL, superficie: "mesa_privada", conteudo: "suspenso falando" },
       AUTOR
     );
     assert.notEqual(r.status, 200);
@@ -774,7 +774,7 @@ describe("INT-E — sancao", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("e04"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "banido falando" },
+      { intentId: intent("e04"), canalId: CANAL, superficie: "mesa_privada", conteudo: "banido falando" },
       AUTOR
     );
     assert.notEqual(r.status, 200);
@@ -792,7 +792,7 @@ describe("INT-F — canal e papel", () => {
   test("INT-F-01 ESPECTADOR nao envia", async () => {
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f01"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "sou plateia" },
+      { intentId: intent("f01"), canalId: CANAL, superficie: "mesa_privada", conteudo: "sou plateia" },
       PLATEIA
     );
     assert.notEqual(r.status, 200);
@@ -802,7 +802,7 @@ describe("INT-F — canal e papel", () => {
   test("INT-F-02 quem nao esta no canal nao envia", async () => {
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f02"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "entrei de fora" },
+      { intentId: intent("f02"), canalId: CANAL, superficie: "mesa_privada", conteudo: "entrei de fora" },
       "uidForasteiro"
     );
     assert.notEqual(r.status, 200);
@@ -811,7 +811,7 @@ describe("INT-F — canal e papel", () => {
   test("INT-F-03 canal inexistente: recusa, e NAO criacao", async () => {
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f03"), canalId: "salaQueNaoExiste", superficie: "mesa_de_partida", conteudo: "oi" },
+      { intentId: intent("f03"), canalId: "salaQueNaoExiste", superficie: "mesa_privada", conteudo: "oi" },
       AUTOR
     );
     assert.notEqual(r.status, 200);
@@ -833,7 +833,7 @@ describe("INT-F — canal e papel", () => {
     const fechado = "salaFechada";
     await gravar(`chatChannels/${fechado}`, {
       canalId: txt(fechado),
-      superficie: txt("mesa_de_partida"),
+      superficie: txt("mesa_privada"),
       aberto: bool(false),
       participantes: {
         arrayValue: {
@@ -847,7 +847,7 @@ describe("INT-F — canal e papel", () => {
 
     const r = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f05"), canalId: fechado, superficie: "mesa_de_partida", conteudo: "partida acabou" },
+      { intentId: intent("f05"), canalId: fechado, superficie: "mesa_privada", conteudo: "partida acabou" },
       AUTOR
     );
     assert.notEqual(r.status, 200);
@@ -859,7 +859,7 @@ describe("INT-F — canal e papel", () => {
       "definirCanalDeChat",
       {
         canalId: "salaDoJogador",
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         participantes: [{ uid: AUTOR, papel: "jogador_sentado" }],
         aberto: true,
       },
@@ -874,7 +874,7 @@ describe("INT-F — canal e papel", () => {
       "definirCanalDeChat",
       {
         canalId: "salaDoMotor",
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         participantes: [
           { uid: AUTOR, papel: "jogador_sentado" },
           { uid: COLEGA, papel: "jogador_sentado" },
@@ -889,7 +889,7 @@ describe("INT-F — canal e papel", () => {
     // E o canal que ele abriu funciona.
     const envio = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("f06"), canalId: "salaDoMotor", superficie: "mesa_de_partida", conteudo: "canal do motor" },
+      { intentId: intent("f06"), canalId: "salaDoMotor", superficie: "mesa_privada", conteudo: "canal do motor" },
       AUTOR
     );
     assert.equal(envio.status, 200, envio.texto);
@@ -919,7 +919,7 @@ describe("INT-G — denuncia sobre mensagem autoritativa", () => {
   test("INT-G-01 a denuncia recupera a evidencia do SERVIDOR", async () => {
     const envio = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("g01"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "frase que sera denunciada" },
+      { intentId: intent("g01"), canalId: CANAL, superficie: "mesa_privada", conteudo: "frase que sera denunciada" },
       AUTOR
     );
     assert.equal(envio.status, 200, envio.texto);
@@ -984,7 +984,7 @@ describe("INT-G — denuncia sobre mensagem autoritativa", () => {
     // evidencia que acusa B do que A escreveu.
     const envio = await chamar(
       "enviarMensagemChat",
-      { intentId: intent("g03"), canalId: CANAL, superficie: "mesa_de_partida", conteudo: "escrita pelo autor" },
+      { intentId: intent("g03"), canalId: CANAL, superficie: "mesa_privada", conteudo: "escrita pelo autor" },
       AUTOR
     );
     assert.equal(envio.status, 200, envio.texto);
@@ -1023,7 +1023,7 @@ describe("INT-H — adaptadores da autoridade", () => {
         autorUid: AUTOR,
         intentId: intent("h"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "pela porta do motor",
       },
       extra || {}
@@ -1038,7 +1038,7 @@ describe("INT-H — adaptadores da autoridade", () => {
       {
         intentId: intent("h01"),
         canalId: CANAL,
-        superficie: "mesa_de_partida",
+        superficie: "mesa_privada",
         conteudo: "pela porta antiga",
       },
       AUTOR,
@@ -1149,7 +1149,7 @@ describe("INT-H — adaptadores da autoridade", () => {
     const fechado = "salaFechadaMotor";
     await gravar(`chatChannels/${fechado}`, {
       canalId: txt(fechado),
-      superficie: txt("mesa_de_partida"),
+      superficie: txt("mesa_privada"),
       aberto: bool(false),
       participantes: {
         arrayValue: {

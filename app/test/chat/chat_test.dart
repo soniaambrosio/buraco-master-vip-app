@@ -31,7 +31,7 @@ CanalDeChat mesa({
   List<String> outros = const [outro],
   List<String> espectadores = const [],
   bool aberto = true,
-  SuperficieChat superficie = SuperficieChat.mesaDePartida,
+  SuperficieChat superficie = SuperficieChat.mesaPrivada,
   bool autorSentado = true,
   bool autorEspectador = false,
 }) =>
@@ -57,7 +57,7 @@ VereditoEnvio enviar({
   String autorUid = autor,
   String intentId = 'intent-1',
   Object? conteudo = 'boa jogada',
-  Object? superficie = 'mesa_de_partida',
+  Object? superficie = 'mesa_privada',
   CanalDeChat? canal,
   SancaoDoAutor sancao = const SancaoDoAutor(),
   List<ParDeContato> contatos = const [],
@@ -89,21 +89,55 @@ void main() {
       }
     });
 
-    test('SUP-02 só a mesa de partida aceita texto livre', () {
-      expect(superficieAceitaTextoLivre(SuperficieChat.mesaDePartida), isTrue);
-      expect(
-          superficieAceitaTextoLivre(SuperficieChat.espectadorDeMesa), isFalse);
-      expect(superficieAceitaTextoLivre(SuperficieChat.saguaoPublico), isFalse);
+    test('SUP-02 SÓ a Mesa Privada aceita texto livre', () {
+      // A correção canônica: texto livre exige círculo restrito, entre pessoas
+      // convidadas e individualmente elegíveis. Só a Mesa Privada é isso.
+      expect(superficieAceitaTextoLivre(SuperficieChat.mesaPrivada), isTrue);
+
+      for (final s in [
+        SuperficieChat.mesaPublica,
+        SuperficieChat.mesaVip,
+        SuperficieChat.saguaoPublico,
+        SuperficieChat.salaoVip,
+        SuperficieChat.espectadorDeMesa,
+      ]) {
+        expect(superficieAceitaTextoLivre(s), isFalse, reason: s.name);
+      }
     });
 
-    test('SUP-03 saguão é DECISÃO AUSENTE, e não "não liberado"', () {
-      // A distinção é o que faz o laudo dizer a verdade: o saguão é pendência de
-      // produto, o espectador é recusa deliberada. Colapsar os dois num só valor
-      // esconderia qual dos dois precisa de decisão da Sônia.
+    test('SUP-02b exatamente UMA superfície aceita texto livre', () {
+      // Contagem, e não lista: acrescentar uma superfície liberada sem decisão
+      // de produto reprova aqui, mesmo que o caso acima não a mencione.
+      final liberadas =
+          SuperficieChat.values.where(superficieAceitaTextoLivre).toList();
+      expect(liberadas, [SuperficieChat.mesaPrivada]);
+    });
+
+    test('SUP-03 as superfícies de falas prontas são recusa DECIDIDA', () {
+      // Não é lacuna: o produto decidiu que elas usam mensagens previamente
+      // cadastradas, reações e emojis autorizados. `decisaoAusente` continua
+      // existindo no enum para a superfície que aparecer amanhã, mas NENHUMA
+      // está nesse estado hoje — e é isso que este caso fixa.
+      for (final s in SuperficieChat.values) {
+        expect(politicaDe(s), isNot(PoliticaSuperficie.decisaoAusente),
+            reason: '${s.name} ficou sem decisão de produto');
+      }
       expect(politicaDe(SuperficieChat.saguaoPublico),
-          PoliticaSuperficie.decisaoAusente);
+          PoliticaSuperficie.naoLiberado);
+      expect(politicaDe(SuperficieChat.salaoVip),
+          PoliticaSuperficie.naoLiberado);
+      expect(politicaDe(SuperficieChat.mesaVip),
+          PoliticaSuperficie.naoLiberado);
       expect(politicaDe(SuperficieChat.espectadorDeMesa),
           PoliticaSuperficie.naoLiberado);
+    });
+
+    test('SUP-03b o valor antigo `mesa_de_partida` NÃO ressuscita', () {
+      // Ele colapsava três superfícies com políticas diferentes. Aceitá-lo como
+      // sinônimo de qualquer uma delas seria manter o defeito com outro nome.
+      expect(SuperficieChat.porWire('mesa_de_partida'), isNull);
+      expect(enviar(superficie: 'mesa_de_partida').recusa,
+          RecusaMensagem.superficieNaoAceitaChat);
     });
 
     test('SUP-04 superfície desconhecida no wire é recusa, não default', () {
@@ -239,7 +273,7 @@ void main() {
       // sentados, então a única diferença entre as duas chamadas é QUEM assina.
       const mesmaMesa = CanalDeChat(
         canalId: 'sala7',
-        superficie: SuperficieChat.mesaDePartida,
+        superficie: SuperficieChat.mesaPrivada,
         participantes: [
           ParticipanteDoCanal(uid: autor, papel: PapelNoCanal.jogadorSentado),
           ParticipanteDoCanal(uid: outro, papel: PapelNoCanal.jogadorSentado),
@@ -304,7 +338,7 @@ void main() {
       final v = enviar(payload: {
         'intentId': 'intent-1',
         'canalId': 'sala7',
-        'superficie': 'mesa_de_partida',
+        'superficie': 'mesa_privada',
         'conteudo': 'oi',
       });
       expect(v.aceita, isTrue);
@@ -520,7 +554,7 @@ void main() {
         autorUid: autor,
         intentId: 'i-1',
         conteudoBruto: 'oi',
-        superficiePedida: 'mesa_de_partida',
+        superficiePedida: 'mesa_privada',
         canal: null,
         sancao: const SancaoDoAutor(),
         contatos: const [],
@@ -535,10 +569,10 @@ void main() {
     });
 
     test('CAN-03 superfície pedida tem que bater com a do canal', () {
-      // Sem isto, alguém mandaria `mesa_de_partida` sobre um canal de saguão e
+      // Sem isto, alguém mandaria `mesa_privada` sobre um canal de saguão e
       // escaparia da classificação da §11 pelo nome do campo.
       final v = enviar(
-        superficie: 'mesa_de_partida',
+        superficie: 'mesa_privada',
         canal: mesa(superficie: SuperficieChat.saguaoPublico),
       );
       expect(v.recusa, RecusaMensagem.canalInvalido);
@@ -590,7 +624,7 @@ void main() {
     MensagemPublica projecao() => const MensagemPublica(
           messageId: 'd0d9544f7185ad8d945ce892865a471c',
           autorPublicId: publicIdDoAutor,
-          superficie: 'mesa_de_partida',
+          superficie: 'mesa_privada',
           canalId: 'sala7',
           conteudo: 'boa jogada',
           enviadaEm: '2026-08-18T00:00:00.000Z',

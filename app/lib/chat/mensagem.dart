@@ -137,6 +137,20 @@ const Set<String> kCamposProibidosNoEnvio = {
   // estado que só a moderação escreve
   'moderacao', 'playerModeration', 'chatSilenciadoAte', 'socialRestritoAte',
   'suspensoAte', 'suspensaoPermanente', 'visibilidade', 'oculta',
+  // MODO DO CHAT — quem decide é a SUPERFÍCIE, não o pedido.
+  //
+  // A correção canônica é explícita: payload que tente habilitar chat completo
+  // fora da Mesa Privada tem de ser RECUSADO pela autoridade, mesmo vindo de
+  // cliente adulterado. Estes nomes existem aqui para que a tentativa seja
+  // recusada por NOME, e não apenas ignorada — uma recusa nomeada aparece no log
+  // e no laudo; um campo ignorado em silêncio deixa o cliente adulterado tentar
+  // de novo, para sempre, sem ninguém saber.
+  //
+  // Note que a proteção NÃO depende desta lista: mesmo sem ela, a superfície vem
+  // do documento do canal (escrito pelo motor) e é conferida contra a
+  // classificação. A lista é a segunda tranca, e é a que dá o diagnóstico.
+  'chatCompleto', 'chatLivre', 'textoLivre', 'modoChat', 'chat',
+  'permitirTextoLivre', 'liberarChat',
 };
 
 /// Caracteres que não renderizam e por isso não entram numa linha de chat.

@@ -1,66 +1,86 @@
-// superficie.dart — ONDE o chat livre existe, e onde ele NÃO existe.
+// superficie.dart — ONDE o chat de TEXTO LIVRE existe, e onde ele NÃO existe.
 //
-// Este arquivo é uma CLASSIFICAÇÃO, não uma lista de desejos. A OS do Chat Livre
-// Seguro §11 proíbe inventar superfície de produto e proíbe liberar por
-// conveniência: cada superfície aqui tem um veredito, e o veredito de quem não
-// tem decisão de produto é NÃO LIBERADO — nunca "liberado até alguém reclamar".
+// Este arquivo é uma CLASSIFICAÇÃO, não uma lista de desejos: cada superfície tem
+// um veredito, e o veredito de quem não tem decisão de produto é NÃO LIBERADO —
+// nunca "liberado até alguém reclamar".
 //
-// POR QUE UM ENUM FECHADO, e não uma string de canal livre: a superfície decide
-// se a mensagem existe. Se ela fosse texto vindo do cliente, inventar
-// `superficie: "qualquer_coisa"` seria inventar um canal onde ninguém aplicou
-// política nenhuma — e o padrão de quem inventa canal é justamente escapar do
-// gate. Valor fora desta lista é entrada inválida, e entrada inválida é recusa.
+// A CORREÇÃO CANÔNICA QUE MOLDOU ESTE ARQUIVO. A primeira versão tratava
+// "mesa de partida" como UMA superfície e liberava texto livre nas três variantes
+// de `TipoMesa`, apoiada em `ChatMesa.completo` aparecer nas três. Isso estava
+// errado, e a razão é de produto, não de código:
 //
-// A CLASSIFICAÇÃO, com a evidência que a sustenta (§11):
+//   TEXTO LIVRE EXIGE CÍRCULO RESTRITO. Só a Mesa Privada é composta por pessoas
+//   CONVIDADAS e INDIVIDUALMENTE ELEGÍVEIS — quem entra tem código e tem direito
+//   próprio. Numa Mesa Pública qualquer pessoa senta ao lado de qualquer outra, e
+//   texto livre entre desconhecidos é uma superfície de assédio que a denúncia
+//   remedia depois em vez de prevenir antes.
 //
-//   mesaDePartida ......... LIBERADO. A decisão existe e é anterior a esta OS:
-//                           `ChatMesa.completo` está nas TRÊS variantes de
-//                           `TipoMesa` (publica, vip, privada) em
-//                           app/lib/screens/configurar_mesa_screen.dart, e a
-//                           mesa tem coluna de chat em app/lib/mesa.dart.
-//                           Cobre as superfícies que a §11 lista como "mesa",
-//                           "sala privada" e "VIP/Ranqueada": as três são a
-//                           MESMA superfície técnica — uma partida com gente
-//                           sentada — e diferem só no `TipoDePartida`, que é
-//                           dado do canal e não outro lugar de conversa.
+// As demais superfícies NÃO ficam sem chat: elas usam mensagens previamente
+// cadastradas, reações e emojis autorizados. Isso é outra funcionalidade, com
+// outro vocabulário, e NÃO é construída aqui — este arquivo só afirma que texto
+// DIGITADO LIVREMENTE não nasce nelas.
 //
-//   espectadorDeMesa ...... NÃO LIBERADO. Nenhuma decisão de produto diz que
-//                           quem assiste conversa com quem joga, e a §11 é
-//                           explícita ao proibir concluir isso automaticamente.
-//                           Não liberado nas DUAS direções: espectador não fala
-//                           e não recebe. Receber é metade de conversar, e
-//                           liberar só a escuta entregaria a mesa a uma plateia
-//                           que os jogadores não escolheram.
+// A CLASSIFICAÇÃO, com a evidência de cada linha:
 //
-//   saguaoPublico ......... DECISÃO DE PRODUTO AUSENTE. Dois artefatos do
-//                           próprio repositório apontam para longe do texto
-//                           livre aqui: app/lib/screens/saguao_screen.dart
-//                           anuncia "Converse por falas prontas · sem
-//                           digitação", e o único controle de idade que existe
-//                           (`chatPublicoSoMaiores`, em
-//                           app/lib/screens/configuracoes_screen.dart) é uma
-//                           preferência gravada em SharedPreferences pelo
-//                           próprio aparelho — não há autoridade de idade
-//                           NENHUMA no backend para sustentá-lo. Abrir texto
-//                           livre num saguão público apoiado num interruptor que
-//                           o usuário controla é o oposto de restringir.
+//   mesaPrivada ........... LIBERADO. Círculo restrito: `TipoMesa.privada` nasce
+//                           com `codigo` de convite em
+//                           app/lib/screens/configurar_mesa_screen.dart, e o
+//                           servidor a trata como benefício exclusivo em que
+//                           "cada ocupante precisa de direito PRÓPRIO"
+//                           (`avaliarAdmissaoAoAssento`).
 //
-// O que muda quando o produto decidir: acrescenta-se o valor e a política. O que
-// NÃO se faz é reaproveitar `mesaDePartida` para um canal que não é mesa.
+//   mesaPublica ........... NÃO LIBERADO. Falas prontas. Mesa aberta a
+//                           desconhecidos.
+//
+//   mesaVip ............... NÃO LIBERADO. Falas prontas. A modalidade
+//                           competitiva oficial (`vip_ranqueada`) é aberta a
+//                           qualquer VIP, e ser VIP não é ser convidado.
+//
+//   saguaoPublico ......... NÃO LIBERADO. Falas prontas — e é o que
+//                           app/lib/screens/saguao_screen.dart já anunciava:
+//                           "Converse por falas prontas · sem digitação".
+//
+//   salaoVip .............. NÃO LIBERADO. Falas prontas. É o saguão em modo VIP
+//                           ("👑 Salão VIP" na mesma tela), e não uma mesa.
+//
+//   espectadorDeMesa ...... NÃO LIBERADO, nas DUAS direções: não fala e não
+//                           recebe. Receber é metade de conversar, e liberar só a
+//                           escuta entregaria a mesa a uma plateia que os
+//                           jogadores não escolheram.
+//
+// O QUE MUDA QUANDO O PRODUTO DECIDIR outra coisa: acrescenta-se o valor e a
+// política. O que NÃO se faz é reaproveitar `mesaPrivada` para um canal que não é
+// Mesa Privada — ver `politicaDe`, que é a fonte única.
 
 /// Onde a mensagem foi escrita.
 ///
 /// `wire` é o valor que atravessa a fronteira. Nome de enum do Dart NÃO vai para
 /// o Firestore: renomear o enum em Dart não pode reescrever documento gravado.
+///
+/// QUEBRA DELIBERADA: o valor `mesa_de_partida` da primeira versão NÃO existe
+/// mais. Ele colapsava três superfícies com políticas diferentes, e mantê-lo como
+/// sinônimo de alguma delas seria manter o defeito com outro nome. Canal gravado
+/// com o valor antigo passa a ser superfície desconhecida — e superfície
+/// desconhecida é recusa, não permissão.
 enum SuperficieChat {
-  /// Uma partida com jogadores sentados. O canal é a partida.
-  mesaDePartida('mesa_de_partida'),
+  /// Mesa criada por convite, com código, entre pessoas individualmente
+  /// elegíveis. A ÚNICA superfície de texto livre.
+  mesaPrivada('mesa_privada'),
 
-  /// Quem assiste uma partida sem ocupar assento.
-  espectadorDeMesa('espectador_de_mesa'),
+  /// Mesa aberta: qualquer jogador senta.
+  mesaPublica('mesa_publica'),
+
+  /// A modalidade competitiva oficial (VIP/Ranqueada).
+  mesaVip('mesa_vip'),
 
   /// O saguão, fora de qualquer partida.
-  saguaoPublico('saguao_publico');
+  saguaoPublico('saguao_publico'),
+
+  /// O saguão em modo VIP.
+  salaoVip('salao_vip'),
+
+  /// Quem assiste uma partida sem ocupar assento.
+  espectadorDeMesa('espectador_de_mesa');
 
   final String wire;
   const SuperficieChat(this.wire);
@@ -74,35 +94,43 @@ enum SuperficieChat {
   }
 }
 
-/// O estado de uma superfície diante do chat livre.
+/// O estado de uma superfície diante do chat de TEXTO LIVRE.
 enum PoliticaSuperficie {
   /// Há decisão de produto, e ela permite texto livre.
   liberado('liberado'),
 
-  /// Há decisão de produto, e ela NÃO permite. Não é lacuna: é recusa.
+  /// Há decisão de produto, e ela NÃO permite texto livre. Não é lacuna: é
+  /// recusa. Estas superfícies têm chat de falas prontas, que é outra coisa.
   naoLiberado('nao_liberado'),
 
-  /// Não há decisão de produto. Trata-se como recusa até que exista, e o nome é
-  /// diferente de [naoLiberado] de propósito: um laudo precisa distinguir "o
-  /// produto disse não" de "ninguém decidiu", porque só o segundo é pendência.
+  /// Não há decisão de produto. Trata-se como recusa até que exista.
+  ///
+  /// NENHUMA superfície está neste estado hoje — a correção canônica decidiu
+  /// todas. O valor permanece porque a distinção continua valendo para a
+  /// superfície que aparecer amanhã, e porque um laudo precisa distinguir "o
+  /// produto disse não" de "ninguém decidiu": só o segundo é pendência.
   decisaoAusente('decisao_ausente');
 
   final String wire;
   const PoliticaSuperficie(this.wire);
 }
 
-/// A classificação da §11. Fonte ÚNICA: quem quiser saber se há chat numa
+/// A classificação. Fonte ÚNICA: quem quiser saber se há texto livre numa
 /// superfície pergunta aqui, e não olha um `if` espalhado.
 PoliticaSuperficie politicaDe(SuperficieChat s) => switch (s) {
-      SuperficieChat.mesaDePartida => PoliticaSuperficie.liberado,
+      SuperficieChat.mesaPrivada => PoliticaSuperficie.liberado,
+      SuperficieChat.mesaPublica => PoliticaSuperficie.naoLiberado,
+      SuperficieChat.mesaVip => PoliticaSuperficie.naoLiberado,
+      SuperficieChat.saguaoPublico => PoliticaSuperficie.naoLiberado,
+      SuperficieChat.salaoVip => PoliticaSuperficie.naoLiberado,
       SuperficieChat.espectadorDeMesa => PoliticaSuperficie.naoLiberado,
-      SuperficieChat.saguaoPublico => PoliticaSuperficie.decisaoAusente,
     };
 
 /// Texto livre pode nascer nesta superfície?
 ///
 /// FALHA FECHADA por construção: só `liberado` responde `true`. Um valor novo no
-/// enum [PoliticaSuperficie] não vira permissão por descuido.
+/// enum [PoliticaSuperficie] não vira permissão por descuido, e uma superfície
+/// nova não vira permissão por esquecimento — o `switch` é exaustivo.
 bool superficieAceitaTextoLivre(SuperficieChat s) =>
     politicaDe(s) == PoliticaSuperficie.liberado;
 
@@ -125,4 +153,8 @@ enum PapelNoCanal {
 }
 
 /// Versão do formato dos documentos de chat.
-const int kEsquemaChat = 1;
+///
+/// SOBE PARA 2 nesta correção. O `esquema: 1` acompanhava canais gravados com
+/// `mesa_de_partida`, valor que deixou de existir; um leitor que encontre 1 está
+/// olhando um documento cuja superfície não é mais interpretável.
+const int kEsquemaChat = 2;

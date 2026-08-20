@@ -48,7 +48,7 @@ const FONTE = fs.readFileSync(path.join(__dirname, "..", "src", "index.ts"), "ut
  * Normalizado em LF: sem isso a mesma arvore reprovaria no Windows (CRLF do
  * autocrlf) e passaria no CI.
  */
-const DIGEST_CONTRATO = "08365398cad454c18f04c6270db4152b022df32bf50d8d9f194d9cde6ed74ced";
+const DIGEST_CONTRATO = "1cd27e7af79b4d1608af05356395ef5b753b6e74222e08289f0b41624748f85e";
 
 const contrato = JSON.parse(fs.readFileSync(CAMINHO_CONTRATO, "utf8"));
 

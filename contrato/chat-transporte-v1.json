@@ -42,10 +42,15 @@
     "reciboAoRemetente": "chat_ack"
   },
   "superficies": {
-    "//": "Preserva o veredito da fundacao. Espectador nao fala e nao recebe; saguao esta fora desta OS.",
-    "mesa": "mesa_de_partida",
-    "espectador": "espectador_de_mesa",
-    "saguao": "saguao_publico"
+    "//": "CORRECAO CANONICA: SO a Mesa Privada admite texto livre, por ser circulo restrito entre pessoas convidadas e individualmente elegiveis. As outras usam mensagens previamente cadastradas, reacoes e emojis autorizados — outra funcionalidade, com outro vocabulario, nao coberta por este contrato. Espectador nao fala e nao recebe.",
+    "//quebra": "O valor `mesa_de_partida` da primeira versao NAO existe mais: ele colapsava tres superficies com politicas diferentes. Canal gravado com ele passa a ser superficie desconhecida, e desconhecida e recusa.",
+    "textoLivre": ["mesa_privada"],
+    "mesaPrivada": "mesa_privada",
+    "mesaPublica": "mesa_publica",
+    "mesaVip": "mesa_vip",
+    "saguaoPublico": "saguao_publico",
+    "salaoVip": "salao_vip",
+    "espectador": "espectador_de_mesa"
   },
   "papeis": {
     "sentado": "jogador_sentado",
@@ -67,6 +72,8 @@
     "canalFechado": "canal_fechado",
     "intencaoInvalida": "intencao_invalida",
     "intencaoReutilizada": "intencao_reutilizada",
+    "//textoLivreIndisponivel": "A superficie usa falas prontas, e nao texto digitado. E resposta de PRODUTO, nao de moderacao: o cliente deve mostrar o teclado de falas prontas em vez de sugerir que a pessoa foi silenciada.",
+    "textoLivreIndisponivel": "texto_livre_indisponivel",
     "indisponivelTemporario": "tente_de_novo"
   }
 }
