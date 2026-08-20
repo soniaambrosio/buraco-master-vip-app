@@ -318,6 +318,25 @@ List<NoSemantico> acionaveis(WidgetTester tester) =>
 
 const double kAlvoMinimo = 48.0;
 
+/// A folga contra erro de ponto flutuante na composição de matrizes.
+///
+/// Em escala 175% e 200% o retângulo do nó chega em 47.999999999999986 para
+/// um botão que mede 48 dp exatos: a acumulação de transformações da árvore
+/// semântica não fecha em binário. Comparar cru reprovaria um alvo correto,
+/// e é o tipo de reprovação que ensina a afrouxar a régua em vez de medir
+/// direito. A régua continua sendo 48.
+const double kFolgaDeArredondamento = 0.05;
+
+/// O alvo tem pelo menos 48 x 48 dp?
+void exigirAlvoMinimo(NoSemantico alvo, String razao) {
+  expect(alvo.largura,
+      greaterThanOrEqualTo(kAlvoMinimo - kFolgaDeArredondamento),
+      reason: razao);
+  expect(alvo.altura,
+      greaterThanOrEqualTo(kAlvoMinimo - kFolgaDeArredondamento),
+      reason: razao);
+}
+
 /// Conta as caixas que estouraram, varrendo o render tree.
 ///
 /// Não basta olhar exceção: `flutter_test` guarda só a primeira, e o caso
@@ -351,6 +370,98 @@ int caixasEstouradas(WidgetTester tester) {
 
   andar(tester.binding.rootElement!.renderObject!);
   return n;
+}
+
+
+// ===========================================================================
+// OS 14-C2 — a matriz de largura × escala, e os gestos que ela exige
+// ===========================================================================
+
+/// As três larguras obrigatórias, em pontos lógicos.
+///
+/// 320 dp é a menor largura Android suportada; 412 dp é o telefone comum de
+/// hoje. É entre elas que a folha de confirmação precisa continuar utilizável.
+const List<double> kLargurasObrigatorias = <double>[320, 360, 412];
+
+/// As cinco escalas obrigatórias.
+///
+/// 130% e 175% não são enfeite: o estouro na base congelada aparecia PRIMEIRO
+/// em 130% a 320 dp, e 175% era a fronteira a 360 dp. Uma matriz que fosse só
+/// 100/150/200 teria deixado as duas fronteiras de fora.
+const List<double> kEscalasObrigatorias = <double>[1.0, 1.3, 1.5, 1.75, 2.0];
+
+/// A altura de tela que acompanha cada largura, em proporções reais.
+double alturaDe(double largura) {
+  if (largura <= 320) return 640;
+  if (largura <= 360) return 780;
+  return 915;
+}
+
+/// Abre a folha de confirmação a partir da vitrine.
+///
+/// A ação comercial precisa ser trazida à área visível antes do toque: em
+/// escalas altas ela mesma fica abaixo da dobra da Loja, e um toque em
+/// coordenada fora da tela não chega a widget nenhum. Isto é preparo do
+/// cenário, e não a prova — a prova de rolagem é PROVA-17.
+Future<void> abrirConfirmacao(WidgetTester tester) async {
+  final acao = find.textContaining('Assinar plano');
+  expect(acao, findsOneWidget, reason: 'a vitrine não ofereceu a ação');
+  await tester.ensureVisible(acao);
+  await tester.pumpAndSettle();
+  await tester.tap(acao);
+  await tester.pumpAndSettle();
+}
+
+/// A região de rolagem da folha aberta.
+Finder rolavelDaFolha() => find.descendant(
+      of: find.byType(BottomSheet),
+      matching: find.byType(Scrollable),
+    );
+
+/// Rola até [alvo] entrar na área visível, com GESTO de verdade.
+///
+/// `scrollUntilVisible` arrasta de fato, em incrementos — é o que separa "o
+/// widget existe na árvore" de "a pessoa consegue chegar nele". Quando o alvo
+/// já está visível, nenhum arrasto acontece.
+Future<void> trazerAoVisivel(WidgetTester tester, Finder alvo) async {
+  final rolavel = rolavelDaFolha();
+  if (rolavel.evaluate().isEmpty) return;
+  await tester.scrollUntilVisible(alvo, 120, scrollable: rolavel.first);
+  await tester.pumpAndSettle();
+}
+
+/// Os [quantos] primeiros paradas do `Tab`, pelo nome acessível de cada uma.
+Future<List<String>> ordemDeFoco(WidgetTester tester, int quantos) async {
+  final ordem = <String>[];
+  for (int i = 0; i < quantos; i++) {
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+    final FocusNode? f = FocusManager.instance.primaryFocus;
+    final BuildContext? c = f?.context;
+    if (c == null) {
+      ordem.add('(sem foco)');
+      continue;
+    }
+    // O nome do nó semântico que contém o widget focado.
+    final RenderObject? ro = c.findRenderObject();
+    String achado = '(sem nome)';
+    if (ro is RenderBox && ro.hasSize) {
+      final Offset centro = ro.localToGlobal(ro.size.center(Offset.zero));
+      NoSemantico? melhor;
+      for (final n in arvore(tester)) {
+        if (n.rotulo.trim().isEmpty) continue;
+        if (!n.retangulo.contains(centro)) continue;
+        if (melhor == null ||
+            n.retangulo.height * n.retangulo.width <
+                melhor.retangulo.height * melhor.retangulo.width) {
+          melhor = n;
+        }
+      }
+      if (melhor != null) achado = melhor.rotulo;
+    }
+    ordem.add(achado);
+  }
+  return ordem;
 }
 
 // ===========================================================================
@@ -440,6 +551,14 @@ void main() {
       expect(x.altura, greaterThanOrEqualTo(kAlvoMinimo));
 
       // NENHUM acionável sem nome pode sobrar na folha.
+      //
+      // A ÂNCORA VEM PRIMEIRO. Uma varredura que afirma "nenhum é assim"
+      // passa sozinha diante de árvore vazia — e árvore vazia é justamente o
+      // que se obtém quando a folha não abre, quando o `ensureSemantics` cai
+      // ou quando alguém troca o finder. Sem esta linha, o caso continuaria
+      // verde exatamente na hora em que deixou de medir.
+      expect(acionaveis(tester).length, greaterThanOrEqualTo(3),
+          reason: 'ÂNCORA: a folha tem X, Continuar e Cancelar');
       expect(
         acionaveis(tester).where((n) => n.rotulo.trim().isEmpty),
         isEmpty,
@@ -731,6 +850,13 @@ void main() {
     });
 
     test('nenhuma mensagem de compra promete VIP concedido', () {
+      // ÂNCORA: sete estados, seis com texto. Um `enum` esvaziado faria o
+      // laço não rodar nenhuma vez e o caso passar sem ler frase alguma.
+      expect(
+        EstadoDaCompraNaLoja.values.where((e) => e.mensagem != null).length,
+        greaterThanOrEqualTo(6),
+        reason: 'ÂNCORA: as mensagens de compra sumiram',
+      );
       for (final e in EstadoDaCompraNaLoja.values) {
         final texto = e.mensagem;
         if (texto == null) continue;
@@ -821,8 +947,16 @@ void main() {
       final b = Bancada(tester);
       await b.montar();
 
+      // ÂNCORA antes da varredura: a Loja com planos tem voltar, três cards,
+      // a ação de assinar e quatro destinos da barra. Menos que isso e a
+      // varredura está medindo outra coisa — ou coisa nenhuma.
+      expect(acionaveis(tester).length, greaterThanOrEqualTo(9),
+          reason: 'ÂNCORA: a tela sumiu, e a varredura passaria vazia');
+
       final pequenos = acionaveis(tester)
-          .where((n) => n.largura < kAlvoMinimo || n.altura < kAlvoMinimo)
+          .where((n) =>
+              n.largura < kAlvoMinimo - kFolgaDeArredondamento ||
+              n.altura < kAlvoMinimo - kFolgaDeArredondamento)
           .toList();
       expect(pequenos, isEmpty, reason: 'alvos pequenos: $pequenos');
 
@@ -1134,6 +1268,331 @@ void main() {
           expect(traduzido, isNot(EstadoDaCompraNaLoja.ociosa), reason: '$e');
         }
       }
+    });
+  });
+
+  // ===========================================================================
+  // OS 14-C2 — a folha de confirmação sob escala de fonte
+  // ===========================================================================
+  //
+  // A C1 provou que a folha existe, nomeia seus controles e não compra sozinha.
+  // O que ela NÃO provou é que a folha continua utilizável quando o conteúdo
+  // passa da altura da tela: todos os casos da C1 abriam a folha a 100%.
+  //
+  // A rehomologação independente encontrou o buraco, e a medição na base
+  // congelada o confirmou: sete das quinze combinações obrigatórias
+  // estouravam, e em seis delas os DOIS botões comerciais ficavam inteiramente
+  // fora da tela. A 320 dp / 200% eles nem apareciam na árvore semântica — a
+  // folha pedia uma decisão de compra sem oferecer as duas saídas dela.
+  //
+  //     largura  escala   estouro   "Continuar"        "Cancelar"
+  //     320 dp   130%     51 pt     554..617 visível   640..659 FORA
+  //     320 dp   150%     sim       707..779 FORA      800..822 FORA
+  //     320 dp   200%     sim      1115..1243 FORA    1261..1290 FORA
+  //     360 dp   175%     195 pt    817..901 FORA      921..946 FORA
+  //     412 dp   200%     168 pt    913..1009 FORA    1027..1056 FORA
+  //
+  // Arrastar não movia nada, porque não havia região de rolagem nenhuma dentro
+  // da folha — e o `Tab` conseguia FOCAR botões que jamais entravam na tela.
+
+  group('PROVA-16 · a matriz obrigatória da folha de confirmação', () {
+    test('a matriz tem exatamente as dimensões que a OS exige', () {
+      // Sem este caso, apagar uma largura ou uma escala das listas apenas
+      // reduziria o número de testes — e uma suíte menor passa igual. Ele é o
+      // que faz a REMOÇÃO de uma combinação ficar vermelha.
+      expect(kLargurasObrigatorias, <double>[320, 360, 412]);
+      expect(kEscalasObrigatorias, <double>[1.0, 1.3, 1.5, 1.75, 2.0]);
+      expect(
+        kLargurasObrigatorias.length * kEscalasObrigatorias.length,
+        15,
+        reason: 'a matriz da OS 14-C2 é 3 larguras × 5 escalas',
+      );
+    });
+
+    for (final larg in kLargurasObrigatorias) {
+      for (final esc in kEscalasObrigatorias) {
+        final rotulo = '${larg.toInt()} dp @ ${(esc * 100).round()}%';
+
+        testWidgets(rotulo, (tester) async {
+          final SemanticsHandle h = tester.ensureSemantics();
+          final b = Bancada(tester);
+          await b.montar(tela: Size(larg, alturaDe(larg)), escala: esc);
+          await abrirConfirmacao(tester);
+
+          // 1 — a folha abriu de verdade.
+          expect(find.text('Confirmar assinatura'), findsOneWidget,
+              reason: '$rotulo: a folha não abriu');
+
+          // 2 e 3 — nenhuma exceção de layout, nenhuma caixa estourada.
+          expect(tester.takeException(), isNull, reason: rotulo);
+          expect(caixasEstouradas(tester), 0, reason: '$rotulo: overflow');
+
+          // 4 — cabeçalho presente e compreensível.
+          expect(no(tester, 'Confirmar assinatura').ehCabecalho, isTrue,
+              reason: rotulo);
+          expect(find.text('Revise antes de continuar'), findsOneWidget);
+
+          // 5 — Fechar nomeado, botão, com alvo. E ele NÃO rola: fica fixo.
+          final fechar = no(tester, 'Fechar confirmação de assinatura');
+          expect(fechar.ehBotao, isTrue, reason: rotulo);
+          expect(fechar.temToque, isTrue, reason: rotulo);
+          exigirAlvoMinimo(fechar, rotulo);
+          expect(fechar.retangulo.bottom,
+              lessThanOrEqualTo(alturaDe(larg) + kFolgaDeArredondamento),
+              reason: '$rotulo: o "X" precisa estar visível sem rolar');
+
+          // 6 e 7 — as duas ações comerciais estão na árvore semântica,
+          // caibam elas ou não na área visível inicial. É a diferença entre
+          // "não coube" e "não existe": na base congelada, a 320 dp / 200%,
+          // elas sumiam da árvore.
+          for (final r in const <String>[
+            'Continuar para o pagamento',
+            'Cancelar',
+          ]) {
+            expect(no(tester, r).ehBotao, isTrue, reason: '$rotulo: $r');
+          }
+
+          // 12 — nenhuma duplicação: `no()` já reprova com mais de um nó, e
+          // estes três são os que a rolagem poderia ter clonado.
+          for (final r in const <String>[
+            'Confirmar assinatura',
+            'Continuar para o pagamento',
+            'Cancelar',
+            'Fechar confirmação de assinatura',
+          ]) {
+            expect(
+              arvore(tester).where((n) => n.rotulo == r),
+              hasLength(1),
+              reason: '$rotulo: "$r" duplicado na árvore',
+            );
+          }
+
+          // 9 e 10 — foco real e ordem lógica: Fechar, Continuar, Cancelar.
+          //
+          // O passeio de foco também é a prova de D-pad da OS: o Flutter
+          // traz o widget focado para a área visível, então chegar ao
+          // Cancelar por teclado ROLA a folha até ele. Depois deste bloco os
+          // dois botões estão na tela, e é aí que o alvo pode ser medido.
+          expect(await ordemDeFoco(tester, 3), <String>[
+            'Fechar confirmação de assinatura',
+            'Continuar para o pagamento',
+            'Cancelar',
+          ], reason: rotulo);
+
+          // 8 — alvo mínimo. O retângulo do nó semântico é RECORTADO pelo
+          // viewport, então medi-lo com o botão meio fora da tela devolveria
+          // o pedaço visível (14,8 pt num dos casos) e não o alvo. Mede-se
+          // depois de o foco tê-lo trazido.
+          for (final r in const <String>[
+            'Continuar para o pagamento',
+            'Cancelar',
+          ]) {
+            final acao = no(tester, r);
+            exigirAlvoMinimo(acao, '$rotulo: $r');
+            expect(acao.retangulo.bottom,
+                lessThanOrEqualTo(alturaDe(larg) + kFolgaDeArredondamento),
+                reason: '$rotulo: $r nao chegou a area visivel pelo foco');
+          }
+
+          // 11 — a ação correta, depois de trazida à área visível por ROLAGEM
+          // real. Nas combinações amplas ela já está lá e o gesto é inócuo.
+          await trazerAoVisivel(tester, find.text('Continuar para o pagamento'));
+          expect(
+            tester.getRect(find.text('Continuar para o pagamento')).bottom,
+            lessThanOrEqualTo(alturaDe(larg)),
+            reason: '$rotulo: "Continuar" não chegou à área visível',
+          );
+          await tester.tap(find.text('Continuar para o pagamento'));
+          await tester.pumpAndSettle();
+          expect(b.registro.intencoes, <String>['ASSINAR:yearly_auto'],
+              reason: '$rotulo: uma intenção, e só uma');
+
+          h.dispose();
+        });
+      }
+    }
+  });
+
+  group('PROVA-17 · rolagem real, e não presença na árvore', () {
+    testWidgets('a folha ganhou UMA região de rolagem, e só uma',
+        (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      final rolaveis = find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.byType(Scrollable),
+      );
+      expect(rolaveis, findsOneWidget,
+          reason: 'antes desta OS eram ZERO; duas seriam rolagem aninhada');
+      tester.takeException();
+    });
+
+    testWidgets('no pior caso, Continuar começa FORA e a rolagem o traz',
+        (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      // 2 — pelo menos uma ação comercial está fora da área visível inicial.
+      final antes = tester.getRect(find.text('Continuar para o pagamento'));
+      expect(antes.top, greaterThan(640),
+          reason: 'o caso perde o sentido se o botão já couber');
+
+      // 3 e 4 — rolagem REAL, e o conteúdo se desloca.
+      await tester.drag(rolavelDaFolha(), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      final depois = tester.getRect(find.text('Continuar para o pagamento'));
+      expect(depois.top, lessThan(antes.top - 100),
+          reason: 'o gesto tem de deslocar o conteúdo de verdade');
+
+      // O cabeçalho NÃO se moveu: ele está fora da região de rolagem.
+      expect(tester.getRect(find.text('Confirmar assinatura')).top,
+          closeTo(28, 1),
+          reason: 'o "X" é a saída da folha e não pode rolar para longe');
+
+      // 5 — os dois botões chegam à área visível.
+      await trazerAoVisivel(tester, find.text('Cancelar'));
+      expect(tester.getRect(find.text('Cancelar')).bottom,
+          lessThanOrEqualTo(640.0));
+      expect(tester.getRect(find.text('Continuar para o pagamento')).bottom,
+          lessThanOrEqualTo(640.0));
+
+      // 8 — no sentido inverso, o conteúdo do começo volta a ser alcançável.
+      await trazerAoVisivel(tester, find.text('Plano Anual'));
+      expect(tester.getRect(find.text('Plano Anual')).top,
+          greaterThanOrEqualTo(0.0));
+      tester.takeException();
+    });
+
+    testWidgets('rolar NÃO inicia pagamento', (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      await tester.drag(rolavelDaFolha(), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.drag(rolavelDaFolha(), const Offset(0, 400));
+      await tester.pumpAndSettle();
+
+      expect(b.registro.intencoes, isEmpty);
+      tester.takeException();
+    });
+
+    testWidgets('navegar por foco NÃO inicia pagamento', (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      for (int i = 0; i < 6; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pumpAndSettle();
+      }
+      expect(b.registro.intencoes, isEmpty);
+      tester.takeException();
+    });
+
+    testWidgets('cancelar depois de rolar fecha e NÃO paga', (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      await trazerAoVisivel(tester, find.text('Cancelar'));
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Confirmar assinatura'), findsNothing);
+      expect(b.registro.intencoes, isEmpty);
+      tester.takeException();
+    });
+
+    testWidgets('fechar pelo "X" depois de rolar também não paga',
+        (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      await tester.drag(rolavelDaFolha(), const Offset(0, -600));
+      await tester.pumpAndSettle();
+      // O "X" continua onde estava, sem precisar rolar de volta.
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Confirmar assinatura'), findsNothing);
+      expect(b.registro.intencoes, isEmpty);
+      tester.takeException();
+    });
+
+    testWidgets('três toques em Continuar, depois de rolar, produzem UMA',
+        (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(320, 640), escala: 2.0);
+      await abrirConfirmacao(tester);
+
+      await trazerAoVisivel(tester, find.text('Continuar para o pagamento'));
+      final alvo = find.text('Continuar para o pagamento');
+      await tester.tap(alvo, warnIfMissed: false);
+      await tester.tap(alvo, warnIfMissed: false);
+      await tester.tap(alvo, warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(b.registro.intencoes, hasLength(1),
+          reason: 'a trava da C1 continua valendo depois da rolagem');
+      tester.takeException();
+    });
+
+    testWidgets('em tela ampla a folha NÃO rola artificialmente',
+        (tester) async {
+      final b = Bancada(tester);
+      await b.montar(tela: const Size(412, 915), escala: 1.0);
+      await abrirConfirmacao(tester);
+
+      final antes = tester.getRect(find.text('Cancelar'));
+      await tester.drag(rolavelDaFolha(), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      final depois = tester.getRect(find.text('Cancelar'));
+
+      expect(depois.top, closeTo(antes.top, 0.5),
+          reason: 'conteúdo que cabe não pode deslizar sob o dedo');
+      tester.takeException();
+    });
+
+    testWidgets('a folha de presente também rola, sem perder o "X"',
+        (tester) async {
+      // A casca é compartilhada: consertar só a confirmação deixaria a outra
+      // folha comercial com o mesmo defeito.
+      // A maquete completa (LojaVM.mock()) tem pacotes e categorias de
+      // altura fixa que ja estouravam antes desta OS, na tela ATRAS da
+      // folha. Esse e debito conhecido da maquete e esta fora do escopo da
+      // C2 — o VM aqui traz so o que a folha de presente precisa.
+      final b = Bancada(tester);
+      await b.montar(
+        vm: LojaVM(
+          ehVip: false,
+          planos: planosDaPlay(),
+          amigos: const <AmigoPresente>[
+            AmigoPresente(id: 'claudia', nome: 'Cláudia', avatar: '🐰'),
+          ],
+        ),
+        tela: const Size(320, 640),
+        escala: 2.0,
+      );
+      await tester.ensureVisible(find.text('Presentear assinatura VIP'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Presentear assinatura VIP'));
+      await tester.pumpAndSettle();
+
+      expect(caixasEstouradas(tester), 0);
+      expect(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.byType(Scrollable),
+        ),
+        findsWidgets,
+      );
+      expect(no(tester, 'Fechar seleção de presente').ehBotao, isTrue);
+      tester.takeException();
     });
   });
 

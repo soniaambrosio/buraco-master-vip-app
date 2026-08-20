@@ -35,6 +35,9 @@ const SUITE = 'test/casca/loja_a11y_comercial_test.dart';
 
 const TELA = 'app/lib/screens/loja_screen.dart';
 const CASCA = 'app/lib/casca/loja_de_producao.dart';
+/// A própria suíte: duas mutações da C2 tiram uma dimensão da matriz, e o que
+/// se quer provar é que a REMOÇÃO fica vermelha — não que o teste some junto.
+const SUITE_ARQ = 'app/test/casca/loja_a11y_comercial_test.dart';
 
 const MUTACOES = [
   {
@@ -145,6 +148,62 @@ const MUTACOES = [
     arquivo: TELA,
     de: "      'Compra confirmada. Seu acesso VIP é liberado assim que o servidor '\n          'terminar de registrar.',",
     para: "      'Compra confirmada. Você é VIP.',",
+  },
+
+  // ---------------------------------------------------------------------------
+  // OS 14-C2 — a folha de confirmação sob escala de fonte
+  // ---------------------------------------------------------------------------
+  {
+    id: 'MB-01',
+    espera: 'PROVA-16 / PROVA-17',
+    o_que: 'a regiao de rolagem some da casca da folha',
+    arquivo: TELA,
+    // `SingleChildScrollView` e `Padding` recebem os mesmos dois parametros
+    // nomeados, entao a troca compila e devolve exatamente o estado da base
+    // congelada: um `Column` sem viewport nenhum.
+    de: '                    child: SingleChildScrollView(\n                      padding: EdgeInsets.fromLTRB(',
+    para: '                    child: Padding(\n                      padding: EdgeInsets.fromLTRB(',
+  },
+  {
+    id: 'MB-02',
+    espera: 'PROVA-17',
+    o_que: 'a rolagem existe, mas o gesto nao desloca nada',
+    arquivo: TELA,
+    de: '                    child: SingleChildScrollView(\n                      padding: EdgeInsets.fromLTRB(',
+    para:
+        '                    child: SingleChildScrollView(\n                      physics: const NeverScrollableScrollPhysics(),\n                      padding: EdgeInsets.fromLTRB(',
+  },
+  {
+    id: 'MB-03',
+    espera: 'PROVA-16',
+    o_que: 'o cabecalho fixo desaparece, e com ele o X',
+    arquivo: TELA,
+    de: '                  if (cabecalho != null)',
+    para: '                  if (cabecalho == null)',
+  },
+  {
+    id: 'MB-04',
+    espera: 'PROVA-16',
+    o_que: 'uma ESCALA obrigatoria e retirada da matriz',
+    arquivo: SUITE_ARQ,
+    de: 'const List<double> kEscalasObrigatorias = <double>[1.0, 1.3, 1.5, 1.75, 2.0];',
+    para: 'const List<double> kEscalasObrigatorias = <double>[1.0, 1.3, 1.5, 2.0];',
+  },
+  {
+    id: 'MB-05',
+    espera: 'PROVA-16',
+    o_que: 'uma LARGURA obrigatoria e retirada da matriz',
+    arquivo: SUITE_ARQ,
+    de: 'const List<double> kLargurasObrigatorias = <double>[320, 360, 412];',
+    para: 'const List<double> kLargurasObrigatorias = <double>[360, 412];',
+  },
+  {
+    id: 'MB-06',
+    espera: 'PROVA-16',
+    o_que: 'o alvo do Cancelar cai abaixo de 48 dp',
+    arquivo: TELA,
+    de: '              foregroundColor: const Color(0xFFE4D6B0),\n              minimumSize: const Size.fromHeight(48),',
+    para: '              foregroundColor: const Color(0xFFE4D6B0),\n              minimumSize: const Size.fromHeight(24),',
   },
 ];
 

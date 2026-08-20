@@ -1238,15 +1238,17 @@ class _ConfirmacaoAssinaturaSheetState
     final p = widget.plano;
     final economia = p.selo;
     return _SheetShell(
+      // O cabeçalho, e portanto o "X", fica FORA da rolagem: fechar é sempre um
+      // gesto só, mesmo quando o corpo precisa rolar.
+      cabecalho: const _SheetHeader(
+        title: 'Confirmar assinatura',
+        subtitle: 'Revise antes de continuar',
+        rotuloFechar: 'Fechar confirmação de assinatura',
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _SheetHeader(
-            title: 'Confirmar assinatura',
-            subtitle: 'Revise antes de continuar',
-            rotuloFechar: 'Fechar confirmação de assinatura',
-          ),
           const SizedBox(height: 16),
           Semantics(
             container: true,
@@ -1811,15 +1813,15 @@ class _CompraSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SheetShell(
+      cabecalho: const _SheetHeader(
+        title: 'Confirmar compra',
+        subtitle: 'Revise antes de comprar',
+        rotuloFechar: 'Fechar confirmação de compra',
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SheetHeader(
-            title: 'Confirmar compra',
-            subtitle: 'Revise antes de comprar',
-            rotuloFechar: 'Fechar confirmação de compra',
-          ),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(14),
@@ -1922,15 +1924,15 @@ class _PresenteSheetState extends State<_PresenteSheet> {
     final bottom = MediaQuery.viewInsetsOf(context).bottom;
     return _SheetShell(
       bottomInset: bottom,
+      cabecalho: _SheetHeader(
+        title: '🎁 Presentear · ${widget.titulo}',
+        subtitle: 'Escolha quem vai receber',
+        rotuloFechar: 'Fechar seleção de presente',
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _SheetHeader(
-            title: '🎁 Presentear · ${widget.titulo}',
-            subtitle: 'Escolha quem vai receber',
-            rotuloFechar: 'Fechar seleção de presente',
-          ),
           const SizedBox(height: 13),
           TextField(
             onChanged: (value) {
@@ -2046,11 +2048,59 @@ class _PresenteSheetState extends State<_PresenteSheet> {
   }
 }
 
+/// A casca das folhas modais, com CABEÇALHO FIXO E CORPO ROLÁVEL.
+///
+/// ---------------------------------------------------------------------------
+/// O QUE ESTAVA ERRADO
+/// ---------------------------------------------------------------------------
+///
+/// Ela era `Center > Container > child`, e o `child` de cada folha é um `Column`
+/// de altura mínima. Não havia região de rolagem nenhuma: quando o conteúdo
+/// passava da altura disponível, o `Column` estourava e o excedente
+/// simplesmente deixava de existir para quem olha — e para quem lê.
+///
+/// A medição da folha de confirmação, antes desta correção:
+///
+///     largura  escala   estouro   "Continuar"        "Cancelar"
+///     320 dp   130%     51 pt     554..617 visível   640..659 FORA
+///     320 dp   150%     sim       707..779 FORA      800..822 FORA
+///     320 dp   200%     sim      1115..1243 FORA    1261..1290 FORA
+///     360 dp   175%     195 pt    817..901 FORA      921..946 FORA
+///     412 dp   200%     168 pt    913..1009 FORA    1027..1056 FORA
+///
+/// Sete das quinze combinações obrigatórias estouravam. Em seis delas os DOIS
+/// botões comerciais ficavam inteiramente fora da tela, e a 320 dp / 200% eles
+/// nem apareciam na árvore semântica — a folha oferecia uma decisão de compra
+/// sem oferecer as duas saídas dela. Arrastar não movia nada (não havia o que
+/// rolar) e o `Tab` conseguia FOCAR botões que nunca entravam na tela.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE O CABEÇALHO FICA FORA DA ROLAGEM
+/// ---------------------------------------------------------------------------
+///
+/// Rolar a folha inteira também resolveria o estouro, e foi descartado: o "X" é
+/// a saída da folha, e uma saída que depende de rolar até ela é pior do que uma
+/// que está sempre no mesmo lugar. Com o cabeçalho fixo, fechar é sempre um
+/// gesto só, em qualquer escala.
+///
+/// [Flexible] com `SingleChildScrollView` dá o comportamento nos dois sentidos:
+/// quando o corpo cabe, ele fica do tamanho do conteúdo e NÃO rola — não há
+/// deslocamento artificial em tela ampla; quando não cabe, ele ocupa o que
+/// sobrou e rola.
 class _SheetShell extends StatelessWidget {
+  /// O que fica FIXO no alto. Fora da região de rolagem, de propósito.
+  final Widget? cabecalho;
+
+  /// O que rola quando não couber.
   final Widget child;
+
   final double bottomInset;
 
-  const _SheetShell({required this.child, this.bottomInset = 0});
+  const _SheetShell({
+    required this.child,
+    this.cabecalho,
+    this.bottomInset = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2062,13 +2112,36 @@ class _SheetShell extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 430),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
               decoration: const BoxDecoration(
                 color: Color(0xFF21150D),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border(top: BorderSide(color: Color(0xFF755A1D), width: 1.2)),
               ),
-              child: child,
+              // O padding saiu do `Container` e entrou nas duas partes: o do
+              // corpo precisa ficar DENTRO da área rolável, senão a margem de
+              // baixo vira uma faixa morta que o último botão nunca alcança.
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (cabecalho != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+                      child: cabecalho,
+                    ),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(
+                        18,
+                        cabecalho == null ? 10 : 0,
+                        18,
+                        18,
+                      ),
+                      child: child,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
