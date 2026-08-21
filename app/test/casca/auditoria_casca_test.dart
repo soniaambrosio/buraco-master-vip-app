@@ -136,6 +136,44 @@ List<File> _fontesDoCliente() =>
         .toList()
       ..sort((a, b) => a.path.compareTo(b.path));
 
+/// As linhas de COMANDO de um passo do workflow, achado pelo nome.
+///
+/// POR QUE UM BLOCO, E NÃO O ARQUIVO INTEIRO. A OS 37-R1 mediu o preço de
+/// afirmar com `contains` sobre o YAML todo: trocar `flutter test test/casca`
+/// por `flutter test test/casca/casca_producao_test.dart` deixava a asserção
+/// VERDE — o alvo estreitado contém o texto do alvo largo como prefixo —, e a
+/// suíte protegida parava de rodar sem uma linha vermelha. Um `contains` acha
+/// o que procura e não vê o que mudou em volta.
+///
+/// Duas coisas mudam aqui. A primeira é o RECORTE: um comando que existe em
+/// outro passo não prova nada sobre este, então a busca começa no `- name:`
+/// pedido e termina no próximo. A segunda é que COMENTÁRIO NÃO É COMANDO —
+/// tanto o do YAML quanto o do shell dentro do `run: |` começam com `#`, e
+/// nenhum dos dois executa coisa nenhuma. Sem esse filtro, comentar o comando
+/// e deixar a frase escrita ao lado continuaria passando.
+///
+/// Devolve lista vazia quando o passo não existe — e aí a asserção de quem
+/// chamou reprova, que é o comportamento certo: passo apagado é regressão.
+List<String> _linhasDoPasso(String yaml, String nomeDoPasso) {
+  final linhas = yaml.split('\n').map((l) => l.replaceAll('\r', '')).toList();
+  final inicio = linhas.indexWhere(
+    (l) => l.trimLeft().startsWith('- name:') && l.contains(nomeDoPasso),
+  );
+  if (inicio < 0) return const <String>[];
+  final saida = <String>[];
+  for (var i = inicio + 1; i < linhas.length; i++) {
+    final linha = linhas[i];
+    if (linha.trimLeft().startsWith('- name:')) break;
+    if (linha.trimLeft().startsWith('#')) continue;
+    saida.add(linha);
+  }
+  return saida;
+}
+
+/// [padrao] casa com alguma linha de comando de [linhas]?
+bool _executa(List<String> linhas, RegExp padrao) =>
+    linhas.any(padrao.hasMatch);
+
 void main() {
   late Set<String> alcancaveis;
 
@@ -589,12 +627,13 @@ void main() {
       "group('a entrada na mesa'",
       "group('o monte e os mortos'",
       "group('o protocolo e a partida não mudaram'",
+      "group('a recusa do lobby ao criar mesa'",
     ];
 
     // PISO, e não meta. Serve contra o arquivo esvaziado e contra o `main()`
     // trivial — dois casos que passam verdes e não provam nada. Subir o piso
     // quando a suíte crescer é opcional; baixá-lo exige explicar o que saiu.
-    const pisoDeCasos = 30;
+    const pisoDeCasos = 36;
 
     test('a suíte existe na árvore', () {
       expect(
@@ -636,28 +675,155 @@ void main() {
       );
     });
 
-    test('o passo que a executa continua no build.yml', () {
+    // A ÂNCORA É ESTRUTURAL, e a fronteira de palavra é o que a OS 37-R1
+    // provou indispensável. `flutter test test/casca` é PREFIXO de
+    // `flutter test test/casca/casca_producao_test.dart` e de qualquer
+    // subdiretório mais estreito: exigir que o próximo caractere seja espaço
+    // ou fim de linha é o que separa "roda o diretório" de "roda um arquivo,
+    // e o resto do diretório some".
+    final rodaODiretorio = RegExp(r'(^|\s)flutter test test/casca(\s|$)');
+    final copiaODiretorio = RegExp(
+      r'(^|\s)cp -R app/test/casca/\. app_build/test/casca/(\s|$)',
+    );
+
+    test('o passo do build.yml copia e executa o DIRETÓRIO inteiro', () {
       // O overlay do CI roda a partir de `app_build/`, e o workflow fica dois
       // níveis acima. Fora do CI o arquivo pode não estar alcançável — e aí o
       // caso não tem o que afirmar, em vez de afirmar errado.
       final workflow = File('../.github/workflows/build.yml');
       if (!workflow.existsSync()) return;
-      final texto = workflow.readAsStringSync();
-      // O ALVO É O DIRETÓRIO, de propósito: é essa forma que faz a suíte
-      // rodar sem precisar de chave própria, e é ela que não pode sumir.
+      final passo = _linhasDoPasso(
+        workflow.readAsStringSync(),
+        'PORTÃO DE PRODUÇÃO — casca real',
+      );
+
       expect(
-        texto,
-        contains('flutter test test/casca'),
+        passo,
+        isNotEmpty,
         reason:
-            'o portão da casca deixou de executar o diretório — e com ele '
-            'param de rodar todas as suítes que não têm chave própria',
+            'o passo da casca sumiu do build.yml (apagado ou renomeado) — e '
+            'com ele param de rodar todas as suítes que não têm chave própria',
+      );
+      // O ALVO É O DIRETÓRIO, de propósito: é essa forma que faz a suíte
+      // rodar sem precisar de chave própria, e é ela que não pode encolher.
+      expect(
+        _executa(passo, rodaODiretorio),
+        isTrue,
+        reason:
+            'o passo da casca deixou de executar `flutter test test/casca` '
+            'como DIRETÓRIO — um alvo mais estreito (um arquivo, um '
+            'subdiretório) contém o mesmo texto e apagaria a suíte em silêncio',
       );
       expect(
-        texto,
-        contains('cp -R app/test/casca/. app_build/test/casca/'),
+        _executa(passo, copiaODiretorio),
+        isTrue,
         reason:
-            'o diretório deixou de ser copiado para o overlay — o passo '
-            'roda e não encontra nada para rodar',
+            'o passo deixou de copiar `test/casca` INTEIRO para o overlay — '
+            'uma cópia seletiva roda e não encontra o que rodar',
+      );
+    });
+  });
+
+  // =========================================================================
+  // O PORTÃO `cascaaud` CONTINUA REGISTRADO NOS TRÊS PONTOS
+  // =========================================================================
+  //
+  // MESMA FORMA DO GRUPO `perfilvis`, e de propósito. Aquele grupo já existia
+  // neste arquivo quando a OS 37-C1 escreveu o de cima, e a OS 37-R1 mostrou o
+  // custo de não tê-lo copiado: tirar `cascaaud` do `for k in` que decide
+  // verde/vermelho deixava TODA a proteção acima verde — a auditoria continuava
+  // rodando, escrevia o exit code, e ninguém o lia.
+  //
+  // ISTO NÃO REGISTRA CHAVE NENHUMA. A chave `cascaaud` já existe no workflow
+  // desde a OS da Casca de Produção; este grupo só LÊ o YAML e exige que ela
+  // continue nos três lugares onde precisa estar. Não há `GATES=` escrito aqui,
+  // não há `for k in` escrito aqui, e `.github/` não é tocado — que é
+  // exatamente a distinção que a OS 32 canonizou: REGISTRAR uma chave nova
+  // exigiria digitá-la em duas listas do YAML, o defeito que a família P
+  // fechou; AFIRMAR que uma chave existente continua nas duas é leitura pura.
+  //
+  // O que a fonte única P vai absorver desta folha é o contrato de CONTEÚDO da
+  // suíte dos estados anunciados, não este grupo: este continua valendo
+  // enquanto o `ci-os-integracao.yml` desta linhagem tiver as duas listas
+  // literais.
+  group('o portão cascaaud', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+
+    // O caminho registrado tem de ser o DESTE arquivo: registro que aponta
+    // para outro lugar é registro morto, e um gate que executa outra coisa
+    // não prova o que o nome dele promete.
+    final rodaEstaAuditoria = RegExp(
+      r'(^|\s)roda\s+cascaaud\s+test/casca/auditoria_casca_test\.dart(\s|$)',
+    );
+    final naEvidencia = RegExp(r'GATES="[^"]*\bcascaaud\b');
+    final noVeredito = RegExp(r'for k in [^;]*\bcascaaud\b[^;]*; do');
+
+    test('cascaaud executa ESTA auditoria', () {
+      if (!workflow.existsSync()) return;
+      final passo = _linhasDoPasso(
+        workflow.readAsStringSync(),
+        'analyze + suítes Flutter',
+      );
+      expect(
+        passo,
+        isNotEmpty,
+        reason: 'o passo que roda as suítes Flutter sumiu do ci-os-integracao',
+      );
+      expect(
+        _executa(passo, rodaEstaAuditoria),
+        isTrue,
+        reason:
+            'o gate cascaaud não executa mais '
+            'test/casca/auditoria_casca_test.dart — ou saiu, ou passou a '
+            'apontar para outro arquivo',
+      );
+      // Coerência entre registro e execução: o caminho registrado existe.
+      expect(
+        File('test/casca/auditoria_casca_test.dart').existsSync(),
+        isTrue,
+        reason: 'o caminho registrado em cascaaud não existe na árvore',
+      );
+    });
+
+    test('cascaaud está nas DUAS listas do portão', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+      // Nas DUAS: a da evidência publicada e a que decide verde/vermelho.
+      // Estar só na primeira faz o gate aparecer no relatório e não reprovar.
+      expect(
+        naEvidencia.hasMatch(texto),
+        isTrue,
+        reason: 'cascaaud saiu da evidência publicada',
+      );
+      expect(
+        noVeredito.hasMatch(texto),
+        isTrue,
+        reason:
+            'cascaaud saiu do portão verde/vermelho — a auditoria passaria a '
+            'rodar sem poder reprovar, e toda a proteção deste arquivo ficaria '
+            'decorativa',
+      );
+    });
+
+    test('cascaaud não está duplicado nem registrado morto', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+      final passo = _linhasDoPasso(texto, 'analyze + suítes Flutter');
+
+      // DUPLICATA: dois `roda` para a mesma chave fazem o segundo sobrescrever
+      // o exit code do primeiro, e o portão passa a ler só metade.
+      expect(
+        passo.where(rodaEstaAuditoria.hasMatch).length,
+        1,
+        reason: 'cascaaud aparece mais de uma vez entre os passos `roda`',
+      );
+      expect(
+        RegExp(r'\bcascaaud\b').allMatches(texto).length,
+        3,
+        reason:
+            'cascaaud deixou de aparecer exatamente três vezes no workflow '
+            '(roda, GATES=, for k in) — sobra é registro duplicado, falta é '
+            'registro morto',
       );
     });
   });

@@ -1242,5 +1242,256 @@ void main() {
 
       await encerrarTransporte(tester, b);
     });
+
+    // N08 — A ÂNCORA TEM DE SEGURAR DEPOIS DO RETORNO, e não só no instante
+    // dele. O caso acima prova o momento em que a rota renasce; este prova o
+    // momento seguinte, que é o que a rede produz sozinha: qualquer mensagem
+    // do servidor notifica o transporte e reconstrói esta tela. Se a decisão
+    // de "isto é notícia" for tomada pela PRESENÇA da recusa em vez da
+    // TRANSIÇÃO dela, o primeiro aviso depois da volta reacende a região viva
+    // e a pessoa é interrompida por um recado anterior à saída dela.
+    testWidgets('aviso do transporte depois da volta não ressuscita a recusa '
+        'antiga — e a recusa legítima seguinte ainda fala', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      final escuta = escutarAnuncios(tester);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+        final daPrimeiraVisita = noDaRecusa(tester, recusa);
+        expect(daPrimeiraVisita.viva, isTrue);
+
+        // SAIR E VOLTAR. `erro` é do transporte, e o transporte é da raiz: o
+        // recado sobrevive à rota e a caixa reaparece com ele.
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(find.byType(LobbyOnline), findsNothing);
+        await tester.tap(find.text('Mesa por código'));
+        await tester.pumpAndSettle();
+        expect(find.text(recusa), findsOneWidget);
+        expect(noDaRecusa(tester, recusa).viva, isFalse);
+        escuta.limpar();
+
+        // O AVISO QUE NÃO É RECUSA NENHUMA — três deles, que é o que acontece
+        // a cada mensagem do servidor enquanto o recado está na tela.
+        for (var i = 0; i < 3; i++) {
+          b.online.notifyListeners();
+          await tester.pumpAndSettle();
+          expect(
+            noDaRecusa(tester, recusa).viva,
+            isFalse,
+            reason:
+                'o aviso ${i + 1} do transporte transformou a recusa '
+                'histórica em região viva — ninguém perguntou nada',
+          );
+        }
+        expect(
+          escuta.mensagens,
+          isEmpty,
+          reason: 'anúncio fantasma depois do retorno ao lobby',
+        );
+
+        // E A ÂNCORA NÃO É MORDAÇA: uma tentativa de verdade, recusada pelo
+        // mesmo motivo, volta a ser notícia depois de tudo isso.
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        expect(
+          find.text(recusa),
+          findsNothing,
+          reason: 'a pergunta nova não apagou a resposta velha',
+        );
+        await servidorRecusa(tester, b, recusa);
+        final depoisDoRetorno = noDaRecusa(tester, recusa);
+        expect(depoisDoRetorno.viva, isTrue);
+        expect(
+          depoisDoRetorno.id,
+          isNot(daPrimeiraVisita.id),
+          reason: 'a recusa nova reaproveitou o nó da visita anterior',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+  });
+
+  // =========================================================================
+  // 30 a 34 — a recusa do lobby ao CRIAR mesa
+  // =========================================================================
+  //
+  // O MESMO CONTRATO, A OUTRA PORTA. `entrarMesa` e `criarMesa` são as duas
+  // perguntas que esta tela sabe fazer, e as duas voltam pelo mesmo canal —
+  // `OnlineService.erro`, desenhado pela mesma caixa. Uma matriz que só
+  // exercita "Entrar por código" deixa metade do contrato sem prova: tirar
+  // `_perguntaNova()` de `criarMesa` devolve, só nesse caminho, exatamente o
+  // defeito que a OS 37 mediu — a segunda recusa idêntica sem nada a anunciar.
+  //
+  // Criar mesa não pede código: o botão vale assim que a conexão está de pé.
+  // Isso torna a repetição AINDA mais provável do que no outro caminho — dois
+  // toques seguidos no mesmo botão são o gesto natural de quem não ouviu
+  // resposta.
+  group('a recusa do lobby ao criar mesa', () {
+    const recusa = 'não foi possível criar a mesa agora';
+
+    Future<void> criarPeloBotao(WidgetTester tester) async {
+      await tester.tap(find.text('Criar mesa'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a primeira recusa de criação é região viva', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      final escuta = escutarAnuncios(tester);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        escuta.limpar();
+
+        await criarPeloBotao(tester);
+        await servidorRecusa(tester, b, recusa);
+
+        expect(noDaRecusa(tester, recusa).viva, isTrue);
+        expect(escuta.mensagens, isEmpty);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('reconstruir não é uma criação nova', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await criarPeloBotao(tester);
+        await servidorRecusa(tester, b, recusa);
+        final antes = noDaRecusa(tester, recusa);
+
+        for (var i = 0; i < 3; i++) {
+          b.online.notifyListeners();
+          await tester.pumpAndSettle();
+        }
+
+        expect(
+          noDaRecusa(tester, recusa).id,
+          antes.id,
+          reason: 'o nó foi refeito sem criação nova — a região viva falaria',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('uma CRIAÇÃO nova recusada pelo mesmo motivo volta a falar', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await criarPeloBotao(tester);
+        await servidorRecusa(tester, b, recusa);
+        final primeira = noDaRecusa(tester, recusa);
+
+        // A PERGUNTA NOVA APAGA A RESPOSTA VELHA, e o recado sumir da tela é
+        // o que demonstra isso — não há dedução por texto em lugar nenhum.
+        await criarPeloBotao(tester);
+        expect(
+          find.text(recusa),
+          findsNothing,
+          reason: 'a recusa da criação anterior sobreviveu à pergunta nova',
+        );
+
+        await servidorRecusa(tester, b, recusa);
+        final segunda = noDaRecusa(tester, recusa);
+
+        expect(segunda.viva, isTrue);
+        expect(
+          segunda.id,
+          isNot(primeira.id),
+          reason:
+              'a segunda criação reaproveitou o nó da primeira — texto igual '
+              'em nó igual é silêncio, e a pessoa não saberia que a segunda '
+              'tentativa também falhou',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('a criação aceita depois da recusa não é suprimida, e nada a '
+        'mais vai ao fio', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirAplicativo(tester, b);
+      await irAoLobby(tester, b);
+      await criarPeloBotao(tester);
+      await servidorRecusa(tester, b, recusa);
+      expect(find.text(recusa), findsOneWidget);
+
+      await criarPeloBotao(tester);
+      b.canal.servidorEnvia({
+        'tipo': 'entrou',
+        'codigo': 'BURACO-0001',
+        'assento': 0,
+      });
+      await tester.pumpAndSettle();
+      await servidorManda(tester, b, visaoDeLobby());
+
+      expect(find.text(recusa), findsNothing);
+      // A limpeza é LOCAL: esquecer não é mandar mensagem.
+      expect(b.canal.mensagens.map((m) => m['tipo']).toList(), [
+        'auth',
+        'criarMesa',
+        'criarMesa',
+      ]);
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('sair e voltar não anuncia a recusa de criação de antes', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      final escuta = escutarAnuncios(tester);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await criarPeloBotao(tester);
+        await servidorRecusa(tester, b, recusa);
+        expect(noDaRecusa(tester, recusa).viva, isTrue);
+
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(b.online.erro, recusa);
+        escuta.limpar();
+
+        await tester.tap(find.text('Mesa por código'));
+        await tester.pumpAndSettle();
+
+        expect(find.text(recusa), findsOneWidget);
+        expect(
+          noDaRecusa(tester, recusa).viva,
+          isFalse,
+          reason:
+              'a recusa de criação que já estava no transporte foi anunciada '
+              'como se tivesse acabado de chegar',
+        );
+        b.online.notifyListeners();
+        await tester.pumpAndSettle();
+        expect(noDaRecusa(tester, recusa).viva, isFalse);
+        expect(escuta.mensagens, isEmpty);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
   });
 }
