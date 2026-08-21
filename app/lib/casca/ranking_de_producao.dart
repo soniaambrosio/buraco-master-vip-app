@@ -64,6 +64,14 @@ import 'navegacao_perfil_publico.dart';
 /// grande do sistema já empurra o conteúdo para fora.
 const double kAlturaMinimaDaLinha = 56;
 
+/// Largura da coluna da colocação, em fonte 100%.
+///
+/// ELA PRECISA CRESCER COM A FONTE. Fixa em 44, `#123` já não cabia na maior
+/// fonte que o Android oferece, e o que sobrava na tela era a colocação cortada
+/// encostada no nome. Multiplicá-la pelo mesmo fator do texto mantém as linhas
+/// alinhadas entre si — todas escalam igual — sem nunca apertar o número.
+const double kLarguraDaColocacao = 44;
+
 class RankingDeProducao extends StatelessWidget {
   const RankingDeProducao({super.key});
 
@@ -121,13 +129,25 @@ class RankingDeProducao extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 2),
-        const Text(
-          'Ranking',
-          style: TextStyle(
-            color: _ouroClaro,
-            fontSize: 17,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .4,
+        // CABEÇALHO, e o primeiro da tela. Sem `header: true` o gesto "próximo
+        // cabeçalho" do leitor de tela não tinha onde parar, e quem navega por
+        // estrutura caía direto na lista.
+        //
+        // `Flexible` porque o título divide a linha com o botão Voltar, que tem
+        // largura fixa: com fonte grande do sistema o texto cresce e, sem poder
+        // ceder, estouraria a `Row`.
+        Flexible(
+          child: Semantics(
+            header: true,
+            child: const Text(
+              'Ranking',
+              style: TextStyle(
+                color: _ouroClaro,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                letterSpacing: .4,
+              ),
+            ),
           ),
         ),
       ],
@@ -209,13 +229,20 @@ class _TituloSecao extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
-    child: Text(
-      texto,
-      style: const TextStyle(
-        color: RankingDeProducao._textoSec,
-        fontSize: 11.5,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 1.1,
+    // PÓDIO e CLASSIFICAÇÃO são as duas seções competitivas reais da tela, e é
+    // por elas que a navegação estrutural anda. O que NÃO entra aqui é a linha
+    // do jogador: um cabeçalho por jogador encheria a lista de cabeçalhos e
+    // destruiria o atalho que eles existem para dar.
+    child: Semantics(
+      header: true,
+      child: Text(
+        texto,
+        style: const TextStyle(
+          color: RankingDeProducao._textoSec,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.1,
+        ),
       ),
     ),
   );
@@ -295,7 +322,9 @@ class _LinhaJogador extends StatelessWidget {
               child: Row(
                 children: [
                   SizedBox(
-                    width: 44,
+                    width: MediaQuery.textScalerOf(
+                      context,
+                    ).scale(kLarguraDaColocacao),
                     child: Text(
                       _colocacao,
                       style: TextStyle(
@@ -312,10 +341,13 @@ class _LinhaJogador extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // SEM `maxLines: 1`. O corte em uma linha devolvia
+                        // "Mariana Aparecida…" já em fonte 100%, e em 200% comia
+                        // o nome inteiro. Quem está classificado tem direito ao
+                        // próprio nome na tela: aqui o texto quebra e a linha
+                        // cresce, o que a lista rolável absorve de graça.
                         Text(
                           _nome,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: RankingDeProducao._texto,
                             fontSize: 14,
@@ -325,8 +357,6 @@ class _LinhaJogador extends StatelessWidget {
                         if (_liga.isNotEmpty)
                           Text(
                             _liga,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Color(0xFF9FDCFF),
                               fontSize: 12,
