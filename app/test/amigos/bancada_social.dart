@@ -77,12 +77,22 @@ class TransporteSocialFalso implements TransporteSocial {
   );
 
   PaginaSocial respostaAmigos = PaginaSocial.vazia;
+  PaginaSocial respostaOnline = PaginaSocial.vazia;
   PaginaSocial respostaRecebidas = PaginaSocial.vazia;
   PaginaSocial respostaEnviadas = PaginaSocial.vazia;
+  bool respostaAparecerOffline = false;
 
   DesfechoSocial respostaDaAcao = const DesfechoSocial(
     repeticao: false,
     estado: 'pendente',
+  );
+  List<ConviteMesa> respostaConvites = const [];
+  RespostaConviteMesa respostaConvite = const RespostaConviteMesa(
+    aceito: true,
+    repeticao: false,
+    expirado: false,
+    codigo: 'BURACO-1234',
+    tipoMesa: 'privada',
   );
 
   /// Quando não nulo, a PRÓXIMA chamada falha com isto e o campo se limpa.
@@ -149,6 +159,45 @@ class TransporteSocialFalso implements TransporteSocial {
       _responder(ChamadaSocial('listarAmigos', cursor: cursor), respostaAmigos);
 
   @override
+  Future<PaginaSocial> listarAmigosOnline() =>
+      _responder(ChamadaSocial('listarOnline'), respostaOnline);
+
+  @override
+  Future<bool> atualizarPresenca() => _responder<bool>(
+    ChamadaSocial('atualizarPresenca'),
+    respostaAparecerOffline,
+  );
+
+  @override
+  Future<void> definirAparecerOffline(bool valor) => _responder<Object?>(
+    ChamadaSocial('definirAparecerOffline', termo: '$valor'),
+    null,
+  ).then((_) {});
+
+  @override
+  Future<void> enviarConviteMesa({
+    required String publicId,
+    required String codigo,
+    required String tipoMesa,
+  }) => _responder<Object?>(
+    ChamadaSocial('enviarConviteMesa', publicId: publicId, termo: codigo),
+    null,
+  ).then((_) {});
+
+  @override
+  Future<List<ConviteMesa>> listarConvitesMesa() =>
+      _responder(ChamadaSocial('listarConvitesMesa'), respostaConvites);
+
+  @override
+  Future<RespostaConviteMesa> responderConviteMesa(
+    String conviteId, {
+    required bool aceitar,
+  }) => _responder(
+    ChamadaSocial('responderConviteMesa', termo: '$conviteId|$aceitar'),
+    respostaConvite,
+  );
+
+  @override
   Future<PaginaSocial> listarSolicitacoesRecebidas({
     String? cursor,
     int? limite,
@@ -171,6 +220,12 @@ class TransporteSocialFalso implements TransporteSocial {
     ChamadaSocial('agir', publicId: publicId, acao: acao),
     respostaDaAcao,
   );
+
+  @override
+  Future<void> registrarIndicacao(String codigo) => _responder<Object?>(
+    ChamadaSocial('registrarIndicacao', termo: codigo),
+    null,
+  ).then((_) {});
 }
 
 /// Um jogador público de teste.

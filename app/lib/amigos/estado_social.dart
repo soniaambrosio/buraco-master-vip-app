@@ -325,6 +325,63 @@ class PaginaSocial {
   );
 }
 
+/// Convite de mesa entregue somente ao destinatário autenticado.
+class ConviteMesa {
+  const ConviteMesa({
+    required this.conviteId,
+    required this.codigo,
+    required this.tipoMesa,
+    required this.expiraEm,
+    required this.remetente,
+  });
+
+  final String conviteId;
+  final String codigo;
+  final String tipoMesa;
+  final DateTime? expiraEm;
+  final JogadorPublico remetente;
+
+  static ConviteMesa doWire(Map<Object?, Object?> bruto) {
+    final remetente = bruto['remetente'] is Map
+        ? (bruto['remetente'] as Map).cast<Object?, Object?>()
+        : const <Object?, Object?>{};
+    return ConviteMesa(
+      conviteId: _texto(bruto['conviteId']),
+      codigo: _texto(bruto['codigo']),
+      tipoMesa: _texto(bruto['tipoMesa']),
+      expiraEm: DateTime.tryParse(_texto(bruto['expiraEm']))?.toUtc(),
+      remetente: JogadorPublico.doWire(remetente),
+    );
+  }
+}
+
+class RespostaConviteMesa {
+  const RespostaConviteMesa({
+    required this.aceito,
+    required this.repeticao,
+    required this.expirado,
+    required this.codigo,
+    required this.tipoMesa,
+  });
+
+  final bool aceito;
+  final bool repeticao;
+  final bool expirado;
+  final String? codigo;
+  final String? tipoMesa;
+
+  static RespostaConviteMesa doWire(Map<Object?, Object?> bruto) =>
+      RespostaConviteMesa(
+        aceito: bruto['aceito'] == true,
+        repeticao: bruto['repeticao'] == true,
+        expirado: bruto['expirado'] == true,
+        codigo: bruto['codigo'] is String ? bruto['codigo'] as String : null,
+        tipoMesa: bruto['tipoMesa'] is String
+            ? bruto['tipoMesa'] as String
+            : null,
+      );
+}
+
 /// O desfecho de uma operação sobre a relação (§ `respostaDaOperacao`).
 class DesfechoSocial {
   const DesfechoSocial({required this.repeticao, required this.estado});

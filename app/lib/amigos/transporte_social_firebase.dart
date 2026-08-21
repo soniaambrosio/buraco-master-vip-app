@@ -28,8 +28,15 @@ import 'transporte_social.dart';
 const String kCallableBuscarPorApelido = 'buscarJogadoresPorApelido';
 const String kCallableVerPerfilPublico = 'verPerfilPublico';
 const String kCallableListarAmigos = 'listarAmigos';
+const String kCallableListarAmigosOnline = 'listarAmigosOnline';
+const String kCallableAtualizarPresenca = 'atualizarPresencaSocial';
+const String kCallableAparecerOffline = 'definirAparecerOffline';
+const String kCallableEnviarConviteMesa = 'enviarConviteMesa';
+const String kCallableListarConvitesMesa = 'listarConvitesMesa';
+const String kCallableResponderConviteMesa = 'responderConviteMesa';
 const String kCallableListarRecebidas = 'listarSolicitacoesRecebidas';
 const String kCallableListarEnviadas = 'listarSolicitacoesEnviadas';
+const String kCallableRegistrarIndicacao = 'registrarIndicacao';
 
 /// A callable de cada ação de amizade.
 ///
@@ -87,6 +94,57 @@ class TransporteSocialFirebase implements TransporteSocial {
       _pagina(kCallableListarAmigos, cursor, limite);
 
   @override
+  Future<PaginaSocial> listarAmigosOnline() =>
+      _pagina(kCallableListarAmigosOnline, null, null);
+
+  @override
+  Future<bool> atualizarPresenca() async {
+    final r = await _chamar(kCallableAtualizarPresenca, const {});
+    return r['aparecerOffline'] == true;
+  }
+
+  @override
+  Future<void> definirAparecerOffline(bool valor) async {
+    await _chamar(kCallableAparecerOffline, {'aparecerOffline': valor});
+  }
+
+  @override
+  Future<void> enviarConviteMesa({
+    required String publicId,
+    required String codigo,
+    required String tipoMesa,
+  }) async {
+    await _chamar(kCallableEnviarConviteMesa, {
+      'publicId': publicId,
+      'codigo': codigo,
+      'tipoMesa': tipoMesa,
+    });
+  }
+
+  @override
+  Future<List<ConviteMesa>> listarConvitesMesa() async {
+    final bruto = await _chamar(kCallableListarConvitesMesa, const {});
+    final itens = bruto['itens'];
+    if (itens is! List) return const [];
+    return List.unmodifiable([
+      for (final item in itens)
+        if (item is Map) ConviteMesa.doWire(item.cast<Object?, Object?>()),
+    ]);
+  }
+
+  @override
+  Future<RespostaConviteMesa> responderConviteMesa(
+    String conviteId, {
+    required bool aceitar,
+  }) async {
+    final bruto = await _chamar(kCallableResponderConviteMesa, {
+      'conviteId': conviteId,
+      'aceitar': aceitar,
+    });
+    return RespostaConviteMesa.doWire(bruto);
+  }
+
+  @override
   Future<PaginaSocial> listarSolicitacoesRecebidas({
     String? cursor,
     int? limite,
@@ -114,6 +172,11 @@ class TransporteSocialFirebase implements TransporteSocial {
     }
     final bruto = await _chamar(nome, {'publicId': publicId});
     return DesfechoSocial.doWire(bruto);
+  }
+
+  @override
+  Future<void> registrarIndicacao(String codigo) async {
+    await _chamar(kCallableRegistrarIndicacao, {'codigo': codigo});
   }
 
   Future<PaginaSocial> _pagina(String nome, String? cursor, int? limite) async {

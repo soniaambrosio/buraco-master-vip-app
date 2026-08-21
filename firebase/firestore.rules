@@ -551,6 +551,57 @@ service cloud.firestore {
     }
 
     // =====================================================================
+    // INDICAÇÃO — vínculo e recompensa da primeira partida pública válida.
+    //
+    // Nenhum destes documentos é escrito pelo cliente. Em particular, o
+    // recibo é a trava de idempotência: permitir `create` deixaria um cliente
+    // plantar ou apagar o próprio direito antes do gatilho autoritativo.
+    // =====================================================================
+
+    match /referrals/{inviteeUid} {
+      allow get: if ehDono(inviteeUid) || ehAdmin();
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /referralProgress/{inviteeUid} {
+      allow get: if ehDono(inviteeUid) || ehAdmin();
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /indicacaoLedger/{chaveIdempotencia} {
+      allow get: if autenticado()
+                 && (resource.data.beneficiarioUid == request.auth.uid || ehAdmin());
+      allow list: if false;
+      allow write: if false;
+    }
+
+    match /referralStats/{uid} {
+      allow read, write: if false;
+    }
+
+    match /referralFraudSignals/{chaveIdempotencia} {
+      allow read: if ehAdmin();
+      allow write: if false;
+    }
+
+    // Presença e preferência social são servidas apenas pelas Functions. O
+    // cliente não consulta a coleção para enumerar quem está online e não pode
+    // fabricar prazo de presença ou estado de outra pessoa.
+    match /socialPresence/{uid} {
+      allow read, write: if false;
+    }
+
+    match /socialPrivacy/{uid} {
+      allow read, write: if false;
+    }
+
+    match /gameInvites/{conviteId} {
+      allow read, write: if false;
+    }
+
+    // =====================================================================
     // BLOCO 5/5 — MODERACAO
     // origem: claude/moderation-reports-blocking-social-08ef72
     //

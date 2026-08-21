@@ -68,6 +68,14 @@
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
       "ignore": ["node_modules", ".git", "*.log"]
+    },
+    {
+      "//": "INDICACAO — registrarIndicacao e aoRegistrarPrimeiraPartidaIndicada. Codebase separado porque move a carteira por uma origem contabil propria e observa o encerramento autoritativo; um deploy social nao pode creditar fichas, e um deploy desta recompensa nao pode derrubar amizade.",
+      "source": "functions-indicacao",
+      "codebase": "indicacao",
+      "runtime": "nodejs20",
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run check"],
+      "ignore": ["node_modules", ".git", "*.log"]
     }
   ],
 

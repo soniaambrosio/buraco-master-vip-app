@@ -110,7 +110,6 @@ void main() {
     if (assentar) await _assentar(tester);
   }
 
-
   String textoDaTela(WidgetTester tester) => tester
       .widgetList<Text>(find.byType(Text))
       .map((t) => t.data ?? '')
@@ -120,19 +119,20 @@ void main() {
   // A tela de Amigos
   // =========================================================================
   group('Amigos — as listas vêm da autoridade', () {
-    testWidgets('a lista desenha quem o servidor devolveu, e emite UMA consulta', (
-      tester,
-    ) async {
-      t.respostaAmigos = paginaFalsa([
-        jogadorFalso('P1', apelido: 'Bia'),
-        jogadorFalso('P2', apelido: 'Caio'),
-      ]);
-      await montar(tester, const AmigosDeProducao());
+    testWidgets(
+      'a lista desenha quem o servidor devolveu, e emite UMA consulta',
+      (tester) async {
+        t.respostaOnline = paginaFalsa([
+          jogadorFalso('P1', apelido: 'Bia'),
+          jogadorFalso('P2', apelido: 'Caio'),
+        ]);
+        await montar(tester, const AmigosDeProducao());
 
-      expect(find.text('Bia'), findsOneWidget);
-      expect(find.text('Caio'), findsOneWidget);
-      expect(t.chamadasDe('listarAmigos'), 1);
-    });
+        expect(find.text('Bia'), findsOneWidget);
+        expect(find.text('Caio'), findsOneWidget);
+        expect(t.chamadasDe('listarOnline'), 1);
+      },
+    );
 
     testWidgets('nenhum nome da maquete chega à tela', (tester) async {
       // A maquete tem seis pessoas escritas dentro. Se um dia ela voltar ao
@@ -166,13 +166,13 @@ void main() {
       expect(carregando, contains('Carregando'));
       expect(
         carregando,
-        isNot(contains('ainda não tem amigos')),
-        reason: 'afirmou "sem amigos" antes de a autoridade responder',
+        isNot(contains('Nenhum amigo online')),
+        reason: 'afirmou "sem amigos online" antes de a autoridade responder',
       );
 
       t.responder(0, PaginaSocial.vazia);
       await _assentar(tester);
-      expect(textoDaTela(tester), contains('ainda não tem amigos'));
+      expect(textoDaTela(tester), contains('Nenhum amigo online agora'));
     });
 
     testWidgets('trocar de aba consulta a aba nova, e só ela', (tester) async {
@@ -180,18 +180,24 @@ void main() {
       await montar(tester, const AmigosDeProducao());
       expect(t.chamadasDe('listarRecebidas'), 0);
 
-      await tester.tap(find.text('Recebidos'));
+      await tester.tap(find.text('Pedidos'));
       await _assentar(tester);
 
       expect(find.text('Duda'), findsOneWidget);
       expect(t.chamadasDe('listarRecebidas'), 1);
-      expect(t.chamadasDe('listarAmigos'), 1, reason: 'consultou de novo à toa');
+      expect(
+        t.chamadasDe('listarOnline'),
+        1,
+        reason: 'consultou de novo à toa',
+      );
     });
 
-    testWidgets('o botão da aba de recebidas é o VERBO da ação', (tester) async {
+    testWidgets('o botão da aba de recebidas é o VERBO da ação', (
+      tester,
+    ) async {
       t.respostaRecebidas = paginaFalsa([jogadorFalso('PR', apelido: 'Duda')]);
       await montar(tester, const AmigosDeProducao());
-      await tester.tap(find.text('Recebidos'));
+      await tester.tap(find.text('Pedidos'));
       await _assentar(tester);
 
       expect(find.text('Aceitar'), findsOneWidget);
@@ -213,7 +219,8 @@ void main() {
       expect(
         t.chamadasDe('buscar'),
         0,
-        reason: 'gastou chamada com termo abaixo do mínimo que o servidor publicou',
+        reason:
+            'gastou chamada com termo abaixo do mínimo que o servidor publicou',
       );
     });
 
@@ -314,12 +321,15 @@ void main() {
       expect(
         find.text('Carregar mais'),
         findsNothing,
-        reason: 'a busca não tem cursor, e oferecer "mais" prometeria uma '
+        reason:
+            'a busca não tem cursor, e oferecer "mais" prometeria uma '
             'paginação que o contrato não tem',
       );
     });
 
-    testWidgets('recusa de termo curto vira recado sobre o TEXTO', (tester) async {
+    testWidgets('recusa de termo curto vira recado sobre o TEXTO', (
+      tester,
+    ) async {
       await montar(tester, const AmigosDeProducao());
       // DEPOIS de montar:  vale para UMA chamada, e a carga da
       // lista de amigos que a abertura dispara a consumiria antes da busca.
@@ -344,8 +354,10 @@ void main() {
   // Navegação ao Perfil
   // =========================================================================
   group('navegação — o publicId, e nunca a posição', () {
-    testWidgets('tocar num amigo abre o Perfil daquele publicId', (tester) async {
-      t.respostaAmigos = paginaFalsa([
+    testWidgets('tocar num amigo abre o Perfil daquele publicId', (
+      tester,
+    ) async {
+      t.respostaOnline = paginaFalsa([
         jogadorFalso('P1', apelido: 'Bia'),
         jogadorFalso('P2', apelido: 'Caio'),
       ]);
@@ -361,7 +373,9 @@ void main() {
       expect(pagina.ehMeuPerfil, isFalse);
     });
 
-    testWidgets('um resultado que É você abre o perfil do DONO', (tester) async {
+    testWidgets('um resultado que É você abre o perfil do DONO', (
+      tester,
+    ) async {
       // `souEu` vem da autoridade (relação `euMesmo`), e não de comparar o
       // publicId local — que no intervalo de troca de sessão já é o da conta
       // nova enquanto a lista ainda é da antiga.
@@ -499,7 +513,9 @@ void main() {
       expect(find.text('Amigos'), findsNothing);
     });
 
-    testWidgets('relação sem rótulo E sem ação não desenha faixa', (tester) async {
+    testWidgets('relação sem rótulo E sem ação não desenha faixa', (
+      tester,
+    ) async {
       // O caso de quem não pode interagir por motivo que o contrato esconde.
       // Uma faixa vazia com moldura seria, ela mesma, a informação de que há
       // algo do outro lado.

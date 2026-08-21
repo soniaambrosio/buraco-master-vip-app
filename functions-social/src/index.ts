@@ -21,13 +21,16 @@
 // trava de `exigirRespostaSegura` transforma um vazamento acidental em erro.
 
 import { initializeApp } from "firebase-admin/app";
+import { Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { CallableRequest, HttpsError, onCall } from "firebase-functions/v2/https";
+import { createHash } from "node:crypto";
 
 import {
   C_AMIZADES,
   C_PERFIS_PUBLICOS,
+  C_USUARIOS,
   entradaDeBusca,
   entradaPublica,
   exigirRespostaSegura,
@@ -396,6 +399,47 @@ export const buscarJogadoresPorApelido = onCall(opcoesCliente, async (req) => {
   const uid = exigirAutenticacao(req);
   const { termo, modo, limite } = (req.data ?? {}) as Record<string, unknown>;
 
+  // O MESMO campo de busca aceita um `publicId` exato. A decisão de formato é
+  // do domínio no servidor — o cliente não copia prefixo nem comprimento.
+  // Bloqueio continua indistinguível de inexistência: um ID exato não vira
+  // oráculo lateral só porque veio no lugar de um apelido.
+  const idExato = typeof termo === "string"
+    ? dominio.normalizarIdPublico(termo).publicId
+    : null;
+  if (idExato) {
+    const [perfil, alvoUid] = await Promise.all([
+      lerPerfilPublico(idExato),
+      resolverUid(idExato),
+    ]);
+    if (!perfil || !alvoUid || perfil.estado !== "ativo") {
+      return exigirRespostaSegura({ itens: [], truncado: false, modo: "exato" });
+    }
+    const contato = await estadoDeContato(uid, alvoUid);
+    if (!contato.permitido) {
+      return exigirRespostaSegura({ itens: [], truncado: false, modo: "exato" });
+    }
+    const relacoes = await relacoesParaBusca(uid, [alvoUid]);
+    const rel = relacoes.get(alvoUid);
+    const projetados = dominio.projetarResultadosDeBusca({
+      uidObservador: uid,
+      candidatos: [{
+        publicId: idExato,
+        uidAlvo: alvoUid,
+        estado: rel?.estado ?? "nenhuma",
+        solicitanteUid: rel?.solicitanteUid ?? null,
+        euBloqueeiOAlvo: contato.euBloqueeiOAlvo,
+        alvoMeBloqueou: false,
+      }],
+    });
+    return exigirRespostaSegura({
+      itens: projetados.itens.map((r) =>
+        entradaDeBusca(perfil, r.publicId, r.relacao, r.acoes)
+      ),
+      truncado: false,
+      modo: "exato",
+    });
+  }
+
   const consulta = dominio.avaliarConsultaDeBusca({ termo, modo, limite });
   if (!consulta.aceita) recusar(consulta.recusa);
 
@@ -632,6 +676,235 @@ export const listarAmigos = onCall(opcoesCliente, async (req) => {
     limiteDoPedido(req.data)
   );
   return resolverPagina(pagina);
+});
+
+// ===========================================================================
+// PRESENÇA — visível somente entre amigos
+// ===========================================================================
+
+const JANELA_PRESENCA_MS = 90_000;
+
+/// Renova a presença da própria sessão. O cliente não escolhe UID nem prazo.
+export const atualizarPresencaSocial = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const privacidade = await db().collection("socialPrivacy").doc(uid).get();
+  if (privacidade.data()?.aparecerOffline === true) {
+    await db().collection("socialPresence").doc(uid).delete();
+    return { online: false, aparecerOffline: true };
+  }
+  const agora = Date.now();
+  await db().collection("socialPresence").doc(uid).set({
+    uid,
+    onlineAte: Timestamp.fromMillis(agora + JANELA_PRESENCA_MS),
+    atualizadoEm: Timestamp.fromMillis(agora),
+    esquema: 1,
+  });
+  return { online: true, aparecerOffline: false };
+});
+
+/// Preferência autoritativa "Aparecer offline". Quando ligada, a presença
+/// corrente é apagada na mesma operação lógica; o próximo heartbeat também
+/// respeita a preferência e não a recria.
+export const definirAparecerOffline = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const aparecerOffline = req.data?.aparecerOffline === true;
+  const lote = db().batch();
+  lote.set(db().collection("socialPrivacy").doc(uid), {
+    aparecerOffline,
+    atualizadoEm: Timestamp.now(),
+  }, { merge: true });
+  if (aparecerOffline) lote.delete(db().collection("socialPresence").doc(uid));
+  await lote.commit();
+  return { aparecerOffline };
+});
+
+/// Lista apenas amigos cuja presença ainda está viva. Nenhum UID sai; cada
+/// candidato passa novamente pelo bloqueio para fechar a janela entre um
+/// bloqueio e a faxina assíncrona da amizade.
+export const listarAmigosOnline = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const snap = await db()
+    .collection(C_USUARIOS)
+    .doc(uid)
+    .collection("friends")
+    .limit(LIMITES.limiteAmigos)
+    .get();
+  if (snap.empty) return exigirRespostaSegura({ itens: [] });
+
+  const refs = snap.docs.map((d) => db().collection("socialPresence").doc(d.id));
+  const presencas = await db().getAll(...refs);
+  const agora = Date.now();
+  const candidatos = presencas
+    .map((p, i) => ({ p, amigo: snap.docs[i] }))
+    .filter(({ p }) => {
+      const ate = p.data()?.onlineAte;
+      return p.exists && ate instanceof Timestamp && ate.toMillis() > agora;
+    });
+
+  const visiveis = [] as Array<{ publicId: string; desde: string | null }>;
+  for (const { amigo } of candidatos) {
+    const contato = await estadoDeContato(uid, amigo.id);
+    if (!contato.permitido) continue;
+    visiveis.push({
+      publicId: `${amigo.data().publicId ?? ""}`,
+      desde: typeof amigo.data().amigosDesde === "string"
+        ? amigo.data().amigosDesde : null,
+    });
+  }
+  const perfis = await lerPerfisPublicos(visiveis.map((i) => i.publicId));
+  return exigirRespostaSegura({
+    itens: visiveis
+      .map((i) => entradaPublica(perfis.get(i.publicId), i.publicId, i.desde))
+      .filter((i) => i.publicId.length > 0),
+  });
+});
+
+// ===========================================================================
+// CONVITES DE MESA — amizade real, prazo curto e código opaco ao restante
+// ===========================================================================
+
+const PRAZO_CONVITE_MESA_MS = 15 * 60_000;
+
+function idConviteMesa(inviterUid: string, inviteeUid: string, codigo: string): string {
+  return createHash("sha256")
+    .update(`${inviterUid}|${inviteeUid}|${codigo}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+async function exigirAmizadeSemBloqueio(uid: string, alvoUid: string): Promise<void> {
+  const contato = await estadoDeContato(uid, alvoUid);
+  if (!contato.permitido) recusar("contatoIndisponivel");
+  const par = dominio.chaveDoPar(uid, alvoUid).pairKey;
+  const rel = await db().collection(C_AMIZADES).doc(par).get();
+  if (!rel.exists || rel.data()?.estado !== "amigos") recusar("amizadeNecessaria");
+}
+
+/// Envia ou renova um convite para uma mesa já criada. O servidor de jogo
+/// continua sendo quem valida se o código existe, se a mesa aceita entrada e se
+/// o destinatário tem VIP; este documento só entrega o convite ao amigo certo.
+export const enviarConviteMesa = onCall(opcoesCliente, async (req) => {
+  const inviterUid = exigirAutenticacao(req);
+  const publicId = req.data?.publicId;
+  const codigo = typeof req.data?.codigo === "string"
+    ? req.data.codigo.trim().toUpperCase() : "";
+  const tipoMesa = typeof req.data?.tipoMesa === "string"
+    ? req.data.tipoMesa : "privada";
+  if (!/^[A-Z0-9-]{4,32}$/.test(codigo)) {
+    throw new HttpsError("invalid-argument", "Código de mesa inválido.");
+  }
+  if (!["publica", "vip", "privada"].includes(tipoMesa)) {
+    throw new HttpsError("invalid-argument", "Tipo de mesa inválido.");
+  }
+  const inviteeUid = await exigirUidDoPublicId(publicId);
+  if (inviteeUid === inviterUid) recusar("autoConviteInvalido");
+  await exigirAmizadeSemBloqueio(inviterUid, inviteeUid);
+
+  const inviterPublicId = await publicIdDe(inviterUid);
+  if (!inviterPublicId) recusar("identidadeNaoEncontrada");
+  const conviteId = idConviteMesa(inviterUid, inviteeUid, codigo);
+  const agora = Date.now();
+  await db().collection("gameInvites").doc(conviteId).set({
+    conviteId,
+    inviterUid,
+    inviteeUid,
+    inviterPublicId,
+    inviteePublicId: publicId,
+    codigo,
+    tipoMesa,
+    status: "pendente",
+    criadoEm: Timestamp.fromMillis(agora),
+    expiraEm: Timestamp.fromMillis(agora + PRAZO_CONVITE_MESA_MS),
+    esquema: 1,
+  });
+  return exigirRespostaSegura({ enviado: true, conviteId });
+});
+
+export const listarConvitesMesa = onCall(opcoesCliente, async (req) => {
+  const inviteeUid = exigirAutenticacao(req);
+  const snap = await db().collection("gameInvites")
+    .where("inviteeUid", "==", inviteeUid)
+    .where("status", "==", "pendente")
+    .orderBy("criadoEm", "desc")
+    .limit(25)
+    .get();
+  const agora = Date.now();
+  const candidatos = snap.docs.filter((d) => {
+    const expira = d.data().expiraEm;
+    return expira instanceof Timestamp && expira.toMillis() > agora;
+  });
+  const saida = [] as Array<Record<string, unknown>>;
+  for (const d of candidatos) {
+    const e = d.data();
+    const inviterUid = e.inviterUid;
+    if (typeof inviterUid !== "string") continue;
+    const contato = await estadoDeContato(inviteeUid, inviterUid);
+    if (!contato.permitido) continue;
+    const par = dominio.chaveDoPar(inviteeUid, inviterUid).pairKey;
+    const relacao = await db().collection(C_AMIZADES).doc(par).get();
+    if (!relacao.exists || relacao.data()?.estado !== "amigos") continue;
+    const perfil = await lerPerfilPublico(`${e.inviterPublicId ?? ""}`);
+    saida.push({
+      conviteId: d.id,
+      codigo: `${e.codigo ?? ""}`,
+      tipoMesa: `${e.tipoMesa ?? "privada"}`,
+      expiraEm: (e.expiraEm as Timestamp).toDate().toISOString(),
+      remetente: entradaPublica(perfil, `${e.inviterPublicId ?? ""}`, null),
+    });
+  }
+  return exigirRespostaSegura({ itens: saida });
+});
+
+export const responderConviteMesa = onCall(opcoesCliente, async (req) => {
+  const inviteeUid = exigirAutenticacao(req);
+  const conviteId = typeof req.data?.conviteId === "string" ? req.data.conviteId : "";
+  const aceitar = req.data?.aceitar === true;
+  if (!/^[a-f0-9]{32}$/.test(conviteId)) {
+    throw new HttpsError("invalid-argument", "Convite inválido.");
+  }
+  const ref = db().collection("gameInvites").doc(conviteId);
+  return db().runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    const e = doc.data();
+    if (!doc.exists || e?.inviteeUid !== inviteeUid) recusar("conviteIndisponivel");
+    const inviterUid = e?.inviterUid;
+    if (typeof inviterUid !== "string") recusar("conviteIndisponivel");
+    const contato = await estadoDeContato(inviteeUid, inviterUid, tx);
+    const par = dominio.chaveDoPar(inviteeUid, inviterUid).pairKey;
+    const relacao = await tx.get(db().collection(C_AMIZADES).doc(par));
+    if (!contato.permitido || !relacao.exists || relacao.data()?.estado !== "amigos") {
+      recusar("conviteIndisponivel");
+    }
+    if (e?.status !== "pendente") {
+      return exigirRespostaSegura({
+        aceito: e?.status === "aceito",
+        repeticao: true,
+        codigo: e?.status === "aceito" ? `${e.codigo ?? ""}` : null,
+        tipoMesa: e?.status === "aceito" ? `${e.tipoMesa ?? "privada"}` : null,
+      });
+    }
+    const expira = e.expiraEm;
+    if (!(expira instanceof Timestamp) || expira.toMillis() <= Date.now()) {
+      tx.update(ref, { status: "expirado", respondidoEm: Timestamp.now() });
+      return exigirRespostaSegura({
+        aceito: false,
+        repeticao: false,
+        expirado: true,
+        codigo: null,
+        tipoMesa: null,
+      });
+    }
+    tx.update(ref, {
+      status: aceitar ? "aceito" : "recusado",
+      respondidoEm: Timestamp.now(),
+    });
+    return exigirRespostaSegura({
+      aceito: aceitar,
+      repeticao: false,
+      codigo: aceitar ? `${e.codigo ?? ""}` : null,
+      tipoMesa: aceitar ? `${e.tipoMesa ?? "privada"}` : null,
+    });
+  });
 });
 
 /// Lista as solicitacoes RECEBIDAS pendentes (§23).

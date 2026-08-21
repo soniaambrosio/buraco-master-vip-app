@@ -3,6 +3,15 @@
   "//identidade-publica": "A OS de integracao Identidade Publica x Ranking NAO ACRESCENTOU NENHUM INDICE, e a ausencia e conferida e nao presumida. Os quatro caminhos que ela criou ou trocou resolvem por ID DE DOCUMENTO, que o Firestore serve sem indice declarado: `playerIdentities/{uid}` (uid -> publicId, via getAll), `publicIdIndex/{publicId}` (o caminho de volta, que substituiu a leitura em rankingPublicIds), `publicProfiles/{publicId}` (apelido e avatar projetados na linha do ranking) e a varredura da auditoria dry-run, que le colecao inteira sem where nem orderBy. `rankingPublicIds` sumiu do codigo e nunca teve entrada aqui, pelo mesmo motivo. LEMBRETE QUE CONTINUA VALENDO: o emulador cria indice sozinho e NAO prova a necessidade de indice composto em producao — a conferencia e por leitura deste arquivo, e continua sendo portao de pre-deploy.",
   "indexes": [
     {
+      "collectionGroup": "gameInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inviteeUid", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "criadoEm", "order": "DESCENDING" }
+      ]
+    },
+    {
       "//": "Vitrine/inventario: itens de uma colecao, mais recentes primeiro. Usado ao abrir a aba do Kit Pioneiros no inventario do jogador. [origem: colecoes/kit-pioneiros]",
       "collectionGroup": "inventory",
       "queryScope": "COLLECTION",

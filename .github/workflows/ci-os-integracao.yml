@@ -14,6 +14,7 @@ name: CI OS Integração (analyze + suítes + codebases Firebase)
 #        social   -> functions-social     (dart compile js + tsc + node --test,
 #                                          e um passo PRÓPRIO de Emulator Suite
 #                                          com chamadas reais às callables)
+#        indicacao -> functions-indicacao (sintaxe + política pura da recompensa)
 #      As regras rodam por `test:integrado`, que prova os cinco blocos de
 #      firestore.rules cobertos por suíte no MESMO arquivo.
 #      NÃO COBERTO, e registrado como tal: `functions-moderacao` não tem passo
@@ -65,7 +66,8 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          # firebase-tools atual exige Java 21 ou superior.
+          java-version: '21'
 
       - name: Setup Node (firebase-tools e testes das Functions)
         uses: actions/setup-node@v4
@@ -270,6 +272,22 @@ jobs:
             "cd firebase/testes && npm run test:social:functions" 2>&1 | tee t_socialemu.log
           echo ${PIPESTATUS[0]} > exit_socialemu
 
+      - name: "3d2 — codebase INDICACAO: sintaxe e política de recompensa"
+        run: |
+          set +e
+          if [ ! -f functions-indicacao/package.json ]; then
+            echo "functions-indicacao/package.json ausente" > nao_indicacao; exit 0
+          fi
+          ( cd functions-indicacao && npm ci ) 2>&1 | tee t_indicacao_install.log
+          install_exit=${PIPESTATUS[0]}
+          ( cd functions-indicacao && npm run check && npm test ) 2>&1 | tee t_indicacao.log
+          test_exit=${PIPESTATUS[0]}
+          if [ "$install_exit" = 0 ] && [ "$test_exit" = 0 ]; then
+            echo 0 > exit_indicacao
+          else
+            echo 1 > exit_indicacao
+          fi
+
       - name: "3f2 — INTEGRACAO IDENTIDADE x RANKING contra o emulador"
         run: |
           set +e
@@ -352,7 +370,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -403,7 +421,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

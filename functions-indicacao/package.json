@@ -1,0 +1,16 @@
+{
+  "name": "bmv-indicacao-functions",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Indicação segura e recompensa da primeira partida pública válida.",
+  "main": "index.js",
+  "engines": { "node": "20" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check index.js && node --check politica.js && node --check store.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

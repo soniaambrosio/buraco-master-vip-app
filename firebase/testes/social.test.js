@@ -529,6 +529,41 @@ describe('nao-regressao: moderacao nao foi afrouxada nem duplicada', () => {
 });
 
 // ===========================================================================
+// INDICAÇÃO, PRESENÇA E CONVITES — o cliente nunca grava a autoridade
+// ===========================================================================
+describe('novas autoridades sociais: escrita somente pelas Functions', () => {
+  test('o dono consulta o próprio vínculo, mas não o fabrica nem o apaga', async () => {
+    await assertSucceeds(getDoc(doc(comoAna(), `referrals/${ANA}`)));
+    await assertSucceeds(getDoc(doc(comoAna(), `referralProgress/${ANA}`)));
+    await assertFails(setDoc(doc(comoAna(), `referrals/${ANA}`), {
+      referrerUid: BIA, status: 'pendente',
+    }));
+    await assertFails(deleteDoc(doc(comoAna(), `referrals/${ANA}`)));
+  });
+
+  test('presença, privacidade e convite não são enumeráveis nem graváveis', async () => {
+    for (const caminho of [
+      `socialPresence/${ANA}`,
+      `socialPrivacy/${ANA}`,
+      'gameInvites/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ]) {
+      await assertFails(getDoc(doc(comoAna(), caminho)));
+      await assertFails(setDoc(doc(comoAna(), caminho), { forjado: true }));
+    }
+    await assertFails(getDocs(collection(comoAna(), 'socialPresence')));
+    await assertFails(getDocs(collection(comoAna(), 'gameInvites')));
+  });
+
+  test('estatística e sinal antifraude não vazam para o jogador', async () => {
+    await assertFails(getDoc(doc(comoAna(), `referralStats/${ANA}`)));
+    await assertFails(getDoc(doc(comoAna(), 'referralFraudSignals/sinal')));
+    await assertFails(setDoc(doc(comoAna(), `referralStats/${ANA}`), {
+      concedidasTotal: 0,
+    }));
+  });
+});
+
+// ===========================================================================
 // A PARTIR DAQUI e preciso o emulador de FUNCTIONS, alem do de Firestore.
 // Cobre o que a REGRA nao alcanca: idempotencia, concorrencia, soberania do
 // bloqueio e a AUSENCIA de UID nas respostas.

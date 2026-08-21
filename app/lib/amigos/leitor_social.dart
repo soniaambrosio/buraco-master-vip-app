@@ -102,7 +102,7 @@ class ListaSocial {
 }
 
 /// Qual lista social.
-enum QualLista { amigos, recebidas, enviadas }
+enum QualLista { online, amigos, recebidas, enviadas }
 
 /// O estado da busca por apelido.
 @immutable
@@ -132,6 +132,19 @@ class BuscaSocial {
   /// enquanto a consulta ainda corria e também depois de ela falhar.
   bool get semResultados =>
       fase == FaseSocial.pronta && (resultados?.vazio ?? false);
+}
+
+@immutable
+class ListaConvitesMesa {
+  const ListaConvitesMesa({
+    this.fase = FaseSocial.naoCarregada,
+    this.itens = const [],
+    this.falha,
+  });
+
+  final FaseSocial fase;
+  final List<ConviteMesa> itens;
+  final FalhaSocial? falha;
 }
 
 /// Como uma ação social terminou.
@@ -173,12 +186,15 @@ class LeitorSocial extends ChangeNotifier {
   final Map<QualLista, Future<void>> _emVoo = <QualLista, Future<void>>{};
 
   final Map<QualLista, ListaSocial> _listas = <QualLista, ListaSocial>{
+    QualLista.online: const ListaSocial(),
     QualLista.amigos: const ListaSocial(),
     QualLista.recebidas: const ListaSocial(),
     QualLista.enviadas: const ListaSocial(),
   };
 
   BuscaSocial _busca = const BuscaSocial();
+  ListaConvitesMesa _convitesMesa = const ListaConvitesMesa();
+  Future<void>? _convitesEmVoo;
   int _ultimaBusca = 0;
 
   /// Quantas chamadas de transporte foram realmente emitidas. Diagnóstico de
@@ -226,9 +242,13 @@ class LeitorSocial extends ChangeNotifier {
 
   ListaSocial lista(QualLista qual) => _listas[qual]!;
   ListaSocial get amigos => lista(QualLista.amigos);
+  ListaSocial get online => lista(QualLista.online);
   ListaSocial get recebidas => lista(QualLista.recebidas);
   ListaSocial get enviadas => lista(QualLista.enviadas);
   BuscaSocial get busca => _busca;
+  ListaConvitesMesa get convitesMesa => _convitesMesa;
+  bool? get aparecerOffline => _aparecerOffline;
+  bool? _aparecerOffline;
 
   /// A sessão avançou: logout, troca de conta, recarga.
   ///
@@ -245,10 +265,13 @@ class LeitorSocial extends ChangeNotifier {
     // mesmo `publicId` receber, por deduplicação, o `null` da conta velha.
     _vistasEmVoo.clear();
     _ultimaBusca = 0;
+    _aparecerOffline = null;
     for (final qual in QualLista.values) {
       _listas[qual] = const ListaSocial();
     }
     _busca = const BuscaSocial();
+    _convitesMesa = const ListaConvitesMesa();
+    _convitesEmVoo = null;
     _notificarEmBreve();
   }
 
@@ -318,6 +341,7 @@ class LeitorSocial extends ChangeNotifier {
     _chamadas++;
     try {
       final pagina = await switch (qual) {
+        QualLista.online => _transporte.listarAmigosOnline(),
         QualLista.amigos => _transporte.listarAmigos(cursor: cursor),
         QualLista.recebidas => _transporte.listarSolicitacoesRecebidas(
           cursor: cursor,
@@ -515,6 +539,106 @@ class LeitorSocial extends ChangeNotifier {
     _vencerListas();
     notifyListeners();
     return RespostaDeAcao(desfecho: desfecho, vista: vista);
+  }
+
+  /// Registra o código de convite antes da primeira partida válida.
+  ///
+  /// Não guarda um booleano local de “já usei”: reinstalação e troca de aparelho
+  /// não podem reabrir a indicação. A resposta autoritativa é sempre remota.
+  Future<void> registrarIndicacao(String codigo) async {
+    final limpo = codigo.trim();
+    if (limpo.isEmpty) {
+      throw const FalhaSocial(MotivoFalhaSocial.pedidoInvalido, 'codigoVazio');
+    }
+    _chamadas++;
+    await _transporte.registrarIndicacao(limpo);
+  }
+
+  Future<void> atualizarPresenca() async {
+    _chamadas++;
+    _aparecerOffline = await _transporte.atualizarPresenca();
+    notifyListeners();
+  }
+
+  Future<void> definirAparecerOffline(bool valor) async {
+    _chamadas++;
+    await _transporte.definirAparecerOffline(valor);
+    _aparecerOffline = valor;
+    _listas[QualLista.online] = const ListaSocial();
+    notifyListeners();
+  }
+
+  Future<void> carregarConvitesMesa({bool forcar = false}) {
+    if (!forcar && _convitesMesa.fase != FaseSocial.naoCarregada) {
+      return Future<void>.value();
+    }
+    final atual = _convitesEmVoo;
+    if (atual != null) return atual;
+    final geracao = _geracao;
+    _convitesMesa = ListaConvitesMesa(
+      fase: FaseSocial.carregando,
+      itens: _convitesMesa.itens,
+    );
+    _notificarEmBreve();
+    _chamadas++;
+    final voo = _transporte
+        .listarConvitesMesa()
+        .then((itens) {
+          if (geracao != _geracao) return;
+          _convitesMesa = ListaConvitesMesa(
+            fase: FaseSocial.pronta,
+            itens: List.unmodifiable(itens),
+          );
+          notifyListeners();
+        })
+        .catchError((Object erro) {
+          if (geracao != _geracao) return;
+          _convitesMesa = ListaConvitesMesa(
+            fase: FaseSocial.falha,
+            itens: _convitesMesa.itens,
+            falha: erro is FalhaSocial
+                ? erro
+                : const FalhaSocial(MotivoFalhaSocial.desconhecida),
+          );
+          notifyListeners();
+        })
+        .whenComplete(() {
+          _convitesEmVoo = null;
+        });
+    _convitesEmVoo = voo;
+    return voo;
+  }
+
+  Future<void> enviarConviteMesa({
+    required String publicId,
+    required String codigo,
+    required String tipoMesa,
+  }) async {
+    _chamadas++;
+    await _transporte.enviarConviteMesa(
+      publicId: publicId,
+      codigo: codigo,
+      tipoMesa: tipoMesa,
+    );
+  }
+
+  Future<RespostaConviteMesa> responderConviteMesa(
+    String conviteId, {
+    required bool aceitar,
+  }) async {
+    _chamadas++;
+    final r = await _transporte.responderConviteMesa(
+      conviteId,
+      aceitar: aceitar,
+    );
+    _convitesMesa = ListaConvitesMesa(
+      fase: FaseSocial.pronta,
+      itens: _convitesMesa.itens
+          .where((i) => i.conviteId != conviteId)
+          .toList(growable: false),
+    );
+    notifyListeners();
+    return r;
   }
 
   /// Tira a linha da lista em que a ação a tornou obsoleta.

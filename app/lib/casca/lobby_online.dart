@@ -51,8 +51,12 @@
 // da tela do online. É o mesmo raciocínio que `casca_de_producao.dart` usa para
 // escolher entre Login e Home, e pelo mesmo motivo.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../amigos/escopo_social.dart';
+import '../amigos/estado_social.dart';
 import '../services/online_service.dart';
 import 'escopo_transporte.dart';
 import 'mesa_online/estado_mesa_online.dart';
@@ -60,7 +64,10 @@ import 'mesa_online/mesa_online_screen.dart';
 import 'mesa_online/porta_de_comandos_online.dart';
 
 class LobbyOnline extends StatefulWidget {
-  const LobbyOnline({super.key});
+  const LobbyOnline({super.key, this.codigoInicial, this.convidarPublicId});
+
+  final String? codigoInicial;
+  final String? convidarPublicId;
 
   @override
   State<LobbyOnline> createState() => _LobbyOnlineState();
@@ -69,6 +76,7 @@ class LobbyOnline extends StatefulWidget {
 class _LobbyOnlineState extends State<LobbyOnline> {
   OnlineService? _srv;
   bool _pediuConexao = false;
+  String? _conviteEnviadoParaCodigo;
 
   /// A porta por onde as ações da mesa saem.
   ///
@@ -79,6 +87,12 @@ class _LobbyOnlineState extends State<LobbyOnline> {
 
   final TextEditingController _codigo = TextEditingController();
   final TextEditingController _apelido = TextEditingController(text: 'Você');
+
+  @override
+  void initState() {
+    super.initState();
+    _codigo.text = widget.codigoInicial ?? '';
+  }
 
   static const _ouro = Color(0xFFEFB94A);
   static const _ouroClaro = Color(0xFFF6E2A6);
@@ -121,7 +135,41 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   }
 
   void _atualizar() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    final codigo = _srv?.codigo;
+    final alvo = widget.convidarPublicId;
+    if (codigo != null &&
+        codigo.isNotEmpty &&
+        alvo != null &&
+        alvo.isNotEmpty &&
+        _srv?.meuAssento == 0 &&
+        _conviteEnviadoParaCodigo != codigo) {
+      _conviteEnviadoParaCodigo = codigo;
+      unawaited(_enviarConvite(alvo, codigo));
+    }
+  }
+
+  Future<void> _enviarConvite(String publicId, String codigo) async {
+    final social = EscopoSocial.talvezDe(context);
+    if (social == null) return;
+    try {
+      await social.enviarConviteMesa(
+        publicId: publicId,
+        codigo: codigo,
+        tipoMesa: 'privada',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Convite enviado.')));
+    } on FalhaSocial {
+      if (!mounted) return;
+      _conviteEnviadoParaCodigo = null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não consegui enviar o convite agora.')),
+      );
+    }
   }
 
   @override
@@ -485,10 +533,13 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   /// permanente dizendo "conectado" é ruído sobre a mesa.
   String? _avisoDeConexao(OnlineService srv) => switch (srv.status) {
     OnlineStatus.conectado => null,
-    OnlineStatus.conectando => 'reconectando… as ações voltam quando a mesa voltar',
+    OnlineStatus.conectando =>
+      'reconectando… as ações voltam quando a mesa voltar',
     OnlineStatus.autenticando => 'identificando você…',
-    OnlineStatus.naoAutenticado => 'sua sessão terminou — entre de novo para jogar',
-    OnlineStatus.semConexao => 'sem conexão — a mesa está congelada como você a deixou',
+    OnlineStatus.naoAutenticado =>
+      'sua sessão terminou — entre de novo para jogar',
+    OnlineStatus.semConexao =>
+      'sem conexão — a mesa está congelada como você a deixou',
     _ => 'sem conexão com o servidor',
   };
 

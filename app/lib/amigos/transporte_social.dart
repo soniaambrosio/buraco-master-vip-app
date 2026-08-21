@@ -56,6 +56,30 @@ abstract class TransporteSocial {
   /// A lista de amigos, paginada e ordenada por apelido.
   Future<PaginaSocial> listarAmigos({String? cursor, int? limite});
 
+  /// Amigos online agora. Sem cursor: o teto de amigos já é limitado pelo
+  /// domínio e a resposta só contém relações confirmadas.
+  Future<PaginaSocial> listarAmigosOnline();
+
+  /// Renova a presença da própria sessão por uma janela curta.
+  /// Devolve se a preferência "Aparecer offline" está ligada.
+  Future<bool> atualizarPresenca();
+
+  /// Liga/desliga a preferência autoritativa "Aparecer offline".
+  Future<void> definirAparecerOffline(bool valor);
+
+  Future<void> enviarConviteMesa({
+    required String publicId,
+    required String codigo,
+    required String tipoMesa,
+  });
+
+  Future<List<ConviteMesa>> listarConvitesMesa();
+
+  Future<RespostaConviteMesa> responderConviteMesa(
+    String conviteId, {
+    required bool aceitar,
+  });
+
   /// As solicitações pendentes RECEBIDAS, mais recentes primeiro.
   Future<PaginaSocial> listarSolicitacoesRecebidas({
     String? cursor,
@@ -83,6 +107,12 @@ abstract class TransporteSocial {
   /// e a terceira é do próprio perfil. Pedi-las a este transporte lança
   /// [ArgumentError] — falha de programação, não de rede.
   Future<DesfechoSocial> agir(AcaoSocial acao, String publicId);
+
+  /// Vincula a conta atual ao código de quem a convidou.
+  ///
+  /// O código é o `publicId` canônico. Valor, elegibilidade e primeira partida
+  /// não atravessam esta porta: são definidos e liquidados pelo backend.
+  Future<void> registrarIndicacao(String codigo);
 }
 
 /// As ações que [TransporteSocial.agir] sabe executar.

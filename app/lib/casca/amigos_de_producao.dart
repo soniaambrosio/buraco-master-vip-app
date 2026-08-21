@@ -38,11 +38,9 @@
 // `navegacao_perfil_publico.dart`, e a razão de ser um arquivo separado está
 // lá.
 //
-// NÃO MOSTRA PRESENÇA ("online agora", "na mesa"). A maquete tem as três abas
-// Online/Todos/Pedidos, e a primeira depende de um serviço de presença que não
-// existe em lugar nenhum deste projeto. Desenhar uma aba "Online" alimentada
-// pela lista completa faria a tela afirmar que todo mundo está jogando. As
-// abas aqui são as que têm autoridade por trás: Amigos, Recebidos, Enviados.
+// PRESENÇA NÃO É PALPITE. A aba Online vem da presença social efêmera, expira
+// no servidor e só revela amigos confirmados. O controle "Aparecer offline"
+// é igualmente autoritativo: trocar de aparelho não desfaz a preferência.
 //
 // NÃO TEM PORTÃO DE VIP. A maquete anuncia Amigos como benefício de assinatura,
 // e o backend social NÃO aplica esse gate em lugar nenhum — `enviarSolicitacao`
@@ -50,7 +48,10 @@
 // decoração sobre uma porta aberta, e esta OS é sobre ligar a tela ao grafo
 // canônico, não sobre criar política de produto que a autoridade não tem.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../amigos/escopo_social.dart';
 import '../amigos/estado_social.dart';
@@ -59,6 +60,7 @@ import '../amigos/rotulos_sociais.dart';
 import '../amigos/transporte_social.dart' show kAcoesDeAmizade;
 import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
+import 'lobby_online.dart';
 import 'navegacao_perfil_publico.dart';
 
 /// Altura mínima de uma linha tocável. Mesmo piso do Ranking, e pelo mesmo
@@ -92,10 +94,14 @@ class AmigosDeProducao extends StatefulWidget {
   State<AmigosDeProducao> createState() => _AmigosDeProducaoState();
 }
 
+enum _AbaAmigos { online, todos, pedidos }
+
 class _AmigosDeProducaoState extends State<AmigosDeProducao> {
   final TextEditingController _campo = TextEditingController();
 
-  QualLista _aba = QualLista.amigos;
+  _AbaAmigos _aba = _AbaAmigos.online;
+  Timer? _heartbeat;
+  bool _presencaIniciada = false;
 
   /// Uma ação está em voo para este `publicId`.
   ///
@@ -109,11 +115,25 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
     super.didChangeDependencies();
     // Idempotente: `garantir` só consulta quando a lista está por carregar. Sem
     // essa guarda, abrir o teclado viraria uma chamada.
-    EscopoSocial.talvezDe(context)?.garantir(_aba);
+    final social = EscopoSocial.talvezDe(context);
+    if (social != null) {
+      _garantirAba(social);
+      if (!_presencaIniciada) {
+        _presencaIniciada = true;
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _renovarPresenca(atualizarLista: false),
+        );
+        _heartbeat = Timer.periodic(
+          const Duration(seconds: 55),
+          (_) => _renovarPresenca(),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
+    _heartbeat?.cancel();
     _campo.dispose();
     super.dispose();
   }
@@ -128,9 +148,43 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
   int get _minimoDeBusca =>
       EscopoSessao.identidadeDe(context).identidade?.edicao.apelidoMinimo ?? 0;
 
-  void _trocarAba(QualLista qual) {
+  void _trocarAba(_AbaAmigos qual) {
     setState(() => _aba = qual);
-    EscopoSocial.talvezDe(context)?.garantir(qual);
+    final social = EscopoSocial.talvezDe(context);
+    if (social != null) _garantirAba(social);
+  }
+
+  void _garantirAba(LeitorSocial social) {
+    switch (_aba) {
+      case _AbaAmigos.online:
+        social.garantir(QualLista.online);
+        return;
+      case _AbaAmigos.todos:
+        social.garantir(QualLista.amigos);
+        return;
+      case _AbaAmigos.pedidos:
+        social.garantir(QualLista.recebidas);
+        social.garantir(QualLista.enviadas);
+        social.carregarConvitesMesa();
+        return;
+    }
+  }
+
+  Future<void> _renovarPresenca({bool atualizarLista = true}) async {
+    final social = EscopoSocial.talvezDe(context);
+    if (social == null) return;
+    try {
+      await social.atualizarPresenca();
+      if (!mounted) return;
+      if (atualizarLista &&
+          _aba == _AbaAmigos.online &&
+          social.aparecerOffline != true) {
+        await social.recarregar(QualLista.online);
+      }
+    } on FalhaSocial {
+      // A lista online tem seu próprio estado de falha e retry. O heartbeat
+      // não abre um segundo SnackBar a cada oscilação de rede.
+    }
   }
 
   void _buscar(String termo) {
@@ -158,7 +212,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
       if (!mounted) return;
       // A aba visível foi VENCIDA pela ação (ver `_vencerListas`): quem a
       // recarrega é esta tela, porque é ela que sabe qual está à vista.
-      social.garantir(_aba);
+      _garantirAba(social);
       _recado(textoDoDesfecho(acao, repeticao: r.repeticao));
     } on FalhaSocial catch (e) {
       if (!mounted) return;
@@ -199,6 +253,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _topo(context),
+              _cartaoIndicacao(social),
               _busca(),
               // Fora do escopo não há a quem perguntar. A tela diz isso e não
               // desenha aba nenhuma: abas vazias pareceriam "você não tem
@@ -257,9 +312,207 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
             letterSpacing: .4,
           ),
         ),
+        const Spacer(),
+        Builder(
+          builder: (context) {
+            final social = EscopoSocial.talvezDe(context);
+            final offline = social?.aparecerOffline == true;
+            return Semantics(
+              button: true,
+              label: offline
+                  ? 'Aparecer online para amigos'
+                  : 'Aparecer offline para amigos',
+              child: IconButton(
+                tooltip: offline ? 'Aparecer online' : 'Aparecer offline',
+                constraints: const BoxConstraints(
+                  minWidth: kAlvoMinimoDeToqueSocial,
+                  minHeight: kAlvoMinimoDeToqueSocial,
+                ),
+                icon: Icon(
+                  offline
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
+                  color: AmigosDeProducao._ouro,
+                ),
+                onPressed: social == null
+                    ? null
+                    : () async {
+                        try {
+                          await social.definirAparecerOffline(!offline);
+                          if (!mounted) return;
+                          if (offline) await _renovarPresenca();
+                          if (mounted) {
+                            _recado(
+                              offline
+                                  ? 'Você voltou a aparecer online para amigos.'
+                                  : 'Você aparecerá offline para seus amigos.',
+                            );
+                          }
+                        } on FalhaSocial catch (e) {
+                          if (mounted) _recado(textoDaFalhaSocial(e));
+                        }
+                      },
+              ),
+            );
+          },
+        ),
       ],
     ),
   );
+
+  Widget _cartaoIndicacao(LeitorSocial? social) {
+    final codigo =
+        EscopoSessao.identidadeDe(context).identidade?.publicId ?? '';
+    final utilizavel = codigo.trim().isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A1B0E),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AmigosDeProducao._ouro.withValues(alpha: .48),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Convide um amigo 🎉',
+            style: TextStyle(
+              color: AmigosDeProducao._ouroClaro,
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
+            ),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            'Vocês dois ganham após a 1ª partida pública válida dele.',
+            style: TextStyle(color: AmigosDeProducao._texto, fontSize: 11.5),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  label: utilizavel
+                      ? 'Seu código de convite: $codigo'
+                      : 'Código indisponível',
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF160E09),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: AmigosDeProducao._ouro.withValues(alpha: .45),
+                        style: BorderStyle.solid,
+                      ),
+                    ),
+                    child: Text(
+                      utilizavel ? codigo : 'Carregando…',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AmigosDeProducao._ouroClaro,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 48,
+                child: FilledButton(
+                  onPressed: utilizavel
+                      ? () async {
+                          await Clipboard.setData(ClipboardData(text: codigo));
+                          if (mounted) _recado('Código copiado.');
+                        }
+                      : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AmigosDeProducao._ouro,
+                    foregroundColor: const Color(0xFF24150A),
+                  ),
+                  child: const Text(
+                    'Copiar',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '🪙 500 para cada jogador',
+                  style: TextStyle(
+                    color: Color(0xFF70E7B0),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: social == null ? null : () => _usarCodigo(social),
+                child: const Text('Usar um código'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _usarCodigo(LeitorSocial social) async {
+    final controle = TextEditingController();
+    final codigo = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF241812),
+        title: const Text(
+          'Código de quem convidou você',
+          style: TextStyle(color: AmigosDeProducao._ouroClaro),
+        ),
+        content: TextField(
+          controller: controle,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          style: const TextStyle(color: AmigosDeProducao._texto),
+          decoration: const InputDecoration(
+            hintText: 'Cole o código aqui',
+            hintStyle: TextStyle(color: AmigosDeProducao._textoSec),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controle.text),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+    controle.dispose();
+    if (codigo == null || codigo.trim().isEmpty || !mounted) return;
+    try {
+      await social.registrarIndicacao(codigo);
+      if (mounted)
+        _recado(
+          'Código registrado. A recompensa sai após a primeira partida válida.',
+        );
+    } on FalhaSocial catch (e) {
+      if (mounted) _recado(textoDaFalhaSocial(e));
+    }
+  }
 
   Widget _busca() => Padding(
     padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
@@ -272,7 +525,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
       onSubmitted: _buscar,
       style: const TextStyle(color: AmigosDeProducao._texto),
       decoration: InputDecoration(
-        hintText: 'Procurar por apelido',
+        hintText: 'Buscar por apelido ou código…',
         hintStyle: const TextStyle(color: AmigosDeProducao._textoSec),
         prefixIcon: const Icon(
           Icons.search_rounded,
@@ -312,21 +565,21 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
     child: Row(
       children: [
         _Aba(
-          rotulo: 'Amigos',
-          ativa: _aba == QualLista.amigos,
-          onTap: () => _trocarAba(QualLista.amigos),
+          rotulo: 'Online',
+          ativa: _aba == _AbaAmigos.online,
+          onTap: () => _trocarAba(_AbaAmigos.online),
         ),
         const SizedBox(width: 8),
         _Aba(
-          rotulo: 'Recebidos',
-          ativa: _aba == QualLista.recebidas,
-          onTap: () => _trocarAba(QualLista.recebidas),
+          rotulo: 'Todos',
+          ativa: _aba == _AbaAmigos.todos,
+          onTap: () => _trocarAba(_AbaAmigos.todos),
         ),
         const SizedBox(width: 8),
         _Aba(
-          rotulo: 'Enviados',
-          ativa: _aba == QualLista.enviadas,
-          onTap: () => _trocarAba(QualLista.enviadas),
+          rotulo: 'Pedidos',
+          ativa: _aba == _AbaAmigos.pedidos,
+          onTap: () => _trocarAba(_AbaAmigos.pedidos),
         ),
       ],
     ),
@@ -334,6 +587,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
 
   Widget _conteudo(LeitorSocial social) {
     if (_emModoBusca(social)) return _resultados(social, social.busca);
+    if (_aba == _AbaAmigos.pedidos) return _pedidos(social);
     return _listaDaAba(social);
   }
 
@@ -419,7 +673,10 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
   // -------------------------------------------------------------------------
 
   Widget _listaDaAba(LeitorSocial social) {
-    final lista = social.lista(_aba);
+    final qual = _aba == _AbaAmigos.online
+        ? QualLista.online
+        : QualLista.amigos;
+    final lista = social.lista(qual);
     switch (lista.fase) {
       case FaseSocial.naoCarregada:
       case FaseSocial.carregando:
@@ -435,14 +692,14 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
         return _AvisoSocial(
           mensagem: 'Não consegui carregar agora.',
           onTentarDeNovo: lista.podeTentarDeNovo
-              ? () => social.recarregar(_aba)
+              ? () => social.recarregar(qual)
               : null,
         );
       case FaseSocial.pronta:
         if (lista.itens.isEmpty) {
           // Afirmação só com resposta na mão — as outras fases desenhariam a
           // mesma lista vazia, e nelas a frase seria um palpite.
-          return _AvisoSocial(mensagem: _vazioDaAba(_aba));
+          return _AvisoSocial(mensagem: _vazioDaAba(qual));
         }
     }
 
@@ -453,10 +710,12 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
         for (final entrada in lista.itens)
           _LinhaSocial(
             jogador: entrada,
-            relacao: _relacaoDaAba(_aba),
-            acoes: _acoesDaAba(_aba),
+            relacao: _relacaoDaAba(qual),
+            acoes: _acoesDaAba(qual),
             ocupado: _agindoSobre == entrada.publicId,
             onAgir: (a) => _agir(a, entrada.publicId),
+            onChamar: () => _chamarPraJogar(entrada),
+            online: qual == QualLista.online,
             onAbrir: () => abrirPerfilDoJogador(
               context,
               AlvoDePerfil.daListaSocial(entrada),
@@ -470,7 +729,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
               child: OutlinedButton(
                 onPressed: lista.carregandoMais
                     ? null
-                    : () => social.carregarMais(_aba),
+                    : () => social.carregarMais(qual),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AmigosDeProducao._ouroClaro,
                   side: const BorderSide(color: AmigosDeProducao._borda),
@@ -485,7 +744,135 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
     );
   }
 
+  Widget _pedidos(LeitorSocial social) {
+    final recebidas = social.recebidas;
+    final enviadas = social.enviadas;
+    final convites = social.convitesMesa;
+    final carregando =
+        recebidas.fase == FaseSocial.carregando ||
+        enviadas.fase == FaseSocial.carregando ||
+        convites.fase == FaseSocial.carregando;
+    final falhou =
+        recebidas.fase == FaseSocial.falha ||
+        enviadas.fase == FaseSocial.falha ||
+        convites.fase == FaseSocial.falha;
+    if (carregando &&
+        recebidas.itens.isEmpty &&
+        enviadas.itens.isEmpty &&
+        convites.itens.isEmpty) {
+      return const _AvisoSocial(
+        mensagem: 'Carregando pedidos…',
+        mostrarProgresso: true,
+      );
+    }
+    if (falhou &&
+        recebidas.itens.isEmpty &&
+        enviadas.itens.isEmpty &&
+        convites.itens.isEmpty) {
+      return _AvisoSocial(
+        mensagem: 'Não consegui carregar os pedidos agora.',
+        onTentarDeNovo: () {
+          social.recarregar(QualLista.recebidas);
+          social.recarregar(QualLista.enviadas);
+          social.carregarConvitesMesa(forcar: true);
+        },
+      );
+    }
+    if (recebidas.fase == FaseSocial.pronta &&
+        enviadas.fase == FaseSocial.pronta &&
+        convites.fase == FaseSocial.pronta &&
+        recebidas.itens.isEmpty &&
+        enviadas.itens.isEmpty &&
+        convites.itens.isEmpty) {
+      return const _AvisoSocial(mensagem: 'Nenhum pedido pendente.');
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 18),
+      children: [
+        if (carregando) const _FaixaDeProgresso(),
+        if (convites.itens.isNotEmpty)
+          const _TituloDeSecao('CONVITES PARA JOGAR'),
+        for (final convite in convites.itens)
+          _LinhaConviteMesa(
+            convite: convite,
+            onRecusar: () => _responderConviteMesa(social, convite, false),
+            onAceitar: () => _responderConviteMesa(social, convite, true),
+          ),
+        if (recebidas.itens.isNotEmpty) const _TituloDeSecao('SOLICITAÇÕES'),
+        for (final entrada in recebidas.itens)
+          _LinhaSocial(
+            jogador: entrada,
+            relacao: RelacaoSocial.solicitacaoRecebida,
+            acoes: const [
+              AcaoSocial.aceitarSolicitacao,
+              AcaoSocial.recusarSolicitacao,
+            ],
+            ocupado: _agindoSobre == entrada.publicId,
+            onAgir: (a) => _agir(a, entrada.publicId),
+            onAbrir: () => abrirPerfilDoJogador(
+              context,
+              AlvoDePerfil.daListaSocial(entrada),
+            ),
+          ),
+        if (enviadas.itens.isNotEmpty) const _TituloDeSecao('ENVIADOS'),
+        for (final entrada in enviadas.itens)
+          _LinhaSocial(
+            jogador: entrada,
+            relacao: RelacaoSocial.solicitacaoEnviada,
+            acoes: const [AcaoSocial.cancelarSolicitacao],
+            ocupado: _agindoSobre == entrada.publicId,
+            onAgir: (a) => _agir(a, entrada.publicId),
+            onAbrir: () => abrirPerfilDoJogador(
+              context,
+              AlvoDePerfil.daListaSocial(entrada),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _responderConviteMesa(
+    LeitorSocial social,
+    ConviteMesa convite,
+    bool aceitar,
+  ) async {
+    try {
+      final r = await social.responderConviteMesa(
+        convite.conviteId,
+        aceitar: aceitar,
+      );
+      if (!mounted) return;
+      if (!aceitar) {
+        _recado('Convite recusado.');
+        return;
+      }
+      if (r.expirado || r.codigo == null || r.codigo!.isEmpty) {
+        _recado('Esse convite expirou. Peça um novo código.');
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LobbyOnline(codigoInicial: r.codigo),
+        ),
+      );
+    } on FalhaSocial catch (e) {
+      if (mounted) _recado(textoDaFalhaSocial(e));
+    }
+  }
+
+  void _chamarPraJogar(JogadorPublico jogador) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LobbyOnline(convidarPublicId: jogador.publicId),
+      ),
+    );
+    _recado(
+      'Crie a mesa; o convite para ${jogador.nomeDeApresentacao} será enviado automaticamente.',
+    );
+  }
+
   static String _vazioDaAba(QualLista qual) => switch (qual) {
+    QualLista.online => 'Nenhum amigo online agora.',
     QualLista.amigos =>
       'Você ainda não tem amigos por aqui. Procure alguém pelo apelido.',
     QualLista.recebidas => 'Nenhum pedido esperando resposta.',
@@ -506,6 +893,7 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
   ///
   /// O que continua NÃO sendo deduzido é a AÇÃO — ver [_acoesDaAba].
   static RelacaoSocial _relacaoDaAba(QualLista qual) => switch (qual) {
+    QualLista.online => RelacaoSocial.amigos,
     QualLista.amigos => RelacaoSocial.amigos,
     QualLista.recebidas => RelacaoSocial.solicitacaoRecebida,
     QualLista.enviadas => RelacaoSocial.solicitacaoEnviada,
@@ -540,7 +928,8 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
   /// Nos RESULTADOS DE BUSCA, onde o servidor manda `acoes`, a lista do
   /// servidor é usada e esta função não é chamada.
   static List<AcaoSocial> _acoesDaAba(QualLista qual) => switch (qual) {
-    QualLista.amigos => const [AcaoSocial.removerAmigo],
+    QualLista.online => const [],
+    QualLista.amigos => const [],
     QualLista.recebidas => const [
       AcaoSocial.aceitarSolicitacao,
       AcaoSocial.recusarSolicitacao,
@@ -610,6 +999,8 @@ class _LinhaSocial extends StatelessWidget {
     required this.ocupado,
     required this.onAgir,
     required this.onAbrir,
+    this.onChamar,
+    this.online = false,
   });
 
   final JogadorPublico jogador;
@@ -618,19 +1009,18 @@ class _LinhaSocial extends StatelessWidget {
   final bool ocupado;
   final ValueChanged<AcaoSocial> onAgir;
   final VoidCallback onAbrir;
+  final VoidCallback? onChamar;
+  final bool online;
 
   /// O rótulo do estado. DESCREVE, e não autoriza — quem autoriza é [acoes].
   ///
   /// As palavras moram em `amigos/rotulos_sociais.dart`, e não aqui, para que
   /// esta linha e a faixa do Perfil visitado não possam chamar a mesma relação
   /// por nomes diferentes.
-  String? get _rotulo => rotuloDaRelacao(relacao);
+  String? get _rotulo => online ? '● Online' : rotuloDaRelacao(relacao);
 
   String get _anuncio {
-    final partes = <String>[
-      jogador.nomeDeApresentacao,
-      ?_rotulo,
-    ];
+    final partes = <String>[jogador.nomeDeApresentacao, ?_rotulo];
     return '${partes.join('. ')}. Toque para ver o perfil.';
   }
 
@@ -690,8 +1080,10 @@ class _LinhaSocial extends StatelessWidget {
                         if (_rotulo != null)
                           Text(
                             _rotulo!,
-                            style: const TextStyle(
-                              color: AmigosDeProducao._textoSec,
+                            style: TextStyle(
+                              color: online
+                                  ? const Color(0xFF70E7B0)
+                                  : AmigosDeProducao._textoSec,
                               fontSize: 11.5,
                             ),
                           ),
@@ -708,7 +1100,12 @@ class _LinhaSocial extends StatelessWidget {
                       color: AmigosDeProducao._ouro,
                     ),
                   )
-                else
+                else ...[
+                  if (onChamar != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: _BotaoChamar(onTap: onChamar!),
+                    ),
                   for (final acao in desenhaveis)
                     Padding(
                       padding: const EdgeInsets.only(left: 6),
@@ -717,6 +1114,7 @@ class _LinhaSocial extends StatelessWidget {
                         onTap: () => onAgir(acao),
                       ),
                     ),
+                ],
               ],
             ),
           ),
@@ -724,6 +1122,125 @@ class _LinhaSocial extends StatelessWidget {
       ),
     );
   }
+}
+
+class _BotaoChamar extends StatelessWidget {
+  const _BotaoChamar({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: 'Chamar para jogar',
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: FilledButton(
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          backgroundColor: AmigosDeProducao._ouro,
+          foregroundColor: const Color(0xFF24150A),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+        child: const Text(
+          'Chamar pra jogar',
+          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900),
+        ),
+      ),
+    ),
+  );
+}
+
+class _TituloDeSecao extends StatelessWidget {
+  const _TituloDeSecao(this.texto);
+
+  final String texto;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(2, 8, 2, 8),
+    child: Text(
+      texto,
+      style: const TextStyle(
+        color: AmigosDeProducao._ouro,
+        fontSize: 11,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 1.1,
+      ),
+    ),
+  );
+}
+
+class _LinhaConviteMesa extends StatelessWidget {
+  const _LinhaConviteMesa({
+    required this.convite,
+    required this.onAceitar,
+    required this.onRecusar,
+  });
+
+  final ConviteMesa convite;
+  final VoidCallback onAceitar;
+  final VoidCallback onRecusar;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 7),
+    padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+    constraints: const BoxConstraints(minHeight: 64),
+    decoration: BoxDecoration(
+      color: AmigosDeProducao._card,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: AmigosDeProducao._borda),
+    ),
+    child: Row(
+      children: [
+        Text(
+          avatarPublicoDe(convite.remetente.avatarRef),
+          style: const TextStyle(fontSize: 22),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                convite.remetente.nomeDeApresentacao,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AmigosDeProducao._texto,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                'chamou você para uma mesa ${convite.tipoMesa.toUpperCase()}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AmigosDeProducao._textoSec,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Recusar convite',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          onPressed: onRecusar,
+          icon: const Icon(Icons.close_rounded, color: Color(0xFFE05B5B)),
+        ),
+        IconButton(
+          tooltip: 'Aceitar convite',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          onPressed: onAceitar,
+          icon: const Icon(Icons.check_rounded, color: Color(0xFF70E7B0)),
+        ),
+      ],
+    ),
+  );
 }
 
 /// O botão de uma ação social.

@@ -114,7 +114,8 @@ void main() {
           RegExp(r'verPerfilPublico\([^)]*apelido'),
           RegExp(r'publicIdVisitado\s*:\s*[\w.]*apelido'),
         ]) {
-          if (padrao.hasMatch(fonte)) proibidos.add('$caminho: ${padrao.pattern}');
+          if (padrao.hasMatch(fonte))
+            proibidos.add('$caminho: ${padrao.pattern}');
         }
       }
       expect(proibidos, isEmpty);
@@ -148,10 +149,9 @@ void main() {
       // O que se procura é a forma do defeito: `agir(acao, i)` ou
       // `AlvoDePerfil...(indice)`. Cada chamada tem de nomear o identificador.
       final tela = _codigo(File('lib/casca/amigos_de_producao.dart'));
-      final chamadas = RegExp(r'onAgir\s*:\s*\(a\)\s*=>\s*_agir\(a,\s*([^)]+)\)')
-          .allMatches(tela)
-          .map((m) => m.group(1)!.trim())
-          .toList();
+      final chamadas = RegExp(
+        r'onAgir\s*:\s*\(a\)\s*=>\s*_agir\(a,\s*([^)]+)\)',
+      ).allMatches(tela).map((m) => m.group(1)!.trim()).toList();
       expect(chamadas, isNotEmpty, reason: 'a varredura não achou as chamadas');
       for (final argumento in chamadas) {
         expect(
@@ -181,10 +181,9 @@ void main() {
 
     test('`JogadorPublico` não tem campo de identidade interna', () {
       final fonte = _codigo(File('lib/amigos/estado_social.dart'));
-      final campos = RegExp(r'final\s+\S+\s+(\w+);')
-          .allMatches(fonte)
-          .map((m) => m.group(1)!)
-          .toSet();
+      final campos = RegExp(
+        r'final\s+\S+\s+(\w+);',
+      ).allMatches(fonte).map((m) => m.group(1)!).toSet();
       for (final proibido in const [
         'uid',
         'userId',
@@ -211,9 +210,9 @@ void main() {
       // O padrão é PREGUIÇOSO de propósito: um `[^>]*` não atravessa
       // `Future<void>>`, e com ele metade dos campos escaparia da varredura
       // sem ninguém notar.
-      final campos = RegExp(r'Map<[\s\S]*?>\s+(_?\w+)\s*=')
-          .allMatches(_codigo(File('lib/amigos/leitor_social.dart')))
-          .toList();
+      final campos = RegExp(
+        r'Map<[\s\S]*?>\s+(_?\w+)\s*=',
+      ).allMatches(_codigo(File('lib/amigos/leitor_social.dart'))).toList();
       expect(campos, isNotEmpty, reason: 'a varredura não achou campo nenhum');
       for (final m in campos) {
         expect(
@@ -224,7 +223,8 @@ void main() {
         expect(
           m.group(0),
           isNot(contains('ResultadoSocial>')),
-          reason: 'nasceu um cache de relação — e relação guardada é um botão '
+          reason:
+              'nasceu um cache de relação — e relação guardada é um botão '
               'que afirma uma permissão que pode já não valer',
         );
       }
@@ -243,16 +243,18 @@ void main() {
       // acabou); adicionar não é. Quem entra numa lista é a próxima leitura.
       final fonte = _codigo(File('lib/amigos/leitor_social.dart'));
       expect(
-        RegExp(r'\.itens\s*\.\.\s*add|itens\.add\(|itens\.insert\(').hasMatch(fonte),
+        RegExp(
+          r'\.itens\s*\.\.\s*add|itens\.add\(|itens\.insert\(',
+        ).hasMatch(fonte),
         isFalse,
-        reason: 'o leitor passou a inserir jogador numa lista por conta própria',
+        reason:
+            'o leitor passou a inserir jogador numa lista por conta própria',
       );
       // `PaginaSocial` oferece SUBTRAÇÃO e concatenação de página do servidor —
       // e nenhuma outra mutação.
       final estado = _codigo(File('lib/amigos/estado_social.dart'));
       expect(estado, contains('PaginaSocial sem(String publicId)'));
     });
-
   });
 
   // =========================================================================
@@ -448,10 +450,13 @@ void main() {
       expect(achados, isEmpty);
     });
 
-    test('a maquete continua existindo — ninguém a apagou para calar a regra', () {
-      // Apagar o arquivo faria as auditorias N12/C16 ficarem verdes por vacuidade.
-      expect(File('lib/screens/amigos_screen.dart').existsSync(), isTrue);
-    });
+    test(
+      'a maquete continua existindo — ninguém a apagou para calar a regra',
+      () {
+        // Apagar o arquivo faria as auditorias N12/C16 ficarem verdes por vacuidade.
+        expect(File('lib/screens/amigos_screen.dart').existsSync(), isTrue);
+      },
+    );
   });
 
   // =========================================================================
@@ -473,9 +478,7 @@ void main() {
     test('a região é IMPORTADA da identidade, e não recopiada', () {
       // Duas cópias divergem, e chamar a região errada devolve `not-found` —
       // que é o mesmo código de "esse jogador não existe".
-      final fonte = _codigo(
-        File('lib/amigos/transporte_social_firebase.dart'),
-      );
+      final fonte = _codigo(File('lib/amigos/transporte_social_firebase.dart'));
       expect(fonte, contains('kRegiaoFuncoesSociais'));
       expect(
         fonte,
@@ -504,6 +507,13 @@ void main() {
         return;
       }
       final ts = backend.readAsStringSync();
+      final backendIndicacao = File('../functions-indicacao/index.js');
+      expect(
+        backendIndicacao.existsSync(),
+        isTrue,
+        reason: 'o adaptador chama registrarIndicacao, mas o codebase sumiu',
+      );
+      final jsIndicacao = backendIndicacao.readAsStringSync();
       final adaptador = _codigo(
         File('lib/amigos/transporte_social_firebase.dart'),
       );
@@ -527,8 +537,10 @@ void main() {
       };
       expect(
         nomes,
-        hasLength(10),
-        reason: 'o adaptador tem cinco leituras e cinco ações; a conta mudou',
+        hasLength(17),
+        reason:
+            'o adaptador tem doze operações sociais e cinco ações de amizade; '
+            'a conta mudou',
       );
       // COM FRONTEIRA DE PALAVRA, e o motivo é uma mutação que passou.
       //
@@ -540,12 +552,18 @@ void main() {
       final exportadas = RegExp(r'export const (\w+)\s*=')
           .allMatches(ts)
           .map((m) => m.group(1)!)
+          .followedBy(
+            RegExp(
+              r'exports\.(\w+)\s*=',
+            ).allMatches(jsIndicacao).map((m) => m.group(1)!),
+          )
           .toSet();
       for (final nome in nomes) {
         expect(
           exportadas,
           contains(nome),
-          reason: '`$nome` não é uma callable exportada por functions-social',
+          reason:
+              '`$nome` não é uma callable exportada pelos codebases sociais',
         );
       }
     });

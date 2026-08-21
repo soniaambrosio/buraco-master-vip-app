@@ -339,9 +339,9 @@ void main() {
               builder: (context) => Scaffold(
                 body: Center(
                   child: TextButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => tela),
-                    ),
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).push(MaterialPageRoute<void>(builder: (_) => tela)),
                     child: const Text('ABRIR AMIGOS'),
                   ),
                 ),
@@ -372,24 +372,26 @@ void main() {
   // -------------------------------------------------------------------------
 
   Future<void> comAmigos(WidgetTester tester) async {
-    t.respostaAmigos = paginaFalsa(
-      [jogadorFalso('P1', apelido: 'Bia'), jogadorFalso('P2', apelido: 'Caio')],
-      proximoCursor: 'c1',
-    );
+    t.respostaAmigos = paginaFalsa([
+      jogadorFalso('P1', apelido: 'Bia'),
+      jogadorFalso('P2', apelido: 'Caio'),
+    ], proximoCursor: 'c1');
     await montar(tester);
+    await tester.tap(find.text('Todos'));
+    await assentar(tester);
   }
 
   Future<void> emRecebidas(WidgetTester tester) async {
     t.respostaRecebidas = paginaFalsa([jogadorFalso('P3', apelido: 'Duda')]);
     await montar(tester);
-    await tester.tap(find.text('Recebidos'));
+    await tester.tap(find.text('Pedidos'));
     await assentar(tester);
   }
 
   Future<void> emEnviadas(WidgetTester tester) async {
     t.respostaEnviadas = paginaFalsa([jogadorFalso('P4', apelido: 'Elis')]);
     await montar(tester);
-    await tester.tap(find.text('Enviados'));
+    await tester.tap(find.text('Pedidos'));
     await assentar(tester);
   }
 
@@ -450,9 +452,9 @@ void main() {
       montar(tester, comEscopo: false);
 
   final cenas = <String, Future<void> Function(WidgetTester)>{
-    'amigos + carregar mais': comAmigos,
-    'recebidas': emRecebidas,
-    'enviadas': emEnviadas,
+    'todos + carregar mais': comAmigos,
+    'pedidos recebidos': emRecebidas,
+    'pedidos enviados': emEnviadas,
     'busca com resultado': emBusca,
     'busca truncada': emBuscaTruncada,
     'falha de lista': emFalhaDeLista,
@@ -490,7 +492,11 @@ void main() {
         (tester) => _comSemantica(tester, () async {
           await cena.value(tester);
           final alvos = _alvos(tester);
-          expect(alvos, isNotEmpty, reason: '${cena.key}: cena sem alvo nenhum');
+          expect(
+            alvos,
+            isNotEmpty,
+            reason: '${cena.key}: cena sem alvo nenhum',
+          );
           for (final a in alvos) {
             expect(
               a.area.height,
@@ -508,21 +514,24 @@ void main() {
     }
 
     testWidgets(
-      '1c — o inventário nominal da cena de amigos continua o mesmo',
+      '1c — o inventário nominal preserva os controles essenciais',
       (tester) => _comSemantica(tester, () async {
         await comAmigos(tester);
-        expect(_alvos(tester).map((a) => a.nome).toList(), <String>[
+        final nomes = _alvos(tester).map((a) => a.nome).toList();
+        for (final nome in const [
           'Voltar',
-          'Procurar por apelido',
-          'Amigos',
-          'Recebidos',
-          'Enviados',
-          '', // a linha de Bia
-          'Remover',
-          '', // a linha de Caio
-          'Remover',
+          'Aparecer offline',
+          'Copiar',
+          'Usar um código',
+          'Online',
+          'Todos',
+          'Pedidos',
+          'Chamar pra jogar',
           'Carregar mais',
-        ]);
+        ]) {
+          expect(nomes, contains(nome), reason: 'faltou o controle $nome');
+        }
+        expect(_linhas(_alvos(tester)), hasLength(2));
       }),
     );
 
@@ -636,9 +645,12 @@ void main() {
         // partir da segunda volta `garantir` acha a página já carregada e não
         // consulta — o que é o comportamento certo dele, e reprovaria um
         // toque que funcionou. Quem prova a contagem é `leitor_social_test`.
-        const esperado = {'Recebidos': 'Duda', 'Enviados': 'Elis'};
+        const esperado = {'Todos': 'Caio', 'Pedidos': 'Duda'};
         for (final entrada in esperado.entries) {
           for (var borda = 0; borda < 4; borda++) {
+            t.respostaAmigos = paginaFalsa([
+              jogadorFalso('P2', apelido: 'Caio'),
+            ]);
             t.respostaRecebidas = paginaFalsa([
               jogadorFalso('P3', apelido: 'Duda'),
             ]);
@@ -648,8 +660,10 @@ void main() {
             await montar(tester);
             final area = _porNome(_alvos(tester), entrada.key).area;
             expect(area.height, greaterThanOrEqualTo(_piso));
-            expect(_porNome(_alvos(tester), entrada.key).selecionado,
-                Tristate.isFalse);
+            expect(
+              _porNome(_alvos(tester), entrada.key).selecionado,
+              Tristate.isFalse,
+            );
             await tester.tapAt(_bordas(area)[borda]);
             await assentar(tester);
             final agora = _porNome(_alvos(tester), entrada.key);
@@ -661,7 +675,8 @@ void main() {
             expect(
               find.text(entrada.value),
               findsOneWidget,
-              reason: 'a borda $borda de ${entrada.key} trocou o rótulo mas '
+              reason:
+                  'a borda $borda de ${entrada.key} trocou o rótulo mas '
                   'não a lista',
             );
           }
@@ -809,10 +824,10 @@ void main() {
         final area = _porNome(_alvos(tester), 'Tentar de novo').area;
         expect(area.height, greaterThanOrEqualTo(_piso));
         t.falhaFixa = null;
-        final antes = t.chamadasDe('listarAmigos');
+        final antes = t.chamadasDe('listarOnline');
         await tester.tapAt(_bordas(area).last);
         await assentar(tester);
-        expect(t.chamadasDe('listarAmigos'), antes + 1);
+        expect(t.chamadasDe('listarOnline'), antes + 1);
       }),
     );
 
@@ -837,26 +852,32 @@ void main() {
     testWidgets(
       '4a — as abas continuam declarando papel e seleção',
       (tester) => _comSemantica(tester, () async {
-        const rotulos = ['Amigos', 'Recebidos', 'Enviados'];
+        const rotulos = ['Online', 'Todos', 'Pedidos'];
         await comAmigos(tester);
         var alvos = _alvos(tester);
-        expect({for (final n in rotulos) n: _porNome(alvos, n).selecionado}, {
-          'Amigos': Tristate.isTrue,
-          'Recebidos': Tristate.isFalse,
-          'Enviados': Tristate.isFalse,
-        });
+        expect(
+          {for (final n in rotulos) n: _porNome(alvos, n).selecionado},
+          {
+            'Online': Tristate.isFalse,
+            'Todos': Tristate.isTrue,
+            'Pedidos': Tristate.isFalse,
+          },
+        );
         for (final n in rotulos) {
           expect(_porNome(alvos, n).ehBotao, isTrue);
         }
 
-        await tester.tap(find.text('Enviados'));
+        await tester.tap(find.text('Pedidos'));
         await assentar(tester);
         alvos = _alvos(tester);
-        expect({for (final n in rotulos) n: _porNome(alvos, n).selecionado}, {
-          'Amigos': Tristate.isFalse,
-          'Recebidos': Tristate.isFalse,
-          'Enviados': Tristate.isTrue,
-        });
+        expect(
+          {for (final n in rotulos) n: _porNome(alvos, n).selecionado},
+          {
+            'Online': Tristate.isFalse,
+            'Todos': Tristate.isFalse,
+            'Pedidos': Tristate.isTrue,
+          },
+        );
       }),
     );
 
@@ -920,7 +941,7 @@ void main() {
           for (final n in alvos.map((a) => a.nome).where((n) => n.isNotEmpty)) {
             if (!vistos.add(n)) {
               expect(
-                const ['Remover', 'Cancelar', 'Adicionar'],
+                const ['Chamar pra jogar', 'Cancelar', 'Adicionar'],
                 contains(n),
                 reason: '${cena.key}: "$n" anunciado duas vezes',
               );
@@ -963,7 +984,11 @@ void main() {
               isNot(contains('uid')),
               reason: '${cena.key}: $no',
             );
-            expect(firebase.hasMatch(fala), isFalse, reason: '${cena.key}: $no');
+            expect(
+              firebase.hasMatch(fala),
+              isFalse,
+              reason: '${cena.key}: $no',
+            );
           }
         }),
       );
@@ -978,12 +1003,7 @@ void main() {
       '5a — vazio diz a frase da aba, e não desenha alvo de lista',
       (tester) => _comSemantica(tester, () async {
         await emVazio(tester);
-        expect(
-          find.text(
-            'Você ainda não tem amigos por aqui. Procure alguém pelo apelido.',
-          ),
-          findsOneWidget,
-        );
+        expect(find.text('Nenhum amigo online agora.'), findsOneWidget);
         expect(_linhas(_alvos(tester)), isEmpty);
       }),
     );
