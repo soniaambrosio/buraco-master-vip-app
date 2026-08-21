@@ -360,7 +360,7 @@ describe('ranking: temporada e escada de ligas', () => {
     await assertFails(
       setDoc(doc(comoDono(), 'rankingLadders', 'a-minha'), {
         ladderId: 'a-minha',
-        degraus: [{ ligaId: 'imperial', nome: 'IMPERIAL', pontosMinimos: 0, pontosMaximos: null }],
+        degraus: [{ ligaId: 'a-minha', nome: 'A MINHA', pontosMinimos: 0, pontosMaximos: null }],
       }),
     );
   });

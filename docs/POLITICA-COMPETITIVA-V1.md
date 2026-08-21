@@ -222,10 +222,13 @@ ponto de promoção, partida de promoção, proteção contra queda, demotion sh
 Durante colocação/revalidação **não há Liga**, e isso vence qualquer `ligaId`
 gravado na linha.
 
-> **Ícones saem vazios nos sete.** A arte do cliente tem sete arquivos, mas o
-> sexto se chama `liga_imperial.webp` enquanto a §15 nomeia a sexta liga como
-> **Mestre**. Amarrar as duas coisas seria inventar uma associação de arte dentro
-> de uma OS de regra competitiva. Dependência declarada.
+> **Os sete ícones estão registrados.** A dependência declarada aqui — a arte
+> da 6ª liga chamava-se `liga_imperial.webp` enquanto a §15 nomeia a liga
+> **Mestre** — foi fechada pela OS de canonização das sete Ligas:
+> `assets/ranking/liga_mestre.webp` entrou como arte própria, `liga_imperial`
+> saiu do catálogo oficial, e `DEGRAUS_V1` passou a carregar os sete caminhos
+> numa tabela **literal** (nunca derivada do nome). Ver
+> `docs/CANONIZACAO-SETE-LIGAS-V1.md`.
 
 ---
 
@@ -470,8 +473,10 @@ colocação, soft reset, posição ou elegibilidade. Nenhuma função chamável 
 1. ~~K da revalidação~~ — **resolvido**: K=24, decidido na aprovação da OS. Ver §4.
 2. **`abandonos` fica em zero** — não há atribuição de abandono por jogador no
    registro oficial. O critério 4 do desempate é um no-op até que exista fonte.
-3. **Ícones das Ligas vazios** — o asset da 6ª liga se chama `liga_imperial` e a
-   OS a nomeia `Mestre`. Associação não inventada.
+3. ~~**Ícones das Ligas vazios**~~ — **resolvido** na OS de canonização das sete
+   Ligas: os sete caminhos estão em `DEGRAUS_V1`, a arte da Mestre existe, e um
+   gate confere cada caminho contra o disco. Ver
+   `docs/CANONIZACAO-SETE-LIGAS-V1.md`.
 4. **Apelido e avatar vazios** — não há fonte de perfil **nesta árvore**. Ver a
    §21: existe fonte numa branch paralela.
 5. **Escopo `amigos`** continua recusando com `failed-precondition` — não há

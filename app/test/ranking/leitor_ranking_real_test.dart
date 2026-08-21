@@ -895,6 +895,13 @@ void main() {
       // É o que o Caso A do contrato exige: o backend manda o rótulo pronto, e
       // um mapa local de nomes seria uma segunda autoridade sobre como as ligas
       // se chamam — que divergiria no primeiro dia em que uma fosse renomeada.
+      //
+      // A LISTA ABAIXO É DE PROIBIÇÃO, e por isso ela contém tanto os sete
+      // nomes oficiais quanto `Imperial`, que NÃO é uma Liga. A canonização das
+      // sete Ligas tirou Imperial da autoridade; mantê-la proibida aqui é o que
+      // impede que ela volte pelo cliente, que é por onde ela entrou da
+      // primeira vez. `Mestre` entrou na lista pelo mesmo motivo dos outros
+      // seis: nome de Liga não se escreve no cliente, nem o novo.
       for (final f in arquivosDoRanking) {
         final fonte = codigo(f);
         for (final liga in const [
@@ -903,6 +910,7 @@ void main() {
           'Ouro',
           'Diamante',
           'Platina',
+          'Mestre',
           'Imperial',
           'Lenda',
         ]) {

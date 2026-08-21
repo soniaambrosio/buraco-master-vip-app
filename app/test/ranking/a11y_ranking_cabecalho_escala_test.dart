@@ -113,6 +113,13 @@ Map<String, Object?> abertura({
 
 /// A tabela do pior caso de largura: colocação de três dígitos, apelido longo,
 /// rótulo de liga longo e o selo "você" na mesma linha.
+///
+/// O RÓTULO LONGO É `Diamante`, e a escolha não é indiferente: ele tem oito
+/// caracteres — a maior das sete Ligas oficiais, empatado com nenhuma — e é uma
+/// Liga que EXISTE. Até a canonização das sete Ligas este fixture usava
+/// `Imperial`, que tem o mesmo comprimento e por isso media a mesma coisa, mas
+/// deixava o nome de uma liga inexistente espalhado por cinco asserções desta
+/// suíte. A propriedade medida aqui é a largura, e ela sobreviveu à troca.
 Map<String, Object?> aberturaPovoada({String? temporadaId = 'T-2026-01'}) =>
     abertura(
       temporadaId: temporadaId,
@@ -124,8 +131,8 @@ Map<String, Object?> aberturaPovoada({String? temporadaId = 'T-2026-01'}) =>
           apelido: nomeLongo,
           posicao: 2,
           souEu: true,
-          liga: 'Imperial',
-          ligaId: 'imperial',
+          liga: 'Diamante',
+          ligaId: 'diamante',
         ),
         jogadorBruto(id: alvoY, apelido: 'Terceiro', posicao: 3, pontos: 900),
       ],
@@ -136,8 +143,8 @@ Map<String, Object?> aberturaPovoada({String? temporadaId = 'T-2026-01'}) =>
           apelido: nomeLongo,
           posicao: 2,
           souEu: true,
-          liga: 'Imperial',
-          ligaId: 'imperial',
+          liga: 'Diamante',
+          ligaId: 'diamante',
         ),
         // Colocação de TRÊS DÍGITOS: é ela que não cabia nos 44 fixos.
         jogadorBruto(
@@ -451,7 +458,7 @@ void main() {
       for (final c in cabecalhos(tester)) {
         expect(c, isNot(contains(nomeLongo)));
         expect(c, isNot(contains('Posição')));
-        expect(c, isNot(contains('Imperial')));
+        expect(c, isNot(contains('Diamante')));
       }
       handle.dispose();
     });
@@ -478,7 +485,7 @@ void main() {
       expect(
         falados,
         contains(
-          'Posição 2. $nomeLongo. Imperial. Você. Toque para ver o perfil.',
+          'Posição 2. $nomeLongo. Diamante. Você. Toque para ver o perfil.',
         ),
       );
       expect(
@@ -502,7 +509,7 @@ void main() {
       // COMO O DEFEITO SE PARECE. Sem `excludeSemantics` os pedaços não viram
       // nós soltos — `container: true` os MESCLA no rótulo da linha, e o que o
       // leitor de tela fala vira a frase inteira seguida de "#2, Mariana
-      // Aparecida Nascimento, Imperial, você" outra vez. Procurar um nó igual a
+      // Aparecida Nascimento, Diamante, você" outra vez. Procurar um nó igual a
       // "#2" não acha isso; o que acha é exigir que a frase TERMINE onde
       // `_anuncio` termina.
       for (final l in linhas) {
@@ -654,7 +661,7 @@ void main() {
         // porque `textosCortados` já provou que nenhum foi cortado.
         expect(texto, contains('#123'), reason: 'colocação sumiu a $rotulo');
         expect(texto, contains(nomeLongo), reason: 'nome sumiu a $rotulo');
-        expect(texto, contains('Imperial'), reason: 'liga sumiu a $rotulo');
+        expect(texto, contains('Diamante'), reason: 'liga sumiu a $rotulo');
         expect(
           texto,
           contains('Centesimo Vigesimo Terceiro'),

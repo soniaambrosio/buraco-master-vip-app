@@ -4,17 +4,19 @@
 // criar a infraestrutura configuravel, mas nao criar politica de produto por
 // conta propria."
 //
-// O QUE A INVESTIGACAO ACHOU. As ligas existem como ARTE, e so como arte. Na
-// branch do cliente (`integracao/ranking-ligas-hall`) ha sete arquivos:
+// O QUE A INVESTIGACAO ACHOU, E O QUE MUDOU DESDE ENTAO. Quando este arquivo foi
+// escrito, as ligas existiam como ARTE e so como arte — sete arquivos na branch
+// do cliente, um deles chamado `liga_imperial.webp`, e nenhuma lista oficial,
+// nenhum limite de faixa e nenhuma regra de promocao registrados em lugar nenhum.
 //
-//   assets/ranking/liga_bronze.webp    liga_prata.webp     liga_ouro.webp
-//   assets/ranking/liga_platina.webp   liga_diamante.webp  liga_imperial.webp
-//   assets/ranking/liga_lenda.webp
+// A Politica Competitiva v1 fechou a primeira metade: `DEGRAUS_V1`, em
+// `competicao.ts`, e a lista OFICIAL dos sete degraus com seus limites. A OS de
+// canonizacao das sete Ligas fechou a segunda: a sexta liga se chama MESTRE,
+// tem arte propria (`assets/ranking/liga_mestre.webp`), e `liga_imperial.webp`
+// deixou o catalogo oficial — nao ha oitava liga, e "Imperial" nao e apelido de
+// nenhuma das sete.
 //
-// Nao ha, em nenhuma branch, nenhum documento e nenhum teste do repositorio:
-//   * a lista OFICIAL de ligas (a arte tem sete; a OS anterior citou quatro
-//     nomes; nenhuma das duas listas e uma decisao registrada);
-//   * os limites de pontuacao de cada faixa;
+// O QUE CONTINUA SEM DECISAO REGISTRADA, e por isso continua fora daqui:
 //   * regra de promocao ou rebaixamento;
 //   * o que a liga faz na virada de temporada.
 //
@@ -37,9 +39,13 @@
 export interface DegrauDeLiga {
   readonly ligaId: string;
   readonly nome: string;
-  /// Caminho do asset, quando o produto o registrar. Nao e derivado do nome:
-  /// deduzir `assets/ranking/liga_${nome.toLowerCase()}.webp` amarraria a
-  /// autoridade a um nome de arquivo do cliente.
+  /// Caminho do asset, registrado pelo produto. Nao e derivado do nome: deduzir
+  /// `assets/ranking/liga_${nome.toLowerCase()}.webp` amarraria a autoridade a
+  /// um nome de arquivo do cliente — e a sexta liga e a prova viva de que os
+  /// dois divergem, porque a arte se chamou `liga_imperial` durante meses
+  /// enquanto a liga sempre se chamou Mestre. Vazio continua sendo um valor
+  /// legitimo para escadas que ainda nao tenham arte; a oficial da v1 tem os
+  /// sete caminhos preenchidos e conferidos contra o disco.
   readonly icone: string;
   /// `null` = sem piso. So o PRIMEIRO degrau pode te-lo.
   readonly pontosMinimos: number | null;

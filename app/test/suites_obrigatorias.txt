@@ -86,6 +86,20 @@
 #
 # ENTRAR AQUI E UMA DECISAO. Significa que a suite passou a ser obrigatoria, e
 # que remove-la ou esvazia-la exige mexer aqui — o que aparece no diff.
+#
+# ---------------------------------------------------------------------------
+# O QUE A OS DE CANONIZACAO DAS SETE LIGAS ACRESCENTOU
+# ---------------------------------------------------------------------------
+#
+# `ligas7` entrou porque a escada competitiva e a unica coisa deste projeto
+# que existe em QUATRO lugares ao mesmo tempo — a autoridade em
+# `functions-ranking/src/competicao.ts`, a arte em `app/assets/ranking/`, a
+# maquete do catalogo visual e as tres superficies produtivas — e a suite e o
+# que amarra os quatro. Ela e derivada: le a autoridade e confere o resto
+# contra ela. Apagar a suite devolveria a liberdade de os quatro divergirem
+# em silencio, que foi exatamente o estado que a OS veio fechar (a sexta liga
+# se chamava Imperial na arte e Mestre na regra, e a setima nao existia na
+# maquete).
 
 a11yconf    test/casca/acessibilidade_configuracoes_test.dart
     sha256   00fc0528512c4f5fe046fe2fccfce0874aaa294049bebf5b850b549e7cbf0795
@@ -120,3 +134,33 @@ suitesobrig test/ci/suites_obrigatorias_test.dart
     exige    ('S7
     exige    ('S8
     exige    ('S9
+
+ligas7      test/ranking/escada_sete_ligas_test.dart
+    sha256   2440d131d0987a7f1c8d446ee6c80ee07fe51fbf63a2ee3b1329390427c10354
+    provas   40
+    exige    ('L1a
+    exige    ('L1b
+    exige    ('L1c
+    exige    ('L1f
+    exige    ('L1g
+    exige    ('L1j
+    exige    ('L1k
+    exige    ('L2c
+    exige    ('L2e
+    exige    ('L2i
+    exige    ('L2j
+    exige    ('L2k
+    exige    ('L3b
+    exige    ('L3c
+    exige    ('L3d
+    exige    ('L3g
+    exige    ('L3h
+    exige    ('L4a
+    exige    ('L4d
+    exige    ('L4e
+    exige    ('L4f
+    exige    ('L5a
+    exige    ('L5b
+    exige    ('L5d
+    exige    ('L5f
+    exige    ('L6b

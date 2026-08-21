@@ -378,24 +378,36 @@ export const LADDER_V1_ID = "competitiva-v1";
 /// o defeito "buraco entre faixas" que `conferirEscada` recusa. Simetrico ao teto
 /// aberto de Lenda.
 ///
-/// `icone` SAI VAZIO NOS SETE, e isso e deliberado. A arte existe na branch do
-/// cliente com sete arquivos, mas o sexto deles se chama `liga_imperial.webp`
-/// enquanto a secao 15 nomeia a sexta liga como MESTRE. Amarrar "Mestre" a um
-/// arquivo chamado "imperial" seria uma associacao de arte inventada dentro de
-/// uma OS de regra competitiva, e o cabecalho de `DegrauDeLiga.icone` ja proibia
-/// derivar o caminho do nome. Fica como dependencia declarada no relatorio.
+/// `icone` E UMA TABELA LITERAL, e nao uma derivacao do nome. Sete linhas,
+/// escritas uma a uma. A alternativa obvia — `assets/ranking/liga_` mais o nome
+/// em minusculas — foi recusada em `DegrauDeLiga.icone` desde o primeiro dia, e
+/// a razao acabou de se provar concreta: por seis meses a sexta arte se chamou
+/// `liga_imperial.webp` enquanto a secao 15 nomeia a sexta liga MESTRE. Uma
+/// regra de derivacao teria apontado para um arquivo inexistente — ou, pior,
+/// teria convidado alguem a renomear a LIGA para caber no nome do ARQUIVO.
+///
+/// A ARTE DA MESTRE ENTROU NA OS DE CANONIZACAO:
+/// `app/assets/ranking/liga_mestre.webp`, 256x256 WebP sRGBA com canal alfa
+/// real. `liga_imperial.webp` SAIU do catalogo oficial — o arquivo continua no
+/// repositorio como legado nao referenciado, e `test/competicao.test.js` reprova
+/// se o nome voltar a aparecer aqui.
+///
+/// CADA CAMINHO E CONFERIDO CONTRA O DISCO por `test/competicao.test.js`: os
+/// sete arquivos tem de existir sob `app/`. Apagar uma arte, renomear uma, ou
+/// tirar uma linha desta tabela derruba o gate — que e o que a secao 7.2 da OS
+/// de canonizacao pede com todas as letras.
 ///
 /// NAO HA, e a secao 15 proibe cada um: Bronze I/II/III, subdivisao, estrela,
 /// ponto de promocao, partida de promocao, protecao contra queda ou demotion
 /// shield. A Liga e uma funcao pura do rating, e nada mais.
 export const DEGRAUS_V1: ReadonlyArray<DegrauDeLiga> = [
-  { ligaId: "bronze", nome: "Bronze", icone: "", pontosMinimos: null, pontosMaximos: 949 },
-  { ligaId: "prata", nome: "Prata", icone: "", pontosMinimos: 950, pontosMaximos: 1099 },
-  { ligaId: "ouro", nome: "Ouro", icone: "", pontosMinimos: 1100, pontosMaximos: 1249 },
-  { ligaId: "platina", nome: "Platina", icone: "", pontosMinimos: 1250, pontosMaximos: 1399 },
-  { ligaId: "diamante", nome: "Diamante", icone: "", pontosMinimos: 1400, pontosMaximos: 1549 },
-  { ligaId: "mestre", nome: "Mestre", icone: "", pontosMinimos: 1550, pontosMaximos: 1699 },
-  { ligaId: "lenda", nome: "Lenda", icone: "", pontosMinimos: 1700, pontosMaximos: null },
+  { ligaId: "bronze", nome: "Bronze", icone: "assets/ranking/liga_bronze.webp", pontosMinimos: null, pontosMaximos: 949 },
+  { ligaId: "prata", nome: "Prata", icone: "assets/ranking/liga_prata.webp", pontosMinimos: 950, pontosMaximos: 1099 },
+  { ligaId: "ouro", nome: "Ouro", icone: "assets/ranking/liga_ouro.webp", pontosMinimos: 1100, pontosMaximos: 1249 },
+  { ligaId: "platina", nome: "Platina", icone: "assets/ranking/liga_platina.webp", pontosMinimos: 1250, pontosMaximos: 1399 },
+  { ligaId: "diamante", nome: "Diamante", icone: "assets/ranking/liga_diamante.webp", pontosMinimos: 1400, pontosMaximos: 1549 },
+  { ligaId: "mestre", nome: "Mestre", icone: "assets/ranking/liga_mestre.webp", pontosMinimos: 1550, pontosMaximos: 1699 },
+  { ligaId: "lenda", nome: "Lenda", icone: "assets/ranking/liga_lenda.webp", pontosMinimos: 1700, pontosMaximos: null },
 ];
 
 export const ESCADA_V1: EscadaDeLigas = {

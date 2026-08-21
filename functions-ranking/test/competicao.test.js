@@ -8,6 +8,8 @@
 
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   POLITICA_COMPETITIVA_V1,
@@ -29,7 +31,7 @@ const {
   calcularDeltaV1,
   registrarPoliticaV1,
 } = require("../lib/competicao");
-const { conferirEscada, ligaDe } = require("../lib/ligas");
+const { conferirEscada, ligaDe, escadaParaExibicao } = require("../lib/ligas");
 const { calculadoraDe, politicaDefinida, politicasRegistradas } = require("../lib/politica");
 const { K_COLOCACAO, K_CLASSIFICADO, softReset } = require("../lib/elo");
 
@@ -247,6 +249,20 @@ describe("ligas: a escada v1 (secoes 15 e 16)", () => {
     }
   });
 
+  test("PONTUACAO NEGATIVA CAI EM BRONZE, e nao so em alguma liga", () => {
+    // A secao 7.1 da OS de canonizacao pede este caso com todas as letras, e o
+    // teste acima NAO o cobre: notEqual(null) ficaria verde se um piso inventado
+    // empurrasse o rating negativo para QUALQUER outro degrau. O que o piso
+    // aberto promete e mais forte — abaixo de 950 e Bronze, sem fundo.
+    for (const rating of [-1, -100, -5000, Number.MIN_SAFE_INTEGER]) {
+      assert.equal(ligaDe(ESCADA_V1, rating)?.ligaId, "bronze", `rating ${rating}`);
+    }
+    // E o teto simetrico: nada acima de Lenda.
+    for (const rating of [1700, 99999, Number.MAX_SAFE_INTEGER]) {
+      assert.equal(ligaDe(ESCADA_V1, rating)?.ligaId, "lenda", `rating ${rating}`);
+    }
+  });
+
   test("o rating inicial cai em Prata", () => {
     // 1000 esta entre 950 e 1099. Nao e uma decisao desta suite — e a
     // consequencia das faixas da secao 15, e vale registrar porque e onde todo
@@ -263,13 +279,6 @@ describe("ligas: a escada v1 (secoes 15 e 16)", () => {
     }
   });
 
-  test("o icone sai vazio nos sete — a arte nao foi inventada", () => {
-    // A branch do cliente tem sete arquivos, mas o sexto se chama
-    // `liga_imperial.webp` enquanto a secao 15 nomeia a sexta liga como MESTRE.
-    // Amarrar as duas coisas seria inventar uma associacao de arte.
-    assert.deepEqual([...new Set(DEGRAUS_V1.map((d) => d.icone))], [""]);
-  });
-
   test("a escada e resolvida por CODIGO, pelo id da politica", () => {
     assert.equal(escadaEmCodigo(LADDER_V1_ID), ESCADA_V1);
     assert.equal(escadaEmCodigo("uma-escada-qualquer"), null);
@@ -283,6 +292,133 @@ describe("ligas: a escada v1 (secoes 15 e 16)", () => {
       assert.equal(DEGRAUS_V1[i].pontosMaximos + 1, DEGRAUS_V1[i + 1].pontosMinimos);
     }
   });
+
+  test("IMPERIAL NAO EXISTE em lugar nenhum da escada oficial", () => {
+    // Nem como id, nem como nome, nem como caminho de arte, nem como oitava
+    // liga. A denominacao e legada e visual; ela nao volta por apelido.
+    const tudo = JSON.stringify(ESCADA_V1).toLowerCase();
+    assert.equal(tudo.includes("imperial"), false, "imperial reapareceu na escada");
+    assert.equal(DEGRAUS_V1.length, 7, "a escada deixou de ter sete degraus");
+    assert.deepEqual(
+      DEGRAUS_V1.map((d) => d.ligaId),
+      ["bronze", "prata", "ouro", "platina", "diamante", "mestre", "lenda"]
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A ARTE DOS SETE DEGRAUS (OS de canonizacao, secoes 5.1, 5.2 e 7.2)
+// ---------------------------------------------------------------------------
+//
+// ESTE BLOCO E UM PORTAO DERIVADO, e nao uma segunda lista. Ele nao redigita os
+// caminhos: le DEGRAUS_V1 e vai ao DISCO conferir. Por isso apagar uma arte,
+// renomear uma, ou tirar a linha de um degrau reprova aqui — os tres jeitos de
+// desfazer a canonizacao em silencio.
+describe("ligas: a arte dos sete degraus", () => {
+  // functions-ranking/test/ -> raiz do repositorio -> app/.
+  const APP = path.resolve(__dirname, "..", "..", "app");
+  const noDisco = (icone) => path.join(APP, icone);
+
+  test("os sete tem icone, e nenhum sai vazio", () => {
+    assert.equal(DEGRAUS_V1.length, 7);
+    for (const d of DEGRAUS_V1) {
+      assert.notEqual(d.icone, "", `a liga ${d.ligaId} ficou sem arte`);
+      assert.equal(typeof d.icone, "string");
+    }
+  });
+
+  test("os sete caminhos sao DISTINTOS — nenhuma liga toma a arte da outra", () => {
+    assert.equal(new Set(DEGRAUS_V1.map((d) => d.icone)).size, 7);
+  });
+
+  test("cada icone declarado EXISTE no disco", () => {
+    // O gate que a secao 7.2 pede: "remocao de qualquer degrau, asset ou
+    // mapeamento deve reprovar o gate". Aqui morre a remocao do ASSET.
+    for (const d of DEGRAUS_V1) {
+      assert.equal(
+        fs.existsSync(noDisco(d.icone)),
+        true,
+        `${d.ligaId}: arte declarada e ausente do disco — ${d.icone}`
+      );
+      assert.ok(fs.statSync(noDisco(d.icone)).size > 0, `${d.ligaId}: arte vazia`);
+    }
+  });
+
+  test("a MESTRE usa a arte da Mestre, e ela e um WebP com alfa", () => {
+    const mestre = DEGRAUS_V1.find((d) => d.ligaId === "mestre");
+    assert.equal(mestre.icone, "assets/ranking/liga_mestre.webp");
+
+    // Cabecalho RIFF/WEBP lido cru: nao ha decodificador de imagem neste
+    // codebase, e nao vale a pena acrescentar um. O que da para afirmar aqui e
+    // que o arquivo E um WebP e que ele DECLARA canal alfa. A prova de que o
+    // alfa e REAL (cantos transparentes, sem xadrez incorporado) e do lado
+    // Flutter, que tem decodificador:
+    // app/test/ranking/escada_sete_ligas_test.dart.
+    const b = fs.readFileSync(noDisco(mestre.icone));
+    assert.equal(b.toString("ascii", 0, 4), "RIFF");
+    assert.equal(b.toString("ascii", 8, 12), "WEBP");
+    const formato = b.toString("ascii", 12, 16);
+    if (formato === "VP8L") {
+      // Bit 28 do cabecalho VP8L e alpha_is_used.
+      assert.equal(((b.readUInt32LE(21) >>> 28) & 1) === 1, true, "VP8L sem alfa");
+    } else if (formato === "VP8X") {
+      assert.equal((b[20] & 0x10) !== 0, true, "VP8X sem bandeira de alfa");
+    } else {
+      assert.fail(`liga_mestre.webp e ${formato}: lossy simples nao carrega alfa`);
+    }
+  });
+
+  test("NENHUM icone aponta para a arte legada da Imperial", () => {
+    for (const d of DEGRAUS_V1) {
+      assert.equal(
+        d.icone.toLowerCase().includes("imperial"),
+        false,
+        `${d.ligaId} voltou a apontar para a arte legada`
+      );
+    }
+  });
+
+  test("o icone e CAMPO do degrau, e nao regra derivada do nome", () => {
+    // A tentacao registrada em DegrauDeLiga.icone e trocar a tabela por
+    // assets/ranking/liga_ + nome.toLowerCase(). Trocar o campo por um getter
+    // derivado faz hasOwnProperty perder o campo, e este teste morre — que e o
+    // aviso que se quer dar a quem tentar.
+    for (const d of DEGRAUS_V1) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(d, "icone"),
+        true,
+        `${d.ligaId}: icone deixou de ser um campo proprio do degrau`
+      );
+    }
+  });
+
+  test("a escada de EXIBICAO carrega os icones ate o cliente", () => {
+    // Sem isto, os caminhos existiriam no servidor e nao atravessariam a
+    // fronteira — que e o mesmo que nao existirem.
+    const paraTela = escadaParaExibicao(ESCADA_V1, "mestre");
+    assert.equal(paraTela.length, 7);
+    assert.deepEqual(
+      paraTela.map((d) => d.icone),
+      DEGRAUS_V1.map((d) => d.icone)
+    );
+    assert.deepEqual(
+      paraTela.filter((d) => d.atual).map((d) => d.ligaId),
+      ["mestre"]
+    );
+  });
+
+  test("a arte legada da Imperial continua no disco, e FORA do catalogo", () => {
+    // A OS manda tirar do catalogo oficial e permite que o arquivo permaneca
+    // como legado nao referenciado ate uma limpeza independente. As duas metades
+    // sao afirmadas aqui para que nem a remocao silenciosa do arquivo nem o
+    // retorno dele ao catalogo passem despercebidos.
+    assert.equal(fs.existsSync(noDisco("assets/ranking/liga_imperial.webp")), true);
+    assert.equal(
+      DEGRAUS_V1.some((d) => d.icone.includes("liga_imperial")),
+      false
+    );
+  });
+
 });
 
 describe("ligas: escadas invalidas continuam sendo recusadas", () => {

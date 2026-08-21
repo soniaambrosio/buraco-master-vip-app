@@ -214,7 +214,7 @@ sabe exibir todos estes casos.
 | ~~`liga`~~ | ~~`""`~~ → **resolvido na v1**: rótulo pronto | — |
 | ~~`escadaLigas`~~ | ~~`[]`~~ → **resolvido na v1**: as sete Ligas | — |
 | `divisao` | `null` | regra de divisão **dentro** de uma liga. A §15 da OS nova **proíbe** divisões I/II/III na v1, então isto deixou de ser lacuna e virou decisão. `qualificacaoRestante` cobre o caso de "faltam X partidas" |
-| `icone` das Ligas | `""` | o asset da 6ª liga se chama `liga_imperial` e a OS a nomeia `Mestre`; a associação não foi inventada |
+| ~~`icone` das Ligas~~ | ~~`""`~~ → **resolvido na canonização das sete Ligas**: os sete caminhos são uma tabela literal em `DEGRAUS_V1`, e `liga_mestre.webp` entrou como a arte da 6ª. `liga_imperial.webp` saiu do catálogo | — |
 | `apelido` / `avatar` | `""` | uma fonte de perfil no backend |
 | `selo` | `null` | critérios dos 9 selos que a arte já tem |
 | Hall (5 categorias) | `criterio_nao_definido` | critérios de elegibilidade |

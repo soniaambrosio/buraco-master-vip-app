@@ -79,7 +79,7 @@ readonly CHAVE_MINIMA="a11yconf"
 # O piso de provas que ESTA OS declarou, pela mesma razao: baixar `provas` no
 # manifesto seria a saida silenciosa que o resto do arquivo veio fechar.
 # Formato: <chave>:<piso>, separados por espaco.
-readonly PISOS="a11yconf:35 suitesobrig:9"
+readonly PISOS="a11yconf:35 suitesobrig:9 ligas7:40"
 
 falhas=0
 erro() {

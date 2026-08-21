@@ -387,9 +387,14 @@ Nenhuma foi improvisada, e nenhuma está escondida atrás de um valor default.
 1. **Fórmula de pontuação.** Quanto vale vitória, derrota, empate e abandono;
    se depende da força do adversário; se há piso. Sem ela **nada pontua**.
    Onde entra: registrar uma calculadora em `functions-ranking/src/politica.ts`.
-2. **Lista oficial de ligas e faixas.** A arte tem sete (Bronze, Prata, Ouro,
-   Platina, Diamante, Imperial, Lenda); não há decisão registrada sobre quais
-   valem nem sobre os limites. Onde entra: um documento em `rankingLadders`.
+2. ~~**Lista oficial de ligas e faixas.**~~ **RESOLVIDO.** A Política
+   Competitiva v1 registrou os sete degraus e seus limites em `DEGRAUS_V1`
+   (`functions-ranking/src/competicao.ts`), e a OS de canonização das sete
+   Ligas fechou o lado visual: a 6ª liga chama-se **Mestre** e tem arte própria
+   (a arte legada `liga_imperial.webp` saiu do catálogo). A escada mora em
+   CÓDIGO e não em documento do Firestore — `escadaEmCodigo` é consultada
+   ANTES de `rankingLadders`, justamente para que um documento adulterado não
+   consiga rebaixar ninguém. Ver `docs/CANONIZACAO-SETE-LIGAS-V1.md`.
 3. **Política de temporada.** Duração, e o que acontece na virada: a pontuação
    zera, é reduzida ou é mantida? A liga da temporada anterior influencia a
    próxima? Hoje a temporada nova simplesmente começa vazia, **por consequência

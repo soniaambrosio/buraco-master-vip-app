@@ -10,23 +10,50 @@ enum RankingEstado { carregando, normal, erro, vazio }
 
 enum Direcao { subiu, desceu, estavel }
 
-class DivisaoAtual {
-  final String nome;
-  final String icone;
-  final int pontos;
-  final int pontosProxima;
-  final int faltamPontos;
-  final String proximaDivisao;
-  final int posicaoLiga;
+/// O progresso do jogador DENTRO da escada oficial: em que Liga ele está e
+/// quanto falta para a seguinte.
+///
+/// CHAMAVA-SE `DivisaoAtual`, e o nome era o defeito. Ele afirmava uma divisão
+/// DENTRO de uma Liga — "Diamante III", "Diamante II" —, e não existe divisão
+/// nenhuma: a §15 da Política Competitiva v1 proíbe subdivisão, estrela, ponto
+/// de promoção e partida de promoção. A Liga é função pura do rating e nada
+/// mais. O tipo passou a dizer a única coisa verdadeira que ele sabia dizer: a
+/// Liga corrente, a PRÓXIMA Liga da escada, e a distância entre as duas.
+///
+/// TODOS OS CAMPOS VÊM DA AUTORIDADE. Nem `proximaLiga` nem `faltamPontos` são
+/// calculáveis aqui: quem conhece as faixas é `DEGRAUS_V1`, em
+/// `functions-ranking/src/competicao.ts`, e reimplementá-las no widget criaria
+/// a segunda tabela de limites que a §16 existe para impedir.
+class ProgressoDeLiga {
+  /// O nome da Liga corrente, como a autoridade o publica.
+  final String ligaAtual;
 
-  const DivisaoAtual({
-    required this.nome,
+  /// A arte da Liga corrente, como a autoridade a registra em `icone`.
+  final String icone;
+
+  /// O rating do jogador.
+  final int pontos;
+
+  /// O piso da PRÓXIMA Liga da escada.
+  final int pontosDaProxima;
+
+  /// `pontosDaProxima - pontos`, calculado pela autoridade.
+  final int faltamPontos;
+
+  /// O nome da próxima Liga — um dos sete, nunca uma subdivisão.
+  final String proximaLiga;
+
+  /// A colocação do jogador dentro da própria Liga.
+  final int posicaoNaLiga;
+
+  const ProgressoDeLiga({
+    required this.ligaAtual,
     required this.icone,
     required this.pontos,
-    required this.pontosProxima,
+    required this.pontosDaProxima,
     required this.faltamPontos,
-    required this.proximaDivisao,
-    required this.posicaoLiga,
+    required this.proximaLiga,
+    required this.posicaoNaLiga,
   });
 }
 
@@ -72,28 +99,62 @@ class RankingRow {
   });
 }
 
+/// UM degrau da escada oficial, como esta maquete o desenha.
+///
+/// Espelha `DegrauDeLiga` de `functions-ranking/src/ligas.ts` nos três campos
+/// que a tela usa. `ligaId` entrou na canonização das sete Ligas e não é
+/// decoração: é por ele que `test/ranking/escada_sete_ligas_test.dart` casa
+/// esta lista com `DEGRAUS_V1`, degrau a degrau. Casar por NOME deixaria a
+/// prova depender do texto de exibição, que é justamente a parte que muda.
 class LigaEscada {
+  final String ligaId;
   final String nome;
   final String icone;
   final bool atual;
 
   const LigaEscada({
+    required this.ligaId,
     required this.nome,
     required this.icone,
     required this.atual,
   });
 }
 
-/// View-model visual do contrato entregue pelo Claude.
+/// View-model visual desta tela.
 ///
-/// Os tipos ficam temporariamente neste arquivo para a fatia visual compilar de
-/// forma isolada. Na integração, o Claude pode movê-los para `lib/models/`
-/// preservando exatamente esta API pública.
+/// -------------------------------------------------------------------------
+/// ESTA TELA NÃO É PRODUTIVA, E ISSO É VERIFICADO
+/// -------------------------------------------------------------------------
+///
+/// `RankingScreen` é catálogo visual. Nenhuma rota que nasça em `main()` a
+/// alcança — quem publica classificação é `lib/casca/ranking_de_producao.dart`,
+/// que não tem um jogador escrito dentro. Três suítes independentes reprovam
+/// se isto mudar: `auditoria_casca_test.dart` (§2 — a raiz não alcança
+/// maquete), `a11y_ranking_cabecalho_escala_test.dart` (R01d) e
+/// `navegacao_perfil_publico_test.dart` (N13d).
+///
+/// -------------------------------------------------------------------------
+/// E POR ISSO ELA AINDA PRECISA DIZER A VERDADE SOBRE AS LIGAS
+/// -------------------------------------------------------------------------
+///
+/// Ser maquete autoriza inventar JOGADOR — nomes, avatares, pontuações. Não
+/// autoriza inventar REGRA. Até a canonização das sete Ligas esta maquete
+/// exibia "Diamante III", "Diamante II" e uma sexta liga chamada "Imperial",
+/// e omitia Lenda: uma escada de seis degraus com duas subdivisões que a
+/// política competitiva proíbe, mostrada a quem abrisse o catálogo como se
+/// fosse o produto.
+///
+/// A escada abaixo é agora um ESPELHO de `DEGRAUS_V1`
+/// (`functions-ranking/src/competicao.ts`), e não uma segunda autoridade:
+/// `test/ranking/escada_sete_ligas_test.dart` lê os dois lados e reprova na
+/// primeira divergência de id, de nome, de ordem ou de arte. Editar um degrau
+/// aqui sem editar a autoridade derruba o gate; editar a autoridade sem editar
+/// aqui também.
 class RankingVM {
   final RankingAba aba;
   final String faixaTempo;
   final bool mostrarHall;
-  final DivisaoAtual? divisao;
+  final ProgressoDeLiga? progresso;
   final List<PodioEntry> podio;
   final List<RankingRow> lista;
   final List<LigaEscada> escadaLigas;
@@ -102,7 +163,7 @@ class RankingVM {
     required this.aba,
     required this.faixaTempo,
     required this.mostrarHall,
-    required this.divisao,
+    required this.progresso,
     required this.podio,
     required this.lista,
     required this.escadaLigas,
@@ -115,15 +176,19 @@ class RankingVM {
       aba: aba,
       faixaTempo: temporada ? 'Temporada acaba em 12d 6h' : '',
       mostrarHall: true,
-      divisao: temporada
-          ? const DivisaoAtual(
-              nome: 'Diamante III',
-              icone: 'assets/ranking/divisao_diamante.webp',
+      // OURO, e não "Diamante III". 1240 está entre 1100 e 1249, que é a faixa
+      // do Ouro em `DEGRAUS_V1`; a próxima Liga é a Platina, cujo piso é 1250,
+      // e daí saem os 10 pontos que faltam. Os três números são consequência
+      // da escada oficial, e não escolha desta maquete.
+      progresso: temporada
+          ? const ProgressoDeLiga(
+              ligaAtual: 'Ouro',
+              icone: 'assets/ranking/liga_ouro.webp',
               pontos: 1240,
-              pontosProxima: 1500,
-              faltamPontos: 260,
-              proximaDivisao: 'Diamante II',
-              posicaoLiga: 12,
+              pontosDaProxima: 1250,
+              faltamPontos: 10,
+              proximaLiga: 'Platina',
+              posicaoNaLiga: 12,
             )
           : null,
       podio: const [
@@ -132,7 +197,7 @@ class RankingVM {
           nome: 'Aurora',
           avatar: '👑',
           moldura: 'assets/ranking/podio_ouro.webp',
-          pontos: 5020,
+          pontos: 1820,
           ehVoce: false,
         ),
         PodioEntry(
@@ -140,7 +205,7 @@ class RankingVM {
           nome: 'Marina',
           avatar: '🐱',
           moldura: 'assets/ranking/podio_prata.webp',
-          pontos: 4180,
+          pontos: 1755,
           ehVoce: false,
         ),
         PodioEntry(
@@ -148,17 +213,20 @@ class RankingVM {
           nome: 'Beto',
           avatar: '🦊',
           moldura: 'assets/ranking/podio_bronze.webp',
-          pontos: 3910,
+          pontos: 1702,
           ehVoce: false,
         ),
       ],
       lista: const [
+        // AS LIGAS DESTAS LINHAS CONCORDAM COM A PONTUAÇÃO, e isso não é
+        // preciosismo de maquete: uma linha que diz "Diamante" ao lado de 3640
+        // pontos ensina uma faixa que não existe a quem lê o catálogo.
         RankingRow(
           posicao: 4,
           nome: 'Cláudia',
           avatar: '🐰',
-          liga: 'Diamante',
-          pontos: 3640,
+          liga: 'Mestre',
+          pontos: 1690,
           direcao: Direcao.subiu,
           delta: 2,
           ehVoce: false,
@@ -168,8 +236,8 @@ class RankingVM {
           posicao: 5,
           nome: 'Ricardo',
           avatar: '🐻',
-          liga: 'Diamante',
-          pontos: 3500,
+          liga: 'Mestre',
+          pontos: 1602,
           direcao: Direcao.desceu,
           delta: 1,
           ehVoce: false,
@@ -179,7 +247,7 @@ class RankingVM {
           posicao: 12,
           nome: 'Você',
           avatar: '👑',
-          liga: 'Diamante III',
+          liga: 'Ouro',
           pontos: 1240,
           direcao: Direcao.subiu,
           delta: 3,
@@ -190,7 +258,7 @@ class RankingVM {
           posicao: 13,
           nome: 'Fernanda',
           avatar: '🐶',
-          liga: 'Diamante',
+          liga: 'Ouro',
           pontos: 1180,
           direcao: Direcao.subiu,
           delta: 1,
@@ -201,7 +269,7 @@ class RankingVM {
           posicao: 14,
           nome: 'Paulo',
           avatar: '🐵',
-          liga: 'Ouro',
+          liga: 'Prata',
           pontos: 1090,
           direcao: Direcao.desceu,
           delta: 2,
@@ -209,35 +277,54 @@ class RankingVM {
           selo: 'assets/ranking/selos/rei_do_morto.webp',
         ),
       ],
+      // OS SETE DEGRAUS OFICIAIS, na ordem crescente de `DEGRAUS_V1`.
+      //
+      // O que mudou na canonização: a sexta deixou de se chamar "Imperial" e
+      // passou a ser MESTRE, com arte própria; a sétima — Lenda — entrou, e
+      // antes simplesmente não estava aqui, o que fazia o topo da escada
+      // desaparecer do catálogo. `atual` marca a Liga do `progresso` acima, e
+      // exatamente uma.
       escadaLigas: const [
         LigaEscada(
+          ligaId: 'bronze',
           nome: 'Bronze',
           icone: 'assets/ranking/liga_bronze.webp',
           atual: false,
         ),
         LigaEscada(
+          ligaId: 'prata',
           nome: 'Prata',
           icone: 'assets/ranking/liga_prata.webp',
           atual: false,
         ),
         LigaEscada(
+          ligaId: 'ouro',
           nome: 'Ouro',
           icone: 'assets/ranking/liga_ouro.webp',
-          atual: false,
+          atual: true,
         ),
         LigaEscada(
+          ligaId: 'platina',
           nome: 'Platina',
           icone: 'assets/ranking/liga_platina.webp',
           atual: false,
         ),
         LigaEscada(
+          ligaId: 'diamante',
           nome: 'Diamante',
           icone: 'assets/ranking/liga_diamante.webp',
-          atual: true,
+          atual: false,
         ),
         LigaEscada(
-          nome: 'Imperial',
-          icone: 'assets/ranking/liga_imperial.webp',
+          ligaId: 'mestre',
+          nome: 'Mestre',
+          icone: 'assets/ranking/liga_mestre.webp',
+          atual: false,
+        ),
+        LigaEscada(
+          ligaId: 'lenda',
+          nome: 'Lenda',
+          icone: 'assets/ranking/liga_lenda.webp',
           atual: false,
         ),
       ],
@@ -349,7 +436,7 @@ class RankingScreen extends StatelessWidget {
         )];
       case RankingEstado.normal:
         return [
-          if (vm.divisao != null) _divisao(vm.divisao!),
+          if (vm.progresso != null) _progresso(vm.progresso!),
           if (vm.podio.isNotEmpty) _podio(),
           if (vm.lista.isNotEmpty) _lista(),
           if (onCarregarMais != null && vm.lista.isNotEmpty) _carregarMais(),
@@ -537,10 +624,13 @@ class RankingScreen extends StatelessWidget {
     );
   }
 
-  Widget _divisao(DivisaoAtual divisao) {
-    final progresso = divisao.pontosProxima <= 0
+  Widget _progresso(ProgressoDeLiga p) {
+    // A BARRA É PROPORÇÃO, E NÃO REGRA. Ela desenha o que a autoridade já
+    // calculou; não há aqui nenhuma faixa de Liga, nenhum limite e nenhuma
+    // conta que decida em que degrau alguém está.
+    final fracao = p.pontosDaProxima <= 0
         ? 0.0
-        : (divisao.pontos / divisao.pontosProxima).clamp(0.0, 1.0).toDouble();
+        : (p.pontos / p.pontosDaProxima).clamp(0.0, 1.0).toDouble();
 
     return Container(
       margin: const EdgeInsets.fromLTRB(14, 12, 14, 0),
@@ -556,14 +646,14 @@ class RankingScreen extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _imagem(divisao.icone, 42),
+          _imagem(p.icone, 42),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  divisao.nome,
+                  p.ligaAtual,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: _azulClaro, fontSize: 16, fontWeight: FontWeight.w900),
@@ -572,12 +662,12 @@ class RankingScreen extends StatelessWidget {
                 Text.rich(
                   TextSpan(
                     children: [
-                      TextSpan(text: '${_formatar(divisao.pontos)} pts · faltam '),
+                      TextSpan(text: '${_formatar(p.pontos)} pts · faltam '),
                       TextSpan(
-                        text: _formatar(divisao.faltamPontos),
+                        text: _formatar(p.faltamPontos),
                         style: const TextStyle(color: _azulClaro, fontWeight: FontWeight.w800),
                       ),
-                      TextSpan(text: ' pra ${divisao.proximaDivisao}'),
+                      TextSpan(text: ' pra ${p.proximaLiga}'),
                     ],
                   ),
                   maxLines: 1,
@@ -595,7 +685,7 @@ class RankingScreen extends StatelessWidget {
                         ColoredBox(color: Colors.black.withValues(alpha: .33)),
                         FractionallySizedBox(
                           alignment: Alignment.centerLeft,
-                          widthFactor: progresso,
+                          widthFactor: fracao,
                           child: const DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(colors: [Color(0xFF7FBAFF), _azulClaro]),
@@ -613,7 +703,7 @@ class RankingScreen extends StatelessWidget {
           Column(
             children: [
               Text(
-                '#${divisao.posicaoLiga}',
+                '#${p.posicaoNaLiga}',
                 style: const TextStyle(color: _ouroClaro, fontSize: 20, fontWeight: FontWeight.w900),
               ),
               const Text('na liga', style: TextStyle(color: _azulSec, fontSize: 8.5)),

@@ -188,6 +188,11 @@ jobs:
           # apagar a suite deixaria o CI verde. Quem fecha isso e o passo
           # "2b — GUARDA", logo abaixo.
           roda a11yrank   test/ranking/a11y_ranking_cabecalho_escala_test.dart
+          # A canonizacao das sete Ligas. A suite le a AUTORIDADE
+          # (`functions-ranking/src/competicao.ts`) a partir de `app_build/..`,
+          # que aqui e a raiz do repositorio — por isso ela roda no overlay, e
+          # nao num passo separado.
+          roda ligas7     test/ranking/escada_sete_ligas_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -414,7 +419,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yconf suitesobrig a11yrank a11yguard perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yconf suitesobrig a11yrank a11yguard ligas7 perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -471,7 +476,7 @@ jobs:
           # `auditident`) continuam exatamente como estavam. Tornar obrigatorio
           # "por tabela" o que so era reportado seria mudanca de escopo que
           # nenhuma das duas OSs compostas nesta base pediu.
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yconf suitesobrig a11yrank a11yguard perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yconf suitesobrig a11yrank a11yguard ligas7 perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
