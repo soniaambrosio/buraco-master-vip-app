@@ -150,9 +150,14 @@ meio segundo de relógio falso por nada.
 
 ### 3.3 Movimento reduzido
 
-Quando a plataforma pede animações reduzidas, a arte **não é sequer carregada**:
-o fundo estável fica no ar por `duração × 1/5` e a abertura se encerra. Sem
-laço, sem bloqueio, e o bootstrap continua mandando. Caso `W09`.
+Quando a plataforma pede animações reduzidas, a **apresentação animada** é que
+sai: a arte não é sequer carregada, o fade da constelação não acontece, o fundo
+estável fica no ar por `duração × 1/5` e a abertura se encerra. Sem laço, sem
+bloqueio, e o bootstrap continua mandando. Casos `W09` e `C09`.
+
+O que **não** sai: o fundo, a constelação (que é imagem parada), o rótulo falado
+da abertura, o botão "Pular abertura" — e o som. Movimento reduzido governa
+animação, e nada além disso; ver §3.5 e o **Adendo B**.
 
 ### 3.4 A porta estreita, e por que ela existe
 
@@ -174,6 +179,11 @@ importado num arquivo só (`A08`), a fonte real é construída num lugar só
 `assets/splash/splash_intro.mp3`, com o mesmo volume, a mesma proteção contra
 ambiente sem plugin de áudio e o mesmo `habilitarSom`. Não estava no escopo
 mexer nisso, e tirá-lo em silêncio seria regressão.
+
+> **Corrigido depois, na OS 11.2.** Esta V1 preservou o som, mas o pedia
+> **dentro do ramo de movimento normal** — e com isso reduzir movimento
+> silenciava a abertura de quem não tinha pedido silêncio nenhum. As duas
+> autoridades foram separadas; ver o **Adendo B**.
 
 ---
 
@@ -709,3 +719,208 @@ rasterizar o SVG. Fica registrado como residual visual desta V1.
 Seguem valendo, sem novidade: cold start em aparelho não foi provado, o build
 depende de rede para as libs nativas da Rive, e o `ci-os-integracao.yml` não é
 dispatchável fora de `main`.
+
+---
+
+# ADENDO B — Áudio e movimento reduzido, desacoplados (OS 11.2)
+
+Correção **P2**. Independente da correção visual (Adendo A) e da correção de
+acessibilidade (OS 11.1). Nada de arte, máscara, Rive, ícone nativo, Starting
+Window, pipeline Android, lista de assets ou botão "Pular abertura" foi
+reaberto.
+
+Base: `2f4226fbfaaa28054104f6ef3a6850d25464ba81` — o HEAD da OS 11.1, que
+descende de `2ffe4ff` (folha visual canônica) e de `580c41c` (a marca nativa do
+Android), nesta ordem.
+
+## B1. O defeito
+
+`didChangeDependencies` bifurcava assim:
+
+```dart
+if (_movimentoReduzido) {
+  _relogioDeSeguranca = Timer(_janelaDeMovimentoReduzido, _encerrarAnimacao);
+  return;                      // <- sai daqui
+}
+_relogioDeSeguranca = Timer(_horizonteDeSeguranca, _encerrarAnimacao);
+unawaited(_tocarSom());        // <- e o som mora DEPOIS do return
+unawaited(_carregarArte());
+```
+
+O pedido de som estava **dentro do ramo de movimento normal**. Quem tivesse
+"reduzir animações" ligado no sistema recebia a abertura muda — mesmo com o som
+do aplicativo ligado, e sem ter pedido silêncio nenhum.
+
+Era o pior tipo de acoplamento: invisível, e justamente na configuração de quem
+mais depende do canal que sobrou. Para quem usa leitor de tela e mantém o som
+ligado, a abertura inteira virava nada.
+
+**Reproduzido antes de editar**, no código da base, escutando o canal real do
+`audioplayers`:
+
+| estado | chamadas ao plugin, na base |
+| --- | --- |
+| movimento normal + áudio permitido | `[init, create, setVolume, stop, …]` |
+| movimento reduzido + áudio permitido | `[]` |
+| movimento normal + áudio mutado | `[]` |
+
+## B2. As duas autoridades
+
+Nenhuma preferência nova nasceu. As duas já existiam, e continuam sendo as
+mesmas — o que mudou foi **uma parar de decidir pela outra**:
+
+| pergunta | quem responde | de onde vem |
+| --- | --- | --- |
+| há animação? | `MediaQuery.maybeDisableAnimationsOf(context)` | configuração de acessibilidade do sistema |
+| há som? | `SplashConstelacaoScreen.habilitarSom` | `somNaSplash`, da raiz, pela casca |
+
+O pedido de som subiu para **antes da bifurcação**. É uma linha movida, e é toda
+a correção:
+
+```dart
+unawaited(_carregarConstelacao());
+unawaited(_tocarSom());        // <- os dois ramos passam por aqui
+
+if (_movimentoReduzido) { … return; }
+…
+unawaited(_carregarArte());
+```
+
+Nos dois sentidos: movimento reduzido não silencia som permitido, e não liga som
+que a jogadora desligou — `_tocarSom` continua devolvendo na primeira linha
+quando `habilitarSom` é falso.
+
+## B3. O que o ramo reduzido é, agora que está escrito
+
+Movimento reduzido desliga **a apresentação animada**, e só isso:
+
+| | ramo normal | ramo reduzido |
+| --- | --- | --- |
+| timeline da Rive | carregada e tocada | **não é nem carregada** |
+| fade da constelação | `duração × 1/5` | **sem fade**, entra em opacidade cheia |
+| horizonte do encerramento | `duração × 7/6` | `duração × 1/5` |
+| fundo `#050B1E` | sim | sim |
+| constelação (imagem parada) | sim | sim |
+| rótulo falado da abertura | sim | sim |
+| "Pular abertura" | sim | sim |
+| **som** | obedece a `habilitarSom` | **obedece a `habilitarSom`** |
+
+## B4. Como o som é medido sem plugin de áudio
+
+Não há dublê de áudio. A suíte intercepta o canal **real** do `audioplayers`
+(`xyz.luan/audioplayers`) pela costura padrão do `flutter_test`: a tela constrói
+o `AudioPlayer` de sempre, com o asset de sempre, e o que a suíte lê é
+literalmente o que sairia para o lado nativo no aparelho.
+
+A reprodução em si nunca completa dentro de `flutter test` — o `audioplayers`
+copia o asset para o disco pelo `path_provider`, que também não existe ali —, e
+não é ela que está em questão. O que está em questão é se a abertura **chega a
+pedir**: `create` é a assinatura de `AudioPlayer()` no canal.
+
+**Uma armadilha que quase falsificou a medição.** O pacote inicializa o lado
+nativo uma vez por processo e guarda o resultado num `Completer` estático. Cada
+caso de `flutter test` roda na sua própria zona de tempo falso, e um `Future`
+completado na zona do primeiro caso nunca entrega nos seguintes. Na primeira
+medição, **só o primeiro caso do processo** conseguia abrir um player: todos os
+outros mediam zero por motivo de ambiente — um zero indistinguível do defeito.
+`_EscopoGlobalDoAudio` troca a instância da plataforma global a cada caso, o que
+faz o pacote refazer a inicialização dentro da zona corrente. O canal do player
+continua sendo o real.
+
+## B5. A matriz
+
+`app/test/splash/splash_constelacao_test.dart`: **59 → 84 casos**.
+
+| Exigência da OS 11.2 | Caso |
+| --- | --- |
+| 1. movimento normal + áudio permitido | `M01` |
+| 2. movimento normal + áudio mutado | `M02` |
+| 3. movimento reduzido + áudio permitido | `M03` |
+| 4. movimento reduzido + áudio mutado | `M04` |
+| 5. pular imediatamente em cada estado | `M07` × 4 |
+| 6. conclusão natural em cada estado | `M08` × 4 |
+| 7. ausência de dupla conclusão | `M07`, `M08` (a segunda espera, em cada estado) |
+| 8. ausência de áudio após encerramento | `M09` × 4 |
+| 9. anúncio semântico preservado | `M10` × 4 |
+| 10. "Pular abertura" com nome, papel e 48 dp | `M10` × 4 |
+
+Extras: `M05` prova que o volume pedido é o mesmo nos dois ramos de movimento;
+`M11` prova que ligar o som **não** devolve animação ao ramo reduzido; `M06`
+ancora a matriz pela contagem e pelo conjunto; `M12` é a guarda estrutural da
+ordem no código; `M13` é o contrato de conteúdo da própria suíte.
+
+### B5.1 As provas reprovam ao recouplar
+
+Campanha de mutação, cada uma aplicada e revertida:
+
+| mutação | quem reprova |
+| --- | --- |
+| `_tocarSom()` volta para dentro do ramo normal (o código da base) | `M03`, `M05`, `M09` [normal + som] e [reduzido + som], `M12` |
+| `if (!widget.habilitarSom) return` vira `if (false) return` | `M02`, `M04`, `M09` [normal + mudo] e [reduzido + mudo], `M12` |
+| `M01`–`M05` apagados da suíte, o resto intacto | `M13` ("8 casos M, e a OS 11.2 exige 13") |
+| `unawaited(_pararSom())` sai de `_encerrarAnimacao` | `M09` [normal + som] e [reduzido + som] |
+| `_kMatriz` encolhida para três estados | `M06` |
+
+**5 de 5 pegas.** Nenhuma mutação sobreviveu.
+
+## B6. Preservação binária e visual
+
+Nenhum asset foi tocado. Hashes antes e depois da correção, idênticos:
+
+| arquivo | SHA-256 | bytes |
+| --- | --- | --- |
+| `assets/rive/splash_constelacao_master_vip_v2.riv` | `a5a7ca1912de6f301b8a5c022151c7f14d6ae07228fa9c9dd49076fb2ea4d67d` | 2.298.957 |
+| `assets/rive/constelacao_dourada_master_vip.svg` | `a87fc5ad2d25fef715d9db7556575b96cd180d99eebaac113607f3abcffc0204` | 4.663 |
+| `assets/splash/splash_intro.mp3` | `171f6ca1a8b72468dab62411a9456610b3b3b0f898aec85c2572d614b6ebe415` | 92.830 |
+| `assets/splash/logo_splash_oficial.webp` | `6d84529c80addf8278cc73624b216da9b6aceb4857759bd8c10702c39578fb37` | — |
+
+A composição visual não foi tocada: a máscara continua **só** na camada SVG
+(`C11`), a Rive continua fora dela (`C11`), a sobreposição do título continua
+como foi medida (`C12`, `C13`), o enquadramento `contain` continua o mesmo
+(`A10`, `L03`), e o fade e a callback continuam onde estavam (`C14`, `W01`).
+
+## B7. Arquivos alterados
+
+| Arquivo | O que mudou |
+| --- | --- |
+| `app/lib/casca/splash/splash_constelacao_screen.dart` | `unawaited(_tocarSom())` movido para antes da bifurcação, com a razão escrita |
+| `app/test/splash/splash_constelacao_test.dart` | grupo `SOM × MOVIMENTO` (`M01`–`M13`), a escuta do canal, a matriz; `_montarAbertura` ganhou o parâmetro `som` |
+| `docs/INTEGRACAO-SPLASH-RIVE-CONSTELACAO-V1.md` | §3.3, §3.5 e este adendo |
+
+`.riv`, `.svg`, áudio, `pubspec.yaml`, `pubspec.lock`, recursos Android,
+`build.yml` e `ci-os-integracao.yml` **não foram tocados**.
+
+## B8. Gates
+
+Overlay limpo, scaffold do CI, Flutter 3.41.4:
+
+| Comando | Base `2f4226f` | Esta correção |
+| --- | --- | --- |
+| `flutter analyze` | 203 | **203 — conjunto normalizado idêntico** |
+| `flutter test test/splash` | +59 | **+84** |
+| `flutter test test/casca` | — | **+244** |
+| `flutter test test/splash test/casca` | — | **+328** |
+| `flutter test` (glob) | +1212 | **+1237** — exatamente os 25 casos novos |
+
+Nenhuma falha, nenhuma exceção pendente, nenhum caso pulado.
+
+`flutter build apk --debug`: **não concluído nesta máquina**, e não por código. O
+disco `C:` está a 100% e o Gradle reprova em `mergeDebugNativeLibs` com "espaço
+insuficiente em disco" ao copiar `librive_native.so` — as libs nativas da Rive
+são o passo mais pesado do build. Antes disso, a JVM do Gradle já havia caído
+por falta de memória. Fica registrado como **bloqueio de ambiente**: o
+`build.yml` não foi tocado, e o passo que valida a abertura no CI é
+`flutter test test/splash`, que passou.
+
+O **PORTÃO DA ABERTURA** do `build.yml` roda `flutter test test/splash` inteiro:
+os 25 casos novos entram nele sem que o workflow precise mudar uma linha. `M13`
+é a metade que falta a esse portão — ele exige que o arquivo exista, mas não sabe
+o que tem dentro.
+
+## B9. O que continua não provado
+
+O mesmo de antes, sem novidade: cold start em aparelho não foi refeito nesta
+correção, o build depende de rede para as libs nativas da Rive, e o
+`ci-os-integracao.yml` não é dispatchável fora de `main`. A reprodução sonora em
+si continua sendo prova de aparelho — o que esta OS prova é **a decisão**, e ela
+é a que estava errada.

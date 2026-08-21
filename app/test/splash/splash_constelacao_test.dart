@@ -29,6 +29,12 @@
 import 'dart:io';
 import 'dart:ui' show Tristate;
 
+// A implementação do escopo global do `audioplayers` mora neste pacote, que
+// chega como dependência transitiva. O `ignore` é deliberado: declarar o
+// pacote em `dev_dependencies` mexeria nas dependências da árvore, e esta OS
+// não pode mexer. Ver [_EscopoGlobalDoAudio].
+// ignore: depend_on_referenced_packages
+import 'package:audioplayers_platform_interface/audioplayers_platform_interface.dart';
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
 import 'package:buraco_master_vip/casca/login_de_producao.dart';
 import 'package:buraco_master_vip/casca/raiz_do_aplicativo.dart';
@@ -87,6 +93,7 @@ Future<int Function()> _montarAbertura(
   required AberturaFalsa fonte,
   Duration duracao = const Duration(milliseconds: 300),
   bool movimentoReduzido = false,
+  bool som = false,
   TextScaler escalaDeTexto = TextScaler.noScaling,
   Size tamanho = const Size(1080, 1920),
   String chave = 'abertura',
@@ -110,7 +117,10 @@ Future<int Function()> _montarAbertura(
               // mede a primeira montagem duas vezes e passa por engano.
               key: ValueKey<String>(chave),
               duracao: duracao,
-              habilitarSom: false,
+              // Falso por padrão: os casos que NÃO tratam de som não têm por
+              // que abrir um player. Quem prova a matriz de §11.2 liga isto e
+              // escuta os canais reais do plugin — ver `_EscutaDoAudio`.
+              habilitarSom: som,
               fonte: fonte,
               onConcluida: () => saidas++,
             ),
@@ -1555,6 +1565,408 @@ void main() {
       );
     });
   });
+
+  // =========================================================================
+  // §11.2 — o som e o movimento reduzido, cada um com a sua autoridade
+  // =========================================================================
+  //
+  // O DEFEITO QUE ESTE GRUPO EXISTE PARA IMPEDIR
+  //
+  // A abertura pedia o som DENTRO do ramo de movimento normal. Quem tinha
+  // "reduzir animações" ligado no sistema — e som ligado no aplicativo —
+  // recebia uma abertura muda, sem ter pedido silêncio nenhum. Era o pior tipo
+  // de acoplamento: invisível, e justamente na configuração de quem mais
+  // depende do canal que sobrou.
+  //
+  // COMO ISTO É MEDIDO, E POR QUE A MEDIDA VALE
+  //
+  // Não há dublê de áudio aqui. O que a suíte escuta são os DOIS canais reais
+  // do `audioplayers` (`xyz.luan/audioplayers` e `.global`), interceptados pela
+  // costura padrão do `flutter_test`. O que aparece em [_EscutaDoAudio] é
+  // literalmente o que sairia para o lado nativo no aparelho de quem joga.
+  //
+  // O plugin não existe dentro de `flutter test`, então a reprodução em si
+  // nunca completa — e não é ela que está em questão. O que está em questão é
+  // se a abertura CHEGA A PEDIR: `create` é a assinatura de `AudioPlayer()` no
+  // canal, e é exatamente a chamada que não acontecia no ramo reduzido.
+  group('SOM × MOVIMENTO — duas autoridades, e elas não se consultam', () {
+    late _EscutaDoAudio audio;
+
+    setUp(() => audio = _EscutaDoAudio()..instalar());
+    tearDown(() => audio.remover());
+
+    // -----------------------------------------------------------------------
+    // M01–M04: a matriz, uma combinação por caso
+    // -----------------------------------------------------------------------
+    //
+    // Escritos um a um, e não gerados por laço: são as quatro afirmações que a
+    // OS 11.2 pede, e um laço faria a remoção de uma delas sumir sem deixar
+    // rastro no relatório da suíte.
+
+    testWidgets('M01 movimento normal + áudio permitido: a abertura toca', (
+      tester,
+    ) async {
+      await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(),
+        chave: 'm01',
+        som: true,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        audio.playersAbertos,
+        1,
+        reason: 'a abertura não pediu som nem no ramo em que sempre pediu',
+      );
+    });
+
+    testWidgets('M02 movimento normal + áudio mutado: nada soa', (
+      tester,
+    ) async {
+      await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(),
+        chave: 'm02',
+        som: false,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        audio.chamadasDoPlayer,
+        isEmpty,
+        reason: 'mudo, e ainda assim alguma coisa foi pedida ao plugin',
+      );
+    });
+
+    testWidgets(
+      'M03 movimento reduzido + áudio permitido: o som CONTINUA',
+      (tester) async {
+        await _montarAbertura(
+          tester,
+          fonte: AberturaFalsa(),
+          chave: 'm03',
+          movimentoReduzido: true,
+          som: true,
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // ESTA É A LINHA QUE REPROVA A RECOUPLAGEM. Enquanto `_tocarSom()`
+        // morou dentro do ramo de movimento normal, ela media zero.
+        expect(
+          audio.playersAbertos,
+          1,
+          reason:
+              'reduzir movimento voltou a silenciar a abertura — o áudio '
+              'obedece a `habilitarSom`, nunca a `disableAnimations`',
+        );
+      },
+    );
+
+    testWidgets(
+      'M04 movimento reduzido + áudio mutado: mudo continua mudo',
+      (tester) async {
+        await _montarAbertura(
+          tester,
+          fonte: AberturaFalsa(),
+          chave: 'm04',
+          movimentoReduzido: true,
+          som: false,
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // O OUTRO LADO DA MESMA LINHA: desacoplar não pode virar "toca
+        // sempre". Movimento reduzido não liga áudio que a jogadora desligou.
+        expect(
+          audio.chamadasDoPlayer,
+          isEmpty,
+          reason: 'movimento reduzido passou a LIGAR som que estava desligado',
+        );
+      },
+    );
+
+    // -----------------------------------------------------------------------
+    // M05: o volume pedido é o mesmo nos dois ramos de movimento
+    // -----------------------------------------------------------------------
+
+    testWidgets('M05 o volume não é abaixado pelo movimento reduzido', (
+      tester,
+    ) async {
+      await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(),
+        chave: 'm05a',
+        som: true,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      final normal = audio.volumes;
+
+      audio.limpar();
+      await _montarAbertura(
+        tester,
+        fonte: AberturaFalsa(),
+        chave: 'm05b',
+        movimentoReduzido: true,
+        som: true,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      final reduzido = audio.volumes;
+
+      // ANCORADO NA CONTAGEM, e não só na igualdade: duas listas vazias também
+      // são iguais, e passariam sem provar nada.
+      expect(normal, hasLength(1), reason: 'o volume deixou de ser pedido');
+      expect(reduzido, hasLength(1));
+      expect(
+        reduzido.single,
+        normal.single,
+        reason: 'o ramo reduzido passou a pedir outro volume',
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // M06–M10: as propriedades que a matriz não pode quebrar
+    // -----------------------------------------------------------------------
+    //
+    // Estas são transversais: valem nos QUATRO estados, e o laço é ancorado
+    // logo abaixo por uma contagem — sem ela, apagar entradas de `_kMatriz`
+    // deixaria o grupo verde com menos casos do que a OS exige.
+
+    test('M06 a matriz tem os quatro estados que a OS pede', () {
+      expect(_kMatriz, hasLength(4));
+      expect(
+        _kMatriz.map((e) => '${e.movimentoReduzido}/${e.som}').toSet(),
+        <String>{'false/true', 'false/false', 'true/true', 'true/false'},
+        reason: 'a matriz deixou de cobrir as quatro combinações',
+      );
+    });
+
+    for (final estado in _kMatriz) {
+      testWidgets('M07 [${estado.nome}] pular imediatamente: UMA saída', (
+        tester,
+      ) async {
+        final saidas = await _montarAbertura(
+          tester,
+          fonte: AberturaFalsa(),
+          chave: 'm07-${estado.chave}',
+          movimentoReduzido: estado.movimentoReduzido,
+          som: estado.som,
+        );
+        await tester.pump();
+
+        expect(saidas(), 0);
+        await tester.tap(find.byType(TextButton));
+        await tester.pump();
+        expect(saidas(), 1, reason: 'pular não encerrou a abertura');
+
+        // "Pular abertura" continua passando por `_encerrarAnimacao()`, e é
+        // por isso que o botão sai da árvore e o relógio não produz uma
+        // segunda saída.
+        expect(find.byType(TextButton), findsNothing);
+        await tester.pump(const Duration(seconds: 1));
+        expect(saidas(), 1, reason: 'houve uma segunda conclusão');
+      });
+
+      testWidgets('M08 [${estado.nome}] conclusão natural: UMA saída', (
+        tester,
+      ) async {
+        final saidas = await _montarAbertura(
+          tester,
+          fonte: AberturaFalsa(
+            duracaoDaTimeline: const Duration(milliseconds: 100),
+          ),
+          chave: 'm08-${estado.chave}',
+          movimentoReduzido: estado.movimentoReduzido,
+          som: estado.som,
+        );
+        await tester.pump();
+        expect(saidas(), 0);
+
+        // No ramo reduzido quem encerra é a janela curta (300 ms × 1/5); no
+        // outro, a timeline. Os dois horizontes cabem nesta espera, e o que se
+        // afirma é o mesmo nos dois: encerrou, e uma vez só.
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(saidas(), 1, reason: 'a abertura não terminou sozinha');
+
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          saidas(),
+          1,
+          reason: 'o relógio de segurança produziu uma segunda saída',
+        );
+      });
+
+      testWidgets(
+        'M09 [${estado.nome}] depois de encerrar, o som para e nada recomeça',
+        (tester) async {
+          final saidas = await _montarAbertura(
+            tester,
+            fonte: AberturaFalsa(),
+            chave: 'm09-${estado.chave}',
+            movimentoReduzido: estado.movimentoReduzido,
+            som: estado.som,
+          );
+          await tester.pump(const Duration(milliseconds: 50));
+
+          final antes = audio.chamadasDoPlayer.length;
+          await tester.tap(find.byType(TextButton));
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 1));
+          expect(saidas(), 1);
+
+          final depois = audio.chamadasDoPlayer.skip(antes).toList();
+          expect(
+            depois.where(_reiniciaOSom),
+            isEmpty,
+            reason: 'a abertura mandou o som recomeçar depois de encerrar',
+          );
+          // ÂNCORA: com som permitido tem de haver a parada. Sem esta linha, o
+          // caso passaria por lista vazia — inclusive num futuro em que o
+          // `stop` deixasse de ser enviado.
+          expect(
+            depois.where((m) => m == 'stop'),
+            estado.som ? hasLength(1) : isEmpty,
+            reason: 'o encerramento deixou de silenciar o que estava tocando',
+          );
+        },
+      );
+
+      testWidgets('M10 [${estado.nome}] a abertura continua falando', (
+        tester,
+      ) async {
+        final manipulador = tester.ensureSemantics();
+        await _montarAbertura(
+          tester,
+          fonte: AberturaFalsa(),
+          chave: 'm10-${estado.chave}',
+          movimentoReduzido: estado.movimentoReduzido,
+          som: estado.som,
+        );
+        await tester.pump();
+
+        // O anúncio da OS 11.1, intacto: uma frase, e uma só.
+        expect(find.bySemanticsLabel(kRotuloDaAbertura), findsOneWidget);
+
+        // E o botão, com nome, papel, estado e alvo medido no que RECEBE o
+        // toque — não na pintura.
+        final botao = find.byType(TextButton);
+        final dados = tester.getSemantics(botao).getSemanticsData();
+        expect(dados.label, kRotuloDePular);
+        expect(dados.flagsCollection.isButton, isTrue);
+        expect(dados.flagsCollection.isEnabled, Tristate.isTrue);
+        expect(dados.hasAction(SemanticsAction.tap), isTrue);
+
+        final alvo = tester.getSize(botao);
+        expect(alvo.width, greaterThanOrEqualTo(kAlvoMinimoDePular));
+        expect(alvo.height, greaterThanOrEqualTo(kAlvoMinimoDePular));
+        manipulador.dispose();
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // M11: o ramo reduzido continua sendo o ramo reduzido
+    // -----------------------------------------------------------------------
+
+    testWidgets('M11 som ligado não devolve animação ao ramo reduzido', (
+      tester,
+    ) async {
+      final fonte = AberturaFalsa();
+      await _montarAbertura(
+        tester,
+        fonte: fonte,
+        chave: 'm11',
+        movimentoReduzido: true,
+        som: true,
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+
+      // Desacoplar é nos DOIS sentidos: o som passou a tocar aqui, e a
+      // apresentação animada continua desligada. A arte não é nem carregada, e
+      // a constelação — que é imagem parada — entra sem fade.
+      expect(
+        fonte.carregamentos,
+        0,
+        reason: 'a animação voltou ao ramo reduzido',
+      );
+      expect(find.byKey(kChaveDaArteFalsa), findsNothing);
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byType(TweenAnimationBuilder<double>), findsNothing);
+    });
+
+    // -----------------------------------------------------------------------
+    // M12–M13: as duas guardas estruturais
+    // -----------------------------------------------------------------------
+
+    test('M12 o pedido de som está FORA do ramo de movimento reduzido', () {
+      final tela = _semComentarios(
+        File(
+          'lib/casca/splash/splash_constelacao_screen.dart',
+        ).readAsStringSync(),
+      );
+
+      final inicio = tela.indexOf('void didChangeDependencies()');
+      expect(
+        inicio,
+        isNonNegative,
+        reason: 'a entrada da abertura mudou de nome',
+      );
+      final corpo = tela.substring(inicio);
+
+      final pedidoDeSom = corpo.indexOf('_tocarSom()');
+      final ramoReduzido = corpo.indexOf('if (_movimentoReduzido)');
+      expect(
+        pedidoDeSom,
+        isNonNegative,
+        reason: 'a abertura parou de pedir som',
+      );
+      expect(ramoReduzido, isNonNegative);
+
+      // A ORDEM É A AFIRMAÇÃO. Dentro do ramo, o pedido viria depois — foi
+      // exatamente essa a posição que a OS 11.2 veio desfazer.
+      expect(
+        pedidoDeSom,
+        lessThan(ramoReduzido),
+        reason:
+            '`_tocarSom()` voltou para dentro (ou para depois) do ramo de '
+            'movimento reduzido: movimento voltou a decidir áudio',
+      );
+
+      // E a autoridade do som continua sendo uma só, com o nome que ela tem.
+      expect(
+        tela,
+        contains('if (!widget.habilitarSom) return'),
+        reason:
+            'a autoridade de áudio da abertura deixou de ser `habilitarSom`',
+      );
+    });
+
+    test('M13 a matriz de §11.2 não pode ser esvaziada em silêncio', () {
+      // ESTA GUARDA MORA DENTRO DO GLOB QUE O PORTÃO RODA, e é de propósito: o
+      // portão da abertura, no `build.yml`, exige que ESTE ARQUIVO exista e
+      // roda a suíte inteira — mas ele não sabe o que tem dentro. Sem esta
+      // contagem, apagar os casos de som deixaria o portão verde.
+      final fonte = File(
+        'test/splash/splash_constelacao_test.dart',
+      ).readAsStringSync();
+
+      // Casados pela FORMA DA CHAMADA, e não por comentário: um caso removido
+      // e explicado em prosa continuaria contando, e o "conserto" seria apagar
+      // a explicação.
+      final casos = RegExp(
+        "(?:testWidgets|test)\\(\\s*\\n?\\s*'M[0-9][0-9] ",
+      ).allMatches(fonte).length;
+      expect(
+        casos,
+        greaterThanOrEqualTo(13),
+        reason:
+            'a matriz de áudio × movimento encolheu: $casos casos M, e a OS '
+            '11.2 exige 13',
+      );
+
+      // E as duas autoridades continuam nomeadas em lugares diferentes.
+      expect(fonte, contains('audio.playersAbertos'));
+      expect(fonte, contains('movimentoReduzido: true'));
+    });
+  });
 }
 
 // ===========================================================================
@@ -1647,3 +2059,157 @@ List<String> _textosDaTela(WidgetTester tester) => tester
     .widgetList<Text>(find.byType(Text))
     .map((t) => t.data ?? t.textSpan?.toPlainText() ?? '')
     .toList();
+
+// ===========================================================================
+// §11.2 — a matriz de áudio × movimento, e como ela é escutada
+// ===========================================================================
+
+/// Uma das quatro combinações de "movimento reduzido × áudio permitido".
+class _Estado {
+  const _Estado(
+    this.nome, {
+    required this.movimentoReduzido,
+    required this.som,
+  });
+
+  final String nome;
+
+  /// A plataforma pediu animações reduzidas.
+  final bool movimentoReduzido;
+
+  /// A jogadora permitiu som — a autoridade de áudio da abertura.
+  final bool som;
+
+  /// Sufixo de chave de widget. Sem ele, duas montagens do mesmo caso
+  /// reaproveitariam o `State` da anterior e mediriam a primeira duas vezes.
+  String get chave =>
+      '${movimentoReduzido ? 'red' : 'nor'}-${som ? 'som' : 'mudo'}';
+}
+
+/// AS QUATRO COMBINAÇÕES, DECLARADAS UMA VEZ.
+///
+/// Elas são o eixo da OS 11.2: movimento reduzido e áudio permitido são
+/// perguntas independentes, e a suíte só prova isso se percorrer o produto das
+/// duas — não uma diagonal conveniente. `M06` ancora a lista pela contagem e
+/// pelo conjunto, para que apagar uma linha daqui reprove em vez de encolher a
+/// cobertura em silêncio.
+const List<_Estado> _kMatriz = <_Estado>[
+  _Estado('normal + som', movimentoReduzido: false, som: true),
+  _Estado('normal + mudo', movimentoReduzido: false, som: false),
+  _Estado('reduzido + som', movimentoReduzido: true, som: true),
+  _Estado('reduzido + mudo', movimentoReduzido: true, som: false),
+];
+
+/// Os métodos do plugin que FAZEM som voltar a existir.
+///
+/// Depois de a abertura encerrar, nenhum deles pode ser pedido: uma abertura
+/// que já saiu de cena tocando por cima da tela seguinte é o defeito que `M09`
+/// existe para impedir.
+bool _reiniciaOSom(String metodo) => const <String>{
+  'resume',
+  'play',
+  'setSourceUrl',
+  'setSourceBytes',
+}.contains(metodo);
+
+/// O escopo GLOBAL do `audioplayers`, refeito a cada caso.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE ISTO PRECISA EXISTIR, E POR QUE NÃO É ELE QUE ESTÁ SENDO MEDIDO
+/// ---------------------------------------------------------------------------
+///
+/// O pacote inicializa o lado nativo UMA vez por processo e guarda o resultado
+/// num `Completer` estático. Dentro de `flutter test` cada caso roda na sua
+/// própria zona de tempo falso, e um `Future` completado na zona do primeiro
+/// caso NUNCA entrega nos seguintes — a zona que agendaria a continuação já
+/// morreu. Na prática: sem esta troca, só o PRIMEIRO caso do processo consegue
+/// abrir um player, e todos os outros medem zero por motivo de ambiente. Foi
+/// exatamente isso que aconteceu na primeira medição desta matriz, e um "zero"
+/// desses é indistinguível do defeito que a OS 11.2 veio corrigir.
+///
+/// Trocar a instância faz o pacote considerar a plataforma "nova" e refazer a
+/// inicialização dentro da zona do caso corrente.
+///
+/// O que isto substitui é só o `init` global. O caminho que a suíte de fato
+/// mede — `AudioPlayer()`, `play`, `stop` — continua indo pelo canal REAL do
+/// plugin, e é ele que [_EscutaDoAudio] escuta.
+class _EscopoGlobalDoAudio extends GlobalAudioplayersPlatformInterface {
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<void> setGlobalAudioContext(AudioContext ctx) async {}
+
+  @override
+  Future<void> emitGlobalLog(String message) async {}
+
+  @override
+  Future<void> emitGlobalError(String code, String message) async {}
+
+  @override
+  Stream<GlobalAudioEvent> getGlobalEventStream() =>
+      const Stream<GlobalAudioEvent>.empty();
+}
+
+/// O que a abertura pediu ao plugin de áudio, na ordem.
+///
+/// ---------------------------------------------------------------------------
+/// NÃO É UM DUBLÊ DE CONVENIÊNCIA
+/// ---------------------------------------------------------------------------
+///
+/// É o canal REAL do `audioplayers` — `xyz.luan/audioplayers` —, interceptado
+/// pela costura padrão do `flutter_test`. Nada no código de produção sabe que
+/// esta escuta existe: a tela constrói o `AudioPlayer` de sempre, com o asset
+/// de sempre, e o que cai nesta lista é literalmente o que sairia para o lado
+/// nativo no aparelho de quem joga.
+///
+/// É por isso que ela consegue responder "houve som?" num ambiente onde o
+/// plugin de áudio não está instalado. A reprodução em si nunca completa dentro
+/// de `flutter test` — o `audioplayers` copia o asset para o disco pelo
+/// `path_provider`, que também não existe aqui —, e não é ela que está em
+/// questão. O que está em questão é se a abertura CHEGA A PEDIR.
+///
+/// Sem esta escuta, a alternativa seria pendurar um contador dentro da tela só
+/// para o teste olhar. Isso provaria que a tela concorda consigo mesma, e não
+/// que o som foi pedido.
+class _EscutaDoAudio {
+  static const MethodChannel _doPlayer = MethodChannel('xyz.luan/audioplayers');
+
+  final List<MethodCall> chamadas = <MethodCall>[];
+
+  List<String> get chamadasDoPlayer =>
+      chamadas.map((c) => c.method).toList(growable: false);
+
+  /// Quantos players a abertura abriu.
+  ///
+  /// `create` é a assinatura de `AudioPlayer()` no canal, e é exatamente a
+  /// chamada que não acontecia no ramo de movimento reduzido.
+  int get playersAbertos => chamadas.where((c) => c.method == 'create').length;
+
+  /// Os volumes pedidos, na ordem. Vem de `play(volume: …)`.
+  List<double> get volumes => chamadas
+      .where((c) => c.method == 'setVolume')
+      .map(
+        (c) =>
+            ((c.arguments as Map<Object?, Object?>)['volume'] as num).toDouble(),
+      )
+      .toList();
+
+  void limpar() => chamadas.clear();
+
+  void instalar() {
+    // Antes do mock, e não depois: o escopo global tem de estar trocado quando
+    // o primeiro `AudioPlayer` do caso for construído. Ver
+    // [_EscopoGlobalDoAudio].
+    GlobalAudioplayersPlatformInterface.instance = _EscopoGlobalDoAudio();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_doPlayer, (chamada) async {
+          chamadas.add(chamada);
+          return null;
+        });
+  }
+
+  void remover() =>
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_doPlayer, null);
+}

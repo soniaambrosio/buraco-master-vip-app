@@ -131,9 +131,39 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
     // desliga é o fade, não a camada.
     unawaited(_carregarConstelacao());
 
+    // O SOM É PEDIDO AQUI, ANTES DA BIFURCAÇÃO, e isso não é arrumação de
+    // linhas.
+    //
+    // -----------------------------------------------------------------------
+    // DUAS AUTORIDADES, E ELAS NÃO SE CONSULTAM
+    // -----------------------------------------------------------------------
+    //
+    // Quem decide se HÁ SOM é [SplashConstelacaoScreen.habilitarSom], e só ele.
+    // Quem decide se HÁ ANIMAÇÃO é `disableAnimations` da plataforma, lido logo
+    // acima em [_movimentoReduzido], e só ele. São perguntas diferentes, feitas
+    // por gente diferente: a primeira é preferência de quem joga, a segunda é
+    // uma configuração de acessibilidade do sistema.
+    //
+    // Enquanto esta chamada morou dentro do ramo de baixo, reduzir movimento
+    // silenciava a abertura de quem não tinha pedido silêncio nenhum — e ainda
+    // por cima de um jeito invisível, porque quem liga "reduzir animações" no
+    // Android não espera perder áudio junto. Para quem usa leitor de tela e
+    // mantém o som ligado, era a abertura inteira virando nada.
+    //
+    // O contrário também vale, e é o outro lado da mesma linha: com
+    // `habilitarSom` falso não sai som em ramo nenhum — [_tocarSom] devolve
+    // antes de tocar em qualquer coisa. Movimento reduzido não liga áudio que
+    // a jogadora desligou.
+    unawaited(_tocarSom());
+
     if (_movimentoReduzido) {
       // Sem laço e sem animação: o fundo estável fica no ar por uma janela
       // curta e a abertura se dá por encerrada. O bootstrap continua mandando.
+      //
+      // O que este ramo desliga é a APRESENTAÇÃO ANIMADA: a timeline da Rive
+      // não é carregada e o fade da constelação não acontece. O fundo, a
+      // constelação, o rótulo falado, o botão de pular e o som seguem
+      // exatamente como no outro ramo.
       _relogioDeSeguranca = Timer(
         _janelaDeMovimentoReduzido,
         _encerrarAnimacao,
@@ -145,7 +175,6 @@ class _SplashConstelacaoScreenState extends State<SplashConstelacaoScreen> {
     // relógio já está correndo.
     _relogioDeSeguranca = Timer(_horizonteDeSeguranca, _encerrarAnimacao);
 
-    unawaited(_tocarSom());
     unawaited(_carregarArte());
   }
 
