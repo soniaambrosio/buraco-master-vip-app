@@ -29,6 +29,7 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
@@ -842,6 +843,245 @@ void main() {
           _acionarPelaSemantica(tester, _porNome(alvos, par[0]));
           await tester.pump();
           expect(apertados, contains(par[1]), reason: 'o toque em ${par[0]} sumiu');
+        }
+      }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // TROCAR AVATAR — O ALVO REAL, MEDIDO COM O DEDO  (OS 36-C1)
+  // -------------------------------------------------------------------------
+  //
+  // POR QUE ESTE GRUPO EXISTE, SE O CASO 14 JÁ MEDIA 48
+  //
+  // Porque o caso 14 mede o RETÂNGULO DO NÓ SEMÂNTICO, e retângulo não é área
+  // tocável. Este botão declarava 48x48 e entregava 42x45: a caixa estava
+  // deslocada para fora do `Stack` de 126 pontos por um `Positioned` negativo,
+  // e `clipBehavior: Clip.none` deixa PINTAR fora do pai mas não deixa RECEBER
+  // TOQUE fora dele. Três dos quatro cantos não chegavam ao callback, e nenhuma
+  // medida de retângulo — nem `SemanticsAction.tap` disparada na árvore — vê
+  // isso. Só o dedo vê.
+  //
+  // A RÉGUA AQUI É LITERAL, E ISSO É PARTE DO CONTRATO
+  //
+  // Todo número deste grupo é escrito à mão: `48.0` e `34.0`. É PROIBIDO trocar
+  // qualquer um deles por `kAlvoMinimoDeToque`, por um getter de produção ou
+  // pelo tamanho medido do próprio widget. O motivo é aritmético: se a régua for
+  // o mesmo símbolo que dimensiona a caixa, baixá-lo de 48 para 46 encolhe o
+  // produto E a expectativa na mesma proporção, e o portão aprova a própria
+  // derrota. Foi assim que a folha anterior passou com 46.
+  //
+  // OBRIGAÇÃO PENDENTE, PARA QUEM COMPUSER ESTA FOLHA
+  //
+  // Apagar este arquivo continua deixando o CI verde: o agregador do
+  // `ci-os-integracao.yml` trata suíte ausente como NÃO EXECUTADO e não soma
+  // falha. Isso é dívida da base, e não se conserta aqui — consertá-la exigiria
+  // um verificador paralelo, que esta OS proíbe. Na composição, este arquivo
+  // TEM de entrar na fonte única de gates da arquitetura P
+  // (`scripts/ci/gates_os_integracao.txt`, com `suite`, `sha256`, `provas` e
+  // `casos`), que é onde a ausência e o esvaziamento passam a reprovar.
+  group('Trocar avatar — alvo real', () {
+    /// O piso, escrito à mão. Não importar de `lib/`. Ver o comentário acima.
+    const piso = 48.0;
+
+    /// O diâmetro do disco dourado, escrito à mão.
+    const disco = 34.0;
+
+    /// Quanto para dentro da borda os toques caem.
+    ///
+    /// Meio ponto: perto o bastante da borda matemática para não tocá-la, e
+    /// pequeno o bastante para que uma caixa de 46 deixe os cantos de fora — é
+    /// esta folga que faz a mutação 48 → 46 ficar vermelha pelo TOQUE, e não só
+    /// pela conta.
+    const dentro = 0.5;
+
+    /// Os cinco pontos de uma caixa de [piso] centrada em [centro].
+    ///
+    /// A caixa é construída com o literal, e não com o tamanho medido: quando o
+    /// controle encolhe, os pontos continuam onde um alvo de 48 os teria, e o
+    /// toque cai fora.
+    List<Offset> cincoPontos(Offset centro) {
+      final r = Rect.fromCenter(center: centro, width: piso, height: piso);
+      return <Offset>[
+        r.center,
+        Offset(r.left + dentro, r.top + dentro),
+        Offset(r.right - dentro, r.top + dentro),
+        Offset(r.left + dentro, r.bottom - dentro),
+        Offset(r.right - dentro, r.bottom - dentro),
+      ];
+    }
+
+    Finder oIcone() => find.byIcon(Icons.photo_camera_rounded);
+
+    testWidgets(
+      '25 — um nó só, com nome, papel e disponibilidade',
+      (tester) => _comSemantica(tester, () async {
+        await _perfilCompleto(tester);
+        final alvos = _alvos(tester);
+
+        final comEsseNome =
+            alvos.where((a) => a.nome == 'Trocar avatar').toList();
+        expect(
+          comEsseNome,
+          hasLength(1),
+          reason: 'o alvo aumentado não pode virar dois nós: $comEsseNome',
+        );
+        final alvo = comEsseNome.single;
+        expect(alvo.nome, 'Trocar avatar');
+        expect(alvo.ehBotao, isTrue);
+        expect(alvo.habilitado, Tristate.isTrue);
+        expect(alvo.aciona, isTrue);
+      }),
+    );
+
+    testWidgets(
+      '26 — o alvo anunciado mede 48 e cabe inteiro dentro do pai',
+      (tester) => _comSemantica(tester, () async {
+        await _perfilCompleto(tester);
+        final alvo = _porNome(_alvos(tester), 'Trocar avatar');
+
+        // Literais. Ver o cabeçalho do grupo.
+        expect(alvo.area.width, greaterThanOrEqualTo(piso), reason: '$alvo');
+        expect(alvo.area.height, greaterThanOrEqualTo(piso), reason: '$alvo');
+
+        // E cabe dentro da caixa que hit-testa: um `Stack` recusa o toque fora
+        // do próprio `size`, e é isso que transformava 48 declarados em 42x45.
+        final pai = tester.getRect(
+          find.ancestor(of: oIcone(), matching: find.byType(Stack)).first,
+        );
+        expect(
+          _contem(pai, alvo.area),
+          isTrue,
+          reason: 'o alvo $alvo transborda o pai hit-testável $pai',
+        );
+      }),
+    );
+
+    testWidgets(
+      '27 — os quatro cantos e o centro respondem ao DEDO, uma vez cada',
+      (tester) => _comSemantica(tester, () async {
+        final apertados = await _perfilCompleto(tester);
+        final alvo = _porNome(_alvos(tester), 'Trocar avatar');
+
+        final pontos = cincoPontos(alvo.area.center);
+        for (final p in pontos) {
+          apertados.clear();
+          // `tapAt`, e nunca `performAction`: a ação semântica é entregue pelo
+          // id do nó e passa por cima do teste de toque. Ela responderia certo
+          // com o defeito de pé.
+          await tester.tapAt(p);
+          await tester.pump();
+          expect(
+            apertados,
+            ['trocarAvatar'],
+            reason:
+                'toque em $p devia acionar Trocar avatar exatamente uma vez, '
+                'e sem acionar vizinho; veio $apertados',
+          );
+        }
+        expect(pontos, hasLength(5));
+      }),
+    );
+
+    testWidgets(
+      '28 — toque imediatamente fora não aciona o controle',
+      (tester) => _comSemantica(tester, () async {
+        final apertados = await _perfilCompleto(tester);
+        final r = _porNome(_alvos(tester), 'Trocar avatar').area;
+
+        final fora = <Offset>[
+          Offset(r.left - 1, r.center.dy),
+          Offset(r.right + 1, r.center.dy),
+          Offset(r.center.dx, r.top - 1),
+          Offset(r.center.dx, r.bottom + 1),
+        ];
+        for (final p in fora) {
+          apertados.clear();
+          await tester.tapAt(p);
+          await tester.pump();
+          expect(
+            apertados,
+            isEmpty,
+            reason: 'o ponto $p está fora do alvo e mesmo assim acionou '
+                '$apertados',
+          );
+        }
+      }),
+    );
+
+    testWidgets(
+      '29 — o disco continua com 34 e no mesmo lugar',
+      (tester) => _comSemantica(tester, () async {
+        await _perfilCompleto(tester);
+
+        final rDisco = tester.getRect(
+          find.ancestor(of: oIcone(), matching: find.byType(Container)).first,
+        );
+        final rPai = tester.getRect(
+          find.ancestor(of: oIcone(), matching: find.byType(Stack)).first,
+        );
+
+        // Tamanho: literal.
+        expect(rDisco.width, disco);
+        expect(rDisco.height, disco);
+        // Posição dentro do pai: o disco sempre esteve a 4 do topo e a 1 da
+        // direita. Crescer o alvo não pode movê-lo nem meio ponto.
+        expect(rDisco.top - rPai.top, 4.0);
+        expect(rPai.right - rDisco.right, 1.0);
+        // E o disco está inteiro dentro do alvo tocável.
+        final alvo = _porNome(_alvos(tester), 'Trocar avatar').area;
+        expect(_contem(alvo, rDisco), isTrue, reason: '$alvo não cobre $rDisco');
+      }),
+    );
+
+    testWidgets(
+      '30 — foco real: teclado alcança e Enter aciona',
+      (tester) => _comSemantica(tester, () async {
+        final apertados = await _perfilCompleto(tester);
+
+        final ink =
+            find.ancestor(of: oIcone(), matching: find.byType(InkWell)).first;
+        final focos = find.descendant(of: ink, matching: find.byType(Focus));
+        expect(
+          focos,
+          findsWidgets,
+          reason: 'o controle perdeu o nó de foco: sem teclado, sem D-pad, '
+              'sem switch access',
+        );
+
+        final no = Focus.of(tester.element(oIcone()));
+        expect(no.canRequestFocus, isTrue);
+        expect(no.skipTraversal, isFalse);
+
+        no.requestFocus();
+        await tester.pump();
+        expect(no.hasPrimaryFocus, isTrue);
+
+        apertados.clear();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(apertados, ['trocarAvatar'], reason: 'Enter não acionou');
+      }),
+    );
+
+    testWidgets(
+      '31 — na casca de produção, os cinco pontos abrem o aviso',
+      (tester) => _comSemantica(tester, () async {
+        await _noPerfil(tester);
+        final alvo = _porNome(_alvos(tester), 'Trocar avatar');
+        expect(alvo.area.width, greaterThanOrEqualTo(piso));
+        expect(alvo.area.height, greaterThanOrEqualTo(piso));
+
+        for (final p in cincoPontos(alvo.area.center)) {
+          await tester.tapAt(p);
+          await tester.pump();
+          expect(
+            find.textContaining('Trocar avatar'),
+            findsOneWidget,
+            reason: 'o toque em $p não chegou ao callback de produção',
+          );
+          // O aviso some sozinho; esperar para o próximo ponto começar limpo.
+          await tester.pumpAndSettle(const Duration(milliseconds: 1400));
         }
       }),
     );

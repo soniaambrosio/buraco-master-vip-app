@@ -761,17 +761,44 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   ),
                 ),
                 if (vm.ehMeuPerfil)
-                  // O DISCO CONTINUA COM 34, e o alvo passa a ter 48.
+                  // O DISCO CONTINUA COM 34, E AGORA O ALVO DE 48 CABE DENTRO
+                  // DO PAI.
                   //
-                  // `right: -6, top: -3` desloca a CAIXA, não o botão: são os 7
-                  // pontos que sobram de cada lado quando 34 vira 48, e o disco
-                  // dourado fica exatamente onde estava. O `Stack` já tinha
-                  // `clipBehavior: Clip.none`, então o transbordo é legítimo, e
-                  // o que ele cobre a mais é a borda do retrato — que não é
-                  // tocável, e por isso ninguém perde um toque para ele.
+                  // -------------------------------------------------------
+                  // POR QUE O `right: -6, top: -3` ANTERIOR NÃO SERVIA
+                  // -------------------------------------------------------
+                  //
+                  // `clipBehavior: Clip.none` deixa PINTAR fora da caixa do
+                  // `Stack`. Ele não deixa RECEBER TOQUE fora dela: o
+                  // `RenderBox` recusa o hit-test em qualquer ponto que não
+                  // esteja dentro do próprio `size`, e o `Stack` mede 126x126.
+                  // Com a caixa deslocada 6 para a direita e 3 para cima, esses
+                  // 6 e esses 3 ficavam desenhados, anunciados como parte de um
+                  // alvo de 48 — e inertes. O alvo real media 42x45. Medido:
+                  // 1890 de 2304 pontos da caixa chegavam ao callback, e três
+                  // dos quatro cantos não chegavam.
+                  //
+                  // -------------------------------------------------------
+                  // A GEOMETRIA DE AGORA
+                  // -------------------------------------------------------
+                  //
+                  // A caixa encosta na borda do `Stack` POR DENTRO
+                  // (`right: 0, top: 0`), então os 48 pontos ficam inteiros em
+                  // região hit-testável. O disco não se move: ele sempre esteve
+                  // a 1 ponto da direita e a 4 do topo do `Stack`, e é
+                  // exatamente aí que o `Padding` + `Align` o colocam de novo.
+                  // O que muda de lugar é a caixa, que cresce para a ESQUERDA,
+                  // sobre a borda do retrato — que não é tocável, e por isso
+                  // ninguém perde um toque para ela.
+                  //
+                  // Único efeito visual: a tinta do `InkWell` é um círculo
+                  // inscrito na caixa, e a caixa deixou de ser centrada no
+                  // disco — o halo do toque nasce 6 pontos à esquerda e 3
+                  // abaixo do centro do disco. O disco em si — tamanho, posição,
+                  // centro, ícone e cores — está intacto.
                   Positioned(
-                    right: -6,
-                    top: -3,
+                    right: 0,
+                    top: 0,
                     child: Material(
                       color: Colors.transparent,
                       child: Semantics(
@@ -787,22 +814,38 @@ class _PerfilScreenState extends State<PerfilScreen> {
                         child: InkWell(
                           onTap: widget.onTrocarAvatar,
                           customBorder: const CircleBorder(),
-                          child: AlvoMinimo(
-                            child: Container(
-                              width: 34,
-                              height: 34,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: const LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [_ouroClaro, Color(0xFFE0A83A)],
+                          // `SizedBox` no lugar de `AlvoMinimo` porque aqui o
+                          // disco NÃO fica no centro da caixa: ele fica onde
+                          // sempre esteve, e o piso cresce à volta dele para o
+                          // lado que tem espaço. `AlvoMinimo` centraliza, e
+                          // centralizar aqui é mover o disco.
+                          child: SizedBox(
+                            width: kAlvoMinimoDeToque,
+                            height: kAlvoMinimoDeToque,
+                            child: Padding(
+                              // A posição do disco dentro do `Stack`: 4 do topo,
+                              // 1 da direita. Como a caixa encosta no canto
+                              // superior direito, esta é a mesma medida.
+                              padding: const EdgeInsets.only(top: 4, right: 1),
+                              child: Align(
+                                alignment: Alignment.topRight,
+                                child: Container(
+                                  width: 34,
+                                  height: 34,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: const LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [_ouroClaro, Color(0xFFE0A83A)],
+                                    ),
+                                    border: Border.all(color: const Color(0xFF241812), width: 2),
+                                    boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
+                                  ),
+                                  child: const Icon(Icons.photo_camera_rounded, color: Color(0xFF3A2606), size: 18),
                                 ),
-                                border: Border.all(color: const Color(0xFF241812), width: 2),
-                                boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
                               ),
-                              child: const Icon(Icons.photo_camera_rounded, color: Color(0xFF3A2606), size: 18),
                             ),
                           ),
                         ),
