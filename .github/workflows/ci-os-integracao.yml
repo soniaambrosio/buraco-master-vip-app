@@ -65,6 +65,36 @@ permissions:
 jobs:
   validar:
     runs-on: ubuntu-latest
+
+    # FONTE ÚNICA DE OBRIGATORIEDADE.
+    #
+    # Gates que NÃO PODEM deixar de executar. Para as chaves listadas aqui,
+    # ausência é FALHA — nos três caminhos: arquivo ausente, marcador de
+    # execução ausente, e passo que não chegou a rodar.
+    #
+    # Mora no `env:` do job, e não repetida dentro de cada `run:`, por uma
+    # razão dura: cada passo é um shell próprio, então uma variável de shell
+    # teria de ser digitada duas vezes — no passo de evidência e no do
+    # veredito — e duas cópias digitadas divergem. O Actions entrega este
+    # `env:` a TODOS os passos do job, inclusive aos `if: always()`. É UMA
+    # declaração, lida por todos os consumidores, sem lista nova no YAML e
+    # sem arquivo novo.
+    #
+    # Por que isto precisou existir: `roda` escreve `nao_<chave>` quando o
+    # ARQUIVO não existe, e o veredito tratava `nao_<chave>` como neutro.
+    # Isso é deliberado para a maior parte da lista — alvos de emulador e de
+    # Node dependem de serviço externo, e um passo que nem chegou a rodar não
+    # é evidência de regressão do código. Só que o mesmo tratamento fazia de
+    # APAGAR A SUÍTE a maneira mais barata de voltar ao verde: a única forma
+    # de "consertar" um portão vermelho sem consertar nada.
+    #
+    # `torneiosmk` — o portão de saneamento de mock e admin — continua NÃO
+    # obrigatório, e a folga fica registrada: é a suíte da OS anterior, e
+    # fechá-la é decisão de quem arbitra aquela entrega. A mudança é uma
+    # palavra nesta linha.
+    env:
+      GATES_OBRIGATORIOS: torneiosa11y
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -125,6 +155,22 @@ jobs:
             if [ ! -f "app_build/$t" ]; then echo "ausente: $t" > "nao_$k"; return; fi
             ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
           }
+          # Irmã de `roda` com UMA diferença, e é a diferença inteira desta
+          # correção: ausência do arquivo é FALHA, com `exit_<chave>=1`, e não
+          # `nao_<chave>`. Apagar ou renomear a suíte deixa de ser
+          # indistinguível de uma branch antiga que nunca a teve.
+          #
+          # `roda` continua existindo e continua sendo o certo para todo o
+          # resto: NÃO EXECUTADO é reservado a ausência real de artefato, e há
+          # branches legítimas sem as suítes novas.
+          exige() { # exige <chave> <caminho>
+            local k="$1" t="$2"
+            if [ ! -f "app_build/$t" ]; then
+              echo "SUÍTE OBRIGATÓRIA AUSENTE: $t" | tee "t_$k.log"
+              echo 1 > "exit_$k"; return
+            fi
+            ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
+          }
           roda motor      test/teste_motor.dart
           roda resil      test/teste_motor_resiliencia.dart
           roda encerr     test/teste_encerramento.dart
@@ -157,7 +203,7 @@ jobs:
           # pelo SemanticsOwner, que e o caminho da tecnologia assistiva.
           # Guarda tambem a fronteira com a OS 12.2: o P0 de layout continua
           # medido, e corrigi-lo por aqui deixa o portao vermelho.
-          roda torneiosa11y test/torneios/a11y_p0_semantico_test.dart
+          exige torneiosa11y test/torneios/a11y_p0_semantico_test.dart
           # OS Integracao do Splash Rive Constelacao: o binario aprovado (tamanho,
           # cabecalho, SHA-256 e os nomes do artboard e da timeline DENTRO do
           # arquivo, lidos pelo bundle), o portao duplo animacao x bootstrap, a
@@ -332,6 +378,13 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
+          # Lê a MESMA fonte que o veredito — o `env:` do job. Sem isto, a
+          # evidência marcaria "NÃO EXECUTADO" (neutro) para o gate que acabou
+          # de deixar o portão vermelho, e quem lesse o relatório procuraria a
+          # causa no lugar errado.
+          obrigatorio() {
+            case " ${GATES_OBRIGATORIOS:-} " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+          }
           GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosa11y splash billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
@@ -349,9 +402,17 @@ jobs:
                 v=$(cat "exit_$k")
                 [ "$v" = "0" ] && echo "| $k | EXECUTADO | $v |" || echo "| $k | **FALHOU** | $v |"
               elif [ -f "nao_$k" ]; then
-                echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+                if obrigatorio "$k"; then
+                  echo "| $k | **FALHOU (OBRIGATÓRIO, NÃO EXECUTOU)** | $(cat "nao_$k") |"
+                else
+                  echo "| $k | NÃO EXECUTADO | $(cat "nao_$k") |"
+                fi
               else
-                echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+                if obrigatorio "$k"; then
+                  echo "| $k | **FALHOU (OBRIGATÓRIO, NÃO EXECUTOU)** | passo não chegou a rodar |"
+                else
+                  echo "| $k | NÃO EXECUTADO | passo não chegou a rodar |"
+                fi
               fi
             done
             if [ -f info_colevid ]; then
@@ -379,19 +440,66 @@ jobs:
           git commit -m "ci(evidencia): run ${RUN} (${BR} @ ${SHA})"
           git push origin ci-evidencias
 
-      - name: Portão verde/vermelho (só falha em gate que REALMENTE rodou e falhou)
+      - name: Portão verde/vermelho (gate que falhou, e gate OBRIGATÓRIO que não executou)
         if: always()
         run: |
+          # A DECLARAÇÃO de obrigatoriedade não mora aqui: mora no `env:` do
+          # job, e este passo apenas a CONSOME. Se ela sumir, este portão
+          # deixa de proteger — e um portão que não protege nada não pode sair
+          # verde fingindo que protegeu.
+          if [ -z "$(echo ${GATES_OBRIGATORIOS:-} | tr -d '[:space:]')" ]; then
+            echo "ERRO: GATES_OBRIGATORIOS ausente ou vazio no env: do job."
+            echo "A declaração de obrigatoriedade é a fonte única deste portão."
+            echo "resultado: VERMELHO"
+            exit 1
+          fi
+          echo "gates obrigatórios declarados: $GATES_OBRIGATORIOS"
+
+          obrigatorio() {
+            case " $GATES_OBRIGATORIOS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+          }
+
+          # A lista percorrida continua LITERAL na linha do `for`, de
+          # propósito: há auditoria neste repositório que casa a chave DENTRO
+          # da própria linha do laço, e mover a lista para uma variável derruba
+          # essa auditoria sem que nada de errado tenha acontecido. Em vez
+          # disso o laço ACUMULA o que percorreu, e é o acumulado — e não uma
+          # segunda cópia digitada — que a conferência do fim lê.
           fail=0
+          PERCORRIDOS=""
           for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud torneiosmk torneiosa11y splash billing torneiosfn socialdom socialfn socialemu regras; do
+            PERCORRIDOS="$PERCORRIDOS $k"
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
             elif [ -f "nao_$k" ]; then
-              echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
+              if obrigatorio "$k"; then
+                echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k")) — OBRIGATÓRIO: VERMELHO"
+                fail=1
+              else
+                echo "gate $k = NÃO EXECUTADO ($(cat "nao_$k"))"
+              fi
             else
-              echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+              if obrigatorio "$k"; then
+                echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar) — OBRIGATÓRIO: VERMELHO"
+                fail=1
+              else
+                echo "gate $k = NÃO EXECUTADO (passo não chegou a rodar)"
+              fi
             fi
           done
+
+          # Declarar uma chave obrigatória não vale nada se ela puder sair do
+          # laço: apagá-la da lista faria o gate deixar de ser conferido EM
+          # SILÊNCIO — o mesmo defeito que o bloco acima fecha, uma camada
+          # acima. A conferência lê `PERCORRIDOS`, que é o que o laço
+          # realmente percorreu, e não uma promessa sobre ele.
+          for k in $GATES_OBRIGATORIOS; do
+            case " $PERCORRIDOS " in
+              *" $k "*) ;;
+              *) echo "ERRO: gate obrigatório [$k] não está na lista do veredito"; fail=1 ;;
+            esac
+          done
+
           echo "resultado: $([ $fail -eq 0 ] && echo VERDE || echo VERMELHO)"
           exit $fail

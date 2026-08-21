@@ -922,4 +922,223 @@ void main() {
       expect(importadores, isEmpty);
     });
   });
+
+  // =========================================================================
+  // §7 — o portão que vigia esta suíte não pode ser desligado em silêncio
+  //
+  // Esta é a METADE DE DENTRO da proteção, e ela existe porque a de fora tem
+  // um ponto cego que só algo já dentro do caminho de execução cobre.
+  //
+  // A metade de FORA mora no `ci-os-integracao.yml`: `exige` faz da ausência
+  // do arquivo uma FALHA, e o veredito faz da ausência de marcador uma FALHA
+  // para toda chave declarada em `GATES_OBRIGATORIOS`. Ela pega apagar a
+  // suíte, renomeá-la, remover o produtor, fabricar `NÃO EXECUTADO` e tirar a
+  // chave do laço.
+  //
+  // O que ela NÃO pega é o REBAIXAMENTO com a suíte intacta: trocar `exige`
+  // por `roda`, ou tirar `torneiosa11y` da declaração. Nesses dois casos nada
+  // fica vermelho hoje — o estrago só aparece no dia em que alguém apagar a
+  // suíte, e aí não há mais nada de pé para reclamar. Quem precisa reclamar é
+  // algo que RODA, e o único lugar que roda e é obrigatório é este arquivo.
+  //
+  // As afirmações são de LINHA ancorada (`^\s*chave:`), e não de substring:
+  // uma linha de comentário do YAML começa em `#` e por construção não pode
+  // satisfazê-las. Isso importa porque este workflow explica em comentário
+  // tudo o que faz, inclusive as chaves que cita.
+  // =========================================================================
+  group('o portão que vigia esta suíte não pode ser desligado em silêncio', () {
+    // `app/` (local) e `app_build/` (os dois workflows) estão os DOIS na raiz
+    // do repositório, então `../.github` vale para as três formas de rodar.
+    String workflow(String nome) {
+      final f = File('../.github/workflows/$nome');
+      if (!f.existsSync()) {
+        fail(
+          'workflow não encontrado: ${f.path} — esta suíte só sabe afirmar o '
+          'portão se puder LER o portão. Rode-a de dentro de `app/` ou de '
+          '`app_build/`, como fazem os dois workflows.',
+        );
+      }
+      return f.readAsStringSync().replaceAll('\r\n', '\n');
+    }
+
+    late final String agregador = workflow('ci-os-integracao.yml');
+    late final String buildYml = workflow('build.yml');
+
+    /// O corpo do passo do veredito, isolado do resto do YAML.
+    String corpoDoVeredito() {
+      final i = agregador.indexOf('- name: Portão verde/vermelho');
+      expect(i, greaterThan(0), reason: 'o passo do veredito sumiu do workflow');
+      final resto = agregador.substring(i + 1);
+      final j = resto.indexOf('\n      - name:');
+      return j < 0 ? resto : resto.substring(0, j);
+    }
+
+    test('os dois workflows estão onde o portão os procura, e têm conteúdo', () {
+      // Âncora de CONTAGEM. Sem ela, todas as afirmações abaixo passariam por
+      // vacuidade contra um arquivo vazio — que é exatamente o estado em que
+      // um portão desligado ficaria.
+      expect(agregador.length, greaterThan(10000));
+      expect(buildYml.length, greaterThan(10000));
+      expect(agregador, contains('torneiosa11y'));
+    });
+
+    test('`torneiosa11y` está declarado obrigatório, e a declaração é ÚNICA', () {
+      final declaracoes = RegExp(r'^\s*GATES_OBRIGATORIOS:(.*)$', multiLine: true)
+          .allMatches(agregador)
+          .toList();
+      expect(
+        declaracoes,
+        hasLength(1),
+        reason:
+            'a obrigatoriedade tem de ser declarada UMA vez. Zero significa que '
+            'o portão não protege nada; duas significam duas cópias que vão '
+            'divergir.',
+      );
+      final declarados = declaracoes.single
+          .group(1)!
+          .trim()
+          .split(RegExp(r'\s+'))
+          .where((s) => s.isNotEmpty)
+          .toSet();
+      expect(
+        declarados,
+        contains('torneiosa11y'),
+        reason:
+            'REBAIXAMENTO: a chave saiu da fonte única de obrigatoriedade. Com '
+            'isso, apagar esta suíte volta a deixar o agregador verde.',
+      );
+    });
+
+    test('nenhum passo redigita a lista de obrigatórios num shell próprio', () {
+      // O motivo de a declaração morar no `env:` do job é que ela é entregue a
+      // TODOS os passos. Uma atribuição de shell aqui dentro seria uma segunda
+      // cópia — e é da segunda cópia que nasce a divergência.
+      final copias = RegExp(r'^\s*[A-Z_]*OBRIGATORIOS[A-Z_]*=', multiLine: true)
+          .allMatches(agregador)
+          .map((m) => m.group(0)!.trim())
+          .toList();
+      expect(copias, isEmpty, reason: 'lista de obrigatórios duplicada: $copias');
+    });
+
+    test('o produtor do marcador é `exige`, e não `roda`', () {
+      expect(
+        RegExp(
+          r'^\s*exige torneiosa11y test/torneios/a11y_p0_semantico_test\.dart\s*$',
+          multiLine: true,
+        ).hasMatch(agregador),
+        isTrue,
+        reason:
+            'a linha que produz o marcador de `torneiosa11y` tem de ser `exige`: '
+            'é ela que faz de "arquivo ausente" uma falha.',
+      );
+      expect(
+        RegExp(r'^\s*roda +torneiosa11y\b', multiLine: true).hasMatch(agregador),
+        isFalse,
+        reason:
+            'REBAIXAMENTO: o produtor voltou a ser `roda`, e com `roda` apagar '
+            'esta suíte vira "NÃO EXECUTADO" em vez de falha.',
+      );
+    });
+
+    test('`exige` trata arquivo ausente como FALHA, e não como NÃO EXECUTADO', () {
+      final i = agregador.indexOf('exige() {');
+      expect(i, greaterThan(0), reason: 'o helper `exige` sumiu do workflow');
+      final corpo = agregador.substring(i, agregador.indexOf('\n          }', i));
+      expect(corpo, contains(r'if [ ! -f "app_build/$t" ]'));
+      expect(
+        corpo,
+        contains(r'echo 1 > "exit_$k"'),
+        reason: 'no caminho de ausência, `exige` tem de escrever exit 1',
+      );
+      expect(
+        corpo,
+        isNot(contains(r'nao_$k')),
+        reason:
+            '`exige` que escreve `nao_<chave>` é `roda` com outro nome: o '
+            'veredito leria a ausência como neutra.',
+      );
+    });
+
+    test('a chave está registrada nas DUAS listas do workflow', () {
+      final evidencia = RegExp(r'^\s*GATES="([^"]*)"', multiLine: true)
+          .firstMatch(agregador);
+      expect(evidencia, isNotNull, reason: 'a lista da evidência sumiu');
+      expect(evidencia!.group(1)!.split(RegExp(r'\s+')), contains('torneiosa11y'));
+
+      final laco = RegExp(r'^\s*for k in (analyze [^;]*); do', multiLine: true)
+          .firstMatch(corpoDoVeredito());
+      expect(laco, isNotNull, reason: 'a lista literal do veredito sumiu');
+      expect(
+        laco!.group(1)!.split(RegExp(r'\s+')),
+        contains('torneiosa11y'),
+        reason:
+            'a chave saiu do laço do veredito: o gate deixaria de ser conferido '
+            'sem que nada ficasse vermelho.',
+      );
+    });
+
+    test('o veredito CONSOME a fonte única em vez de repetir a lista', () {
+      final corpo = corpoDoVeredito();
+      expect(corpo, contains(r'$GATES_OBRIGATORIOS'));
+      expect(
+        corpo,
+        contains(r'case " $GATES_OBRIGATORIOS " in'),
+        reason: 'a consulta de obrigatoriedade tem de ler a fonte única',
+      );
+    });
+
+    test('o veredito fica VERMELHO se a declaração sumir ou esvaziar', () {
+      final corpo = corpoDoVeredito();
+      expect(
+        corpo,
+        contains(r'${GATES_OBRIGATORIOS:-}'),
+        reason: 'sem tratar "ausente", apagar o `env:` deixaria tudo verde',
+      );
+      expect(
+        RegExp(r'if \[ -z .*GATES_OBRIGATORIOS.*\]; then[\s\S]{0,400}?exit 1')
+            .hasMatch(corpo),
+        isTrue,
+        reason:
+            'declaração vazia tem de derrubar o portão: um portão que não '
+            'protege nada não pode sair verde fingindo que protegeu.',
+      );
+    });
+
+    test('o veredito confere que todo obrigatório foi mesmo percorrido', () {
+      final corpo = corpoDoVeredito();
+      expect(
+        corpo,
+        contains(r'for k in $GATES_OBRIGATORIOS; do'),
+        reason: 'falta a conferência que impede a chave de sair do laço',
+      );
+      expect(
+        corpo,
+        contains(r'PERCORRIDOS="$PERCORRIDOS $k"'),
+        reason:
+            'a conferência tem de ler o que o laço REALMENTE percorreu, e não '
+            'uma segunda lista digitada ao lado.',
+      );
+      expect(corpo, contains(r'case " $PERCORRIDOS " in'));
+    });
+
+    test('o portão irmão do `build.yml` continua exigindo esta suíte', () {
+      // Terceira perna, noutro workflow e com outro efeito: este bloqueia o
+      // APK. É ele que sobra de pé se alguém desfizer as duas primeiras.
+      final i = buildYml.indexOf(
+        'if [ ! -f app/test/torneios/a11y_p0_semantico_test.dart ]; then',
+      );
+      expect(
+        i,
+        greaterThan(0),
+        reason: 'o portão de acessibilidade saiu do `build.yml`',
+      );
+      expect(buildYml.substring(i, i + 400), contains('exit 1'));
+      expect(
+        buildYml,
+        contains('flutter test test/torneios/a11y_p0_semantico_test.dart'),
+        reason: 'o `build.yml` precisa continuar EXECUTANDO a suíte, não só '
+            'conferindo que o arquivo existe.',
+      );
+    });
+  });
 }
