@@ -46,10 +46,12 @@
 // dizer mudou o que se manda pelo fio.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
 import 'package:buraco_master_vip/casca/lobby_online.dart';
+import 'package:buraco_master_vip/casca/mesa_online/arte_das_cartas.dart';
 import 'package:buraco_master_vip/casca/login_de_producao.dart';
 import 'package:buraco_master_vip/casca/mesa_online/mesa_online_screen.dart';
 import 'package:buraco_master_vip/services/online_service.dart';
@@ -143,6 +145,73 @@ bool focoDentroDe<T extends Widget>() {
   if (contexto == null) return false;
   if (contexto.widget is T) return true;
   return contexto.findAncestorWidgetOfExactType<T>() != null;
+}
+
+/// TODO rótulo falável da tela, na ordem em que o leitor de tela anda.
+///
+/// A LISTA EXATA é o instrumento, e não um `contains`. Um `contains` acha o
+/// que se procura e não vê o que sobrou — e o defeito desta família é
+/// justamente sobra: a mesma informação dita duas vezes. Comparar a lista
+/// inteira pega decoração que voltou E informação que se perdeu, com a mesma
+/// asserção.
+List<String> rotulosFalaveis(WidgetTester tester) {
+  final saida = <String>[];
+  void andar(SemanticsNode no) {
+    if (no.label.isNotEmpty) saida.add(no.label);
+    no.visitChildren((filho) {
+      andar(filho);
+      return true;
+    });
+  }
+
+  andar(tester.binding.rootElement!.renderObject!.debugSemantics!);
+  return saida;
+}
+
+/// Lê a árvore de semântica durante [corpo] e a descarta ANTES do fim do caso.
+///
+/// `addTearDown(handle.dispose)` não serve: o `flutter_test` confere as alças
+/// de semântica no fim do CORPO, antes dos tearDowns, e o descarte chegaria
+/// tarde — todo caso do arquivo falharia com "A SemanticsHandle was active", e
+/// a falha real sumiria no meio.
+Future<void> lendoATela(
+  WidgetTester tester,
+  Future<void> Function() corpo,
+) async {
+  final alca = tester.ensureSemantics();
+  try {
+    await corpo();
+  } finally {
+    alca.dispose();
+  }
+}
+
+/// Digita [codigo] e aperta "Entrar por código". Uma TENTATIVA.
+Future<void> tentarCodigo(
+  WidgetTester tester,
+  Bancada b,
+  String codigo,
+) async {
+  await tester.enterText(find.byType(TextField).last, codigo);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Entrar por código'));
+  await tester.pumpAndSettle();
+}
+
+/// O servidor recusa com [motivo].
+Future<void> servidorRecusa(
+  WidgetTester tester,
+  Bancada b,
+  String motivo,
+) async {
+  b.canal.servidorEnvia({'tipo': 'erro', 'motivo': motivo});
+  await tester.pumpAndSettle();
+}
+
+/// O nó da recusa que está na tela: identidade e marca de região viva.
+({int id, bool viva}) noDaRecusa(WidgetTester tester, String texto) {
+  final no = tester.getSemantics(find.text(texto));
+  return (id: no.id, viva: no.getSemanticsData().flagsCollection.isLiveRegion);
 }
 
 void main() {
@@ -742,6 +811,434 @@ void main() {
       // participou dessa decisão.
       expect(b.online.meuAssento, 2);
       expect(find.text('Bia (você)'), findsOneWidget);
+
+      await encerrarTransporte(tester, b);
+    });
+  });
+
+  // =========================================================================
+  // 17 a 21 — o monte e os mortos
+  // =========================================================================
+  //
+  // UMA INFORMAÇÃO LÓGICA, UM NÓ FALÁVEL. `PilhaFechada` escreve a mesma coisa
+  // duas vezes na tela de propósito: por extenso no rótulo de acessibilidade
+  // ("Monte, 60 cartas") e abreviada no texto desenhado ("Monte · 60"), que é
+  // o que cabe em 10,5 pontos embaixo do dorso. Para quem enxerga são a mesma
+  // coisa dita uma vez. Para quem ouve eram duas.
+  //
+  // O eixo destes casos é a ÁRVORE, nunca o texto: `find.text('Monte · 60')`
+  // continua achando o texto depois da correção — e é isso que se quer, ele
+  // saiu da leitura e não da tela. Só a árvore de semântica separa as duas
+  // coisas.
+  group('o monte e os mortos', () {
+    testWidgets('cada pilha tem UM rótulo falável, e ele é o escrito por '
+        'extenso', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await irAMesa(tester, b);
+
+        final rotulos = rotulosFalaveis(tester);
+        final dasPilhas = rotulos
+            .where((r) => r.contains('Monte') || r.contains('Mortos'))
+            .toList();
+
+        // A LISTA EXATA. Antes desta OS ela vinha com o par colado no mesmo
+        // nó — 'Monte, 60 cartas\nMonte · 60' —, e um `contains` teria
+        // passado nos dois estados.
+        expect(
+          dasPilhas,
+          ['Monte, 60 cartas', 'Mortos, 2 cartas'],
+          reason: 'a pilha voltou a ser anunciada duas vezes',
+        );
+
+        // E O DESENHO CONTINUA LÁ. `excludeSemantics` tira da leitura, não
+        // da tela: quem enxerga não perdeu nada.
+        expect(find.text('Monte · 60'), findsOneWidget);
+        expect(find.text('Mortos · 2'), findsOneWidget);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('o monte comprável é um botão com ação e com a pilha inteira '
+        'de alvo', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await irAMesa(tester, b);
+
+        final no = tester.getSemantics(find.text('Monte · 60'));
+        final dados = no.getSemanticsData();
+        expect(dados.flagsCollection.isButton, isTrue);
+        // A AÇÃO É A METADE QUE `excludeSemantics` LEVARIA EMBORA. O gesto
+        // mora no `GestureDetector`, dentro da subárvore excluída; sem
+        // subir o `onTap` para a anotação sobraria um nó marcado como botão
+        // e surdo ao duplo toque.
+        expect(
+          dados.hasAction(SemanticsAction.tap),
+          isTrue,
+          reason: 'o nó diz que é botão e não responde ao toque do leitor',
+        );
+        // O ALVO CONTINUA SENDO A PILHA INTEIRA, rótulo incluído — a
+        // geometria de antes da exclusão.
+        expect(
+          no.rect.size,
+          tester.getSize(find.byType(PilhaFechada).first),
+          reason: 'o alvo falável encolheu para menos que a pilha',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('as duas portas do toque compram do monte', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await irAMesa(tester, b);
+
+        // A PORTA DO LEITOR DE TELA. É por aqui que o duplo toque do
+        // TalkBack chega, e um controle que só responde ao dedo passa no
+        // teste de toque e continua inacessível.
+        tester.semantics.performAction(
+          find.semantics.byLabel('Monte, 60 cartas'),
+          SemanticsAction.tap,
+        );
+        await tester.pumpAndSettle();
+        expect(b.canal.jogadas, [
+          {'tipo': 'comprarMonte'},
+        ]);
+
+        // A PORTA DO DEDO, que já existia e não podia sumir.
+        await tester.tap(find.text('Monte · 60'));
+        await tester.pumpAndSettle();
+        expect(b.canal.jogadas, [
+          {'tipo': 'comprarMonte'},
+          {'tipo': 'comprarMonte'},
+        ]);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('o monte que não se pode comprar não se declara botão', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await irAMesa(tester, b, visao: visaoDeJogo(jaComprou: true));
+
+        final dados = tester
+            .getSemantics(find.text('Monte · 60'))
+            .getSemanticsData();
+        expect(dados.flagsCollection.isButton, isFalse);
+        expect(
+          dados.hasAction(SemanticsAction.tap),
+          isFalse,
+          reason: 'quem já comprou continuaria ouvindo uma oferta de compra',
+        );
+        // E o rótulo continua sendo um só.
+        expect(
+          tester.getSemantics(find.text('Monte · 60')).label,
+          'Monte, 60 cartas',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('os mortos são leitura, não controle', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await irAMesa(tester, b);
+
+        final no = tester.getSemantics(find.text('Mortos · 2'));
+        final dados = no.getSemanticsData();
+        expect(no.label, 'Mortos, 2 cartas');
+        expect(dados.flagsCollection.isButton, isFalse);
+        expect(
+          dados.hasAction(SemanticsAction.tap),
+          isFalse,
+          reason: 'os mortos não se compram — anunciar ação seria mentira',
+        );
+        expect(no.rect.size, tester.getSize(find.byType(PilhaFechada).last));
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+  });
+
+  // =========================================================================
+  // 22 a 29 — a recusa do lobby, tentativa a tentativa
+  // =========================================================================
+  //
+  // A IDENTIDADE DE UMA RECUSA É A TENTATIVA QUE ELA RESPONDE, e o protocolo
+  // não carimba evento: duas tentativas recusadas pelo mesmo motivo produzem a
+  // MESMA string. Quem comparasse o texto ouviria uma notícia e um silêncio.
+  //
+  // A mesa resolveu isso com o selo de ocorrência da porta de comandos. O
+  // lobby resolve pelo outro lado, que é o que cabe numa região viva: uma
+  // pergunta nova apaga a resposta velha (`OnlineService._perguntaNova`), o nó
+  // morre, e o que renasce é conteúdo novo — que é a única coisa que uma
+  // região viva sabe anunciar.
+  //
+  // POR QUE ESTES CASOS MEDEM A IDENTIDADE DO NÓ. Região viva não passa pelo
+  // canal de anúncios: ela É um nó, e quem fala é a plataforma quando o
+  // conteúdo daquele nó muda. Um teste de widget não alcança a plataforma —
+  // alcança o nó. Então a pergunta que dá para responder aqui, e que é a
+  // pergunta certa, é: o conteúdo mudou? Nó igual com rótulo igual é silêncio;
+  // nó novo, ou rótulo novo, é fala.
+  group('a recusa do lobby, tentativa a tentativa', () {
+    const recusa = 'não encontrei essa mesa';
+
+    testWidgets('a primeira recusa é região viva e não vira anúncio solto', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      final escuta = escutarAnuncios(tester);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        escuta.limpar();
+
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+
+        final no = noDaRecusa(tester, recusa);
+        expect(no.viva, isTrue);
+        // UM mecanismo, não dois: o nó fala, o anúncio se cala.
+        expect(escuta.mensagens, isEmpty);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('reconstruir não é uma recusa nova', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+        final antes = noDaRecusa(tester, recusa);
+
+        // Três avisos do transporte sem evento novo — que é o que acontece
+        // a cada mensagem do servidor enquanto o recado está na tela.
+        for (var i = 0; i < 3; i++) {
+          b.online.notifyListeners();
+          await tester.pumpAndSettle();
+        }
+
+        final depois = noDaRecusa(tester, recusa);
+        expect(
+          depois.id,
+          antes.id,
+          reason: 'o nó foi refeito sem recusa nova — a região viva falaria',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('reemitir a mesma recusa sem tentativa nova não fala de novo', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+        final antes = noDaRecusa(tester, recusa);
+
+        // O servidor repete a MESMA recusa, e ninguém perguntou de novo.
+        await servidorRecusa(tester, b, recusa);
+
+        expect(
+          noDaRecusa(tester, recusa).id,
+          antes.id,
+          reason: 'a repetição do servidor virou notícia',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('uma TENTATIVA nova recusada pelo mesmo motivo volta a falar', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+        final primeira = noDaRecusa(tester, recusa);
+
+        // A pessoa tenta de novo. A resposta velha deixa de ser a resposta
+        // corrente NO INSTANTE do pedido — e é isso que o recado sumir da
+        // tela demonstra.
+        await tester.tap(find.text('Entrar por código'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(recusa),
+          findsNothing,
+          reason: 'a recusa da tentativa anterior sobreviveu à pergunta nova',
+        );
+
+        await servidorRecusa(tester, b, recusa);
+        final segunda = noDaRecusa(tester, recusa);
+
+        expect(segunda.viva, isTrue);
+        expect(
+          segunda.id,
+          isNot(primeira.id),
+          reason:
+              'a segunda tentativa reaproveitou o nó da primeira — texto '
+              'igual em nó igual é silêncio, e a pessoa não saberia que a '
+              'segunda tentativa também falhou',
+        );
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('uma recusa com motivo diferente continua perceptível', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+        await servidorRecusa(tester, b, 'essa mesa está cheia');
+
+        final no = noDaRecusa(tester, 'essa mesa está cheia');
+        expect(no.viva, isTrue);
+        expect(find.text(recusa), findsNothing);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('o sucesso depois da recusa não é suprimido', (tester) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+
+      await abrirAplicativo(tester, b);
+      await irAoLobby(tester, b);
+      await tentarCodigo(tester, b, 'BURACO-9999');
+      await servidorRecusa(tester, b, recusa);
+      expect(find.text(recusa), findsOneWidget);
+
+      await tester.tap(find.text('Entrar por código'));
+      await tester.pumpAndSettle();
+      b.canal.servidorEnvia({
+        'tipo': 'entrou',
+        'codigo': 'BURACO-9999',
+        'assento': 0,
+      });
+      await tester.pumpAndSettle();
+      await servidorManda(tester, b, visaoDeLobby());
+
+      expect(find.text(recusa), findsNothing);
+      // E NADA A MAIS FOI AO FIO: a limpeza é local, não é mensagem.
+      expect(b.canal.mensagens.map((m) => m['tipo']).toList(), [
+        'auth',
+        'entrarMesa',
+        'entrarMesa',
+      ]);
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('sair do lobby e voltar não anuncia a recusa de antes', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      final escuta = escutarAnuncios(tester);
+
+      await lendoATela(tester, () async {
+        await abrirAplicativo(tester, b);
+        await irAoLobby(tester, b);
+        await tentarCodigo(tester, b, 'BURACO-9999');
+        await servidorRecusa(tester, b, recusa);
+        expect(noDaRecusa(tester, recusa).viva, isTrue);
+
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(find.byType(LobbyOnline), findsNothing);
+        // O transporte é da raiz: a resposta continua lá dentro.
+        expect(b.online.erro, recusa);
+        escuta.limpar();
+
+        await tester.tap(find.text('Mesa por código'));
+        await tester.pumpAndSettle();
+
+        // O TEXTO CONTINUA LEGÍVEL — ele explica por que a mesa não abriu.
+        expect(find.text(recusa), findsOneWidget);
+        // E NÃO INTERROMPE. Ninguém acabou de perguntar nada: essa recusa é
+        // histórico, e histórico se lê quando se quer.
+        expect(
+          noDaRecusa(tester, recusa).viva,
+          isFalse,
+          reason:
+              'a recusa que já estava no transporte foi anunciada como se '
+              'tivesse acabado de chegar',
+        );
+        expect(escuta.mensagens, isEmpty);
+      });
+
+      await encerrarTransporte(tester, b);
+    });
+
+    testWidgets('a tela descartada não recebe callback atrasado', (
+      tester,
+    ) async {
+      final b = Bancada(uidInicial: 'uid-A');
+      addTearDown(b.fechar);
+      final escuta = escutarAnuncios(tester);
+
+      await abrirAplicativo(tester, b);
+      await irAoLobby(tester, b);
+      await tentarCodigo(tester, b, 'BURACO-9999');
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byType(LobbyOnline), findsNothing);
+      escuta.limpar();
+
+      // A resposta chega DEPOIS de a tela sair, que é o caso que a rede
+      // produz sozinha.
+      b.canal.servidorEnvia({'tipo': 'erro', 'motivo': recusa});
+      await tester.pumpAndSettle();
+      b.canal.servidorDerruba();
+      await tester.pumpAndSettle();
+
+      expect(
+        escuta.mensagens,
+        isEmpty,
+        reason: 'uma tela que já não está na árvore falou',
+      );
 
       await encerrarTransporte(tester, b);
     });

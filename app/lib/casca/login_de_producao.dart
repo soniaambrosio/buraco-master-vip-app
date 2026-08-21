@@ -290,10 +290,19 @@ class _SemProvedor extends StatelessWidget {
 /// segunda. Mexer no foco faria pior: tiraria a pessoa do botão que ela
 /// acabou de apertar e que ela vai querer apertar de novo.
 ///
-/// O `MergeSemantics` existe porque a marca precisa cair no MESMO nó que
-/// carrega o texto. Sem ele, a propriedade fica num nó de contêiner e o rótulo
-/// num nó filho — e um leitor de tela não anuncia a mudança de uma região viva
-/// vazia.
+/// O que a região viva EXIGE é que a marca e o rótulo estejam no mesmo nó — um
+/// nó marcado como região viva e sem rótulo não tem conteúdo a anunciar. Aqui
+/// isso já é verdade sem ajuda: `Semantics` em volta de um `Text` único não
+/// abre nó próprio, ele funde a anotação com a do filho.
+///
+/// O `MergeSemantics` em volta, então, é CINTO SOBRE SUSPENSÓRIO, e está
+/// escrito aqui como tal. Medido na OS 37: com ele e sem ele o nó é o mesmo —
+/// mesmo id, `isLiveRegion` verdadeiro, rótulo presente, zero filhos. Ele
+/// passa a valer no dia em que este cartão ganhar um segundo filho falável
+/// (um ícone com rótulo, um botão de "tentar de novo"), e é por isso que
+/// continua aqui. Uma versão anterior deste comentário dizia que sem ele a
+/// região viva ficaria vazia; não fica, e quem tentasse simplificar a partir
+/// dessa frase iria procurar um defeito que não existe.
 class _Recado extends StatelessWidget {
   const _Recado({required this.texto});
 

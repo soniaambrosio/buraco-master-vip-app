@@ -101,6 +101,24 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   /// que a perda saia duas vezes no mesmo ciclo de tentativas.
   bool _disseQueCaiu = false;
 
+  /// A recusa que está no transporte, como esta tela a viu da última vez.
+  ///
+  /// ANCORADA NA CHEGADA, e é isso que ela existe para fazer. `erro` é a
+  /// resposta à última pergunta feita ao servidor, e ela sobrevive à saída
+  /// desta rota: quem digita um código inexistente, volta para a Home e entra
+  /// de novo no lobby encontra o recado ainda ali. Ver a caixa é razoável — o
+  /// texto explica por que a mesa não abriu. Ser INTERROMPIDO por ela não é:
+  /// ninguém acabou de perguntar nada.
+  final SentinelaDeTransicao<String?> _sentinelaDaRecusa =
+      SentinelaDeTransicao<String?>();
+
+  /// A recusa na tela chegou DEPOIS desta tela? Só ela é região viva.
+  ///
+  /// Região viva é a marca de "isto acabou de mudar". Uma recusa que já estava
+  /// no transporte quando esta rota nasceu não mudou nada — ela é histórico, e
+  /// histórico se lê quando se quer, não se ouve quando chega.
+  bool _recusaEhNoticia = false;
+
   /// A porta por onde as ações da mesa saem.
   ///
   /// Nasce e morre com o transporte que esta tela está usando — ela é um
@@ -133,6 +151,12 @@ class _LobbyOnlineState extends State<LobbyOnline> {
       _porta = PortaDeComandosOnline(srv)..addListener(_atualizar);
     }
 
+    // A ÂNCORA. O que já estava no transporte quando esta tela chegou é o
+    // ponto de partida, não uma transição — a mesma regra que vale para o
+    // status da conexão, aplicada à recusa.
+    _sentinelaDaRecusa.ancorar(srv?.erro);
+    _recusaEhNoticia = false;
+
     // O PEDIDO DE CONEXÃO É DA PESSOA, e acontece uma vez: abrir esta tela é o
     // gesto de querer jogar online. A trava importa porque
     // `didChangeDependencies` roda de novo a cada notificação do escopo — sem
@@ -154,7 +178,14 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   void _atualizar() {
     if (!mounted) return;
     final srv = _srv;
-    if (srv != null) _falarDaConexao(srv);
+    if (srv != null) {
+      _falarDaConexao(srv);
+      // A recusa mudou de valor: ou chegou uma, e é notícia, ou a pergunta
+      // nova apagou a anterior, e a próxima começa do zero.
+      if (_sentinelaDaRecusa.mudou(srv.erro)) {
+        _recusaEhNoticia = srv.erro != null;
+      }
+    }
     setState(() {});
   }
 
@@ -238,12 +269,17 @@ class _LobbyOnlineState extends State<LobbyOnline> {
 
   @override
   void dispose() {
-    // SOLTAR O OUVINTE É O QUE CALA A TELA. O transporte é da raiz e continua
-    // vivo depois que esta rota sai: sem isto, um `OnlineService` que notifica
-    // encontraria um `_falarDaConexao` de uma tela que já não está na árvore,
-    // e a pessoa ouviria "conexão perdida" numa Home que não fala de conexão
-    // nenhuma. Não desliga o transporte — sair da tela do lobby não é sair do
-    // jogo online.
+    // QUEM CALA A TELA É A GUARDA DE `mounted`, no alto de `_atualizar`. Uma
+    // versão anterior deste comentário dava o crédito a esta linha; a OS 37
+    // mediu o contrário — sem o `removeListener`, sair da tela e deixar o
+    // servidor mandar mesa nova e derrubar a conexão continua produzindo ZERO
+    // anúncio, porque o ouvinte devolve antes de falar.
+    //
+    // Isto aqui é HIGIENE, e é obrigatório pelo motivo de sempre: o transporte
+    // é da raiz e vive muito mais que esta rota, então um ouvinte que não sai
+    // fica pendurado nele até o fim da sessão, uma cópia por visita ao lobby.
+    // Não desliga o transporte — sair da tela do lobby não é sair do jogo
+    // online.
     _srv?.removeListener(_atualizar);
     // A porta, ao contrário, é DESTA tela: ela foi construída aqui e morre
     // aqui. Descartá-la também solta o ouvinte que ela mantém no transporte.
@@ -320,7 +356,7 @@ class _LobbyOnlineState extends State<LobbyOnline> {
         _statusChip(srv),
         if (srv.erro != null) ...[
           const SizedBox(height: 12),
-          _erroBox(srv.erro!),
+          _erroBox(srv.erro!, viva: _recusaEhNoticia),
         ],
         if (srv.falhaTerminal) ...[
           const SizedBox(height: 10),
@@ -416,10 +452,24 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   ///
   /// REGIÃO VIVA, e não anúncio: aqui a notícia É um texto que fica. Ele
   /// aparece, o leitor de tela o lê no instante em que entra, e continua no
-  /// mesmo lugar para quem quiser voltar a ele. O `MergeSemantics` põe a marca
-  /// e o rótulo no MESMO nó — separados, a região viva ficaria vazia e não
-  /// haveria mudança a anunciar.
-  Widget _erroBox(String msg) => Container(
+  /// mesmo lugar para quem quiser voltar a ele.
+  ///
+  /// A marca e o rótulo precisam mesmo cair no MESMO nó — região viva sem
+  /// rótulo não tem o que anunciar. O que não é verdade é que o
+  /// `MergeSemantics` seja quem garante isso: `Semantics` sobre um `Text`
+  /// único já funde, e a OS 37 mediu o nó com e sem ele, idêntico nos dois
+  /// casos. Ele fica como reserva para o dia em que esta caixa tiver dois
+  /// filhos faláveis.
+  ///
+  /// E A REGIÃO VIVA SÓ FALA QUANDO O CONTEÚDO MUDA. Duas recusas idênticas
+  /// seguidas seriam uma notícia e um silêncio se o texto anterior continuasse
+  /// pendurado; quem resolve isso não é esta caixa, é
+  /// `OnlineService._perguntaNova`, que apaga a resposta velha no instante em
+  /// que a pessoa faz a pergunta nova.
+  /// [viva] é falso para a recusa que esta tela ENCONTROU pronta ao nascer.
+  /// O texto é o mesmo e continua legível; o que não acontece é a
+  /// interrupção.
+  Widget _erroBox(String msg, {required bool viva}) => Container(
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
       color: const Color(0x33E05B5B),
@@ -428,7 +478,7 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     ),
     child: MergeSemantics(
       child: Semantics(
-        liveRegion: true,
+        liveRegion: viva,
         child: Text(
           msg,
           style: const TextStyle(color: Color(0xFFF6C9C9), fontSize: 12.5),

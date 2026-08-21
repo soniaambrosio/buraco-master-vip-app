@@ -160,9 +160,22 @@ class _MesaOnlineScreenState extends State<MesaOnlineScreen> {
   ///
   /// Roda em `didUpdateWidget`, que é onde as duas autoridades desta tela
   /// chegam trocadas: o `EstadoMesaOnline` novo vem dentro do widget, e a porta
-  /// notificou o lobby, que reconstruiu. NÃO roda em `build` — build acontece
-  /// também por mudança de tamanho, de tema e de teclado, e um anúncio preso ao
-  /// build fala quando alguém gira o aparelho.
+  /// notificou o lobby, que reconstruiu.
+  ///
+  /// QUEM IMPEDE A REPETIÇÃO É A SENTINELA, e não o lugar desta chamada. Foi
+  /// medido: com o anúncio movido para o `build`, girar o aparelho, subir a
+  /// escala de fonte do sistema e selecionar uma carta continuam produzindo
+  /// ZERO anúncio, porque em nenhum desses caminhos `suaVez` ou o selo de
+  /// recusa mudaram, e `SentinelaDeTransicao` só devolve `true` para valor
+  /// diferente. Uma versão anterior deste comentário dizia que um anúncio
+  /// preso ao `build` falaria ao girar o aparelho — não fala, e acreditar
+  /// nisso levaria a próxima pessoa a proteger o caminho errado.
+  ///
+  /// `didUpdateWidget` continua sendo o lugar certo por outro motivo, mais
+  /// modesto: é onde as duas autoridades chegam JUNTAS e já trocadas, e o
+  /// `build` roda por motivos que nada têm a ver com elas. Ler o estado onde
+  /// ele muda é mais barato e mais honesto do que ler em toda reconstrução e
+  /// deixar a sentinela absorver o excesso.
   void _falarDoQueMudou() {
     // A VEZ. Só a ENTRADA nela é notícia: sair da própria vez é consequência de
     // uma jogada que a pessoa acabou de fazer, e ela já sabe.

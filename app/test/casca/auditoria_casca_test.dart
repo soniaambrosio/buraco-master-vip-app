@@ -547,4 +547,186 @@ void main() {
       );
     });
   });
+
+  // =========================================================================
+  // A SUÍTE DOS ESTADOS ANUNCIADOS SOBREVIVE, OU O PORTÃO CAI
+  // =========================================================================
+  //
+  // POR QUE ESTA PROVA MORA AQUI. Pelo mesmo motivo do grupo acima, e a OS 37
+  // mediu o preço de não ter feito isso na primeira vez: com
+  // `a11y_estados_anunciados_test.dart` apagado, `flutter test test/casca`
+  // passou de 267 para 247 casos e imprimiu `All tests passed`, exit 0. Vinte
+  // provas de acessibilidade sumiram sem uma linha vermelha — porque o único
+  // passo que as executa aponta para o DIRETÓRIO, e um diretório com menos
+  // arquivos continua sendo um diretório válido.
+  //
+  // Uma prova escrita dentro da suíte morreria junto com ela. Escrita aqui,
+  // num gate que já é obrigatório em `casca` (o diretório, no `build.yml`) e em
+  // `cascaaud` (o caminho explícito, no `ci-os-integracao.yml`), ela sobrevive
+  // ao apagamento e o denuncia.
+  //
+  // O QUE ESTE GRUPO NÃO FAZ, e por quê: ele não cria chave de gate nova, não
+  // escreve `GATES=` e não acrescenta `for k in`. A OS 32 canonizou a família P
+  // — os gates saem de UMA fonte, lida por um produtor só — e o jeito antigo de
+  // registrar um gate aqui era digitar a mesma chave em duas listas do YAML,
+  // que é exatamente o defeito que a OS 32 fechou. Registrar por conta própria
+  // criaria a segunda autoridade de novo, nesta folha, para desfazer na
+  // composição. A ligação da suíte à fonte única é UMA LINHA no inventário de P,
+  // e é lá que ela será feita. Até lá, o contrato de conteúdo abaixo é o que
+  // impede a suíte de sumir em silêncio.
+  group('o portão dos estados anunciados', () {
+    const caminho = 'test/casca/a11y_estados_anunciados_test.dart';
+
+    // Os grupos que a OS 37 e a OS 37-C1 tornaram obrigatórios. A lista é de
+    // CENÁRIOS, não de casos: renomear um caso é manutenção, apagar um eixo
+    // inteiro é regressão, e só o segundo derruba isto aqui.
+    const cenarios = <String>[
+      "group('a vez'",
+      "group('a recusa de comando'",
+      "group('a recusa do lobby, tentativa a tentativa'",
+      "group('a conexão'",
+      "group('o login'",
+      "group('a entrada na mesa'",
+      "group('o monte e os mortos'",
+      "group('o protocolo e a partida não mudaram'",
+    ];
+
+    // PISO, e não meta. Serve contra o arquivo esvaziado e contra o `main()`
+    // trivial — dois casos que passam verdes e não provam nada. Subir o piso
+    // quando a suíte crescer é opcional; baixá-lo exige explicar o que saiu.
+    const pisoDeCasos = 30;
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File(caminho).existsSync(),
+        isTrue,
+        reason:
+            'a suíte dos estados anunciados sumiu (apagada ou renomeada) — e '
+            'some em silêncio, porque o passo do CI roda o diretório inteiro',
+      );
+    });
+
+    test('a suíte ainda cobre os cenários obrigatórios', () {
+      final f = File(caminho);
+      if (!f.existsSync()) return; // o caso acima já reprovou por isso
+      // SEM COMENTÁRIOS: um cenário comentado não é um cenário. É a mesma
+      // razão de `_codigo` existir no resto deste arquivo.
+      final fonte = _codigo(f);
+      for (final cenario in cenarios) {
+        expect(
+          fonte,
+          contains(cenario),
+          reason: 'o cenário $cenario saiu da suíte dos estados anunciados',
+        );
+      }
+    });
+
+    test('a suíte não foi esvaziada', () {
+      final f = File(caminho);
+      if (!f.existsSync()) return;
+      final fonte = _codigo(f);
+      final casos = RegExp('testWidgets' r'\s*\(').allMatches(fonte).length;
+      expect(
+        casos,
+        greaterThanOrEqualTo(pisoDeCasos),
+        reason:
+            'a suíte caiu para $casos casos (piso $pisoDeCasos) — um arquivo '
+            'que existe e não afirma nada é pior do que um que não existe, '
+            'porque o portão fica verde',
+      );
+    });
+
+    test('o passo que a executa continua no build.yml', () {
+      // O overlay do CI roda a partir de `app_build/`, e o workflow fica dois
+      // níveis acima. Fora do CI o arquivo pode não estar alcançável — e aí o
+      // caso não tem o que afirmar, em vez de afirmar errado.
+      final workflow = File('../.github/workflows/build.yml');
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+      // O ALVO É O DIRETÓRIO, de propósito: é essa forma que faz a suíte
+      // rodar sem precisar de chave própria, e é ela que não pode sumir.
+      expect(
+        texto,
+        contains('flutter test test/casca'),
+        reason:
+            'o portão da casca deixou de executar o diretório — e com ele '
+            'param de rodar todas as suítes que não têm chave própria',
+      );
+      expect(
+        texto,
+        contains('cp -R app/test/casca/. app_build/test/casca/'),
+        reason:
+            'o diretório deixou de ser copiado para o overlay — o passo '
+            'roda e não encontra nada para rodar',
+      );
+    });
+  });
+
+  // =========================================================================
+  // TRÊS EXPLICAÇÕES QUE FORAM MEDIDAS FALSAS NÃO VOLTAM
+  // =========================================================================
+  //
+  // Este arquivo despoja comentário antes de varrer, e por bom motivo. Aqui,
+  // uma vez, ele faz o contrário — e a diferença é o que está sendo afirmado.
+  //
+  // Nos outros grupos o comentário é RUÍDO: a proibição fala de código, e a
+  // prosa que a explica acusaria a si mesma. Aqui o comentário é o OBJETO. As
+  // três frases abaixo não são estilo nem opinião: são afirmações sobre o que o
+  // programa faz, e a OS 37 mediu as três e achou o contrário. Uma explicação
+  // falsa custa mais caro que nenhuma, porque manda a próxima pessoa proteger o
+  // caminho errado — e as três apontavam para o lugar errado ao mesmo tempo em
+  // que a proteção verdadeira estava a três linhas de distância.
+  //
+  // O que cada uma dizia, e o que foi medido:
+  //
+  //   1. "um anúncio preso ao build fala quando alguém gira o aparelho" —
+  //      NÃO fala. Com o anúncio movido para o `build`, girar o aparelho,
+  //      dobrar a escala de fonte e selecionar uma carta continuam dando zero
+  //      anúncio. Quem protege é a `SentinelaDeTransicao`.
+  //
+  //   2. "sem o `MergeSemantics` a propriedade fica num nó de contêiner e o
+  //      rótulo num nó filho" — NÃO fica. `Semantics` sobre um `Text` único já
+  //      funde: com e sem o envoltório o nó é o mesmo, mesmo id, região viva
+  //      verdadeira, zero filhos.
+  //
+  //   3. "soltar o ouvinte é o que cala a tela" — NÃO é. Quem cala é a guarda
+  //      de `mounted` no alto de `_atualizar`; sem o `removeListener` a tela
+  //      desmontada continua muda. O descarte é higiene, e continua
+  //      obrigatório por isso.
+  //
+  // A âncora de cada caso é um trecho curto e literal da frase refutada. Ela só
+  // reaparece por reversão — reescrever a explicação com outras palavras não
+  // dispara nada, que é o comportamento desejado.
+  group('as explicações refutadas pela OS 37 não voltam', () {
+    const refutadas = <String, (String, String)>{
+      'lib/casca/mesa_online/mesa_online_screen.dart': (
+        'um anúncio preso ao',
+        'o anúncio no `build` não fala ao girar o aparelho — a sentinela o '
+            'impede, e dar o crédito ao lugar da chamada manda a próxima '
+            'pessoa proteger o caminho errado',
+      ),
+      'lib/casca/login_de_producao.dart': (
+        'a propriedade fica num nó de contêiner',
+        'sem o MergeSemantics o nó é IDÊNTICO — medido na OS 37',
+      ),
+      'lib/casca/lobby_online.dart': (
+        'SOLTAR O OUVINTE É O QUE CALA A TELA',
+        'quem cala a tela é a guarda de mounted, não o removeListener',
+      ),
+    };
+
+    refutadas.forEach((caminho, par) {
+      final (trecho, porque) = par;
+      test('$caminho não afirma de novo o que foi medido falso', () {
+        final f = File(caminho);
+        expect(f.existsSync(), isTrue, reason: '$caminho sumiu');
+        // COM comentário, de propósito: aqui a frase é o objeto da prova.
+        expect(
+          f.readAsStringSync(),
+          isNot(contains(trecho)),
+          reason: porque,
+        );
+      });
+    });
+  });
 }

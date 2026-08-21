@@ -215,6 +215,30 @@ class PilhaFechada extends StatelessWidget {
     return Semantics(
       label: '$rotulo, $quantidade cartas',
       button: habilitada,
+      // UMA INFORMAÇÃO LÓGICA, UM NÓ FALÁVEL.
+      //
+      // O rótulo acima já diz tudo o que esta pilha sabe — o nome e a
+      // contagem — numa frase escrita para ser ouvida. O que está DENTRO é a
+      // MESMA informação em forma de desenho: o dorso da carta, que é
+      // decoração, e o texto `Monte · 60`, que é a contagem outra vez,
+      // abreviada para caber em 10,5 pontos. Sem esta linha o leitor de tela
+      // lia as duas — "Monte, 60 cartas / Monte · 60" —, e ouvir a mesma
+      // coisa duas vezes é pior do que ouvi-la uma: quem escuta fica
+      // procurando a diferença que não existe.
+      //
+      // NADA SE PERDE. A contagem continua no rótulo, por extenso; o dorso
+      // nunca teve nome; e o texto abreviado continua DESENHADO, porque
+      // `excludeSemantics` tira da leitura, não da tela.
+      excludeSemantics: true,
+      // E A AÇÃO SOBE JUNTO, senão a exclusão levaria o toque embora.
+      //
+      // `excludeSemantics` apaga a árvore de semântica do filho, e é lá que
+      // mora a ação do `GestureDetector`. Sem esta linha sobraria um nó
+      // marcado como botão e SEM ação — que o TalkBack anuncia como botão e
+      // não obedece ao duplo toque. O dedo continua sendo atendido pelo
+      // `GestureDetector` abaixo; esta linha é o mesmo alvo pela outra porta,
+      // e as duas precisam existir.
+      onTap: habilitada ? onTap : null,
       // O TOQUE PEGA A PILHA INTEIRA, rótulo incluído. Com o gesto só na
       // imagem, o alvo é uma carta de 46 pontos de largura — pequeno para o
       // dedo, e menor ainda para quem tem pouca firmeza na mão. O rótulo está
