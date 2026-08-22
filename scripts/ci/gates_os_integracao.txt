@@ -115,8 +115,8 @@ cascaloja
 temavip
     suite      app/test/casca/tema_real_vip_ajustes_test.dart
     executor   roda temavip      test/casca/tema_real_vip_ajustes_test.dart
-    sha256     3150aaca81ee92cd9761008c985624b0261b37e449ef621f0418a70ff8b03852
-    provas     38
+    sha256     29e1a45d979bcdd2080a018089263e976a30584a39a8c098e79c857c515474e9
+    provas     52
     # SEM `casos`: o piso executado exigiria log, e a matriz do proprio
     # verificador (gate contratosui) monta um diretorio de evidencia sem ele.
     # A trava de conteudo continua inteira pelo `sha256` + `provas` + `exige` —
@@ -132,6 +132,16 @@ temavip
     exige      ('AST-14 a tela nunca mistura os dois conjuntos
     exige      ('DAD-24 a linha comercial chama-se Fichas e compras
     exige      ('A11Y-29 os nomes acessíveis são IGUAIS nos dois temas
+    # OS 39 — a arte aprovada entrou, e com ela o unico grupo do repositorio
+    # que ABRE os WebP e olha dentro: digesto, 256x256, alfa real, nada de
+    # fundo assado, legibilidade a 18 px e a prova de ATIVACAO pelo caminho de
+    # producao. Sem estes literais, apagar o grupo ART deixaria o portao verde
+    # com o Tema Real desligado e ninguem sabendo.
+    exige      group('ART
+    exige      ('ART-02 cada arquivo confere com o SHA-256 aprovado
+    exige      ('ART-05 o alfa é REAL
+    exige      ('ART-11 corromper UM arquivo derruba o conjunto inteiro
+    exige      kConjuntoRealVipRegistrado, isTrue
 
 # --- 4. suítes Flutter de Ranking Real e Perfil Publicável (entram por esta OS)
 # `rkbarreira` é a barreira temporal V2; `rkestado` guarda `EstadoRanking` como

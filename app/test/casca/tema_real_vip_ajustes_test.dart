@@ -18,6 +18,10 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:crypto/crypto.dart' show sha256;
 
 import 'package:buraco_master_vip/billing/acesso_vip.dart';
 import 'package:buraco_master_vip/elegibilidade/entitlement.dart';
@@ -208,6 +212,234 @@ Future<void> _assentar(WidgetTester t) async {
 }
 
 String _fonte(String caminho) => File(caminho).readAsStringSync();
+
+// ---------------------------------------------------------------------------
+// A arte: onde ela mora, o que ela é, e como se olha dentro dela
+// ---------------------------------------------------------------------------
+
+const String _dirDaArte = 'assets/ajustes/real';
+
+/// Os digestos APROVADOS, conferidos contra `SHA256SUMS.txt` do pacote
+/// `tema-real-vip-assets-v1.zip`
+/// (`8ef236fd64f9a3bf0c4dcddcd9bf5da3f86a29f788ac0d860658a74bcc99c3b6`).
+///
+/// Estão aqui, e não num arquivo ao lado, de propósito: uma tabela de hashes que
+/// mora junto do que ela guarda pode ser reescrita no mesmo commit sem aparecer
+/// como decisão. Trocar a arte passa a exigir trocar ESTA lista, no diff.
+const Map<String, String> _digestosAprovados = {
+  'editar_perfil.webp':
+      '8a2d81da512bf44c41822df2dd9a79332b3849aa569573e507b358034df086b5',
+  'assinatura_vip.webp':
+      'b93a1445e893c55ce7eb458a405d8d0ce8e0cd7ca9685b3bf3da0142ff5f9c45',
+  'fichas_e_compras.webp':
+      'a4ed40a0645cab6baf6a17a57c80663c443e165c1f6d097e47685c2aace0f60f',
+  'musica.webp':
+      'aab5866f36beb99f84420fe8398dff4c0c85a39e1b1de7c43c0086774d973350',
+  'efeitos_sonoros.webp':
+      'db9a0928db0fb72bd7ef4dcf11082cd5dd0ea7e901305b6448b312b2085fc9f1',
+  'vibracao.webp':
+      'b40b95fb0523be3656b6f5654481dc4f6059828f144e57781ef0015fa7f1cd30',
+  'notificacoes.webp':
+      'cf4f8c3908fa35b9b6404dcb32fc2735de8dea0a3120493da4fa7fd515064dbc',
+  'animacoes.webp':
+      'a820c2aeec9315cbd5e0f4d365817917e850fcc1274a9a114d7b5e4aeae63666',
+  'ordenar_cartas.webp':
+      'ebb6d41c90ba636454f0a6a1d48c4dabfe369250c9e91615e83a4e23214d9266',
+  'mao.webp':
+      '9d4ba7346c4818b34324ca9931643f870677573684754cc599d5caffb134924e',
+  'presenca_online.webp':
+      'c4c1eb811e2f045e52eea73335eb2f6516162fff973724f260469bc6a3280aaf',
+  'convites.webp':
+      'ca7a1d3fe919216ffe2f036e97863e350ec978a6e395991f2e1740f4e98b836c',
+  'jogadores_bloqueados.webp':
+      '2698f28b93e311c96040e4ca37cc500de00d4f8a53110b661de36b6f4a047d98',
+  'como_jogar.webp':
+      'b5fa759df9a5cad73cf8a93e2e5a107a203b24ba3c03193e5f97e7cf556e8de1',
+  'suporte.webp':
+      'efd1ea80bbd991aeef0543d6dfc660f481a8ac36e8d4d1d70236328aabe15411',
+  'avaliar_aplicativo.webp':
+      '6cee0fc959dab25140fc7104d4eebd7e76e501d57998936a31dc10638e492810',
+  'secao_conta.webp':
+      'a01fe79375c8ea505fc97a17ff82b14c76037dad973ac2f7b1cd298f65a24856',
+  'secao_som_e_notificacoes.webp':
+      '5f88111d7fbefaf0f1b4b592e5ea6fd994b113ccc37b3e800a5f9e130fb7f299',
+  'secao_jogo.webp':
+      'd06bebfb7ad918e90d0bc5d2021f4fdfba5601144d6addfd52dd8af4a114253b',
+  'secao_privacidade.webp':
+      '89e0c913d90c36ec92933bedbd3d94d177bda1f5b9abe834cb7a5c06f2435b34',
+  'secao_geral.webp':
+      'edca9681f7986d85b537646c55a707d0ce93a9298578ea07d524596cb2d063fa',
+  'titulo_ajustes.webp':
+      'b5a804424d2aba06fe9afc6929bfb7c7b8cdda41fcf3e3abe86cee049a9afd2b',
+  'confirmar_descarte.webp':
+      '5253ef584a68396f16b0860f9657170372e7f744f6a2fec8cc1ed304d73a4b8e',
+  'chat_publico.webp':
+      'f3b1c526595707442a350620d9bb717f7ff80e64bdda83f8149314ae2dcaabcd',
+  'idioma.webp':
+      'b013eb3c67e503b03b55fefa8b042c280c9b0189900ff38521e6015d9bf82e88',
+  'termos_e_privacidade.webp':
+      '2ebdf9861f700419838582da938ed834272ea472a36a6747c1571df292b23e31',
+  'orientacao_mesa.webp':
+      '5d9d7232a27bef442a7cc21651ca4eb8a93430a876b64324d2380f81403498d1',
+  'saldo_de_fichas.webp':
+      'b1e4dba34be2187b12d2d61ed0ef2015e3f0c3a6d2c430191e8f08e21318caaa',
+};
+
+/// Bundle servido pelos ARQUIVOS REAIS do repositório.
+///
+/// Existe porque `rootBundle` numa suíte de teste não carrega o manifesto de
+/// assets do aplicativo. Ler do disco prova o que interessa — que estes bytes
+/// abrem —, e [vazio] encena corrupção sem tocar em nenhum arquivo.
+class _BundleDoDisco extends CachingAssetBundle {
+  _BundleDoDisco({this.vazio = const {}});
+
+  /// Chaves que devem responder como arquivo corrompido (zero byte).
+  final Set<String> vazio;
+
+  final List<String> lidos = <String>[];
+
+  @override
+  Future<ByteData> load(String key) async {
+    lidos.add(key);
+    if (vazio.contains(key)) return ByteData(0);
+    final nome = key.split('/').last;
+    final arquivo = File('$_dirDaArte/$nome');
+    if (!arquivo.existsSync()) {
+      throw FlutterError('asset ausente no disco: $key');
+    }
+    return ByteData.view(arquivo.readAsBytesSync().buffer);
+  }
+
+  @override
+  Future<String> loadString(String key, {bool cache = true}) async =>
+      throw FlutterError('esta bancada só serve bytes');
+}
+
+/// Roda [corpo] com o relogio REAL.
+///
+/// `testWidgets` roda sob `FakeAsync`, e decodificar imagem depende de
+/// trabalho do engine que acontece FORA desse relogio: o `await` nunca
+/// devolve e o teste morre por timeout de dez minutos, sem uma linha de
+/// diagnostico. `runAsync` e a unica saida — e por isso nenhuma prova deste
+/// grupo pode bombear quadro: dentro dele, `pump` e proibido.
+Future<void> _comRelogioReal(
+  WidgetTester t,
+  Future<void> Function() corpo,
+) async {
+  await t.runAsync(corpo);
+}
+
+Future<ui.Image> _decodificar(String nome) async {
+  final bytes = File('$_dirDaArte/$nome').readAsBytesSync();
+  final codec = await ui.instantiateImageCodec(bytes);
+  final quadro = await codec.getNextFrame();
+  return quadro.image;
+}
+
+/// O que se aprende olhando os pixels de um ícone.
+class _Pixels {
+  const _Pixels({
+    required this.transparentes,
+    required this.opacos,
+    required this.cobertura,
+    required this.cantosTransparentes,
+    required this.brancoOpaco,
+    required this.bordaNaoTransparente,
+  });
+
+  /// Pixels com alfa exatamente zero.
+  final int transparentes;
+
+  /// Pixels com alfa 255.
+  final int opacos;
+
+  /// Fração de pixels com alguma tinta (alfa > 32).
+  final double cobertura;
+
+  /// Quantos dos quatro cantos estão transparentes.
+  final int cantosTransparentes;
+
+  /// Fração de pixels brancos E opacos — o rastro de um fundo esquecido.
+  final double brancoOpaco;
+
+  /// Fração do ANEL DE BORDA (1 px) que não é transparente.
+  ///
+  /// É a medida decisiva contra fundo assado: um fundo chapado — branco, preto
+  /// ou xadrez de editor — dá 100% aqui. Um desenho que só encosta na borda dá
+  /// frações de por cento. Os quatro cantos sozinhos são frágeis; o anel são
+  /// 1.020 pixels.
+  final double bordaNaoTransparente;
+}
+
+Future<_Pixels> _pixels(String nome) async {
+  final img = await _decodificar(nome);
+  final dados = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+  img.dispose();
+  final b = dados!.buffer.asUint8List();
+  final total = b.length ~/ 4;
+  var transparentes = 0, opacos = 0, comTinta = 0, branco = 0;
+  for (var i = 0; i < b.length; i += 4) {
+    final a = b[i + 3];
+    if (a == 0) transparentes++;
+    if (a == 255) opacos++;
+    if (a > 32) comTinta++;
+    if (a > 200 && b[i] > 240 && b[i + 1] > 240 && b[i + 2] > 240) branco++;
+  }
+  int alfaEm(int x, int y) => b[((y * img.width) + x) * 4 + 3];
+  final cantos = [
+    alfaEm(0, 0),
+    alfaEm(img.width - 1, 0),
+    alfaEm(0, img.height - 1),
+    alfaEm(img.width - 1, img.height - 1),
+  ].where((a) => a == 0).length;
+
+  var pixelsDaBorda = 0, naoTransparenteNaBorda = 0;
+  for (var x = 0; x < img.width; x++) {
+    for (final y in [0, img.height - 1]) {
+      pixelsDaBorda++;
+      if (alfaEm(x, y) != 0) naoTransparenteNaBorda++;
+    }
+  }
+  for (var y = 1; y < img.height - 1; y++) {
+    for (final x in [0, img.width - 1]) {
+      pixelsDaBorda++;
+      if (alfaEm(x, y) != 0) naoTransparenteNaBorda++;
+    }
+  }
+
+  return _Pixels(
+    transparentes: transparentes,
+    opacos: opacos,
+    cobertura: comTinta / total,
+    cantosTransparentes: cantos,
+    brancoOpaco: branco / total,
+    bordaNaoTransparente: naoTransparenteNaBorda / pixelsDaBorda,
+  );
+}
+
+/// Fração da caixa de 18x18 que ainda recebe tinta depois da redução.
+Future<double> _coberturaEm18px(String nome) async {
+  const lado = 18;
+  final img = await _decodificar(nome);
+  final gravador = ui.PictureRecorder();
+  final tela = Canvas(gravador);
+  tela.drawImageRect(
+    img,
+    Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+    const Rect.fromLTWH(0, 0, 18, 18),
+    Paint()..filterQuality = FilterQuality.high,
+  );
+  final pequena = await gravador.endRecording().toImage(lado, lado);
+  img.dispose();
+  final dados = await pequena.toByteData(format: ui.ImageByteFormat.rawRgba);
+  pequena.dispose();
+  final b = dados!.buffer.asUint8List();
+  var comTinta = 0;
+  for (var i = 3; i < b.length; i += 4) {
+    if (b[i] > 32) comTinta++;
+  }
+  return comTinta / (lado * lado);
+}
 
 /// Lê um arquivo da raiz do repositório a partir da pasta `app/`.
 String _daRaiz(String relativo) => _fonte('../$relativo');
@@ -1033,8 +1265,314 @@ void main() {
           reason: 'o tema escapou da tela de Ajustes');
     });
   });
-}
 
+  // -------------------------------------------------------------------------
+  // ART — a arte aprovada, byte a byte e pixel a pixel
+  //
+  // Este grupo entrou com a incorporação dos 28 desenhos. Ele não fala de
+  // elegibilidade nem de tema: fala dos ARQUIVOS. É o único lugar do
+  // repositório que abre os WebP e olha dentro deles, e é por isso que ele
+  // existe — um asset pode estar presente, registrado e citado no manifesto e
+  // ainda assim ser um retângulo branco opaco.
+  // -------------------------------------------------------------------------
+  group('ART — a arte aprovada', () {
+    test('ART-01 o diretório tem os 28 exigidos, e nada além', () {
+      final dir = Directory(_dirDaArte);
+      expect(dir.existsSync(), isTrue, reason: 'diretório da arte ausente');
+      final noDisco = dir
+          .listSync()
+          .whereType<File>()
+          .map((f) => f.path.replaceAll(r'\', '/').split('/').last)
+          .toSet();
+      final exigidos = arquivosDoTemaReal.values.toSet();
+
+      expect(exigidos.length, 28);
+      expect(noDisco.difference(exigidos), isEmpty,
+          reason: 'arquivo NÃO registrado no contrato: '
+              '${noDisco.difference(exigidos)}');
+      expect(exigidos.difference(noDisco), isEmpty,
+          reason: 'arquivo exigido e ausente: '
+              '${exigidos.difference(noDisco)}');
+    });
+
+    test('ART-02 cada arquivo confere com o SHA-256 aprovado', () {
+      expect(_digestosAprovados.length, 28);
+      expect(_digestosAprovados.keys.toSet(),
+          arquivosDoTemaReal.values.toSet(),
+          reason: 'a tabela de digestos e o contrato divergiram');
+      for (final entrada in _digestosAprovados.entries) {
+        final bytes = File('$_dirDaArte/${entrada.key}').readAsBytesSync();
+        final real = sha256.convert(bytes).toString();
+        expect(real, entrada.value,
+            reason: '${entrada.key} não é o arquivo aprovado');
+      }
+    });
+
+    test('ART-03 todos são WebP LOSSLESS 256x256 com alfa declarado', () {
+      for (final nome in arquivosDoTemaReal.values) {
+        final b = File('$_dirDaArte/$nome').readAsBytesSync();
+        expect(String.fromCharCodes(b.sublist(0, 4)), 'RIFF', reason: nome);
+        expect(String.fromCharCodes(b.sublist(8, 12)), 'WEBP', reason: nome);
+        // `VP8L` é o contêiner SEM PERDA. `VP8 ` seria com perda, e num ícone
+        // de 18 px o artefato de compressão come justamente o contorno fino.
+        expect(String.fromCharCodes(b.sublist(12, 16)), 'VP8L', reason: nome);
+        expect(b[20], 0x2F, reason: '$nome: assinatura VP8L errada');
+        final bits = b.buffer.asByteData().getUint32(21, Endian.little);
+        expect((bits & 0x3FFF) + 1, 256, reason: '$nome: largura');
+        expect(((bits >> 14) & 0x3FFF) + 1, 256, reason: '$nome: altura');
+        expect((bits >> 28) & 1, 1, reason: '$nome: alfa não declarado');
+      }
+    });
+
+    testWidgets('ART-04 os 28 decodificam de verdade, em 256x256', (t) async {
+      await _comRelogioReal(t, () async {
+      for (final nome in arquivosDoTemaReal.values) {
+        final img = await _decodificar(nome);
+        expect(img.width, 256, reason: nome);
+        expect(img.height, 256, reason: nome);
+        img.dispose();
+      }
+      });
+    });
+
+    testWidgets('ART-05 o alfa é REAL: há pixel transparente e pixel opaco',
+        (t) async {
+      await _comRelogioReal(t, () async {
+      // A prova de que o fundo foi RECORTADO, e não pintado de preto. Um PNG
+      // com fundo chapado também "tem canal alfa": o que ele não tem é pixel
+      // com alfa zero.
+      for (final nome in arquivosDoTemaReal.values) {
+        final p = await _pixels(nome);
+        expect(p.transparentes, greaterThan(0),
+            reason: '$nome não tem um único pixel transparente');
+        expect(p.opacos, greaterThan(0),
+            reason: '$nome não tem um único pixel opaco');
+      }
+      });
+    });
+
+    testWidgets('ART-06 nenhum é uma folha em branco', (t) async {
+      await _comRelogioReal(t, () async {
+      for (final nome in arquivosDoTemaReal.values) {
+        final p = await _pixels(nome);
+        expect(p.cobertura, greaterThan(0.05),
+            reason: '$nome está praticamente vazio '
+                '(${(p.cobertura * 100).toStringAsFixed(1)}% de tinta)');
+      }
+      });
+    });
+
+    testWidgets('ART-07 nenhum traz fundo branco ou xadrez embutido',
+        (t) async {
+      await _comRelogioReal(t, () async {
+      for (final nome in arquivosDoTemaReal.values) {
+        final p = await _pixels(nome);
+        // Os quatro cantos são o lugar onde um fundo esquecido aparece
+        // primeiro — e onde o xadrez do editor de imagem costuma sobrar.
+        expect(p.cantosTransparentes, 4,
+            reason: '$nome tem canto opaco: fundo não foi recortado');
+        // Os limiares vêm da MEDIDA do conjunto aprovado, e a distância é de
+        // ordens de grandeza — não são números ajustados para passar:
+        //   anel de borda ... máximo medido 0,69%; fundo assado daria 100%;
+        //   branco opaco ... máximo medido 2,00% (o vidro do espelho em
+        //                    `editar_perfil`); fundo branco daria mais de 50%.
+        expect(p.bordaNaoTransparente, lessThan(0.02),
+            reason: '$nome pinta '
+                '${(p.bordaNaoTransparente * 100).toStringAsFixed(1)}% do anel '
+                'de borda: fundo assado');
+        expect(p.brancoOpaco, lessThan(0.10),
+            reason: '$nome tem ${(p.brancoOpaco * 100).toStringAsFixed(1)}% '
+                'de branco opaco: fundo branco ou xadrez de editor');
+      }
+      });
+    });
+
+    testWidgets('ART-08 continuam legíveis reduzidos a 18 px', (t) async {
+      await _comRelogioReal(t, () async {
+      // 18 px é o tamanho de desenho na tela (`_iconeTile`). Um ícone que
+      // desaparece nessa redução é bonito no painel e inútil no aparelho; um
+      // que vira um bloco cheio perdeu o desenho e virou mancha.
+      for (final nome in arquivosDoTemaReal.values) {
+        final cobertura = await _coberturaEm18px(nome);
+        expect(cobertura, greaterThan(0.15),
+            reason: '$nome some a 18 px '
+                '(${(cobertura * 100).toStringAsFixed(1)}%)');
+        expect(cobertura, lessThan(0.98),
+            reason: '$nome vira mancha a 18 px '
+                '(${(cobertura * 100).toStringAsFixed(1)}%)');
+      }
+      });
+    });
+
+    test('ART-09 o pubspec declara o diretório, uma vez só', () {
+      final pubspec = _fonte('pubspec.yaml');
+      final linhas = pubspec
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l == '- assets/ajustes/real/')
+          .length;
+      expect(linhas, 1,
+          reason: 'a declaração do diretório da arte não está exatamente uma '
+              'vez em app/pubspec.yaml');
+      // FONTE ÚNICA: a lista não pode ser repetida em workflow, script ou
+      // manifesto auxiliar. Duas listas divergem no primeiro dia.
+      for (final caminho in const [
+        '../.github/workflows/ci-os-integracao.yml',
+        '../scripts/ci/gates_os_integracao.txt',
+      ]) {
+        expect(_fonte(caminho).contains('assets/ajustes/real'), isFalse,
+            reason: '$caminho passou a repetir a lista de assets');
+      }
+    });
+
+    testWidgets('ART-10 a chave está ligada e o conjunto inteiro abre',
+        (t) async {
+      await _comRelogioReal(t, () async {
+      expect(kConjuntoRealVipRegistrado, isTrue,
+          reason: 'o Tema Real está desligado');
+      final doDisco = _BundleDoDisco();
+      expect(await conjuntoRealDisponivel(bundle: doDisco), isTrue,
+          reason: 'o conjunto real não abriu inteiro a partir dos arquivos');
+      expect(doDisco.lidos.toSet(), chavesDeAssetDoTemaReal.toSet(),
+          reason: 'a pré-checagem não percorreu os 28');
+      });
+    });
+
+    testWidgets('ART-11 corromper UM arquivo derruba o conjunto inteiro',
+        (t) async {
+      await _comRelogioReal(t, () async {
+      for (final alvo in chavesDeAssetDoTemaReal) {
+        final bundle = _BundleDoDisco(vazio: {alvo});
+        expect(await conjuntoRealDisponivel(bundle: bundle), isFalse,
+            reason: '$alvo corrompido e o conjunto se disse completo');
+      }
+      });
+    });
+
+    testWidgets('ART-12 ATIVAÇÃO: o VIP vigente recebe o Tema Real pelo '
+        'caminho de produção', (t) async {
+      await _comRelogioReal(t, () async {
+      // Sem `registrado:` e sem `verificarConjunto:` — exatamente a chamada que
+      // o host faz. É esta prova que distingue "a arquitetura funciona" de "o
+      // tema está ligado".
+      final acesso = await _comPortao(
+        documento: _direito(EstadoEntitlement.ativo),
+      );
+      final r = await resolverTemaDeAjustes(
+        acesso: acesso,
+        verificarConjunto: () => conjuntoRealDisponivel(
+          bundle: _BundleDoDisco(),
+        ),
+      );
+      expect(r.tema, TemaIconografia.realVip);
+      expect(r.motivo, MotivoDoTema.concedido);
+      expect(r.icones.assetsUsados, chavesDeAssetDoTemaReal.toSet());
+      });
+    });
+
+    testWidgets('ART-13 e o público continua no Padrão pelo mesmo caminho',
+        (t) async {
+      await _comRelogioReal(t, () async {
+      for (final caso in <String, EntitlementVip?>{
+        'sem documento': null,
+        'expirado': _direito(
+          EstadoEntitlement.expirado,
+          ativo: false,
+          expira: DateTime.utc(2026, 1, 1),
+        ),
+      }.entries) {
+        final acesso = await _comPortao(documento: caso.value);
+        final r = await resolverTemaDeAjustes(
+          acesso: acesso,
+          verificarConjunto: () => conjuntoRealDisponivel(
+            bundle: _BundleDoDisco(),
+          ),
+        );
+        expect(r.tema, TemaIconografia.padrao, reason: caso.key);
+        expect(r.icones.assetsUsados, isEmpty, reason: caso.key);
+      }
+      });
+    });
+
+    testWidgets('ART-14 o Tema Real não acrescenta UM pixel de estouro em '
+        '320/360/412 dp a 100/150/200% de fonte', (t) async {
+      // Nove geometrias, e a razão de serem estas: 320 dp é o telefone pequeno
+      // que ainda existe, 412 dp o grande, 360 dp a mediana; 200% é o teto de
+      // ampliação que o Android oferece nas Configurações do sistema.
+      //
+      // A prova é COMPARATIVA, e é de propósito. Esta tela já estoura 22 px em
+      // 320 dp a 200% — no cabeçalho, entre o apelido flexível e a pastilha
+      // 'VIP' — e isso é dívida ANTERIOR a esta OS, medida idêntica nos dois
+      // temas. Um limiar absoluto aqui obrigaria esta missão a consertar layout
+      // que ela não veio consertar, ou a afrouxar o número até passar. A
+      // pergunta certa é outra: o ícone luxuoso, que tem a MESMA caixa de 18 px
+      // do glifo, acrescenta alguma coisa? A resposta tem de ser 'nada', e o
+      // teste falha se um único estouro ou corte aparecer só no Tema Real.
+      final bundle = _BundleDoDisco();
+      addTearDown(t.view.reset);
+
+      Future<(Set<String>, Set<String>)> medir(
+        ConjuntoDeIcones icones,
+        double largura,
+        double escala,
+      ) async {
+        t.view.physicalSize = Size(largura * 3, 12000);
+        t.view.devicePixelRatio = 3;
+        final estouros = <String>{};
+        final anterior = FlutterError.onError;
+        FlutterError.onError = (d) => estouros.add(d.exceptionAsString());
+        try {
+          await t.pumpWidget(
+            MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(escala)),
+              child: _telaCom(
+                icones: icones,
+                bundle: bundle,
+                perfil: const PerfilResumo(
+                  apelido: 'Jogadora',
+                  email: 'jogadora@exemplo.com',
+                  avatar: '👑',
+                  vip: true,
+                  fichas: 1200,
+                ),
+              ),
+            ),
+          );
+          await _assentar(t);
+        } finally {
+          FlutterError.onError = anterior;
+        }
+        return (
+          estouros.where((e) => e.contains('overflowed')).toSet(),
+          _cortesSilenciosos(t).toSet(),
+        );
+      }
+
+      for (final largura in const [320.0, 360.0, 412.0]) {
+        for (final escala in const [1.0, 1.5, 2.0]) {
+          final caso = '${largura.toInt()}dp @ ${(escala * 100).toInt()}%';
+          final (estouroPadrao, cortePadrao) =
+              await medir(conjuntoPadraoDeAjustes, largura, escala);
+          final (estouroReal, corteReal) =
+              await medir(conjuntoRealVipDeAjustes, largura, escala);
+
+          expect(estouroReal.difference(estouroPadrao), isEmpty,
+              reason: '$caso: estouro que só o Tema Real produz');
+          expect(corteReal.difference(cortePadrao), isEmpty,
+              reason: '$caso: corte que só o Tema Real produz');
+
+          // E a tela continua INTEIRA no Tema Real: os 28 arquivos, e nenhum
+          // glifo de chave variável sobrando.
+          final v = _varrer(t);
+          expect(v.assets.difference(chavesDeAssetDoTemaReal.toSet()), isEmpty,
+              reason: caso);
+          expect(v.glifos.intersection(_glifosVariaveis()), isEmpty,
+              reason: '$caso: sobrou glifo padrão na tela real');
+        }
+      }
+    });
+  });
+}
 // ---------------------------------------------------------------------------
 // Ferramentas de medição
 // ---------------------------------------------------------------------------
