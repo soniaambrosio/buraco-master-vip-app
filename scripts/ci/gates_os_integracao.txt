@@ -185,7 +185,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     77966085e9f0205a03faaa1dc6be827a24a76d49ca85f5e13653616fc3b4aaa1
+    sha256     90b322a4f6a1f79577d8dd033fcdf506ee7487b2202ee8b723e72f4b94c90bc5
     provas     37
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      34
@@ -310,3 +310,37 @@ composneg
 # que guarda a invariante RANKING-01 podia ficar vermelha sem ninguém saber.
 rkpagina
 composloja
+
+# --- 13. o saneamento da falsa recompensa da Mesa de Treino ----------------
+# A tela de Resultado do Treino oferecia um cartao de midia recompensada que
+# prometia credito na carteira pela continuidade. Credito nenhum existia: a
+# carteira canonica so aceita escrita do servidor, e o Treino nao movimenta
+# economia. A promessa saiu inteira, e `treinosan` guarda a remocao.
+#
+# O gate tem as DUAS metades que uma remocao exige. Os blocos SAN e CON sao
+# COMPORTAMENTO: a tela e montada e a arvore semantica percorrida, porque um
+# rotulo tirado do desenho e mantido na leitura de tela continua sendo a
+# promessa — e porque apagar a tela inteira passaria num teste que so afirma
+# ausencia. O bloco EST e ESTRUTURA: alcanca o que o comportamento nao alcanca,
+# que e codigo morto que compila e dependencia publicitaria declarada e ainda
+# nao usada.
+#
+# ATENCAO A QUEM FOR COMPOR ESTA FOLHA COM A LINHAGEM DE ACESSIBILIDADE:
+# `claude/a11y-resultado-legivel-tocavel-v1` reescreveu ESTE MESMO cartao para
+# torna-lo acessivel, e nao descende desta base. Compor aquela folha por cima
+# devolve a promessa — mais bem desenhada e igualmente falsa. `treinosan` fica
+# vermelho se isso acontecer, e e para isso que ele existe.
+treinosan
+    suite      app/test/mesa/saneamento_recompensa_treino_test.dart
+    executor   roda treinosan test/mesa/saneamento_recompensa_treino_test.dart
+    sha256     96e5886d0bbda3a94732b47598b3dd6016c2b00af6fe9fe4eedf19eedc58737d
+    provas     22
+    casos      22
+    exige      group('SAN
+    exige      group('CON
+    exige      group('EST
+    exige      ('SAN-06
+    exige      ('CON-02b
+    exige      ('EST-05
+    exige      _promessasProibidas
+    exige      _simbolosProibidos
