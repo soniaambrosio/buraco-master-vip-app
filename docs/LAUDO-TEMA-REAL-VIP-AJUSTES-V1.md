@@ -22,10 +22,30 @@ A lista exata do que falta está na seção 7.
 | --- | --- |
 | branch | `claude/tema-real-vip-iconografia-ajustes-v1` |
 | SHA do código | `dc3a46bc13267949cb7d96da0cf4c627b507c855` |
-| ponta da branch | `f1be5d09ceba81d8b68206274761d33d9d354310` (este laudo; um documento não pode conter o próprio SHA) |
-| local == remoto | sim (`git ls-remote` confere) |
+| ponta remota no selamento | `79e6ad89243606c2351930132b63c493d5758f65` |
+| local == remoto | sim, por `git ls-remote` (não por `refs/remotes/`) |
 | árvore | limpa |
 | deploy / PR / merge / force | nenhum |
+
+**Sobre os dois SHAs, e por que eles não podem ser um só.** Um documento não pode
+conter o próprio SHA: o commit que sela este laudo é, por construção, posterior ao
+SHA que ele nomeia. `79e6ad8` é a ponta remota **no instante do selamento**; o
+commit que carrega esta própria tabela é o seguinte, e é documental como os
+outros — mesma classe, mesmo diretório, nenhuma linha fora de `docs/`.
+
+O que fica provado, e é a afirmação que importa, é que **o código não mudou desde
+`dc3a46b`**:
+
+```text
+git diff-tree -r --name-status dc3a46b HEAD
+A   docs/LAUDO-TEMA-REAL-VIP-AJUSTES-V1.md
+```
+
+Uma linha, e só ela, em toda a árvore. As árvores de `app/`, `scripts/`,
+`.github/`, `android/`, `firebase/`, `ferramentas/`, `tools/`, `servidor/`, `web/`
+e das nove codebases de Functions têm **hash idêntico** nos dois commits — o de
+`app/` é `f3f195ee59b2` dos dois lados. Nenhum código, asset, teste, gate,
+workflow ou dependência foi tocado depois de `dc3a46b`.
 
 ## 2. Base e ancestralidade
 
@@ -356,10 +376,25 @@ Limpa. `git status --porcelain` vazio.
 
 ## 15. Confirmação local == remoto
 
+Conferido por `git ls-remote`, e não por `refs/remotes/` — o mapa local mente
+quando o refspec está truncado, e aqui ele foi conferido (`+refs/heads/*:refs/remotes/origin/*`).
+
 ```text
-local   dc3a46bc13267949cb7d96da0cf4c627b507c855
-remoto  dc3a46bc13267949cb7d96da0cf4c627b507c855   refs/heads/claude/tema-real-vip-iconografia-ajustes-v1
+local    79e6ad89243606c2351930132b63c493d5758f65
+remoto   79e6ad89243606c2351930132b63c493d5758f65   refs/heads/claude/tema-real-vip-iconografia-ajustes-v1
+árvore   limpa (git status --porcelain vazio)
 ```
+
+Commits posteriores ao SHA do código, e o que cada um tocou:
+
+| SHA | assunto | arquivos |
+| --- | --- | --- |
+| `f1be5d09ceba81d8b68206274761d33d9d354310` | `docs(tema): o laudo do Tema Real VIP dos Ajustes` | `A docs/LAUDO-TEMA-REAL-VIP-AJUSTES-V1.md` |
+| `79e6ad89243606c2351930132b63c493d5758f65` | `docs(tema): o laudo separa o SHA do codigo da ponta da branch` | `M docs/LAUDO-TEMA-REAL-VIP-AJUSTES-V1.md` |
+
+Os dois são **exclusivamente documentais**, e não por leitura da mensagem de
+commit: `git diff --name-status dc3a46b..HEAD -- . ':(exclude)docs'` devolve
+vazio, e o `diff-tree` recursivo da seção 1 devolve uma linha só.
 
 Push normal, sem `--force`.
 
