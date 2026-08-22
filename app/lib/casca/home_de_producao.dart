@@ -21,8 +21,8 @@
 // MENU: O QUE EXISTE E O QUE AINDA NÃO
 // ---------------------------------------------------------------------------
 //
-// Cinco destinos são reais: Perfil, Jogar, Como jogar, Ajustes e a Loja VIP.
-// Os outros três apontavam para prévias visuais — Ranking, Recompensas e Amigos
+// Seis destinos são reais: Perfil, Jogar, Como jogar, Ajustes, a Loja VIP e
+// Amigos. Os outros dois apontam para prévias visuais — Ranking e Recompensas
 // mostram dados inventados e nenhum deles tem backend ligado no cliente. Eles
 // continuam na grade, apagados e com selo, e o toque avisa. Sumir com o item
 // esconderia o plano; abrir a prévia venderia maquete como funcionalidade.
@@ -33,6 +33,12 @@
 // para `LojaDeProducao`, que só desenha o que tem autoridade: o selo VIP vindo
 // de `playerEntitlements/{uid}` e os planos que a Play devolveu. Ver
 // `loja_de_producao.dart`.
+//
+// AMIGOS MUDOU DE LADO PELO MESMO MOTIVO, e por outra OS: ele apontava para
+// prévia e passou a abrir `AmigosDeProducao`, alimentada por `listarAmigos`,
+// `listarSolicitacoes*` e `buscarJogadoresPorApelido`. A maquete
+// `screens/amigos_screen.dart` continua órfã de propósito. Ver
+// `amigos_de_producao.dart`.
 
 import 'package:flutter/material.dart';
 
@@ -46,8 +52,10 @@ import '../ranking/estado_ranking.dart';
 import '../screens/como_jogar_screen.dart';
 import '../screens/inicio_screen.dart';
 import '../screens/perfil_screen.dart' show NavDestino;
+import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
+import 'amigos_de_producao.dart';
 import 'configuracoes_de_producao.dart';
 import 'loja_de_producao.dart';
 import 'onde_jogar_de_producao.dart';
@@ -107,7 +115,14 @@ class HomeDeProducao extends StatelessWidget {
         // O e-mail da conta NÃO é exibido. Ele não acrescenta nada a quem já
         // está logado e é dado pessoal numa tela que qualquer um do lado vê.
         email: '',
-        avatar: identidade?.avatarRef ?? '👑',
+        // O `?? '👑'` que morava aqui virou `avatarPublicoDaIdentidade`, e o
+        // ganho não é de estilo: o `??` só cobria o `avatarRef` NULO. Uma
+        // referência vazia desenhava um círculo em branco, uma com espaços nas
+        // bordas desenhava o espaço junto, e uma que começasse com `https://`
+        // fazia o renderizador da tela abrir `Image.network` para o endereço
+        // que estivesse gravado no perfil. As três agora caem na mesma regra —
+        // a mesma que o Perfil passou a consultar.
+        avatar: avatarPublicoDaIdentidade(identidade),
         moldura: null,
         // Sem autoridade de economia no cliente.
         moedas: null,
@@ -153,7 +168,6 @@ class HomeDeProducao extends StatelessWidget {
           id: 'amigos',
           label: 'Amigos',
           icone: 'assets/inicio/menu_amigos.webp',
-          disponivel: false,
         ),
         MenuItem(
           id: 'loja',
@@ -219,7 +233,7 @@ class HomeDeProducao extends StatelessWidget {
       case 'recompensas':
         _aindaNao(context, 'Recompensas');
       case 'amigos':
-        _aindaNao(context, 'Amigos');
+        _abrirAmigos(context);
       case 'loja':
         _abrirLoja(context);
       default:
@@ -243,6 +257,15 @@ class HomeDeProducao extends StatelessWidget {
   void _abrirPerfil(BuildContext context) => Navigator.of(
     context,
   ).push(MaterialPageRoute<void>(builder: (_) => const PerfilPage()));
+
+  /// A porta produtiva para Amigos e para a descoberta social.
+  ///
+  /// Só empurra rota: não consulta nada. Quem consulta é a tela aberta, e ela
+  /// lê o escopo social que a raiz já mantém — abrir e fechar Amigos dez vezes
+  /// não emite dez consultas, do mesmo jeito que abrir o Ranking não emite.
+  void _abrirAmigos(BuildContext context) => Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const AmigosDeProducao()));
 
   void _abrirOndeJogar(BuildContext context) => Navigator.of(
     context,
