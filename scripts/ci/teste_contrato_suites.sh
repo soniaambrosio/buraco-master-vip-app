@@ -101,6 +101,7 @@ resultados() {
   # um `contador` proprio, e por isso este fixture nao pode copiar o formato
   # dos de cima.
   printf 'tests 34\npass 34\nfail 0\n' > "$d/t_comunicacaoemu.log"
+  printf 'tests 35\npass 35\nfail 0\n' > "$d/t_composloja.log"
   # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
   # ordem carimbo -> log ficar inequivoca sem esperar o relogio.
   touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log

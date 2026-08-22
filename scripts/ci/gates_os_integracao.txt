@@ -185,7 +185,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     a71a085ed883c479eb341e04a4b4b7c1be335e5bc5c642b0fc7c4eca4bacc7a3
+    sha256     767c802f36effb1d767b1a37e5bea8df78e34b24120b3589e081f187cb16668e
     provas     38
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      35
@@ -353,3 +353,14 @@ composneg
 # que guarda a invariante RANKING-01 podia ficar vermelha sem ninguém saber.
 rkpagina
 composloja
+    suite      ferramentas/composicao/loja_functions.test.js
+    executor   node --test ferramentas/composicao/loja_functions.test.js 2>&1 | tee t_composloja.log
+    sha256     1d4940bc46854d6f5fbe5c977b0405fb4a3430ce55bee3aa7030f28f2b52f962
+    provas     20
+    conta      ^[[:blank:]]*test\(
+    casos      35
+    contador   pass [0-9]+
+    exige      const DA_COMUNICACAO = ['chatdom', 'comunicacao', 'comunicacaoemu']
+    exige      const DA_LOJA
+    exige      const DAS_FUNCTIONS
+    exige      'functions-moderacao': [

@@ -108,9 +108,15 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # — protegido em presenca e execucao, e desprotegido no que a suite PROVA. Era
 # exatamente o buraco que a arquitetura P veio fechar, reaberto pela porta dos
 # fundos no gate mais recente.
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui comunicacaoemu"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 comunicacaoemu:32"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 comunicacaoemu:34"
+# `composloja` entra junto, e nao por simetria: e nele que mora `CL-05`, a
+# assinatura que reprova quando alguem apaga registro E produtor de um gate na
+# mesma edicao. Sem contrato, a propria ancora podia ser esvaziada em silencio —
+# bastava tirar um nome da lista `DA_COMUNICACAO` para o gate mais novo deixar
+# de ser exigido, e nenhuma guarda diria nada. Guarda que nao sobrevive a
+# propria remocao nao e guarda.
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui comunicacaoemu composloja"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 comunicacaoemu:32 composloja:20"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 comunicacaoemu:34 composloja:35"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
