@@ -244,6 +244,19 @@ jobs:
           # `avaliarContato`, que espectador não fala nem recebe, e que a projeção
           # não carrega UID, token, socket nem estado administrativo.
           roda chatdom      test/chat/chat_test.dart
+          # OS 38.2 — Lobby Público e presença agregada. Ver o bloco 13 de
+          # `scripts/ci/gates_os_integracao.txt` para o que cada uma guarda.
+          #
+          # `descadapt` LÊ `../contrato/descoberta-mesas-v1.json`. O caminho
+          # funciona nos dois lugares de propósito: aqui o CWD é `app_build/`, e
+          # na máquina de quem escreve é `app/` — os dois são irmãos de
+          # `contrato/` na raiz do repositório. Sem isso, o digest do contrato
+          # só seria conferido num dos dois.
+          roda descadapt    test/descoberta/contrato_e_adaptador_test.dart
+          roda descestado   test/descoberta/estado_e_agente_test.dart
+          roda deschome     test/descoberta/presenca_na_home_test.dart
+          roda descstbl     test/descoberta/apresentacao_stbl_test.dart
+          roda desclobby    test/descoberta/lobby_publico_test.dart
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.

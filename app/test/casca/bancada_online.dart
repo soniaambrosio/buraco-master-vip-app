@@ -116,7 +116,7 @@ class AutenticacaoFalsa implements ComandosDeAutenticacao {
   Future<void> sair() async {
     saidas++;
     _fluxo.add(null);
-  }
+  }
   @override
   /// O dublê não reautentica: nenhum teste desta casca exerce exclusão de
   /// conta, e devolver `false` é o que impede um caminho de exclusão de
@@ -241,6 +241,23 @@ class Bancada {
     sessao.dispose();
     fluxo.close();
   }
+
+  /// Silencia o transporte DENTRO do corpo do teste.
+  ///
+  /// POR QUE ISTO PASSOU A SER NECESSÁRIO. Desde a OS 38.2 a ponte de sessão
+  /// conecta assim que existe sessão autenticada — é o P0 "a presença nasce na
+  /// Home". Toda tela autenticada, portanto, tem transporte vivo, e transporte
+  /// vivo tem temporizador vivo: o limite de autenticação e, depois do
+  /// `autenticado`, o ritmo da descoberta.
+  ///
+  /// O `flutter_test` confere temporizadores pendentes AO FIM DO CORPO, antes
+  /// dos `addTearDown`. Então `addTearDown(b.fechar)` — que continua existindo
+  /// e continua certo — não chega a tempo, e o caso reprova com "Pending
+  /// timers" mesmo estando correto.
+  ///
+  /// Isto não afrouxa nada: é o equivalente a fechar o aplicativo, e nenhuma
+  /// asserção depende de o socket continuar aberto depois da última linha.
+  void aquietar() => online.desligar();
 }
 
 // ===========================================================================

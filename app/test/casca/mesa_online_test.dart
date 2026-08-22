@@ -127,6 +127,7 @@ void main() {
       );
       expect(find.textContaining('Cartas na sua mão:'), findsNothing);
       expect(find.byType(MesaOnlineScreen), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('a mesa mostra o que o servidor mandou', (tester) async {
@@ -145,6 +146,7 @@ void main() {
       expect(find.textContaining('Ana'), findsWidgets);
       expect(find.textContaining('Bot 2'), findsOneWidget);
       expect(find.text('11'), findsWidgets);
+      b.aquietar();
     });
   });
 
@@ -164,6 +166,7 @@ void main() {
       expect(find.byType(MesaOnlineScreen), findsNothing);
       expect(find.text('Código da mesa'), findsOneWidget);
       expect(find.text('BURACO-0001'), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('a visão de partida troca para a mesa UMA vez', (tester) async {
@@ -178,6 +181,7 @@ void main() {
 
       await servidorManda(tester, b, visaoDeJogo());
       expect(find.byType(MesaOnlineScreen), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('atualizações seguintes não empilham mesa nenhuma', (
@@ -197,6 +201,7 @@ void main() {
         );
       }
       expect(find.textContaining('Rodada 8'), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('a mesa é a mesma rota do lobby: um pop volta a Onde Jogar', (
@@ -216,6 +221,7 @@ void main() {
       expect(find.byType(MesaOnlineScreen), findsNothing);
       expect(find.byType(LobbyOnline), findsNothing);
       expect(find.byType(OndeJogarDeProducao), findsOneWidget);
+      b.aquietar();
     });
   });
 
@@ -245,6 +251,7 @@ void main() {
       // E nada de mesa com zeros: o placar não foi desenhado.
       expect(find.text('Sua dupla'), findsNothing);
       expect(find.text('Adversários'), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('a visão de OUTRO assento é recusada', (tester) async {
@@ -260,6 +267,7 @@ void main() {
 
       expect(find.byType(MesaOnlineScreen), findsNothing);
       expect(find.text('Não consegui entender a mesa'), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('a visão de um socket anterior não alcança a tela', (
@@ -296,6 +304,7 @@ void main() {
       expect(find.textContaining('Rodada 1'), findsOneWidget);
 
       await encerrarTransporte(tester, b);
+      b.aquietar();
     });
 
     testWidgets('a visão mais nova atualiza a mesa', (tester) async {
@@ -313,6 +322,7 @@ void main() {
       expect(find.textContaining('Rodada 2'), findsOneWidget);
       expect(find.text('É a sua vez'), findsNothing);
       expect(find.text('Vez de Bot 2'), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('a mesma visão duas vezes não acumula nada', (tester) async {
@@ -328,6 +338,7 @@ void main() {
       // mesmo retrato produz o mesmo desenho.
       expect(find.text('Sua mão · 3'), findsOneWidget);
       expect(find.byType(MesaOnlineScreen), findsOneWidget);
+      b.aquietar();
     });
   });
 
@@ -347,6 +358,7 @@ void main() {
       // Dos outros, contagem — e nenhuma carta.
       expect(find.text('11'), findsWidgets);
       expect(find.text('9'), findsWidgets);
+      b.aquietar();
     });
 
     testWidgets('cartas de outros assentos na visão não vazam para a tela', (
@@ -370,6 +382,7 @@ void main() {
         expect(texto.contains('CARTA-SECRETA-DO-VIZINHO'), isFalse);
         expect(texto.contains('CARTA-DO-MONTE'), isFalse);
       }
+      b.aquietar();
     });
   });
 
@@ -388,6 +401,7 @@ void main() {
       expect(b.canal.jogadas, [
         {'tipo': 'comprarMonte'},
       ]);
+      b.aquietar();
     });
 
     testWidgets('duplo toque não envia duas intenções', (tester) async {
@@ -410,6 +424,7 @@ void main() {
         reason: 'o protocolo não tem eventoId: a segunda compra chegaria como '
             'uma compra a mais',
       );
+      b.aquietar();
     });
 
     testWidgets('a intenção pendente aparece na tela', (tester) async {
@@ -422,6 +437,7 @@ void main() {
 
       expect(find.text('Comprando do monte…'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('descartar exige uma carta selecionada e manda o id dela', (
@@ -443,6 +459,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(b.canal.jogadas.single, {'tipo': 'descartar', 'id': 'c2'});
+      b.aquietar();
     });
 
     testWidgets('baixar manda a lista de ids selecionados', (tester) async {
@@ -463,6 +480,7 @@ void main() {
         'tipo': 'baixar',
         'ids': ['c1', 'c2'],
       });
+      b.aquietar();
     });
 
     testWidgets('fora da minha vez não há ação oferecida', (tester) async {
@@ -482,6 +500,7 @@ void main() {
       await tester.tap(find.text('Monte · 60'));
       await tester.pumpAndSettle();
       expect(b.canal.jogadas, isEmpty);
+      b.aquietar();
     });
 
     testWidgets('recusa de regra preserva o estado autoritativo', (
@@ -508,6 +527,7 @@ void main() {
       expect(find.text('essa carta não tem mola'), findsOneWidget);
       // E a mesa aceita a próxima tentativa.
       expect(b.canal.jogadas, hasLength(1));
+      b.aquietar();
     });
   });
 
@@ -541,6 +561,7 @@ void main() {
       expect(b.canal.jogadas, hasLength(antes));
 
       await encerrarTransporte(tester, b);
+      b.aquietar();
     });
 
     testWidgets('a mesa continua desenhada durante a reconexão', (
@@ -559,6 +580,7 @@ void main() {
       expect(find.textContaining('Rodada 1'), findsOneWidget);
 
       await encerrarTransporte(tester, b);
+      b.aquietar();
     });
 
     testWidgets('a retomada substitui a mesa pela visão nova', (tester) async {
@@ -585,6 +607,7 @@ void main() {
 
       expect(find.textContaining('Rodada 4'), findsOneWidget);
       expect(find.byType(MesaOnlineScreen), findsOneWidget);
+      b.aquietar();
     });
   });
 
@@ -609,6 +632,7 @@ void main() {
       expect(canalDaSessao.fechado, isTrue);
       expect(b.online.visao, isNull);
       expect(b.online.querConectado, isFalse);
+      b.aquietar();
     });
 
     testWidgets('trocar de conta elimina a pilha e o estado visual anterior', (
@@ -634,6 +658,7 @@ void main() {
       // correto, e que deixa o relógio de autenticação armado quando o caso
       // termina.
       await encerrarTransporte(tester, b);
+      b.aquietar();
     });
 
     testWidgets('sair da mesa não é sair da conta', (tester) async {
@@ -651,6 +676,7 @@ void main() {
       expect(find.byType(LobbyOnline), findsOneWidget);
       expect(find.text('Criar mesa'), findsOneWidget);
       expect(b.online.status, OnlineStatus.conectado);
+      b.aquietar();
     });
 
     testWidgets('falha terminal oferece ação explícita, sem laço', (
@@ -675,6 +701,7 @@ void main() {
         find.text('atualize o aplicativo para jogar online'),
         findsOneWidget,
       );
+      b.aquietar();
     });
   });
 
@@ -704,6 +731,7 @@ void main() {
       expect(find.text('🏆 Sua dupla venceu'), findsOneWidget);
       expect(find.text('Partida encerrada'), findsOneWidget);
       expect(find.textContaining('3010'), findsWidgets);
+      b.aquietar();
     });
 
     testWidgets('quem bateu é lido do servidor, não do placar', (tester) async {
@@ -732,6 +760,7 @@ void main() {
         findsOneWidget,
         reason: 'o placar da tela é relativo a quem está sentado',
       );
+      b.aquietar();
     });
 
     testWidgets('partida encerrada sem quem bateu não anuncia vencedor', (
@@ -750,6 +779,7 @@ void main() {
       expect(find.text('A partida terminou'), findsOneWidget);
       expect(find.text('🏆 Sua dupla venceu'), findsNothing);
       expect(find.text('A dupla adversária venceu'), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('encerrada a partida, nenhuma ação é oferecida', (
@@ -777,6 +807,7 @@ void main() {
       await tester.tap(find.text('Monte · 60'));
       await tester.pumpAndSettle();
       expect(b.canal.jogadas, hasLength(antes));
+      b.aquietar();
     });
   });
 
@@ -802,6 +833,7 @@ void main() {
         hasLength(1),
       );
       expect(b.canal.mensagens.first['tipo'], 'auth');
+      b.aquietar();
     });
 
     testWidgets('nenhuma conquista é concedida por inferência do cliente', (
@@ -829,6 +861,7 @@ void main() {
       expect(tipos.contains('conquista'), isFalse);
       expect(tipos.contains('ranking'), isFalse);
       expect(tipos.contains('perfil'), isFalse);
+      b.aquietar();
     });
   });
 }

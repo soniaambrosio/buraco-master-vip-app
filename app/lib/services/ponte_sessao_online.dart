@@ -26,26 +26,44 @@
 // conhece a UI.
 //
 // ---------------------------------------------------------------------------
-// A PONTE NÃO TOMA INICIATIVA — ELA PRESERVA A DO JOGADOR
+// A INICIATIVA MORA AQUI — E ISTO MUDOU NA OS 38.2
 // ---------------------------------------------------------------------------
 //
-// Numa troca de conta, a ponte derruba tudo e só então religa a conexão SE o
-// jogador já tinha pedido para estar online (`online.querConectado`). Isso não
-// é a ponte decidindo conectar: é ela não fazendo o jogador perder um pedido
-// que ele já tinha feito.
+// ANTES: a ponte não conectava nada. Quem tomava a iniciativa era a tela do
+// lobby, ao montar. A justificativa estava escrita e era boa para o que se
+// sabia então — "uma raiz que conectasse sozinha abriria socket para quem só
+// queria treinar contra os robôs".
 //
-// A alternativa — sempre deixar em `desconectado` — tem um buraco concreto: a
-// tela do lobby chama `conectar()` ao montar, e se o login chegar logo depois,
-// a tentativa em voo morreria na troca de geração e ninguém a refaria. O
-// jogador ficaria olhando "desconectado" sem nada para apertar.
+// O QUE MUDOU: passou a existir uma pergunta que só o servidor responde e que
+// a Home faz antes de qualquer tela de jogo — QUANTAS PESSOAS ESTÃO ONLINE. A
+// resposta vem da presença agregada (OS 38.1), e presença é, por definição,
+// uma afirmação sobre quem está no aplicativo AGORA.
 //
-// Do outro lado, logout NÃO religa: sem sessão autenticada não há credencial, e
-// insistir só produziria "entre na sua conta" em loop.
+// Com a iniciativa na tela do lobby, essa afirmação ficava impossível de fazer
+// com honestidade: uma pessoa com o aplicativo aberto na Home não estaria
+// conectada, logo não seria contada — e o número que a Home mostra estaria
+// errado exatamente sobre quem está olhando para ele. Pior: o número só
+// passaria a incluir a pessoa DEPOIS de ela visitar o Lobby, o que faz o total
+// subir por causa de navegação, e não de gente chegando.
 //
-// O que a ponte continua não decidindo: ela nunca conecta um transporte que o
-// jogador jamais pediu para conectar. Essa iniciativa é da Casca de Produção,
-// quando existir — e é para ela que este seam fica explícito aqui, em vez de
-// virar um `conectar()` escondido dentro do transporte.
+// Então a iniciativa subiu para cá, que é o lugar que o comentário anterior já
+// apontava ("essa iniciativa é da Casca de Produção, quando existir"). Ela
+// existe, e é esta ponte.
+//
+// O QUE NÃO MUDOU, e continua valendo:
+//
+//   * SÓ COM SESSÃO AUTENTICADA. Sem credencial não há o que apresentar, e
+//     insistir produziria "entre na sua conta" em laço. Logout NÃO religa.
+//   * UMA TRANSIÇÃO POR TROCA. Numa troca de conta a ponte derruba tudo e só
+//     então religa — do zero, com credencial nova, sem nada do jogador
+//     anterior em mãos.
+//   * A PONTE NÃO CONHECE TELA. Ela observa a sessão e fala com o transporte.
+//     Nenhuma rota, nenhum widget e nenhum `BuildContext` entram aqui.
+//
+// O treino contra robôs continua sem depender disto: ele roda no aparelho, e
+// um socket aberto não o afeta. O que se paga é uma conexão para quem está
+// logado e não vai jogar online — e é exatamente essa conexão que a presença
+// precisa para não mentir.
 
 import '../sessao/sessao_do_jogador.dart';
 import 'online_service.dart';
@@ -85,6 +103,16 @@ class PonteSessaoOnline {
   PonteSessaoOnline({required this.sessao, required this.online})
     : _geracao = sessao.geracao {
     sessao.addListener(_aoMudarSessao);
+    // [DESCOBERTA §3.1] PARTIDA FRIA COM SESSÃO JÁ RESTAURADA.
+    //
+    // O aplicativo sobe, a sessão já vem autenticada e a Home é a primeira
+    // tela. Nesse caminho a sessão NÃO notifica — ela já estava no estado
+    // final quando a ponte foi construída —, então esperar pela notificação
+    // deixaria a presença desligada até a pessoa fazer logout e login.
+    //
+    // É o caso mais comum que existe: toda abertura de aplicativo de quem já
+    // usou uma vez.
+    _talvezConectar();
   }
 
   final SessaoDoJogador sessao;
@@ -108,19 +136,29 @@ class PonteSessaoOnline {
     _geracao = agora;
     _transicoes++;
 
-    // O pedido do jogador é lido ANTES de encerrar — `encerrarSessao` o apaga.
-    final queriaEstarOnline = online.querConectado;
-
     // UMA chamada, que faz tudo: derruba socket, cancela reconexão e refresh
-    // pendentes, esvazia a fila, sobe a geração do transporte e apaga o estado
-    // privado do jogador anterior.
+    // pendentes, esvazia a fila, sobe a geração do transporte, apaga o estado
+    // privado do jogador anterior e APAGA O RETRATO DA DESCOBERTA.
+    //
+    // `querConectado` deixou de ser lido aqui, e isso não é descuido: desde
+    // esta OS a conexão não depende mais de o jogador ter pedido. Ela depende
+    // de haver sessão autenticada, e é a linha abaixo que decide isso.
     online.encerrarSessao();
 
-    // E só então, se havia pedido e há com quem autenticar, a conexão volta —
-    // do zero, com credencial nova, sem nada do jogador anterior em mãos.
-    if (queriaEstarOnline && sessao.estado.autenticado) {
-      online.conectar();
-    }
+    // E só então, se há com quem autenticar, a conexão volta — do zero, com
+    // credencial nova, sem nada do jogador anterior em mãos. Logout cai no
+    // `else` implícito: fica desconectado, que é o certo.
+    _talvezConectar();
+  }
+
+  /// Liga o transporte SE — e só se — há sessão autenticada.
+  ///
+  /// Ponto único: a construção e a troca de sessão passam pelos dois pelo mesmo
+  /// caminho, então não há como uma delas ganhar uma regra que a outra não tem.
+  void _talvezConectar() {
+    if (_descartada) return;
+    if (!sessao.estado.autenticado) return;
+    online.conectar();
   }
 
   void dispose() {

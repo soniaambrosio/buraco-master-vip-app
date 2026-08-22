@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import '../mesa.dart' show MesaScreen;
 import '../screens/onde_jogar_screen.dart';
 import 'lobby_online.dart';
+import 'lobby_publico_de_producao.dart';
 
 class OndeJogarDeProducao extends StatelessWidget {
   const OndeJogarDeProducao({super.key});
@@ -51,15 +52,25 @@ class OndeJogarDeProducao extends StatelessWidget {
             'Crie uma mesa e compartilhe o código, ou entre no código de alguém. '
             'É jogo online de verdade, no servidor.',
       ),
+      // [DESCOBERTA §10] DESBLOQUEADA — e a descrição diz exatamente o que ela
+      // entrega hoje, nem mais nem menos.
+      //
+      // Ela estava bloqueada com a nota "o pareamento automático ainda não
+      // existe", e isso era verdade. Continua sendo: entrar numa mesa pública é
+      // a OS 38.3. O que passou a existir é a LISTA — quem está jogando, em que
+      // mesa, com quantas vagas — e ver isso é útil por si só.
+      //
+      // Prometer "entre e jogue" aqui seria repetir o defeito que esta tela
+      // existe para não ter: uma opção que afirma o contrário do que faz.
       OpcaoMesa(
         id: 'publica',
         icone: '🌎',
         titulo: 'Mesa Pública',
+        badge: 'ONLINE',
+        corBadge: CorBadge.verde,
         descricao:
-            'Entrar sozinho e cair numa mesa com desconhecidos. O pareamento '
-            'automático ainda não existe nesta versão.',
-        nota: '🔒 Ainda não disponível',
-        bloqueado: true,
+            'Veja as mesas públicas abertas agora, quem está sentado e quantas '
+            'vagas faltam. Entrar numa delas chega na próxima atualização.',
       ),
       OpcaoMesa(
         id: 'vip',
@@ -88,6 +99,13 @@ class OndeJogarDeProducao extends StatelessWidget {
           case 'privada':
             Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const LobbyOnline()),
+            );
+          // [DESCOBERTA §10] O caminho real: Entrar em mesa → Lobby Público.
+          case 'publica':
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const LobbyPublicoDeProducao(),
+              ),
             );
           default:
             // Bloqueada. A tela desenha o cadeado mas REPASSA o toque — ela não

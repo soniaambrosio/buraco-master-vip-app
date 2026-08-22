@@ -103,7 +103,7 @@ class _AutenticacaoFalsa implements ComandosDeAutenticacao {
   Future<void> sair() async {
     saidas++;
     _fluxo.add(null);
-  }
+  }
   @override
   /// O dublê não reautentica: nenhum teste desta casca exerce exclusão de
   /// conta, e devolver `false` é o que impede um caminho de exclusão de
@@ -213,6 +213,13 @@ class _Bancada {
     sessao.dispose();
     fluxo.close();
   }
+
+  /// Silencia o transporte DENTRO do corpo do teste.
+  ///
+  /// Ver a mesma nota em `test/casca/bancada_online.dart`: desde a OS 38.2
+  /// toda tela autenticada tem transporte vivo, e o `flutter_test` confere
+  /// temporizadores pendentes AO FIM DO CORPO, antes dos `addTearDown`.
+  void aquietar() => online.desligar();
 }
 
 Future<void> _abrirAplicativo(WidgetTester tester, _Bancada b) async {
@@ -285,6 +292,7 @@ void main() {
       expect(find.byType(LoginDeProducao), findsOneWidget);
       expect(find.byType(ConfiguracoesDeProducao), findsNothing);
       expect(find.byType(HomeDeProducao), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('a troca de conta não herda a navegação da conta anterior', (
@@ -316,6 +324,7 @@ void main() {
         find.byType(Navigator).first,
       );
       expect(navegador.canPop(), isFalse);
+      b.aquietar();
     });
 
     testWidgets('é a GERAÇÃO que derruba a pilha, e não a troca de tela', (
@@ -340,6 +349,7 @@ void main() {
       expect(b.sessao.geracao, greaterThan(geracaoAntes));
       expect(find.byType(HomeDeProducao), findsOneWidget);
       expect(find.byType(ConfiguracoesDeProducao), findsNothing);
+      b.aquietar();
     });
   });
 
@@ -371,7 +381,8 @@ void main() {
     b.fluxo.add('uid-A');
     await tester.pumpAndSettle();
     expect(find.byType(HomeDeProducao), findsOneWidget);
-  });
+      b.aquietar();
+    });
 
   // =========================================================================
   // §4.4 — transporte
@@ -410,6 +421,7 @@ void main() {
       // construí-lo — e aqui o transporte foi injetado.
       b.canal.servidorEnvia({'tipo': 'autenticado'});
       await tester.pumpAndSettle();
+      b.aquietar();
     });
 
     testWidgets('sair e voltar ao lobby não abre um segundo socket', (
@@ -440,6 +452,7 @@ void main() {
       );
       expect(b.canais, hasLength(1));
       expect(b.online.status, OnlineStatus.conectado);
+      b.aquietar();
     });
 
     testWidgets('o logout cancela uma reconexão JÁ AGENDADA', (tester) async {
@@ -475,6 +488,7 @@ void main() {
       expect(b.online.querConectado, isFalse);
       expect(b.online.status, OnlineStatus.desconectado);
       expect(find.byType(LoginDeProducao), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('o logout no meio da autenticação fecha o socket em aberto', (
@@ -501,6 +515,7 @@ void main() {
       expect(b.aberturas, 1);
       expect(b.online.status, OnlineStatus.desconectado);
       expect(find.byType(LoginDeProducao), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('protocolo incompatível é terminal — não vira laço', (
@@ -532,6 +547,7 @@ void main() {
       // botão, mesmo sabendo que quem resolve é a loja.
       expect(find.text('Tentar de novo'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      b.aquietar();
     });
 
     testWidgets('o recado de estado terminal cabe na linha — REGRESSÃO', (
@@ -564,6 +580,7 @@ void main() {
       );
       expect(find.text('servidor em atualização — tente mais tarde'),
           findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('descartar a raiz solta o ouvinte da ponte', (tester) async {
@@ -594,6 +611,7 @@ void main() {
         reason: 'a ponte descartada não manda mais em transporte nenhum',
       );
       expect(b.aberturas, 1);
+      b.aquietar();
     });
   });
 
@@ -642,5 +660,6 @@ void main() {
       // sobra deste.
       await tester.pumpAndSettle(const Duration(seconds: 2));
     }
-  });
+      b.aquietar();
+    });
 }

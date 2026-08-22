@@ -194,3 +194,31 @@ composneg
 # que guarda a invariante RANKING-01 podia ficar vermelha sem ninguém saber.
 rkpagina
 composloja
+
+# --- 13. Lobby Público e presença agregada (OS 38.2) ------------------------
+# Cinco suítes, e cada uma guarda uma coisa que as outras não veem.
+#
+# `descadapt` é a FRONTEIRA: o digest do contrato copiado da OS 38.1 e a recusa
+# de todo retrato que não caiba nele — inclusive um que traga `jogadorId`, que
+# é o uid. Sem ele, uma regressão do servidor desenharia uid na tela.
+#
+# `descestado` é a ORDEM: geração, revisão, resposta atrasada e troca de conta.
+# É a única parte da descoberta que o cliente decide sozinho.
+#
+# `deschome` é o P0 da OS: a presença online nasce na Home autenticada, sem que
+# ninguém abra o Lobby. Remover a iniciativa da ponte de sessão reprova aqui, e
+# só aqui — nenhuma outra suíte percorre sessão → ponte → transporte → presença.
+#
+# `descstbl` é o segundo P0, e metade dele é VARREDURA DE CÓDIGO: a chave do
+# servidor (`sbtl`) não pode aparecer em `lib/casca` nem em `lib/screens`. Um
+# caso de tela só prova o que ele desenha; a varredura pega o tooltip que
+# alguém escrever amanhã.
+#
+# `desclobby` é a tela: ordem do servidor preservada, contagens não
+# recalculadas, estados honestos, ingresso ausente, e a matriz de 320/360/412 dp
+# por 100/130/150/175/200% de fonte.
+descadapt
+descestado
+deschome
+descstbl
+desclobby

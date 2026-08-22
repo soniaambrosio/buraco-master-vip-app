@@ -522,7 +522,12 @@ class _Modalidades extends StatelessWidget {
     const items = [
       (name: 'Aberto', subtitle: 'lixo espalhado'),
       (name: 'Fechado', subtitle: 'aceita trinca'),
-      (name: 'SBTL', subtitle: 'tradicional'),
+      // STBL, e não SBTL. As letras estavam trocadas aqui e em
+      // `mesa_screen.dart`, enquanto o resto do aplicativo já dizia STBL — o
+      // contrato de mesa, o lançamento da partida e a tela de preparação, com
+      // caso próprio cada um. A varredura da OS 38.2 encontrou os dois
+      // resíduos.
+      (name: 'STBL', subtitle: 'tradicional'),
     ];
 
     return Row(

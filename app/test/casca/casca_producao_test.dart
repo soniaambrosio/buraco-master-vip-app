@@ -128,7 +128,7 @@ class _AutenticacaoFalsa implements ComandosDeAutenticacao {
   Future<void> sair() async {
     saidas++;
     _fluxo.add(null);
-  }
+  }
   @override
   /// O dublê não reautentica: nenhum teste desta casca exerce exclusão de
   /// conta, e devolver `false` é o que impede um caminho de exclusão de
@@ -244,6 +244,23 @@ class _Bancada {
     sessao.dispose();
     fluxo.close();
   }
+
+  /// Silencia o transporte DENTRO do corpo do teste.
+  ///
+  /// POR QUE ISTO PASSOU A SER NECESSÁRIO. Desde a OS 38.2 a ponte de sessão
+  /// conecta assim que existe sessão autenticada — é o P0 "a presença nasce na
+  /// Home". Toda tela autenticada, portanto, tem transporte vivo, e transporte
+  /// vivo tem temporizador vivo: o limite de autenticação (15 s) e, depois do
+  /// `autenticado`, o ritmo da descoberta.
+  ///
+  /// O `flutter_test` confere temporizadores pendentes AO FIM DO CORPO, antes
+  /// dos `addTearDown`. Então `addTearDown(b.fechar)` — que continua existindo
+  /// e continua certo — não chega a tempo, e o caso reprova com "Pending
+  /// timers" mesmo estando correto.
+  ///
+  /// Isto não afrouxa nada: é o equivalente a fechar o aplicativo, e nenhuma
+  /// asserção depende de o socket continuar aberto depois da última linha.
+  void aquietar() => online.desligar();
 }
 
 /// Monta o aplicativo numa superfície de telefone e atravessa a abertura.
@@ -296,6 +313,7 @@ void main() {
 
       expect(find.byType(HomeDeProducao), findsOneWidget);
       expect(find.byType(LoginDeProducao), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('a Splash cobre a espera inteira, não só a animação', (
@@ -361,6 +379,7 @@ void main() {
         1,
         reason: 'a identidade é resolvida uma vez por sessão, não por quadro',
       );
+      b.aquietar();
     });
 
     testWidgets('o mesmo uid reemitido não abre segunda resolução', (
@@ -383,6 +402,7 @@ void main() {
       expect(b.fonte.chamadas, 1);
       expect(b.sessao.geracao, 1, reason: 'reemissão não é troca de sessão');
       expect(find.byType(HomeDeProducao), findsOneWidget);
+      b.aquietar();
     });
   });
 
@@ -410,6 +430,7 @@ void main() {
       // UMA resolução de identidade. Se houvesse um segundo observador do fluxo
       // de autenticação em algum canto da árvore, este número seria outro.
       expect(b.fonte.chamadas, 1);
+      b.aquietar();
     });
 
     testWidgets('login cancelado não vira mensagem de erro', (tester) async {
@@ -534,6 +555,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Bruno'), findsOneWidget);
       expect(find.text('Ana'), findsNothing);
+      b.aquietar();
     });
   });
 
@@ -559,6 +581,7 @@ void main() {
       expect(vm.jogador.email, isEmpty);
       expect(vm.jogador.moedas, isNot(maquete.jogador.moedas));
       expect(vm.jogador.liga, isNot(maquete.jogador.liga));
+      b.aquietar();
     });
 
     testWidgets('sem autoridade, o dado fica ausente — não vira zero', (
@@ -583,6 +606,7 @@ void main() {
       // E nada disso é desenhado com um valor de mentira.
       expect(find.textContaining('Liga '), findsNothing);
       expect(find.textContaining('online agora'), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('identidade em voo mostra carregamento, não cabeçalho', (
@@ -597,6 +621,7 @@ void main() {
 
       expect(telaInicial(tester).estado, InicioEstado.carregando);
       expect(find.text('Jogador(a)'), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('o menu não oferece destino que não existe', (tester) async {
@@ -625,6 +650,7 @@ void main() {
       expect(menu['ranking'], isFalse);
       expect(menu['recompensas'], isFalse);
       expect(menu['amigos'], isFalse);
+      b.aquietar();
     });
 
     testWidgets('tocar num item indisponível avisa e não navega', (
@@ -644,6 +670,7 @@ void main() {
 
       expect(find.byType(HomeDeProducao), findsOneWidget);
       expect(find.textContaining('ainda não está disponível'), findsOneWidget);
+      b.aquietar();
     });
   });
 
@@ -699,6 +726,7 @@ void main() {
       expect(find.byType(PerfilPage), findsOneWidget);
       // E a identidade REAL da sessão chega até lá.
       expect(find.text('Ana'), findsWidgets);
+      b.aquietar();
     });
 
     testWidgets('sem autoridade de ranking, nada de Bronze nem de #0', (
@@ -725,6 +753,7 @@ void main() {
       // neutro aprovado na linha canônica, e não a linha apagada.
       expect(find.text('💎 Liga'), findsOneWidget);
       expect(find.text('—'), findsWidgets);
+      b.aquietar();
     });
 
     testWidgets('progressão, estatísticas e conquistas ficam ausentes', (
@@ -761,6 +790,7 @@ void main() {
       // Nem no recado de estado vazio: "ainda sem conquistas" é uma frase sobre
       // a vida da pessoa, e ninguém conferiu.
       expect(texto, isNot(contains('Ainda sem conquistas')));
+      b.aquietar();
     });
 
     testWidgets('o convite copiado do Perfil alcançável não inventa nada', (
@@ -779,6 +809,7 @@ void main() {
       expect(texto, isNot(contains('Bronze')));
       expect(texto, isNot(contains('#')));
       expect(texto, isNot(contains('—')), reason: 'nem o travessão vaza');
+      b.aquietar();
     });
 
     testWidgets('o VM do Perfil alcançável não é a maquete', (tester) async {
@@ -794,6 +825,7 @@ void main() {
       expect(vm.ranking, isNot(maquete.ranking));
       expect(vm.stats, isNot(maquete.stats));
       expect(vm.conquistas, isNot(maquete.conquistas));
+      b.aquietar();
     });
   });
 
@@ -850,7 +882,20 @@ void main() {
       expect(find.byType(LobbyOnline), findsOneWidget);
     }
 
-    testWidgets('inicialização autenticada não abre socket nenhum', (
+    // ESTE CASO FOI INVERTIDO PELA OS 38.2, E A INVERSÃO É PROPOSITAL.
+    //
+    // Ele afirmava "inicialização autenticada não abre socket nenhum", com a
+    // razão escrita ao lado: subir o transporte na raiz não é conectar. Era
+    // verdade — e era uma AFIRMAÇÃO DATADA. O próprio `escopo_transporte.dart`
+    // dizia que a iniciativa passaria a ser "da Casca de Produção, quando
+    // existir". Ela existe, e a OS 38.2 a exige: a presença online tem de nascer
+    // na Home, sem depender de a pessoa visitar o Lobby.
+    //
+    // A troca NÃO afrouxa o guarda — ela o aperta. Antes se afirmava um número
+    // (zero). Agora se afirma EXATAMENTE UM, e mais duas coisas que o caso
+    // anterior não dizia: que isso acontece SEM passar pelo Lobby, e que a
+    // credencial apresentada é a da sessão.
+    testWidgets('inicialização autenticada abre UM socket, sem ir ao Lobby', (
       tester,
     ) async {
       final b = _Bancada(uidInicial: 'uid-A');
@@ -859,25 +904,52 @@ void main() {
       await _abrirAplicativo(tester, b);
       await _passarAAbertura(tester);
 
+      expect(find.byType(HomeDeProducao), findsOneWidget);
+      expect(
+        find.byType(LobbyOnline),
+        findsNothing,
+        reason: 'ninguém abriu o Lobby — a presença não pode depender dele',
+      );
+      expect(b.aberturas, 1, reason: 'a Home autenticada conecta, e uma vez só');
+      expect(b.canais, hasLength(1));
+      expect(b.online.querConectado, isTrue);
+      // E a credencial saiu pela sessão canônica, na primeira mensagem.
+      expect(b.canal.mensagens.first['tipo'], 'auth');
+      expect(b.canal.mensagens.first['token'], 'token-de-teste');
+      b.aquietar();
+    });
+
+    testWidgets('sem sessão NÃO há socket — conectar exige quem autenticar', (
+      tester,
+    ) async {
+      final b = _Bancada();
+      addTearDown(b.fechar);
+
+      await _abrirAplicativo(tester, b);
+      b.fluxo.add(null); // o fluxo se pronuncia: não há ninguém
+      await _passarAAbertura(tester);
+
+      expect(find.byType(LoginDeProducao), findsOneWidget);
       expect(
         b.aberturas,
         0,
-        reason: 'subir o transporte na raiz não é conectar',
+        reason: 'sem credencial não há o que apresentar; insistir daria laço',
       );
       expect(b.online.querConectado, isFalse);
     });
 
-    testWidgets('abrir o lobby conecta UMA vez, mesmo com o status mudando', (
-      tester,
-    ) async {
+    testWidgets('abrir o lobby NÃO abre um segundo socket', (tester) async {
       final b = _Bancada(uidInicial: 'uid-A');
       addTearDown(b.fechar);
 
       await _abrirAplicativo(tester, b);
       await _passarAAbertura(tester);
-      await irAoLobby(tester);
-
+      // Já conectou na Home. O Lobby encontra transporte de pé.
       expect(b.aberturas, 1);
+
+      await irAoLobby(tester);
+      expect(b.aberturas, 1, reason: 'um transporte pela vida do aplicativo');
+
       // O servidor aceita a credencial: o status muda, e cada mudança
       // reconstrói a tela. Nenhuma dessas reconstruções pode abrir outro
       // socket.
@@ -885,6 +957,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(b.aberturas, 1);
       expect(b.canais, hasLength(1));
+      b.aquietar();
     });
 
     testWidgets('logout fecha o socket e cancela a reconexão', (tester) async {
@@ -934,7 +1007,25 @@ void main() {
       // O token sai UMA vez, e só dentro da mensagem `auth`.
       final comToken = b.canal.enviadas.where((m) => m.contains(token));
       expect(comToken, hasLength(1));
-      expect(b.canal.mensagens.single['tipo'], 'auth');
+      expect(b.canal.mensagens.first['tipo'], 'auth');
+
+      // `mensagens.single` NÃO serve mais, e a razão é a OS 38.2: assim que a
+      // credencial é aceita, a descoberta pede a lista e pulsa a presença.
+      // Trocar `single` por `first` seria afrouxar; então a afirmação passou a
+      // ser mais forte — TODA mensagem que não é a credencial está no
+      // vocabulário conhecido, e NENHUMA delas carrega o token.
+      final demais = b.canal.mensagens.skip(1).toList();
+      expect(demais, isNotEmpty, reason: 'a descoberta tem de ter falado');
+      for (final m in demais) {
+        expect(
+          m['tipo'],
+          anyOf('descobrirMesas', 'presenca_ping'),
+          reason: 'mensagem inesperada no fio: $m',
+        );
+        expect(jsonEncode(m).contains(token), isFalse);
+        // E as duas são SEM CAMPOS — nada além do `tipo` atravessa.
+        expect(m.keys, ['tipo']);
+      }
 
       // E não está em nenhum texto desenhado, nem na URL do socket.
       final textos = tester
@@ -944,6 +1035,7 @@ void main() {
         expect(texto.contains(token), isFalse, reason: 'texto na tela: $texto');
       }
       expect(kEndpointDeTeste.contains(token), isFalse);
+      b.aquietar();
     });
   });
 

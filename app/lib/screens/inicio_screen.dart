@@ -45,7 +45,18 @@ class TemporadaBanner {
 class LobbyBanner {
   final String titulo;
   final String subtitulo;
-  final int online;
+
+  /// Quantas PESSOAS estão no aplicativo agora, ou `null` quando ainda não se
+  /// sabe.
+  ///
+  /// ANULÁVEL DE PROPÓSITO, e é a diferença que a OS 38.2 §9 cobra:
+  /// desconhecido não é zero. Zero é uma afirmação ("não tem ninguém"), e
+  /// desconhecido não afirma nada — o número simplesmente não é desenhado até
+  /// o servidor dizer qual é. Um `int` com zero de padrão faria a Home dizer
+  /// "0 jogadores online agora" durante todo o tempo de conexão, que é
+  /// exatamente quando alguém está olhando.
+  final int? online;
+
   final bool cadeadoVip;
 
   const LobbyBanner({
@@ -545,6 +556,14 @@ class _SeasonCard extends StatelessWidget {
   }
 }
 
+/// "N jogadores online agora", com o plural certo.
+///
+/// FUNÇÃO PRÓPRIA, e não interpolação solta, porque este texto é afirmado por
+/// teste e lido por leitor de tela. Montá-lo em dois lugares faria o rótulo
+/// visível e o rótulo acessível divergirem no primeiro ajuste de redação.
+String textoDePresenca(int online) =>
+    '$online ${online == 1 ? 'jogador' : 'jogadores'} online agora';
+
 class _LobbyCard extends StatelessWidget {
   final LobbyBanner lobby;
   final VoidCallback onTap;
@@ -553,6 +572,22 @@ class _LobbyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // UMA frase para quem usa leitor de tela, e os filhos descartados: o título
+    // e a linha de presença produziriam dois nós com pedaços da mesma
+    // informação, e a régua conta isso como duplicação semântica.
+    return Semantics(
+      button: true,
+      label: [
+        lobby.titulo,
+        if (lobby.online != null) textoDePresenca(lobby.online!),
+        lobby.subtitulo,
+      ].join('. '),
+      excludeSemantics: true,
+      child: _corpoDoCartao(),
+    );
+  }
+
+  Widget _corpoDoCartao() {
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -617,11 +652,17 @@ class _LobbyCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 2),
+                    // O NÚMERO SÓ APARECE QUANDO EXISTE. Sem ele, some a bolinha
+                    // verde junto: ela é o sinal de "tem gente lá", e sozinha
+                    // afirmaria o que o número ainda não sabe.
                     Text.rich(
                       TextSpan(
                         children: [
-                          const TextSpan(text: '🟢 '),
-                          TextSpan(text: '${lobby.online} online agora · '),
+                          if (lobby.online != null) ...[
+                            const TextSpan(text: '🟢 '),
+                            TextSpan(text: textoDePresenca(lobby.online!)),
+                            const TextSpan(text: ' · '),
+                          ],
                           TextSpan(text: lobby.subtitulo),
                         ],
                       ),

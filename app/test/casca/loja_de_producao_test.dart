@@ -172,6 +172,7 @@ void main() {
 
       expect(find.byType(LojaDeProducao), findsOneWidget);
       expect(find.byType(LojaScreen), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('o item da Loja não está mais apagado na grade', (
@@ -191,6 +192,7 @@ void main() {
       final inicio = tester.widget<InicioScreen>(find.byType(InicioScreen));
       final item = inicio.vm.menu.firstWhere((m) => m.id == 'loja');
       expect(item.disponivel, isTrue);
+      b.aquietar();
     });
 
     testWidgets('os Ajustes também abrem a Loja', (tester) async {
@@ -208,6 +210,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(LojaDeProducao), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('o ‹ da Loja volta para a Home, que continua viva', (
@@ -228,6 +231,7 @@ void main() {
 
       expect(find.byType(LojaDeProducao), findsNothing);
       expect(find.byType(HomeDeProducao), findsOneWidget);
+      b.aquietar();
     });
   });
 
@@ -249,6 +253,7 @@ void main() {
 
       expect(loja.uidsRecebidos, ['uid-A']);
       expect(loja.escutasAbertas, ['uid-A']);
+      b.aquietar();
     });
 
     testWidgets('sair da conta com a Loja aberta descarta a Loja', (
@@ -272,6 +277,7 @@ void main() {
 
       expect(find.byType(LojaDeProducao), findsNothing);
       expect(find.byType(LoginDeProducao), findsOneWidget);
+      b.aquietar();
     });
 
     testWidgets('sem sessão a Loja nem é alcançável', (tester) async {
@@ -289,6 +295,7 @@ void main() {
       // E nada de Billing montado: a tela pública não tem o que vender.
       expect(loja.uidsRecebidos, isEmpty);
       expect(loja.escutasAbertas, isEmpty);
+      b.aquietar();
     });
   });
 
@@ -322,6 +329,7 @@ void main() {
       expect(tela.vm.pacotes, isEmpty);
       expect(tela.vm.categorias, isEmpty);
       expect(tela.vm.amigos, isEmpty);
+      b.aquietar();
     });
 
     testWidgets('as seções de maquete não chegam à tela', (tester) async {
@@ -335,6 +343,7 @@ void main() {
       // E nenhum preço escrito no código: o único preço que a Loja pode exibir é
       // o `formattedPrice` que a Play devolveu.
       expect(find.textContaining('R\$'), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('sem planos, a vitrine explica em vez de ficar vazia', (
@@ -348,6 +357,7 @@ void main() {
             'catálogo vazio é o estado de hoje e precisa ser dito; um buraco no '
             'lugar da grade lê-se como aplicativo quebrado',
       );
+      b.aquietar();
     });
   });
 
@@ -368,6 +378,7 @@ void main() {
       expect(find.text('Seu acesso VIP está ativo'), findsNothing);
       expect(tester.widget<LojaScreen>(find.byType(LojaScreen)).vm.ehVip,
           isFalse);
+      b.aquietar();
     });
 
     testWidgets('o entitlement do backend acende o selo', (tester) async {
@@ -388,6 +399,7 @@ void main() {
         tester.widget<LojaScreen>(find.byType(LojaScreen)).vm.ehVip,
         isTrue,
       );
+      b.aquietar();
     });
 
     testWidgets('tocar em assinar NÃO acende o VIP', (tester) async {
@@ -422,6 +434,7 @@ void main() {
         reason: 'nenhum caminho do cliente pode conceder VIP',
       );
       expect(find.text('Seu acesso VIP está ativo'), findsNothing);
+      b.aquietar();
     });
 
     testWidgets('a Loja fechada não deixa escuta aberta', (tester) async {
@@ -444,6 +457,7 @@ void main() {
       loja.entitlements.add(_vipVigente('uid-A'));
       await tester.pumpAndSettle();
       expect(find.byType(HomeDeProducao), findsOneWidget);
+      b.aquietar();
     });
   });
 

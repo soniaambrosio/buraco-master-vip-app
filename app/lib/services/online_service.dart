@@ -77,6 +77,9 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../descoberta/agente_descoberta.dart';
+import '../descoberta/contrato_descoberta.dart';
+import '../descoberta/estado_descoberta.dart';
 import 'endpoint_servidor.dart';
 import 'redacao_segredos.dart';
 
@@ -163,10 +166,23 @@ class OnlineService extends ChangeNotifier {
     AbrirCanal? abrirCanal,
     Uri? endpoint,
     Random? aleatorio,
+    Duration? intervaloDeDescoberta,
+    DateTime Function()? relogioDaDescoberta,
   })  : _obterIdToken = obterIdToken,
         _abrirCanal = abrirCanal ?? WebSocketChannel.connect,
         _endpointFixo = endpoint,
-        _aleatorio = aleatorio ?? Random();
+        _aleatorio = aleatorio ?? Random() {
+    // [DESCOBERTA] O agente do ritmo nasce DESLIGADO. Quem o liga é
+    // `_aoAutenticar`, e ninguém mais — antes de autenticar o servidor
+    // recusaria as duas mensagens.
+    _agenteDaDescoberta = AgenteDeDescoberta(
+      pedirMesas: _enviarPedidoDeMesas,
+      pulsar: _enviarPulsoDePresenca,
+      relogio: relogioDaDescoberta,
+      intervaloDeDescoberta:
+          intervaloDeDescoberta ?? intervaloPadraoDeDescoberta,
+    );
+  }
 
   final ObterIdToken _obterIdToken;
   final AbrirCanal _abrirCanal;
@@ -239,6 +255,22 @@ class OnlineService extends ChangeNotifier {
   /// Geração do TRANSPORTE. Ver o cabeçalho do arquivo.
   int _geracaoTransporte = 0;
 
+  /// [DESCOBERTA] O retrato das mesas públicas e a presença agregada.
+  ///
+  /// MORA AQUI, e não numa tela, por uma razão que a OS 38.2 cobra em voz
+  /// alta: a presença precisa existir para quem nunca abre o Lobby. Se o
+  /// retrato pertencesse à tela, o número da Home só estaria certo depois de
+  /// alguém visitar o Lobby — e antes disso a pessoa seria contada como
+  /// ausente, com o aplicativo aberto na mão.
+  ///
+  /// É PROJEÇÃO SEPARADA de [visao]. As duas chegam pelo mesmo socket e não se
+  /// tocam: uma resposta `mesas` nunca escreve em `visao`, `codigo` ou
+  /// `meuAssento`, e o estado de uma partida em andamento não é afetado por
+  /// nada que aconteça aqui.
+  final EstadoDaDescoberta descoberta = EstadoDaDescoberta();
+
+  late final AgenteDeDescoberta _agenteDaDescoberta;
+
   bool get conectado => status == OnlineStatus.conectado;
   bool get autenticado => status == OnlineStatus.conectado;
   bool get noLobby => visao != null && visao!['lobby'] == true;
@@ -264,6 +296,39 @@ class OnlineService extends ChangeNotifier {
   void conectar() {
     _querConectado = true;
     _abrir();
+  }
+
+  /// [DESCOBERTA] Pede a lista de mesas públicas agora, se o limite de
+  /// frequência do contrato permitir.
+  ///
+  /// É a ÚNICA porta pela qual uma tela pede atualização. Devolve `true` quando
+  /// o pedido saiu — o botão Atualizar usa isso para não fingir que fez algo.
+  bool solicitarMesas() => _agenteDaDescoberta.solicitarMesas();
+
+  /// Diagnóstico e teste: quantos pedidos de mesa já saíram por este agente.
+  @visibleForTesting
+  int get pedidosDeMesasEnviados => _agenteDaDescoberta.pedidosDeMesasEnviados;
+
+  /// Diagnóstico e teste: o agente está pulsando?
+  @visibleForTesting
+  bool get descobertaLigada => _agenteDaDescoberta.ligado;
+
+  void _enviarPedidoDeMesas() {
+    // SEM CAMPOS, e sem passar pela fila de pendentes: uma consulta que ficou
+    // guardada porque o socket caiu não interessa mais quando ele voltar — o
+    // agente pede de novo, e o retrato velho seria descartado pela revisão de
+    // qualquer forma.
+    if (status != OnlineStatus.conectado || _canal == null) return;
+    descoberta.marcarPedidoEmVoo();
+    _bruto({'tipo': ContratoDaDescoberta.pedidoDeMesas});
+    notifyListeners();
+  }
+
+  void _enviarPulsoDePresenca() {
+    // SEM CAMPOS. Renova o lease do uid DESTA conexão, e não existe caminho
+    // pelo qual um total, uma contagem ou a presença de terceiro entrem aqui.
+    if (status != OnlineStatus.conectado || _canal == null) return;
+    _bruto({'tipo': ContratoDaDescoberta.pulsoDePresenca});
   }
 
   /// Recomeça depois de uma falha terminal — é o "tentar de novo" da tela.
@@ -465,6 +530,11 @@ class OnlineService extends ChangeNotifier {
   /// Fecha tudo (sair da tela online).
   void desligar() {
     _querConectado = false;
+    // [DESCOBERTA] O ritmo para JUNTO com a conexão. Um timer que continuasse
+    // pedindo por um socket que não existe é o "timer órfão" que a §8.3 proíbe
+    // — e ele não daria erro nenhum: `_enviarPedidoDeMesas` desiste calado,
+    // então o defeito seria um laço invisível gastando bateria.
+    _agenteDaDescoberta.parar();
     // O crachá sobe ANTES de qualquer outra coisa: é o que faz uma busca de
     // credencial ou uma abertura de socket já em voo desistirem ao voltar.
     _geracaoTransporte++;
@@ -507,6 +577,11 @@ class OnlineService extends ChangeNotifier {
     _tentativas = 0;
     _jaAutenticouNestaConexao = false;
     _limparProjecao();
+    // [DESCOBERTA] O retrato É DE UMA PESSOA. Numa troca de conta ele não é
+    // "velho", é de outra — e mostrar a lista que B recebeu enquanto A estava
+    // logado seria mostrar a A o que B viu. Este é o ÚNICO caminho que apaga o
+    // retrato; nem revisão atrasada nem resposta inválida apagam.
+    descoberta.encerrarSessao();
     desligar(); // sobe a geração, derruba tudo e notifica uma vez só
   }
 
@@ -565,6 +640,25 @@ class OnlineService extends ChangeNotifier {
         // A credencial venceu com a conexão de pé. O servidor dá uma carência
         // curta para apresentar um token novo — sem derrubar ninguém da mesa.
         _renovarCredencial();
+        return;
+      // [DESCOBERTA] AS DUAS PROJEÇÕES NÃO SE TOCAM.
+      //
+      // Este `case` termina com `return`, e não com `break`, exatamente como
+      // os de autenticação: cair no `notifyListeners()` do fim seria inofensivo
+      // hoje, mas o `break` colocaria a descoberta no mesmo caminho de saída
+      // que `visao`/`codigo`/`meuAssento` — e é esse caminho comum que, um dia,
+      // faria uma resposta de lista mexer numa partida em andamento.
+      case ContratoDaDescoberta.respostaDeMesas:
+        descoberta.aplicar(msg, geracaoDeTransporte: _geracaoTransporte);
+        notifyListeners();
+        return;
+      case ContratoDaDescoberta.reciboDePulso:
+        final sugerido = msg['intervaloSugeridoMs'];
+        if (sugerido is int && sugerido > 0) {
+          _agenteDaDescoberta.aoReceberRecibo(
+            intervaloSugerido: Duration(milliseconds: sugerido),
+          );
+        }
         return;
       case 'atualizacaoObrigatoria':
         _falhaTerminal(
@@ -684,7 +778,20 @@ class OnlineService extends ChangeNotifier {
     _tentativas = 0;
     erro = null;
     erroCodigo = null;
+
+    // [DESCOBERTA] A PRESENÇA COMEÇA AQUI, e é o P0 desta OS.
+    //
+    // Não em `conectar()` (o socket ainda não vale nada), não numa tela (nem
+    // toda pessoa abre o Lobby) e não no `build` de coisa nenhuma. Aqui, no
+    // instante em que o servidor aceitou a credencial — que é o instante em que
+    // a pessoa passa a existir para ele.
+    //
+    // O crachá do transporte é carimbado ANTES de o agente pedir qualquer
+    // coisa: é ele que faz uma resposta da conexão anterior ser descartável.
+    descoberta.definirGeracaoDeTransporte(_geracaoTransporte);
+    descoberta.marcarAguardandoRetrato();
     notifyListeners();
+    _agenteDaDescoberta.iniciar();
 
     // Se caímos e voltamos com uma mesa aberta, tenta reentrar na mesma mesa.
     // Quem essa reentrada pertence é decidido pelo servidor, a partir do token —
@@ -714,6 +821,12 @@ class OnlineService extends ChangeNotifier {
   /// demais, servidor velho demais, build mal configurado, tentativas esgotadas.
   void _falhaTerminal(OnlineStatus novo, String mensagem) {
     _querConectado = false;
+    // [DESCOBERTA] O ciclo automático desistiu: o ritmo para e a superfície
+    // passa a dizer isso. O retrato que estiver na tela CONTINUA — ele foi
+    // verdade há pouco, e apagá-lo faria a tela afirmar "não há mesas", que é
+    // outra coisa.
+    _agenteDaDescoberta.parar();
+    descoberta.marcarServidorIndisponivel();
     _geracaoTransporte++; // nada que estiver em voo pode ressuscitar isto
     _reconectarTimer?.cancel();
     _reconectarTimer = null;
@@ -751,10 +864,15 @@ class OnlineService extends ChangeNotifier {
     _sub?.cancel();
     _sub = null;
     _canal = null;
+    // [DESCOBERTA] Caiu: para de pedir e marca "reconectando". O retrato fica
+    // na tela, marcado como possivelmente velho — uma lista de dez segundos
+    // atrás é mais útil e mais honesta do que uma tela vazia.
+    _agenteDaDescoberta.parar();
     if (_estadoTerminal) return; // insistir não resolveria
     if (status == OnlineStatus.conectado ||
         status == OnlineStatus.autenticando) {
       status = OnlineStatus.conectando; // vamos tentar voltar
+      descoberta.marcarReconectando();
       notifyListeners();
     }
     if (_querConectado) _agendarReconexao();
@@ -799,6 +917,11 @@ class OnlineService extends ChangeNotifier {
 
   @override
   void dispose() {
+    // [DESCOBERTA] `descartar`, e não `parar`: depois disto o agente não religa
+    // nem se alguém chamar `iniciar`. É o que impede uma resposta tardia —
+    // `autenticado` chegando por um socket que ainda não fechou — religar os
+    // timers de um transporte que já foi descartado.
+    _agenteDaDescoberta.descartar();
     desligar();
     super.dispose();
   }

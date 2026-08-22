@@ -49,6 +49,8 @@ import '../screens/perfil_screen.dart' show NavDestino;
 import '../sessao/escopo_sessao.dart';
 import '../sessao/identidade_publica_sessao.dart';
 import 'configuracoes_de_producao.dart';
+import 'escopo_transporte.dart';
+import 'lobby_publico_de_producao.dart';
 import 'loja_de_producao.dart';
 import 'onde_jogar_de_producao.dart';
 
@@ -62,9 +64,20 @@ class HomeDeProducao extends StatelessWidget {
     // valor é `rankingDaCascaPublicavel` — a Home continua omitindo a linha,
     // como sempre fez.
     final ranking = EscopoRanking.meuEstadoDe(context);
+    // [DESCOBERTA §9] A PRESENÇA, do transporte canônico.
+    //
+    // Ler daqui é o que faz a Home reconstruir quando o número muda — o escopo
+    // é um `InheritedNotifier` sobre o próprio transporte. E é LEITURA: a Home
+    // não conecta, não pede e não guarda nada. Quem conecta é a ponte de
+    // sessão; quem pede é o agente de ritmo, dentro do transporte.
+    //
+    // `null` quando não há transporte (prévia isolada) ou quando o servidor
+    // ainda não respondeu. Nos dois casos a linha inteira some — não vira zero.
+    final online = EscopoTransporte.talvezDe(context);
+    final jogadoresOnline = online?.descoberta.jogadoresOnlineTotal;
 
     return InicioScreen(
-      vm: _vmDaSessao(identidade, ranking),
+      vm: _vmDaSessao(identidade, ranking, jogadoresOnline),
       // A fase da identidade MANDA na tela, do mesmo jeito que no Ranking:
       // enquanto ela carrega, a Home mostra o esqueleto; se falhou, mostra erro
       // com retry. O que ela não faz em nenhum dos dois é seguir em frente com
@@ -86,7 +99,11 @@ class HomeDeProducao extends StatelessWidget {
       // chegam a ser acionados. Continuam preenchidos porque um callback vazio
       // viraria, no dia em que a fonte existir, um botão silencioso.
       onAbrirTemporada: () => _aindaNao(context, 'Temporadas'),
-      onAbrirLobby: () => _aindaNao(context, 'Saguão'),
+      // [DESCOBERTA §9] O acesso conduz ao Lobby Público. Ele só existe quando
+      // há presença para mostrar — ver `_vmDaSessao`.
+      onAbrirLobby: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const LobbyPublicoDeProducao()),
+      ),
       onMenuTap: (id) => _menu(context, id),
       // Retry EXPLÍCITO, nascido do gesto. `recarregar` é deduplicada: apertar
       // duas vezes não abre duas chamadas.
@@ -99,7 +116,11 @@ class HomeDeProducao extends StatelessWidget {
   // O VM
   // ---------------------------------------------------------------------------
 
-  InicioVM _vmDaSessao(EstadoIdentidadeSessao estado, EstadoRanking ranking) {
+  InicioVM _vmDaSessao(
+    EstadoIdentidadeSessao estado,
+    EstadoRanking ranking,
+    int? jogadoresOnline,
+  ) {
     final identidade = estado.identidade;
     return InicioVM(
       jogador: CabecalhoJogador(
@@ -128,9 +149,30 @@ class HomeDeProducao extends StatelessWidget {
         // espaço para dizê-lo por extenso.
         liga: ranking.ehLigaDeVerdade ? ranking.liga : null,
       ),
-      // Sem autoridade de temporada nem de saguão.
+      // Sem autoridade de temporada.
       temporada: null,
-      lobby: null,
+      // [DESCOBERTA §9] O SAGUÃO PASSOU A TER AUTORIDADE.
+      //
+      // Era `null` porque não havia fonte para "gente online" — e a regra desta
+      // Home é que dado sem fonte não é desenhado. A fonte agora existe: a
+      // presença agregada da OS 38.1.
+      //
+      // O banner só entra quando o número JÁ CHEGOU. Enquanto não chegou, a
+      // linha inteira continua fora — que é o mesmo tratamento que moedas e
+      // liga recebem, e a razão é a mesma: um acesso que dissesse "0 jogadores
+      // online agora" durante toda a conexão afirmaria o contrário da verdade
+      // no instante em que a pessoa está olhando.
+      //
+      // `cadeadoVip: false` porque o Lobby Público não é benefício de
+      // assinante. O cadeado é da Mesa VIP, que não é esta.
+      lobby: jogadoresOnline == null
+          ? null
+          : LobbyBanner(
+              titulo: 'Lobby Público',
+              subtitulo: 'veja as mesas abertas agora',
+              online: jogadoresOnline,
+              cadeadoVip: false,
+            ),
       menu: const [
         MenuItem(
           id: 'perfil',
