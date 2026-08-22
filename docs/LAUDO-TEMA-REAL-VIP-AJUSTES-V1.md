@@ -21,7 +21,8 @@ A lista exata do que falta está na seção 7.
 | item | valor |
 | --- | --- |
 | branch | `claude/tema-real-vip-iconografia-ajustes-v1` |
-| SHA final | `dc3a46bc13267949cb7d96da0cf4c627b507c855` |
+| SHA do código | `dc3a46bc13267949cb7d96da0cf4c627b507c855` |
+| ponta da branch | `f1be5d09ceba81d8b68206274761d33d9d354310` (este laudo; um documento não pode conter o próprio SHA) |
 | local == remoto | sim (`git ls-remote` confere) |
 | árvore | limpa |
 | deploy / PR / merge / force | nenhum |
