@@ -1315,6 +1315,51 @@ void main() {
       expect(importados, ['identidade_publica_sessao.dart']);
     });
 
+    test('o Hall continua alcançável, e por um produtor de verdade', () {
+      // ESTE CASO EXISTE POR UMA MUTAÇÃO QUE ESCAPOU.
+      //
+      // A composição que trouxe este arquivo quase removeu o Hall da produção:
+      // trocar o destino de Ranking do Perfil tirava `ranking_page.dart` do
+      // fecho, e com ele iam `hall_page`, `hall_screen`, `hall_service`,
+      // `hall_contract` e mais cinco. O total do fecho pegou aquele caso —
+      // porque o import sumiu junto.
+      //
+      // Mas a MUTAÇÃO PARCIAL escapa do total: trocar só a CONSTRUÇÃO e deixar
+      // o import passa despercebido, o fecho continua com 127 arquivos e o Hall
+      // fica inalcançável para o dedo do jogador — presente na árvore, ausente
+      // do aplicativo. Contar arquivo não é o mesmo que provar navegação.
+      for (final caminho in const [
+        'lib/pages/ranking_page.dart',
+        'lib/pages/hall_page.dart',
+        'lib/services/hall_service.dart',
+      ]) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — o Hall deixou de existir',
+        );
+      }
+      // E alguém, fora do arquivo que a declara, tem de CONSTRUIR a página.
+      final produtores = alcancaveis.where((c) {
+        // FORA DO CICLO: `ranking_page` e `hall_page` constroem um ao outro, e
+        // esse par sozinho se sustenta enquanto ALGUÉM de fora o alcançar. Se a
+        // única porta externa sumir, os dois continuam se citando e a lista
+        // pareceria saudável — foi assim que a primeira versão desta guarda
+        // deixou a mutação passar.
+        if (c.endsWith('lib/pages/ranking_page.dart')) return false;
+        if (c.endsWith('lib/pages/hall_page.dart')) return false;
+        final f = File(c);
+        if (!f.existsSync()) return false;
+        return _codigo(f).contains('const RankingPage()');
+      }).toList();
+      expect(
+        produtores,
+        isNotEmpty,
+        reason: 'ninguém mais constrói RankingPage — o Hall continua na árvore '
+            'e ficou sem porta, que é o defeito que o total do fecho não vê',
+      );
+    });
+
     test('nada do que a OS proíbe entrou no fecho', () {
       // A PRÉVIA DO RANKING: o alvo mudou de CAMINHO para CONTEÚDO, e a guarda
       // ficou mais estrita, não menos.

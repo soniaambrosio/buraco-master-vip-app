@@ -332,9 +332,9 @@ composloja
 avatarcanon
     suite      app/test/casca/avatar_publico_canonico_test.dart
     executor   roda avatarcanon test/casca/avatar_publico_canonico_test.dart
-    sha256     7abf28b66f318cad2093e2420b0d14929fc1fa18b5ede03778fb82d8d85df12a
-    provas     37
-    casos      37
+    sha256     cea6eb4e8b0def0721be379bbe8d7207928ebeb18fa260238bdf523d98da6c86
+    provas     38
+    casos      38
     exige      group('resolvedor canônico
     exige      group('Home e Perfil consomem a mesma autoridade
     exige      group('auditoria estrutural
