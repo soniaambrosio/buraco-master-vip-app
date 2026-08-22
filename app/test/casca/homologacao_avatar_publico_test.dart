@@ -1431,17 +1431,30 @@ void main() {
     });
 
     test('H-E04 nem Home nem Perfil alcançam Firestore ou publicProfiles', () {
-      for (final externo in [
-        'package:cloud_firestore/cloud_firestore.dart',
-        'package:firebase_auth/firebase_auth.dart',
-      ]) {
-        expect(
-          fecho,
-          isNot(contains(externo)),
-          reason: 'o fecho de Home+Perfil passou a alcançar $externo',
-        );
-      }
+      // REANCORADO PARA A RAIZ P, com os caminhos preexistentes NOMEADOS.
+      //
+      // A linhagem funcional não tinha Billing pendurado na Home, e exigir que
+      // o fecho de Home+Perfil não alcançasse Firestore era exato. A raiz P
+      // tem: `home_de_producao` -> `configuracoes_de_producao` ->
+      // `billing/entitlement_repositorio` -> `cloud_firestore`, que é o
+      // repositório do selo VIP. Medido: a raiz P SOZINHA, sem nada desta
+      // composição, já alcança — logo não é regressão desta folha.
+      //
+      // A invariante que importa continua inteira, e agora é dita direito: o
+      // caminho das TELAS não lê Firestore. Quem pode alcançar o pacote é o
+      // repositório de Billing, nomeado abaixo; qualquer OUTRO arquivo do
+      // fecho que passe a ler direto reprova, e `firebase_auth` continua
+      // proibido para todo mundo.
+      const portadoresPreexistentes = [
+        'lib/billing/entitlement_repositorio.dart',
+      ];
+      expect(
+        fecho,
+        isNot(contains('package:firebase_auth/firebase_auth.dart')),
+        reason: 'o fecho de Home+Perfil passou a alcançar firebase_auth',
+      );
       for (final f in arquivos) {
+          if (portadoresPreexistentes.any(f.endsWith)) continue;
         final codigo = _semComentarios(_texto(f));
         for (final agulha in [
           'publicProfiles',

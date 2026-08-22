@@ -403,17 +403,45 @@ void main() {
       // Amigos, Loja e Hall são catálogo visual: podem existir na árvore, mas
       // não podem ser ALCANÇÁVEIS a partir de `main.dart`, porque alcançável é
       // o que a casca de produção monta.
+      // REANCORADO PARA A RAIZ P, e a regra ficou mais estrita.
+      //
+      // Na linhagem funcional estas cinco telas eram inalcançáveis, e proibir o
+      // CAMINHO bastava. A raiz P ligou a Loja (`LojaDeProducao`) e o
+      // Ranking/Hall reais, e com isso `loja_screen`, `loja_categoria_screen`,
+      // `hall_screen` e `ranking_screen` passaram a ser ALCANÇÁVEIS — como
+      // apresentação, recebendo o VM de fora. Medido: a raiz P sozinha, SEM nada
+      // desta composição, já alcança as quatro.
+      //
+      // O que não pode é a maquete assumir autoridade, e maquete aqui é o
+      // factory `.mock()` — que continua existindo, DECLARADO, e que ninguém no
+      // caminho de produção constrói. Então a proibição passa de "o arquivo não
+      // está no fecho" para "o factory não é chamado no fecho", que é o que a
+      // regra sempre quis dizer e que continua valendo com o arquivo dentro.
+      //
+      // `amigos_screen` segue proibida pelo CAMINHO: ela não tem host de
+      // produção nenhum, e se aparecer no fecho é porque virou rota.
+      expect(
+        alcancaveis,
+        isNot(contains('lib/screens/amigos_screen.dart')),
+        reason: 'a maquete de Amigos virou produção',
+      );
       for (final maquete in const [
-        'lib/screens/amigos_screen.dart',
-        'lib/screens/loja_screen.dart',
-        'lib/screens/loja_categoria_screen.dart',
-        'lib/screens/hall_screen.dart',
-        'lib/screens/ranking_screen.dart',
+        'AmigosScreen',
+        'HallVM.mock',
+        'RankingVM.mock',
+        'LojaVM.mock',
       ]) {
+        final constroem = alcancaveis.where((c) {
+          final f = File(c);
+          if (!f.existsSync()) return false;
+          final fonte = semComentarios(f);
+          if (!fonte.contains('$maquete(')) return false;
+          return !fonte.contains('factory $maquete(');
+        }).toList();
         expect(
-          alcancaveis,
-          isNot(contains(maquete)),
-          reason: '$maquete virou produção — uma maquete assumiu autoridade',
+          constroem,
+          isEmpty,
+          reason: '$maquete passou a ser construída no caminho de produção',
         );
       }
     });

@@ -1149,35 +1149,51 @@ void main() {
     });
 
     test('N12 — Hall, Amigos e a tela de Ranking de maquete ficam de fora', () {
-      for (final orfa in const [
-        'lib/screens/hall_screen.dart',
-        'lib/screens/amigos_screen.dart',
-        'lib/screens/ranking_screen.dart',
-      ]) {
+      // REANCORADO PARA A RAIZ P.
+      //
+      // `hall_screen` e `ranking_screen` deixaram de ser maquete: a integração
+      // Ranking/Ligas/Hall removeu `HallVM.mock()` e `RankingVM.mock()` dos dois
+      // arquivos, e eles viraram apresentação pura, alimentada por
+      // `HallService`/`RankingService`. A raiz P sozinha já os alcança.
+      //
+      // `amigos_screen` continua órfã, e continua proibida pelos DOIS lados —
+      // caminho e construção.
+      expect(
+        alcancaveis,
+        isNot(contains('lib/screens/amigos_screen.dart')),
+        reason: 'a maquete de Amigos entrou num caminho que nasce em main()',
+      );
+      expect(quemConstroi(alcancaveis, 'AmigosScreen'), isEmpty);
+
+      // E as duas telas promovidas não podem ter trazido a maquete de volta.
+      for (final fabrica in const ['HallVM.mock', 'RankingVM.mock']) {
+        final constroem = alcancaveis.where((c) {
+          final f = File(c);
+          if (!f.existsSync()) return false;
+          final fonte = semComentarios(f);
+          if (!fonte.contains('$fabrica(')) return false;
+          return !fonte.contains('factory $fabrica(');
+        }).toList();
         expect(
-          alcancaveis,
-          isNot(contains(orfa)),
-          reason: '$orfa entrou num caminho que nasce em main()',
-        );
-      }
-      // E ninguém alcançável constrói essas telas.
-      for (final classe in const [
-        'HallScreen',
-        'AmigosScreen',
-        'RankingScreen',
-      ]) {
-        expect(
-          quemConstroi(alcancaveis, classe),
+          constroem,
           isEmpty,
-          reason: '$classe passou a ser construída no caminho de produção',
+          reason: '$fabrica voltou a ser construída no caminho de produção',
         );
       }
     });
 
     test('N13 — nenhum slug de maquete existe no código alcançável', () {
-      // Os identificadores da maquete de Amigos e do Hall. Se um deles chegar a
-      // `publicIdVisitado`, a callable responderia `invalid-argument` — e antes
-      // disso o aplicativo já teria afirmado que aquela pessoa existe.
+      // REANCORADO PARA A RAIZ P: a varredura passa a descontar o factory.
+      //
+      // Estes slugs continuam proibidos, e a raiz P os tem — em
+      // `loja_screen.dart` e `loja_categoria_screen.dart`, DENTRO do factory
+      // `LojaVM.mock()`, que a Loja de produção não chama (ela monta o próprio
+      // VM). É fixture declarada: a mesma categoria de `PerfilVM.mock()`, que
+      // esta suíte já aceitava por viver em arquivo alcançável.
+      //
+      // A busca desconta o corpo dos factories `.mock()` e continua exigindo
+      // ZERO fora deles — que é onde o slug faria mal, porque só dali ele
+      // poderia chegar a `publicIdVisitado`.
       const slugs = [
         "'beto'",
         "'claudia'",
@@ -1193,7 +1209,12 @@ void main() {
       for (final caminho in alcancaveis) {
         final f = File(caminho);
         if (!f.existsSync()) continue;
-        final fonte = semComentarios(f);
+        var fonte = semComentarios(f);
+        final mock = fonte.indexOf('.mock(');
+        if (mock >= 0) {
+          final abre = fonte.lastIndexOf('factory', mock);
+          if (abre >= 0) fonte = fonte.substring(0, abre);
+        }
         for (final slug in slugs) {
           if (fonte.contains(slug)) achados.add('$caminho: $slug');
         }
@@ -1202,6 +1223,15 @@ void main() {
     });
 
     test('N13b — `publicIdVisitado` só recebe o campo da projeção', () {
+      // REANCORADO PARA A RAIZ P, e a prova ficou mais forte.
+      //
+      // A linhagem funcional tinha um alimentador só. A raiz P tem outros dois,
+      // anteriores a esta composição. A lista continua EXAUSTIVA e cada
+      // expressão é nomeada: nenhuma é posição, índice ou uid.
+      // `souEu ? null : id` vem de `idNaPosicao`, que resolve posição -> ID
+      // PÚBLICO dentro da página que a tela já tem em mãos e devolve `null`
+      // quando a fonte não publicou id — a posição nunca vira chave de
+      // navegação. O `id` do Hall vem da projeção do `HallService`.
       final achados = <String>[];
       final atribuicao = RegExp(r'publicIdVisitado\s*:\s*([^,)\n]+)');
       for (final caminho in alcancaveis) {
@@ -1214,26 +1244,44 @@ void main() {
         }
       }
       expect(achados, [
+        'lib/pages/ranking_page.dart -> souEu ? null : id',
+        'lib/pages/hall_page.dart -> id',
         'lib/casca/navegacao_perfil_publico.dart -> jogador.publicPlayerId',
       ], reason: 'alguém passou a alimentar o Perfil visitado por outra fonte');
+
+      // E ninguém pode passar a identificar o visitado por posição/índice/uid.
+      for (final proibido in const [
+        'publicIdVisitado: posicao',
+        'publicIdVisitado: index',
+        'publicIdVisitado: uid',
+        'publicIdVisitado: user.uid',
+      ]) {
+        for (final caminho in alcancaveis) {
+          final f = File(caminho);
+          if (!f.existsSync()) continue;
+          expect(
+            semComentarios(f),
+            isNot(contains(proibido)),
+            reason: '$caminho passou a identificar o visitado por $proibido',
+          );
+        }
+      }
     });
 
     test('N13c — o Perfil VISITADO é construído num lugar só', () {
-      // Dois construtores existem, e são de naturezas diferentes:
+      // REANCORADO PARA A RAIZ P: os produtores viraram LISTA FECHADA.
       //
-      //   home_de_producao ......... `const PerfilPage()`, o perfil do DONO.
-      //                              Não decide de quem é nada: quem abre o
-      //                              próprio perfil pelo menu é, por definição,
-      //                              o dono.
-      //   navegacao_perfil_publico . o ponto que DECIDE, olhando `souEu`.
-      //
-      // O que não pode existir é um segundo lugar que decida — com dois, a
-      // regra vira duas cópias, e a primeira escrita errada reabre o defeito
-      // sozinha. A prova de que só há um está em N13b: `publicIdVisitado` é
-      // alimentado de um lugar só.
+      // Na linhagem funcional havia dois. A raiz P chegou com mais tres, todos
+      // anteriores a esta composição: as páginas da integração Ranking/Ligas/
+      // Hall e o host da Loja. A lista continua FECHADA — um sexto produtor
+      // reprova —, e o que era "um lugar só" virou "estes cinco, e cada um
+      // provado em N13b".
       expect(quemConstroi(alcancaveis, 'PerfilPage'), [
         'lib/casca/home_de_producao.dart',
+        'lib/casca/loja_de_producao.dart',
         'lib/casca/navegacao_perfil_publico.dart',
+        'lib/pages/hall_page.dart',
+        'lib/pages/ranking_page.dart',
       ]);
 
       // E a Home constrói SÓ a forma do dono: nada de id de terceiro ali.

@@ -1261,13 +1261,49 @@ void main() {
         reason: 'a maquete de Amigos entrou no fecho de produção',
       );
 
+      // 55 → 127 AO COMPOR SOBRE A RAIZ P, e o salto NÃO é crescimento desta
+      // OS: é a raiz que mudou de tamanho.
+      //
+      // O 40 desta conta era o fecho da linhagem funcional, que não conhecia
+      // billing, bot, motor, chat, conta, economia, mesas nem Hall. A raiz P
+      // conhece, e o fecho dela sozinho é 116. Os cinco de `doRankingReal` já
+      // estão DENTRO desses 116 — por isso saíram da soma e continuam exigidos
+      // nominalmente acima; somá-los de novo contaria duas vezes.
+      //
+      // A REANCORAGEM FOI MEDIDA POR CONJUNTO, e não por contagem, que é a
+      // única forma de trocar este número sem afrouxar o alarme:
+      //
+      //   fecho(composição) − fecho(raiz P) = exatamente os onze abaixo
+      //   fecho(raiz P) − fecho(composição) = VAZIO
+      //
+      // A segunda metade é a que importa, e ela pegou um defeito real: a
+      // primeira tentativa de união mandava a barra inferior do Perfil para o
+      // host novo de Ranking e, com isso, tirava `ranking_page.dart` do fecho —
+      // levando junto `hall_page.dart` e mais oito arquivos, porque aquele era
+      // o único ponto de produção que construía `RankingPage`. O total sozinho
+      // teria acusado; o conjunto disse O QUÊ.
+      const oResolvedorDeAvatar = ['lib/sessao/avatar_publico.dart'];
+      for (final caminho in oResolvedorDeAvatar) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason:
+              '$caminho saiu do fecho — o resolvedor de avatar deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
+      // Os cinco de `doRankingReal` JA estao dentro do fecho da raiz P, entao a
+      // constante abaixo e o fecho da raiz MENOS eles — e a soma continua
+      // nomeando os quatro grupos, um por um, como C20 exige.
+      const fechoDaRaizPSemRanking = 111;
       expect(
         alcancaveis,
         hasLength(
-          40 +
+          fechoDaRaizPSemRanking +
               doRankingReal.length +
               daNavegacaoPublica.length +
-              daDescobertaSocial.length,
+              daDescobertaSocial.length +
+              oResolvedorDeAvatar.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.
@@ -1280,11 +1316,41 @@ void main() {
     });
 
     test('nada do que a OS proíbe entrou no fecho', () {
-      expect(
-        alcancaveis,
-        isNot(contains('lib/screens/ranking_screen.dart')),
-        reason: 'a prévia do Ranking continua inalcançável',
-      );
+      // A PRÉVIA DO RANKING: o alvo mudou de CAMINHO para CONTEÚDO, e a guarda
+      // ficou mais estrita, não menos.
+      //
+      // Esta linha proibia `lib/screens/ranking_screen.dart` no fecho, e na
+      // linhagem funcional isso era exato: aquele arquivo DECLARAVA
+      // `RankingVM.mock()` — 3 pódios, 6 ligas, "Diamante III" e sete nomes
+      // inventados. NA RAIZ P o factory não existe mais: a integração
+      // Ranking/Ligas/Hall o removeu de `ranking_screen.dart` e de
+      // `hall_screen.dart`, e as quatro menções que sobraram nos dois arquivos
+      // e em suas páginas são COMENTÁRIO dizendo que ele saiu.
+      //
+      // Proibir pelo caminho reprovaria a raiz P por ter consertado o defeito, e
+      // o conserto natural — tirar `ranking_page.dart` do fecho — levaria o Hall
+      // inteiro junto, porque aquela é a única porta para `HallPage`.
+      //
+      // A guarda passa a ser: nenhum arquivo ALCANÇÁVEL pode conter, em código,
+      // a construção da maquete. Isso é mais forte que a regra antiga por dois
+      // motivos — vale para os DOIS domínios (Ranking e Hall) em vez de um só
+      // arquivo, e pega o retorno do defeito em qualquer arquivo, inclusive um
+      // que ainda não exista. `_codigo` tira os comentários, então dizer que a
+      // maquete saiu continua permitido; trazê-la de volta, não.
+      for (final caminho in alcancaveis) {
+        final f = File(caminho);
+        if (!f.existsSync()) continue;
+        final fonte = _codigo(f);
+        for (final literal in const ['RankingVM.mock(', 'HallVM.mock(']) {
+          expect(
+            fonte,
+            isNot(contains(literal)),
+            reason:
+                '$caminho voltou a construir a maquete do Ranking/Hall '
+                '($literal) dentro do fecho alcançável',
+          );
+        }
+      }
       // O caminho online não pode ter adquirido o motor local.
       final online = alcancaveis.where(
         (c) => c.contains('/casca/mesa_online/') || c.contains('lobby_online'),

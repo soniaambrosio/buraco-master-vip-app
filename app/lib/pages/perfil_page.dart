@@ -12,6 +12,7 @@ import '../ranking/estado_ranking.dart';
 import '../ranking/leitor_ranking.dart' show LeituraDeAbertura;
 import '../ranking/ranking_transporte.dart' show JogadorPublicoRanking;
 import '../screens/perfil_screen.dart';
+import 'ranking_page.dart';
 import '../services/perfil_service.dart';
 import '../sessao/avatar_publico.dart';
 import '../sessao/escopo_sessao.dart';
@@ -478,13 +479,21 @@ class _PerfilPageState extends State<PerfilPage> {
             Navigator.of(context).maybePop();
             break;
           case NavDestino.ranking:
-            // UNIÃO: a base P mandava este destino para `RankingPage`, e a fonte
-            // funcional criou `_abrirRanking`, que abre `RankingDeProducao` — o
-            // host que consome a fonte real. Fica o segundo, e não por ser o mais
-            // novo: manter os dois deixaria DUAS portas de Ranking no mesmo
-            // arquivo, e a de cima (`onAbrirRanking`) já era esta. O destino da
-            // barra inferior e o do cartão passam a ser a mesma porta.
-            _abrirRanking();
+            // UNIÃO, e a primeira tentativa estava ERRADA. Mandar este destino
+            // para `_abrirRanking` (o host novo, que lê a fonte real) tirou do
+            // fecho alcançável DEZ arquivos de uma vez — `ranking_page.dart` era
+            // o único ponto de produção que construía `RankingPage`, e
+            // `RankingPage` é a única porta para `HallPage`. O Hall inteiro
+            // saía da árvore em silêncio, sem nenhum teste vermelho.
+            //
+            // As DUAS portas ficam, de propósito, e não é indecisão: o cartão
+            // (`onAbrirRanking`) abre a tabela de fonte real, e a barra inferior
+            // continua abrindo a página que hospeda o Hall. Unificá-las exige
+            // decidir onde o Hall passa a morar, e isso é OS própria — esta aqui
+            // não pode remover superfície que não veio compor.
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute<void>(builder: (_) => const RankingPage()),
+            );
             break;
           case NavDestino.loja:
             _breve('Loja VIP');
