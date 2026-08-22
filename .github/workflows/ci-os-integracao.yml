@@ -220,6 +220,13 @@ jobs:
           roda encerr     test/teste_encerramento.dart
           roda torneios   test/torneios/reward_grants_test.dart
           roda mtorneios  test/torneios/motor_torneios_test.dart
+          # OS 42 — FUNDACAO CONTRATUAL DE TORNEIOS V1. A suite guarda as
+          # decisoes congeladas (acesso somente por convite, VIP integral,
+          # participacao individual, ciclo editorial com aprovador distinto e
+          # Hall sem candidatura orfa) E o fato de que a fundacao nao ligou
+          # nada: `FV1-G03` fica vermelho no dia em que alguem lhe der um
+          # consumidor de producao sem decidir isso por escrito.
+          roda torneiobase  test/torneios/fundacao_torneios_v1_test.dart
           roda integr     test/integracao/teste_integracao_motores.dart
           roda colarte    test/colecoes/colecao_arte_test.dart
           roda colfire    test/colecoes/colecao_firebase_test.dart

@@ -442,3 +442,49 @@ a11yamigos
     exige      group('1 — o piso de 48 pontos
     exige      group('3 — tocar na borda nova aciona o controle certo
     exige      group('5 — vazio, carregando, erro e conteúdo
+
+# --- 14. FUNDACAO CONTRATUAL DE TORNEIOS V1 (entra pela OS 42) --------------
+#
+# Torneios chegou nesta arvore como DUAS metades que nunca se encontraram: um
+# backend real (codebase `torneios`, sete callables, 1.431 linhas de rules, 14
+# indices) e um cliente de previa. As duas foram escritas contra um projeto que
+# admitia torneio publico, misto e por assinatura — e a V1 nao admite nenhum
+# dos tres. Sem um lugar onde a decisao esteja escrita, cada sucessora
+# reinterpretaria o recorte, e a divergencia so apareceria depois de ligada.
+#
+# `torneiobase` guarda a fundacao contratual dessa V1 — camada pura, sem
+# Firestore, sem Cloud Function e sem UI — e guarda as decisoes congeladas:
+# acesso `somente_convidados`, convite valido MAIS VIP integral vigente (o
+# presenteado nao conta), participacao individual com dupla DORMENTE, ciclo
+# editorial `rascunho -> em_revisao -> agendado` com aprovador distinto do
+# criador, e Hall sem candidatura orfa.
+#
+# O QUE FAZ ESTE GATE VALER MAIS DO QUE A SOMA DAS SUAS ASSERTIVAS e o grupo
+# `FV1-G`: ele afirma, contra a arvore, que a fundacao NAO LIGOU NADA. `FV1-G03`
+# varre `lib/` inteiro e exige ZERO consumidor de producao; `FV1-G04` prende a
+# superficie de deploy do codebase em sete exports. No dia em que uma sucessora
+# ligar a fundacao a uma rota, os dois ficam vermelhos — e a ligacao passa a ser
+# uma decisao escrita no diff, em vez de um efeito colateral que ninguem viu.
+#
+# `provas` e igual a `casos`: e suite de caso declarado, sem geracao em laco.
+torneiobase
+    suite      app/test/torneios/fundacao_torneios_v1_test.dart
+    executor   roda torneiobase test/torneios/fundacao_torneios_v1_test.dart
+    sha256     f49a7ec46cdcfb4f76ea6b7713147183c06203ee9ecba2b4b3038a24a6e7d17d
+    provas     70
+    casos      70
+    exige      group('FV1-A
+    exige      group('FV1-B
+    exige      group('FV1-C
+    exige      group('FV1-D
+    exige      group('FV1-E
+    exige      group('FV1-F
+    exige      group('FV1-G
+    exige      ('FV1-A06
+    exige      ('FV1-B03
+    exige      ('FV1-C03
+    exige      ('FV1-D03
+    exige      ('FV1-E02
+    exige      ('FV1-F01
+    exige      ('FV1-G03
+    exige      ('FV1-G04
