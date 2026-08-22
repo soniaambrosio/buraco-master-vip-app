@@ -1404,7 +1404,8 @@ void main() {
       });
     });
 
-    test('ART-09 o pubspec declara o diretório, uma vez só', () {
+    test('ART-09 a declaração da arte é única, e a lista de arquivos não se '
+        'repete', () {
       final pubspec = _fonte('pubspec.yaml');
       final linhas = pubspec
           .split('\n')
@@ -1414,17 +1415,32 @@ void main() {
       expect(linhas, 1,
           reason: 'a declaração do diretório da arte não está exatamente uma '
               'vez em app/pubspec.yaml');
-      // FONTE ÚNICA: a lista não pode ser repetida em workflow, script ou
-      // manifesto auxiliar. Duas listas divergem no primeiro dia.
+
+      // FONTE ÚNICA da LISTA DE ARQUIVOS: os 28 nomes moram no contrato
+      // (`conjunto_real_vip.dart`) e no registro de origem, e em lugar nenhum
+      // mais. Um workflow ou script que os repetisse viraria uma segunda
+      // autoridade, e as duas divergiriam no primeiro dia em que alguém
+      // corrigisse só uma. O DIRETÓRIO, esse, precisa aparecer nos montadores —
+      // é o que a ART-15 confere.
+      const alguns = [
+        'secao_jogo.webp',
+        'titulo_ajustes.webp',
+        'saldo_de_fichas.webp',
+      ];
       for (final caminho in const [
         '../.github/workflows/ci-os-integracao.yml',
+        '../.github/workflows/build.yml',
+        '../.github/workflows/release-aab.yml',
         '../scripts/ci/gates_os_integracao.txt',
+        '../tools/ci/montar_app.sh',
       ]) {
-        expect(_fonte(caminho).contains('assets/ajustes/real'), isFalse,
-            reason: '$caminho passou a repetir a lista de assets');
+        final texto = _fonte(caminho);
+        for (final nome in alguns) {
+          expect(texto.contains(nome), isFalse,
+              reason: '$caminho repete a lista de arquivos da arte');
+        }
       }
     });
-
     testWidgets('ART-10 a chave está ligada e o conjunto inteiro abre',
         (t) async {
       await _comRelogioReal(t, () async {
@@ -1570,6 +1586,64 @@ void main() {
               reason: '$caso: sobrou glifo padrão na tela real');
         }
       }
+    });
+
+    test('ART-15 toda pasta declarada é REALMENTE empacotada pelos montadores',
+        () {
+      // O BURACO MAIS SILENCIOSO QUE ESTA OS ENCONTROU, e ele quase levou a
+      // entrega inteira: os dois montadores de APK têm listas PRÓPRIAS de
+      // pastas a copiar, escritas à mão, e nenhuma delas conhecia
+      // `assets/ajustes/real`. O `montar_app.sh` ainda criava a pasta vazia para
+      // o Flutter não reclamar — então o build passava, o APK saía sem os 28
+      // ícones, a pré-checagem do conjunto respondia `false` no aparelho, e todo
+      // assinante VIP via a tela pública. Sem erro. Em lugar nenhum.
+      //
+      // `release-aab.yml` escapa porque copia `app/assets/` inteiro por `find`.
+      // Os outros dois precisam desta prova.
+      final declaradas = _fonte('pubspec.yaml')
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.startsWith('- assets/') && l.endsWith('/'))
+          .map((l) => l.substring('- assets/'.length, l.length - 1))
+          .toList();
+      expect(declaradas, contains('ajustes/real'));
+      expect(declaradas.length, greaterThanOrEqualTo(16));
+
+      final montador = _fonte('../tools/ci/montar_app.sh');
+      final apk = _fonte('../.github/workflows/build.yml');
+      // A cobertura pode vir de um passo do ANCESTRAL que copia recursivamente
+      // — `assets/loja/` arrasta `loja/dorsos` nos dois montadores. Por isso a
+      // busca é por PREFIXO de caminho, e não pelo nome inteiro.
+      //
+      // É um limite declarado: um passo de ancestral que copiasse SEM `-r`
+      // satisfaria esta prova e não empacotaria a subpasta. O que fecha esse
+      // resto é a guarda de pasta vazia do `montar_app.sh`, conferida logo
+      // abaixo — ela mede o resultado, não a intenção.
+      bool cobre(String texto, String pasta) {
+        final segmentos = pasta.split('/');
+        for (var i = segmentos.length; i > 0; i--) {
+          if (texto.contains(segmentos.take(i).join('/'))) return true;
+        }
+        return false;
+      }
+
+      for (final pasta in declaradas) {
+        expect(cobre(montador, pasta), isTrue,
+            reason: 'montar_app.sh não copia assets/$pasta');
+        expect(cobre(apk, 'assets/$pasta'), isTrue,
+            reason: 'build.yml não copia assets/$pasta');
+      }
+      // As duas pastas que esta OS tocou têm passo PRÓPRIO, com contagem exata.
+      expect(apk.contains('EXATAMENTE 28 icones'), isTrue);
+      expect(apk.contains('assets/mesa_vip'), isTrue);
+
+      // E o montador reprova, em vez de seguir, quando uma pasta declarada
+      // chega vazia — é o que impede a próxima pasta de repetir a história.
+      final semComentario = _semComentarios(montador);
+      expect(semComentario.contains('pasta declarada no pubspec e VAZIA'),
+          isTrue,
+          reason: 'montar_app.sh voltou a aceitar pasta declarada e vazia');
+      expect(semComentario.contains('exit 1'), isTrue);
     });
   });
 }
