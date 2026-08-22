@@ -94,6 +94,9 @@ resultados() {
   printf 'run 1 — carimbo desta execucao\n' > "$d/carimbo_execucao"
   printf '00:12 +81: All tests passed!\n' > "$d/t_comunicacao.log"
   printf '00:09 +137: All tests passed!\n' > "$d/t_chatdom.log"
+  # Tema Real VIP das Configuracoes: gate COM contrato, e por isso a fase B
+  # exige log dele tambem — marcador sem log e marcador sem execucao.
+  printf '00:04 +38: All tests passed!\n' > "$d/t_temavip.log"
   printf 'casos ok: 38 | casos com falha: 0\nTESTE DO PORTAO: VERDE\n' > "$d/t_portaoci.log"
   printf 'casos ok: 35 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
   # O gate de emulador da Comunicacao Controlada (OS 24-C3). O rodape e o do

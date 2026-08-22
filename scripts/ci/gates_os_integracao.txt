@@ -97,6 +97,42 @@ cascaporta
 # comercial: um `setState` local acendia o selo sem nenhum servidor envolvido.
 cascaloja
 
+# --- 3c. TEMA REAL VIP das Configuracoes (entra pela OS do Tema Real V1) ----
+# A tela de Ajustes passou a ter DOIS conjuntos de icones, e o defeito que esta
+# suite existe para impedir nao e visivel em nenhuma prova de linha: a tela sair
+# METADE dourada e metade padrao. Cada linha isolada continua correta; so uma
+# varredura de CONJUNTO ve a mistura.
+#
+# Ela guarda tambem as tres portas por onde o direito poderia vazar — o passe
+# quinzenal de cortesia (que NAO libera o tema), o codigo de sala e a variavel
+# local — e as correcoes de dado produtivo da OS: "Fichas e compras" no lugar de
+# "Moedas e compras", versao vinda da build, plano e renovacao vindos da
+# autoridade em vez do literal da maquete.
+#
+# `exige` aponta para os grupos e para os casos que sozinhos ja denunciam a volta
+# de cada defeito. AST-14 e a varredura anti-mistura; ELG-05 e a separacao do
+# passe; DAD-24 e a nomenclatura comercial.
+temavip
+    suite      app/test/casca/tema_real_vip_ajustes_test.dart
+    executor   roda temavip      test/casca/tema_real_vip_ajustes_test.dart
+    sha256     3150aaca81ee92cd9761008c985624b0261b37e449ef621f0418a70ff8b03852
+    provas     38
+    # SEM `casos`: o piso executado exigiria log, e a matriz do proprio
+    # verificador (gate contratosui) monta um diretorio de evidencia sem ele.
+    # A trava de conteudo continua inteira pelo `sha256` + `provas` + `exige` —
+    # e o mesmo arranjo que `chatdom` usa.
+    exige      group('ELG
+    exige      group('AST
+    exige      group('EST
+    exige      group('DAD
+    exige      group('A11Y
+    exige      group('NRG
+    exige      ('ELG-05 o passe quinzenal de cortesia
+    exige      ('AST-11 um único asset ausente derruba o conjunto INTEIRO
+    exige      ('AST-14 a tela nunca mistura os dois conjuntos
+    exige      ('DAD-24 a linha comercial chama-se Fichas e compras
+    exige      ('A11Y-29 os nomes acessíveis são IGUAIS nos dois temas
+
 # --- 4. suítes Flutter de Ranking Real e Perfil Publicável (entram por esta OS)
 # `rkbarreira` é a barreira temporal V2; `rkestado` guarda `EstadoRanking` como
 # autoridade única (sem fallback Bronze/nível 1/#0/#1).
@@ -185,7 +221,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     767c802f36effb1d767b1a37e5bea8df78e34b24120b3589e081f187cb16668e
+    sha256     de8d3a58c543c161e5b80c265b5070ca14bcc166991aa91cc1e209597a3ae441
     provas     38
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      35
