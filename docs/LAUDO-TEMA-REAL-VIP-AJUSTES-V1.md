@@ -192,22 +192,37 @@ catálogo ou registro de assets de ícones em ref alguma.
 Nenhum arquivo novo foi gerado ou incorporado — a §5 e a §6 proíbem, e a proibição
 foi respeitada literalmente.
 
-Faltam, em `app/assets/ajustes/real/`:
+Faltavam, em `app/assets/ajustes/real/`, os **28**:
 
 ```
-editar_perfil.webp          notificacoes.webp        secao_privacidade.webp
-assinatura_vip.webp         animacoes.webp           secao_geral.webp
-fichas_e_compras.webp       ordenar_cartas.webp      titulo_ajustes.webp
-musica.webp                 mao.webp                 confirmar_descarte.webp
-efeitos_sonoros.webp        presenca_online.webp     chat_publico.webp
-vibracao.webp               convites.webp            idioma.webp
-                            jogadores_bloqueados.webp termos_e_privacidade.webp
-                            como_jogar.webp          orientacao_mesa.webp
-                            suporte.webp             saldo_de_fichas.webp
-                            avaliar_aplicativo.webp
-                            secao_conta.webp
-                            secao_som_e_notificacoes.webp
+ 1 editar_perfil.webp             15 suporte.webp
+ 2 assinatura_vip.webp            16 avaliar_aplicativo.webp
+ 3 fichas_e_compras.webp          17 secao_conta.webp
+ 4 musica.webp                    18 secao_som_e_notificacoes.webp
+ 5 efeitos_sonoros.webp           19 secao_jogo.webp
+ 6 vibracao.webp                  20 secao_privacidade.webp
+ 7 notificacoes.webp              21 secao_geral.webp
+ 8 animacoes.webp                 22 titulo_ajustes.webp
+ 9 ordenar_cartas.webp            23 confirmar_descarte.webp
+10 mao.webp                       24 chat_publico.webp
+11 presenca_online.webp           25 idioma.webp
+12 convites.webp                  26 termos_e_privacidade.webp
+13 jogadores_bloqueados.webp      27 orientacao_mesa.webp
+14 como_jogar.webp                28 saldo_de_fichas.webp
 ```
+
+> **Correção documental (OS 39).** A primeira versão desta lista dizia "28" e
+> mostrava **27**: `secao_jogo.webp` tinha caído fora da enumeração. Era erro só
+> do texto — o código, o manifesto e o gate sempre trouxeram as 28 chaves, e a
+> `AST-10` compara `arquivosDoTemaReal.keys` com `IconeAjustes.variaveis`, o que
+> uma omissão de documento não alcança. A lista acima está numerada justamente
+> para que a próxima omissão se denuncie sozinha.
+
+> **Estado atual (OS 39, `integracao/tema-real-vip-assets-aprovados-v1`).** Os 28
+> arquivos foram incorporados byte a byte, o diretório foi declarado no
+> `pubspec.yaml` e `kConjuntoRealVipRegistrado` está em `true`. Este laudo
+> permanece como o registro da folha estrutural; a procedência, os hashes
+> individuais e a aprovação estão em `docs/ORIGEM-ICONES-TEMA-REAL.md`.
 
 O registro de origem, com requisitos por arquivo e o procedimento de ativação em
 quatro passos, está em `docs/ORIGEM-ICONES-TEMA-REAL.md`.
