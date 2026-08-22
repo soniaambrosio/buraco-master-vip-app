@@ -2225,9 +2225,6 @@ class _MesaScreenState extends State<MesaScreen> {
     3: EstadoAmizade.disponivel,
   };
   bool _conviteRevancheEnviado = false;
-  bool _anuncioAssistido = false;
-  bool _anuncioDisponivel = true;
-  bool _assinanteSemAnuncios = false;
 
   AudioPlayer? _pCarta;
   AudioPlayer? _pEvento;
@@ -4920,7 +4917,6 @@ class _MesaScreenState extends State<MesaScreen> {
       _sel.clear();
       _msg = null;
       _conviteRevancheEnviado = false;
-      _anuncioAssistido = false;
       _syncTurnClock(force: true);
     });
     // §3.2: o iniciador rotaciona a cada rodada — se for robô, eles começam.
@@ -4940,7 +4936,6 @@ class _MesaScreenState extends State<MesaScreen> {
       _sel.clear();
       _msg = null;
       _conviteRevancheEnviado = false;
-      _anuncioAssistido = false;
       _syncTurnClock(force: true);
     });
   }
@@ -4950,16 +4945,6 @@ class _MesaScreenState extends State<MesaScreen> {
     setState(() {
       _amizades[seat] = EstadoAmizade.enviado;
       _msg = 'Convite de amizade enviado para ${_j.apelidos[seat]}.';
-    });
-  }
-
-  void _verAnuncioRecompensado() {
-    if (!_anuncioDisponivel || _anuncioAssistido || _assinanteSemAnuncios) {
-      return;
-    }
-    setState(() {
-      _anuncioAssistido = true;
-      _msg = 'Recompensa do anúncio registrada na prévia.';
     });
   }
 
@@ -4994,16 +4979,11 @@ class _MesaScreenState extends State<MesaScreen> {
       jogadores: _jogadoresResultado(),
       amizades: Map<int, EstadoAmizade>.unmodifiable(_amizades),
       conviteRevancheEnviado: _conviteRevancheEnviado,
-      anuncioDisponivel: _anuncioDisponivel,
-      anuncioAssistido: _anuncioAssistido,
-      assinanteSemAnuncios: _assinanteSemAnuncios,
-      recompensaAnuncio: '+50 fichas de continuidade',
       onContinuar: _continuarRodada,
       onConvidarRevanche: _convidarRevanche,
       onJogarNovamente: _jogarNovamente,
       onVoltarLobby: _voltarAoLobby,
       onAdicionarAmigo: _adicionarAmigo,
-      onVerAnuncio: _verAnuncioRecompensado,
     );
 
     // Celebração de vitória (docs/OS-CLAUDE-ADENDO-CELEBRACAO-VITORIA.md):
