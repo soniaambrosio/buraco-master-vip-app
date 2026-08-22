@@ -20,6 +20,7 @@
 //   OnlineService          — o transporte, desligado até alguém pedir
 //   PonteSessaoOnline      — traduz troca de sessão em transição do transporte
 //   RankingDaSessao        — a liga e a colocação reais de quem está logado
+//   LeitorSocial           — amigos, solicitações e a busca por apelido reais
 //
 // A ORDEM IMPORTA: a ponte é montada aqui, e não na tela do lobby, porque um
 // logout disparado na tela de Ajustes precisa derrubar o socket mesmo que o
@@ -36,6 +37,10 @@
 
 import 'package:flutter/material.dart';
 
+import '../amigos/escopo_social.dart';
+import '../amigos/leitor_social.dart';
+import '../amigos/transporte_social.dart';
+import '../amigos/transporte_social_firebase.dart';
 import '../ranking/escopo_ranking.dart';
 import '../ranking/leitor_ranking.dart';
 import '../ranking/ranking_da_sessao.dart';
@@ -59,6 +64,7 @@ class RaizDoAplicativo extends StatefulWidget {
     this.autenticacao,
     this.online,
     this.transporteRanking,
+    this.transporteSocial,
     this.duracaoDaSplash,
     this.somNaSplash = true,
     this.limiteDeResolucao,
@@ -80,6 +86,14 @@ class RaizDoAplicativo extends StatefulWidget {
   /// `flutter test`, e o caso não seria testado.
   final TransporteRanking? transporteRanking;
 
+  /// O transporte social. Nulo em produção — a raiz monta o de Firebase.
+  ///
+  /// Injetável pela mesma razão dos outros: a descoberta social tem casos que
+  /// só existem quando a resposta demora ou é recusada (busca truncada, pedido
+  /// vencido, ação negada por bloqueio), e nenhum deles é encenável contra uma
+  /// Cloud Function de verdade dentro do `flutter test`.
+  final TransporteSocial? transporteSocial;
+
   /// Repassados à casca. Ver `casca_de_producao.dart`.
   final Duration? duracaoDaSplash;
   final bool somNaSplash;
@@ -95,6 +109,7 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
   late final OnlineService _online;
   late final PonteSessaoOnline _ponte;
   late final RankingDaSessao _ranking;
+  late final LeitorSocial _social;
 
   // Só o que esta raiz criou é descartado por ela.
   late final bool _sessaoEhMinha;
@@ -136,6 +151,10 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
     // listener, e não uma chamada do `build`, porque `aoMudarSessao` publica
     // "carregando" na hora — e notificar durante a construção da árvore é erro
     // de framework, não detalhe de estilo.
+    _social = LeitorSocial(
+      transporte: widget.transporteSocial ?? TransporteSocialFirebase(),
+    );
+
     _sessao.addListener(_sincronizarRanking);
     // A primeira sincronização não pode esperar a próxima notificação: numa
     // partida fria com sessão já resolvida, ela nunca viria.
@@ -145,6 +164,7 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
   @override
   void dispose() {
     _sessao.removeListener(_sincronizarRanking);
+    _social.dispose();
     _ranking.dispose();
     _ponte.dispose();
     if (_onlineEhMeu) _online.dispose();
@@ -161,6 +181,13 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
       geracao: _sessao.geracao,
       publicId: _sessao.estado.publicId,
     );
+    // O SOCIAL ANDA PELA GERAÇÃO, E NÃO PELO `publicId`, e a diferença não é
+    // estilo. O ranking precisa do id porque a consulta dele é sobre um jogador
+    // identificado; as callables sociais tiram o UID do contexto autenticado e
+    // não recebem identidade nenhuma no pedido. O que o leitor social precisa
+    // saber é só "a conta mudou" — e a geração é exatamente isso, inclusive
+    // quando a conta nova ainda não resolveu o `publicId` dela.
+    _social.aoMudarSessao(_sessao.geracao);
   }
 
   @override
@@ -178,43 +205,46 @@ class _RaizDoAplicativoState extends State<RaizDoAplicativo> {
           online: _online,
           child: EscopoRanking(
             ranking: _ranking,
-            child: ListenableBuilder(
-              listenable: _sessao,
-              builder: (context, _) => MaterialApp(
-                // A CHAVE É O QUE APAGA A PILHA DE NAVEGAÇÃO NA TROCA DE SESSÃO.
-                //
-                // Trocar a tela de baixo não basta: `Navigator.push` empilha
-                // rotas SOBRE a `home`, e trocar a `home` deixa as de cima
-                // intactas. Sem isto, alguém que saísse da conta com a tela de
-                // Ajustes ou a do lobby abertas continuaria olhando para elas —
-                // telas privadas, de uma sessão que acabou.
-                //
-                // O jeito imperativo seria a tela de logout dar `popUntil`. Isso
-                // devolve a decisão de navegação para quem saiu, exige que TODA
-                // superfície futura de logout se lembre de fazer o mesmo, e não
-                // cobre a troca de conta sem logout — em que a pilha do jogador
-                // anterior também tem de morrer.
-                //
-                // A geração sobe uma vez por troca de sessão, e não quando só a
-                // fase da identidade muda: um Ranking carregando não derruba a
-                // navegação de ninguém.
-                key: ValueKey<int>(_sessao.geracao),
-                title: 'Buraco Master VIP',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData(
-                  useMaterial3: true,
-                  brightness: Brightness.dark,
-                ),
-                home: CascaDeProducao(
-                  aberturaTerminou: _aberturaTerminou,
-                  onAberturaConcluida: () {
-                    if (mounted && !_aberturaTerminou) {
-                      setState(() => _aberturaTerminou = true);
-                    }
-                  },
-                  duracaoDaSplash: widget.duracaoDaSplash,
-                  somNaSplash: widget.somNaSplash,
-                  limiteDeResolucao: widget.limiteDeResolucao,
+            child: EscopoSocial(
+              social: _social,
+              child: ListenableBuilder(
+                listenable: _sessao,
+                builder: (context, _) => MaterialApp(
+                  // A CHAVE É O QUE APAGA A PILHA DE NAVEGAÇÃO NA TROCA DE SESSÃO.
+                  //
+                  // Trocar a tela de baixo não basta: `Navigator.push` empilha
+                  // rotas SOBRE a `home`, e trocar a `home` deixa as de cima
+                  // intactas. Sem isto, alguém que saísse da conta com a tela de
+                  // Ajustes ou a do lobby abertas continuaria olhando para elas —
+                  // telas privadas, de uma sessão que acabou.
+                  //
+                  // O jeito imperativo seria a tela de logout dar `popUntil`. Isso
+                  // devolve a decisão de navegação para quem saiu, exige que TODA
+                  // superfície futura de logout se lembre de fazer o mesmo, e não
+                  // cobre a troca de conta sem logout — em que a pilha do jogador
+                  // anterior também tem de morrer.
+                  //
+                  // A geração sobe uma vez por troca de sessão, e não quando só a
+                  // fase da identidade muda: um Ranking carregando não derruba a
+                  // navegação de ninguém.
+                  key: ValueKey<int>(_sessao.geracao),
+                  title: 'Buraco Master VIP',
+                  debugShowCheckedModeBanner: false,
+                  theme: ThemeData(
+                    useMaterial3: true,
+                    brightness: Brightness.dark,
+                  ),
+                  home: CascaDeProducao(
+                    aberturaTerminou: _aberturaTerminou,
+                    onAberturaConcluida: () {
+                      if (mounted && !_aberturaTerminou) {
+                        setState(() => _aberturaTerminou = true);
+                      }
+                    },
+                    duracaoDaSplash: widget.duracaoDaSplash,
+                    somNaSplash: widget.somNaSplash,
+                    limiteDeResolucao: widget.limiteDeResolucao,
+                  ),
                 ),
               ),
             ),

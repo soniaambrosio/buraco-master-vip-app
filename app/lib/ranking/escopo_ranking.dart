@@ -13,6 +13,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'estado_ranking.dart';
+import 'estado_tabela_ranking.dart';
 import 'ranking_da_sessao.dart';
 
 /// Pendura o [RankingDaSessao] na árvore.
@@ -34,4 +35,12 @@ class EscopoRanking extends InheritedNotifier<RankingDaSessao> {
   /// leitor.
   static EstadoRanking meuEstadoDe(BuildContext context) =>
       talvezDe(context)?.meuEstado ?? rankingDaCascaPublicavel;
+
+  /// A tabela do ranking vista deste ponto da árvore.
+  ///
+  /// Mesma tolerância de [meuEstadoDe]: fora do escopo devolve
+  /// [tabelaDaCascaPublicavel] — "não sei" —, e nunca uma lista vazia, que a
+  /// tela leria como "ninguém está classificado".
+  static EstadoTabelaRanking tabelaDe(BuildContext context) =>
+      talvezDe(context)?.tabela ?? tabelaDaCascaPublicavel;
 }

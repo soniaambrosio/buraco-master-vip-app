@@ -66,12 +66,14 @@ class TransporteRankingFirebase extends TransporteRanking {
       FirebaseFunctions.instanceFor(region: kRegiaoFuncoesRanking);
 
   @override
-  Future<FotografiaRanking> meuRanking() => _chamar(
+  Future<AberturaRanking> abrirRanking() => _chamar(
     kCallableAbrirRanking,
-    // `limite` fica de fora: o Perfil só usa `resumo.eu`, e pedir uma página
-    // menor não é otimização que valha inventar um parâmetro para.
+    // `limite` continua de fora: quem escolhe o tamanho da primeira página é a
+    // autoridade (`normalizarLimite`), e mandar um número daqui seria o cliente
+    // opinando sobre paginação sem ter nenhuma informação que o servidor não
+    // tenha.
     const {'escopo': kEscopoRankingDoPerfil},
-    FotografiaRanking.daAbertura,
+    AberturaRanking.daResposta,
   );
 
   @override
@@ -81,10 +83,10 @@ class TransporteRankingFirebase extends TransporteRanking {
     FotografiaRanking.doPerfilPublico,
   );
 
-  Future<FotografiaRanking> _chamar(
+  Future<T> _chamar<T>(
     String nome,
     Map<String, Object?> payload,
-    FotografiaRanking Function(Object?) ler,
+    T Function(Object?) ler,
   ) async {
     try {
       final chamada = _functions.httpsCallable(nome);

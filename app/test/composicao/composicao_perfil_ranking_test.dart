@@ -131,15 +131,20 @@ class TransporteEspiao extends TransporteRanking {
   Object? respostaPropria = aberturaCom();
   Object? respostaPublica = publicoCom(id: alvoX);
 
+  static AberturaRanking _abertura(FotografiaRanking eu) => AberturaRanking(
+    eu: eu,
+    tabela: const TabelaRanking(podio: [], primeiraPagina: []),
+  );
+
   @override
-  Future<FotografiaRanking> meuRanking() {
+  Future<AberturaRanking> abrirRanking() async {
     chamadas.add('proprio');
     if (!automatico) {
       final c = Completer<FotografiaRanking>();
       proprios.add(c);
-      return c.future;
+      return _abertura(await c.future);
     }
-    return Future.value(FotografiaRanking.daAbertura(respostaPropria));
+    return _abertura(FotografiaRanking.daAbertura(respostaPropria));
   }
 
   @override

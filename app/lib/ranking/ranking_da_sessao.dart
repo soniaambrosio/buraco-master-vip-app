@@ -26,6 +26,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'estado_ranking.dart';
+import 'estado_tabela_ranking.dart';
 import 'leitor_ranking.dart';
 
 class RankingDaSessao extends ChangeNotifier {
@@ -48,6 +49,23 @@ class RankingDaSessao extends ChangeNotifier {
   /// para uma liga: é a afirmação de que não há afirmação.
   EstadoRanking get meuEstado => _meuEstado;
   EstadoRanking _meuEstado = rankingDaCascaPublicavel;
+
+  /// A tabela publicada na MESMA abertura que produziu [meuEstado].
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE ELA MORA AQUI, E NÃO NA TELA QUE A DESENHA
+  /// -------------------------------------------------------------------------
+  ///
+  /// Pelo mesmo motivo que [meuEstado]: uma tela que perguntasse por conta
+  /// própria abriria uma segunda chamada de `abrirRanking` — a mesma callable,
+  /// a mesma resposta — e as duas leituras poderiam divergir. Pior: o cabeçalho
+  /// do Perfil e a lista do ranking mostrariam apurações diferentes da mesma
+  /// temporada, e não haveria como dizer qual das duas está certa.
+  ///
+  /// Como as duas saem de [LeituraDeAbertura], elas são a MESMA resposta por
+  /// construção. Não há caminho em que divirjam.
+  EstadoTabelaRanking get tabela => _tabela;
+  EstadoTabelaRanking _tabela = tabelaDaCascaPublicavel;
 
   String? _publicId;
   int _geracao = 0;
@@ -75,7 +93,10 @@ class RankingDaSessao extends ChangeNotifier {
     _leitor.aoMudarSessao(geracao);
 
     if (publicId == null) {
-      _publicar(rankingDaCascaPublicavel);
+      // A TABELA VAI JUNTO. Deixá-la de pé depois do logout manteria na tela
+      // uma lista de jogadores lida em nome de uma conta que não existe mais —
+      // e, com ela, os `publicPlayerId` que aquela lista carregava.
+      _publicar(rankingDaCascaPublicavel, tabelaDaCascaPublicavel);
       return;
     }
     _consultar(publicId);
@@ -93,18 +114,27 @@ class RankingDaSessao extends ChangeNotifier {
   }
 
   Future<void> _consultar(String publicId) async {
-    _publicar(const EstadoRanking.carregando());
-    final resultado = await _leitor.meuRanking(contaPublicId: publicId);
+    _publicar(
+      const EstadoRanking.carregando(),
+      const EstadoTabelaRanking.carregando(),
+    );
+    final resultado = await _leitor.abrirRanking(contaPublicId: publicId);
     // `null` é DESCARTE: a resposta perdeu a validade no caminho. Não publicar
     // é a reação certa — publicar qualquer coisa aqui seria escolher entre
     // apagar o que está na tela e mostrar dado de outra sessão.
     if (resultado == null || _descartado) return;
-    _publicar(resultado);
+    _publicar(resultado.eu, resultado.tabela);
   }
 
-  void _publicar(EstadoRanking estado) {
-    if (_meuEstado == estado) return;
+  /// Publica os dois JUNTOS, e nunca um sem o outro.
+  ///
+  /// Um `_publicar` por campo abriria a janela em que a tela lê o cabeçalho
+  /// novo ao lado da tabela velha — um quadro inteiro de leitura inconsistente,
+  /// que é tempo de sobra para um toque acontecer.
+  void _publicar(EstadoRanking estado, EstadoTabelaRanking tabela) {
+    if (_meuEstado == estado && _tabela == tabela) return;
     _meuEstado = estado;
+    _tabela = tabela;
     notifyListeners();
   }
 

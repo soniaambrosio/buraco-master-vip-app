@@ -11,7 +11,21 @@ enum NavDestino { inicio, ranking, loja, perfil }
 class PerfilStats {
   final int vitorias;
   final int partidas;
-  final int canastras;
+
+  /// Canastras — NULÁVEL, e é o único dos quatro que é.
+  ///
+  /// A lista branca de `projetarJogador` publica partidas, vitórias, derrotas e
+  /// aproveitamento de um jogador, e NÃO publica canastras. Quando o Perfil
+  /// passou a mostrar os números de um terceiro, ficou faltando exatamente um
+  /// dos quatro quadradinhos — e as duas saídas ruins eram escrever zero
+  /// (afirmar que a pessoa nunca fez canastra) ou esconder os outros três
+  /// (jogar fora o que a autoridade publicou de verdade).
+  ///
+  /// Nulo é a terceira, e é a mesma regra que o resto desta tela já segue: nível,
+  /// XP e título são nulos pelo mesmo motivo, e [EstadoRanking] existe inteiro
+  /// para poder dizer "não sei" sobre liga. Um tipo que não sabe dizer isso
+  /// obriga quem o constrói a mentir.
+  final int? canastras;
   final int aproveitamento;
 
   const PerfilStats({
@@ -74,6 +88,43 @@ class Presente {
     required this.icone,
     required this.quantidade,
   });
+}
+
+/// O que a tela precisa saber sobre um jogador VISITADO.
+///
+/// ---------------------------------------------------------------------------
+/// NÃO É UM SEGUNDO PERFIL PÚBLICO
+/// ---------------------------------------------------------------------------
+///
+/// A autoridade sobre quem é um terceiro continua sendo uma só — a projeção que
+/// o backend publica e que o cliente lê como `JogadorPublicoRanking`. Isto aqui
+/// é a TRADUÇÃO dela para a linguagem da tela, e existe por uma razão de
+/// fronteira: o `PerfilService` não pode conhecer o transporte de ranking (há
+/// auditoria que o exige), então alguém tem de atravessar essa fronteira. Quem
+/// atravessa é o `PerfilPage`, num ponto só.
+///
+/// O VALOR DE SER UM OBJETO, e não três parâmetros soltos: nome, avatar e
+/// números viajam JUNTOS ou não viajam. Foi exatamente a possibilidade de eles
+/// viajarem separados que produziu o defeito que este tipo veio fechar — um
+/// perfil com a liga de B e o nome de A. Um objeto só não tem como ser montado
+/// pela metade a partir de duas pessoas.
+class RetratoVisitado {
+  const RetratoVisitado({
+    required this.nome,
+    required this.avatar,
+    required this.stats,
+  });
+
+  /// Como este jogador se apresenta aos outros. Nunca o nome de quem olha.
+  final String nome;
+
+  /// Já resolvido pela autoridade canônica de avatar — a mesma da Home e do
+  /// perfil próprio. Não há segundo fallback: referência ausente ou malformada
+  /// de um terceiro cai na MESMA coroa que a de qualquer um.
+  final String avatar;
+
+  /// Os números que a autoridade pública publicou sobre ele.
+  final PerfilStats stats;
 }
 
 /// View-model visual do contrato entregue pelo Claude.
@@ -156,6 +207,21 @@ class PerfilVM {
     required this.presentes,
   });
 
+  // Os DOIS enriquecimentos abaixo vivem lado a lado de propósito, e o merge
+  // que os juntou é a razão deste comentário existir: o Git empilhou os dois
+  // corpos num método só, e a resolução preguiçosa — ficar com um — apagaria em
+  // silêncio metade de uma correção já homologada.
+  //
+  // Eles não competem porque não escrevem no mesmo campo: `comRanking` só toca
+  // `ranking`, `comAvatarPublico` só toca `avatar`. Encadeá-los em qualquer
+  // ordem dá o mesmo VM, e é por isso que a página pode aplicá-los em sequência
+  // sem que um desfaça o outro.
+  //
+  // Nenhum dos dois é um `copyWith` genérico, e a recusa é a mesma nos dois
+  // casos: os outros campos têm um produtor só, e abrir a porta para remendá-los
+  // na tela é exatamente como nasce a segunda autoridade que as duas correções
+  // vieram fechar.
+
   /// O mesmo perfil, com outro estado competitivo.
   ///
   /// Existe porque o ranking é a única parte do VM que muda SOZINHA depois da
@@ -177,6 +243,37 @@ class PerfilVM {
     titulo: titulo,
     tituloEmoji: tituloEmoji,
     ranking: outro,
+    stats: stats,
+    ultimaConquista: ultimaConquista,
+    presentesCount: presentesCount,
+    conquistas: conquistas,
+    vitrine: vitrine,
+    presentes: presentes,
+  );
+
+  /// O mesmo perfil, com o avatar substituído pelo valor canônico da sessão.
+  ///
+  /// EXISTE POR CAUSA DA REATIVIDADE, e é o único campo que ganha este
+  /// tratamento. O `PerfilVM` é montado por uma carga assíncrona, e a carga só
+  /// se repete quando o `publicId` muda; um `avatarRef` trocado DENTRO da mesma
+  /// identidade não moveria aquele gatilho, e o Perfil ficaria com o avatar
+  /// velho até o jogador sair e entrar de novo. Reaplicando a resolução a cada
+  /// `build`, o avatar exibido passa a ser função direta do estado vivo — sem
+  /// recarga, sem esqueleto piscando e sem uma segunda consulta.
+  PerfilVM comAvatarPublico(String avatarCanonico) => PerfilVM(
+    ehMeuPerfil: ehMeuPerfil,
+    nome: nome,
+    avatar: avatarCanonico,
+    mascote: mascote,
+    moldura: moldura,
+    dorso: dorso,
+    efeito: efeito,
+    nivel: nivel,
+    xpAtual: xpAtual,
+    xpProximo: xpProximo,
+    titulo: titulo,
+    tituloEmoji: tituloEmoji,
+    ranking: ranking,
     stats: stats,
     ultimaConquista: ultimaConquista,
     presentesCount: presentesCount,
@@ -345,6 +442,43 @@ class PerfilScreen extends StatefulWidget {
   final VoidCallback onRecarregar;
   final ValueChanged<NavDestino> onNavTap;
 
+  /// Abrir o ranking completo a partir da LINHA COMPETITIVA.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE É OPCIONAL
+  /// -------------------------------------------------------------------------
+  ///
+  /// Nulo é o estado honesto de quem monta esta tela sem casca — dezenas de
+  /// testes de widget e o catálogo visual. Sem autoridade de ranking alcançável
+  /// não há tabela para abrir, e uma linha tocável que não leva a lugar nenhum
+  /// é pior do que uma linha que não se oferece.
+  ///
+  /// Com o callback, e SÓ com ele, a linha vira alvo de toque: ganha área
+  /// mínima, um nó de acessibilidade de botão e a seta que diz que ali se
+  /// aperta. Sem ele, o desenho é byte a byte o que sempre foi.
+  final VoidCallback? onAbrirRanking;
+
+  /// A faixa de relação social do perfil VISITADO — "Amigos", "Pedido enviado"
+  /// e os botões que a autoridade ofereceu.
+  ///
+  /// -------------------------------------------------------------------------
+  /// POR QUE UM WIDGET, E NÃO CAMPOS
+  /// -------------------------------------------------------------------------
+  ///
+  /// Esta tela é a superfície visual, e ela não conhece — nem pode passar a
+  /// conhecer — o vocabulário social. Com campos (`relacao`, `acoes`,
+  /// `onAcaoSocial`), o `switch` que decide qual botão existe acabaria aqui
+  /// dentro, e este arquivo viraria um segundo lugar onde se decide o que o
+  /// jogador tem permissão de fazer. Toda essa decisão mora em
+  /// `pages/perfil_page.dart` e em `amigos/`, onde ela pode ser auditada.
+  ///
+  /// O que chega aqui é uma caixa pronta e o lugar onde ela é desenhada.
+  ///
+  /// `null` no perfil do DONO, e não é opcionalidade frouxa: não existe relação
+  /// de alguém consigo, e um espaço reservado para ela empurraria o cabeçalho
+  /// do próprio jogador para baixo por nada.
+  final Widget? faixaSocial;
+
   const PerfilScreen({
     super.key,
     required this.vm,
@@ -364,6 +498,8 @@ class PerfilScreen extends StatefulWidget {
     required this.onCompartilhar,
     required this.onRecarregar,
     required this.onNavTap,
+    this.onAbrirRanking,
+    this.faixaSocial,
   });
 
   @override
@@ -672,6 +808,14 @@ class _PerfilScreenState extends State<PerfilScreen> {
               ],
             ],
           ),
+          // A FAIXA SOCIAL vem antes do título honorífico e depois do nome: a
+          // pergunta "quem é essa pessoa para mim?" é a primeira que se faz num
+          // perfil de terceiro, e enterrá-la abaixo das estatísticas obrigaria a
+          // rolar para descobrir se dá para adicionar alguém.
+          if (widget.faixaSocial != null) ...[
+            const SizedBox(height: 8),
+            widget.faixaSocial!,
+          ],
           // Título honorífico só existe se alguém o concedeu. Sem fonte, a
           // faixa inteira sai — 'Novato(a)' também é um título inventado, e um
           // que o jogo põe na pessoa sem ela ter feito nada para merecê-lo.
@@ -738,7 +882,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
   /// liga vazia: "carregando" não é ausência de liga, e "ainda não
   /// classificado" não é o mesmo que "não consegui carregar".
   Widget _linhaCompetitiva(EstadoRanking ranking) {
-    return Semantics(
+    final linha = Semantics(
       container: true,
       excludeSemantics: true,
       label: _anuncioCompetitivo(ranking),
@@ -766,6 +910,45 @@ class _PerfilScreenState extends State<PerfilScreen> {
               style: const TextStyle(color: Color(0xFFCFC0A0), fontSize: 12),
             ),
         ],
+      ),
+    );
+
+    final abrir = widget.onAbrirRanking;
+    if (abrir == null) return linha;
+
+    // O NÓ DE DENTRO CONTINUA INTACTO, e isso não é detalhe de implementação: a
+    // frase que o leitor de tela anuncia sobre a classificação foi escrita para
+    // ser ouvida e está fixada por teste. O botão é um nó A MAIS, por fora, com
+    // o rótulo da AÇÃO — quem navega por acessibilidade ouve o que a linha diz e
+    // depois o que dá para fazer com ela, em vez de perder um dos dois.
+    return Semantics(
+      button: true,
+      label: 'Ver o ranking completo',
+      child: InkWell(
+        onTap: abrir,
+        borderRadius: BorderRadius.circular(10),
+        child: ConstrainedBox(
+          // A linha tem 15 pixels de texto. Sem este piso, o alvo de toque seria
+          // menor que um terço do mínimo das diretrizes — e num lugar onde o
+          // dedo erra para cima cai no apelido e para baixo na barra de XP.
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(child: linha),
+                const SizedBox(width: 2),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFCFC0A0),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -871,10 +1054,15 @@ class _PerfilScreenState extends State<PerfilScreen> {
     // de quem ainda não jogou" — seriam um placar sem placar nenhum atrás.
     final stats = vm.stats;
     if (stats == null) return const SizedBox.shrink();
+    final canastras = stats.canastras;
+    // O quadradinho de canastras SOME quando não há fonte, em vez de mostrar
+    // zero. Vale para o perfil visitado, onde a lista branca da autoridade
+    // pública não publica canastras — e três números verdadeiros valem mais que
+    // quatro com um inventado.
     final dados = [
       (_numero(stats.vitorias), 'Vitórias'),
       (_numero(stats.partidas), 'Partidas'),
-      (_numero(stats.canastras), 'Canastras'),
+      if (canastras != null) (_numero(canastras), 'Canastras'),
       ('${stats.aproveitamento}%', 'Aproveit.'),
     ];
     return Padding(
