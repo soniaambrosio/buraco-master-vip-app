@@ -103,9 +103,14 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # futuras; nao pode encolher ate zero, nem perder estas chaves, nem rebaixar
 # estes pisos.
 # ---------------------------------------------------------------------------
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34"
+# `comunicacaoemu` entra pela OS 24-C3, e entra AQUI e nao so na fonte: um gate
+# novo que ficasse de fora desta relacao seria o unico sem contrato de conteudo
+# — protegido em presenca e execucao, e desprotegido no que a suite PROVA. Era
+# exatamente o buraco que a arquitetura P veio fechar, reaberto pela porta dos
+# fundos no gate mais recente.
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui comunicacaoemu"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 comunicacaoemu:32"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 comunicacaoemu:34"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'

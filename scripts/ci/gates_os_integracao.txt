@@ -185,10 +185,10 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     77966085e9f0205a03faaa1dc6be827a24a76d49ca85f5e13653616fc3b4aaa1
-    provas     37
+    sha256     a71a085ed883c479eb341e04a4b4b7c1be335e5bc5c642b0fc7c4eca4bacc7a3
+    provas     38
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      34
+    casos      35
     contador   casos ok: [0-9]+
     exige      T01 CONTROLE
     exige      T08 — suite trocada por expect(1, 1)
@@ -260,6 +260,49 @@ chatemu
 # falhar sem reprovar, que e o defeito CI-02 pelo outro lado.
 moderacaoemu
 colecoesemu
+
+# --- 9b. COMUNICAÇÃO CONTROLADA V1 contra o Emulator Suite (OS 24-C3) -------
+# A última lacuna de CI da família OS 24. A suíte
+# `functions-moderacao/test/integracao.comunicacao.emulador.test.js` existia,
+# era funcional e já tinha sido rodada à mão — e gate nenhum a executava. Ela
+# podia quebrar com todos os portões oficiais verdes.
+#
+# ELE NÃO É REDUNDANTE COM NENHUM DOS QUATRO VIZINHOS, e cada um prova outra
+# coisa:
+#
+#   `comunicacao`  ... a DECISÃO, em Dart puro. O canal chega PRONTO, montado
+#                      pelo próprio teste: a matriz do §2 é percorrida sem que
+#                      nada resolva ambiente contra o banco.
+#   `chatdom`      ... a porta do TEXTO, também em domínio puro.
+#   `moderacaofn`  ... `tsc` + os módulos puros da codebase. Não sobe emulador.
+#   `chatemu`      ... a integração real do CHAT LIVRE: autenticação, retry,
+#                      concorrência, bloqueio, sanção. Não toca a matriz da
+#                      Comunicação Controlada nem o catálogo.
+#
+# ESTE prova o limite que só existe depois dos quatro: matriz/porta da
+# Comunicação Controlada → Functions reais → Firestore/Auth. O ambiente é
+# resolvido contra `salasPrivadas` e `assentosAdmitidos`, escritos por OUTRA
+# autoridade; o direito premium vem de `playerEntitlements`, escrito pelo
+# Billing; o ritmo acumula em `chatRitmo` entre chamadas; e o grupo INT-ESP
+# fecha os vetores que dependiam de Firebase e não tinham caso em lugar nenhum
+# — espectador no caminho catalogado, VIP vigente que NÃO abre o teclado,
+# payload que tenta declarar o ambiente, e canal inexistente ou fechado.
+comunicacaoemu
+    suite      functions-moderacao/test/integracao.comunicacao.emulador.test.js
+    executor   "node --test functions-moderacao/test/integracao.comunicacao.emulador.test.js" 2>&1 | tee t_comunicacaoemu.log
+    sha256     3e570584539df355e09e64f7810ec1a9c77c5340a8d60f7a598670106736e37a
+    provas     32
+    casos      34
+    contador   pass [0-9]+
+    exige      describe("INT-AMB
+    exige      describe("INT-TXT
+    exige      describe("INT-CAT
+    exige      describe("INT-ESP
+    exige      INT-ESP-04 CONTROLE
+    exige      INT-ESP-05 VIP VIGENTE
+    exige      INT-ESP-09 recusa nao PERSISTE
+    exige      papelSemDireitoDeFala
+    exige      textoLivreNaoPermitidoNoAmbiente
 
 # --- 10. as TRES codebases que a composicao trouxe e o CI nunca conheceu -----
 # `functions-conta`, `functions-mesas` e `functions-economia` sao implantaveis

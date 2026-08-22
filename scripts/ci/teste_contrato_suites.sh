@@ -95,7 +95,12 @@ resultados() {
   printf '00:12 +81: All tests passed!\n' > "$d/t_comunicacao.log"
   printf '00:09 +137: All tests passed!\n' > "$d/t_chatdom.log"
   printf 'casos ok: 38 | casos com falha: 0\nTESTE DO PORTAO: VERDE\n' > "$d/t_portaoci.log"
-  printf 'casos ok: 34 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
+  printf 'casos ok: 35 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
+  # O gate de emulador da Comunicacao Controlada (OS 24-C3). O rodape e o do
+  # `node --test`, e nao o `+N` do Flutter — por isso o contrato dele declara
+  # um `contador` proprio, e por isso este fixture nao pode copiar o formato
+  # dos de cima.
+  printf 'tests 34\npass 34\nfail 0\n' > "$d/t_comunicacaoemu.log"
   # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
   # ordem carimbo -> log ficar inequivoca sem esperar o relogio.
   touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
@@ -230,6 +235,17 @@ awk '/^comunicacao$/ { pulando = 1; next }
      pulando && /^[[:blank:]]/ { next }
      { pulando = 0; print }' "$BASE/$FONTE_W" > "$W/$FONTE_W"
 esperar 1 "T22 — gate protegido removido da fonte => VERMELHO (N6)" "perdeu o contrato"
+
+# T22b — o MESMO ataque, mirado no gate que a OS 24-C3 acrescentou. Ele tem caso
+# proprio porque foi o ultimo a entrar, e um gate novo e justamente o que passa
+# despercebido: se `comunicacaoemu` cair de `CONTRATOS_MINIMOS` ou perder o
+# bloco na fonte, ele vira o unico gate protegido so em PRESENCA e EXECUCAO —
+# o buraco que esta arquitetura veio fechar, reaberto pelo gate mais recente.
+reset
+awk '/^comunicacaoemu$/ { pulando = 1; next }
+     pulando && /^[[:blank:]]/ { next }
+     { pulando = 0; print }' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+esperar 1 "T22b — comunicacaoemu sem contrato => VERMELHO (OS 24-C3)" "perdeu o contrato"
 
 reset
 printf '\ngatequenaoexiste\n    suite      app/test/chat/chat_test.dart\n    executor   roda gatequenaoexiste test/chat/chat_test.dart\n    sha256     0000000000000000000000000000000000000000000000000000000000000000\n    provas     1\n    exige      void main\n' \
