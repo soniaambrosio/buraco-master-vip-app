@@ -269,6 +269,27 @@ jobs:
           roda rkpagina     test/ranking_page_test.dart
           # A união dos três arquivos da interseção da composição.
           roda composicao   test/composicao/composicao_perfil_ranking_test.dart
+          # ---------------------------------------------------------------
+          # PERFIL/SOCIAL FUNCIONAL SOBRE A RAIZ P
+          # ---------------------------------------------------------------
+          # As onze suites que a composicao trouxe da familia funcional. Elas
+          # cobrem avatar publico, Perfil visitado, Ranking real com navegacao
+          # publica e Amigos funcional — e sao as provas que a folha de origem
+          # protegia com o mecanismo M (`suites_obrigatorias.txt` + verificador
+          # proprio). Esse mecanismo NAO veio junto: a fonte unica desta raiz e
+          # `scripts/ci/gates_os_integracao.txt`, e e la que o contrato de cada
+          # uma destas suites mora — caminho, executor, digest, piso e blocos.
+          roda avatarcanon  test/casca/avatar_publico_canonico_test.dart
+          roda avatarhml  test/casca/homologacao_avatar_publico_test.dart
+          roda perfilvis  test/perfil/identidade_visitada_test.dart
+          roda rknavpub  test/ranking/navegacao_perfil_publico_test.dart
+          roda compavrank  test/composicao/composicao_avatar_ranking_test.dart
+          roda compnavpub  test/composicao/composicao_navegacao_publica_test.dart
+          roda socialestado  test/amigos/estado_social_test.dart
+          roda socialleitor  test/amigos/leitor_social_test.dart
+          roda socialtela  test/amigos/descoberta_social_tela_test.dart
+          roda audsocial  test/amigos/auditoria_descoberta_social_test.dart
+          roda a11yamigos  test/amigos/a11y_alvos_amigos_test.dart
           # OS Chat Livre Seguro V1: a porta ÚNICA de envio de mensagem. Prova
           # que autoria não vem do payload, que o `messageId` é derivado e opaco,
           # que bloqueio é filtrado por PAR nas duas direções consumindo

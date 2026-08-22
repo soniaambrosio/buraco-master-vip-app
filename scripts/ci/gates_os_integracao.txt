@@ -310,3 +310,135 @@ composneg
 # que guarda a invariante RANKING-01 podia ficar vermelha sem ninguém saber.
 rkpagina
 composloja
+
+# --- 13. PERFIL/SOCIAL FUNCIONAL SOBRE A RAIZ P ------------------------------
+#
+# As onze suites que a composicao Perfil/Social trouxe da familia funcional
+# `codex/amigos-funcional-seguro-v1`. Elas provam avatar publico, Perfil
+# visitado, Ranking real com navegacao publica e Amigos funcional.
+#
+# A FOLHA DE ORIGEM PROTEGIA ESTAS SUITES COM O MECANISMO M —
+# `app/test/suites_obrigatorias.txt` mais `verificar_suites_obrigatorias.sh` —
+# e ele NAO veio junto. Ele exige `GATES="<literal>"` e `for k in <literal>`
+# DENTRO do YAML, que e exatamente a lista paralela que esta raiz aboliu por
+# ser o defeito CI-02. Trazer os dois faria duas fontes unicas se reprovarem
+# mutuamente. As provas foram CONVERTIDAS para ca, que e o que sobrevive.
+#
+# `casos` e igual a `provas` em dez das onze: sao suites de caso declarado.
+# Em `a11yamigos` o piso executado e 75 contra 30 declaracoes, porque ela
+# gera caso por alvo dentro de laco — e e justamente ali que um piso
+# executado pega o que a contagem estatica nao ve.
+
+avatarcanon
+    suite      app/test/casca/avatar_publico_canonico_test.dart
+    executor   roda avatarcanon test/casca/avatar_publico_canonico_test.dart
+    sha256     7abf28b66f318cad2093e2420b0d14929fc1fa18b5ede03778fb82d8d85df12a
+    provas     37
+    casos      37
+    exige      group('resolvedor canônico
+    exige      group('Home e Perfil consomem a mesma autoridade
+    exige      group('auditoria estrutural
+    exige      group('reatividade
+
+avatarhml
+    suite      app/test/casca/homologacao_avatar_publico_test.dart
+    executor   roda avatarhml test/casca/homologacao_avatar_publico_test.dart
+    sha256     54ed51b7bcbda8f61ffaa66a28ac8fb77b930af92fa5296994f01c028c9f8280
+    provas     42
+    casos      42
+    exige      group('H-A domínio puro
+    exige      group('H-C Perfil
+    exige      group('H-D identidade em movimento
+    exige      group('H-E auditoria estrutural
+
+perfilvis
+    suite      app/test/perfil/identidade_visitada_test.dart
+    executor   roda perfilvis test/perfil/identidade_visitada_test.dart
+    sha256     1a2a810782ebec3745ecf14ba4e1e59b4a68504d4c6423d04d7ffc03aa8beed9
+    provas     25
+    casos      25
+    exige      group('A visita B
+    exige      group('a chave é o publicId
+    exige      group('falha, fallback e privacidade
+    exige      group('guarda estrutural
+
+rknavpub
+    suite      app/test/ranking/navegacao_perfil_publico_test.dart
+    executor   roda rknavpub test/ranking/navegacao_perfil_publico_test.dart
+    sha256     ef7ce42dfd139d91f7a46e8579a3f6380fe4499adb743abfcfd4e1684b2db024
+    provas     38
+    casos      38
+    exige      group('N2 — o identificador é o público, e só ele
+    exige      group('N12–N13 — nada de maquete no caminho
+    exige      group('N6–N9 — voo, cache e troca de sessão
+    exige      group('N16 — o Perfil abre o ranking real
+
+compavrank
+    suite      app/test/composicao/composicao_avatar_ranking_test.dart
+    executor   roda compavrank test/composicao/composicao_avatar_ranking_test.dart
+    sha256     3f081613dfa648b55ee2ebe64559db13ac5e60b61465a5b4f4a3a99976db1581
+    provas     21
+    casos      21
+    exige      group('Home — as duas autoridades no mesmo cabeçalho
+    exige      group('troca de identidade A → B
+    exige      group('navegação preserva o publicId
+
+compnavpub
+    suite      app/test/composicao/composicao_navegacao_publica_test.dart
+    executor   roda compnavpub test/composicao/composicao_navegacao_publica_test.dart
+    sha256     c6b31bebd7b875635b3641c0316bb30fd737a31258f67e81dd3662ddb0561f8b
+    provas     22
+    casos      22
+    exige      group('C1 — as quatro entregas no mesmo fecho
+    exige      group('C5–C11 — jogadores públicos, sem uid e sem palpite
+    exige      group('C12–C15 — as invariantes da base sob a tabela nova
+
+socialestado
+    suite      app/test/amigos/estado_social_test.dart
+    executor   roda socialestado test/amigos/estado_social_test.dart
+    sha256     b1ad02a845089cbb7b790ade9d597d489fcbff0ec52babe3ce9233537e961ab8
+    provas     28
+    casos      28
+    exige      group('AcaoSocial — a lista que autoriza os botões
+    exige      group('JogadorPublico — apresentação sem identidade inventada
+    exige      group('RelacaoSocial — o que vem do fio, e o que não vem
+
+socialleitor
+    suite      app/test/amigos/leitor_social_test.dart
+    executor   roda socialleitor test/amigos/leitor_social_test.dart
+    sha256     e877b6b576b17d1dab2944d752d39776ed991217c195209546394749d0c02c55
+    provas     29
+    casos      29
+    exige      group('resposta vencida
+    exige      group('troca de sessão — nada de A sobra para B
+    exige      group('ação aceita — subtrai, relê, e NUNCA adiciona
+
+socialtela
+    suite      app/test/amigos/descoberta_social_tela_test.dart
+    executor   roda socialtela test/amigos/descoberta_social_tela_test.dart
+    sha256     0730b190d89a7931581f142fc67e53809a3b67befe2cff1915cd0deaeec0a603
+    provas     18
+    casos      18
+    exige      group('Amigos — as listas vêm da autoridade
+    exige      group('navegação — o publicId, e nunca a posição
+
+audsocial
+    suite      app/test/amigos/auditoria_descoberta_social_test.dart
+    executor   roda audsocial test/amigos/auditoria_descoberta_social_test.dart
+    sha256     28b9cf5e87d2481ac733d062e4df325ae0042ad249ba7811e119208d64c567c1
+    provas     23
+    casos      23
+    exige      group('UID não atravessa a fronteira
+    exige      group('a maquete de Amigos não voltou
+    exige      group('o bloqueio não é decidido nem revelado pelo cliente
+    exige      group('posição e índice não identificam ninguém
+
+a11yamigos
+    suite      app/test/amigos/a11y_alvos_amigos_test.dart
+    executor   roda a11yamigos test/amigos/a11y_alvos_amigos_test.dart
+    sha256     4b614ae0ae0bb3019b3e4fd1722fea9d65b25d2ccdac3b9b859cbc31e3f31b8c
+    provas     30
+    casos      75
+    exige      group('1 — o piso de 48 pontos
+    exige      group('3 — tocar na borda nova aciona o controle certo
+    exige      group('5 — vazio, carregando, erro e conteúdo

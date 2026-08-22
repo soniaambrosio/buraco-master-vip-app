@@ -521,29 +521,51 @@ void main() {
     });
 
     test('o workflow a executa e a considera no portão', () {
-      // O overlay do CI roda a partir de `app_build/`, e o workflow fica dois
-      // níveis acima. Fora do CI o arquivo pode não estar alcançável — e aí o
-      // caso não tem o que afirmar, em vez de afirmar errado.
+      // CONVERTIDO PARA A ARQUITETURA DA RAIZ P.
+      //
+      // Este caso exigia `GATES="...perfilvis..."` e `for k in ...perfilvis...`
+      // DENTRO do YAML. Na folha de origem isso era exato — era o mecanismo M
+      // que protegia a suíte. A raiz P ABOLIU as duas listas embutidas: elas
+      // eram o defeito CI-02 (a lista da evidência divergindo da lista do
+      // agregador, e o portão ficando verde com gate vermelho). A relação de
+      // gates vive em `scripts/ci/gates_os_integracao.txt`, e copiá-la para o
+      // YAML é proibido pelo cabeçalho daquele arquivo.
+      //
+      // Exigir aqui o que a raiz proíbe faria as duas fontes únicas se
+      // reprovarem mutuamente. A prova foi CONVERTIDA, e continua provando o
+      // mesmo: que apagar a suíte não silencia o gate. Ficou mais forte, na
+      // verdade — além de executor e registro, confere o CONTRATO (digest e
+      // piso), que o mecanismo M não tinha.
       if (!workflow.existsSync()) return;
       final texto = workflow.readAsStringSync();
-
       expect(
         texto,
         contains('roda perfilvis  test/perfil/identidade_visitada_test.dart'),
         reason: 'o gate perfilvis não executa mais a suíte',
       );
-      // Nas DUAS listas: a da evidência publicada e a que decide verde/vermelho.
-      // Estar só na primeira faria o gate aparecer no relatório e não reprovar.
+
+      final fonte = File('../scripts/ci/gates_os_integracao.txt');
+      if (!fonte.existsSync()) return;
+      final relacao = fonte.readAsStringSync();
       expect(
-        RegExp(r'GATES="[^"]*\bperfilvis\b').hasMatch(texto),
+        RegExp(r'^perfilvis$', multiLine: true).hasMatch(relacao),
         isTrue,
-        reason: 'perfilvis saiu da evidência publicada',
+        reason: 'perfilvis saiu da fonte única de gates — o agregador deixa '
+            'de percorrê-lo e ele passa a rodar sem decidir nada',
       );
+      for (final atributo in const [
+        'suite      app/test/perfil/identidade_visitada_test.dart',
+        'executor   roda perfilvis test/perfil/identidade_visitada_test.dart',
+      ]) {
+        expect(
+          relacao,
+          contains(atributo),
+          reason: 'o contrato de perfilvis perdeu "$atributo"',
+        );
+      }
       expect(
-        RegExp(r'for k in [^;]*\bperfilvis\b[^;]*; do').hasMatch(texto),
+        RegExp(r'perfilvis[^a-z]', multiLine: true).hasMatch(relacao),
         isTrue,
-        reason: 'perfilvis saiu do portão verde/vermelho — passaria a rodar '
-            'sem poder reprovar',
       );
     });
   });
