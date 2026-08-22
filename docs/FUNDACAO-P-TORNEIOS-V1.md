@@ -217,6 +217,46 @@ exit 0.
 
 ---
 
+## 5.3 EXISTE UMA ENTREGA IRMÃ PARA A MESMA MISSÃO
+
+Descoberto **depois** desta entrega ser publicada, e ele decide sozinho o que
+fazer daqui em diante:
+
+    integracao/base-p-torneios-vip-fundacao-v1  @  5306e3f
+    1 commit sobre o MESMO 21ddf47, publicada em origin, 18 arquivos
+
+As duas são **irmãs, não parentes**: `merge-base` = `21ddf47`, nenhuma é
+ancestral da outra. É o padrão de "três pontas concorrentes" da linhagem P se
+repetindo um nível abaixo, agora dentro de Torneios.
+
+**As três colisões, medidas:**
+
+| colisão | `5306e3f` | esta entrega |
+|---|---|---|
+| nome do gate | `torneiobase` → `app/test/torneios/fundacao_base_p_test.dart` | `torneiobase` → `app/test/torneios/fundacao_torneios_v1_test.dart` |
+| seeds superseded | **removidos** do seed principal para `app/data/torneios/legado/tournamentTemplates.superseded.json` | permanecem no seed e são **classificados** por `situacaoDoSeedV1` |
+| `em_revisao` | acrescentado ao enum **canônico** `EdicaoStatus`, com a aresta direta removida | enum **separado** `EstadoEditorialV1`, sem tocar `EdicaoStatus` |
+
+**A colisão do nome é a mais dura:** o mesmo `torneiobase` aponta para suítes
+diferentes, com digests diferentes, nas duas fontes únicas. Qualquer composição
+tem de escolher um dos dois — não há união.
+
+**A colisão dos seeds quebra esta suíte sobre aquela árvore:** `FV1-A08` e
+`FV1-A09` leem `quarta_vulnerabilidade` e `campeonato_mensal` do seed
+principal com `firstWhere`. Em `5306e3f` eles não estão mais lá, e os dois
+casos lançam. `FV1-A11` e `FV1-A12` também mudam de contagem.
+
+**Comparação honesta do recorte.** `5306e3f` faz MAIS: fecha a porta de
+`registrations` nas Rules (`allow write: if false`, o achado T-02 da
+arbitragem), executa de fato a decisão "seeds `publico` e `misto` SUPERSEDED"
+movendo-os, e integra `em_revisao` na autoridade que já existia. Esta entrega
+faz MENOS de propósito: nenhuma mudança produtiva, e um grupo de auditoria
+(`FV1-G`) que prova contra a árvore que nada foi ligado.
+
+Qual das duas é a fundação de Torneios V1 **não é decisão de quem escreveu
+qualquer uma das duas**. Enquanto não for arbitrada, compor as duas às cegas
+reproduz exatamente o problema que a linhagem P já tem.
+
 ## 6. Limites absolutos respeitados
 
 Não foi implementado, e a lista está em `kForaDaFundacaoV1`, conferida por
