@@ -1,0 +1,162 @@
+{
+  "_meta": {
+    "estado": "SUPERSEDED",
+    "porQue": "Acesso incompativel com a V1: a regra comercial congelada exige VIP integral vigente, e estes dois modelos admitiam jogador sem assinatura.",
+    "naoCarrega": "Este arquivo esta em app/data/torneios/legado/, fora do glob app/data/torneios/*.json que o CI copia para a bancada de teste e que qualquer carregador produtivo usaria. Nao ha, nesta base, produtor de edicoes — entao ele nao cria nada nem por engano; a guarda existe para o dia em que houver.",
+    "naoConvertido": "Os dois foram PRESERVADOS COMO ESTAVAM, e nao reescritos para acesso vip. A Decisao #10 (publico joga e ganha fichas, selos e coroas, mas nao pontua no ranking) e uma decisao de produto registrada, e apaga-la por conveniencia de esquema seria perder a informacao que permite retoma-la.",
+    "origem": "app/data/torneios/tournamentTemplates.seed.json em 21ddf47b6320c1e5ddf1c64659d928b68c1f0889",
+    "guarda": "app/test/torneios/fundacao_base_p_test.dart, grupo SEED"
+  },
+  "templatesSuperseded": [
+    {
+      "templateId": "quarta_vulnerabilidade",
+      "nome": "Quarta da Vulnerabilidade",
+      "coverAssetId": "capa_quarta_vulnerabilidade",
+      "acesso": "publico",
+      "participacao": "individual",
+      "modalidade": {
+        "tipo": "alterna",
+        "opcoes": [
+          "aberto",
+          "fechado"
+        ]
+      },
+      "recorrencia": {
+        "tipo": "semanal",
+        "diaSemana": "quarta",
+        "horario": "20:00"
+      },
+      "vagas": {
+        "max": 64,
+        "min": 16
+      },
+      "checkin": {
+        "abre": "19:30",
+        "fecha": "19:50"
+      },
+      "entrada": {
+        "tipo": "introducaoGratisDepoisPaga",
+        "gratisPrimeirasEdicoes": 6,
+        "contador": "edicoes_validas_realizadas",
+        "ignoraCanceladas": true,
+        "valorApos": 50,
+        "moeda": "fichas",
+        "configuravel": true,
+        "note": "Decisão #11: 6 primeiras EDIÇÕES realizadas (não semanas de calendário)."
+      },
+      "rankingPolicy": {
+        "publicoPontuaRanking": false,
+        "vipPontuaRanking": true,
+        "publicoRecebeOutrosPremios": true,
+        "note": "Decisão #10: público joga e ganha fichas/selos/coroas, mas não pontua no ranking."
+      },
+      "premiacao": [
+        {
+          "colocacao": 1,
+          "fichas": 500,
+          "crownAssetId": "crown_champion",
+          "sealAssetId": "seal_champion",
+          "rankingPoints": {
+            "valor": "configuravel",
+            "sujeitoA": "rankingPolicy"
+          }
+        },
+        {
+          "colocacao": 2,
+          "fichas": 300,
+          "sealAssetId": "seal_runner_up",
+          "rankingPoints": {
+            "valor": "configuravel",
+            "sujeitoA": "rankingPolicy"
+          }
+        },
+        {
+          "colocacao": 3,
+          "fichas": 150,
+          "sealAssetId": "seal_top3",
+          "rankingPoints": {
+            "valor": "configuravel",
+            "sujeitoA": "rankingPolicy"
+          }
+        }
+      ],
+      "selosCondicionais": [
+        "seal_performance",
+        "seal_fair_play"
+      ],
+      "ativo": true,
+      "publicado": false
+    },
+    {
+      "templateId": "campeonato_mensal",
+      "nome": "Campeonato Mensal Master VIP",
+      "coverAssetId": "capa_campeonato_mensal",
+      "acesso": {
+        "tipo": "misto",
+        "elegiveis": [
+          "classificados",
+          "convidados",
+          "vagas_remanescentes"
+        ]
+      },
+      "participacao": "individual",
+      "modalidade": {
+        "tipo": "definidaMensalmente"
+      },
+      "recorrencia": {
+        "tipo": "mensal",
+        "regra": "ultimo_domingo",
+        "horario": "19:00",
+        "note": "Decisão/Correções: último DOMINGO 19:00 (antes era sábado 19:30)."
+      },
+      "vagas": {
+        "max": 64,
+        "min": 16
+      },
+      "checkin": {
+        "abre": "18:00",
+        "fecha": "18:40"
+      },
+      "entrada": {
+        "classificados": {
+          "tipo": "gratuito"
+        },
+        "vagasRemanescentes": {
+          "tipo": "ingresso",
+          "valor": 300,
+          "moeda": "fichas",
+          "ativar": false,
+          "configuravel": true
+        }
+      },
+      "rankingPolicy": {
+        "todosElegiveisPontuam": true
+      },
+      "premiacao": [
+        {
+          "colocacao": 1,
+          "fichas": 3000,
+          "crownAssetId": "crown_monthly_champion",
+          "sealAssetId": "seal_monthly_champion",
+          "extras": [
+            "hall_dos_imortais"
+          ]
+        },
+        {
+          "colocacao": 2,
+          "fichas": 1500,
+          "sealAssetId": "seal_runner_up"
+        },
+        {
+          "colocacao": 3,
+          "fichas": 750,
+          "sealAssetId": "seal_top3"
+        }
+      ],
+      "registroFinalistas": "historico_mensal_permanente",
+      "regraCritica": "Nunca retirar vaga de classificado confirmado para acomodar ingresso pago.",
+      "ativo": true,
+      "publicado": false
+    }
+  ]
+}

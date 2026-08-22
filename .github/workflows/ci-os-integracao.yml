@@ -202,6 +202,14 @@ jobs:
           mkdir -p app_build/test/torneios/data app_build/test/integracao app_build/test/colecoes/data
           cp -R app/test/. app_build/test/
           cp app/data/torneios/*.json app_build/test/torneios/data/
+          # Seeds LEGADOS, em subpasta propria. Eles nao entram pelo glob
+          # acima de proposito: `app/data/torneios/*.json` e o caminho
+          # produtivo, e um modelo aposentado nao pode voltar por ele. Aqui
+          # eles viajam para a bancada porque `fundacao_base_p_test.dart`
+          # precisa PROVAR que continuam de fora — e porque a mecanica que os
+          # dois exercitam segue sustentada por `mtorneios`.
+          mkdir -p app_build/test/torneios/data/legado
+          cp app/data/torneios/legado/*.json app_build/test/torneios/data/legado/
           cp app/data/colecoes/*.json app_build/test/colecoes/data/
           # O widget_test.dart do scaffold tem erro pré-existente conhecido.
           rm -f app_build/test/widget_test.dart
@@ -220,6 +228,10 @@ jobs:
           roda encerr     test/teste_encerramento.dart
           roda torneios   test/torneios/reward_grants_test.dart
           roda mtorneios  test/torneios/motor_torneios_test.dart
+          # OS de Fundacao da Base P: acesso VIP integral, participacao
+          # individual, ciclo editorial com `em_revisao` e aprovador distinto,
+          # e os quatro bloqueios que precisam continuar bloqueados.
+          roda torneiobase test/torneios/fundacao_base_p_test.dart
           roda integr     test/integracao/teste_integracao_motores.dart
           roda colarte    test/colecoes/colecao_arte_test.dart
           roda colfire    test/colecoes/colecao_firebase_test.dart

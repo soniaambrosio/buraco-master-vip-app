@@ -37,6 +37,25 @@ import '../suporte/seeds.dart';
 
 Map<String, dynamic> _seed(String nome) => lerSeed('torneios', nome);
 
+/// Um template SUPERSEDED, lido do seed legado.
+///
+/// A Quarta da Vulnerabilidade e o Campeonato Mensal sairam da relacao ATIVA
+/// da V1 por decisao comercial — VIP integral obrigatorio —, e nao por
+/// defeito. A MECANICA que os dois exercitam (entrada em duas etapas, trilha
+/// de classificado com cobranca desligada, modalidade que exige decisao
+/// humana) continua sendo dominio vivo e sustentado por este arquivo.
+///
+/// Apagar os casos junto com os modelos perderia a prova de um comportamento
+/// que o primeiro template novo com essas formas vai usar de novo — e o
+/// perderia em silencio, que e o pior jeito.
+TorneioTemplate _legado(String templateId) {
+  final raiz = lerSeedLegado('torneios', 'tournamentTemplates.superseded.json');
+  final itens = (raiz['templatesSuperseded'] as List).cast<Map<String, dynamic>>();
+  return TorneioTemplate.fromJson(
+    itens.firstWhere((t) => t['templateId'] == templateId),
+  );
+}
+
 final _agora = DateTime.utc(2026, 8, 7, 20);
 
 /// Template SINTETICO, usado nos caminhos felizes de mecanica.
@@ -236,7 +255,7 @@ void main() {
   // 1. CRIACAO DE TORNEIO
   // ===========================================================================
   group('1. criacao de torneio', () {
-    test('o catalogo carrega os seis templates mais o evento de encerramento', () {
+    test('o catalogo carrega os templates ATIVOS mais o evento de encerramento', () {
       final catalogo = _catalogo();
       expect(catalogo.todos.length, TorneioIds.todos.length);
       expect(catalogo.regulares.map((t) => t.tournamentId), TorneioIds.regulares);
@@ -430,15 +449,23 @@ void main() {
       expect(copa.resolverPara(1 + copa.opcoes.length), copa.opcoes.first);
 
       // Definida pela administracao: NAO resolve sozinha.
-      expect(catalogo[TorneioIds.campeonatoMensal].modalidade.resolverPara(1), isNull);
+      expect(_legado(TorneioIds.campeonatoMensal).modalidade.resolverPara(1), isNull);
       expect(catalogo[TorneioIds.campeonatoAnual].modalidade.resolverPara(1), isNull);
     });
 
     test('o acesso do seed vira criterio de elegibilidade, sem campo duplicado', () {
       final catalogo = _catalogo();
-      expect(catalogo[TorneioIds.quartaVulnerabilidade].criteriosElegibilidade, isEmpty);
-      expect(catalogo[TorneioIds.sextaMasterVip].criteriosElegibilidade,
-          contains('assinatura'));
+      // O acesso `publico` do legado NAO produzia criterio nenhum — e e
+      // exatamente por isso que ele saiu da V1.
+      expect(_legado(TorneioIds.quartaVulnerabilidade).criteriosElegibilidade,
+          isEmpty);
+      // E a regra da V1, afirmada sobre o catalogo INTEIRO e nao sobre um
+      // exemplar: todo template ativo exige assinatura. Um modelo novo sem o
+      // criterio derruba aqui, e nao na primeira inscricao indevida.
+      for (final t in catalogo.todos) {
+        expect(t.criteriosElegibilidade, contains('assinatura'),
+            reason: t.tournamentId);
+      }
       // Sem assinatura, a Sexta recusa com o motivo que a tela ja conhece.
       final r = inscrever(
         edicao: _edicao(),
@@ -454,7 +481,7 @@ void main() {
     test('a entrada em duas etapas cobra a partir da edicao certa', () {
       // Quarta da Vulnerabilidade: gratis nas primeiras edicoes, paga depois.
       // Os numeros vem do seed; o teste so confere o COMPORTAMENTO.
-      final entrada = _catalogo()[TorneioIds.quartaVulnerabilidade].entrada!;
+      final entrada = _legado(TorneioIds.quartaVulnerabilidade).entrada!;
       final gratis = entrada.gratisPrimeirasEdicoes!;
       expect(entrada.custoPara(numeroEdicao: gratis), 0);
       expect(entrada.custoPara(numeroEdicao: gratis + 1), entrada.valorApos);
@@ -462,7 +489,7 @@ void main() {
     });
 
     test('a trilha de classificado do mensal e gratuita e a paga esta desligada', () {
-      final entrada = _catalogo()[TorneioIds.campeonatoMensal].entrada!;
+      final entrada = _legado(TorneioIds.campeonatoMensal).entrada!;
       expect(entrada.trilhas.keys, containsAll(['classificados', 'vagasRemanescentes']));
       expect(entrada.custoPara(trilha: 'classificados'), 0);
       // `ativar: false` no seed: a cobranca existe configurada, mas desligada.
@@ -2481,7 +2508,7 @@ void main() {
         ModalidadeMesa.aberto,
       );
       // Politica que exige decisao humana: a edicao segue sem modalidade.
-      final mensal = _catalogo()[TorneioIds.campeonatoMensal];
+      final mensal = _legado(TorneioIds.campeonatoMensal);
       expect(base.comModalidadeDe(mensal, em: _agora).modalidade, isNull);
     });
 

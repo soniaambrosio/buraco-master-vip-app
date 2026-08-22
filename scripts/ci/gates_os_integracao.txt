@@ -442,3 +442,41 @@ a11yamigos
     exige      group('1 — o piso de 48 pontos
     exige      group('3 — tocar na borda nova aciona o controle certo
     exige      group('5 — vazio, carregando, erro e conteúdo
+
+# --- 14. FUNDACAO DA BASE P DE TORNEIOS V1 ---------------------------------
+#
+# As decisoes de fundacao da V1, cada uma provada pelos DOIS lados: o estado
+# correto existe, e o estado errado derruba. Ela nao substitui `mtorneios`, que
+# continua provando o Motor; ela guarda o que o Motor nao tem como guardar —
+# que modelo pode existir, que ciclo o modelo atravessa, e o que continua
+# proibido enquanto as autoridades ausentes nao chegarem.
+#
+# OS QUATRO BLOCOS ESTRUTURAIS (ECON, JOBS, HALL, CLI) VARREM A ARVORE, e nao
+# ha como ser diferente: eles afirmam a AUSENCIA de uma coisa, e ausencia nao
+# tem comportamento para exercitar. Um teste de comportamento que "nao credita"
+# passaria igual num codigo que credita por outro caminho.
+#
+# `exige` aponta para os casos que sozinhos ja denunciam a volta de cada
+# decisao desfeita: SEED-14 e o superseded reaparecendo no seed ativo, CICL-03
+# e o salto rascunho -> agendado, CICL-05 e o criador aprovando a si mesmo, e
+# ECON-01 e a escolha silenciosa de carteira.
+torneiobase
+    suite      app/test/torneios/fundacao_base_p_test.dart
+    executor   roda torneiobase test/torneios/fundacao_base_p_test.dart
+    sha256     6351d5270f6e91ae5b0307a09f830559dbf78fb70e31b3c3bff51c849222a4b1
+    provas     56
+    casos      56
+    exige      group('SEED
+    exige      group('CTR
+    exige      group('PART
+    exige      group('CICL
+    exige      group('ECON
+    exige      group('JOBS
+    exige      group('HALL
+    exige      group('CLI
+    exige      ('SEED-14 um superseded de volta ao seed ativo DERRUBA a carga
+    exige      ('CICL-03 rascunho -> agendado e RECUSADO
+    exige      ('CICL-05 criador aprovando a propria edicao e RECUSADO
+    exige      ('ECON-01 a fundacao nao escolheu carteira nenhuma
+    exige      kAcessosAdmitidosV1
+    exige      quebrasDoCicloEditorialV1

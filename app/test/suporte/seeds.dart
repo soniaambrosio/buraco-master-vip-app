@@ -32,6 +32,18 @@ import 'dart:io';
 ///    `flutter test` roda localmente.
 /// 3. `app/data/<dominio>/` — mesma arvore, mas com o CWD na raiz do
 ///    repositorio, para invocacoes fora do pacote.
+/// Caminhos do seed LEGADO, na mesma ordem e pelo mesmo criterio.
+///
+/// Existe separado de [_candidatos] porque o legado NAO pode ser alcancavel
+/// pelo mesmo nome do ativo: um `lerSeed('torneios', ...)` que caisse no
+/// legado por engano devolveria modelos aposentados para quem pediu os
+/// vigentes, e o teste ficaria verde provando a coisa errada.
+List<String> _candidatosLegado(String dominio, String nome) => [
+      'test/$dominio/data/legado/$nome',
+      'data/$dominio/legado/$nome',
+      'app/data/$dominio/legado/$nome',
+    ];
+
 List<String> _candidatos(String dominio, String nome) => [
       'test/$dominio/data/$nome',
       'data/$dominio/$nome',
@@ -59,4 +71,28 @@ File arquivoDeSeed(String dominio, String nome) {
 /// Le e decodifica o seed `nome` do dominio `dominio`.
 Map<String, dynamic> lerSeed(String dominio, String nome) =>
     jsonDecode(arquivoDeSeed(dominio, nome).readAsStringSync())
+        as Map<String, dynamic>;
+
+/// Devolve o arquivo do seed LEGADO `nome` do dominio `dominio`.
+///
+/// Seed legado e material de MIGRACAO E TESTE, e nao de producao: ele mora
+/// numa subpasta que o glob `app/data/<dominio>/*.json` nao alcanca, entao
+/// nenhum carregador produtivo o encontra por acidente — e nenhuma edicao
+/// nasce dele, porque quem le por aqui e teste.
+File arquivoDeSeedLegado(String dominio, String nome) {
+  final tentados = _candidatosLegado(dominio, nome);
+  for (final caminho in tentados) {
+    final arquivo = File(caminho);
+    if (arquivo.existsSync()) return arquivo;
+  }
+  throw StateError(
+    'seed legado nao encontrado: $dominio/legado/$nome\n'
+    'diretorio corrente: ${Directory.current.path}\n'
+    'caminhos tentados:\n  ${tentados.join('\n  ')}',
+  );
+}
+
+/// Le e decodifica o seed LEGADO `nome` do dominio `dominio`.
+Map<String, dynamic> lerSeedLegado(String dominio, String nome) =>
+    jsonDecode(arquivoDeSeedLegado(dominio, nome).readAsStringSync())
         as Map<String, dynamic>;

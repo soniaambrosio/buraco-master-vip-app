@@ -385,42 +385,41 @@ service cloud.firestore {
         allow write: if false;
 
         // -----------------------------------------------------------------
-        // Inscricoes — o unico ponto de escrita do jogador
+        // Inscricoes — FECHADAS PARA O CLIENTE
         // -----------------------------------------------------------------
+        //
+        // ATE ESTA BASE, este era o unico ponto de escrita direta do jogador, e
+        // o comentario que autorizava dizia: "a elegibilidade, a lotacao e a
+        // janela sao revalidadas pela Function que reage a este documento".
+        //
+        // ESSA FUNCTION NUNCA EXISTIU. Os unicos gatilhos de documento do
+        // repositorio sao `aoRegistrarPartida` (economia),
+        // `aoRegistrarResultadoOficial` (ranking), `aoBloquearJogador` (social)
+        // e `aoConcluirEdicao` (torneios). Nenhum reage a `registrations`.
+        //
+        // O efeito pratico da porta aberta era completo: um cliente autenticado
+        // criava a propria inscricao em torneio VIP, lotado, fora da janela e
+        // com o perfil suspenso, sem pagar ficha nenhuma — e a linha ainda
+        // contava na lotacao lida pelo `tickTorneios`. A forma era conferida; a
+        // ELEGIBILIDADE nao era conferida por ninguem.
+        //
+        // A porta fecha aqui, e nao "depois que o revalidador existir": uma
+        // regra que confia num consumidor ausente e uma regra que nao vale. A
+        // porta autoritativa de inscricao (callable com App Check, que compoe
+        // `playerModeration` + `playerEntitlements` e obedece ao dominio) e
+        // objeto de OS propria, e ela nao precisa deste `allow` para funcionar:
+        // Cloud Function escreve pelo Admin SDK, que nao passa por Rules.
+        //
+        // A LEITURA CONTINUA: o jogador precisa ver a propria inscricao, e o
+        // administrador precisa ver a lista. Fechar a leitura junto seria
+        // confundir "nao escreve" com "nao existe".
         match /registrations/{userId} {
           allow read: if souEu(userId) || admin();
 
-          // Criar a PROPRIA inscricao, em estado inicial, sem se autoconceder
-          // vaga, posicao de espera nem status avancado. A elegibilidade, a
-          // lotacao e a janela sao revalidadas pela Function que reage a este
-          // documento — aqui so se garante a forma.
-          allow create: if souEu(userId)
-                        && request.resource.data.userId == userId
-                        && request.resource.data.tournamentId == tournamentId
-                        && request.resource.data.editionId == editionId
-                        && request.resource.data.status in ['inscrito', 'aguardando_dupla', 'dupla_confirmada']
-                        && !('posicaoEspera' in campos())
-                        // O cliente nao decide quanto foi debitado dele.
-                        && !('fichasDebitadas' in campos())
-                        && apenasCampos([
-                             'userId', 'tournamentId', 'editionId', 'parceiroId',
-                             'status', 'inscritoEm', 'atualizadoEm', 'chaveIdempotencia'
-                           ]);
-
-          // A UNICA mudanca que o jogador faz na propria inscricao e cancelar.
-          // Promover-se a `convocado_para_mesa` ou `checkin_realizado` mudaria a
-          // formacao de mesas — por isso o destino e travado em 'cancelado'.
-          // O check-in em si e Function: ele depende da janela de tempo.
-          allow update: if souEu(userId)
-                        && request.resource.data.status == 'cancelado'
-                        && resource.data.status != 'cancelado'
-                        // Nada alem do status e do carimbo pode mudar.
-                        && request.resource.data.diff(resource.data)
-                             .affectedKeys().hasOnly(['status', 'atualizadoEm']);
-
-          // Historico de inscricao nao se apaga: a auditoria da inscricao
-          // (OS 02 secao 5) depende dele existir depois do cancelamento.
-          allow delete: if false;
+          // Criar, alterar status, indicar parceiro, declarar pagamento,
+          // confirmar check-in: nenhum deles pelo cliente. Um unico `if false`
+          // em vez de tres `allow` negados — nao ha caminho a esquecer.
+          allow write: if false;
         }
 
         // -----------------------------------------------------------------

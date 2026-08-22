@@ -27,16 +27,33 @@ abstract final class TorneioIds {
   static const campeonatoAnual = 'campeonato_anual';
   static const encerramentoCampeoesAno = 'encerramento_campeoes_ano';
 
-  /// Os cinco torneios regulares, que geram edicoes por recorrencia.
+  /// Os torneios regulares da V1, que geram edicoes por recorrencia.
+  ///
+  /// Eram cinco. Sao tres desde o saneamento da V1: a Quarta da
+  /// Vulnerabilidade (acesso `publico`) e o Campeonato Mensal (acesso
+  /// `misto`) sairam da relacao ATIVA porque a regra comercial congelada da V1
+  /// exige VIP integral vigente, e os dois admitiam jogador sem assinatura.
   static const regulares = <String>[
-    quartaVulnerabilidade,
     sextaMasterVip,
     copaBuracoMaster,
     domingoPintando7,
+  ];
+
+  /// Modelos SUPERSEDED pela regra comercial da V1.
+  ///
+  /// Continuam nomeados aqui de proposito. Apagar os identificadores faria a
+  /// volta de um deles ao seed ativo cair na mensagem generica de "templateId
+  /// nao declarado", que descreve um erro de digitacao. O que aconteceu nao foi
+  /// digitacao: foi uma decisao, e a mensagem tem de dizer isso.
+  ///
+  /// Os dois NAO foram convertidos para `vip`. Vivem preservados como estavam
+  /// em `app/data/torneios/legado/tournamentTemplates.superseded.json`.
+  static const superseded = <String>[
+    quartaVulnerabilidade,
     campeonatoMensal,
   ];
 
-  /// Tudo que a chave `templates` do seed precisa conter. O Campeonato Anual
+  /// Tudo que a chave `templates` do seed ATIVO precisa conter. O Campeonato Anual
   /// entra aqui porque esta CADASTRADO, ainda que inativo (decisao #6); o
   /// encerramento nao entra porque vive na propria chave do seed.
   static const todos = <String>[...regulares, campeonatoAnual];
@@ -76,6 +93,17 @@ class TorneioCatalogo {
       throw FormatException('templateIds ausentes no seed: ${faltando.toList()..sort()}.');
     }
     final sobrando = porId.keys.toSet().difference(esperados);
+    // O SUPERSEDED vem ANTES do generico, e nao junto: um modelo que a V1
+    // aposentou reaparecendo no seed ativo nao e erro de digitacao, e uma
+    // decisao sendo desfeita — e a mensagem precisa dizer qual das duas coisas
+    // aconteceu para quem estiver lendo o log as tres da manha.
+    final voltaram = sobrando.intersection(TorneioIds.superseded.toSet());
+    if (voltaram.isNotEmpty) {
+      throw FormatException(
+          'templateIds SUPERSEDED de volta ao seed ativo: ${voltaram.toList()..sort()}. '
+          'Eles admitem jogador sem VIP integral e nao cabem na V1; vivem em '
+          'app/data/torneios/legado/.');
+    }
     if (sobrando.isNotEmpty) {
       throw FormatException(
           'templateIds nao declarados em TorneioIds: ${sobrando.toList()..sort()}.');

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 enum TorneioStatus {
   rascunho,
+  emRevisao,
   agendado,
   anunciado,
   inscricoesAbertas,
@@ -674,6 +675,7 @@ extension ModalidadeTorneioLabel on ModalidadeTorneio {
 extension TorneioStatusLabel on TorneioStatus {
   String get label => switch (this) {
         TorneioStatus.rascunho => 'Rascunho',
+        TorneioStatus.emRevisao => 'Em revisão',
         TorneioStatus.agendado => 'Agendado',
         TorneioStatus.anunciado => 'Anunciado',
         TorneioStatus.inscricoesAbertas => 'Inscrições abertas',
