@@ -1,40 +1,36 @@
-// conjunto_real_vip.dart — o Tema Real VIP: o que ele exige, e por que ele
-// ainda não está ativo.
+// conjunto_real_vip.dart — o Tema Real VIP: o que ele exige, e a chave que o
+// liga.
 //
 // ---------------------------------------------------------------------------
-// ESTE ARQUIVO É UM REGISTRO, NÃO UMA PROMESSA
+// O REGISTRO ESTÁ CUMPRIDO — OS 28 ARQUIVOS EXISTEM
 // ---------------------------------------------------------------------------
 //
-// O Tema Real é servido por ARQUIVO, e arquivo não se inventa em código. A §5 da
-// OS descreve dezesseis desenhos ("pena ou espelho real", "diamante coroado",
-// "lira dourada"…) e a §6 proíbe gerar ou incorporar ícone novo sem origem,
-// aprovação e registro. Hoje o repositório não tem NENHUM deles: a varredura de
-// `app/assets/` nas 203 refs remotas devolve doze diretórios — baralho, loja,
-// perfil, ranking, torneios, coleções, início, configurar_mesa, hall, mesa_vip,
-// splash, sons — e nenhum ícone de Ajustes em nenhum deles.
+// Este arquivo nasceu como REGISTRO de uma dívida: declarava exatamente quais
+// arquivos o Tema Real precisava — nome, pasta, desenho previsto — e mantinha
+// [kConjuntoRealVipRegistrado] em `false`, porque a arte não existia em ref
+// nenhuma do repositório. Enquanto a chave era `false`, a resolução de tema
+// devolvia o Tema Padrão para todo mundo, inclusive para o assinante VIP em dia.
+// Isso nunca foi degradação: é a §7, fallback POR CONJUNTO.
 //
-// Então este arquivo faz a única coisa honesta possível: declara EXATAMENTE
-// quais arquivos o Tema Real precisa, com que nome, em que pasta, e deixa
-// [kConjuntoRealVipRegistrado] em `false`. Enquanto ele for `false`, a
-// resolução de tema devolve o Tema Padrão para todo mundo — inclusive para o
-// assinante VIP em dia. Não é degradação: é a §7, fallback POR CONJUNTO.
+// A dívida foi paga. Os 28 WebP lossless 256×256 com alfa real entraram em
+// `app/assets/ajustes/real/`, o diretório foi declarado em `app/pubspec.yaml` e
+// a origem de cada um está em `docs/ORIGEM-ICONES-TEMA-REAL.md`. A chave está em
+// `true`, e o assinante VIP completo e vigente vê a tela luxuosa.
 //
 // ---------------------------------------------------------------------------
-// COMO ATIVAR, NO DIA EM QUE OS DESENHOS EXISTIREM
+// A CHAVE NÃO É UM INTERRUPTOR DE APARÊNCIA
 // ---------------------------------------------------------------------------
 //
-//   1. colocar os 28 arquivos em `app/assets/ajustes/real/`, com os nomes de
-//      [arquivosExigidos] — nome estável, sem texto embutido, fundo
-//      transparente, legível em 18 px sobre fundo escuro;
-//   2. declarar `assets/ajustes/real/` em `app/pubspec.yaml` — NÃO está lá
-//      hoje, e não pode estar: o Flutter reprova o build quando um diretório
-//      declarado não existe, então declarar antes da arte quebraria a árvore
-//      inteira por causa de um tema que ninguém ainda vê;
-//   3. registrar a origem de cada arquivo em `docs/ORIGEM-ICONES-TEMA-REAL.md`;
-//   4. virar [kConjuntoRealVipRegistrado] para `true`, no MESMO commit.
+// [kConjuntoRealVipRegistrado] responde "esta build declara o conjunto?", e não
+// "quem vê o quê". Quem vê é decidido por `resolverTemaDeAjustes`, e a chave é
+// apenas a PRIMEIRA das duas condições: a segunda é
+// [conjuntoRealDisponivel], que abre os 28 arquivos de verdade antes de a tela
+// nascer. Virar a chave sem a arte não acende nada — só troca o motivo do
+// fallback de `conjuntoNaoRegistrado` para `conjuntoIncompleto`.
 //
-// O portão de CI `temavip` reprova quem virar a chave sem os arquivos, e reprova
-// quem acrescentar arquivo sem chave. Não há como ativar pela metade.
+// O portão de CI `temavip` guarda os dois lados: reprova quem virar a chave sem
+// os arquivos, quem acrescentar arquivo sem chave, e quem deixar a tela sair
+// metade dourada. Não há como ativar pela metade.
 library;
 
 import 'package:flutter/services.dart' show AssetBundle, rootBundle;
@@ -43,11 +39,14 @@ import 'iconografia_ajustes.dart';
 
 /// O conjunto luxuoso está registrado nesta árvore?
 ///
-/// `false` enquanto os arquivos da §5 não existirem. É a chave da §7: com ela
-/// desligada, ninguém — nem o assinante em dia — recebe o Tema Real, e a tela
-/// inteira usa o Tema Padrão. É PROIBIDO virá-la sem os arquivos; o gate
-/// `temavip` confere os dois lados.
-const bool kConjuntoRealVipRegistrado = false;
+/// `true` desde que os 28 arquivos aprovados entraram em
+/// `app/assets/ajustes/real/` e o diretório foi declarado no `pubspec.yaml`.
+///
+/// Com ela desligada, ninguém — nem o assinante em dia — recebe o Tema Real, e a
+/// tela inteira usa o Tema Padrão. É PROIBIDO virá-la sem os arquivos, e virá-la
+/// não bastaria: [conjuntoRealDisponivel] ainda abre os 28 antes de decidir. O
+/// gate `temavip` confere os dois lados.
+const bool kConjuntoRealVipRegistrado = true;
 
 /// Onde os arquivos do Tema Real moram no bundle.
 ///
