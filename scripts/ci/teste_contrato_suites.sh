@@ -96,7 +96,7 @@ resultados() {
   printf '00:09 +137: All tests passed!\n' > "$d/t_chatdom.log"
   printf 'casos ok: 38 | casos com falha: 0\nTESTE DO PORTAO: VERDE\n' > "$d/t_portaoci.log"
   printf 'casos ok: 34 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
-  printf '00:12 +22: All tests passed!
+  printf '00:12 +24: All tests passed!
 ' > "$d/t_treinosan.log"
   # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
   # ordem carimbo -> log ficar inequivoca sem esperar o relogio.

@@ -167,12 +167,22 @@ const _promessasProibidas = <String>[
   '+50',
   '50 fichas',
   'Recompensa recebida',
+  'Recompensa do an',
   'recompensa registrada',
   'Ver anuncio',
   'Ver anúncio',
   'ASSISTIR',
   'RECEBIDO',
 ];
+
+/// Palavras que, JUNTAS NA MESMA LINHA, declaram uma concessao economica.
+///
+/// A lista de literais acima nao basta, e foi uma campanha de mutacao que
+/// mostrou: a mensagem original era "Recompensa do anuncio registrada na
+/// previa", e "recompensa registrada" nao e substring dela. Reescrever a mesma
+/// promessa com outras palavras no meio passava batido. Aqui a prova e por
+/// CO-OCORRENCIA, que sobrevive a reformulacao.
+const _concessao = <String>['registrad', 'recebid', 'credit', 'ganh', 'premi'];
 
 /// Simbolos do falso fluxo. Se qualquer um reaparecer no CODIGO das superficies
 /// do Treino, o gesto voltou junto.
@@ -219,6 +229,32 @@ String _codigoSemComentarios(String caminho) => _arquivo(caminho)
     .readAsLinesSync()
     .where((l) => !l.trimLeft().startsWith('//'))
     .join('\n');
+
+/// Minusculas e sem acento, para que "anúncio" e "anuncio" sejam a mesma
+/// palavra — trocar o acento nao pode ser um jeito de escapar da guarda.
+String _achatar(String s) {
+  const de = 'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ';
+  const para = 'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC';
+  final b = StringBuffer();
+  for (final c in s.split('')) {
+    final i = de.indexOf(c);
+    b.write(i < 0 ? c : para[i]);
+  }
+  return b.toString().toLowerCase();
+}
+
+/// As linhas em que uma palavra de premio encontra uma palavra de concessao.
+///
+/// E a prova que sobrevive a reformulacao: nao importa qual frase alguem
+/// escreva, dizer que uma RECOMPENSA ou FICHA foi registrada, recebida,
+/// creditada, ganha ou premiada e a promessa que esta OS removeu.
+List<String> _linhasDeConcessao(String texto) => texto
+    .split('\n')
+    .map(_achatar)
+    .where((l) =>
+        (l.contains('recompensa') || l.contains('ficha')) &&
+        _concessao.any(l.contains))
+    .toList();
 
 void main() {
   // =========================================================================
@@ -338,6 +374,15 @@ void main() {
           expect(desenhado, isNot(contains(p)),
               reason: 'a tela voltou a DESENHAR "$p"');
         }
+      });
+    });
+
+    testWidgets('SAN-08 a tela nao declara concessao por outras palavras',
+        (t) async {
+      final e = _Efeitos();
+      await _lendoOResultado(t, e, (nos) async {
+        expect(_linhasDeConcessao(_fala(nos)), isEmpty,
+            reason: 'a tela voltou a anunciar premio concedido');
       });
     });
   });
@@ -486,6 +531,16 @@ void main() {
           expect(src, isNot(contains(d)),
               reason: 'configuracao de anuncio em ${f.path}');
         }
+      }
+    });
+
+    test('EST-08 nenhuma concessao declarada no codigo das superficies', () {
+      // Fecha a familia, e nao um literal: a campanha de mutacao mostrou que
+      // "Recompensa do anuncio registrada na previa" escapava de uma lista que
+      // continha "recompensa registrada", porque uma nao e substring da outra.
+      for (final caminho in <String>[_telaResultado, _mesaTreino, _celebracao]) {
+        expect(_linhasDeConcessao(_codigoSemComentarios(caminho)), isEmpty,
+            reason: 'concessao economica declarada em $caminho');
       }
     });
 

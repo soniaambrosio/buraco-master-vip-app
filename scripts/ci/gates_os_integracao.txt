@@ -185,7 +185,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     90b322a4f6a1f79577d8dd033fcdf506ee7487b2202ee8b723e72f4b94c90bc5
+    sha256     dc0db488248d830ce3e43e4f6b3dd16677f31ea8bb3abe1c3e758c3182426380
     provas     37
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      34
@@ -333,9 +333,9 @@ composloja
 treinosan
     suite      app/test/mesa/saneamento_recompensa_treino_test.dart
     executor   roda treinosan test/mesa/saneamento_recompensa_treino_test.dart
-    sha256     96e5886d0bbda3a94732b47598b3dd6016c2b00af6fe9fe4eedf19eedc58737d
-    provas     22
-    casos      22
+    sha256     26baa4dd73e51d16e1c492bedfd1e44b6f7c91a0ff2d97347d787b8a32c28f10
+    provas     24
+    casos      24
     exige      group('SAN
     exige      group('CON
     exige      group('EST
@@ -344,3 +344,5 @@ treinosan
     exige      ('EST-05
     exige      _promessasProibidas
     exige      _simbolosProibidos
+    exige      _linhasDeConcessao
+    exige      _concessao
