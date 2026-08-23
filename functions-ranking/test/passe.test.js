@@ -656,39 +656,103 @@ describe("PASSE/FRONTEIRA — o que esta OS promete NÃO ter feito", () => {
     return limpo;
   }
 
+  /// A SUPERFÍCIE IMPLANTADA DE CADA CODEBASE, POR NOME.
+  ///
+  /// ERA UMA CONTAGEM, E A CONTAGEM MENTIU. O piso dizia `9` para
+  /// `functions-moderacao` porque foi tirado em `c9efc20` — uma linhagem que
+  /// ainda não continha `6986de9` (Comunicação Controlada V1), e a raiz P
+  /// contém. O caso reprovava com `11 !== 9` sem dizer QUAIS onze, e um número
+  /// não distingue "entrou um export novo" de "trocaram um export por outro".
+  ///
+  /// NOMINAL responde as três perguntas que o número não respondia: algum sumiu?
+  /// algum foi renomeado? entrou um décimo segundo que ninguém aprovou? E torna
+  /// a atualização uma DECISÃO legível no diff, com o nome da função dentro dela.
+  ///
+  /// AUTORIDADE: `ferramentas/composicao/loja_functions.test.js` congela a mesma
+  /// superfície para as NOVE codebases. Esta relação guarda as QUATRO que a OS do
+  /// passe se comprometeu a não mexer, e `test/superficie.test.js` prova que as
+  /// duas não podem divergir — nem uma delas voltar a valer por contagem.
+  const SUPERFICIE_IMPLANTADA = {
+    "functions/src/index.ts": [
+      "aoConcluirEdicao", "cancelarInscricaoTorneio", "consolidarConvitesDaTemporada",
+      "inscreverEmTorneio", "receberResultadoPartida", "responderConviteEncerramento",
+      "tickTorneios",
+    ],
+    // AS DUAS ÚLTIMAS SÃO A DECISÃO DESTA CORREÇÃO, e não acomodação de merge.
+    // `emitirEventoDeSistema` é a ÚNICA porta por onde nasce evento sem autor
+    // (§8 da Comunicação Controlada: usuário comum não fabrica "Você recebeu um
+    // presente"), e `consultarCatalogoDeComunicacao` é a leitura do catálogo
+    // autoritativo de que a UI precisa para desenhar fala pronta sem inventar
+    // texto. As duas nasceram em `6986de9`, ANTES da raiz P, e já estão nomeadas
+    // em `contrato/chat-transporte-v1.json` (`funcoes.eventoDeSistema` e
+    // `funcoes.catalogo`), em `docs/COMUNICACAO-CONTROLADA-V1.md` e na lista
+    // congelada da composição. O piso de 9 é que era anterior a elas.
+    "functions-moderacao/src/index.ts": [
+      "aplicarSancao", "bloquearJogador", "consultarCatalogoDeComunicacao",
+      "consultarContato", "definirCanalDeChat", "desbloquearJogador",
+      "emitirEventoDeSistema", "enviarMensagemChat", "enviarMensagemChatPeloMotor",
+      "registrarDenuncia", "revogarSancao",
+    ],
+    // A INTENÇÃO ORIGINAL DE PF-01 CONTINUA INTEIRA: a OS do Passe não exportou
+    // Function nenhuma. Estes onze são os mesmos de `0b0aa63`, e
+    // `functions-ranking/src` não foi tocado nem pelo Passe nem pela composição
+    // Perfil/Social — as duas árvores dão o mesmo hash.
+    "functions-ranking/src/index.ts": [
+      "abrirRanking", "abrirTemporadaDeRanking", "aoRegistrarResultadoOficial",
+      "apurarRanking", "consultarHall", "consultarJogadorPorIdPublico",
+      "diagnosticarRanking", "encerrarTemporadaDeRanking", "paginarRanking",
+      "processarResultado", "reprocessarBacklogDeRanking",
+    ],
+    "functions-social/src/index.ts": [
+      "aceitarSolicitacaoAmizade", "aoBloquearJogador", "atualizarPerfilPublico",
+      "buscarJogadoresPorApelido", "cancelarSolicitacaoAmizade",
+      "enviarSolicitacaoAmizade", "listarAmigos", "listarSolicitacoesEnviadas",
+      "listarSolicitacoesRecebidas", "localizarJogadorPorIdentidade",
+      "obterMinhaIdentidade", "reconciliarPerfilSocial", "recusarSolicitacaoAmizade",
+      "removerAmizade", "verPerfilPublico",
+    ],
+  };
+
+  /// O que uma entrada de fato exporta, lido SEM comentário e por nome.
+  ///
+  /// A MESMA leitura de `exportsDe` em
+  /// `ferramentas/composicao/loja_functions.test.js`, de propósito: duas listas
+  /// congeladas extraídas de formas diferentes poderiam discordar sem ninguém
+  /// ter mexido em código nenhum.
+  function exportsDe(arquivo) {
+    const fonte = codigoDe(leia(arquivo));
+    const achados = new Set();
+    for (const m of fonte.matchAll(/^\s*export\s+const\s+([A-Za-z0-9_]+)/gm)) achados.add(m[1]);
+    for (const m of fonte.matchAll(/exports\.([A-Za-z0-9_]+)\s*=/g)) achados.add(m[1]);
+    return [...achados].sort();
+  }
+
   test("PF-01: NENHUMA Cloud Function produtiva nova é exportada", () => {
     // §11.20 e §12.12. Neste repositório `index.ts` reexporta tudo: um `export`
-    // a mais vira Cloud Function implantada. A contagem é fixa POR CODEBASE, e
-    // mexer nela passa a exigir mexer neste teste — de propósito.
-    // [COMPOSICAO canonica] DUAS CONTAGENS SUBIRAM, e as duas sao DECISAO — nao
-    // acomodacao de merge. A intencao de PF-01 nao mudou: a OS do Passe continua
-    // sem exportar Function nenhuma. O que mudou foi o mundo em volta dela.
+    // a mais vira Cloud Function implantada. A relação é NOMINAL e fixa POR
+    // CODEBASE, e mexer nela passa a exigir mexer nesta lista — de propósito.
     //
-    //   moderacao 6 -> 9   O Chat Livre Seguro trouxe `definirCanalDeChat`,
-    //                      `enviarMensagemChat` e `enviarMensagemChatPeloMotor`.
-    //                      Sao a superficie do chat, e sem elas o codebase de
-    //                      moderacao entra na composicao sem o produto que a
-    //                      linhagem existe para entregar.
-    //
-    //   social 14 -> 15    `reconciliarPerfilSocial`, que ja vinha na linhagem
-    //                      irma (`auditoria/passe-vip-quinzenal-cortesia-v1`) e
-    //                      na de Mesas. O retrato de 14 e anterior as duas.
-    //
-    // As outras duas contagens NAO se mexeram, e e isso que mantem o teste util:
-    // se `functions/` ou `functions-ranking` crescerem, ele continua reprovando.
-    const esperado = {
-      "functions/src/index.ts": 7,
-      "functions-moderacao/src/index.ts": 9,
-      "functions-ranking/src/index.ts": 11,
-      "functions-social/src/index.ts": 15,
-    };
-    for (const [arquivo, quantos] of Object.entries(esperado)) {
-      const achados = (leia(arquivo).match(/^export const /gm) || []).length;
-      assert.equal(achados, quantos, arquivo + " mudou de superfície de deploy");
+    // A comparação é de CONJUNTO ORDENADO, e não de tamanho: sumir, renomear e
+    // acrescentar reprovam pelo mesmo caminho, cada um nomeando o que mudou.
+    for (const [arquivo, esperados] of Object.entries(SUPERFICIE_IMPLANTADA)) {
+      assert.deepEqual(
+        exportsDe(arquivo),
+        [...esperados].sort(),
+        arquivo + " mudou de superfície de deploy"
+      );
     }
+
     // E o módulo do passe não é alcançável a partir do index do ranking.
     assert.ok(!/from "\.\/passe"|require\("\.\/passe"\)/.test(leia("functions-ranking/src/index.ts")),
       "o index não importa o passe: ele não tem endpoint");
+
+    // A GUARDA DESTA GUARDA MORA FORA DAQUI, e é isso que a torna guarda: trocar
+    // a relação acima por um `assert.ok(true)` ficaria verde se quem cobra o
+    // formato de PF-01 vivesse dentro de PF-01.
+    const guarda = leia("functions-ranking/test/superficie.test.js");
+    for (const caso of ["SF-01", "SF-02"]) {
+      assert.ok(guarda.includes(caso), "a guarda " + caso + " de PF-01 sumiu");
+    }
   });
 
   test("PF-02: NENHUM scheduler novo foi criado", () => {
