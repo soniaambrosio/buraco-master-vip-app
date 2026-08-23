@@ -423,11 +423,38 @@ jobs:
             echo "OBRIGATÓRIAS: manifesto ausente em '$manifesto'"
             fail=1
           else
-            obrigatorias=$(grep -vE '^[[:space:]]*(#|$)' "$manifesto" | awk '{print $1}')
+            # A GRAMÁTICA É A DO MANIFESTO, e é a mesma dos outros dois leitores
+            # (`verificar_suites_obrigatorias.sh` e `test/ci/suites_obrigatorias_test.dart`):
+            # linha na MARGEM é ENTRADA de gate; linha INDENTADA é ATRIBUTO do
+            # contrato daquela entrada (`sha256`, `provas`, `exige`); `#` e linha
+            # vazia são conteúdo ignorado.
+            #
+            # Ler o atributo como se fosse chave foi o defeito da OS 30-R2: o
+            # `grep -v` de comentario/vazia deixava passar a linha INDENTADA, o
+            # `awk '{print $1}'` devolvia o NOME DO ATRIBUTO, e o portão passava a
+            # exigir `exit_sha256`, `exit_provas` e `exit_exige` — marcadores que
+            # passo nenhum escreve. Efeito: a árvore ÍNTEGRA reprovava, e "tudo
+            # verde" e "gate obrigatório NÃO EXECUTADO" davam o MESMO resultado,
+            # que é exatamente a distinção que esta trava existe para fazer.
+            #
+            # O `tr -d '\r'` é pelo mesmo motivo do resto do arquivo: o índice
+            # do git guarda LF, a árvore no Windows tem CRLF e o runner vê LF.
+            obrigatorias=$(tr -d '\r' < "$manifesto" | grep -E '^[^[:space:]#]' | awk '{print $1}')
             if [ -z "$obrigatorias" ]; then
               echo "OBRIGATÓRIAS: manifesto sem nenhuma entrada"
               fail=1
             fi
+            # Tripwire desta família: se o leitor voltar a confundir atributo com
+            # chave, o vermelho sai NOMEADO, em vez de disfarçado de gate que não
+            # rodou. Nenhum gate se chama `sha256`, `provas` ou `exige`.
+            for atributo in sha256 provas exige; do
+              for chave in $obrigatorias; do
+                if [ "$chave" = "$atributo" ]; then
+                  echo "OBRIGATÓRIAS: o leitor do manifesto voltou a tratar o atributo '$atributo' como gate"
+                  fail=1
+                fi
+              done
+            done
             for k in $obrigatorias; do
               if [ ! -f "exit_$k" ]; then
                 echo "OBRIGATÓRIAS: gate '$k' não deixou marcador — NÃO EXECUTADO não vale para ele"
