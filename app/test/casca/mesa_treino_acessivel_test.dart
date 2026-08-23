@@ -213,7 +213,6 @@ void main() {
       final alvo = cartasNaOrdemDeLeitura(tester)[3];
       expect(estaSelecionada(alvo), isFalse);
 
-      final rects = cartasDaMao(tester);
       final ponto = pontoDeToqueDaCarta(tester, 3);
       expect(await tocarEm(tester, ponto), <int>{3});
       expect(
@@ -549,7 +548,6 @@ void main() {
       // selecionada sobe para o topo da pilha de PINTURA. Se o toque seguisse a
       // pintura, ela passaria a cobrir a vizinha por 66 pontos e a deixaria
       // inalcançável enquanto a seleção durasse.
-      final rects = cartasDaMao(tester);
       final ponto = pontoDeToqueDaCarta(tester, 4);
       expect(await tocarEm(tester, ponto), <int>{4});
 
@@ -591,7 +589,6 @@ void main() {
       await abrirMesaDeTreino(tester);
 
       final antes = cartasNaOrdemDeLeitura(tester);
-      final rects = cartasDaMao(tester);
       Offset naCarta(int i) => pontoDeToqueDaCarta(tester, i);
 
       // Selecionar.
@@ -620,7 +617,6 @@ void main() {
       final desenhoAntes = ordemDeDesenho(tester);
       final leituraAntes = cartasNaOrdemDeLeitura(tester);
 
-      final rects = cartasDaMao(tester);
       await tocarEm(tester, pontoDeToqueDaCarta(tester, 5));
 
       expect(ordemDeDesenho(tester), isNot(orderedEquals(desenhoAntes)));

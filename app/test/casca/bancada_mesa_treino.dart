@@ -563,10 +563,15 @@ const String kMarcaDaObrigacao = 'obrigatória do lixo';
 ///
 /// Devolve o rótulo da carta obrigatória. A mesa fica montada e a vez continua
 /// no assento 0 — quem chamou pode reorganizar, selecionar e redesenhar.
+///
+/// Com [comHomonimaNaMao], só devolve quando a mão tiver DUAS cartas de mesmo
+/// nome — a obrigatória e a gêmea dela do segundo baralho. Ver
+/// `homonimasNaMao` para a razão e para a conta das tentativas.
 Future<String> abrirComObrigacaoDoLixo(
   WidgetTester tester, {
   Size superficie = kSuperficieDaAuditoria,
   int tentativas = 14,
+  bool comHomonimaNaMao = false,
 }) async {
   for (var tentativa = 0; tentativa < tentativas; tentativa++) {
     tester.view.physicalSize = superficie;
@@ -602,14 +607,59 @@ Future<String> abrirComObrigacaoDoLixo(
         hasLength(1),
         reason: 'comprou o lixo no FECHADO e a obrigação não apareceu na mão',
       );
-      return obrigatorias.single;
+      // A gêmea do segundo baralho não vem em todo negócio. Quando o caso
+      // depende dela, o baralho que não a trouxe é DESCARTADO — devolvê-lo
+      // faria o caso passar sem ter o que comparar.
+      if (!comHomonimaNaMao || homonimasNaMao(tester, obrigatorias.single) >= 2) {
+        return obrigatorias.single;
+      }
     }
     await encerrarMesaDeTreino(tester);
   }
   fail(
-    'nenhum de $tentativas baralhos permitiu comprar o lixo no FECHADO — '
-    'a trava do topo mudou, ou o sorteio deixou de variar',
+    'nenhum de $tentativas baralhos serviu: no FECHADO a compra do lixo '
+    'depende de o topo ter uso imediato, e '
+    '${comHomonimaNaMao ? 'este caso ainda precisa da carta gêmea na mão' : 'nenhum topo teve'} '
+    '— a trava do topo mudou, ou o sorteio deixou de variar',
   );
+}
+
+/// Quantas cartas da mão têm o MESMO nome de [rotulo], contando a própria.
+///
+/// ---------------------------------------------------------------------------
+/// POR QUE ISTO EXISTE, E POR QUE VALE INSISTIR POR ELE
+/// ---------------------------------------------------------------------------
+///
+/// O destaque da obrigação segue a INSTÂNCIA, e não o valor e o naipe: com dois
+/// baralhos existem duas cartas visualmente idênticas, e só uma delas é a que o
+/// motor obriga a usar. O caso que prova isso confere que, entre as cartas de
+/// mesmo nome, exatamente uma está marcada.
+///
+/// Só que essa afirmação é VERDADEIRA E VAZIA quando a gêmea não foi negociada:
+/// "uma entre uma". A OS 29-R1 mediu o efeito injetando a mutação que trocava a
+/// identidade pelo nome — ela sobrevivia em quatro de cada seis execuções, e o
+/// caso ficava verde por não ter o que comparar.
+///
+/// A saída é a mesma que o resto desta bancada usa para chegar a estados que
+/// dependem do baralho: insistir, e falhar alto quando nenhum servir. A gêmea
+/// aparece em cerca de um terço dos negócios que permitem comprar o lixo no
+/// FECHADO — a trava do topo pede duas cartas do mesmo VALOR na mão, e uma
+/// delas ser também do mesmo naipe não é raro. Em quarenta tentativas, a chance
+/// de nenhuma servir é da ordem de uma em dez milhões; e, quando acontece, o
+/// desfecho é uma falha que diz o que faltou, e não um verde vazio.
+int homonimasNaMao(WidgetTester tester, String rotulo) {
+  final corte = rotulo.indexOf(', carta ');
+  expect(
+    corte,
+    greaterThan(0),
+    reason: '"$rotulo" não é uma carta da mão',
+  );
+  final nome = rotulo.substring(0, corte);
+  return tester.semantics
+      .simulatedAccessibilityTraversal()
+      .where((n) =>
+          kMarcaDeCartaDaMao.hasMatch(n.label) && n.label.startsWith('$nome,'))
+      .length;
 }
 
 /// Todos os nós da árvore semântica, com a garantia de que existe árvore.
@@ -651,6 +701,109 @@ SemanticsNode noDaMesa(WidgetTester tester, String rotulo) =>
 /// O nó oferece a ação de toque.
 bool ofereceToqueNoNo(SemanticsNode no) =>
     no.getSemanticsData().hasAction(SemanticsAction.tap);
+
+// ===========================================================================
+// O DESENHO DA LATERAL, SEPARADO DO ALVO DELA
+// ===========================================================================
+//
+// Os três controles laterais têm duas geometrias que não coincidem: o DISCO,
+// que é o que se vê, e a FAIXA de toque, que é o que o dedo pega e o que o
+// leitor de tela recebe. A OS 29-C1 fez a segunda crescer para 48 e, sem
+// querer, empurrou a primeira — os discos desceram 5, 8 e 11 pontos.
+//
+// Medir as duas é o que separa "o alvo cresceu" de "o desenho andou". O nó
+// semântico dá a faixa; o `Container` do disco, o desenho.
+
+/// O retângulo DESENHADO do disco do controle lateral [rotulo].
+Rect discoDoControleLateral(WidgetTester tester, String rotulo) {
+  final botao = find.byWidgetPredicate(
+    (w) => w is Semantics && w.properties.label == rotulo,
+  );
+  expect(
+    botao,
+    findsOneWidget,
+    reason: 'a mesa não tem um controle lateral chamado "$rotulo"',
+  );
+  final disco = find.descendant(of: botao, matching: find.byType(Container));
+  expect(
+    disco,
+    findsOneWidget,
+    reason: '"$rotulo" deixou de ter exatamente um disco desenhado',
+  );
+  return tester.getRect(disco);
+}
+
+/// O retângulo do assento de [apelido] na borda da mesa.
+///
+/// Serve de RÉGUA. Os assentos 2 e 3 são ancorados na mesma linha que a lateral
+/// — `bottom: playerDockHeight + 8` e `right: 1` —, e nenhuma OS desta família
+/// os moveu. Medir os discos contra eles diz onde a lateral está DENTRO da
+/// mesa, sem depender da altura do rodapé, que esta família mudou de propósito.
+Rect assentoNaBorda(WidgetTester tester, String apelido) {
+  final assento = find.byWidgetPredicate(
+    (w) => w is Semantics && (w.properties.label ?? '').startsWith('$apelido,'),
+  );
+  expect(
+    assento,
+    findsOneWidget,
+    reason: 'a mesa não tem um assento de "$apelido"',
+  );
+  return tester.getRect(assento);
+}
+
+/// O aviso que a mesa mostra no rodapé do tabuleiro, ou `''` quando não há.
+///
+/// Só os avisos da lateral interessam aqui, e eles são os únicos que falam em
+/// ligação final — é por isso que a busca é por esse trecho, e não por um
+/// `Text` qualquer da mesa.
+String avisoDaLateral(WidgetTester tester) {
+  final f = find.textContaining('ligação final com o Claude');
+  if (f.evaluate().isEmpty) return '';
+  return tester.widget<Text>(f.first).data ?? '';
+}
+
+/// Os cinco pontos que provam uma região acionável: o centro e os quatro
+/// cantos, meio ponto para dentro.
+///
+/// Tocar só no centro prova que existe alvo, e não prova tamanho nenhum: um
+/// alvo de um ponto passaria igual. São os cantos que medem a região, porque um
+/// alvo menor do que o retângulo anunciado deixa pelo menos um deles de fora.
+List<Offset> cincoPontosDe(Rect r) => <Offset>[
+      r.center,
+      r.topLeft + const Offset(0.5, 0.5),
+      r.topRight + const Offset(-0.5, 0.5),
+      r.bottomLeft + const Offset(0.5, -0.5),
+      r.bottomRight + const Offset(-0.5, -0.5),
+    ];
+
+/// Toca em [ponto] e devolve qual controle lateral respondeu, ou `null`.
+///
+/// Os três só se distinguem pelo que MUDA: o som inverte o próprio estado, e os
+/// outros dois escrevem o aviso da mesa. Como um segundo toque no mesmo botão
+/// reescreve o MESMO aviso, "não mudou nada" seria indistinguível de "respondeu
+/// de novo" — por isso o aviso é levado antes a um valor que o controle sondado
+/// não escreveria.
+Future<String?> respostaDaLateral(
+  WidgetTester tester,
+  Offset ponto, {
+  required String sondando,
+}) async {
+  final preparo = sondando == 'chat' ? 'expressões' : 'chat';
+  await tester.tapAt(retanguloEmPontos(tester, noDaMesa(tester, preparo)).center);
+  await tester.pump();
+
+  final somAntes = estaLigado(noDaMesa(tester, 'som'));
+  final avisoAntes = avisoDaLateral(tester);
+  await tester.tapAt(ponto);
+  await tester.pump();
+
+  if (estaLigado(noDaMesa(tester, 'som')) != somAntes) return 'som';
+  final aviso = avisoDaLateral(tester);
+  if (aviso == avisoAntes) return null;
+  if (aviso.startsWith('Chat')) return 'chat';
+  if (aviso.startsWith('Expressões')) return 'expressões';
+  return aviso;
+}
 
 // ===========================================================================
 // UM JOGO BAIXADO NA MESA

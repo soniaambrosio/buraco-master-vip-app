@@ -42,6 +42,25 @@ import 'bancada_mesa_treino.dart';
 /// O piso de toque que a OS 29-C1 exige, nos dois eixos, em pontos lógicos.
 const double kPisoExigido = 48.0;
 
+/// Os três controles da lateral, na ordem em que a mesa os empilha.
+const List<String> kControlesLaterais = <String>['chat', 'expressões', 'som'];
+
+/// O DESENHO do disco lateral na mesa original, escrito à mão.
+///
+/// Como o piso, estes números não são importados da produção: importá-los faria
+/// o desenho do teste andar junto com o da tela, e a medição que existe para
+/// pegar o deslocamento passaria verde exatamente quando ele acontecesse.
+const double kDiscoDesenhado = 38.0;
+
+/// O passo entre um disco e o próximo na mesa original: 38 de disco + 7 de
+/// folga. Ele NÃO é o passo do alvo, que é o piso de 48 — e é dessa diferença
+/// que nasce o deslocamento que a OS 29-R1 mediu.
+const double kPassoDesenhado = 45.0;
+
+/// A distância entre a borda direita dos discos e a do assento da direita: a
+/// lateral está em `right: 4`, o assento em `right: 1`.
+const double kFolgaAteOAssentoDaDireita = 3.0;
+
 /// A marca que distingue uma carta da mão de qualquer outro nó da mesa.
 final RegExp kCarta = RegExp(r', carta (\d+) de (\d+)(,|$)');
 
@@ -375,19 +394,42 @@ void main() {
       await encerrarMesaDeTreino(tester);
     });
 
+    // -----------------------------------------------------------------------
+    // A GÊMEA TEM DE ESTAR NA MESA ANTES DE A COMPARAÇÃO VALER
+    // -----------------------------------------------------------------------
+    //
+    // "exatamente uma marcada entre as de mesmo nome" é verdade e não diz nada
+    // quando só existe UMA carta com aquele nome. A OS 29-R1 mediu: a mutação
+    // que troca a identidade pelo nome sobrevivia em quatro de cada seis
+    // execuções, porque em dois terços dos negócios a gêmea do segundo baralho
+    // não estava na mão e o caso passava vazio.
+    //
+    // Agora a bancada insiste até negociar um baralho que tenha as duas, e o
+    // caso EXIGE as duas antes de olhar a marca. O verde passa a significar o
+    // que ele sempre pareceu significar.
     testWidgets('acompanha a INSTÂNCIA, e não o valor e o naipe', (
       tester,
     ) async {
-      final obrigatoria = await abrirComObrigacaoDoLixo(tester);
+      final obrigatoria = await abrirComObrigacaoDoLixo(
+        tester,
+        comHomonimaNaMao: true,
+        tentativas: 40,
+      );
       // O nome da carta é tudo o que vem antes da posição.
       final nome = obrigatoria.substring(0, obrigatoria.indexOf(', carta '));
 
-      // A mão tem DOIS baralhos: quando existe uma segunda carta com o mesmo
-      // nome, ela NÃO pode receber o destaque. É esta a diferença entre marcar
-      // uma instância e marcar um valor.
+      // A mão tem DOIS baralhos, e este negócio trouxe as duas cartas de mesmo
+      // nome. A segunda NÃO pode receber o destaque: é esta a diferença entre
+      // marcar uma instância e marcar um valor.
       final iguais = arvoreDaMesa(tester)
           .where((n) => kCarta.hasMatch(n.label) && n.label.startsWith('$nome,'))
           .toList();
+      expect(
+        iguais.length,
+        greaterThanOrEqualTo(2),
+        reason: 'a mão tem ${iguais.length} carta(s) chamada(s) "$nome" — sem '
+            'a gêmea, comparar instância com valor não distingue nada',
+      );
       final marcadas =
           iguais.where((n) => n.label.contains(kMarcaDaObrigacao)).toList();
       expect(
@@ -396,6 +438,8 @@ void main() {
         reason: 'havia ${iguais.length} cartas chamadas "$nome" e '
             '${marcadas.length} marcadas como obrigatórias',
       );
+      // E a marcada é a que o motor apontou, não "uma delas".
+      expect(marcadas.single.label, obrigatoria);
 
       await encerrarMesaDeTreino(tester);
     });
@@ -482,7 +526,7 @@ void main() {
     testWidgets('cada um tem 48 × 48 de região acionável', (tester) async {
       await abrirMesaDeTreino(tester);
 
-      for (final nome in const ['chat', 'expressões', 'som']) {
+      for (final nome in kControlesLaterais) {
         final no = arvoreDaMesa(tester).singleWhere((n) => n.label == nome);
         final r = retanguloEmPontos(tester, no);
         expect(
@@ -502,13 +546,133 @@ void main() {
       await encerrarMesaDeTreino(tester);
     });
 
+    // -----------------------------------------------------------------------
+    // O ALVO CRESCEU E O DESENHO FICOU PARADO
+    // -----------------------------------------------------------------------
+    //
+    // A OS 29-R1 mediu o preço da primeira solução: com o disco de 38 centrado
+    // numa faixa de 48, as faixas andam de 48 em 48 e os discos, que andavam de
+    // 45, desceram 5, 8 e 11 pontos. O alvo estava certo e o desenho da mesa —
+    // que a OS mandou preservar — tinha mudado.
+    //
+    // Este caso mede o DESENHO, e o de cima mede o ALVO. Os dois juntos são o
+    // que impede trocar um pelo outro: crescer o disco para 48 passaria no de
+    // cima e reprovaria aqui; voltar a faixa para 38 passaria aqui e reprovaria
+    // lá.
+    testWidgets('os discos continuam onde a mesa original os desenhou', (
+      tester,
+    ) async {
+      await abrirMesaDeTreino(tester);
+
+      final discos = <String, Rect>{
+        for (final nome in kControlesLaterais)
+          nome: discoDoControleLateral(tester, nome),
+      };
+
+      for (final e in discos.entries) {
+        expect(
+          e.value.width,
+          closeTo(kDiscoDesenhado, 0.01),
+          reason: 'o disco de "${e.key}" mede ${e.value.width} de largura',
+        );
+        expect(
+          e.value.height,
+          closeTo(kDiscoDesenhado, 0.01),
+          reason: 'o disco de "${e.key}" mede ${e.value.height} de altura',
+        );
+      }
+
+      // A coluna continua andando de 45 em 45 — 38 de disco e 7 de folga.
+      expect(
+        discos['expressões']!.top - discos['chat']!.top,
+        closeTo(kPassoDesenhado, 0.01),
+        reason: 'o passo entre "chat" e "expressões" mudou',
+      );
+      expect(
+        discos['som']!.top - discos['expressões']!.top,
+        closeTo(kPassoDesenhado, 0.01),
+        reason: 'o passo entre "expressões" e "som" mudou',
+      );
+
+      // E os três seguem alinhados pela direita.
+      for (final nome in kControlesLaterais) {
+        expect(
+          discos[nome]!.right,
+          closeTo(discos['chat']!.right, 0.01),
+          reason: 'o disco de "$nome" saiu da coluna',
+        );
+      }
+
+      // AS DUAS ÂNCORAS DA MESA, medidas contra assentos que nenhuma OS desta
+      // família moveu. O assento da esquerda divide com a lateral a linha de
+      // `bottom: playerDockHeight + 8`; o da direita está em `right: 1` contra
+      // os `right: 4` da lateral. Medir assim é o que torna a afirmação
+      // independente da altura do rodapé — que esta família mudou de propósito,
+      // porque a mão passou a caber em duas fileiras.
+      final esquerda = assentoNaBorda(tester, 'Mateus');
+      final direita = assentoNaBorda(tester, 'Sofia');
+      expect(
+        discos['som']!.bottom,
+        closeTo(esquerda.bottom, 0.01),
+        reason: 'a lateral saiu da linha de baixo da mesa: o disco termina em '
+            '${discos['som']!.bottom} e o assento em ${esquerda.bottom}',
+      );
+      expect(
+        direita.right - discos['chat']!.right,
+        closeTo(kFolgaAteOAssentoDaDireita, 0.01),
+        reason: 'a lateral saiu da coluna da direita',
+      );
+
+      await encerrarMesaDeTreino(tester);
+    });
+
+    // -----------------------------------------------------------------------
+    // CINCO PONTOS, E NÃO SÓ O CENTRO
+    // -----------------------------------------------------------------------
+    //
+    // O caso de cima lê o retângulo que a mesa ANUNCIA. Este confere que o
+    // retângulo anunciado é o que o dedo encontra: um alvo de um ponto no meio
+    // do nó de 48 passaria no primeiro caso e reprova aqui, porque os quatro
+    // cantos não responderiam.
+    testWidgets('os cinco pontos de cada alvo respondem, e só ao dono', (
+      tester,
+    ) async {
+      await abrirMesaDeTreino(tester);
+
+      for (final nome in kControlesLaterais) {
+        final faixa = retanguloEmPontos(tester, noDaMesa(tester, nome));
+        expect(
+          faixa.width,
+          greaterThanOrEqualTo(kPisoExigido - 0.01),
+          reason: '"$nome" anunciou ${faixa.width} de largura',
+        );
+        expect(
+          faixa.height,
+          greaterThanOrEqualTo(kPisoExigido - 0.01),
+          reason: '"$nome" anunciou ${faixa.height} de altura',
+        );
+
+        final pontos = cincoPontosDe(faixa);
+        expect(pontos, hasLength(5));
+        for (final ponto in pontos) {
+          expect(
+            await respostaDaLateral(tester, ponto, sondando: nome),
+            nome,
+            reason: 'o ponto $ponto do alvo de "$nome" não respondeu a ele',
+          );
+        }
+      }
+
+      await encerrarMesaDeTreino(tester);
+    });
+
     testWidgets('os três alvos não se sobrepõem nem pegam o vizinho', (
       tester,
     ) async {
       await abrirMesaDeTreino(tester);
 
       final rs = <String, Rect>{
-        for (final nome in const ['chat', 'expressões', 'som'])
+        for (final nome in kControlesLaterais)
           nome: retanguloEmPontos(
             tester,
             arvoreDaMesa(tester).singleWhere((n) => n.label == nome),

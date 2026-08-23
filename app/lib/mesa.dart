@@ -2086,9 +2086,14 @@ class _MesaScreenState extends State<MesaScreen> {
                   child: _sidePlayer(2, left: true),
                 ),
                 // Chat / expressões / som — coluna vertical discreta na lateral direita.
+                //
+                // A âncora desconta o que a faixa do último disco desce abaixo
+                // do desenho dele. Com o desconto, o disco de baixo termina em
+                // `playerDockHeight + 8` — a mesma linha da mesa original —, e
+                // a faixa de 48 encosta no rodapé sem entrar nele.
                 Positioned(
                   right: 4,
-                  bottom: playerDockHeight + 8,
+                  bottom: playerDockHeight + 8 - _recuoInferiorDoRail,
                   child: _actionRail(),
                 ),
                 Positioned(
@@ -3089,14 +3094,15 @@ class _MesaScreenState extends State<MesaScreen> {
       children: [
         _railButton(Icons.chat_bubble_rounded, () {
           setState(() => _msg = 'Chat — ligação final com o Claude.');
-        }, rotulo: 'chat'),
+        }, rotulo: 'chat', posicao: 0),
         _railButton(Icons.sentiment_satisfied_alt_rounded, () {
           setState(() => _msg = 'Expressões — ligação final com o Claude.');
-        }, rotulo: 'expressões'),
+        }, rotulo: 'expressões', posicao: 1),
         _railButton(
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
           rotulo: 'som',
+          posicao: 2,
           // O ícone é a única indicação de que o som está ligado, e ícone não
           // se ouve. `ligado` faz o leitor de tela dizer o estado junto com o
           // nome, em vez de anunciar um botão "som" que não diz o que faz.
@@ -3109,10 +3115,48 @@ class _MesaScreenState extends State<MesaScreen> {
   // O disco desenhado do controle lateral. Ele NÃO é o alvo — ver abaixo.
   static const double _discoDoControleLateral = 38.0;
 
+  /// Quantos discos a lateral tem.
+  static const int _discosDoRail = 3;
+
+  /// A folga entre um disco e o seguinte no desenho ORIGINAL da mesa. A coluna
+  /// era `38 + 7 + 38 + 7 + 38`, e é ela que esta correção devolve.
+  static const double _folgaEntreDiscosDoRail = 7.0;
+
+  /// O passo do DESENHO: quanto anda do topo de um disco ao topo do próximo.
+  static const double _passoDoDiscoDoRail =
+      _discoDoControleLateral + _folgaEntreDiscosDoRail;
+
+  /// O que sobra da faixa de 48 para cada lado de um disco centrado nela.
+  static const double _sobraDoAlvoDoRail =
+      (kPisoDeToque - _discoDoControleLateral) / 2;
+
+  /// A diferença entre o passo do ALVO (48, que é o piso) e o passo do DESENHO
+  /// (45, que é o da mesa original). É ela que faz as faixas escorregarem em
+  /// relação aos discos, três pontos por posição.
+  static const double _escorregaDoAlvoDoRail =
+      kPisoDeToque - _passoDoDiscoDoRail;
+
+  /// Quanto a faixa do último disco desce abaixo do desenho dele.
+  ///
+  /// O `Positioned` do rail desconta exatamente esta medida da própria âncora,
+  /// e é isso que mantém o desenho parado enquanto o alvo cresce.
+  static const double _recuoInferiorDoRail =
+      _sobraDoAlvoDoRail + _escorregaDoAlvoDoRail * (_discosDoRail - 1) / 2;
+
+  /// Onde o disco de [posicao] começa dentro da própria faixa de 48.
+  ///
+  /// O disco do meio fica centrado (5). O de cima desce três pontos (8) e o de
+  /// baixo sobe três (2) — que é exatamente o que devolve o passo de 45 entre
+  /// os desenhos enquanto as faixas seguem de 48 em 48.
+  static double _recuoSuperiorDoDisco(int posicao) =>
+      _sobraDoAlvoDoRail +
+      _escorregaDoAlvoDoRail * ((_discosDoRail - 1) / 2 - posicao);
+
   Widget _railButton(
     IconData icon,
     VoidCallback onTap, {
     required String rotulo,
+    required int posicao,
     bool? ligado,
     bool habilitado = true,
   }) {
@@ -3125,33 +3169,73 @@ class _MesaScreenState extends State<MesaScreen> {
     // e a lateral é discreta de propósito, para não competir com o feltro.
     //
     // Então o que cresce é a REGIÃO ACIONÁVEL: uma caixa de 48 × 48, opaca ao
-    // toque, com o disco de 38 centrado dentro. É a mesma solução que o
-    // `IconButton` do Material usa, e é por isso que ele tem `constraints` de 48
-    // com um ícone de 24 no meio.
+    // toque, com o disco de 38 dentro. É a mesma solução que o `IconButton` do
+    // Material usa, e é por isso que ele tem `constraints` de 48 com um ícone de
+    // 24 no meio.
     //
     // As caixas se encostam sem se sobrepor: `_actionRail` empilha três de 48
     // sem espaçador, então cada uma ocupa exatamente `[k*48, (k+1)*48)`. Um
     // `SizedBox` de folga entre elas devolveria buraco morto entre alvos; folga
     // menor que a diferença de tamanho faria as caixas se cruzarem e mandaria o
     // toque para o vizinho.
+    //
+    // ---------------------------------------------------------------------
+    // MAS O DISCO NÃO FICA CENTRADO NA CAIXA — E É POR ISSO QUE ELE NÃO ANDA
+    // ---------------------------------------------------------------------
+    //
+    // Centrar o disco em cada caixa foi o que a OS 29-C1 fez, e a
+    // rehomologação mediu o preço: as caixas andam de 48 em 48 e os discos
+    // andavam de 45, então os três desciam 5, 8 e 11 pontos em relação ao
+    // desenho da mesa que a OS mandou preservar. O alvo estava certo e o
+    // desenho tinha mudado.
+    //
+    // O passo do ALVO tem de ser 48 — é o piso. O passo do DESENHO tem de ser
+    // 45 — é a mesa. Os dois convivem porque o disco não precisa estar no meio
+    // da própria faixa: basta estar DENTRO dela. Com o recuo variando de três
+    // em três (8, 5, 2), os discos voltam a andar de 45 em 45 e cada faixa
+    // continua com 48 inteiros, sem invadir a vizinha.
+    //
+    // Sobra `48 − 38 − 2 = 8` embaixo do último disco, e é exatamente isso que
+    // `_recuoInferiorDoRail` desconta na âncora do rail. Sem esse desconto os
+    // três subiriam 8 — trocaríamos um deslocamento por outro.
+    //
+    // Na horizontal a caixa cresce só para a ESQUERDA: o disco fica rente à
+    // borda direita dela, e a âncora `right` do rail continua caindo na mesma
+    // coluna de pixels de antes.
+    //
+    // O disco é POSICIONADO dentro da faixa, e não acomodado por respiro. Um
+    // `Padding` dentro de uma caixa de medida fixa repassa a medida apertada
+    // que recebeu: o disco de 38 seria esticado para o que sobrasse da faixa —
+    // 40 pontos de altura no primeiro deles — e a correção mediria errado
+    // exatamente onde tenta acertar.
     final corpo = SizedBox(
       width: kPisoDeToque,
       height: kPisoDeToque,
-      child: Center(
-        child: Container(
-          width: _discoDoControleLateral,
-          height: _discoDoControleLateral,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xEE0A0A0A),
-            border: Border.all(color: _mGold, width: 1),
-            boxShadow: const [
-              BoxShadow(color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
-            ],
+      child: Stack(
+        children: [
+          Positioned(
+            top: _recuoSuperiorDoDisco(posicao),
+            right: 0,
+            child: Container(
+              width: _discoDoControleLateral,
+              height: _discoDoControleLateral,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xEE0A0A0A),
+                border: Border.all(color: _mGold, width: 1),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x66000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(icon, color: _mGoldHi, size: 20),
+            ),
           ),
-          child: Icon(icon, color: _mGoldHi, size: 20),
-        ),
+        ],
       ),
     );
 

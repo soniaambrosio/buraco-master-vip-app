@@ -535,16 +535,205 @@ void main() {
       // Nas DUAS listas: a da evidência publicada e a que decide verde/vermelho.
       // Estar só na primeira faria o gate aparecer no relatório e não reprovar.
       expect(
-        RegExp(r'GATES="[^"]*\bperfilvis\b').hasMatch(texto),
-        isTrue,
+        gatesDaEvidencia(texto),
+        contains('perfilvis'),
         reason: 'perfilvis saiu da evidência publicada',
       );
+      // -------------------------------------------------------------------
+      // POR QUE ESTA CONFERÊNCIA NÃO OLHA MAIS A LINHA DO `for`
+      // -------------------------------------------------------------------
+      //
+      // Ela olhava: a regex exigia a chave DENTRO da linha do laço. Enquanto a
+      // lista do veredito era literal ali, as duas coisas eram a mesma; quando
+      // a OS 29-C1 moveu a lista para `LISTA="..."` — para que a conferência de
+      // gates obrigatórios lesse a MESMA lista que o laço percorre —, a regex
+      // parou de casar e reprovou um portão íntegro.
+      //
+      // Escrever a lista literal no `for` E numa variável devolveria a regex ao
+      // verde e criaria duas declarações da mesma lista, que é o defeito que a
+      // C1 tinha ido corrigir: elas divergem, e a que decide não é a que se lê.
+      //
+      // Então o que se confere agora é o que sempre importou — que a chave está
+      // na lista que o laço PERCORRE. `listaDoVeredito` só devolve a lista
+      // depois de confirmar que o laço a percorre; se alguém trocar
+      // `for k in $LISTA` por outra coisa, ela falha alto em vez de aprovar uma
+      // lista que ninguém lê.
       expect(
-        RegExp(r'for k in [^;]*\bperfilvis\b[^;]*; do').hasMatch(texto),
-        isTrue,
+        listaDoVeredito(texto),
+        contains('perfilvis'),
         reason: 'perfilvis saiu do portão verde/vermelho — passaria a rodar '
             'sem poder reprovar',
       );
     });
   });
+
+  // ===========================================================================
+  // O PORTÃO DAS SUÍTES QUE NÃO PODEM SUMIR NEM DEIXAR DE SER CONFERIDAS
+  // ===========================================================================
+  //
+  // Mesma ideia do grupo acima, um degrau mais fundo.
+  //
+  // `exige` fecha o caminho do ARQUIVO ausente, e a lista `OBRIGATORIOS` do
+  // veredito fecha os dois caminhos do gate que não executa. Só que declarar uma
+  // chave obrigatória é, ele próprio, um ato que ninguém conferia: a OS 29-R1
+  // injetou a mutação de tirar `mesac1` de `OBRIGATORIOS` e ela SOBREVIVEU,
+  // porque nenhuma suíte lia essa lista. O portão continuava verde tendo perdido
+  // a única coisa que o obrigava a reprovar.
+  //
+  // A conferência mora AQUI, e não dentro das suítes que ela protege, pelo mesmo
+  // motivo do grupo de cima: uma prova escrita dentro do que ela garante morre
+  // junto com ele. `cascaaud` é obrigatório, fala de outro assunto, e roda nos
+  // dois workflows.
+  group('o portão das suítes obrigatórias da Mesa de Treino', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+    final build = File('../.github/workflows/build.yml');
+
+    /// A chave do gate e a suíte que ela vigia, relativa a `app/`.
+    const suites = <String, String>{
+      'mesacar': 'test/casca/mesa_treino_caracterizacao_test.dart',
+      'mesaa11y': 'test/casca/mesa_treino_acessivel_test.dart',
+      'mesac1': 'test/casca/mesa_treino_alvos_reais_test.dart',
+      'disposicao': 'test/cartas/disposicao_da_mao_test.dart',
+    };
+
+    test('as quatro suítes existem na árvore', () {
+      for (final e in suites.entries) {
+        expect(
+          File(e.value).existsSync(),
+          isTrue,
+          reason: 'a suíte do gate ${e.key} sumiu — e some em silêncio, porque '
+              'ausência de arquivo vira NÃO EXECUTADO no portão',
+        );
+      }
+    });
+
+    test('o workflow as exige, e não apenas as roda', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+
+      for (final e in suites.entries) {
+        // `exige`, e não `roda`: a diferença entre as duas é o que acontece
+        // quando o arquivo não está lá. `roda` escreve NÃO EXECUTADO, e NÃO
+        // EXECUTADO não soma no fail.
+        expect(
+          RegExp(
+            '^ *exige +' + e.key + ' +' + RegExp.escape(e.value) + r'[ \t]*[\r\n]',
+            multiLine: true,
+          ).hasMatch(texto),
+          isTrue,
+          reason: 'o gate ${e.key} não exige ${e.value} — foi rebaixado para '
+              'roda, apontado para outro caminho, ou saiu do workflow',
+        );
+      }
+    });
+
+    test('as quatro chaves estão nas três listas do veredito', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+
+      final gates = gatesDaEvidencia(texto);
+      final lista = listaDoVeredito(texto);
+      final obrigatorios = declaracoesDe(texto, 'OBRIGATORIOS');
+
+      // As duas declarações de OBRIGATORIOS — a do passo da evidência e a do
+      // veredito — são shells diferentes, então a lista se repete. Repetida e
+      // DIVERGENTE seria pior do que não existir: o relatório diria uma coisa e
+      // o portão faria outra.
+      expect(
+        obrigatorios,
+        hasLength(2),
+        reason: 'o workflow declara ${obrigatorios.length} listas de gates '
+            'obrigatórios, e são duas: a da evidência e a do veredito',
+      );
+      expect(
+        obrigatorios.first,
+        orderedEquals(obrigatorios.last),
+        reason: 'as duas declarações de OBRIGATORIOS divergiram',
+      );
+
+      for (final chave in suites.keys) {
+        expect(gates, contains(chave),
+            reason: '$chave saiu da evidência publicada');
+        expect(lista, contains(chave),
+            reason: '$chave saiu da lista que o veredito percorre — passaria a '
+                'rodar sem poder reprovar');
+        expect(obrigatorios.first, contains(chave),
+            reason: '$chave deixou de ser obrigatório: um passo que não chegue '
+                'a rodar volta a sair VERDE');
+      }
+    });
+
+    test('o build.yml nomeia os quatro caminhos e roda os dois diretórios', () {
+      if (!build.existsSync()) return;
+      final texto = build.readAsStringSync();
+
+      for (final caminho in suites.values) {
+        expect(
+          texto,
+          contains('app/' + caminho),
+          reason: 'o portão de qualidade do APK não nomeia $caminho — apagá-lo '
+              'derrubaria a contagem e deixaria o portão verde',
+        );
+      }
+      // test/cartas não cai dentro de test/casca: sem os dois nomes, a regra da
+      // mão deixa de rodar no portão que produz o APK.
+      expect(
+        texto,
+        contains('flutter test test/casca test/cartas'),
+        reason: 'o portão do APK parou de rodar um dos dois diretórios',
+      );
+    });
+  });
+}
+
+// ===========================================================================
+// LER AS LISTAS DO WORKFLOW COMO LISTAS, E NÃO COMO TEXTO
+// ===========================================================================
+//
+// Uma regex sobre o texto cru confunde a FORMA da declaração com o CONTEÚDO
+// dela. Foi o que derrubou `cascaaud` na OS 29-C1: a chave continuava
+// conferida, e a linha em que ela aparecia tinha mudado. Aqui a declaração é
+// lida uma vez e vira lista de chaves; o que os casos afirmam é pertinência.
+
+/// Toda declaração de shell `NOME="a b c"` do workflow, já quebrada em chaves.
+List<List<String>> declaracoesDe(String texto, String nome) =>
+    RegExp('^ *' + nome + '="([^"]*)"', multiLine: true)
+        .allMatches(texto)
+        .map((m) => m
+            .group(1)!
+            .split(RegExp(r'\s+'))
+            .where((s) => s.isNotEmpty)
+            .toList())
+        .toList();
+
+/// A lista de gates da evidência publicada.
+List<String> gatesDaEvidencia(String texto) {
+  final ds = declaracoesDe(texto, 'GATES');
+  expect(
+    ds,
+    hasLength(1),
+    reason: 'o workflow tem ${ds.length} declarações de GATES, e tem de ter uma',
+  );
+  return ds.single;
+}
+
+/// A lista de gates que o veredito PERCORRE.
+///
+/// Devolvê-la sem conferir o laço seria aprovar uma lista que ninguém lê: a
+/// pertinência só significa alguma coisa se o `for` percorrer esta variável.
+List<String> listaDoVeredito(String texto) {
+  expect(
+    RegExp(r'for +k +in +\$LISTA *; *do').hasMatch(texto),
+    isTrue,
+    reason: 'o veredito deixou de percorrer a variável LISTA — a conferência '
+        'de gates obrigatórios passaria a ler uma lista diferente da que decide',
+  );
+  final ds = declaracoesDe(texto, 'LISTA');
+  expect(
+    ds,
+    hasLength(1),
+    reason: 'o workflow tem ${ds.length} declarações de LISTA, e tem de ter '
+        'uma: duas divergem, e a que decide não é a que se lê',
+  );
+  return ds.single;
 }
