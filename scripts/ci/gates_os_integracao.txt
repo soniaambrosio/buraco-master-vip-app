@@ -277,6 +277,7 @@ rankingfn
     provas     54
     exige      test("PF-01:
     exige      SUPERFICIE_IMPLANTADA = {
+    exige      [...esperados].sort(),
     exige      casosDeclaradosEm(GUARDA)
     exige      corpoDoCaso(GUARDA, "SF-01")
     exige      corpoDoCaso(GUARDA, "SF-02")
@@ -290,6 +291,7 @@ rankingfn
     exige      const ALVO_OFICIAL =
     exige      casosDeclaradosEm(PASSE).includes("PF-01")
     exige      corpoDoCaso(PASSE, "PF-01")
+    exige      listaLiteral(fonte, codebase, "'")
     exige      pkg.scripts.test,
 rankingint
 identint
