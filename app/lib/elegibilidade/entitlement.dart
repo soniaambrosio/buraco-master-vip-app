@@ -39,6 +39,29 @@
 /// Versao do formato de `playerEntitlements/{uid}`.
 const int kEsquemaEntitlement = 1;
 
+/// As origens que produzem VIP INTEGRAL, e a lista e FECHADA.
+///
+/// Ela nao e uma preferencia: cada nome aqui tem um PRODUTOR nesta arvore, e
+/// nenhum nome sem produtor entrou.
+///
+///   play             `functions-billing/rtdn.js` e `reconciliacao.js`
+///                    escrevem a partir da Play Developer API, e
+///                    `index.js` reescreve o vencimento preservando a origem.
+///   legado_usuarios  `functions-billing/migracaoLegado.js`, a migracao da
+///                    populacao que ja tinha VIP antes do Billing.
+///
+/// FECHADA POR LISTA, E NAO POR `else`. A diferenca decide o caso que esta
+/// constante existe para decidir: `administrativa` esta DOCUMENTADA em
+/// [EntitlementVip.origem] e nao tem produtor nenhum — e e exatamente sob
+/// ela que uma assinatura PRESENTEADA seria escrita no dia em que alguem a
+/// implementasse. Uma verificacao escrita como "nao e cortesia" deixaria esse
+/// documento passar; uma lista fechada obriga quem criar a origem nova a vir
+/// aqui e DECIDIR, no diff, se ela concede acesso a Torneio.
+///
+/// O mesmo vale para o rotulo que ninguem previu: origem ausente, vazia ou
+/// desconhecida nao esta na lista, entao recusa. Ausencia nao vira VIP.
+const Set<String> kOrigensVipIntegral = {'play', 'legado_usuarios'};
+
 /// Em que situacao a assinatura esta, segundo a ultima verificacao autoritativa.
 ///
 /// Os nomes espelham os estados que a Play Developer API devolve em
@@ -190,6 +213,36 @@ class EntitlementVip {
     if (ate == null) return false;
     return agora.isBefore(ate);
   }
+
+  /// A origem deste direito e uma das que produzem VIP INTEGRAL?
+  ///
+  /// Pergunta SEPARADA de [vigenteEm] porque as duas respondem coisas
+  /// diferentes: `vigenteEm` diz se o direito VALE AGORA, e esta diz DE ONDE
+  /// ele veio. Um passe de cortesia e um presente podem ser perfeitamente
+  /// vigentes; o que eles nao sao e assinatura integral.
+  bool get origemDeVipIntegral => kOrigensVipIntegral.contains(origem);
+
+  /// O jogador tem VIP INTEGRAL vigente em [agora]?
+  ///
+  /// [vigenteEm] mais [origemDeVipIntegral], nesta ordem — e a ordem importa:
+  /// `vigenteEm` e quem recusa instante sem fuso, e curto-circuitar a origem
+  /// antes dele faria um documento de origem estranha silenciar a exigencia
+  /// de UTC, que e uma exigencia de TODOS os chamadores.
+  ///
+  /// POR QUE ESTE PREDICADO E OUTRO, E NAO UM ENDURECIMENTO DE [vigenteEm]
+  ///
+  /// `vigenteEm` responde "tem VIP agora?" para a loja, para o selo, para a
+  /// comunicacao e para o Billing — consumidores para os quais um direito
+  /// administrativo ou presenteado, se um dia existir, DEVE valer. Mudar a
+  /// resposta deles para fechar a porta de Torneios seria decidir, de
+  /// carona, uma politica que ninguem arbitrou.
+  ///
+  /// Torneios V1 pede mais: la o acesso e pago e ranqueado, e a politica
+  /// congelada e "somente assinatura integral vigente". Quem quer essa
+  /// resposta chama ESTE metodo. Continua havendo UMA definicao de vigencia
+  /// — a de [vigenteEm], reutilizada aqui — e nao duas contas paralelas.
+  bool integralVigenteEm(DateTime agora) =>
+      vigenteEm(agora) && origemDeVipIntegral;
 
   /// Le o documento como ele chega do Firestore.
   ///

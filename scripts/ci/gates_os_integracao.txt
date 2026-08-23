@@ -480,3 +480,38 @@ torneiobase
     exige      ('ECON-01 a fundacao nao escolheu carteira nenhuma
     exige      kAcessosAdmitidosV1
     exige      quebrasDoCicloEditorialV1
+
+# --- 15. A ADMISSAO VIP EM TORNEIOS V1 ------------------------------------
+#
+# `torneiobase` prova que os MODELOS da V1 exigem VIP. Este prova a outra
+# metade: DE ONDE vem o "sim" que a admissao consome, e o que acontece com
+# todo "sim" que nao veio de la.
+#
+# A entrada e SEPARADA de `torneiobase` de proposito. As duas suites guardam
+# decisoes diferentes — modelo e admissao — e juntar as duas faria a falha de
+# uma esconder a cobertura da outra num unico numero.
+#
+# `exige` aponta para os casos que sozinhos denunciam a volta de cada decisao
+# desfeita: ORIG-05 e o presente entrando pela origem, ORIG-01 e a lista
+# fechada virando aberta, CLI-03 e o perfil voltando a vir do corpo da
+# requisicao, e CONV-01 e o convite voltando a ser alternativo ao VIP.
+admvip
+    suite      app/test/torneios/admissao_vip_torneios_test.dart
+    executor   roda admvip test/torneios/admissao_vip_torneios_test.dart
+    sha256     4b78d50d2b0c537fed3f4bc19b05ef50808fbc70540629fa5238845af5cbe746
+    provas     48
+    casos      48
+    exige      group('ADM
+    exige      group('ORIG
+    exige      group('CLI
+    exige      group('CONV
+    exige      group('AUT
+    exige      group('RULES
+    exige      group('GRD
+    exige      ('ORIG-01 a relacao de origens integrais e FECHADA e tem produtor
+    exige      ('ORIG-05 VIP PRESENTEADO nao concede
+    exige      ('ORIG-04 passe de CORTESIA nao concede
+    exige      ('CLI-03 a porta de admissao NAO recebe perfil do cliente
+    exige      ('CONV-01 `somente_convidados` deriva OS DOIS criterios
+    exige      kOrigensVipIntegral
+    exige      integralVigenteEm

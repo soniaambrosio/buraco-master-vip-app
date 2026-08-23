@@ -745,9 +745,25 @@ class TorneioTemplate {
   ///
   /// Derivado, e nao campo proprio: dois lugares dizendo quem pode entrar
   /// divergem, e o seed ja diz isso em `acesso`.
+  ///
+  /// `somente_convidados` DERIVA OS DOIS CRITERIOS, e a correcao fecha dois
+  /// defeitos de uma vez:
+  ///
+  ///   1. o convite estava ALTERNATIVO ao VIP, e nao cumulativo. O contrato
+  ///      normativo da V1 diz o contrario com todas as letras — ver
+  ///      `kAcessosAdmitidosV1` em contrato_v1.dart —, mas quem decidia era
+  ///      esta linha, e ela derivava so o convite. Um convidado sem
+  ///      assinatura entrava.
+  ///   2. `'convite:$tournamentId'` NAO PARSEIA. `TipoCriterio.convite` nao
+  ///      aceita argumento (ele ja e sempre "para ESTE torneio", pelo
+  ///      `tournamentId` que a avaliacao recebe), entao
+  ///      `CriterioElegibilidade.parse` lancava `FormatException` e a
+  ///      avaliacao inteira morria antes de recusar qualquer coisa. O unico
+  ///      modelo `somente_convidados` da V1 e o Encerramento, que nao esta na
+  ///      relacao regular — foi por isso que ninguem esbarrou nisso.
   List<String> get criteriosElegibilidade => switch (acesso) {
         AcessoTorneio.vip => const ['assinatura'],
-        AcessoTorneio.somenteConvidados => ['convite:$tournamentId'],
+        AcessoTorneio.somenteConvidados => const ['assinatura', 'convite'],
         AcessoTorneio.publico || AcessoTorneio.misto => const [],
       };
 

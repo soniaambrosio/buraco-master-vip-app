@@ -232,6 +232,10 @@ jobs:
           # individual, ciclo editorial com `em_revisao` e aprovador distinto,
           # e os quatro bloqueios que precisam continuar bloqueados.
           roda torneiobase test/torneios/fundacao_base_p_test.dart
+          # OS 42-C1: a origem do entitlement que a admissao consome. Roda
+          # SEPARADA de `torneiobase` para que a falha de uma nao esconda a
+          # cobertura da outra.
+          roda admvip test/torneios/admissao_vip_torneios_test.dart
           roda integr     test/integracao/teste_integracao_motores.dart
           roda colarte    test/colecoes/colecao_arte_test.dart
           roda colfire    test/colecoes/colecao_firebase_test.dart
