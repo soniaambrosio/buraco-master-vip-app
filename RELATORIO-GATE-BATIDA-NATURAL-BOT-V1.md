@@ -246,6 +246,16 @@ só existe no scaffold como dependência **transitiva**, e importá-lo acenderia
 fixou. Ela foi conferida contra `sha256sum` nos vetores `""`, `"abc"` e um
 milhão de `a`.
 
+E a normalização foi conferida sobre o arquivo real, nas duas formas em que ele
+pode chegar ao disco:
+
+```
+gate_batida_bot.dart com LF   (34.680 bytes) -> 5fd39ab4c4691e02b0419a140809292dce5acd66624bac6964f6d12baf98291c
+gate_batida_bot.dart com CRLF (35.503 bytes) -> 5fd39ab4c4691e02b0419a140809292dce5acd66624bac6964f6d12baf98291c
+```
+
+Um checkout no Windows e um checkout no Linux satisfazem o mesmo digest.
+
 ### As três coisas conferidas, e por que são três
 
 | camada | onde vive | o que garante |
