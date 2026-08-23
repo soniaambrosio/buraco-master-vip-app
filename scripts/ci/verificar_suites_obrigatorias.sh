@@ -71,15 +71,60 @@ raiz="${1:-app_build}"
 workflow="${2:-}"
 manifesto="$raiz/test/suites_obrigatorias.txt"
 
-# A chave que ESTE script existe para proteger. Escrita aqui, e nao so no
+# As chaves que ESTE script existe para proteger. Escritas aqui, e nao so no
 # manifesto, para que esvaziar o manifesto nao seja uma saida: o arquivo pode
 # crescer com decisoes futuras, mas nao pode encolher ate zero.
-readonly CHAVE_MINIMA="a11yconf"
+#
+# ATE A OS 30-C3 SO `a11yconf` MORAVA AQUI, e a assimetria era a saida. Tirar a
+# entrada `suitesobrig` do manifesto passava neste verificador, e quem acusava
+# era so a guarda Dart — que e exatamente o arquivo que essa entrada protege.
+# Apagar os dois num diff de duas linhas desligava metade da guarda-das-guardas
+# sem acender nada, e o agregador imprimia `NAO EXECUTADO (ausente)` e saia
+# VERDE. Uma guarda cuja unica testemunha e ela mesma nao sobrevive a propria
+# remocao; por isso as DUAS chaves ficam fixadas aqui, fora dela.
+readonly CHAVES_MINIMAS="a11yconf suitesobrig"
 
 # O piso de provas que ESTA OS declarou, pela mesma razao: baixar `provas` no
 # manifesto seria a saida silenciosa que o resto do arquivo veio fechar.
 # Formato: <chave>:<piso>, separados por espaco.
 readonly PISOS="a11yconf:35 suitesobrig:9"
+
+# A relacao normativa minima de `exige`, por chave, pela mesma razao. Ate a
+# OS 30-C3 este verificador exigia que EXISTISSE algum `exige`, nunca QUAIS: a
+# lista de quais morava so em `_minimas`, dentro da guarda Dart. Tirar
+# `exige ('P1` do manifesto saia `exit 0` aqui, e so o Dart acusava — o mesmo
+# Dart que o `build.yml` nunca executava. O QUAIS passa a morar tambem fora
+# dela, e e conferido contra o manifesto antes de qualquer teste rodar.
+#
+# Sao literais de codigo, sem espaco, iguais aos que o manifesto declara e aos
+# que a guarda Dart fixa em `_minimas` — a comparacao e por linha inteira.
+exiges_minimos() {
+  case "$1" in
+    a11yconf)
+      printf '%s\n' "('P1" "('P2" "('I1" "('I2" "('I3" "('I4" "('I5" "('I6"
+      ;;
+    suitesobrig)
+      printf '%s\n' "('S1" "('S2" "('S3" "('S4" "('S5" "('S6" "('S7" "('S8" \
+        "('S9"
+      ;;
+  esac
+}
+
+# QUEM DE FATO RODA A GUARDA RAPIDA.
+#
+# A guarda Dart e a metade que reprova em `flutter test`, sem esperar o Actions
+# — mas ela so guarda alguma coisa se um workflow ALCANCAVEL a executar. Ate a
+# OS 30-C3 nenhum executava: o unico workflow que dispara neste repositorio e o
+# `build.yml`, e ele rodava este verificador e `test/casca`, nunca `test/ci`.
+# Depois de tirar um `exige` obrigatorio, ou a entrada `suitesobrig`, ele ficava
+# VERDE, imprimia "PORTAO VERDE" e publicava o Release.
+#
+# O comando esta escrito AQUI, literal, e NAO chega por parametro: um comando
+# que o proprio invocador escolhe pode ser desescolhido apagando o argumento, e
+# a defesa iria embora junto com quem ela defende.
+readonly EXECUTOR=".github/workflows/build.yml"
+readonly CAMINHO_DA_GUARDA="test/ci/suites_obrigatorias_test.dart"
+readonly COMANDO_DA_GUARDA="flutter test test/ci/suites_obrigatorias_test.dart"
 
 falhas=0
 erro() {
@@ -115,7 +160,8 @@ if [ -n "$workflow" ]; then
 fi
 
 entradas=0
-tem_chave_minima=0
+chaves_vistas=''
+caminhos_vistos=''
 
 # Estado da entrada corrente. Uma entrada so e conferida quando a proxima
 # comeca — ou no fim do arquivo —, porque o contrato dela vem depois dela.
@@ -129,7 +175,8 @@ conferir_entrada() {
   [ -z "$chave" ] && return 0
 
   entradas=$((entradas + 1))
-  [ "$chave" = "$CHAVE_MINIMA" ] && tem_chave_minima=1
+  chaves_vistas="$chaves_vistas $chave"
+  caminhos_vistos="$caminhos_vistos $caminho"
 
   local arquivo="$raiz/$caminho"
 
@@ -156,6 +203,22 @@ conferir_entrada() {
   fi
   if [ -z "$exige_lista" ]; then
     erro "a entrada '$chave' nao declara nenhum 'exige'"
+  fi
+
+  # ---- e QUAIS 'exige' sao obrigatorios, para as chaves desta OS ---------
+  local minimo faltando_minimo=0 total_minimo=0
+  while IFS= read -r minimo; do
+    [ -z "$minimo" ] && continue
+    total_minimo=$((total_minimo + 1))
+    if ! printf '%s\n' "$exige_lista" | grep -Fxq -- "$minimo"; then
+      erro "o bloco $minimo saiu do contrato de '$chave' no manifesto"
+      faltando_minimo=$((faltando_minimo + 1))
+    fi
+  done <<EOF
+$(exiges_minimos "$chave")
+EOF
+  if [ "$total_minimo" -gt 0 ] && [ "$faltando_minimo" -eq 0 ]; then
+    echo "ok   relacao    $chave  $total_minimo exige(s) minimo(s)"
   fi
 
   # ---- o piso escrito AQUI nao pode ser rebaixado no manifesto ----------
@@ -303,8 +366,44 @@ if [ "$entradas" -eq 0 ]; then
   erro "manifesto sem nenhuma entrada — a lista foi esvaziada"
 fi
 
-if [ "$tem_chave_minima" -eq 0 ]; then
-  erro "o manifesto nao lista mais o gate '$CHAVE_MINIMA'"
+for minima in $CHAVES_MINIMAS; do
+  vista=0
+  for chave_vista in $chaves_vistas; do
+    [ "$chave_vista" = "$minima" ] && vista=1
+  done
+  if [ "$vista" -eq 1 ]; then
+    echo "ok   minima     $minima"
+  else
+    erro "o manifesto nao lista mais o gate '$minima'"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# O EXECUTOR — a guarda Dart tem de continuar sendo EXECUTADA por alguem
+# ---------------------------------------------------------------------------
+#
+# A busca ignora linha de comentario do YAML: repetir o comando num comentario
+# nao satisfaz o contrato — a mesma forja barata que o `exige` ja fecha.
+if [ ! -f "$EXECUTOR" ]; then
+  erro "o executor '$EXECUTOR' nao esta no repositorio"
+elif tr -d '\r' < "$EXECUTOR" | grep -vE '^[[:space:]]*#' |
+  grep -Fq -- "$COMANDO_DA_GUARDA"; then
+  echo "ok   executor   $EXECUTOR roda '$COMANDO_DA_GUARDA'"
+else
+  erro "o executor '$EXECUTOR' nao roda mais '$COMANDO_DA_GUARDA'"
+fi
+
+# E o caminho que o executor roda tem de ser uma suite DO MANIFESTO. Sem isto,
+# renomear a guarda no disco E no manifesto no mesmo commit deixaria o executor
+# apontando para um arquivo que nao existe mais, com este verificador verde.
+guarda_no_manifesto=0
+for caminho_visto in $caminhos_vistos; do
+  [ "$caminho_visto" = "$CAMINHO_DA_GUARDA" ] && guarda_no_manifesto=1
+done
+if [ "$guarda_no_manifesto" -eq 1 ]; then
+  echo "ok   alvo       $CAMINHO_DA_GUARDA"
+else
+  erro "'$CAMINHO_DA_GUARDA' — o que o executor roda — nao esta no manifesto"
 fi
 
 if [ "$falhas" -eq 0 ]; then

@@ -156,7 +156,14 @@ jobs:
         # importa as duas diretamente: stream_channel para o canal WebSocket
         # falso, fake_async para atravessar o backoff da reconexão sem esperar
         # segundos de verdade. Declarar evita o aviso depend_on_referenced_packages.
-        run: cd app_build && flutter pub add dev:stream_channel dev:fake_async
+        #
+        # `crypto` é de quem guarda as guardas: a suíte de `test/ci` assina o
+        # conteúdo de cada suíte obrigatória com o mesmo SHA-256 que o
+        # verificador em shell calcula, e é essa assinatura que impede que uma
+        # suíte seja esvaziada sem ninguém perceber. Ela é `dev_dependency` em
+        # `app/pubspec.yaml`, mas este workflow monta o pubspec à mão — sem
+        # declarar aqui, o import não resolve e o portão de análise reprova.
+        run: cd app_build && flutter pub add dev:stream_channel dev:fake_async dev:crypto
 
       - name: Trava jni em 1.0.0 (o 1.0.1 quebrou o android/build.gradle)
         # O jni 1.0.1 (dep transitiva, puxada via native-assets) adicionou um bloco
@@ -310,6 +317,47 @@ jobs:
           chmod +x scripts/ci/verificar_suites_obrigatorias.sh
           scripts/ci/verificar_suites_obrigatorias.sh app .github/workflows/ci-os-integracao.yml
           echo "PORTÃO VERDE: guardas obrigatórias no lugar no commit ${GITHUB_SHA}."
+
+      - name: "PORTÃO DAS GUARDAS — a metade Dart da guarda roda AQUI"
+        # UMA GUARDA QUE NENHUM WORKFLOW ALCANÇÁVEL EXECUTA NÃO GUARDA NADA.
+        #
+        # O passo acima é a metade shell. A outra metade mora em
+        # `app/test/ci/suites_obrigatorias_test.dart`, e até a OS 30-C3 nenhum
+        # workflow que dispara neste repositório a executava: este arquivo é o
+        # único caminho oficial até a candidata, e ele rodava `test/casca` e
+        # nunca `test/ci`. O agregador que a roda não é dispatchável. O
+        # resultado medido na rehomologação: tirar um `exige` obrigatório do
+        # manifesto, ou a entrada `suitesobrig` inteira, deixava este build
+        # VERDE — e o Release saía.
+        #
+        # As duas metades não são redundantes. O shell confere o manifesto, o
+        # conteúdo e o registro no agregador; a Dart é a que reprova em
+        # `flutter test` na máquina de quem edita, e a que cobre o manifesto
+        # entrada por entrada. O verificador em shell exige que ESTE comando
+        # continue escrito neste arquivo — apagar este passo faz o passo de cima
+        # ficar vermelho.
+        #
+        # O passo copia o manifesto E as suítes que ele lista, porque é isso que
+        # a guarda confere: cada caminho declarado no lugar, a assinatura do
+        # conteúdo, o piso de provas e os blocos obrigatórios. Copiar aqui, e não
+        # depender do portão da casca logo abaixo, mantém o passo independente da
+        # ordem — `cp -R` da mesma origem duas vezes é idempotente.
+        run: |
+          if [ ! -f app/test/ci/suites_obrigatorias_test.dart ]; then
+            echo "ERRO: app/test/ci/suites_obrigatorias_test.dart não encontrado — é ela que guarda as guardas."
+            exit 1
+          fi
+          if [ ! -f app/test/suites_obrigatorias.txt ]; then
+            echo "ERRO: app/test/suites_obrigatorias.txt não encontrado — sem manifesto não há contrato."
+            exit 1
+          fi
+          mkdir -p app_build/test/ci app_build/test/casca
+          cp app/test/suites_obrigatorias.txt app_build/test/suites_obrigatorias.txt
+          cp -R app/test/ci/. app_build/test/ci/
+          cp -R app/test/casca/. app_build/test/casca/
+          cd app_build
+          flutter test test/ci/suites_obrigatorias_test.dart --reporter expanded
+          echo "PORTÃO VERDE: a guarda das obrigatórias PROVOU no commit ${GITHUB_SHA}."
 
       - name: "PORTÃO DE PRODUÇÃO — casca real (roteamento, mocks, dados pessoais)"
         # Prova que o APK não abre numa bancada de prévias: partida fria decide
