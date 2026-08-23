@@ -103,9 +103,18 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # futuras; nao pode encolher ate zero, nem perder estas chaves, nem rebaixar
 # estes pisos.
 # ---------------------------------------------------------------------------
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34"
+# `admvip` guarda a origem do entitlement que a admissao em Torneios consome.
+# Ele entrou nesta regua porque a campanha negativa da OS 42-C1 mediu o buraco:
+# tirar a entrada inteira da fonte unica passava em SILENCIO, e um gate que some
+# sem reprovar e um gate que nao existe.
+#
+# `torneiobase` tem o MESMO buraco e NAO foi acrescentado aqui: a canonizacao
+# daquela suite (recarimbo do digest e elevacao do piso) e reserva declarada da
+# OS 42-C2, e mexer na protecao dela agora invadiria essa reserva. A divida fica
+# medida e registrada, nao esquecida.
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 admvip:48"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 admvip:48"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
