@@ -18,24 +18,47 @@
  * buraco que a fonte única dos gates fechou com `sha256`/`provas`, e ele vale
  * aqui igual.
  *
- * ENTÃO A GUARDA MORA FORA DO ARQUIVO QUE ELA GUARDA. Uma guarda que vive
- * dentro de `passe.test.js` some junto com `passe.test.js`, e é trivializada
- * pela mesma edição que trivializa PF-01. `PF-01` devolve a gentileza exigindo
- * que `SF-01` e `SF-02` continuem aqui: a dupla só cai calada se as DUAS forem
- * desmontadas no mesmo commit, e aí não há mais o que esconder no diff.
+ * ---------------------------------------------------------------------------
+ * O QUE MUDOU NESTA CORREÇÃO (OS 40-C1)
+ * ---------------------------------------------------------------------------
+ *
+ * A versão anterior fechava o buraco com um PAR RECÍPROCO — `PF-01` cobrava
+ * `SF-01`/`SF-02`, e `SF-01` cobrava `PF-01` — e com `SF-01` cobrando A PRÓPRIA
+ * PRESENÇA no alvo do `npm test`. Duas coisas erradas nisso, e a rehomologação
+ * OS 40-R1 mediu as duas:
+ *
+ *   1. UM PAR RECÍPROCO FINITO CAI CALADO se as duas pontas caírem juntas. Tirar
+ *      as duas suítes do alvo do `npm test`, ou apontar o alvo para uma
+ *      suíte-isca verde, deixava o gate `rankingfn` inteiramente verde.
+ *   2. UMA SUÍTE QUE COBRA A PRÓPRIA PRESENÇA não cobra nada: ela só roda se
+ *      estiver presente, e o caso em que ela não está é justamente o caso em que
+ *      ninguém pergunta.
+ *
+ * ENTÃO A AUTORIDADE MUDOU DE LUGAR. Quem afirma que estas duas suítes estão no
+ * alvo oficial, que o alvo não ganhou isca, que o piso de casos não caiu e que
+ * `PF-01`/`SF-01`/`SF-02` continuam declarados é o CONTRATO DE `rankingfn` em
+ * `scripts/ci/gates_os_integracao.txt`, interpretado por
+ * `scripts/ci/verificar_contrato_suites.sh` — que roda ANTES de qualquer teste,
+ * falha por conta própria, e vive fora deste codebase. Estas duas suítes
+ * continuam se cobrando, mas como REDUNDÂNCIA, e não como autoridade: nenhuma
+ * das duas é mais o único lugar onde a ausência da outra aparece.
  *
  * ---------------------------------------------------------------------------
  * O QUE CADA CASO AFIRMA
  * ---------------------------------------------------------------------------
  *
- *   SF-01  PF-01 existe, está no alvo explícito do `npm test`, e a relação
- *          nominal escrita nele é EXATAMENTE a do disco — nome por nome.
+ *   SF-01  PF-01 existe COMO CÓDIGO — declaração real, não menção em
+ *          comentário —, valida por nome, e a relação nominal escrita nele é
+ *          EXATAMENTE a do disco.
  *   SF-02  a mesma superfície, congelada por `ferramentas/composicao/
  *          loja_functions.test.js`, também é a do disco.
+ *   SF-03  o alvo do `npm test` é EXATAMENTE o alvo oficial: nominal, sem
+ *          glob, sem isca, sem arquivo fantasma, e com as duas suítes desta
+ *          dupla dentro dele.
  *
- * As duas afirmações apontam para o DISCO, e não uma para a outra. É assim que
- * duas listas congeladas em arquivos diferentes ficam impedidas de divergir sem
- * que nenhuma das duas vire "a fonte" da outra — que seria criar uma terceira
+ * SF-01 e SF-02 apontam para o DISCO, e não uma para a outra. É assim que duas
+ * listas congeladas em arquivos diferentes ficam impedidas de divergir sem que
+ * nenhuma das duas vire "a fonte" da outra — que seria criar uma terceira
  * autoridade sobre a mesma coisa.
  */
 
@@ -48,7 +71,27 @@ const RAIZ = path.resolve(__dirname, "..", "..");
 const leia = (p) => fs.readFileSync(path.join(RAIZ, p), "utf8");
 
 const PASSE = "functions-ranking/test/passe.test.js";
+const ESTA = "functions-ranking/test/superficie.test.js";
+const PACOTE = "functions-ranking/package.json";
 const CONGELADA = "ferramentas/composicao/loja_functions.test.js";
+
+/// O ALVO OFICIAL do `npm test` deste codebase, congelado por escrito.
+///
+/// NOMINAL E NÃO GLOB, de propósito e desde a OS do Passe: um arquivo novo na
+/// pasta passaria a rodar sem ninguém decidir, e um renomeado sairia da suíte em
+/// silêncio. O que esta constante acrescenta é o outro lado — o alvo também não
+/// pode ENCOLHER, nem ganhar uma isca verde no meio, sem aparecer no diff.
+///
+/// ESTE MESMO LITERAL ESTÁ CONGELADO FORA DAQUI, como `exigealvo` do contrato de
+/// `rankingfn` em `scripts/ci/gates_os_integracao.txt`. É a diferença entre uma
+/// constante e uma autoridade: trocar as duas passa a ser uma decisão escrita em
+/// dois arquivos, num commit só, e legível no diff.
+const ALVO_OFICIAL =
+  "tsc && node --test test/politica.test.js test/ligas.test.js test/ordenacao.test.js" +
+  " test/ledger.test.js test/temporadas.test.js test/apuracao.test.js test/projecao.test.js" +
+  " test/resultado.test.js test/elo.test.js test/competicao.test.js test/elegibilidade.test.js" +
+  " test/ciclo.test.js test/identidade.test.js test/passe.test.js test/superficie.test.js" +
+  " test/estatisticas.test.js test/composicao.test.js";
 
 /// As quatro codebases que PF-01 guarda, e o ponto de entrada implantado de cada
 /// uma. São quatro, e não nove, porque foi sobre estas quatro que a OS do Passe
@@ -61,16 +104,48 @@ const GUARDADAS = [
   ["functions-social", "functions-social/src/index.ts"],
 ];
 
-/// Código sem comentário. Mesma limpeza de `passe.test.js` e de `CONGELADA`:
+/// Uma fonte sem comentário. Mesma limpeza de `passe.test.js` e de `CONGELADA`:
 /// uma varredura que não separe prosa de código casa com o comentário que
 /// explica a remoção e passa a provar o texto em vez do programa.
-function codigoDe(fonte) {
+///
+/// A `sentinela` é o que TEM de sobrar depois da limpeza. Sem ela, um bloco de
+/// comentário mal fechado apagaria o arquivo inteiro e toda busca por ausência
+/// ficaria verde — que é o modo mais silencioso de uma guarda textual morrer.
+function semComentario(fonte, sentinela) {
   const limpo = fonte
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^[ \t]*\/\/.*$/gm, "")
     .replace(/^[ \t]*\/\/\/.*$/gm, "");
-  assert.ok(limpo.includes("export"), "a limpeza comeu o código");
+  assert.ok(limpo.includes(sentinela), "a limpeza comeu o código: `" + sentinela + "` sumiu");
   return limpo;
+}
+
+const codigoDe = (fonte) => semComentario(fonte, "export");
+
+/// Os identificadores dos casos DECLARADOS numa suíte — `test("XX-99: ...")` —,
+/// lidos do CÓDIGO.
+///
+/// LIDOS DO CÓDIGO, e não do texto cru: manter `SF-01` num cabeçalho, num
+/// comentário ou na documentação não pode satisfazer guarda nenhuma. Era esta a
+/// falha que a OS 40-R1 apontou na versão anterior de PF-01, que fazia
+/// `arquivo.includes("SF-01")` sobre o arquivo inteiro — e passava verde com os
+/// dois casos apagados, desde que os comentários ficassem.
+function casosDeclaradosEm(arquivo) {
+  const codigo = semComentario(leia(arquivo), "require(");
+  return [...codigo.matchAll(/(?:^|[^\w$.])test\(\s*["']([A-Za-z]{2}-[0-9]{2})\s*:/g)].map((m) => m[1]);
+}
+
+/// O corpo declarado de um caso: do `test("<id>:` até a próxima DECLARAÇÃO de
+/// caso, ou até o fim do arquivo. Sempre sobre o código sem comentário — um
+/// corpo trivializado cujo comentário antigo ficou por cima não pode continuar
+/// respondendo pelo corpo que sumiu.
+function corpoDoCaso(arquivo, id) {
+  const codigo = semComentario(leia(arquivo), "require(");
+  const abre = new RegExp('test\\(\\s*["\']' + id + '\\s*:').exec(codigo);
+  assert.ok(abre !== null, "o caso " + id + " não é declarado em " + arquivo);
+  const resto = codigo.slice(abre.index + abre[0].length);
+  const proximo = /(?:^|[^\w$.])test\(\s*["'][A-Za-z]{2}-[0-9]{2}\s*:/.exec(resto);
+  return proximo === null ? resto : resto.slice(0, proximo.index);
 }
 
 /// O que uma entrada de fato exporta, por nome e ordenado.
@@ -100,29 +175,27 @@ function listaLiteral(fonte, chave, aspas) {
 }
 
 describe("SF — a superfície de deploy não pode voltar a valer por contagem", () => {
-  test("SF-01: PF-01 existe, é executado, e sua relação nominal é a do disco", () => {
-    // 1. É EXECUTADO. O alvo do `npm test` deste codebase é explícito, e não um
-    //    glob, de propósito: um arquivo renomeado sairia da suíte em silêncio.
-    //    Se PF-01 sair dali, ele para de rodar sem nada ficar vermelho — então
-    //    é aqui que a presença no alvo vira afirmação.
-    const pkg = JSON.parse(leia("functions-ranking/package.json"));
-    assert.ok(pkg.scripts.test.includes("test/passe.test.js"), "PF-01 saiu do `npm test`");
+  test("SF-01: PF-01 é código declarado, e sua relação nominal é a do disco", () => {
+    // 1. EXISTE COMO CÓDIGO, com o nome que a OS do Passe registrou. Apagar o
+    //    arquivo já derruba a suíte inteira, porque o alvo o nomeia; apagar só o
+    //    CASO, não — e é esse o furo que esta linha fecha. A leitura é do código
+    //    sem comentário: um `// PF-01` deixado para trás não responde por um
+    //    caso que não existe mais.
     assert.ok(
-      pkg.scripts.test.includes("test/superficie.test.js"),
-      "esta guarda saiu do `npm test`"
+      casosDeclaradosEm(PASSE).includes("PF-01"),
+      "o caso PF-01 não é mais declarado em " + PASSE
     );
 
-    // 2. EXISTE, com o nome que a OS do Passe registrou. (Apagar o arquivo já
-    //    derruba a suíte inteira, porque o alvo o nomeia; apagar só o CASO,
-    //    não — e é esse o furo que esta linha fecha.)
-    const fonte = leia(PASSE);
-    const abre = fonte.indexOf('test("PF-01:');
-    assert.ok(abre > 0, "o caso PF-01 sumiu de " + PASSE);
+    // 2. E O OUTRO LADO CONTINUA NO ALVO. Quem afirma isto DE FORA é o contrato
+    //    de `rankingfn` na fonte única; aqui a afirmação é redundante de
+    //    propósito, e é sobre a OUTRA suíte — não sobre esta. Uma suíte que
+    //    cobra a própria presença só fala quando está presente.
+    const pkg = JSON.parse(leia(PACOTE));
+    assert.ok(pkg.scripts.test.includes("test/passe.test.js"), "PF-01 saiu do `npm test`");
 
     // 3. E VALIDA POR NOME. Um corpo que voltasse a comparar quantidade não tem
     //    `deepEqual` sobre a relação, e um corpo trivial não tem nem a relação.
-    const corpo = fonte.slice(abre, fonte.indexOf('test("PF-02:', abre));
-    assert.ok(corpo.length > 0, "PF-02 sumiu: o recorte de PF-01 ficou sem fim");
+    const corpo = corpoDoCaso(PASSE, "PF-01");
     assert.ok(
       /assert\.deepEqual\(/.test(corpo),
       "PF-01 deixou de comparar a relação de nomes"
@@ -136,6 +209,7 @@ describe("SF — a superfície de deploy não pode voltar a valer por contagem",
     //    disco exporta. Esvaziar a relação, deixar um nome de fora ou inventar
     //    um décimo segundo reprova aqui — mesmo que PF-01 fique verde por não
     //    olhar mais para ela.
+    const fonte = leia(PASSE);
     for (const [, arquivo] of GUARDADAS) {
       assert.deepEqual(
         listaLiteral(fonte, arquivo, '"'),
@@ -158,5 +232,52 @@ describe("SF — a superfície de deploy não pode voltar a valer por contagem",
         codebase + ": a superfície congelada em " + CONGELADA + " não é mais a do disco"
       );
     }
+  });
+
+  test("SF-03: o alvo do `npm test` é exatamente o alvo oficial", () => {
+    const pkg = JSON.parse(leia(PACOTE));
+
+    // 1. IGUALDADE EXATA, e não `includes`. `includes` aceitava acréscimo: uma
+    //    suíte-isca verde no fim da linha passava despercebida, e o gate ficava
+    //    verde medindo outra coisa. Igualdade também recusa a REORDENAÇÃO e a
+    //    troca do `tsc &&` da frente — o alvo compila antes de rodar porque o
+    //    que ele testa é `lib/`, e sem isso a suíte prova o build anterior.
+    assert.equal(
+      pkg.scripts.test,
+      ALVO_OFICIAL,
+      "o alvo do `npm test` divergiu do alvo oficial congelado"
+    );
+
+    // 2. AS DUAS SUÍTES DESTA DUPLA ESTÃO NELE, nominadas. Redundante com a
+    //    igualdade acima e escrito assim de propósito: se alguém realinhar
+    //    `ALVO_OFICIAL` com um alvo mutilado, é aqui que a intenção aparece.
+    for (const obrigatoria of ["test/passe.test.js", "test/superficie.test.js"]) {
+      assert.ok(
+        ALVO_OFICIAL.includes(" " + obrigatoria + " ") ||
+          ALVO_OFICIAL.endsWith(" " + obrigatoria),
+        obrigatoria + " não está mais no alvo oficial"
+      );
+    }
+
+    // 3. E NENHUM ARQUIVO DO ALVO É FANTASMA. Um alvo que nomeia arquivo
+    //    inexistente derruba o `npm test` inteiro com erro de módulo — barulho
+    //    que se lê como "quebrou o Node", e não como "mexeram no alvo".
+    const nomeados = [...ALVO_OFICIAL.matchAll(/(test\/[A-Za-z0-9_.-]+\.test\.js)/g)].map((m) => m[1]);
+    assert.ok(nomeados.length >= 17, "o alvo oficial encolheu: " + nomeados.length + " suítes");
+    for (const arquivo of nomeados) {
+      assert.ok(
+        fs.existsSync(path.join(RAIZ, "functions-ranking", arquivo)),
+        "o alvo nomeia " + arquivo + ", que não existe no disco"
+      );
+    }
+
+    // 4. E O ALVO NÃO VIROU GLOB. `node --test` sem arquivo varre a pasta, e aí
+    //    um arquivo novo entra na suíte sem ninguém decidir.
+    assert.ok(!/[*?]/.test(pkg.scripts.test), "o alvo do `npm test` virou glob");
+    assert.equal(
+      ESTA,
+      "functions-ranking/test/" + path.basename(__filename),
+      "esta suíte foi renomeada e o contrato de `rankingfn` ainda não sabe"
+    );
   });
 });

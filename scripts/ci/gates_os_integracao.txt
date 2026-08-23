@@ -182,13 +182,17 @@ portaoci
 # que responde a terceira pergunta — "a suite ainda PROVA?" — que ate a OS 32
 # ninguem fazia. Sem ele, `verificar_contrato_suites.sh` seria a segunda peca
 # do CI que ninguem verifica.
+# A OS 40-C1 acrescentou sete casos (T35..T41), a matriz do vocabulario novo:
+# `suite` repetivel, `alvo` e `exigealvo`. O digest, o piso de provas e o piso de
+# casos sobem no MESMO commit — um piso que fica para tras deixa de notar que os
+# sete sumiram, e a matriz do elo novo seria a proxima peca sem quem a verifique.
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     77966085e9f0205a03faaa1dc6be827a24a76d49ca85f5e13653616fc3b4aaa1
-    provas     37
+    sha256     4366e22371fbe76989f116b4d153f0390c3c24b93598266bb0097e4bd83cc769
+    provas     44
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      34
+    casos      40
     contador   casos ok: [0-9]+
     exige      T01 CONTROLE
     exige      T08 — suite trocada por expect(1, 1)
@@ -196,6 +200,10 @@ contratosui
     exige      T28 — marcador fabricado, sem log
     exige      T29 — log ANTERIOR ao carimbo
     exige      T34 CONTROLE
+    exige      T35 — suite tirada do alvo oficial
+    exige      T36 — suite-isca acrescentada ao alvo
+    exige      T40 — segunda suite do gate removida da fonte
+    exige      T41 — contrato de rankingfn esvaziado
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
@@ -235,7 +243,54 @@ passeint
 # --- 9. codebases que EXECUTAVAM e eram ignorados pelo agregador (CI-02) ----
 # Estes quatro constavam da evidência desde a OS de integração de identidade,
 # rodavam de verdade, e o portão final não os percorria. Agora são fatais.
+#
+# --- `rankingfn` GANHA CONTRATO (OS 40-C1) ---------------------------------
+#
+# A SUPERFÍCIE DE DEPLOY POR NOME — quais Cloud Functions cada codebase exporta —
+# é guardada por `PF-01`, e o formato de `PF-01` é guardado por `SF-01`/`SF-02`.
+# Até esta OS as duas se guardavam MUTUAMENTE, e mais nada: a rehomologação
+# OS 40-R1 mediu o preço de um par recíproco finito, e foram três escapes.
+#
+#   · tirar as DUAS suítes do alvo do `npm test` deixava o gate verde;
+#   · apontar o alvo para uma suíte-isca verde deixava o gate verde;
+#   · `PF-01` cobrava `SF-01` com `arquivo.includes("SF-01")` sobre texto CRU —
+#     apagar os dois casos mantendo o cabeçalho que os descreve passava.
+#
+# A autoridade mudou de lugar e veio para cá, que é fora das duas. `alvo` fecha a
+# cadeia elo por elo: o passo do workflow roda `functions-ranking`, o
+# `package.json` de `functions-ranking` nomeia as duas suítes, e o COMANDO
+# OFICIAL inteiro está congelado abaixo, literal — sem isca no meio, sem arquivo
+# a menos, sem virar glob. `casos` fecha o outro lado, pelo log: uma suíte-isca
+# verde não executa 465 casos.
+#
+# AS DUAS SUÍTES TÊM ASSINATURA PRÓPRIA. `suite` é repetível desde a OS 40-C1
+# justamente por isto: um gate de codebase roda vários arquivos, e a metade não
+# declarada ficava sem digest, sem piso e sem `exige`.
 rankingfn
+    executor   ( cd functions-ranking && npm test ) 2>&1 | tee t_rankingfn.log; echo ${PIPESTATUS[0]} > exit_rankingfn
+    alvo       functions-ranking/package.json
+    exigealvo  "test": "tsc && node --test test/politica.test.js test/ligas.test.js test/ordenacao.test.js test/ledger.test.js test/temporadas.test.js test/apuracao.test.js test/projecao.test.js test/resultado.test.js test/elo.test.js test/competicao.test.js test/elegibilidade.test.js test/ciclo.test.js test/identidade.test.js test/passe.test.js test/superficie.test.js test/estatisticas.test.js test/composicao.test.js"
+    casos      465
+    contador   pass [0-9]+
+    suite      functions-ranking/test/passe.test.js
+    sha256     7c20bd7f7e763e7757dd06394656ea58d2dcadb4dbb10397704cf37b5a8eea7c
+    provas     54
+    exige      test("PF-01:
+    exige      SUPERFICIE_IMPLANTADA = {
+    exige      casosDeclaradosEm(GUARDA)
+    exige      corpoDoCaso(GUARDA, "SF-01")
+    exige      corpoDoCaso(GUARDA, "SF-02")
+    exige      functions-ranking/test/superficie.test.js
+    suite      functions-ranking/test/superficie.test.js
+    sha256     89599b79dfbd8827e35c5723b5c16a71da60a70a42f602d4343c7355e0c5c62c
+    provas     3
+    exige      test("SF-01:
+    exige      test("SF-02:
+    exige      test("SF-03:
+    exige      const ALVO_OFICIAL =
+    exige      casosDeclaradosEm(PASSE).includes("PF-01")
+    exige      corpoDoCaso(PASSE, "PF-01")
+    exige      pkg.scripts.test,
 rankingint
 identint
 auditident

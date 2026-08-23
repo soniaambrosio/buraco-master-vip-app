@@ -650,10 +650,42 @@ describe("PASSE/FRONTEIRA — o que esta OS promete NÃO ter feito", () => {
   /// Código sem comentários. O bundle e os módulos deste repositório documentam
   /// as decisões em prosa longa, e uma varredura por ausência que não separe as
   /// duas coisas reprova justamente o texto que explica a decisão certa.
-  function codigoDe(fonte) {
+  ///
+  /// A `sentinela` é o que TEM de sobrar depois da limpeza. Sem ela, um bloco de
+  /// comentário mal fechado apagaria o arquivo inteiro e toda busca por ausência
+  /// ficaria verde — que é o modo mais silencioso de uma guarda textual morrer.
+  function semComentario(fonte, sentinela) {
     const limpo = fonte.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "").replace(/^[ \t]*\/\/\/.*$/gm, "");
-    assert.ok(limpo.includes("export"), "a limpeza comeu o código");
+    assert.ok(limpo.includes(sentinela), "a limpeza comeu o código: `" + sentinela + "` sumiu");
     return limpo;
+  }
+
+  const codigoDe = (fonte) => semComentario(fonte, "export");
+
+  /// Os identificadores dos casos DECLARADOS numa suíte — `test("XX-99: ...")` —,
+  /// lidos do CÓDIGO.
+  ///
+  /// LIDOS DO CÓDIGO, e não do texto cru. A versão anterior desta guarda fazia
+  /// `arquivo.includes("SF-01")` sobre o arquivo inteiro: apagar `SF-01` e
+  /// `SF-02` mantendo o cabeçalho que os DESCREVE deixava PF-01 verde, porque o
+  /// cabeçalho cita os dois nomes. Era a forja mais barata que existe contra
+  /// busca textual, e a rehomologação OS 40-R1 a mediu.
+  function casosDeclaradosEm(arquivo) {
+    const codigo = semComentario(leia(arquivo), "require(");
+    return [...codigo.matchAll(/(?:^|[^\w$.])test\(\s*["']([A-Za-z]{2}-[0-9]{2})\s*:/g)].map((m) => m[1]);
+  }
+
+  /// O corpo declarado de um caso: do `test("<id>:` até a próxima DECLARAÇÃO de
+  /// caso, ou até o fim do arquivo. Sempre sobre o código sem comentário — um
+  /// corpo trivializado cujo comentário antigo ficou por cima não pode continuar
+  /// respondendo pelo corpo que sumiu.
+  function corpoDoCaso(arquivo, id) {
+    const codigo = semComentario(leia(arquivo), "require(");
+    const abre = new RegExp('test\\(\\s*["\']' + id + '\\s*:').exec(codigo);
+    assert.ok(abre !== null, "o caso " + id + " não é declarado em " + arquivo);
+    const resto = codigo.slice(abre.index + abre[0].length);
+    const proximo = /(?:^|[^\w$.])test\(\s*["'][A-Za-z]{2}-[0-9]{2}\s*:/.exec(resto);
+    return proximo === null ? resto : resto.slice(0, proximo.index);
   }
 
   /// A SUPERFÍCIE IMPLANTADA DE CADA CODEBASE, POR NOME.
@@ -749,10 +781,38 @@ describe("PASSE/FRONTEIRA — o que esta OS promete NÃO ter feito", () => {
     // A GUARDA DESTA GUARDA MORA FORA DAQUI, e é isso que a torna guarda: trocar
     // a relação acima por um `assert.ok(true)` ficaria verde se quem cobra o
     // formato de PF-01 vivesse dentro de PF-01.
-    const guarda = leia("functions-ranking/test/superficie.test.js");
-    for (const caso of ["SF-01", "SF-02"]) {
-      assert.ok(guarda.includes(caso), "a guarda " + caso + " de PF-01 sumiu");
+    //
+    // A AUTORIDADE, DESDE A OS 40-C1, É O CONTRATO DE `rankingfn` EM
+    // `scripts/ci/gates_os_integracao.txt` — externo a este codebase, conferido
+    // por `scripts/ci/verificar_contrato_suites.sh` antes de qualquer teste
+    // rodar. O que sobra aqui é redundância deliberada, e ela é sobre a OUTRA
+    // suíte: presença no alvo, declaração REAL dos casos e corpo que ainda
+    // compara. Um par recíproco finito cai calado quando as duas pontas caem
+    // juntas; por isso ele deixou de ser a única prova.
+    const GUARDA = "functions-ranking/test/superficie.test.js";
+
+    // 1. A guarda continua no alvo explícito do `npm test`. Esta é a metade que
+    //    a versão anterior não tinha: era a PRÓPRIA `superficie.test.js` que
+    //    cobrava a própria presença, e uma suíte fora do alvo não roda para
+    //    reclamar de estar fora do alvo.
+    const alvo = JSON.parse(leia("functions-ranking/package.json")).scripts.test;
+    assert.ok(alvo.includes("test/superficie.test.js"), "a guarda saiu do `npm test`");
+    assert.ok(alvo.includes("test/passe.test.js"), "PF-01 saiu do `npm test`");
+
+    // 2. SF-01 e SF-02 são DECLARAÇÕES, e não menções. Manter os nomes no
+    //    cabeçalho não satisfaz mais: a leitura é do código sem comentário.
+    const declarados = casosDeclaradosEm(GUARDA);
+    for (const caso of ["SF-01", "SF-02", "SF-03"]) {
+      assert.ok(declarados.includes(caso), "a guarda " + caso + " de PF-01 sumiu");
     }
+
+    // 3. E CADA UMA AINDA COMPARA. Um corpo trocado por `assert.ok(true)` mantém
+    //    a declaração, o nome do arquivo e o registro no alvo — e é exatamente
+    //    esse o buraco que a assinatura da fonte única fecha do lado de fora e
+    //    que estas três linhas fecham do lado de dentro.
+    assert.ok(/assert\.deepEqual\(/.test(corpoDoCaso(GUARDA, "SF-01")), "SF-01 virou fachada");
+    assert.ok(/assert\.deepEqual\(/.test(corpoDoCaso(GUARDA, "SF-02")), "SF-02 virou fachada");
+    assert.ok(/ALVO_OFICIAL/.test(corpoDoCaso(GUARDA, "SF-03")), "SF-03 virou fachada");
   });
 
   test("PF-02: NENHUM scheduler novo foi criado", () => {

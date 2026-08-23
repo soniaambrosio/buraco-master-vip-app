@@ -37,7 +37,7 @@
 # ---------------------------------------------------------------------------
 #
 #   <gate>                                  <- na margem, como sempre
-#       suite      <caminho relativo a raiz do repo>
+#       suite      <caminho relativo a raiz do repo>          (REPETIVEL)
 #       executor   <trecho literal que o workflow tem de conter>
 #       sha256     <64 hex do conteudo, com TODO CR removido>
 #       provas     <piso ESTATICO de declaracoes de caso>
@@ -45,6 +45,47 @@
 #       casos      <piso de casos EXECUTADOS, lido do log>   (opcional)
 #       contador   <ERE com numero, no log>  (opcional; padrao = `+N` do Flutter)
 #       exige      <literal de codigo que tem de continuar la>   (repetivel)
+#       alvo       <manifesto que o executor roda>            (opcional)
+#       exigealvo  <literal que tem de continuar no alvo>     (repetivel; exige `alvo`)
+#
+# ---------------------------------------------------------------------------
+# UM GATE PODE GUARDAR MAIS DE UMA SUITE (OS 40-C1)
+# ---------------------------------------------------------------------------
+#
+# `suite` e REPETIVEL, e `sha256`/`provas`/`conta`/`exige` pertencem a suite
+# declarada acima deles. Os demais atributos sao do GATE, e podem aparecer em
+# qualquer ordem — as conferencias que dependem deles sao feitas no fim da
+# entrada, e nao na hora da leitura.
+#
+# Um gate de codebase — `npm test`, `pytest`, `go test` — roda VARIOS arquivos
+# de uma vez. Ate esta OS o vocabulario so sabia falar de um, e a metade nao
+# declarada ficava sem assinatura, sem piso e sem `exige`: era possivel tirar do
+# alvo a suite que guarda a outra e nada ficava vermelho.
+#
+# ---------------------------------------------------------------------------
+# `alvo` — QUANDO O EXECUTOR NAO NOMEIA O ARQUIVO
+# ---------------------------------------------------------------------------
+#
+# O contrato sempre exigiu que o `executor` CITASSE a suite: sem isso ele
+# aceitaria um passo que roda outra coisa — produtor sem alvo, o degrau seguinte
+# ao gate fantasma. Mas um passo que roda `npm test` nao cita arquivo nenhum:
+# quem nomeia as suites e o `package.json`. Sem `alvo`, um gate de codebase so
+# entraria no contrato afrouxando aquela exigencia.
+#
+# `alvo` fecha a cadeia INTEIRA, elo por elo, em vez de afrouxar:
+#
+#   executor  ->  cita o diretorio do alvo          (o passo roda AQUELE codebase)
+#   alvo      ->  nomeia CADA suite declarada       (o comando oficial roda AQUELAS suites)
+#   exigealvo ->  literais que continuam no alvo    (o comando oficial nao mudou de forma)
+#
+# A busca dentro do alvo ignora comentario, e conhece a chave de comentario de
+# JSON (`"//..."`, usada neste repositorio para documentar `scripts`): repetir o
+# caminho de uma suite numa chave de prosa nao pode substituir roda-la.
+#
+# O alvo NAO tem `sha256`, e isso e decisao. Um `package.json` muda por versao de
+# dependencia, e um digest que reprova a cada bump vira pressao para afrouxar a
+# guarda. O que esta OS congela do alvo e o COMANDO OFICIAL, por `exigealvo` —
+# nominal, legivel no diff, e imune a bump.
 #
 # `provas` e ESTATICO de proposito: a guarda precisa reprovar sem executar a
 # suite que ela guarda, e ANTES dela. `casos` e o mesmo piso do outro lado — lido
@@ -103,9 +144,12 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # futuras; nao pode encolher ate zero, nem perder estas chaves, nem rebaixar
 # estes pisos.
 # ---------------------------------------------------------------------------
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34"
+#
+# `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
+# uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 rankingfn:57"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 rankingfn:465"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
@@ -182,9 +226,116 @@ fi
 contratados=''
 com_contrato=0
 
+# `codigo_de <arquivo>` — o conteudo SEM COMENTARIO, lido uma vez so.
+#
+# A busca ignora linha de comentario porque repetir os literais num comentario e
+# a forja mais barata que existe contra busca textual — e uma suite esvaziada com
+# os comentarios intactos satisfaria o contrato sem provar nada. `"//` esta na
+# lista porque e como este repositorio comenta JSON, onde nao ha `//` de verdade.
+#
+# O byte NUL sai junto com o CR: ha .dart neste repositorio com NUL no meio de um
+# literal (a suite da Comunicacao prova a recusa de caractere de controle usando
+# o proprio caractere de controle), e sem isto o bash avisa que ignorou o byte —
+# barulho que nao muda o casamento de literal nenhum.
+# A ASSINATURA NAO PASSA POR AQUI: ela le o arquivo direto, byte a byte.
+codigo_de() {
+  tr -d '\r\000' < "$1" | grep -avE '^[[:blank:]]*("//|//|#)'
+}
+
+# `conferir_suite` — o bloco de UMA suite, fechado.
+#
+# So o que depende do proprio arquivo mora aqui. O que depende de atributo do
+# GATE (`executor`, `alvo`) e conferido no fim da entrada, sobre a relacao de
+# caminhos acumulada — assim a ordem em que os atributos aparecem na fonte deixa
+# de importar, e os contratos que ja existiam, que declaram `executor` DEPOIS de
+# `suite`, continuam valendo palavra por palavra.
+conferir_suite() {
+  [ "$suite_aberta" -eq 0 ] && return 0
+  suite_aberta=0
+  suites_do_gate=$((suites_do_gate + 1))
+
+  local arquivo=''
+  if [ -z "$suite" ]; then
+    erro "a entrada '$chave' nao declara 'suite'"
+  else
+    caminhos_do_gate="$caminhos_do_gate $suite"
+    arquivo="$raiz/$suite"
+    if [ -f "$arquivo" ]; then
+      printf 'ok   arquivo    %-12s %s\n' "$chave" "$suite"
+    else
+      erro "suite removida ou renomeada: '$suite' (gate $chave)"
+      arquivo=''
+    fi
+  fi
+
+  if [ -z "$sha_esperado" ]; then
+    erro "a entrada '$chave' nao declara 'sha256'"
+  elif ! printf '%s' "$sha_esperado" | grep -Eq '^[0-9a-f]{64}$'; then
+    erro "o 'sha256' de '$chave' nao e um digest de 64 hex: '$sha_esperado'"
+    sha_esperado=''
+  fi
+  if [ -z "$provas_esperadas" ]; then
+    erro "a entrada '$chave' nao declara 'provas'"
+  elif ! printf '%s' "$provas_esperadas" | grep -Eq '^[0-9]+$'; then
+    erro "o 'provas' de '$chave' nao e um numero: '$provas_esperadas'"
+    provas_esperadas=''
+  else
+    provas_do_gate=$((provas_do_gate + provas_esperadas))
+  fi
+  if [ -z "$exige_lista" ]; then
+    erro "a entrada '$chave' nao declara nenhum 'exige'"
+  fi
+
+  [ -z "$arquivo" ] && return 0
+
+  local sha_real
+  sha_real="$(tr -d '\r' < "$arquivo" | sha256sum | awk '{print $1}')"
+  if [ -n "$sha_esperado" ]; then
+    if [ "$sha_real" = "$sha_esperado" ]; then
+      printf 'ok   assinatura %-12s %s...\n' "$chave" "${sha_real:0:16}"
+    else
+      erro "o conteudo de '$suite' (gate $chave) mudou e a assinatura nao."
+      erro "  esperado $sha_esperado"
+      erro "  no disco $sha_real"
+      erro "  se a mudanca e legitima, atualize 'sha256' na fonte NO MESMO commit"
+    fi
+  fi
+
+  local ere_conta provas_reais
+  ere_conta="${conta_ere:-$CONTA_PADRAO}"
+  provas_reais="$(tr -d '\r' < "$arquivo" | grep -acE "$ere_conta")" || provas_reais=0
+  if [ -n "$provas_esperadas" ]; then
+    if [ "$provas_reais" -ge "$provas_esperadas" ]; then
+      printf 'ok   provas     %-12s %s >= %s\n' "$chave" "$provas_reais" "$provas_esperadas"
+    else
+      erro "'$suite' (gate $chave) tem $provas_reais declaracoes e o piso e $provas_esperadas"
+    fi
+  fi
+
+  local codigo faltando=0 padrao
+  codigo="$(codigo_de "$arquivo")"
+  while IFS= read -r padrao; do
+    [ -z "$padrao" ] && continue
+    case "$codigo" in
+      *"$padrao"*) ;;
+      *)
+        erro "o bloco $padrao sumiu de '$suite' (gate $chave)"
+        faltando=$((faltando + 1))
+        ;;
+    esac
+  done <<CONTRATO_EXIGE
+$exige_lista
+CONTRATO_EXIGE
+  if [ "$faltando" -eq 0 ] && [ -n "$exige_lista" ]; then
+    printf 'ok   blocos     %-12s %s conferido(s)\n' "$chave" \
+      "$(printf '%s\n' "$exige_lista" | grep -c .)"
+  fi
+}
+
 conferir_entrada() {
   [ -z "$chave" ] && return 0
-  if [ -z "$suite$executor$sha_esperado$provas_esperadas$exige_lista$casos_esperados$conta_ere$contador_ere" ]; then
+  if [ "$suite_aberta" -eq 0 ] &&
+     [ -z "$executor$casos_esperados$contador_ere$alvo$exigealvo_lista" ]; then
     return 0
   fi
 
@@ -195,32 +346,91 @@ conferir_entrada() {
     erro "'$chave' tem contrato e NAO e um gate obrigatorio da fonte unica"
   fi
 
-  # ---- a suite -----------------------------------------------------------
-  local arquivo=''
-  if [ -z "$suite" ]; then
+  # ---- as suites (a ultima ainda esta aberta) ----------------------------
+  conferir_suite
+  if [ "$suites_do_gate" -eq 0 ]; then
     erro "a entrada '$chave' nao declara 'suite'"
-  else
-    arquivo="$raiz/$suite"
-    if [ -f "$arquivo" ]; then
-      printf 'ok   arquivo    %-12s %s\n' "$chave" "$suite"
-    else
-      erro "suite removida ou renomeada: '$suite' (gate $chave)"
-      arquivo=''
-    fi
   fi
 
   # ---- o executor --------------------------------------------------------
   if [ -z "$executor" ]; then
     erro "a entrada '$chave' nao declara 'executor'"
-  elif [ -n "$suite" ]; then
+  elif [ -z "$alvo" ]; then
     # O executor tem de apontar para a suite que ele diz rodar. Sem isto, o
     # contrato aceitaria um passo que roda outra coisa: produtor sem alvo, que e
     # o degrau seguinte ao gate fantasma.
-    local alvo="${suite#app/}"
-    case "$executor" in
-      *"$alvo"*) ;;
-      *) erro "o 'executor' de '$chave' nao cita a suite '$alvo'" ;;
-    esac
+    #
+    # COM `alvo`, este elo muda de lugar e nao some: quem nomeia a suite passa a
+    # ser o alvo, e o executor e cobrado de citar o alvo. Ver o bloco `alvo`,
+    # logo abaixo.
+    local citada
+    for citada in $caminhos_do_gate; do
+      local rel="${citada#app/}"
+      case "$executor" in
+        *"$rel"*) ;;
+        *) erro "o 'executor' de '$chave' nao cita a suite '$rel'" ;;
+      esac
+    done
+  fi
+
+  # ---- o alvo: o executor roda o codebase, e o codebase roda as suites ---
+  if [ -z "$alvo" ] && [ -n "$exigealvo_lista" ]; then
+    erro "a entrada '$chave' tem 'exigealvo' e nao declara 'alvo'"
+  fi
+  if [ -n "$alvo" ]; then
+    if [ -z "$exigealvo_lista" ]; then
+      erro "a entrada '$chave' declara 'alvo' e nenhum 'exigealvo' — alvo sem congelamento"
+    fi
+    local arq_alvo="$raiz/$alvo"
+    if [ ! -f "$arq_alvo" ]; then
+      erro "o 'alvo' de '$chave' nao existe: '$alvo'"
+    else
+      local dir_alvo="${alvo%/*}"
+      [ "$dir_alvo" = "$alvo" ] && dir_alvo='.'
+
+      if [ -n "$executor" ]; then
+        case "$executor" in
+          *"$dir_alvo"*)
+            printf 'ok   alvo       %-12s %s (rodado por %s)\n' "$chave" "$alvo" "$dir_alvo"
+            ;;
+          *) erro "o 'executor' de '$chave' nao cita o alvo '$dir_alvo'" ;;
+        esac
+      fi
+
+      local codigo_alvo caminho rel_alvo padrao
+      codigo_alvo="$(codigo_de "$arq_alvo")"
+
+      # CADA suite declarada tem de estar NOMEADA no alvo. E aqui que "a suite
+      # saiu do comando oficial" vira vermelho — e o gate continuaria verde se
+      # esta linha nao existisse, porque uma suite que nao roda nao reclama.
+      for caminho in $caminhos_do_gate; do
+        rel_alvo="${caminho#"$dir_alvo"/}"
+        case "$codigo_alvo" in
+          *"$rel_alvo"*)
+            printf 'ok   no alvo    %-12s %s\n' "$chave" "$rel_alvo"
+            ;;
+          *) erro "o alvo '$alvo' nao roda a suite '$rel_alvo' (gate $chave)" ;;
+        esac
+      done
+
+      local faltando_alvo=0
+      while IFS= read -r padrao; do
+        [ -z "$padrao" ] && continue
+        case "$codigo_alvo" in
+          *"$padrao"*) ;;
+          *)
+            erro "o literal exigido sumiu do alvo '$alvo' (gate $chave): $padrao"
+            faltando_alvo=$((faltando_alvo + 1))
+            ;;
+        esac
+      done <<CONTRATO_EXIGE_ALVO
+$exigealvo_lista
+CONTRATO_EXIGE_ALVO
+      if [ "$faltando_alvo" -eq 0 ] && [ -n "$exigealvo_lista" ]; then
+        printf 'ok   comando    %-12s %s literal(is) no alvo\n' "$chave" \
+          "$(printf '%s\n' "$exigealvo_lista" | grep -c .)"
+      fi
+    fi
   fi
 
   if [ -n "$conteudo_workflow" ] && [ -n "$executor" ]; then
@@ -245,31 +455,17 @@ conferir_entrada() {
     esac
   fi
 
-  # ---- o contrato tem de estar COMPLETO ----------------------------------
-  if [ -z "$sha_esperado" ]; then
-    erro "a entrada '$chave' nao declara 'sha256'"
-  elif ! printf '%s' "$sha_esperado" | grep -Eq '^[0-9a-f]{64}$'; then
-    erro "o 'sha256' de '$chave' nao e um digest de 64 hex: '$sha_esperado'"
-    sha_esperado=''
-  fi
-  if [ -z "$provas_esperadas" ]; then
-    erro "a entrada '$chave' nao declara 'provas'"
-  elif ! printf '%s' "$provas_esperadas" | grep -Eq '^[0-9]+$'; then
-    erro "o 'provas' de '$chave' nao e um numero: '$provas_esperadas'"
-    provas_esperadas=''
-  fi
-  if [ -z "$exige_lista" ]; then
-    erro "a entrada '$chave' nao declara nenhum 'exige'"
-  fi
-
   # ---- os pisos escritos AQUI nao podem ser rebaixados na fonte ----------
+  #
+  # Sobre a SOMA das `provas` das suites do gate: um gate de uma suite so — que
+  # e o caso de todos menos `rankingfn` — se comporta exatamente como antes.
   local piso
   piso="$(piso_de "$PISOS_PROVAS" "$chave")"
-  if [ -n "$piso" ] && [ -n "$provas_esperadas" ]; then
-    if [ "$provas_esperadas" -lt "$piso" ]; then
-      erro "o piso de provas de '$chave' foi baixado de $piso para $provas_esperadas na fonte"
+  if [ -n "$piso" ]; then
+    if [ "$provas_do_gate" -lt "$piso" ]; then
+      erro "o piso de provas de '$chave' foi baixado de $piso para $provas_do_gate na fonte"
     else
-      printf 'ok   piso       %-12s provas %s >= %s\n' "$chave" "$provas_esperadas" "$piso"
+      printf 'ok   piso       %-12s provas %s >= %s\n' "$chave" "$provas_do_gate" "$piso"
     fi
   fi
   piso="$(piso_de "$PISOS_CASOS" "$chave")"
@@ -283,61 +479,6 @@ conferir_entrada() {
       erro "o piso de casos de '$chave' foi baixado de $piso para $casos_esperados na fonte"
     else
       printf 'ok   piso       %-12s casos %s >= %s\n' "$chave" "$casos_esperados" "$piso"
-    fi
-  fi
-
-  # ---- assinatura, contagem e blocos ------------------------------------
-  if [ -n "$arquivo" ]; then
-    local sha_real
-    sha_real="$(tr -d '\r' < "$arquivo" | sha256sum | awk '{print $1}')"
-    if [ -n "$sha_esperado" ]; then
-      if [ "$sha_real" = "$sha_esperado" ]; then
-        printf 'ok   assinatura %-12s %s...\n' "$chave" "${sha_real:0:16}"
-      else
-        erro "o conteudo de '$suite' (gate $chave) mudou e a assinatura nao."
-        erro "  esperado $sha_esperado"
-        erro "  no disco $sha_real"
-        erro "  se a mudanca e legitima, atualize 'sha256' na fonte NO MESMO commit"
-      fi
-    fi
-
-    local ere_conta provas_reais
-    ere_conta="${conta_ere:-$CONTA_PADRAO}"
-    provas_reais="$(tr -d '\r' < "$arquivo" | grep -acE "$ere_conta")" || provas_reais=0
-    if [ -n "$provas_esperadas" ]; then
-      if [ "$provas_reais" -ge "$provas_esperadas" ]; then
-        printf 'ok   provas     %-12s %s >= %s\n' "$chave" "$provas_reais" "$provas_esperadas"
-      else
-        erro "'$suite' (gate $chave) tem $provas_reais declaracoes e o piso e $provas_esperadas"
-      fi
-    fi
-
-    # O corpo SEM COMENTARIO, lido uma vez so. A busca ignora linha de
-    # comentario porque repetir os literais num comentario e a forja mais barata
-    # que existe contra busca textual — e uma suite esvaziada com os comentarios
-    # intactos satisfaria o contrato sem provar nada.
-    local codigo faltando=0 padrao
-    # O byte NUL sai junto com o CR: ha .dart neste repositorio com NUL no meio
-    # de um literal (a suite da Comunicacao prova a recusa de caractere de
-    # controle usando o proprio caractere de controle), e sem isto o bash avisa
-    # que ignorou o byte — barulho que nao muda o casamento de literal nenhum.
-    # A ASSINATURA NAO PASSA POR AQUI: ela le o arquivo direto, byte a byte.
-    codigo="$(tr -d '\r\000' < "$arquivo" | grep -avE '^[[:blank:]]*(//|#)')"
-    while IFS= read -r padrao; do
-      [ -z "$padrao" ] && continue
-      case "$codigo" in
-        *"$padrao"*) ;;
-        *)
-          erro "o bloco $padrao sumiu de '$suite' (gate $chave)"
-          faltando=$((faltando + 1))
-          ;;
-      esac
-    done <<CONTRATO_EXIGE
-$exige_lista
-CONTRATO_EXIGE
-    if [ "$faltando" -eq 0 ] && [ -n "$exige_lista" ]; then
-      printf 'ok   blocos     %-12s %s conferido(s)\n' "$chave" \
-        "$(printf '%s\n' "$exige_lista" | grep -c .)"
     fi
   fi
 
@@ -383,6 +524,29 @@ casos_esperados=''
 conta_ere=''
 contador_ere=''
 exige_lista=''
+alvo=''
+exigealvo_lista=''
+suite_aberta=0
+suites_do_gate=0
+provas_do_gate=0
+caminhos_do_gate=''
+
+# `abrir_suite` — comeca um bloco de suite, fechando o anterior se houver.
+#
+# O bloco tambem abre SOZINHO no primeiro atributo de suite que chegar sem
+# `suite` declarada. Sem isso, uma fonte que perdesse todas as linhas `suite`
+# reprovaria com "atributo antes de qualquer suite" — uma mensagem que fala do
+# LEITOR, e nao do contrato. Assim ela continua reprovando por onde de fato
+# falhou: "a entrada nao declara 'suite'".
+abrir_suite() {
+  conferir_suite
+  suite_aberta=1
+  suite=''
+  sha_esperado=''
+  provas_esperadas=''
+  conta_ere=''
+  exige_lista=''
+}
 
 # A leitura e feita SO com expansao de parametro, sem `sed`/`awk`/`tr` por
 # linha. Nao e microotimizacao: a versao com um pipe por linha custava ~800
@@ -412,7 +576,8 @@ while IFS= read -r bruta || [ -n "$bruta" ]; do
       fi
       case "$nome" in
         suite)
-          [ -n "$suite" ] && erro "'suite' repetido em '$chave'"
+          # REPETIVEL: uma segunda `suite` fecha o bloco anterior e abre outro.
+          abrir_suite
           suite="$valor"
           ;;
         executor)
@@ -420,10 +585,12 @@ while IFS= read -r bruta || [ -n "$bruta" ]; do
           executor="$valor"
           ;;
         sha256)
+          [ "$suite_aberta" -eq 0 ] && abrir_suite
           [ -n "$sha_esperado" ] && erro "'sha256' repetido em '$chave'"
           sha_esperado="$valor"
           ;;
         provas)
+          [ "$suite_aberta" -eq 0 ] && abrir_suite
           [ -n "$provas_esperadas" ] && erro "'provas' repetido em '$chave'"
           provas_esperadas="$valor"
           ;;
@@ -432,6 +599,7 @@ while IFS= read -r bruta || [ -n "$bruta" ]; do
           casos_esperados="$valor"
           ;;
         conta)
+          [ "$suite_aberta" -eq 0 ] && abrir_suite
           [ -n "$conta_ere" ] && erro "'conta' repetido em '$chave'"
           conta_ere="$valor"
           ;;
@@ -440,10 +608,23 @@ while IFS= read -r bruta || [ -n "$bruta" ]; do
           contador_ere="$valor"
           ;;
         exige)
+          [ "$suite_aberta" -eq 0 ] && abrir_suite
           if [ -z "$exige_lista" ]; then
             exige_lista="$valor"
           else
             exige_lista="$exige_lista
+$valor"
+          fi
+          ;;
+        alvo)
+          [ -n "$alvo" ] && erro "'alvo' repetido em '$chave'"
+          alvo="$valor"
+          ;;
+        exigealvo)
+          if [ -z "$exigealvo_lista" ]; then
+            exigealvo_lista="$valor"
+          else
+            exigealvo_lista="$exigealvo_lista
 $valor"
           fi
           ;;
@@ -464,6 +645,12 @@ $valor"
   conta_ere=''
   contador_ere=''
   exige_lista=''
+  alvo=''
+  exigealvo_lista=''
+  suite_aberta=0
+  suites_do_gate=0
+  provas_do_gate=0
+  caminhos_do_gate=''
 done < "$fonte"
 
 conferir_entrada

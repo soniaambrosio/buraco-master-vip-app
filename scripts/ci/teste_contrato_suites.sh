@@ -64,12 +64,20 @@ if [ -z "$SUITES" ]; then
   printf 'teste do contrato: a fonte unica nao declara nenhuma `suite`\n' >&2
   exit 1
 fi
-for s in $SUITES; do
+
+# Os ALVOS entram pela mesma porta que as suites, e pela mesma razao: eles saem
+# da FONTE, e nao de uma lista escrita aqui. Um gate de codebase declara o
+# manifesto que o executor roda (`alvo`), e sem ele na bancada o verificador
+# reprovaria por ausencia de arquivo em TODOS os casos — inclusive nos controles,
+# que e o jeito mais rapido de uma matriz inteira deixar de medir.
+ALVOS="$(sed -e 's/\r$//' "$FONTE" | awk '$1 == "alvo" { print $2 }')"
+
+for s in $SUITES $ALVOS; do
   case "$s" in
     scripts/ci/*) continue ;;  # ja copiado acima
   esac
   if [ ! -f "$RAIZ/$s" ]; then
-    printf 'teste do contrato: suite declarada e ausente no disco: %s\n' "$s" >&2
+    printf 'teste do contrato: arquivo declarado e ausente no disco: %s\n' "$s" >&2
     exit 1
   fi
   mkdir -p "$BASE/$(dirname "$s")"
@@ -288,6 +296,47 @@ printf '\n== a margem continua sendo a autoridade ==\n'
 reset
 sed -i 's/^comunicacao$/  comunicacao/' "$W/$FONTE_W"
 esperar 1 "T33 — gate indentado por engano => VERMELHO, e nao some em silencio" 'recusou a fonte'
+
+printf '\n== `alvo`: o executor roda o codebase, o codebase roda as suites ==\n'
+
+# A CADEIA DE `rankingfn`, ELO POR ELO. Ate a OS 40-C1 o vocabulario so sabia
+# falar de um arquivo por gate, e um passo que roda `npm test` nao cita arquivo
+# nenhum — quem nomeia as suites e o `package.json`. Estes seis casos sao a
+# matriz do elo novo: se ele puder ser desligado em silencio, o contrato de
+# `rankingfn` vira decoracao.
+
+reset
+sed -i 's| test/superficie.test.js||' "$W/functions-ranking/package.json"
+esperar 1 "T35 — suite tirada do alvo oficial => VERMELHO" 'nao roda a suite'
+
+reset
+sed -i 's|test/composicao.test.js"|test/composicao.test.js test/isca.test.js"|' \
+  "$W/functions-ranking/package.json"
+esperar 1 "T36 — suite-isca acrescentada ao alvo => VERMELHO" 'sumiu do alvo'
+
+reset
+rm -f "$W/functions-ranking/package.json"
+esperar 1 "T37 — alvo apagado => VERMELHO" "'alvo' de 'rankingfn' nao existe"
+
+reset
+sed -i '/^    alvo       /d' "$W/$FONTE_W"
+esperar 1 "T38 — exigealvo sem alvo => VERMELHO" "tem 'exigealvo' e nao declara 'alvo'"
+
+reset
+sed -i '/^    exigealvo  /d' "$W/$FONTE_W"
+esperar 1 "T39 — alvo sem nenhum exigealvo => VERMELHO" 'alvo sem congelamento'
+
+reset
+awk '/^    suite      functions-ranking\/test\/superficie\.test\.js$/ { pulando = 1; next }
+     pulando && /^[[:blank:]]/ { next }
+     { pulando = 0; print }' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+esperar 1 "T40 — segunda suite do gate removida da fonte => VERMELHO (o piso e a SOMA)" 'piso de provas'
+
+reset
+awk '/^rankingfn$/ { pulando = 1; print; next }
+     pulando && /^[[:blank:]]/ { next }
+     { pulando = 0; print }' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+esperar 1 "T41 — contrato de rankingfn esvaziado => VERMELHO (N6)" "perdeu o contrato"
 
 printf '\n== controle final ==\n'
 
