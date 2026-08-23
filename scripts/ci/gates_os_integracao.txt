@@ -33,7 +33,7 @@
 # diff, que é o ponto.
 #
 #   <gate>
-#       suite      <caminho relativo à raiz do repo>
+#       suite      <caminho relativo à raiz do repo>          (REPETÍVEL)
 #       executor   <trecho literal que o workflow tem de conter>
 #       sha256     <64 hex do conteúdo, com TODO CR removido>
 #       provas     <piso ESTÁTICO de declarações de caso>
@@ -41,6 +41,23 @@
 #       casos      <piso de casos EXECUTADOS, lido do log>   (opcional)
 #       contador   <ERE com número, no log>   (opcional; padrão = `+N` do Flutter)
 #       exige      <literal de código que tem de continuar lá>   (repetível)
+#       alvo       <manifesto que o executor roda>            (opcional)
+#       exigealvo  <literal que tem de continuar no alvo>     (repetível; exige `alvo`)
+#
+# UM GATE PODE GUARDAR MAIS DE UMA SUÍTE (OS 40-C1). `suite` é repetível, e
+# `sha256`/`provas`/`conta`/`exige` pertencem à suíte declarada ACIMA deles. Os
+# demais atributos são do gate e podem vir em qualquer ordem. Um gate de codebase
+# — `npm test` e parentes — roda vários arquivos, e até esta OS a metade não
+# declarada ficava sem digest, sem piso e sem `exige`.
+#
+# `alvo` É PARA QUANDO O EXECUTOR NÃO NOMEIA O ARQUIVO. Um passo que roda
+# `npm test` não cita suíte nenhuma: quem as nomeia é o `package.json`. Sem
+# `alvo`, um gate desses só entraria no contrato AFROUXANDO a exigência de que o
+# executor cite a suíte. `alvo` fecha a cadeia elo por elo, em vez de afrouxar:
+# o executor cita o diretório do alvo, o alvo nomeia CADA `suite` declarada, e
+# `exigealvo` congela o comando oficial. O alvo não tem `sha256` de propósito —
+# um `package.json` muda por bump de dependência, e digest que reprova a cada
+# bump vira pressão para afrouxar a guarda.
 #
 # Quem INTERPRETA o contrato é `scripts/ci/verificar_contrato_suites.sh`, que
 # falha por conta própria antes de qualquer teste rodar, e cuja matriz é o gate
@@ -189,7 +206,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     4366e22371fbe76989f116b4d153f0390c3c24b93598266bb0097e4bd83cc769
+    sha256     88a7494c1c657a6bc9e85bbcb200ab238a001420a0dbaab93a04f8f54eb12a91
     provas     44
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      40

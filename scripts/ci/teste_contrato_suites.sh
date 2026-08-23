@@ -230,7 +230,12 @@ esperar 1 "T20 — atributo repetido => VERMELHO" "'provas' repetido"
 printf '\n== o contrato nao pode encolher ==\n'
 
 reset
-sed -i '/^    \(suite\|executor\|sha256\|provas\|casos\|conta\|contador\|exige\) /d' "$W/$FONTE_W"
+# QUALQUER atributo indentado, e nao uma lista de nomes. A lista escrita a mao
+# ficou para tras quando a OS 40-C1 acrescentou `alvo` e `exigealvo`: o caso
+# continuava vermelho, mas por OUTRO motivo — sobrava contrato, e a mensagem
+# "a protecao de conteudo foi esvaziada" nunca saia. Um caso que reprova pelo
+# motivo errado e um caso que deixou de medir.
+sed -i '/^    [a-z][a-z0-9_]* /d' "$W/$FONTE_W"
 esperar 1 "T21 — TODOS os contratos removidos => VERMELHO (N20)" 'protecao de conteudo foi esvaziada'
 
 reset
