@@ -33,6 +33,8 @@
 // produção: um piso importado anda junto com a mutação que o baixa, e o teste
 // que deveria pegá-la fica verde.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -113,6 +115,274 @@ void exigirNosSemSobreposicao(WidgetTester tester) {
       );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// O DESENHO DA OBRIGAÇÃO, E POR QUE ELE PRECISA DE PORTÃO PRÓPRIO
+// ---------------------------------------------------------------------------
+//
+// A OS 29-R2 mediu o buraco que faltava neste arquivo. O ANÚNCIO da carta
+// obrigatória — `, obrigatória do lixo` — tem prova em quatro casos aqui em
+// baixo. O DESENHO dela não tinha nenhuma, em suíte alguma: uma varredura por
+// `USE ESTA`, `3B30` e `boxShadow` em `test/` inteiro devolvia zero.
+//
+// As duas coisas são decididas SEPARADAMENTE na produção. O rótulo sai do `id`
+// que o motor guarda, na camada de fala; o desenho sai de um `switch` sobre o
+// destaque, na camada de pintura. Por isso duas mutações atravessavam a suíte
+// inteira sem que nada reclamasse:
+//
+//   * tirar a orientação `USE ESTA`;
+//   * amarrar o destaque ao brilho DOURADO da compra, que morre sozinho em
+//     1,85 s enquanto a obrigação do motor segue viva — e anunciada.
+//
+// Nas duas, quem não vê a tela continua encontrando a carta pelo nome, e quem
+// vê fica com uma jogada obrigatória e nenhuma indicação de qual carta é. É
+// exatamente o caso que o destaque existe para resolver.
+//
+// Os três atributos estão escritos à mão aqui, como o piso de toque e o desenho
+// do disco lateral: importá-los da produção faria a prova andar junto com a
+// mutação que ela existe para pegar.
+
+/// Quantos baralhos negociar até um trazer a obrigação E a gêmea dela.
+///
+/// ---------------------------------------------------------------------------
+/// O NÚMERO É MEDIDO, E O ANTERIOR NÃO ERA
+/// ---------------------------------------------------------------------------
+///
+/// A OS 29-C2 pôs 40 aqui com a conta de que a gêmea aparece em cerca de um
+/// TERÇO dos negócios que permitem pegar o lixo no FECHADO — o que daria uma
+/// chance de falha da ordem de uma em dez milhões. Censo de cinco corridas de
+/// 40 negócios cada, nesta árvore: 15 a 21 negócios permitem a compra, e
+/// apenas 1 a 3 deles trazem a gêmea. Não é um terço: é perto de um DÉCIMO,
+/// e a chance de nenhum dos 40 servir fica em torno de 13%.
+///
+/// Medido também pelo lado de fora: o caso `acompanha a INSTÂNCIA`, tal como
+/// a C2 o entregou, reprovou 1 de 15 execuções isoladas — pelo `fail` alto da
+/// bancada, e não por defeito do produto. Um portão obrigatório que reprova
+/// uma vez em oito é um portão que ensina a reexecutar até passar.
+///
+/// Com 240, a chance de nenhum servir cai para menos de uma em vinte mil, e o
+/// custo continua pequeno: o desfecho comum é achar na vigésima tentativa, e
+/// só a corrida azarada paga o resto.
+const int kBaralhosAteAGemea = 240;
+
+/// O vermelho da obrigação: o gradiente que o recuo de 2 vira moldura.
+const Color kVermelhoDaObrigacao = Color(0xFFFF3B30);
+
+/// A sombra da obrigação — a "leve elevação" que não move a carta de lugar.
+const Color kSombraDaObrigacao = Color(0x99FF3B30);
+
+/// A orientação curta escrita na carta obrigada.
+const String kOrientacaoDaObrigacao = 'USE ESTA';
+
+/// Bem depois do dourado da compra, que dura 1,85 s.
+///
+/// É este atraso que separa os dois estados. Quem pega o lixo no FECHADO recebe
+/// a carta do topo E ela é, no mesmo instante, uma carta recém-comprada: os
+/// dois destaques caem sobre a MESMA carta, e só o relógio distingue um que
+/// morre sozinho de um que dura até o motor dizer que acabou.
+const Duration kDepoisDoDourado = Duration(milliseconds: 2400);
+
+/// As cartas DESENHADAS da mão, na ordem lógica — a mesma de `cartasDaMao`.
+///
+/// A camada de desenho e a de toque são separadas de propósito e ficam em
+/// posições diferentes: o retângulo do nó semântico é a FAIXA de toque, e o da
+/// carta é o desenho. Casar as duas por geometria daria falso negativo.
+///
+/// O que casa é a ORDEM. `cartasDaMao` já ordena por (fileira, `left`), que é a
+/// ordem lógica da mão — a mesma que numera o `carta N de M` do anúncio.
+List<AnimatedContainer> cartasDesenhadasDaMao(WidgetTester tester) {
+  final porRetangulo = <Rect, AnimatedContainer>{};
+  for (final w in tester.widgetList<AnimatedContainer>(kCartaDaMao)) {
+    porRetangulo[tester.getRect(find.byWidget(w))] = w;
+  }
+  final ordem = cartasDaMao(tester);
+  expect(ordem, isNotEmpty, reason: 'a mão não desenhou carta nenhuma');
+  expect(
+    porRetangulo,
+    hasLength(ordem.length),
+    reason: 'duas cartas da mão foram desenhadas no MESMO retângulo — a ordem '
+        'lógica deixou de distinguir uma carta da outra',
+  );
+  return <AnimatedContainer>[
+    for (final r in ordem)
+      porRetangulo[r] ??
+          (throw TestFailure('a carta desenhada em $r sumiu da mão')),
+  ];
+}
+
+/// A decoração declarada por esta carta NESTE quadro.
+///
+/// É o campo do widget, e não o que está pintado: `AnimatedContainer` interpola
+/// a decoração ao longo de 220 ms, então ler a pintura devolveria um estado
+/// intermediário que não é decisão de ninguém.
+BoxDecoration decoracaoDaCarta(AnimatedContainer carta) {
+  final d = carta.decoration;
+  expect(
+    d,
+    isA<BoxDecoration>(),
+    reason: 'a carta da mão deixou de declarar uma BoxDecoration',
+  );
+  return d! as BoxDecoration;
+}
+
+/// A carta traz a borda vermelha da obrigação.
+bool temBordaDaObrigacao(AnimatedContainer carta) {
+  final g = decoracaoDaCarta(carta).gradient;
+  return g is LinearGradient && g.colors.contains(kVermelhoDaObrigacao);
+}
+
+/// A carta traz a sombra vermelha da obrigação.
+bool temSombraDaObrigacao(AnimatedContainer carta) {
+  final sombras = decoracaoDaCarta(carta).boxShadow;
+  return sombras != null && sombras.any((s) => s.color == kSombraDaObrigacao);
+}
+
+/// Quantas orientações `USE ESTA` estão escritas DENTRO desta carta.
+int orientacoesNaCarta(WidgetTester tester, AnimatedContainer carta) => tester
+    .widgetList<Text>(
+      find.descendant(
+        of: find.byWidget(carta),
+        matching: find.text(kOrientacaoDaObrigacao),
+      ),
+    )
+    .length;
+
+/// Os rótulos que carregam a marca da obrigação, na mesa montada.
+///
+/// Passa por `arvoreDaMesa` de propósito: "nenhum" e "exatamente um" são
+/// afirmações que passam trivialmente sobre uma árvore vazia.
+List<String> anunciosDaObrigacao(WidgetTester tester) => <String>[
+      for (final no in arvoreDaMesa(tester))
+        if (no.label.contains(kMarcaDaObrigacao)) no.label,
+    ];
+
+/// A posição que o próprio anúncio declara: `carta 3 de 12` devolve `2`.
+int posicaoAnunciada(String rotulo) {
+  final m = kCarta.firstMatch(rotulo);
+  expect(m, isNotNull, reason: '"$rotulo" não é uma carta da mão');
+  return int.parse(m!.group(1)!) - 1;
+}
+
+/// Valor e naipe de uma carta, lidos do anúncio dela.
+///
+/// `rei de espadas` vira `(rei, espadas)`; o curingão, que não tem naipe, vira
+/// `(curinga, )`.
+({String valor, String naipe}) nomeDaCarta(String rotulo) {
+  final corte = rotulo.indexOf(', carta ');
+  expect(corte, greaterThan(0), reason: '"$rotulo" não é uma carta da mão');
+  final nome = rotulo.substring(0, corte);
+  final sep = nome.indexOf(' de ');
+  if (sep < 0) return (valor: nome, naipe: '');
+  return (valor: nome.substring(0, sep), naipe: nome.substring(sep + 4));
+}
+
+/// Esta carta pode entrar num jogo novo ao lado do topo do lixo?
+///
+/// Um jogo de três com o topo é trinca (mesmo VALOR) ou sequência (mesmo
+/// NAIPE), e em qualquer das duas um curinga ocupa um lugar — o curingão e o 2,
+/// que o motor aceita como substituto. O filtro é frouxo de propósito: ele só
+/// precisa NÃO DESCARTAR a combinação que o motor aceitaria, porque quem decide
+/// se o jogo vale continua sendo o motor, do outro lado do toque.
+bool combinaComOTopo(
+  ({String valor, String naipe}) c,
+  ({String valor, String naipe}) topo,
+) {
+  if (topo.valor == 'curinga' || topo.valor == '2') return true;
+  return c.valor == topo.valor ||
+      c.valor == 'curinga' ||
+      c.valor == '2' ||
+      (c.naipe.isNotEmpty && c.naipe == topo.naipe);
+}
+
+/// Faz o MOTOR encerrar a obrigação, pelo caminho de quem joga.
+///
+/// A obrigação nasce no motor e só morre lá: `baixar` e `estender` a consomem
+/// quando usam a carta do topo, e a vez que passa a limpa. Pela tela, e sem
+/// jogo nenhum baixado ainda, o caminho é um só — escolher a carta obrigada
+/// mais duas e tocar no feltro da própria dupla.
+///
+/// Que ESSA combinação existe não é sorte: foi a trava do FECHADO que permitiu
+/// pegar o lixo, e ela só permite quando o topo tem uso imediato. Achar QUAL é
+/// se faz como o motor faz para os robôs — tentando os pares, do mais provável
+/// para o menos. Quando nenhum serve, isto FALHA ALTO: um encerramento que não
+/// aconteceu deixaria o resto do caso confirmando o desaparecimento de um
+/// destaque que nunca chegou a existir.
+Future<void> cumprirAObrigacao(WidgetTester tester, String obrigatoria) async {
+  final alvo = posicaoAnunciada(obrigatoria);
+  final mao = cartasNaOrdemDeLeitura(tester);
+  final topo = nomeDaCarta(obrigatoria);
+
+  // OS PONTOS DE TOQUE SÃO LIDOS AGORA, COM A MÃO EM REPOUSO, E REUSADOS.
+  //
+  // `pontoDeToqueDaCarta` parte de `cartasDaMao`, que ordena a mão por
+  // posição de REPOUSO — e a posição de repouso é calculada descontando a
+  // subida declarada do retângulo PINTADO. Entre escolher uma carta e o fim
+  // dos 180 ms da subida, os dois discordam: o widget já declara a subida e a
+  // pintura ainda não a fez. Nessa janela a conta devolve uma carta treze
+  // pontos abaixo do lugar dela, o que basta para trocar a fileira e, com a
+  // fileira, a ordem — e o toque seguinte cai na carta errada.
+  //
+  // A camada de toque não se mexe com a escolha. Ler os pontos uma vez, antes
+  // da primeira escolha, é o que torna cada tentativa independente da
+  // anterior.
+  expect(
+    selecionadasNaMao(tester),
+    isEmpty,
+    reason: 'a mão já vinha com carta escolhida: os pontos de toque seriam '
+        'lidos de uma mão em movimento',
+  );
+  final pontos = <Offset>[
+    for (var i = 0; i < mao.length; i++) pontoDeToqueDaCarta(tester, i),
+  ];
+
+  final pares = <List<int>>[];
+  for (var i = 0; i < mao.length; i++) {
+    if (i == alvo || !combinaComOTopo(nomeDaCarta(mao[i]), topo)) continue;
+    for (var k = i + 1; k < mao.length; k++) {
+      if (k == alvo || !combinaComOTopo(nomeDaCarta(mao[k]), topo)) continue;
+      pares.add(<int>[i, k]);
+    }
+  }
+  // A trinca primeiro: numa mão de dois baralhos ela é o jogo mais comum, e
+  // cada tentativa custa sete toques.
+  int distancia(List<int> p) =>
+      -p.where((i) => nomeDaCarta(mao[i]).valor == topo.valor).length;
+  pares.sort((a, b) => distancia(a).compareTo(distancia(b)));
+
+  for (final par in pares) {
+    final escolha = <int>[alvo, par[0], par[1]];
+    for (final i in escolha) {
+      await tocarEm(tester, pontos[i]);
+    }
+    // O feltro da dupla de baixo. A tarja "NÓS" mora DENTRO dele e está sob um
+    // `IgnorePointer`, então tocar na tarja é tocar no feltro — e a tarja é o
+    // ponto do feltro cuja posição não depende de quantas fileiras a mão
+    // resolveu usar.
+    await tester.tapAt(tester.getRect(find.text('NÓS').first).center);
+    await tester.pump();
+    if (anunciosDaObrigacao(tester).isEmpty) {
+      // Baixar reorganiza a mão inteira. Deixar a animação terminar é o que faz
+      // a leitura seguinte valer.
+      await tester.pump(const Duration(milliseconds: 400));
+      return;
+    }
+    // A baixada recusada NÃO desfaz a escolha, e sem desfazer a tentativa
+    // seguinte levaria seis cartas ao feltro.
+    for (final i in escolha) {
+      await tocarEm(tester, pontos[i]);
+    }
+    expect(
+      selecionadasNaMao(tester),
+      isEmpty,
+      reason: 'a escolha não voltou ao zero entre duas tentativas de baixar',
+    );
+  }
+  fail(
+    'nenhuma das ${pares.length} combinações baixou a carta obrigatória — a '
+    'trava do FECHADO garante que existe uma, então ou ela deixou de garantir, '
+    'ou o feltro deixou de aceitar a baixada',
+  );
 }
 
 void main() {
@@ -407,13 +677,15 @@ void main() {
     // Agora a bancada insiste até negociar um baralho que tenha as duas, e o
     // caso EXIGE as duas antes de olhar a marca. O verde passa a significar o
     // que ele sempre pareceu significar.
+    //
+    // Quantas insistências, ver `kBaralhosAteAGemea`.
     testWidgets('acompanha a INSTÂNCIA, e não o valor e o naipe', (
       tester,
     ) async {
       final obrigatoria = await abrirComObrigacaoDoLixo(
         tester,
         comHomonimaNaMao: true,
-        tentativas: 40,
+        tentativas: kBaralhosAteAGemea,
       );
       // O nome da carta é tudo o que vem antes da posição.
       final nome = obrigatoria.substring(0, obrigatoria.indexOf(', carta '));
@@ -517,6 +789,137 @@ void main() {
 
       await encerrarMesaDeTreino(tester);
     });
+
+    // -----------------------------------------------------------------------
+    // O DESENHO, E NÃO SÓ O ANÚNCIO
+    // -----------------------------------------------------------------------
+    //
+    // Os quatro casos acima provam o que a carta obrigatória FALA. Este prova o
+    // que ela MOSTRA, e prende as duas coisas à mesma autoridade: enquanto o
+    // motor obrigar, os três atributos ficam de pé na instância que ele
+    // apontou; quando o motor encerrar, os três somem juntos.
+    //
+    // O relógio é a parte que não pode faltar. Comprar o lixo acende dois
+    // destaques na MESMA carta — o dourado da compra e o vermelho da obrigação
+    // —, e um teste tirado no instante da compra fica verde com o desenho
+    // amarrado ao dourado, que morre sozinho em 1,85 s. A medição vale depois
+    // disso, e é por isso que ela começa avançando o relógio.
+    // >>> GUARDA DO DESENHO DA OBRIGACAO - INICIO
+    testWidgets('o destaque vermelho dura o que a obrigação durar', (
+      tester,
+    ) async {
+      // A gêmea do segundo baralho na mão: sem ela, "só a carta certa está
+      // destacada" é uma frase verdadeira sobre uma carta só, e não distingue
+      // instância de valor.
+      final obrigatoria = await abrirComObrigacaoDoLixo(
+        tester,
+        comHomonimaNaMao: true,
+        tentativas: kBaralhosAteAGemea,
+      );
+      final alvo = posicaoAnunciada(obrigatoria);
+
+      // O RELÓGIO. Daqui em diante o dourado da compra já não existe, e o que
+      // sobrar na tela é decisão da obrigação, não do brilho temporário.
+      await tester.pump(kDepoisDoDourado);
+
+      // A autoridade continua sendo do motor, e continua sendo por INSTÂNCIA:
+      // um anúncio só, na mesma carta de antes, e a posição que ele declara é a
+      // posição em que a mão o entrega.
+      expect(
+        anunciosDaObrigacao(tester),
+        <String>[obrigatoria],
+        reason: 'depois do dourado a obrigação sumiu, dobrou ou trocou de carta',
+      );
+      final maoAnunciada = cartasNaOrdemDeLeitura(tester);
+      expect(
+        maoAnunciada[alvo],
+        obrigatoria,
+        reason: 'a posição anunciada não é a posição em que a mão a entrega',
+      );
+
+      final nome = obrigatoria.substring(0, obrigatoria.indexOf(', carta '));
+      final homonimas = <int>[
+        for (var i = 0; i < maoAnunciada.length; i++)
+          if (maoAnunciada[i].startsWith('$nome,')) i,
+      ];
+      expect(
+        homonimas.length,
+        greaterThanOrEqualTo(2),
+        reason: 'a mão tem ${homonimas.length} carta(s) chamada(s) "$nome" — '
+            'sem a gêmea, destacar a instância e destacar o valor desenham a '
+            'mesma tela',
+      );
+
+      // OS TRÊS ATRIBUTOS, JUNTOS, NA CARTA QUE O MOTOR APONTOU.
+      final desenho = cartasDesenhadasDaMao(tester);
+      expect(
+        desenho,
+        hasLength(maoAnunciada.length),
+        reason: 'a mão desenhou ${desenho.length} cartas e anunciou '
+            '${maoAnunciada.length}',
+      );
+      expect(
+        find.text(kOrientacaoDaObrigacao),
+        findsOneWidget,
+        reason: 'a orientação "$kOrientacaoDaObrigacao" tem de existir uma vez '
+            'na mesa inteira',
+      );
+      expect(
+        orientacoesNaCarta(tester, desenho[alvo]),
+        1,
+        reason: 'a orientação não está DENTRO da carta obrigada',
+      );
+      expect(
+        temBordaDaObrigacao(desenho[alvo]),
+        isTrue,
+        reason: 'a carta obrigada perdeu a borda $kVermelhoDaObrigacao',
+      );
+      expect(
+        temSombraDaObrigacao(desenho[alvo]),
+        isTrue,
+        reason: 'a carta obrigada perdeu a sombra $kSombraDaObrigacao',
+      );
+
+      // E EM NENHUMA OUTRA — a homônima comum inclusive.
+      for (var i = 0; i < desenho.length; i++) {
+        if (i == alvo) continue;
+        final qual = homonimas.contains(i)
+            ? 'a homônima "$nome" na posição ${i + 1}'
+            : '"${maoAnunciada[i]}"';
+        expect(temBordaDaObrigacao(desenho[i]), isFalse,
+            reason: '$qual recebeu a borda da obrigação');
+        expect(temSombraDaObrigacao(desenho[i]), isFalse,
+            reason: '$qual recebeu a sombra da obrigação');
+        expect(orientacoesNaCarta(tester, desenho[i]), 0,
+            reason: '$qual recebeu a orientação da obrigação');
+      }
+
+      // E SÓ SOMEM DEPOIS QUE O MOTOR ENCERRA. Quem encerra é a jogada: a carta
+      // obrigada entra num jogo, e `baixar` limpa a pendência.
+      await cumprirAObrigacao(tester, obrigatoria);
+
+      expect(
+        anunciosDaObrigacao(tester),
+        isEmpty,
+        reason: 'o motor deveria ter encerrado a obrigação com a baixada',
+      );
+      expect(
+        find.text(kOrientacaoDaObrigacao),
+        findsNothing,
+        reason: 'a obrigação acabou e a orientação continuou na tela',
+      );
+      final depois = cartasDesenhadasDaMao(tester);
+      expect(depois, isNotEmpty, reason: 'a mão ficou vazia depois de baixar');
+      for (var i = 0; i < depois.length; i++) {
+        expect(temBordaDaObrigacao(depois[i]), isFalse,
+            reason: 'a obrigação acabou e a carta ${i + 1} seguiu com a borda');
+        expect(temSombraDaObrigacao(depois[i]), isFalse,
+            reason: 'a obrigação acabou e a carta ${i + 1} seguiu com a sombra');
+      }
+
+      await encerrarMesaDeTreino(tester);
+    });
+    // <<< GUARDA DO DESENHO DA OBRIGACAO - FIM
   });
 
   // =========================================================================
@@ -821,6 +1224,100 @@ void main() {
       );
 
       await encerrarMesaDeTreino(tester);
+    });
+  });
+
+  // =========================================================================
+  // 8 — A GUARDA DO CASO QUE GUARDA O DESENHO
+  // =========================================================================
+  //
+  // Um caso de teste é a única coisa deste arquivo que ninguém confere. Esvaziar
+  // o corpo do caso acima — trocá-lo por um `expect` trivial — deixa o portão
+  // `mesac1` verde com um a mais no placar e sem nenhuma das afirmações que ele
+  // existe para fazer. É a mesma família de buraco que a OS 29-R1 mediu quando
+  // tirou `mesac1` de `OBRIGATORIOS` e nada reclamou.
+  //
+  // A conferência de DECLARAÇÃO (a chave no workflow, a suíte no disco) mora em
+  // `auditoria_casca_test.dart`, fora do que ela garante. Esta aqui é de outra
+  // natureza e por isso mora junto: ela lê o próprio arquivo e exige que o caso
+  // continue chamando as coisas que fazem a prova. Os marcadores que a delimitam
+  // ficam FORA do corpo do caso, então sobrevivem a um corpo trocado.
+  //
+  // Comentário não conta. A leitura descarta as linhas de comentário antes de
+  // procurar, porque um `grep` que casa com a prosa que explica a remoção fica
+  // verde exatamente no commit que removeu o que ela descrevia.
+  group('a guarda do desenho da obrigação', () {
+    const inicio = '// >>> GUARDA DO DESENHO DA OBRIGACAO - INICIO';
+    const fim = '// <<< GUARDA DO DESENHO DA OBRIGACAO - FIM';
+
+    /// As linhas de CÓDIGO do caso delimitado, sem comentário e sem os
+    /// marcadores.
+    List<String> corpoDoCaso() {
+      final arquivo = File('test/casca/mesa_treino_alvos_reais_test.dart');
+      expect(
+        arquivo.existsSync(),
+        isTrue,
+        reason: 'a suíte não se enxerga do diretório de execução — o caminho '
+            'declarado no workflow é relativo à raiz do pacote',
+      );
+      final linhas = arquivo.readAsLinesSync();
+      final a = linhas.indexWhere((l) => l.trim() == inicio);
+      final b = linhas.indexWhere((l) => l.trim() == fim);
+      expect(a, greaterThanOrEqualTo(0), reason: 'o marcador de início sumiu');
+      expect(b, greaterThan(a), reason: 'o marcador de fim sumiu ou trocou de '
+          'lugar com o de início');
+      return <String>[
+        for (final l in linhas.sublist(a + 1, b))
+          if (!l.trimLeft().startsWith('//')) l,
+      ];
+    }
+
+    test('o caso do desenho continua fazendo o que ele promete', () {
+      final corpo = corpoDoCaso().join('\n');
+
+      const exigido = <String, String>{
+        'abrirComObrigacaoDoLixo(': 'uma obrigação vinda do motor',
+        'comHomonimaNaMao: true': 'a gêmea do segundo baralho na mão',
+        'pump(kDepoisDoDourado)': 'o relógio depois do dourado da compra',
+        'anunciosDaObrigacao(tester)': 'a obrigação lida da mesa montada',
+        'find.text(kOrientacaoDaObrigacao)': 'a orientação escrita na carta',
+        'temBordaDaObrigacao(': 'a borda vermelha',
+        'temSombraDaObrigacao(': 'a sombra vermelha',
+        'orientacoesNaCarta(': 'a orientação conferida carta a carta',
+        'cumprirAObrigacao(': 'o encerramento pelo motor',
+      };
+      for (final e in exigido.entries) {
+        expect(
+          corpo.contains(e.key),
+          isTrue,
+          reason: 'o caso do desenho deixou de exigir ${e.value} '
+              '(`${e.key}` não aparece mais no corpo dele)',
+        );
+      }
+
+      // Um corpo trivial pode citar um nome sem afirmar nada com ele. O piso de
+      // afirmações é grosseiro de propósito: ele não julga qualidade, só impede
+      // que o caso vire casca.
+      expect(
+        'expect('.allMatches(corpo).length,
+        greaterThanOrEqualTo(14),
+        reason: 'o caso do desenho ficou com '
+            '${'expect('.allMatches(corpo).length} afirmações',
+      );
+    });
+
+    test('os três atributos continuam escritos à mão', () {
+      // Se estes números viessem da produção, a mutação que apaga o destaque
+      // levaria a prova junto e o portão ficaria verde no dia do defeito.
+      expect(kVermelhoDaObrigacao, const Color(0xFFFF3B30));
+      expect(kSombraDaObrigacao, const Color(0x99FF3B30));
+      expect(kOrientacaoDaObrigacao, 'USE ESTA');
+      expect(
+        kDepoisDoDourado.inMilliseconds,
+        greaterThanOrEqualTo(2400),
+        reason: 'o dourado da compra dura 1,85 s: medir antes disso não '
+            'distingue os dois destaques',
+      );
     });
   });
 }
