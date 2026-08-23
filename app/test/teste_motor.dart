@@ -25,8 +25,16 @@ import 'package:buraco_master_vip/rules/morto/morto.dart';
 import 'package:buraco_master_vip/rules/gerador/gerador.dart';
 // C8 — conformidade Dart × Node (fixture do lado Node; comparação cross-engine).
 import 'dart:convert';
+import 'dart:io'; // OS 43.1 — a TRAVA lê a fonte única, a suíte e a evidência
 import 'dart:math'; // OS ENCERRAMENTO: passeio determinístico da varredura
 import 'conformidade_fixture.dart';
+// OS 43.1 — PORTÃO DE BATIDA NATURAL DO BOT. O import é DIRETO e com prefixo:
+// é ele que faz a remoção da suíte quebrar a compilação deste arquivo, que é o
+// portão obrigatório do CI. Um `File(...).existsSync()` no lugar disto seria
+// mais frouxo — daria para satisfazê-lo com um arquivo vazio.
+import 'gate_batida_bot.dart' as gate;
+import 'gates/leitor_fonte_unica.dart';
+import 'gates/sha256_puro.dart';
 // C9-A — costura: flags + contrato da porta + fábrica/seletor (aditivo; NÃO é
 // regra, NÃO é runtime; sem projeção Jogo<->EstadoJogo, sem adaptador concreto).
 import 'package:buraco_master_vip/motor/motor_config.dart';
@@ -8091,6 +8099,341 @@ void main() {
       for (final a in legais) {
         expect(acaoEhLegal(estado, estado.vez, a, spec), isTrue);
       }
+    });
+  });
+
+  // =====================================================================
+  // OS 43.1 — TRAVA DO PORTÃO DE BATIDA NATURAL DO BOT.
+  //
+  // Esta suíte é o portão OBRIGATÓRIO do CI: sem ela verde nenhum APK sai. Por
+  // isso é AQUI que mora a guarda do portão novo — e não dentro dele. Presença
+  // cobrada de DENTRO do alvo desaparece junto com o alvo: apagar
+  // `gate_batida_bot.dart` apagaria também o teste que exigia
+  // `gate_batida_bot.dart`. Aqui, apagar a suíte quebra a COMPILAÇÃO deste
+  // arquivo — o import é direto e as constantes são lidas de verdade —, e o
+  // portão obrigatório fica vermelho antes de rodar um único caso.
+  //
+  // A trava confere TRÊS coisas, e são três porque cada uma cobre um buraco das
+  // outras duas:
+  //   • a DECLARAÇÃO (fonte única): o que o repositório promete rodar;
+  //   • o ARQUIVO (sha256): que o que está no disco é o que foi declarado;
+  //   • a EVIDÊNCIA: que o passo REALMENTE rodou nesta build, com o corpus
+  //     inteiro e com resultado reprodutível.
+  // Declaração sem execução é promessa; execução sem declaração é acaso.
+  // =====================================================================
+  group('OS 43.1 — TRAVA do portão de batida natural do bot', () {
+    // NÚMEROS DA TRAVA — cópia INDEPENDENTE dos pisos da OS.
+    //
+    // Sim, são os mesmos números que a suíte e a fonte única declaram, e a
+    // repetição é o mecanismo: baixar um piso passa a exigir três edições em
+    // três arquivos, e cada uma delas reprova sozinha. Uma "fonte única" de
+    // piso que também fosse o único lugar a conferi-lo protegeria o piso de
+    // ninguém — bastaria editá-la.
+    const pisosDaTrava = <String, int>{'ABERTO': 12, 'FECHADO': 25, 'STBL': 16};
+    const pisoTotalDaTrava = 60;
+    const modalidadesDaTrava = <String>['ABERTO', 'FECHADO', 'STBL'];
+    const sementesMinimasDaTrava = <String, int>{
+      'ABERTO': 10,
+      'FECHADO': 8,
+      'STBL': 8,
+    };
+    const partidasMinimasDaTrava = 26;
+    const provasDaTrava = 13;
+    const caminhoFonteUnica = 'test/gates/gates_bot.txt';
+
+    EntradaPortao entradaDoPortao() {
+      final f = File(caminhoFonteUnica);
+      expect(f.existsSync(), isTrue,
+          reason: 'fonte única ausente: $caminhoFonteUnica');
+      final entradas = lerFonteUnica(f.readAsStringSync());
+      final achadas =
+          entradas.where((e) => e.nome == gate.kEntradaFonteUnica).toList();
+      expect(achadas, hasLength(1),
+          reason: 'a fonte única precisa declarar exatamente uma '
+              '${gate.kEntradaFonteUnica}');
+      return achadas.single;
+    }
+
+    String fonteDaSuite(EntradaPortao e) =>
+        File(e.suiteNoPacote).readAsStringSync();
+
+    Map<String, Object?> evidencia() {
+      final f = File(gate.kArquivoEvidencia);
+      expect(f.existsSync(), isTrue,
+          reason: 'EVIDÊNCIA ausente (${gate.kArquivoEvidencia}): o passo do '
+              'portão de batida NÃO EXECUTOU nesta build. Rode primeiro o '
+              '`executor` declarado na fonte única.');
+      return jsonDecode(f.readAsStringSync()) as Map<String, Object?>;
+    }
+
+    int inteiro(Object? v) => (v as num).toInt();
+
+    // ---------- a DECLARAÇÃO ----------
+
+    test('TRAVA-01 a fonte única declara o portão de batida com as seis '
+        'chaves obrigatórias', () {
+      final e = entradaDoPortao();
+      expect(chavesObrigatorias, <String>{
+        'suite',
+        'executor',
+        'sha256',
+        'provas',
+        'casos',
+        'exige',
+      });
+      expect(e.suite, 'app/test/gate_batida_bot.dart');
+      expect(e.suiteNoPacote, gate.kCaminhoDaSuite);
+      expect(e.executor, startsWith('flutter test '));
+      expect(e.executor, contains(gate.kCaminhoDaSuite),
+          reason: 'o executor tem de rodar a suíte que a entrada declara');
+      expect(e.sha256, matches(RegExp(r'^[0-9a-f]{64}$')));
+      expect(e.provas, greaterThanOrEqualTo(provasDaTrava));
+      expect(e.casos, hasLength(e.provas));
+      expect(e.exige, isNotEmpty);
+    });
+
+    test('TRAVA-02 o leitor da fonte única distingue MARGEM de INDENTAÇÃO e '
+        'reprova fechado', () {
+      // Um atributo na margem viraria um portão chamado "suite:" — foi assim
+      // que uma trava desta família passou a reprovar repositório íntegro.
+      expect(() => lerFonteUnica('  suite: x\n'), throwsFormatException);
+      expect(() => lerFonteUnica('suite: x\n'), throwsFormatException);
+      expect(() => lerFonteUnica('# só comentário\n'), throwsFormatException);
+      expect(() => lerFonteUnica(''), throwsFormatException);
+      expect(
+          () => lerFonteUnica('G-1\n  suite: a\n  suite: b\n'),
+          throwsFormatException);
+      expect(() => lerFonteUnica('G-1\n  desconhecida: 1\n'),
+          throwsFormatException);
+      expect(() => lerFonteUnica('G-1\n  suite: a\n'), throwsFormatException);
+      // provas e casos não podem discordar
+      expect(
+          () => lerFonteUnica('G-1\n'
+              '  suite: app/test/x.dart\n'
+              '  executor: flutter test test/x.dart\n'
+              '  sha256: ${'a' * 64}\n'
+              '  provas: 2\n'
+              '  casos: X-01\n'
+              '  exige: A>=1\n'),
+          throwsFormatException);
+      // e o caminho FELIZ continua passando (uma trava que reprova tudo não
+      // distingue estado nenhum)
+      final ok = lerFonteUnica('G-1\n'
+          '  suite: app/test/x.dart\n'
+          '  executor: flutter test test/x.dart\n'
+          '  sha256: ${'a' * 64}\n'
+          '  provas: 1\n'
+          '  casos: X-01\n'
+          '  exige: A>=1\n');
+      expect(ok, hasLength(1));
+      expect(ok.single.suiteNoPacote, 'test/x.dart');
+      expect(ok.single.exige['A'], 1);
+    });
+
+    // ---------- o ARQUIVO ----------
+
+    test('TRAVA-03 a suíte declarada EXISTE e o sha256 dela bate com a fonte '
+        'única', () {
+      final e = entradaDoPortao();
+      final f = File(e.suiteNoPacote);
+      expect(f.existsSync(), isTrue,
+          reason: 'a suíte do portão sumiu: ${e.suiteNoPacote}');
+      final calculado = sha256DeTextoNormalizado(f.readAsBytesSync());
+      expect(calculado, e.sha256,
+          reason: 'o corpo da suíte mudou sem que a fonte única fosse '
+              'atualizada — o portão declarado não é o portão que existe');
+      expect(f.lengthSync(), greaterThan(4000),
+          reason: 'uma suíte trivializada não protege coisa nenhuma');
+    });
+
+    // ---------- as CONSTANTES compiladas ----------
+
+    test('TRAVA-04 as constantes COMPILADAS da suíte cumprem a trava: três '
+        'modalidades, corpus e pisos', () {
+      expect(gate.kModalidadesGate, modalidadesDaTrava,
+          reason: 'nenhuma modalidade pode ser retirada do portão');
+      for (final m in modalidadesDaTrava) {
+        expect(gate.kSementesGate[m], isNotNull, reason: m);
+        expect(gate.kSementesGate[m]!.length,
+            greaterThanOrEqualTo(sementesMinimasDaTrava[m]!),
+            reason: '$m: corpus reduzido abaixo do mínimo da trava');
+        expect(gate.kSementesGate[m]!.toSet().length,
+            gate.kSementesGate[m]!.length,
+            reason: '$m: semente repetida infla o corpus sem medir nada novo');
+        expect(gate.kPisosGate[m], greaterThanOrEqualTo(pisosDaTrava[m]!),
+            reason: '$m: piso abaixo do mínimo da trava');
+      }
+      expect(
+          gate.kSementesGate.values.fold<int>(0, (a, l) => a + l.length),
+          greaterThanOrEqualTo(partidasMinimasDaTrava));
+      expect(gate.kPisoTotalGate, greaterThanOrEqualTo(pisoTotalDaTrava));
+      expect(gate.kPisoTotalGate,
+          greaterThan(pisosDaTrava.values.reduce((a, b) => a + b)),
+          reason: 'o piso agregado tem de exigir mais que a soma dos mínimos');
+      expect(gate.kPesoBatidaExigido, 160);
+      expect(gate.kMetaPontosGate, 1500);
+    });
+
+    test('TRAVA-05 as exigências da fonte única NÃO estão afrouxadas em '
+        'relação à trava', () {
+      final e = entradaDoPortao();
+      for (final m in modalidadesDaTrava) {
+        expect(e.exige[m], isNotNull,
+            reason: 'a fonte única deixou de exigir $m');
+        expect(e.exige[m]!, greaterThanOrEqualTo(pisosDaTrava[m]!),
+            reason: '$m: exigência afrouxada na fonte única');
+        expect(e.exige[m]!, gate.kPisosGate[m],
+            reason: '$m: a fonte única e a suíte discordam do piso');
+      }
+      expect(e.exige['TOTAL'], greaterThanOrEqualTo(pisoTotalDaTrava));
+      expect(e.exige['TOTAL'], gate.kPisoTotalGate);
+      expect(e.exige['MODALIDADES'], greaterThanOrEqualTo(3));
+      expect(e.exige['PARTIDAS'],
+          greaterThanOrEqualTo(partidasMinimasDaTrava));
+      expect(e.exige['PROVAS'], greaterThanOrEqualTo(provasDaTrava));
+    });
+
+    test('TRAVA-06 os casos declarados existem de verdade dentro da suíte', () {
+      final e = entradaDoPortao();
+      expect(e.casos, gate.kCasosGate,
+          reason: 'a fonte única e a suíte discordam da lista de casos');
+      final src = fonteDaSuite(e);
+      for (final caso in e.casos) {
+        // Âncora no `test('CASO `, e não no identificador solto: o nome do
+        // caso aparece também em comentário, e um grep frouxo casaria com a
+        // PROSA que explica o caso em vez de com o caso.
+        expect(RegExp("test\\(\\s*'$caso ").hasMatch(src), isTrue,
+            reason: 'caso $caso declarado na fonte única e ausente da suíte');
+      }
+      final declarados = RegExp(r"\btest\(").allMatches(src).length;
+      expect(declarados, e.provas,
+          reason: 'a suíte tem $declarados testes e a fonte única declara '
+              '${e.provas} provas');
+    });
+
+    // ---------- a EVIDÊNCIA ----------
+
+    test('TRAVA-07 a EVIDÊNCIA existe e veio da suíte declarada', () {
+      final e = entradaDoPortao();
+      final ev = evidencia();
+      expect(ev['entrada'], gate.kEntradaFonteUnica);
+      expect(ev['sha256Suite'], e.sha256,
+          reason: 'a evidência foi produzida por outra versão da suíte');
+      expect(ev['casos'], gate.kCasosGate);
+    });
+
+    test('TRAVA-08 a evidência cumpre os PISOS, os ZEROS e o determinismo', () {
+      final ev = evidencia();
+      final batidas = (ev['batidas'] as Map).cast<String, Object?>();
+      for (final m in modalidadesDaTrava) {
+        expect(inteiro(batidas[m]), greaterThanOrEqualTo(pisosDaTrava[m]!),
+            reason: '$m: ${batidas[m]} batidas legais medidas');
+      }
+      expect(inteiro(ev['batidasTotal']),
+          greaterThanOrEqualTo(pisoTotalDaTrava));
+      final razoes = (ev['razaoBaixaBatida'] as Map).cast<String, Object?>();
+      for (final m in modalidadesDaTrava) {
+        expect(inteiro(razoes[m]), greaterThanOrEqualTo(1),
+            reason: '$m sem nenhuma BAIXA_BATIDA');
+      }
+      expect(ev['featureBatida'], <dynamic>[160],
+          reason: 'a feature `batida` medida tem de ser sempre 160');
+      for (final zero in const <String>[
+        'divergenciasPlanoAcao',
+        'batidasSemHabilitacao',
+        'decisoesVazias',
+        'turnosSemConclusao',
+        'falhasTecnicas',
+        'falhasIntegridade',
+        'partidasTruncadas',
+      ]) {
+        expect(inteiro(ev[zero]), 0, reason: '$zero deveria ser zero');
+      }
+      // Toda batida veio do VOCABULÁRIO de razões: plano de turno ou compra
+      // atômica do lixo. Uma terceira origem quebra a soma.
+      final porPlano = (ev['batidasPorPlano'] as Map)
+          .values
+          .fold<int>(0, (a, v) => a + inteiro(v));
+      final naCompra = (ev['batidasNaCompra'] as Map)
+          .values
+          .fold<int>(0, (a, v) => a + inteiro(v));
+      expect(porPlano + naCompra, inteiro(ev['batidasTotal']),
+          reason: 'existe batida fora do vocabulário de razões');
+      expect(porPlano, greaterThan(0));
+      expect(ev['razoesDeBatidaNaCompra'],
+          <String>['COMPRA_LIXO_ESTRUTURA', 'COMPRA_LIXO_VOLUME'],
+          reason: 'o vocabulário de razões de batida na compra é FECHADO');
+      // Esgotamento é contado, e contado FORA da batida.
+      final esgot = (ev['esgotamentos'] as Map).values.fold<int>(
+          0, (a, v) => a + inteiro(v));
+      expect(esgot, greaterThan(0),
+          reason: 'sem rodada encerrada por esgotamento a distinção entre '
+              'bater e acabar o baralho não foi exercitada');
+      expect(inteiro(ev['batidasTotal']) + esgot,
+          inteiro(ev['rodadasEncerradas']),
+          reason: 'batida e esgotamento têm de particionar as rodadas '
+              'encerradas');
+      expect(ev['determinismo'], isTrue,
+          reason: 'as duas execuções do corpus divergiram');
+      expect(ev['digestExecucao1'], ev['digestExecucao2']);
+      expect((ev['digestExecucao1'] as String).length, 64);
+    });
+
+    test('TRAVA-09 o corpus da evidência não foi reduzido nem perdeu '
+        'modalidade', () {
+      final ev = evidencia();
+      expect(ev['modalidades'], modalidadesDaTrava);
+      final sementes = (ev['sementes'] as Map).cast<String, Object?>();
+      for (final m in modalidadesDaTrava) {
+        final lista = (sementes[m] as List).map(inteiro).toList();
+        expect(lista.length,
+            greaterThanOrEqualTo(sementesMinimasDaTrava[m]!),
+            reason: '$m: corpus reduzido na execução');
+        expect(lista, gate.kSementesGate[m],
+            reason: '$m: a evidência jogou sementes diferentes das declaradas');
+      }
+      expect(inteiro(ev['partidas']),
+          greaterThanOrEqualTo(partidasMinimasDaTrava));
+      expect(inteiro(ev['metaPontos']), gate.kMetaPontosGate);
+      expect(inteiro(ev['rodadas']), greaterThan(0));
+      expect(inteiro(ev['turnos']), greaterThan(0));
+    });
+
+    // ---------- a PRODUÇÃO segue intacta ----------
+
+    test('TRAVA-10 o portão não mexeu na produção do bot: fusível, tetos, '
+        'prudência e peso da batida', () {
+      // A medição desliga o fusível; a PRODUÇÃO continua com ele ligado. Se
+      // esta expectativa cair, o portão terá exportado o seu desvio para o
+      // app real — que é exatamente o que a OS proíbe.
+      expect(ConfiguracaoBot.v2.fusivelBuscaMs, 5000);
+      expect(ConfiguracaoBot.v2.orcamentoBusca, 6000);
+      expect(ConfiguracaoBot.v2.tetoTransacoesCompraLixo, 2000);
+      expect(ConfiguracaoBot.v2.tetoPlanosAvaliados, 4000);
+      expect(ConfiguracaoBot.v2.regras.prudenciaBatida, isTrue);
+      expect(ConfiguracaoBot.v2.pesos.batida, 160);
+      expect(ConfiguracaoBot.v2.pesos.batidaPrematura, 300);
+      expect(ConfiguracaoBot.v1.pesos.batida, 160);
+      // E a configuração de medição difere da produção SOMENTE no fusível.
+      final medicao = gate.configuracaoDeMedicao();
+      expect(medicao.fusivelBuscaMs, 0);
+      expect(medicao.orcamentoBusca, ConfiguracaoBot.v2.orcamentoBusca);
+      expect(medicao.tetoTransacoesCompraLixo,
+          ConfiguracaoBot.v2.tetoTransacoesCompraLixo);
+      expect(medicao.tetoPlanosAvaliados,
+          ConfiguracaoBot.v2.tetoPlanosAvaliados);
+      expect(medicao.maxBaixadasAvaliadas,
+          ConfiguracaoBot.v2.maxBaixadasAvaliadas);
+      expect(medicao.maxDescartesPorBaixada,
+          ConfiguracaoBot.v2.maxDescartesPorBaixada);
+      expect(medicao.pesos.versao, ConfiguracaoBot.v2.pesos.versao);
+      expect(medicao.regras.prudenciaBatida, isTrue);
+      expect(medicao.seed, ConfiguracaoBot.v2.seed);
+      // O padrão que a mesa carrega é o de produção, não o de medição.
+      final j = Jogo(const ['a', 'b', 'c', 'd'], const ['', '', '', ''],
+          const ['', '', '', ''],
+          seed: 1);
+      expect(j.configuracaoBot.fusivelBuscaMs, 5000);
     });
   });
 }

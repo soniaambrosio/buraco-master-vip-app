@@ -1,0 +1,35 @@
+# FONTE ÚNICA DOS PORTÕES DO BOT — OS 43.1
+#
+# FORMATO. Dois níveis, e o que os distingue é a MARGEM:
+#
+#   NOME-DO-PORTAO        -> ENTRADA  (coluna 0)
+#     chave: valor        -> ATRIBUTO (indentado)
+#
+# Ler um atributo como entrada cria portão fantasma; ler uma entrada como
+# atributo apaga o portão. As duas violações são ERRO explícito no leitor
+# (test/gates/leitor_fonte_unica.dart), nunca interpretação silenciosa.
+#
+# QUEM CONSOME ESTE ARQUIVO
+#   1) o passo "PORTÃO DE BATIDA NATURAL DO BOT" de .github/workflows/build.yml,
+#      que confere o sha256 da suíte e RODA o `executor` declarado aqui — o
+#      passo não tem comando próprio, ele obedece a este arquivo;
+#   2) a TRAVA em app/test/teste_motor.dart, que confere entrada, sha256, casos,
+#      exigências e a EVIDÊNCIA que a execução deixou.
+#
+# SOBRE O sha256. É o digest dos bytes do arquivo com o CR das sequências CRLF
+# removido. O repositório é editado no Windows (core.autocrlf = true) e o CI
+# roda em Linux; sem essa normalização o MESMO conteúdo daria dois digests e o
+# portão reprovaria por causa do sistema operacional. Ver
+# test/gates/sha256_puro.dart — CR solto continua entrando no hash.
+#
+# SOBRE `exige`. Os números aqui são repetidos, de propósito, nas constantes da
+# própria suíte e na TRAVA de teste_motor.dart. Afrouxar um piso exige editar
+# os três lugares, e cada um deles reprova sozinho.
+
+GATE-BATIDA-NATURAL-BOT-V1
+  suite: app/test/gate_batida_bot.dart
+  executor: flutter test test/gate_batida_bot.dart --reporter expanded
+  sha256: 5fd39ab4c4691e02b0419a140809292dce5acd66624bac6964f6d12baf98291c
+  provas: 13
+  casos: GBB-01, GBB-02, GBB-03, GBB-04, GBB-05, GBB-06, GBB-07, GBB-08, GBB-09, GBB-10, GBB-11, GBB-12, GBB-13
+  exige: ABERTO>=12, FECHADO>=25, STBL>=16, TOTAL>=60, MODALIDADES>=3, PARTIDAS>=26, PROVAS>=13

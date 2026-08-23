@@ -144,6 +144,139 @@ jobs:
           PY
           flutter pub get
 
+      # ============================================================================
+      # OS 43.1 — PORTÃO DE BATIDA NATURAL DO BOT.
+      #
+      # Roda ANTES do portão do motor, e de propósito: ele deixa em
+      # app_build/build/evidencia_gate_batida.json a prova de que EXECUTOU, com
+      # o corpus inteiro e com resultado reprodutível. O portão do motor (passo
+      # seguinte) EXIGE essa evidência — de modo que apagar este passo do
+      # workflow não deixa o APK passar mais rápido: deixa o portão obrigatório
+      # vermelho.
+      #
+      # Este passo não tem comando próprio. O que ele roda vem do atributo
+      # `executor` da FONTE ÚNICA (app/test/gates/gates_bot.txt), depois de
+      # conferir que o arquivo declarado existe e que o sha256 dele bate.
+      # ============================================================================
+      - name: "PORTÃO DE BATIDA NATURAL DO BOT — fonte única, sha256 e medição"
+        run: |
+          set -euo pipefail
+          MANIFESTO=app/test/gates/gates_bot.txt
+          ENTRADA=GATE-BATIDA-NATURAL-BOT-V1
+          if [ ! -f "$MANIFESTO" ]; then
+            echo "ERRO: fonte única dos portões do bot não encontrada ($MANIFESTO)."
+            echo "Nenhum APK pode ser gerado sem ela."
+            exit 1
+          fi
+          # ATRIBUTO é linha INDENTADA sob a ENTRADA. A MARGEM é o que separa os
+          # dois níveis: ler atributo como entrada criaria portões fantasmas
+          # chamados 'suite:' e 'sha256:', e ler entrada como atributo apagaria
+          # o portão. É o mesmo contrato do leitor Dart.
+          attr() {
+            awk -v alvo="$ENTRADA" -v chave="$1" '
+              /^[^[:space:]#]/ { dentro = ($0 == alvo); next }
+              dentro && $0 ~ ("^[[:space:]]+" chave "[[:space:]]*:") {
+                sub("^[[:space:]]*" chave "[[:space:]]*:[[:space:]]*", "")
+                print
+                exit
+              }
+            ' "$MANIFESTO"
+          }
+          SUITE="$(attr suite)"
+          EXECUTOR="$(attr executor)"
+          SHA="$(attr sha256)"
+          PROVAS="$(attr provas)"
+          CASOS="$(attr casos)"
+          EXIGE="$(attr exige)"
+          for par in "suite=$SUITE" "executor=$EXECUTOR" "sha256=$SHA" \
+                     "provas=$PROVAS" "casos=$CASOS" "exige=$EXIGE"; do
+            k="${par%%=*}"; v="${par#*=}"
+            if [ -z "$v" ]; then
+              echo "ERRO: a entrada $ENTRADA não declara o atributo obrigatório '$k'."
+              exit 1
+            fi
+          done
+          if [ ! -f "$SUITE" ]; then
+            echo "ERRO: a suíte declarada na fonte única não existe: $SUITE"
+            echo "O portão de batida natural do bot é OBRIGATÓRIO."
+            exit 1
+          fi
+          case "$EXECUTOR" in
+            "flutter test "*) ;;
+            *) echo "ERRO: executor declarado não é um 'flutter test': $EXECUTOR"; exit 1 ;;
+          esac
+          SUITE_NO_PACOTE="${SUITE#app/}"
+          case "$EXECUTOR" in
+            *"$SUITE_NO_PACOTE"*) ;;
+            *) echo "ERRO: o executor declarado não roda a suíte declarada."; exit 1 ;;
+          esac
+          # sha256 sobre os bytes com o CR de CRLF removido — a MESMA
+          # normalização de app/test/gates/sha256_puro.dart. Sem ela o digest
+          # dependeria do sistema operacional que fez o checkout.
+          CALC="$(sed 's/\r$//' "$SUITE" | sha256sum | cut -d' ' -f1)"
+          if [ "$CALC" != "$SHA" ]; then
+            echo "ERRO: o sha256 da suíte não confere com a fonte única."
+            echo "  declarado: $SHA"
+            echo "  calculado: $CALC"
+            echo "O corpo do portão mudou sem que a fonte única fosse atualizada."
+            exit 1
+          fi
+          EXIGE_LIMPO="$(echo "$EXIGE" | tr -d ' ')"
+          for req in ABERTO:12 FECHADO:25 STBL:16 TOTAL:60 MODALIDADES:3 PARTIDAS:26 PROVAS:13; do
+            k="${req%%:*}"; min="${req#*:}"
+            got="$(echo "$EXIGE_LIMPO" | tr ',' '\n' | sed -n "s/^$k>=//p")"
+            if [ -z "$got" ]; then
+              echo "ERRO: a fonte única deixou de exigir '$k'."
+              exit 1
+            fi
+            if [ "$got" -lt "$min" ]; then
+              echo "ERRO: exigência '$k' AFROUXADA na fonte única: $got < $min"
+              exit 1
+            fi
+          done
+          N="$(echo "$CASOS" | tr ',' '\n' | tr -d ' ' | grep -c .)"
+          if [ "$N" != "$PROVAS" ]; then
+            echo "ERRO: a entrada declara provas=$PROVAS e lista $N casos."
+            exit 1
+          fi
+          for caso in $(echo "$CASOS" | tr ',' ' '); do
+            if ! grep -q "'$caso " "$SUITE"; then
+              echo "ERRO: o caso $caso é declarado na fonte única e não existe na suíte."
+              exit 1
+            fi
+          done
+          # `|| true` só para que a MENSAGEM abaixo apareça: sem ele, um arquivo
+          # sem nenhum `test(` faria o `grep` sair 1 e o `set -e` abortar o
+          # passo em silêncio. Fecha do mesmo jeito, mas dizendo por quê.
+          DECLARADOS="$(grep -o 'test(' "$SUITE" | wc -l || true)"
+          if [ "$DECLARADOS" != "$PROVAS" ]; then
+            echo "ERRO: a suíte tem $DECLARADOS testes e a fonte única declara $PROVAS provas."
+            echo "Corpo trivializado ou fonte única desatualizada."
+            exit 1
+          fi
+          echo "============== REGISTRO DO PORTÃO DE BATIDA =============="
+          echo "commit:   ${GITHUB_SHA}"
+          echo "entrada:  $ENTRADA"
+          echo "suite:    $SUITE"
+          echo "sha256:   $SHA  (conferido)"
+          echo "provas:   $PROVAS"
+          echo "exige:    $EXIGE"
+          echo "executor: $EXECUTOR"
+          echo "========================================================="
+          mkdir -p app_build/test
+          cp -R app/test/. app_build/test/
+          cd app_build
+          rm -f build/evidencia_gate_batida.json
+          # O comando NÃO está escrito aqui: ele é o da fonte única.
+          eval "$EXECUTOR"
+          if [ ! -s build/evidencia_gate_batida.json ]; then
+            echo "ERRO: a suíte terminou sem deixar evidência."
+            exit 1
+          fi
+          echo "================== EVIDÊNCIA DO PORTÃO =================="
+          cat build/evidencia_gate_batida.json
+          echo "========================================================"
+
       - name: "PORTÃO DE QUALIDADE — testes do motor (bloqueia o APK se falhar)"
         run: |
           if [ ! -f app/test/teste_motor.dart ]; then
