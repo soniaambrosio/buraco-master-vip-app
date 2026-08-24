@@ -12,9 +12,9 @@
 # tocada: tudo acontece sob `mktemp -d`, e o caso e considerado bom quando o
 # verificador fica VERMELHO por conta propria.
 #
-# Prova que sobrevive a quebra da propria guarda e prova vazia. Por isso o T01 e
-# o T30 sao CONTROLES verdes: sem eles, um verificador que reprovasse SEMPRE
-# passaria nesta matriz inteira.
+# Prova que sobrevive a quebra da propria guarda e prova vazia. Por isso o T01,
+# o T34, o C2-19 e o C2-23 sao CONTROLES verdes: sem eles, um verificador que
+# reprovasse SEMPRE passaria nesta matriz inteira.
 #
 # Exit 0 = matriz inteira passou. Exit 1 = ao menos um caso falhou.
 
@@ -85,17 +85,55 @@ reset() {
   cp -r "$BASE" "$W"
 }
 
+# gates_com_contrato <fonte> — a relacao de gates que CARREGAM contrato, lida da
+# fonte unica. Existe para que nada nesta bancada precise repetir a mao uma lista
+# de gates: uma lista escrita aqui envelheceria no primeiro contrato novo e
+# passaria a dar verde por omissao — que e a familia de defeito que esta bancada
+# inteira existe para nao ter.
+gates_com_contrato() {
+  awk '/^[^[:blank:]#]/ { g = $0; next }
+       /^[[:blank:]]/ && g != "" && !(g in vistos) { vistos[g] = 1; print g }' "$1"
+}
+
+# casos_declarados <gate> <fonte> — o `casos` que a FONTE declara para o gate,
+# ou vazio se ele nao declara nenhum.
+casos_declarados() {
+  awk -v g="$1" '/^[^[:blank:]#]/ { dentro = ($0 == g) }
+                 dentro && /^[[:blank:]]/ && $1 == "casos" { print $2; exit }' "$2"
+}
+
+# OS QUATRO GATES QUE `resultados()` FABRICA, escritos UMA vez.
+#
+# Sao os que a OS 32 protegia quando esta bancada nasceu. A fonte unica hoje tem
+# dezessete contratos, e os treze restantes ficam DE PROPOSITO sem log: e deles
+# que o T27 tira a materia-prima, e e por isso que este nome existe em vez de os
+# quatro `printf` soltos de antes — a fixture e a assercao do T27 leem a MESMA
+# relacao, e acrescentar um log so num dos lados deixa de passar despercebido.
+readonly FABRICADOS='comunicacao chatdom portaoci contratosui'
+
 # resultados <dir> — monta a evidencia de um run bem-sucedido, na ordem certa:
 # o carimbo primeiro, os logs depois.
+#
+# O NUMERO DE CADA LOG VEM DO CONTRATO, e nao de um literal escrito aqui. A OS
+# 42-C2 subiu o piso de `contratosui` de 34 para 74 e este literal ficou para
+# tras: a fixture passou a fabricar evidencia que o proprio verificador acusa de
+# suite encolhida, e o gate reprovou por um defeito da bancada, nao do produto.
+# Ler o piso da fonte e o que impede a mesma deriva de acontecer de novo — o
+# numero passa a ter UM dono, e ele e o contrato.
+#
+# `chatdom` nao declara `casos` (nao tem piso de casos executados), e por isso
+# ele — e so ele — mantem um valor proprio.
 resultados() {
-  local d="$1" k
+  local d="$1" k n
   rm -rf "$d"
   mkdir -p "$d"
   printf 'run 1 — carimbo desta execucao\n' > "$d/carimbo_execucao"
-  printf '00:12 +81: All tests passed!\n' > "$d/t_comunicacao.log"
-  printf '00:09 +137: All tests passed!\n' > "$d/t_chatdom.log"
-  printf 'casos ok: 38 | casos com falha: 0\nTESTE DO PORTAO: VERDE\n' > "$d/t_portaoci.log"
-  printf 'casos ok: 34 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
+  for k in $FABRICADOS; do
+    n="$(casos_declarados "$k" "$W/$FONTE_W")"
+    [ -z "$n" ] && n=137
+    printf '00:12 +%s: All tests passed! | casos ok: %s | casos com falha: 0\n' \
+      "$n" "$n" > "$d/t_$k.log"
+  done
   # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
   # ordem carimbo -> log ficar inequivoca sem esperar o relogio.
   touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
@@ -254,7 +292,43 @@ printf '\n== FASE B: o log da execucao ==\n'
 
 reset
 resultados "$TMP/res"
-esperar 0 "T27 CONTROLE — evidencia completa e datada => VERDE" 'posterior ao carimbo' "$TMP/res"
+# T27 — A EVIDENCIA INCOMPLETA, E O CONJUNTO EXATO DE MOTIVOS QUE ELA PRODUZ.
+#
+# Este caso nasceu CONTROLE VERDE e nao e mais um. `resultados()` fabrica log
+# para os QUATRO gates que a OS 32 protegia; a fonte unica ja carrega dezessete
+# contratos, e os treze restantes ficam sem evidencia de proposito. O que o T27
+# passou a provar e o outro lado da mesma moeda do T28: evidencia faltando
+# reprova, NOMINALMENTE — gate por gate, e nao "reprova de algum jeito".
+#
+# A ASSERCAO E DE CONJUNTO EXATO, e e por isso que ela vale. Um caso que so
+# olhasse o exit ficaria verde com a bancada mentindo: foi assim que a OS 42-C2
+# subiu o piso de `contratosui` de 34 para 74, deixou a fixture para tras e
+# acrescentou um DECIMO QUARTO motivo — 'contratosui' executou 34 caso(s) e o
+# piso e 74 — sem que nada aqui reclamasse. Cobrar o conjunto, e nao a cor,
+# transforma qualquer motivo a mais OU a menos em falha nomeada.
+#
+# A relacao esperada e DERIVADA: tudo que tem contrato, menos o que a fixture
+# declara fabricar. Nao ha lista de gates escrita neste caso, e um log
+# acrescentado so na fixture faz sobrar motivo esperado — que e reprovar.
+bash "$W/scripts/ci/verificar_contrato_suites.sh" "$W" "$W/$YML_W" "$TMP/res" \
+  > "$TMP/saida.txt" 2>&1
+t27_exit=$?
+printf '%s\n' $FABRICADOS | sort > "$TMP/t27_fabricados.txt"
+gates_com_contrato "$W/$FONTE_W" | sort > "$TMP/t27_contratados.txt"
+t27_esperados="$(comm -23 "$TMP/t27_contratados.txt" "$TMP/t27_fabricados.txt")"
+t27_obtidos="$(grep -oE "o gate '[A-Za-z0-9_]+' nao deixou log" "$TMP/saida.txt" |
+  sed -E "s/.*'([A-Za-z0-9_]+)'.*/\1/" | sort)"
+t27_motivos="$(grep -c '^CONTRATO DE SUITE:' "$TMP/saida.txt")"
+t27_n="$(printf '%s\n' "$t27_esperados" | grep -c .)"
+if [ "$t27_exit" = "1" ] && [ "$t27_obtidos" = "$t27_esperados" ] &&
+   [ "$t27_motivos" = "$t27_n" ]; then
+  ok "T27 — evidencia incompleta reprova, e SO pelos $t27_n gates sem log (exit 1)"
+else
+  nok "T27 — esperado exit 1 com exatamente $t27_n motivo(s) nominal(is); obtido exit $t27_exit com $t27_motivos"
+  diff <(printf '%s\n' "$t27_esperados") <(printf '%s\n' "$t27_obtidos") |
+    sed 's/^/        | conjunto: /'
+  grep '^CONTRATO DE SUITE:' "$TMP/saida.txt" | sed 's/^/        | /'
+fi
 
 reset
 resultados "$TMP/res"
@@ -350,17 +424,15 @@ escapar_ere() { printf '%s' "$1" | sed -e 's#[][(){}.*+?^$|\\]#\\&#g'; }
 # FONTE, e nao de uma lista escrita aqui: lista escrita aqui envelhece no
 # primeiro gate novo e passa a dar verde por omissao.
 #
-# NAO substitui `resultados()` e nao mexe nela: T27 continua medindo exatamente
-# o que media. Esta e a fixture da campanha da OS 42-C2, que precisa de uma FASE
-# B VERDE para depois sabotar UM log e ver a diferenca.
+# NAO substitui `resultados()`: aquela fabrica evidencia INCOMPLETA de proposito,
+# e e disso que o T27 vive. Esta fabrica evidencia COMPLETA, que e o estado de
+# onde a campanha da OS 42-C2 parte para sabotar UM log e ver a diferenca.
 resultados_completos() {
   local d="$1" k
   rm -rf "$d"
   mkdir -p "$d"
   printf 'run C2 — carimbo desta execucao\n' > "$d/carimbo_execucao"
-  for k in $(awk '/^[^[:blank:]#]/ { g = $0; next }
-                  /^[[:blank:]]/ && g != "" && !(g in vistos) { vistos[g] = 1; print g }' \
-                  "$W/$FONTE_W"); do
+  for k in $(gates_com_contrato "$W/$FONTE_W"); do
     printf '00:12 +999: All tests passed! | casos ok: 999 | casos com falha: 0\n' > "$d/t_$k.log"
   done
   touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log

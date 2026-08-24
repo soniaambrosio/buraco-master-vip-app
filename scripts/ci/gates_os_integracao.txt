@@ -184,16 +184,22 @@ portaoci
 # do CI que ninguem verifica.
 #
 # A OS 42-C2 acrescentou aqui a campanha de `torneiobase` (C2-01 a C2-27, mais
-# um caso por bloco normativo). Os `exige` abaixo nomeiam os cinco casos que,
-# sozinhos, denunciam a volta de cada escape fechado por ela: C2-02 e a remocao
-# conjunta de registro e produtor — o escape que a OS 42-C1 mediu e deixou de
-# reserva; C2-08 e o digest realinhado depois da adulteracao; C2-15 e o contrato
-# encolhendo um `exige` por vez; C2-22 e o alvo trocado por caminho mais
-# estreito; e C2-27 e a divisao de trabalho entre o agregador e a regua.
+# um caso por bloco normativo), e a OS 42-C3 acrescentou as duas ancoras do
+# T27. Os `exige` abaixo nomeiam o que, sozinho, denuncia a volta de cada escape
+# fechado: C2-02 e a remocao conjunta de registro e produtor — o escape que a OS
+# 42-C1 mediu e deixou de reserva; C2-08 e o digest realinhado depois da
+# adulteracao; C2-15 e o contrato encolhendo um `exige` por vez; C2-22 e o alvo
+# trocado por caminho mais estreito; e C2-27 e a divisao de trabalho entre o
+# agregador e a regua.
+#
+# AS DUAS ULTIMAS SAO A ASSERCAO DO T27, e entraram medidas: a campanha da C3
+# provou que trivializar o T27 — manter o nome, apagar a comparacao e recarimbar
+# o digest — deixava este verificador VERDE. `provas` nao pega, porque a linha
+# `ok` que sobra mantem a contagem no piso; so o literal da comparacao pega.
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     ce872aaddc7e712ac1889393a205247b87ec7758c1538c2eaed89567665f5ac1
+    sha256     8bc0afcccb163357bc6069165106f16cdc31362ba144d4673a56a92e1e0ce8e7
     provas     65
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      74
@@ -209,6 +215,8 @@ contratosui
     exige      C2-15 — UM exige removido, treze de catorze
     exige      C2-22 — alvo trocado por caminho mais ESTREITO
     exige      C2-27 — sem a entrada o agregador fica VERDE
+    exige      comm -23 "$TMP/t27_contratados.txt" "$TMP/t27_fabricados.txt"
+    exige      [ "$t27_obtidos" = "$t27_esperados" ]
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
