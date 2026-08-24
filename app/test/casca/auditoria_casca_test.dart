@@ -569,4 +569,93 @@ void main() {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // O PORTÃO DA ATESTAÇÃO ANDROID
+  //
+  // Mesma ideia, e pelo mesmo motivo, do bloco acima: a guarda de um gate não
+  // pode morar dentro da suíte que ele executa. `app_check_android_test.dart`
+  // prova que `main.dart` ativa App Check na ordem certa e com o provedor
+  // certo; se ALGUÉM apagar aquele arquivo, aquelas provas somem sem um ruído.
+  //
+  // A prova de que ele existe e é obrigatório mora AQUI — num gate que já é
+  // obrigatório, que fala da casca, e cuja porta de entrada é justamente o
+  // arquivo em questão. Não é mistura de assunto: `main.dart` é o objeto desta
+  // auditoria desde a primeira linha dela.
+  // -------------------------------------------------------------------------
+  group('o portão da atestação Android', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+    final fonte = File('../scripts/ci/gates_os_integracao.txt');
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File('test/casca/app_check_android_test.dart').existsSync(),
+        isTrue,
+        reason: 'a suíte que prova a ativação do App Check sumiu — e some em '
+            'silêncio, porque ausência vira NÃO EXECUTADO no portão',
+      );
+    });
+
+    test('o workflow a executa e a considera no portão', () {
+      if (!workflow.existsSync()) return;
+      // A LINHA TEM DE ESTAR VIVA, e não só presente. `contains` do literal
+      // casaria com `# roda appcheckandroid …` — a forma mais barata de tirar
+      // um gate do ar sem apagar nada, e foi assim que a campanha negativa
+      // desta OS mediu esta guarda passando enquanto o gate não rodava. A
+      // âncora de início de linha só admite espaço antes do `roda`.
+      expect(
+        RegExp(
+          r'^[ \t]*roda appcheckandroid '
+          r'test/casca/app_check_android_test\.dart[ \t]*$',
+          multiLine: true,
+        ).hasMatch(workflow.readAsStringSync()),
+        isTrue,
+        reason: 'o gate appcheckandroid não executa mais a suíte — apagado, '
+            'renomeado ou comentado',
+      );
+
+      if (!fonte.existsSync()) return;
+      final relacao = fonte.readAsStringSync();
+      expect(
+        RegExp(r'^appcheckandroid$', multiLine: true).hasMatch(relacao),
+        isTrue,
+        reason: 'appcheckandroid saiu da fonte única de gates — o agregador '
+            'deixa de percorrê-lo e ele passa a rodar sem decidir nada',
+      );
+      for (final atributo in const [
+        'suite      app/test/casca/app_check_android_test.dart',
+        'executor   roda appcheckandroid test/casca/app_check_android_test.dart',
+      ]) {
+        expect(
+          relacao,
+          contains(atributo),
+          reason: 'o contrato de appcheckandroid perdeu "$atributo"',
+        );
+      }
+    });
+
+    test('o verificador de contrato exige o gate e não deixa o piso cair', () {
+      final verificador = File('../scripts/ci/verificar_contrato_suites.sh');
+      if (!verificador.existsSync()) return;
+      final texto = verificador.readAsStringSync();
+      expect(
+        RegExp(r'CONTRATOS_MINIMOS=.*appcheckandroid').hasMatch(texto),
+        isTrue,
+        reason: 'sem a régua, apagar a entrada inteira da fonte única passa em '
+            'SILÊNCIO — e um gate que some sem reprovar é um gate que não existe',
+      );
+      expect(
+        RegExp(r'PISOS_PROVAS=.*appcheckandroid:26').hasMatch(texto),
+        isTrue,
+        reason: 'sem o piso declarado aqui, rebaixar `provas` na fonte única '
+            'esvazia a suíte com o portão verde',
+      );
+      expect(
+        RegExp(r'PISOS_CASOS=.*appcheckandroid:26').hasMatch(texto),
+        isTrue,
+        reason: 'o piso executado é a outra metade: `provas` é estático e não '
+            'vê caso que deixou de rodar',
+      );
+    });
+  });
 }

@@ -913,12 +913,23 @@ void main() {
     });
 
     test('M19 main.dart continua byte a byte o da base', () {
-      // Digest da base `d738f458f1f115ab8f47efea7a80bef26675e2ca`, calculado
-      // sobre o conteúdo com quebras normalizadas (o checkout no Windows entrega
-      // `\r\n` e o do CI entrega `\n`; sem normalizar, o digest provaria o
-      // sistema operacional).
+      // Digest calculado sobre o conteúdo com quebras normalizadas (o checkout
+      // no Windows entrega `\r\n` e o do CI entrega `\n`; sem normalizar, o
+      // digest provaria o sistema operacional).
+      //
+      // RECARIMBADO PELA OS 50.1, e este é o caso que o `reason` abaixo prevê:
+      // mudança deliberada, de outra OS, com o digest atualizado NO MESMO
+      // commit que muda o arquivo. O que entrou em `main.dart` foi a ativação
+      // do App Check — provedor por constante de compilação, `activate()` entre
+      // `initializeApp` e `runApp`, com `try/catch` próprio. Quem guarda esse
+      // conteúdo é `test/casca/app_check_android_test.dart` (gate
+      // `appcheckandroid`); este caso continua guardando só que o arquivo não
+      // muda SEM alguém decidir que ele mude.
+      //
+      // Digest anterior (base `d738f458`, antes do App Check):
+      //   8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab
       const digestDaBase =
-          '8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab';
+          '5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321';
       final atual = sha256
           .convert(utf8.encode(_normalizado(File('lib/main.dart'))))
           .toString();

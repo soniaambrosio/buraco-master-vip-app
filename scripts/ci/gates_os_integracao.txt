@@ -345,7 +345,7 @@ composloja
 avatarcanon
     suite      app/test/casca/avatar_publico_canonico_test.dart
     executor   roda avatarcanon test/casca/avatar_publico_canonico_test.dart
-    sha256     cea6eb4e8b0def0721be379bbe8d7207928ebeb18fa260238bdf523d98da6c86
+    sha256     f414810479fe84f01457b2e40216367654581023439f9489a38c82ce7b67b456
     provas     38
     casos      38
     exige      group('resolvedor canônico
@@ -356,7 +356,7 @@ avatarcanon
 avatarhml
     suite      app/test/casca/homologacao_avatar_publico_test.dart
     executor   roda avatarhml test/casca/homologacao_avatar_publico_test.dart
-    sha256     54ed51b7bcbda8f61ffaa66a28ac8fb77b930af92fa5296994f01c028c9f8280
+    sha256     f2d0cc97d81dbe9f5a3544419526ae84d73c895a04d9eba03dba755f1720fe95
     provas     42
     casos      42
     exige      group('H-A domínio puro
@@ -528,3 +528,55 @@ admvip
     exige      ('CONV-01 `somente_convidados` deriva OS DOIS criterios
     exige      kOrigensVipIntegral
     exige      integralVigenteEm
+
+# --- 12. a ATESTACAO do cliente Android (entra pela OS 50.1) ---------------
+#
+# `appcheckandroid` guarda a ativacao do App Check na porta de entrada do
+# aplicativo, e ele nasce de uma auditoria que mediu o buraco: a entrega que
+# ativava App Check existia, provada, numa folha que NENHUMA ponta produtiva
+# descendia. O plugin estava no pubspec e no lock, declarado e nunca
+# importado, e quinze das dezessete callables alcancaveis pela raiz ja
+# exigiam o token no codigo do backend.
+#
+# A suite prova tres coisas que so um teste mantem verdadeiras depois que a
+# OS fechar:
+#
+#   1. a ORDEM — `activate()` depois de `initializeApp` e antes de `runApp`,
+#      com `try/catch` PROPRIO. Sem o proprio, uma falha do Firebase pularia
+#      a ativacao em silencio; sem o `catch`, um ambiente sem configuracao
+#      Android derrubaria o `main()`;
+#   2. a FORMA — o provedor sai de uma CONSTANTE DE COMPILACAO sobre
+#      `kReleaseMode`. Escrita como `if` de execucao, funcao ou variavel, as
+#      DUAS classes ficam no artefato e basta um engano de configuracao para
+#      distribuir atestacao de graca;
+#   3. a RECUSA — `unauthenticated` chega de credencial E de atestacao, e com
+#      sessao viva o estado e neutro, com nova tentativa permitida. Ninguem e
+#      deslogado por nao ter conseguido atestar.
+#
+# Ela guarda TAMBEM o passo do `release-aab.yml` que troca o appId pelo do
+# registro oficial: e ali que a atestacao fecha ou nao fecha, porque o Play
+# Integrity valida o par (pacote, certificado) contra o registro que o appId
+# nomeia. O mesmo passo conferia o `serverClientId` DENTRO de `main.dart`,
+# onde ele nao mora mais — e por isso levantava `AssertionError` em toda
+# execucao, travando o AAB por um arquivo errado.
+#
+# A prova de que ESTE gate existe no portao NAO mora na suite: mora em
+# `app/test/casca/auditoria_casca_test.dart` (gate `cascaaud`), pelo mesmo
+# motivo do `perfilvis` — uma guarda escrita dentro do arquivo que ela guarda
+# morre junto com ele.
+appcheckandroid
+    suite      app/test/casca/app_check_android_test.dart
+    executor   roda appcheckandroid test/casca/app_check_android_test.dart
+    sha256     e22019cb5668ee61acf42fddd086831d7c7b23ba3c78e570d40580f057ca7b25
+    provas     26
+    casos      26
+    exige      group('a ativação de App Check na porta de entrada
+    exige      group('o pipeline de release aponta o registro oficial
+    exige      group('a recusa de atestação é neutra
+    exige      ('N02 a ativação existe, e é uma só
+    exige      ('N06 a ativação tem try/catch PRÓPRIO
+    exige      ('N10 a escolha não é feita em tempo de execução
+    exige      ('N14 o serverClientId NÃO é procurado em main.dart
+    exige      ('N20 com sessão viva, credencial-ou-atestação admite nova tentativa
+    exige      FirebaseAppCheck.instance.activate(
+    exige      identidadeAdmiteNovaTentativa(

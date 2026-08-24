@@ -250,6 +250,16 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # OS 50.1 — a ATESTAÇÃO da porta de entrada. Prova a ordem
+          # (`activate()` entre `initializeApp` e `runApp`, com `try/catch`
+          # próprio), a forma (provedor por constante de compilação, para que o
+          # release não carregue o provedor de depuração) e a leitura da recusa
+          # (`unauthenticated` com sessão viva é atestação, e admite nova
+          # tentativa). Guarda também o passo do `release-aab.yml` que troca o
+          # appId pelo do registro oficial — é ele que decide se o Play
+          # Integrity fecha. O alinhamento aqui é de UM espaço de propósito: o
+          # literal é conferido por `cascaaud`.
+          roda appcheckandroid test/casca/app_check_android_test.dart
           # OS Mesa Online / Casca V2 (CI-01). Estas seis suítes eram verdes só
           # na máquina de quem escreve: provam a porta ÚNICA de comandos, o
           # adaptador da visão versionada, a caracterização da ligação
