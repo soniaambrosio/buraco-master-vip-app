@@ -222,3 +222,30 @@ descestado
 deschome
 descstbl
 desclobby
+
+# --- 14. Ingresso produtivo e escolha autoritativa de assento (OS 38.3) ---
+# Quatro suítes, e cada uma guarda o que as outras não veem.
+#
+# `ingrcontrato` é a PROVENIÊNCIA: o digest de `contrato/ingresso-assento-v1.json`
+# e o SHA do servidor de onde ele foi lido. Diferente do contrato da
+# descoberta, este NÃO tem gêmeo no `buraco-servidor` — a OS proíbe tocar
+# nele —, então esta suíte é a única amarra que existe entre o vocabulário
+# do cliente e o protocolo real. Ela guarda também a máquina da intenção,
+# que é onde `confirmado == solicitado` vive.
+#
+# `ingrassento` é a TELA: quatro cadeiras, ocupação do servidor, recusa
+# perceptível, anúncio, piso de toque e a matriz de 320/360/412 dp por
+# 100/130/150/175/200% de fonte. É a única que prova que a cadeira PEDIDA
+# não é desenhada como ocupada enquanto o pedido está em voo.
+#
+# `ingrtransp` é o FIO: o que sai (`assento` presente ou a chave AUSENTE),
+# o que entra, e o que é descartado — resposta atrasada, duplicada, fora de
+# ordem, de outra mesa e de outra conta. Nenhuma outra suíte percorre isso.
+#
+# `ingrnav` é a PILHA: navegar só depois do ACK, uma vez, e nunca depois de
+# recusa, de saída da tela ou de troca de conta. Só é visível com o
+# `Navigator` de verdade acima da tela.
+ingrcontrato
+ingrassento
+ingrtransp
+ingrnav

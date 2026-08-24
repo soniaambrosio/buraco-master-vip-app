@@ -17,20 +17,25 @@
 // atualização quando a tela abre.
 //
 // ---------------------------------------------------------------------------
-// SEM INGRESSO NESTA ETAPA
+// O INGRESSO ABRE UMA TELA, NÃO EXECUTA UMA ENTRADA
 // ---------------------------------------------------------------------------
 //
-// `onEscolherMesa` fica NULO de propósito. Escolher assento e entrar numa mesa
-// pública é a OS 38.3, e ela tem decisões próprias (qual assento, o que fazer
-// quando a mesa encheu entre o toque e a chegada do pedido, o que a mesa VIP
-// muda). Um card clicável agora prometeria uma porta que não existe, e a porta
-// que existe — `entrarMesa` por código — não serve: ela não sabe escolher
-// assento e entraria em qualquer lugar.
+// `onEscolherMesa` deixou de ser nulo, e o que ele faz é ABRIR o seletor de
+// assento. Não manda `entrarMesa`, não escolhe cadeira e não navega para a
+// mesa.
+//
+// A diferença importa. A porta que existia antes — `entrarMesa` só com o
+// código — entraria em QUALQUER lugar: o servidor aplicaria a ordem dele e a
+// pessoa descobriria onde sentou depois de sentar. Ligar essa porta aqui
+// atenderia a letra do fluxo (o toque leva à mesa) e não a intenção dele (a
+// pessoa escolhe onde joga), e desligá-la depois seria mais caro do que
+// nunca tê-la ligado.
 
 import 'package:flutter/material.dart';
 
 import '../descoberta/estado_descoberta.dart';
 import '../screens/lobby_publico_screen.dart';
+import 'escolha_assento_de_producao.dart';
 import 'escopo_transporte.dart';
 
 class LobbyPublicoDeProducao extends StatefulWidget {
@@ -86,8 +91,12 @@ class _LobbyPublicoDeProducaoState extends State<LobbyPublicoDeProducao> {
       // O botão Atualizar. `solicitarMesas` já é protegida por frequência:
       // apertar dez vezes seguidas manda um pedido só.
       onAtualizar: () => online.solicitarMesas(),
-      // OS 38.3. Ver o cabeçalho.
-      onEscolherMesa: null,
+      // A porta do ingresso: abre o SELETOR. Ver o cabeçalho.
+      onEscolherMesa: (codigo) => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => EscolhaAssentoDeProducao(codigo: codigo),
+        ),
+      ),
     );
   }
 }

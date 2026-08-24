@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:buraco_master_vip/casca/escolha_assento_de_producao.dart';
 import 'package:buraco_master_vip/casca/home_de_producao.dart';
 import 'package:buraco_master_vip/casca/lobby_online.dart';
 import 'package:buraco_master_vip/casca/lobby_publico_de_producao.dart';
@@ -321,7 +322,14 @@ void main() {
     // `entrarMesa`, e a suíte ficou verde: o caso que provava "o card não é
     // botão" exercitava a TELA com callback nulo, e não o HOST de produção.
     // Provar a tela isolada não prova quem a monta.
-    testWidgets('P0-08b o Lobby de produção NÃO envia ingresso', (tester) async {
+    //
+    // A OS 38.3 LIGOU o card, e a afirmação NÃO afrouxou: o que ele abre é o
+    // SELETOR de assento, e o Lobby continua sem mandar ingresso nenhum.
+    // Entrar direto daqui entraria em QUALQUER lugar — o servidor aplicaria a
+    // ordem dele —, e a pessoa descobriria onde sentou depois de sentar.
+    testWidgets('P0-08b o Lobby de produção NÃO envia ingresso: abre o seletor', (
+      tester,
+    ) async {
       final b = Bancada(uidInicial: 'uid-A');
       addTearDown(b.fechar);
 
@@ -339,11 +347,13 @@ void main() {
       await irAoLobbyPublico(tester);
       final antes = b.canal.mensagens.length;
 
-      // Toca no card, e em tudo o que houver dentro dele.
+      // Toca no card.
       await tester.tap(find.text('Mesa de Ana'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('2/4'));
-      await tester.pumpAndSettle();
+
+      // O destino é o SELETOR, e não a mesa.
+      expect(find.byType(EscolhaAssentoDeProducao), findsOneWidget);
+      expect(find.byType(LobbyOnline), findsNothing);
 
       // NADA de ingresso saiu — nem `entrarMesa`, nem `criarMesa`.
       for (final m in b.canal.mensagens.skip(antes)) {

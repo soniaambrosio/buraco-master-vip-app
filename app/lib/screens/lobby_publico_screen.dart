@@ -112,12 +112,14 @@ class LobbyPublicoScreen extends StatefulWidget {
   final VoidCallback onVoltar;
   final VoidCallback onAtualizar;
 
-  /// A PORTA DA OS 38.3, e nada além disso.
+  /// A PORTA DO INGRESSO, e nada além disso.
   ///
-  /// Recebe o código OPACO da mesa. Em produção esta OS passa `null`: não
-  /// existe ingresso pela descoberta ainda, e um card que parecesse clicável
-  /// prometeria o que não há. Quando a 38.3 chegar, é por aqui que ela entra —
-  /// sem que esta tela precise aprender a falar com o servidor.
+  /// Recebe o código OPACO da mesa. Ela NÃO ingressa: quem a liga (a OS 38.3)
+  /// abre o seletor de assento, e é lá que o pedido é feito. Esta tela
+  /// continua sem saber falar com o servidor.
+  ///
+  /// `null` em prévia isolada — e aí o card não é botão, porque um nó tocável
+  /// que não faz nada é pior que nenhum.
   final void Function(String codigo)? onEscolherMesa;
 
   @override
@@ -528,7 +530,10 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
   /// Uma frase só, com tudo o que a pessoa vidente lê de relance — e nesta
   /// ordem, porque é a ordem em que a decisão é tomada: que mesa é, quanto
   /// falta, de que tipo, até quantos pontos, e desde quando espera.
-  String frasePara(MesaPublica m) {
+  /// [tocavel] acrescenta a dica de ação. Ela só existe quando o card É
+  /// botão: dizer "toque para escolher" num card inerte mandaria a pessoa
+  /// tentar um gesto que não acontece.
+  String frasePara(MesaPublica m, {bool tocavel = false}) {
     final partes = <String>[
       m.nome,
       '${m.jogadores} de ${m.capacidade} ${m.jogadores == 1 ? 'jogador' : 'jogadores'}',
@@ -540,17 +545,22 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
       m.estadoIngresso.rotulo,
       'esperando ${textoDeEspera(m.aguardandoHa)}',
       for (final a in m.assentos) a.descricaoAcessivel,
+      if (tocavel) 'toque para escolher seu lugar',
     ];
     return partes.join('. ');
   }
 
   Widget _cardDaMesa(MesaPublica m) {
     final escolher = widget.onEscolherMesa;
-    final conteudo = _conteudoDoCard(m);
+    // TOCÁVEL SÓ QUANDO A MESA ACEITA INGRESSO, e `ingressavel` vem do
+    // SERVIDOR — não é `vagas > 0`. Mesa em andamento pode ter cadeira vazia
+    // e mesmo assim não aceitar ninguém, e um card clicável ali mandaria a
+    // pessoa buscar uma recusa que o retrato já sabia dar.
+    final tocavel = escolher != null && m.ingressavel;
+    final conteudo = _conteudoDoCard(m, tocavel: tocavel);
 
-    if (escolher == null) {
-      // SEM INGRESSO NESTA OS. O card não é botão, não tem `onTap` e não
-      // finge que tem: um nó tocável que não faz nada é pior que nenhum.
+    if (!tocavel) {
+      // Um nó tocável que não faz nada é pior que nenhum.
       return Semantics(
         container: true,
         label: frasePara(m),
@@ -558,9 +568,12 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
         child: conteudo,
       );
     }
+    // `excludeSemantics` AQUI LEVARIA O TOQUE JUNTO: a semântica ENVOLVE o
+    // `InkWell` (herdando a ação dele) e quem tem a semântica descartada é o
+    // conteúdo de dentro.
     return Semantics(
       button: true,
-      label: frasePara(m),
+      label: frasePara(m, tocavel: true),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -572,7 +585,7 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
     );
   }
 
-  Widget _conteudoDoCard(MesaPublica m) {
+  Widget _conteudoDoCard(MesaPublica m, {bool tocavel = false}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
@@ -631,7 +644,7 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
           const SizedBox(height: 10),
           _assentos(m),
           const SizedBox(height: 8),
-          _estado(m),
+          _estado(m, tocavel: tocavel),
         ],
       ),
     );
@@ -689,7 +702,11 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
     );
   }
 
-  Widget _estado(MesaPublica m) {
+  /// [tocavel] acrescenta a etiqueta ENTRAR. Ela é o rótulo da ação que o
+  /// card inteiro executa — o card é o botão, e não ela: um segundo alvo
+  /// dentro de um alvo produziria dois nós tocáveis para o mesmo gesto, e o
+  /// de dentro teria menos de 48 dp.
+  Widget _estado(MesaPublica m, {bool tocavel = false}) {
     final cor = m.ingressavel ? _verdeClaro : _mut;
     return Row(
       children: [
@@ -711,6 +728,23 @@ class _LobbyPublicoScreenState extends State<LobbyPublicoScreen> {
             ),
           ),
         ),
+        if (tocavel)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(9),
+              color: const Color(0xFF3A2A15),
+              border: Border.all(color: _gold, width: 1.2),
+            ),
+            child: const Text(
+              'Entrar',
+              style: TextStyle(
+                color: _goldHi,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
       ],
     );
   }

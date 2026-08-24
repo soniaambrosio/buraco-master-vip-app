@@ -1,0 +1,73 @@
+{
+  "//": "CONTRATO DO INGRESSO EM MESA PUBLICA COM ESCOLHA AUTORITATIVA DE ASSENTO V1 (OS 38.3, lado do cliente). Ele descreve o fio que o aplicativo Flutter fala com o servidor para PEDIR um assento e para ler o veredito. Nao inventa nada: cada valor daqui foi lido do servidor congelado nomeado em `proveniencia`.",
+  "//naoEhEspelho": "ATENCAO — diferente de `descoberta-mesas-v1.json`, este arquivo NAO existe no repositorio do servidor. A OS 38.3 e do cliente e proibe alterar o servidor, entao nao ha como criar a copia gemea sem tocar nele. A amarra que sobra e a PROVENIENCIA: o SHA congelado esta declarado abaixo e a suite do cliente confere o digest DESTE arquivo. Publicar a copia gemea no servidor e residual registrado da OS.",
+  "//autoridade": "O cliente PEDE; o servidor DECIDE. Nada neste arquivo autoriza o aplicativo a concluir ocupacao, vaga, assento ou ingresso por conta propria. O unico fato que sustenta uma entrada e o ACK `entrou`, e o unico assento que vale e o que vem DENTRO dele.",
+
+  "versao": 1,
+  "esquema": "ingresso-assento-v1",
+
+  "proveniencia": {
+    "repositorio": "soniaambrosio/buraco-servidor",
+    "branch": "integracao/servidor-assento-descoberta-presenca-v1",
+    "sha": "8a0ee4b76ac915705e2e1a37237666a4aab41c39",
+    "//sha": "Folha canonica da OS 44. Contem o transporte de `ff3ddbe`, a escolha autoritativa de assento da OS 41 (`13ea6f1`) e a descoberta/presenca da OS 38.1 (`d1de8a7`) — os tres conferidos por `git merge-base --is-ancestor`.",
+    "arquivo": "server.js",
+    "funcoes": ["entrarMesa", "ehAssentoPedido", "recusaDeAssento", "aplicarEntrada", "erroDeAdmissao", "concluirPortaDeMesa"]
+  },
+
+  "protocoloWebSocket": {
+    "//": "Nenhum protocolo paralelo. O pedido anda no MESMO WebSocket autenticado da descoberta e do jogo, no mesmo despachante.",
+    "pedidoDoCliente": "entrarMesa",
+    "camposDoPedido": ["codigo", "apelido", "assento"],
+    "//codigo": "O codigo OPACO que a descoberta publicou (`mesa.codigo`). O cliente nunca o monta nem o interpreta.",
+    "//apelido": "Como o servidor vai nomear o assento. Vem da identidade publica da sessao. NAO e identidade: o servidor deriva o uid do token, e um `jogadorId` saindo do cliente seria recusado como identidade divergente.",
+    "//assento": "OPCIONAL. Inteiro de 0 a 3 quando ha escolha explicita. AUSENTE — a chave nao vai no objeto — quando o ingresso e automatico. `null` explicito NAO e ausencia: chega ao servidor como pedido malformado e recebe `ASSENTO_INVALIDO`.",
+
+    "respostaDeAceite": "entrou",
+    "camposDaResposta": ["codigo", "assento", "reconexao"],
+    "//assentoConfirmado": "O assento EFETIVAMENTE ocupado, decidido pelo servidor. E o unico assento que existe para o cliente.",
+    "//reconexao": "true quando a tentativa foi classificada como volta do titular ao PROPRIO assento. Nesse caso o servidor IGNORA o assento pedido e devolve o que ja era dele — e por isso e o unico caso em que `confirmado != solicitado` e legitimo.",
+
+    "respostaDeRecusa": "erro",
+    "camposDaRecusa": ["motivo", "codigo"],
+    "//codigo": "Presente so nas recusas TIPADAS. As recusas de ciclo de vida da mesa chegam so com `motivo`."
+  },
+
+  "recusasTipadas": {
+    "//": "Enumeracao FECHADA dos codigos que o servidor emite neste caminho. Codigo desconhecido nao vira fallback: vira recusa generica, e o cliente continua sem entrar.",
+    "assentoOcupado": "ASSENTO_OCUPADO",
+    "assentoInvalido": "ASSENTO_INVALIDO",
+    "admissaoIndisponivel": "ADMISSAO_VIP_INDISPONIVEL"
+  },
+
+  "recusasSemCodigo": {
+    "//": "Chegam so com `motivo`, no texto exato do servidor. Sao lidas por TEXTO porque e o que existe no fio; classificar errado nao concede assento nenhum — no pior caso vira recusa generica.",
+    "mesaNaoEncontrada": "mesa nao encontrada",
+    "mesaCheia": "mesa cheia",
+    "partidaJaComecou": "a partida ja comecou",
+    "//acentuacao": "O servidor emite com acentos (`mesa nao encontrada` sai como `mesa nao encontrada` com til e cedilha conforme o fonte). A comparacao do cliente e feita SEM acento e sem caixa, de proposito: um acento a mais ou a menos no servidor nao pode transformar uma recusa conhecida em desconhecida."
+  },
+
+  "assento": {
+    "minimo": 0,
+    "maximo": 3,
+    "capacidade": 4,
+    "//validade": "`Number.isInteger(v) && v >= 0 && v < 4` no servidor. Nao ha coercao: `\"2\"` e recusado. O cliente aplica a MESMA regra antes de enviar, para nao gastar socket levando recusa.",
+    "ordemAutomatica": [2, 1, 3],
+    "//ordemAutomatica": "A ordem que o servidor aplica quando `assento` esta AUSENTE: parceiro do criador primeiro. O cliente NAO a reproduz e NAO a envia disfarcada de preferencia — ele omite o campo e le o assento do ACK."
+  },
+
+  "proibidoNoFio": {
+    "//": "Nada disto sai do cliente neste caminho, e nada disto pode aparecer na interface.",
+    "itens": ["uid", "jogadorId", "uidAutenticado", "admissaoId", "tentativaEntradaId", "token", "credencial"]
+  },
+
+  "invariantes": {
+    "semFallback": "Recusa NAO produz segunda tentativa. O cliente nao tenta outra cadeira, nao sai e reentra, e nao navega.",
+    "semNavegacaoOtimista": "Nenhuma navegacao acontece antes do ACK. O assento nao e marcado como ocupado localmente enquanto o pedido esta em voo.",
+    "umaIntencao": "Uma unica intencao ativa por vez. Toque repetido nao gera segundo pedido.",
+    "igualdade": "Quando houve pedido EXPLICITO e a resposta nao e reconexao, `assento` do ACK tem de ser igual ao pedido. Diferente e violacao de contrato e nao concede entrada.",
+    "geracao": "Resposta de uma geracao de transporte anterior e DESCARTADA. Troca de conta invalida toda intencao pendente.",
+    "unicidade": "Uma confirmacao navega UMA vez. Resposta duplicada nao empilha destino."
+  }
+}

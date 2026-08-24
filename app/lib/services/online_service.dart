@@ -80,6 +80,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../descoberta/agente_descoberta.dart';
 import '../descoberta/contrato_descoberta.dart';
 import '../descoberta/estado_descoberta.dart';
+import '../ingresso/contrato_ingresso.dart';
+import '../ingresso/estado_ingresso.dart';
 import 'endpoint_servidor.dart';
 import 'redacao_segredos.dart';
 
@@ -268,6 +270,17 @@ class OnlineService extends ChangeNotifier {
   /// `meuAssento`, e o estado de uma partida em andamento não é afetado por
   /// nada que aconteça aqui.
   final EstadoDaDescoberta descoberta = EstadoDaDescoberta();
+
+  /// [INGRESSO] A intenção de sentar numa mesa pública, e o veredito dela.
+  ///
+  /// MORA AQUI pelo mesmo motivo do retrato: a tela do seletor pode ser
+  /// descartada antes da resposta, e estado que morre com a tela não tem como
+  /// descartar o que chega depois. Aqui há o crachá da conexão na mão, e é ele
+  /// que faz uma resposta da conta anterior não virar assento da conta nova.
+  ///
+  /// É PROJEÇÃO SEPARADA de [descoberta] e de [visao]: a lista não confirma
+  /// ingresso nenhum, e o ingresso não escreve na lista.
+  final EstadoDoIngresso ingresso = EstadoDoIngresso();
 
   late final AgenteDeDescoberta _agenteDaDescoberta;
 
@@ -504,6 +517,49 @@ class OnlineService extends ChangeNotifier {
     _enviar({'tipo': 'entrarMesa', 'codigo': codigo, 'apelido': apelido});
   }
 
+  /// [INGRESSO 38.3] Pede UM assento numa mesa pública descoberta.
+  ///
+  /// Devolve `true` quando o pedido saiu de verdade. Devolve `false` — sem
+  /// mandar nada — em três casos, e nenhum deles decide coisa alguma sobre
+  /// ocupação:
+  ///
+  ///   * não há conexão autenticada;
+  ///   * já existe um pedido em voo (a trava do toque duplo);
+  ///   * o assento pedido não é um assento (a MESMA regra do servidor).
+  ///
+  /// POR QUE `_bruto` E NÃO `_enviar`. A fila de pendentes existe para
+  /// comandos que valem quando a conexão voltar; um ingresso não vale. Entre
+  /// a queda e a volta a mesa pode ter enchido, e a pessoa já não está
+  /// olhando para aquela tela — um pedido guardado sentaria alguém numa
+  /// cadeira que ninguém está pedindo mais.
+  ///
+  /// [assento] nulo é INGRESSO AUTOMÁTICO: a chave não vai no objeto, e o
+  /// servidor aplica a ordem dele. Mandar `null` explícito seria outra coisa
+  /// — o servidor o lê como pedido malformado e responde `ASSENTO_INVALIDO`.
+  bool solicitarIngresso({
+    required String codigo,
+    required String apelido,
+    int? assento,
+  }) {
+    if (status != OnlineStatus.conectado || _canal == null) return false;
+    if (!ingresso.iniciar(
+      codigo: codigo,
+      assento: assento,
+      geracaoDeTransporte: _geracaoTransporte,
+    )) {
+      return false;
+    }
+    _meuApelido = apelido;
+    _bruto(<String, dynamic>{
+      'tipo': ContratoDoIngresso.pedidoDeIngresso,
+      ContratoDoIngresso.campoCodigo: codigo,
+      ContratoDoIngresso.campoApelido: apelido,
+      if (assento != null) ContratoDoIngresso.campoAssento: assento,
+    });
+    notifyListeners();
+    return true;
+  }
+
   void iniciarPartida() => _enviar({'tipo': 'iniciarPartida'});
 
   /// Envia uma jogada crua no formato do motor:
@@ -538,6 +594,11 @@ class OnlineService extends ChangeNotifier {
     // O crachá sobe ANTES de qualquer outra coisa: é o que faz uma busca de
     // credencial ou uma abertura de socket já em voo desistirem ao voltar.
     _geracaoTransporte++;
+    // [INGRESSO] E a intenção que estava em voo morre JUNTO com o socket que
+    // a levou. A resposta dela não vem mais por este canal, e a que vier pelo
+    // próximo é de outra tentativa — creditar uma à outra sentaria alguém por
+    // um pedido que ninguém repetiu.
+    ingresso.definirGeracaoDeTransporte(_geracaoTransporte);
     _reconectarTimer?.cancel();
     _reconectarTimer = null;
     _limiteAuthTimer?.cancel();
@@ -582,6 +643,10 @@ class OnlineService extends ChangeNotifier {
     // logado seria mostrar a A o que B viu. Este é o ÚNICO caminho que apaga o
     // retrato; nem revisão atrasada nem resposta inválida apagam.
     descoberta.encerrarSessao();
+    // [INGRESSO] A confirmação também É DE UMA PESSOA. Deixá-la viva faria a
+    // conta B navegar para a mesa que a conta A conquistou — o assento seria
+    // de A no servidor, e a tela de B mostraria a projeção dele.
+    ingresso.encerrarSessao();
     desligar(); // sobe a geração, derruba tudo e notifica uma vez só
   }
 
@@ -668,6 +733,17 @@ class OnlineService extends ChangeNotifier {
         );
         return;
       case 'entrou':
+        // [INGRESSO 38.3] O ACK é julgado ANTES de o transporte adotar
+        // qualquer coisa, e o julgamento é sobre a INTENÇÃO — mesa, geração
+        // e igualdade entre pedido e confirmação. Sem intenção ativa (a mesa
+        // por código, a reentrada automática depois de reconectar) isto é um
+        // no-op e o caminho antigo segue igual.
+        //
+        // O transporte adota o assento de qualquer forma: ele é a verdade do
+        // SERVIDOR sobre esta conexão, e discordar dele deixaria o cliente
+        // falando de uma cadeira que não é a dele. O que a recusa bloqueia é
+        // a NAVEGAÇÃO, que é a decisão do cliente.
+        ingresso.aplicarAceite(msg, geracaoDeTransporte: _geracaoTransporte);
         if (msg['codigo'] != null) codigo = msg['codigo'] as String;
         meuAssento = msg['assento'] as int?;
         erro = null;
@@ -705,6 +781,11 @@ class OnlineService extends ChangeNotifier {
           );
           return;
         }
+        // [INGRESSO 38.3] Recusa tipada de assento, quando há pedido em voo.
+        // Ela é lida do `msg` CRU, e não de `erro`: `redigir` existe para
+        // proteger a tela de um eco indevido do servidor, e classificar a
+        // recusa por um texto já alterado seria classificar outra coisa.
+        ingresso.aplicarRecusa(msg, geracaoDeTransporte: _geracaoTransporte);
         // O motivo vem do servidor e vai para a tela: passa pela redação, que é
         // barata, para o caso de ele ecoar algo que não devia.
         erro = redigir((msg['motivo'] as String?) ?? 'erro no servidor');
@@ -790,6 +871,9 @@ class OnlineService extends ChangeNotifier {
     // coisa: é ele que faz uma resposta da conexão anterior ser descartável.
     descoberta.definirGeracaoDeTransporte(_geracaoTransporte);
     descoberta.marcarAguardandoRetrato();
+    // [INGRESSO] O mesmo crachá, na mesma linha do tempo. Uma resposta que
+    // chegue com a geração anterior é de um pedido que já não existe.
+    ingresso.definirGeracaoDeTransporte(_geracaoTransporte);
     notifyListeners();
     _agenteDaDescoberta.iniciar();
 
@@ -828,6 +912,9 @@ class OnlineService extends ChangeNotifier {
     _agenteDaDescoberta.parar();
     descoberta.marcarServidorIndisponivel();
     _geracaoTransporte++; // nada que estiver em voo pode ressuscitar isto
+    // [INGRESSO] Inclusive um pedido de assento: sem conexão não há resposta,
+    // e a tela travada em "entrando" para sempre seria pior que a recusa.
+    ingresso.definirGeracaoDeTransporte(_geracaoTransporte);
     _reconectarTimer?.cancel();
     _reconectarTimer = null;
     _limiteAuthTimer?.cancel();
@@ -868,6 +955,15 @@ class OnlineService extends ChangeNotifier {
     // na tela, marcado como possivelmente velho — uma lista de dez segundos
     // atrás é mais útil e mais honesta do que uma tela vazia.
     _agenteDaDescoberta.parar();
+    // [INGRESSO] E o pedido de assento que estava em voo MORRE aqui.
+    //
+    // A queda não sobe a geração do transporte — a reconexão reaproveita a
+    // mesma —, então o crachá sozinho não resolveria este caso. E a resposta
+    // não vem: o socket que levou o pedido não existe mais, e a reentrada
+    // automática que acontece ao voltar é do CÓDIGO DA MESA, não de uma
+    // escolha de cadeira. Sem isto o seletor ficaria em "pedindo" para
+    // sempre, com as quatro cadeiras travadas e nada a mostrar.
+    ingresso.cancelar();
     if (_estadoTerminal) return; // insistir não resolveria
     if (status == OnlineStatus.conectado ||
         status == OnlineStatus.autenticando) {

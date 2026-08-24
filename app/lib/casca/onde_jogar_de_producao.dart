@@ -52,16 +52,16 @@ class OndeJogarDeProducao extends StatelessWidget {
             'Crie uma mesa e compartilhe o código, ou entre no código de alguém. '
             'É jogo online de verdade, no servidor.',
       ),
-      // [DESCOBERTA §10] DESBLOQUEADA — e a descrição diz exatamente o que ela
-      // entrega hoje, nem mais nem menos.
+      // [INGRESSO §12] A DESCRIÇÃO ANDOU JUNTO COM O QUE A OPÇÃO FAZ.
       //
-      // Ela estava bloqueada com a nota "o pareamento automático ainda não
-      // existe", e isso era verdade. Continua sendo: entrar numa mesa pública é
-      // a OS 38.3. O que passou a existir é a LISTA — quem está jogando, em que
-      // mesa, com quantas vagas — e ver isso é útil por si só.
+      // Ela dizia "entrar numa delas chega na próxima atualização", e isso
+      // era verdade enquanto o toque no card não levava a lugar nenhum. Agora
+      // leva: a lista abre o seletor de assento, e o assento é pedido ao
+      // servidor.
       //
-      // Prometer "entre e jogue" aqui seria repetir o defeito que esta tela
-      // existe para não ter: uma opção que afirma o contrário do que faz.
+      // O que a descrição continua NÃO prometendo é pareamento automático:
+      // ninguém é encaixado numa mesa por um algoritmo. Quem escolhe a mesa e
+      // a cadeira é a pessoa, e quem decide se pode é o servidor.
       OpcaoMesa(
         id: 'publica',
         icone: '🌎',
@@ -69,8 +69,8 @@ class OndeJogarDeProducao extends StatelessWidget {
         badge: 'ONLINE',
         corBadge: CorBadge.verde,
         descricao:
-            'Veja as mesas públicas abertas agora, quem está sentado e quantas '
-            'vagas faltam. Entrar numa delas chega na próxima atualização.',
+            'Veja as mesas abertas agora, escolha uma e escolha seu lugar na '
+            'mesa. Quem confirma a cadeira é o servidor.',
       ),
       OpcaoMesa(
         id: 'vip',

@@ -123,8 +123,14 @@ const MUTACOES = [
     id: 'M07',
     nome: 'o retrato SOBREVIVE ao logout (vaza para a conta seguinte)',
     arquivo: 'lib/services/online_service.dart',
-    de: '    descoberta.encerrarSessao();\n    desligar(); // sobe',
-    para: '    desligar(); // sobe',
+    // A ÂNCORA MUDOU NA OS 38.3, e não o que ela mede. Entre as duas linhas
+    // passou a existir `ingresso.encerrarSessao()`, então a âncora antiga
+    // deixou de casar — e uma campanha com âncora ausente aborta antes de
+    // medir, que é o comportamento certo dela.
+    de:
+      '    descoberta.encerrarSessao();\n' +
+      '    // [INGRESSO] A confirmação',
+    para: '    // [INGRESSO] A confirmação',
   },
 
   // --- §6.2 — as duas projeções não se tocam -------------------------------
@@ -286,9 +292,18 @@ const MUTACOES = [
   // --- §11.3 — ingresso não pertence a esta OS -----------------------------
   {
     id: 'M20',
-    nome: 'o Lobby passa a EXECUTAR ingresso',
+    // A OS 38.3 LIGOU esta porta, e o que ela liga é o SELETOR de assento.
+    // A mutação continua sendo a mesma pergunta — o Lobby executa ingresso? —
+    // e a resposta continua tendo de ser não: `entrarMesa` sem assento entra
+    // em QUALQUER lugar, e a pessoa descobre onde sentou depois de sentar.
+    nome: 'o Lobby passa a EXECUTAR ingresso, em vez de abrir o seletor',
     arquivo: 'lib/casca/lobby_publico_de_producao.dart',
-    de: '      onEscolherMesa: null,',
+    de:
+      '      onEscolherMesa: (codigo) => Navigator.of(context).push(\n' +
+      '        MaterialPageRoute<void>(\n' +
+      '          builder: (_) => EscolhaAssentoDeProducao(codigo: codigo),\n' +
+      '        ),\n' +
+      '      ),',
     para:
       '      onEscolherMesa: (codigo) =>\n' +
       "          online.entrarMesa(codigo: codigo, apelido: 'Jogador'),",
