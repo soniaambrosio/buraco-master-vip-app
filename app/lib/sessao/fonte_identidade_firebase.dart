@@ -74,8 +74,14 @@ class FonteDeIdentidadeFirebase implements FonteDeIdentidade {
   /// código que a Function devolve quando estoura uma exceção não tratada, e
   /// isso costuma ser transitório (cold start, contenção). Negar o retry
   /// deixaria o jogador sem identidade por um soluço do servidor.
+  ///
+  /// `unauthenticated` NÃO é traduzido para uma conclusão sobre a sessão. Este
+  /// transporte fala com `obterMinhaIdentidade`, que roda com `enforceAppCheck`
+  /// em produção, e ali o MESMO código chega de credencial recusada, de App
+  /// Check ausente e de App Check inválido. Quem separa os casos é a camada que
+  /// sabe se há sessão local — [identidadeAdmiteNovaTentativa].
   static MotivoFalhaIdentidade _traduzir(String codigo) => switch (codigo) {
-    'unauthenticated' => MotivoFalhaIdentidade.naoAutenticado,
+    'unauthenticated' => MotivoFalhaIdentidade.credencialOuAtestacao,
     'permission-denied' => MotivoFalhaIdentidade.recusado,
     'unavailable' ||
     'deadline-exceeded' ||
