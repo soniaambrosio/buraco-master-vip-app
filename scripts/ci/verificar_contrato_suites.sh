@@ -119,8 +119,8 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # decisao nova; o que estas linhas proibem e ele ENCOLHER — perder a chave,
 # rebaixar o piso de provas, rebaixar o piso de casos executados.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip torneiobase"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:65 admvip:48 torneiobase:56"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:74 admvip:48 torneiobase:56"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:72 admvip:48 torneiobase:56"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:80 admvip:48 torneiobase:56"
 
 # O piso de BLOCOS NORMATIVOS. `exige` sozinho ja reprova quando some inteiro —
 # "nao declara nenhum 'exige'" —, e essa era toda a protecao que existia. Apagar
@@ -128,7 +128,12 @@ readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:74 admvip:48 tornei
 # formalmente completo, com uma unica linha, e a suite podia perder sete dos oito
 # blocos estruturais sem que ninguem cobrasse. A quantidade tambem nao pode
 # encolher.
-readonly PISOS_EXIGE="torneiobase:14"
+#
+# `contratosui` entrou nesta regua pela OS 46, e pelo mesmo motivo: os literais
+# que guardam a fixture da FASE B sao a unica coisa que sobra quando alguem
+# apaga um caso da matriz para "consertar" uma sabotagem. Um contrato que perde
+# `exige` um a um continua formalmente completo.
+readonly PISOS_EXIGE="torneiobase:14 contratosui:19"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'

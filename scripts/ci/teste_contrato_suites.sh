@@ -85,17 +85,37 @@ reset() {
   cp -r "$BASE" "$W"
 }
 
+# gates_com_contrato <fonte> — a relacao dos gates que CARREGAM contrato, lida
+# da propria fonte unica. E a mesma pergunta que `conferir_entrada` faz do outro
+# lado ("esta entrada declara algum atributo?"), feita aqui uma vez so.
+#
+# Existe porque a evidencia da FASE B nao pode ser lista escrita a mao: a FASE B
+# cobra um `t_<gate>.log` de TODO gate contratado, e lista escrita aqui envelhece
+# no primeiro contrato novo — o CONTROLE verde da FASE B fica vermelho sem que
+# nada no verificador tenha se quebrado. Foi exatamente isso que aconteceu com
+# T27 quando a composicao de Perfil/Social acrescentou onze contratos de uma vez.
+gates_com_contrato() {
+  awk '/^[^[:blank:]#]/ { g = $0; next }
+       /^[[:blank:]]/ && g != "" && !(g in vistos) { vistos[g] = 1; print g }' "$1"
+}
+
 # resultados <dir> — monta a evidencia de um run bem-sucedido, na ordem certa:
-# o carimbo primeiro, os logs depois.
+# o carimbo primeiro, os logs depois. A relacao vem da FONTE.
+#
+# A linha de log carrega os DOIS contadores de uma vez — o `+N` do Flutter e o
+# `casos ok: N` dos portoes em bash — porque `contador` e por gate e a fixture
+# nao tem como conhecer o vocabulario de cada um. Os numeros sao folgados de
+# proposito: quem mede piso de casos EXECUTADOS e o caso que reescreve, ele
+# mesmo, o log do gate que quer medir (T31, C2-22).
 resultados() {
   local d="$1" k
   rm -rf "$d"
   mkdir -p "$d"
   printf 'run 1 — carimbo desta execucao\n' > "$d/carimbo_execucao"
-  printf '00:12 +81: All tests passed!\n' > "$d/t_comunicacao.log"
-  printf '00:09 +137: All tests passed!\n' > "$d/t_chatdom.log"
-  printf 'casos ok: 38 | casos com falha: 0\nTESTE DO PORTAO: VERDE\n' > "$d/t_portaoci.log"
-  printf 'casos ok: 34 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
+  for k in $(gates_com_contrato "$W/$FONTE_W"); do
+    printf '00:12 +999: All tests passed! | casos ok: 999 | casos com falha: 0\n' \
+      > "$d/t_$k.log"
+  done
   # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
   # ordem carimbo -> log ficar inequivoca sem esperar o relogio.
   touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
@@ -344,27 +364,11 @@ trocar_atributo() {
 # passaria a medir o instrumento, nao a guarda.
 escapar_ere() { printf '%s' "$1" | sed -e 's#[][(){}.*+?^$|\\]#\\&#g'; }
 
-# resultados_completos <dir>
-#
-# Evidencia de um run em que TODO gate com contrato deixou log. A relacao vem da
-# FONTE, e nao de uma lista escrita aqui: lista escrita aqui envelhece no
-# primeiro gate novo e passa a dar verde por omissao.
-#
-# NAO substitui `resultados()` e nao mexe nela: T27 continua medindo exatamente
-# o que media. Esta e a fixture da campanha da OS 42-C2, que precisa de uma FASE
-# B VERDE para depois sabotar UM log e ver a diferenca.
-resultados_completos() {
-  local d="$1" k
-  rm -rf "$d"
-  mkdir -p "$d"
-  printf 'run C2 — carimbo desta execucao\n' > "$d/carimbo_execucao"
-  for k in $(awk '/^[^[:blank:]#]/ { g = $0; next }
-                  /^[[:blank:]]/ && g != "" && !(g in vistos) { vistos[g] = 1; print g }' \
-                  "$W/$FONTE_W"); do
-    printf '00:12 +999: All tests passed! | casos ok: 999 | casos com falha: 0\n' > "$d/t_$k.log"
-  done
-  touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
-}
+# A fixture da FASE B e UMA so — `resultados()`, la em cima, que deriva a
+# relacao de logs da fonte unica. Ate a OS 46 havia DUAS: `resultados()` com
+# quatro logs escritos a mao, usada por T27, e uma copia ja derivada aqui, para
+# a campanha da OS 42-C2. Era a primeira que deixava T27 vermelho — e duas
+# fixtures para o mesmo cenario garantem que uma delas envelheca sozinha.
 
 # marcadores <dir> — um `exit_<gate>` = 0 para CADA gate da fonte. E o estado em
 # que o agregador fica VERDE; as sabotagens tiram ou adulteram exatamente um.
@@ -516,18 +520,18 @@ esperar 1 "C2-18 — produtor do marcador COMENTADO no workflow => VERMELHO" \
 printf '\n== OS 42-C2: torneiobase — FASE B, a execucao real ==\n'
 
 reset
-resultados_completos "$TMP/resc2"
+resultados "$TMP/resc2"
 esperar 0 "C2-19 CONTROLE — evidencia datada de TODOS os contratos => VERDE" \
   'ok   casos      torneiobase' "$TMP/resc2"
 
 reset
-resultados_completos "$TMP/resc2"
+resultados "$TMP/resc2"
 rm -f "$TMP/resc2/t_torneiobase.log"
 esperar 1 "C2-20 — marcador de torneiobase sem log => VERMELHO" \
   "gate 'torneiobase' nao deixou log" "$TMP/resc2"
 
 reset
-resultados_completos "$TMP/resc2"
+resultados "$TMP/resc2"
 touch -d '-1 hour' "$TMP/resc2/t_torneiobase.log"
 esperar 1 "C2-21 — log de torneiobase ANTERIOR ao carimbo => VERMELHO" \
   "log de 'torneiobase' e ANTERIOR" "$TMP/resc2"
@@ -537,7 +541,7 @@ esperar 1 "C2-21 — log de torneiobase ANTERIOR ao carimbo => VERMELHO" \
 # de casos EXECUTADOS — e ele so existe porque `casos` esta na fonte e
 # `PISOS_CASOS` o impede de sumir de la.
 reset
-resultados_completos "$TMP/resc2"
+resultados "$TMP/resc2"
 trocar_atributo torneiobase executor "$TB_CMD --plain-name SEED"
 sed -i "s|^\\( *\\)$TB_CMD\$|\\1$TB_CMD --plain-name SEED|" "$W/$YML_W"
 printf '00:03 +9: All tests passed!\n' > "$TMP/resc2/t_torneiobase.log"
@@ -591,6 +595,129 @@ else
   nok "C2-27 — esperado agregador 0 e verificador 1 com a causa; obtido $agg_exit / $ver_exit"
   sed 's/^/        | /' "$TMP/saida2.txt"
 fi
+
+# ---------------------------------------------------------------------------
+# OS 46 — A EVIDENCIA DA FASE B ACOMPANHA A FONTE
+#
+# T27 e o unico CONTROLE VERDE da FASE B, e ele estava VERMELHO sem que nada no
+# verificador tivesse se quebrado: a fixture escrevia QUATRO logs a mao —
+# comunicacao, chatdom, portaoci, contratosui — e a composicao de Perfil/Social
+# acrescentou ONZE contratos de uma vez a fonte unica. A FASE B cobra log de
+# TODO gate contratado; treze passaram a faltar.
+#
+# O defeito era da FIXTURE. O verificador estava certo em cobrar, o leitor da
+# fonte leu o que estava escrito, e a expectativa de T27 estava certa em ser
+# VERDE — por isso o conserto e a fixture derivar da fonte, e nao T27 passar a
+# esperar VERMELHO.
+#
+# Os casos abaixo existem para que a fixture nao volte a ficar atras da fonte.
+# OS46-03 acrescenta um contrato NOVO e cobra FASE B VERDE — com lista escrita a
+# mao ele fica vermelho no ato. OS46-04 e a prova de que OS46-03 nao e verde por
+# omissao. OS46-05 e a fixture-ISCA: a lista antiga de quatro logs, vermelha por
+# nome proprio.
+#
+# O que impede T27 de ser PULADO, ou de ter a expectativa rebaixada para exit 1,
+# NAO mora aqui — mora fora, no contrato de `contratosui` na fonte unica, que
+# nomeia como bloco obrigatorio tanto a linha do proprio T27 quanto a derivacao
+# da fixture. Caso que se apaga junto com a sabotagem nao guarda nada.
+# ---------------------------------------------------------------------------
+
+GN46='gatenovo46'
+GN46_SUITE='app/test/comunicacao/comunicacao_test.dart'
+
+# acrescentar_contrato46 — poe na fonte E no workflow um gate NOVO com contrato
+# completo, apontando para uma suite que ja esta na bancada. E o cenario que
+# quebrou T27, reproduzido de proposito.
+acrescentar_contrato46() {
+  local sha
+  sha="$(tr -d '\r' < "$W/$GN46_SUITE" | sha256sum | awk '{print $1}')"
+  {
+    printf '\n%s\n' "$GN46"
+    printf '    suite      %s\n' "$GN46_SUITE"
+    printf '    executor   roda %s %s\n' "$GN46" "${GN46_SUITE#app/}"
+    printf '    sha256     %s\n' "$sha"
+    printf '    provas     71\n'
+    printf '    exige      void main\n'
+  } >> "$W/$FONTE_W"
+  # O produtor, ao lado do passo que ja roda a mesma suite. `awk` e nao `sed`:
+  # a linha do YAML termina em CRLF nesta arvore, e ancora com `$` depois do
+  # caminho e casamento que vale numa plataforma e mente na outra.
+  awk -v ln="roda $GN46 ${GN46_SUITE#app/}" '
+    { print }
+    !feito && index($0, "roda comunicacao  test/comunicacao/comunicacao_test.dart") {
+      match($0, /^ */)
+      printf "%s%s\n", substr($0, 1, RLENGTH), ln
+      feito = 1
+    }' "$W/$YML_W" > "$TMP/y46.txt"
+  mv "$TMP/y46.txt" "$W/$YML_W"
+}
+
+printf '\n== OS 46: a evidencia da FASE B acompanha a fonte ==\n'
+
+reset
+resultados "$TMP/res46"
+CONTRATADOS46=" $(gates_com_contrato "$W/$FONTE_W" | tr '\n' ' ') "
+
+faltando46=''
+for g46 in $CONTRATADOS46; do
+  [ -s "$TMP/res46/t_$g46.log" ] || faltando46="$faltando46 $g46"
+done
+if [ -z "$faltando46" ]; then
+  ok "OS46-01 CONTROLE — a fixture deixa log de TODO gate com contrato"
+else
+  nok "OS46-01 — a fixture ficou atras da fonte; sem log:$faltando46"
+fi
+
+# A outra metade da mesma pergunta: linha INDENTADA e atributo, e atributo nao e
+# gate. Uma derivacao que confundisse os dois escreveria `t_sha256.log` e
+# companhia, e a FASE B ficaria verde cobrando nomes que nao existem.
+sobrando46=''
+for f46 in "$TMP/res46"/t_*.log; do
+  g46="${f46##*/t_}"
+  g46="${g46%.log}"
+  case "$CONTRATADOS46" in
+    *" $g46 "*) ;;
+    *) sobrando46="$sobrando46 $g46" ;;
+  esac
+done
+if [ -z "$sobrando46" ]; then
+  ok "OS46-02 — nenhuma linha indentada virou gate na evidencia"
+else
+  nok "OS46-02 — a fixture inventou gate que a fonte nao declara:$sobrando46"
+fi
+
+reset
+acrescentar_contrato46
+resultados "$TMP/res46"
+esperar 0 "OS46-03 CONTROLE — contrato NOVO na fonte e a FASE B segue VERDE" \
+  "ok   log        $GN46" "$TMP/res46"
+
+reset
+acrescentar_contrato46
+resultados "$TMP/res46"
+rm -f "$TMP/res46/t_$GN46.log"
+esperar 1 "OS46-04 — o log do contrato NOVO removido => VERMELHO" \
+  "gate '$GN46' nao deixou log" "$TMP/res46"
+
+# A fixture-ISCA: exatamente a lista escrita a mao que a OS 46 aposentou. Ela
+# nao pode voltar a valer como evidencia de um run completo.
+reset
+rm -rf "$TMP/res46"
+mkdir -p "$TMP/res46"
+printf 'run isca — carimbo desta execucao\n' > "$TMP/res46/carimbo_execucao"
+for g46 in comunicacao chatdom portaoci contratosui; do
+  printf '00:12 +999: All tests passed! | casos ok: 999 | casos com falha: 0\n' \
+    > "$TMP/res46/t_$g46.log"
+done
+touch -d '+1 hour' "$TMP/res46"/t_*.log 2>/dev/null || touch "$TMP/res46"/t_*.log
+esperar 1 "OS46-05 — fixture-ISCA: so os quatro logs escritos a mao => VERMELHO" \
+  'nao deixou log' "$TMP/res46"
+
+reset
+marcadores "$TMP/agg46"
+printf 'ausente: scripts/ci/teste_contrato_suites.sh\n' > "$TMP/agg46/nao_contratosui"
+esperar_portao 1 "OS46-06 — contratosui marcado NAO EXECUTADO => agregador VERMELHO" \
+  'contratosui +NAO EXECUTADO' "$TMP/agg46"
 
 printf '\n== controle final ==\n'
 

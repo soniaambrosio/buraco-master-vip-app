@@ -190,13 +190,23 @@ portaoci
 # reserva; C2-08 e o digest realinhado depois da adulteracao; C2-15 e o contrato
 # encolhendo um `exige` por vez; C2-22 e o alvo trocado por caminho mais
 # estreito; e C2-27 e a divisao de trabalho entre o agregador e a regua.
+#
+# A OS 46 acrescentou os oito ultimos. Eles guardam a FIXTURE da FASE B, que e
+# a peca que nenhuma sabotagem alcancava: `resultados()` escrevia quatro logs a
+# mao, a fonte passou a ter dezessete contratos, e T27 — o unico CONTROLE verde
+# da FASE B — ficou vermelho sem que nada tivesse se quebrado. Os literais
+# incluem o `esperar 0` de T27 e o `esperar`/`nok` de cada caso novo DE
+# PROPOSITO: assim o contrato reprova tanto quem apaga o caso quanto quem
+# rebaixa a expectativa dele para vermelho. E o `for k in $(gates_com_contrato`
+# e o unico literal que cobra a derivacao em si — sem ele, a lista escrita a mao
+# poderia voltar com todos os casos no lugar.
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     ce872aaddc7e712ac1889393a205247b87ec7758c1538c2eaed89567665f5ac1
-    provas     65
+    sha256     f76eb744a957fb28cd5db35f734c0edab32b50483ea18b7a474a7a1ebe471254
+    provas     72
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      74
+    casos      80
     contador   casos ok: [0-9]+
     exige      T01 CONTROLE
     exige      T08 — suite trocada por expect(1, 1)
@@ -209,6 +219,14 @@ contratosui
     exige      C2-15 — UM exige removido, treze de catorze
     exige      C2-22 — alvo trocado por caminho mais ESTREITO
     exige      C2-27 — sem a entrada o agregador fica VERDE
+    exige      esperar 0 "T27 CONTROLE
+    exige      for k in $(gates_com_contrato "$W/$FONTE_W")
+    exige      nok "OS46-01 — a fixture ficou atras da fonte; sem log:$faltando46"
+    exige      nok "OS46-02 — a fixture inventou gate que a fonte nao declara:$sobrando46"
+    exige      esperar 0 "OS46-03 CONTROLE — contrato NOVO na fonte
+    exige      esperar 1 "OS46-04 — o log do contrato NOVO removido
+    exige      esperar 1 "OS46-05 — fixture-ISCA
+    exige      esperar_portao 1 "OS46-06 — contratosui marcado NAO EXECUTADO
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
