@@ -108,13 +108,27 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # tirar a entrada inteira da fonte unica passava em SILENCIO, e um gate que some
 # sem reprovar e um gate que nao existe.
 #
-# `torneiobase` tem o MESMO buraco e NAO foi acrescentado aqui: a canonizacao
-# daquela suite (recarimbo do digest e elevacao do piso) e reserva declarada da
-# OS 42-C2, e mexer na protecao dela agora invadiria essa reserva. A divida fica
-# medida e registrada, nao esquecida.
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 admvip:48"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 admvip:48"
+# `torneiobase` guarda a outra metade da fundacao P de Torneios V1 — que modelo
+# pode existir, que ciclo ele atravessa e o que continua proibido. Ele tinha o
+# MESMO buraco, medido e deixado em aberto pela OS 42-C1 como reserva desta OS
+# 42-C2: a entrada inteira saia da fonte unica, o produtor saia do workflow, a
+# suite saia do disco, e este verificador terminava com "tudo no lugar".
+#
+# As tres reguas abaixo sao a razao de a remocao deixar de ser silenciosa. Elas
+# nao substituem o contrato: o contrato mora na fonte unica e pode CRESCER com
+# decisao nova; o que estas linhas proibem e ele ENCOLHER — perder a chave,
+# rebaixar o piso de provas, rebaixar o piso de casos executados.
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip torneiobase"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:65 admvip:48 torneiobase:56"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:74 admvip:48 torneiobase:56"
+
+# O piso de BLOCOS NORMATIVOS. `exige` sozinho ja reprova quando some inteiro —
+# "nao declara nenhum 'exige'" —, e essa era toda a protecao que existia. Apagar
+# treze dos catorze literais de `torneiobase` passava calado: o contrato ficava
+# formalmente completo, com uma unica linha, e a suite podia perder sete dos oito
+# blocos estruturais sem que ninguem cobrasse. A quantidade tambem nao pode
+# encolher.
+readonly PISOS_EXIGE="torneiobase:14"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
@@ -292,6 +306,23 @@ conferir_entrada() {
       erro "o piso de casos de '$chave' foi baixado de $piso para $casos_esperados na fonte"
     else
       printf 'ok   piso       %-12s casos %s >= %s\n' "$chave" "$casos_esperados" "$piso"
+    fi
+  fi
+
+  # O piso de BLOCOS. Um contrato que perde `exige` um a um continua "completo"
+  # para a checagem acima — ela so pergunta se sobrou ALGUM. Este piso responde
+  # a outra pergunta: sobraram QUANTOS. Vale por gate, e so para quem esta
+  # nomeado em `PISOS_EXIGE`.
+  piso="$(piso_de "$PISOS_EXIGE" "$chave")"
+  if [ -n "$piso" ]; then
+    local blocos_exigidos=0
+    if [ -n "$exige_lista" ]; then
+      blocos_exigidos="$(printf '%s\n' "$exige_lista" | grep -c .)"
+    fi
+    if [ "$blocos_exigidos" -lt "$piso" ]; then
+      erro "o contrato de '$chave' declara $blocos_exigidos 'exige' e o piso e $piso — o contrato encolheu"
+    else
+      printf 'ok   piso       %-12s exige %s >= %s\n' "$chave" "$blocos_exigidos" "$piso"
     fi
   fi
 

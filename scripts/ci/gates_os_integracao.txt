@@ -182,13 +182,21 @@ portaoci
 # que responde a terceira pergunta — "a suite ainda PROVA?" — que ate a OS 32
 # ninguem fazia. Sem ele, `verificar_contrato_suites.sh` seria a segunda peca
 # do CI que ninguem verifica.
+#
+# A OS 42-C2 acrescentou aqui a campanha de `torneiobase` (C2-01 a C2-27, mais
+# um caso por bloco normativo). Os `exige` abaixo nomeiam os cinco casos que,
+# sozinhos, denunciam a volta de cada escape fechado por ela: C2-02 e a remocao
+# conjunta de registro e produtor — o escape que a OS 42-C1 mediu e deixou de
+# reserva; C2-08 e o digest realinhado depois da adulteracao; C2-15 e o contrato
+# encolhendo um `exige` por vez; C2-22 e o alvo trocado por caminho mais
+# estreito; e C2-27 e a divisao de trabalho entre o agregador e a regua.
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     77966085e9f0205a03faaa1dc6be827a24a76d49ca85f5e13653616fc3b4aaa1
-    provas     37
+    sha256     ce872aaddc7e712ac1889393a205247b87ec7758c1538c2eaed89567665f5ac1
+    provas     65
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      34
+    casos      74
     contador   casos ok: [0-9]+
     exige      T01 CONTROLE
     exige      T08 — suite trocada por expect(1, 1)
@@ -196,6 +204,11 @@ contratosui
     exige      T28 — marcador fabricado, sem log
     exige      T29 — log ANTERIOR ao carimbo
     exige      T34 CONTROLE
+    exige      C2-02 — registro e produtor removidos JUNTOS
+    exige      C2-08 — conteudo adulterado e digest REALINHADO
+    exige      C2-15 — UM exige removido, treze de catorze
+    exige      C2-22 — alvo trocado por caminho mais ESTREITO
+    exige      C2-27 — sem a entrada o agregador fica VERDE
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
