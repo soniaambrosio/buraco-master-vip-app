@@ -8,18 +8,26 @@
 // A postura é adversarial: quando um valor é suspeito, ele some. Perder um
 // detalhe de diagnóstico é barato; vazar um `purchaseToken` num ticket, não.
 //
-// Duas defesas independentes, para que uma falha não deixe o dado passar:
+// Três defesas independentes, para que uma falha não deixe o dado passar:
 //   1. NEGAÇÃO POR CHAVE — se a chave se chama `uid`, `email`, `token`,
 //      `purchaseToken`, `mao`…, o valor inteiro é substituído. Não importa
 //      o formato do valor.
 //   2. NEGAÇÃO POR FORMA — dentro de qualquer texto livre, o que TEM CARA de
 //      segredo (JWT, chave de API, e-mail, blob opaco longo, carta de baralho)
 //      é substituído mesmo sem chave nenhuma por perto.
+//   3. NEGAÇÃO POR POSIÇÃO — numa URL, o que vem depois de `?chave=`,
+//      `&chave=` ou `#chave=` é valor de parâmetro, e valor de parâmetro some
+//      sempre: nem o nome do campo nem o formato do valor entram na decisão.
+//
+// A terceira não reforça as outras duas — ela cobre um furo que existia
+// justamente porque as duas primeiras se atrapalhavam. Ver
+// [Redator._valorDeParametroDeUrl], que conta o mecanismo por inteiro.
 //
 // A rede larga da defesa 2 vale para MENSAGEM e CONTEXTO. Stack trace usa
 // [Redator.stack], que aplica só os padrões inequívocos: um stack trace é
 // estrutura gerada pelo compilador, e varrer blob opaco ali destruiria
-// justamente o que responde "onde quebrou?".
+// justamente o que responde "onde quebrou?". A defesa 3 está entre os
+// inequívocos, e portanto vale para o stack também.
 
 /// Marca deixada no lugar do que foi removido. Aparece nos relatórios e é o
 /// sinal de que a redação funcionou — não é erro.
@@ -112,6 +120,44 @@ class Redator {
         r'''|(["'])(?:\\.|(?!\3)[^\\])*\3|[^\s,;)}\]]+)''',
   );
 
+  // Valor de parâmetro de URL — a defesa por POSIÇÃO.
+  //
+  // O furo que ela fecha, e por que nenhuma das outras duas alcançava:
+  //
+  //     https://servidor.tld/ws?token=abc123&uid=xyz
+  //
+  // `_paresNomeados` varre `chave: valor` em texto livre. A primeira coisa que
+  // ele encontra numa URL é `https` seguido de `:` — e `https` não está em
+  // [chavesProibidas]. O casamento engole `//servidor.tld/ws?token=abc123&uid=xyz`
+  // inteiro como "valor" de um campo inofensivo, devolve o trecho intacto e,
+  // por tê-lo CONSUMIDO, nunca chega a examinar o `token=` que estava lá
+  // dentro. `_blobOpaco` também não alcança: `/`, `.`, `?`, `=` e `&` quebram a
+  // corrida de caracteres em pedaços muito abaixo do piso de 24. O segredo
+  // atravessava as duas defesas por causa do `https:` na frente.
+  //
+  // Daí a leitura posicional: depois de `?chave=`, `&chave=` ou `#chave=` vem
+  // valor de parâmetro, e valor de parâmetro é segredo pelo LUGAR onde está.
+  // Não depende de a lista de nomes proibidos acompanhar o mundo, nem de o
+  // valor ter cara de credencial — `?t=abc123` cai igual a `?token=<jwt>`.
+  //
+  // O `#` entra junto porque o fluxo OAuth implícito devolve o `access_token`
+  // no fragmento, que nem chega a ser enviado ao servidor — e é justamente por
+  // isso que ele acaba colado em texto de diagnóstico.
+  //
+  // O que ela PRESERVA é deliberado: o esquema, o host, o caminho e o NOME do
+  // parâmetro sobrevivem. Saber que houve um `?token=` e para onde a conexão
+  // ia é diagnóstico legítimo; saber o valor, não.
+  //
+  // A primeira alternativa do valor é a própria marca de redação, pela mesma
+  // razão que em `_paresNomeados`: sem ela, a classe negada pararia antes do
+  // `]` de um valor já redigido, e cada nova passada acrescentaria um `]` —
+  // a redação deixaria de ser idempotente.
+  static final RegExp _valorDeParametroDeUrl = RegExp(
+    r'([?&#][^\s=&#?]{1,64}=)(?:' +
+        RegExp.escape(marcaRedacao) +
+        r'''|[^\s&#,;)"'\]}<>]+)''',
+  );
+
   // Blob opaco: candidato a token ou UID solto, sem chave por perto.
   // 24 é o piso: um UID do Firebase tem 28 e um purchaseToken passa de 100.
   static final RegExp _blobOpaco = RegExp(r'[A-Za-z0-9_\-]{24,}');
@@ -139,6 +185,14 @@ class Redator {
 
   String _inequivocos(String entrada) {
     var s = entrada;
+    // Vem PRIMEIRO, e a ordem é o remédio: se `_paresNomeados` rodasse antes,
+    // ele consumiria a URL inteira pela chave do esquema e o valor de query
+    // nunca seria examinado. Aqui o valor já saiu antes de qualquer outra
+    // regra ter chance de engolir o trecho.
+    s = s.replaceAllMapped(
+      _valorDeParametroDeUrl,
+      (m) => '${m.group(1)}$marcaRedacao',
+    );
     s = s.replaceAll(_jwt, marcaRedacao);
     s = s.replaceAll(_chaveGoogle, marcaRedacao);
     s = s.replaceAll(_clientId, marcaRedacao);
