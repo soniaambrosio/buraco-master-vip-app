@@ -606,6 +606,7 @@ garante nesse escopo.
 | `aad09df` | `functions-conta`: matriz, plano, diário, reautenticação, executor, callables |
 | `b304f59` | os dez casos da OS contra Firestore e Auth reais |
 | `d251c14` | cliente Flutter: porta, adaptador, controlador, tela e entrada em Configurações |
+| `f0694d8` | **OS 48** — destino de `chatRitmo/{uid}`: matriz, plano, executor, 11 casos de emulador e a campanha negativa de `ferramentas/exclusao/` |
 
 ---
 
