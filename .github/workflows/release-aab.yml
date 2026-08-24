@@ -237,15 +237,30 @@ jobs:
         # `app/lib/main.dart`. O fonte e compartilhado com o build.yml (APK de
         # teste, pacote .poc), que precisa continuar usando o app antigo do
         # Firebase. Editar o fonte quebraria o login do APK de teste.
+        #
+        # ---------------------------------------------------------------------
+        # O `serverClientId` NAO MORA MAIS EM `main.dart`, E ISSO TRAVOU O AAB
+        # ---------------------------------------------------------------------
+        #
+        # Este passo conferia o Web client do Google Sign-In DENTRO de main.dart,
+        # onde ele um dia esteve. Ele mudou para
+        # `app/lib/sessao/autenticacao_firebase.dart` numa OS de sessao, e a
+        # conferencia continuou apontando para o arquivo antigo: o passo passou a
+        # levantar `AssertionError` em TODA execucao, e nenhum AAB saia daqui —
+        # por um arquivo errado, nao por um defeito de configuracao.
+        #
+        # A conferencia continua existindo, e no arquivo onde o valor realmente
+        # vive. Perde-la seria pior do que te-la quebrada: sem ela, um bundle
+        # sem Web client compila, sobe, e so falha no primeiro login real.
         run: |
           python3 - <<'PY'
           import os
+
           p = 'app_build/lib/main.dart'
           s = open(p, encoding='utf-8').read()
 
           antigo = os.environ['BMV_FIREBASE_APP_ID_POC']
           novo = os.environ['BMV_FIREBASE_APP_ID']
-          server_client = '203886484007-a5e1ob9b7uequoffj6u76h5vltici9a4.apps.googleusercontent.com'
 
           n = s.count(antigo)
           if n != 1:
@@ -255,16 +270,33 @@ jobs:
               )
           s = s.replace(antigo, novo)
 
-          # O Web client do Google Sign-In continua o MESMO nos dois pacotes:
-          # ele identifica o projeto, nao o app Android. Trocar quebraria o login.
-          if server_client not in s:
-              raise AssertionError('serverClientId Web sumiu do main.dart — nao prosseguir.')
+          # CONFERE O PROPRIO RESULTADO. Uma substituicao que erra o alvo e segue
+          # em frente produz um bundle que compila, parece pronto e fala com o
+          # registro Firebase errado — e com App Check ligado no cliente, e o
+          # registro que decide se a atestacao fecha.
+          if s.count(novo) != 1 or antigo in s:
+              raise AssertionError(
+                  'a substituicao do appId nao produziu exatamente um appId oficial '
+                  'e zero appId de teste — nao prosseguir.'
+              )
 
           open(p, 'w', encoding='utf-8').write(s)
           print('appId do Firebase no build oficial:', novo)
-          print('serverClientId Web preservado.')
+
+          # O Web client do Google Sign-In continua o MESMO nos dois pacotes: ele
+          # identifica o projeto, nao o app Android. Trocar quebraria o login.
+          autenticacao = 'app_build/lib/sessao/autenticacao_firebase.dart'
+          server_client = '203886484007-a5e1ob9b7uequoffj6u76h5vltici9a4.apps.googleusercontent.com'
+          a = open(autenticacao, encoding='utf-8').read()
+          if a.count(server_client) != 1:
+              raise AssertionError(
+                  f'esperava exatamente 1 serverClientId Web em {autenticacao}, '
+                  f'achei {a.count(server_client)} — nao prosseguir.'
+              )
+          print('serverClientId Web preservado em', autenticacao)
           PY
-          grep -n "appId:\|serverClientId" app_build/lib/main.dart | head -4
+          grep -n "appId:" app_build/lib/main.dart | head -2
+          grep -n "serverClientId" app_build/lib/sessao/autenticacao_firebase.dart | head -2
           echo "--- o fonte do repositorio NAO foi tocado: ---"
           grep -n "appId:" app/lib/main.dart
 

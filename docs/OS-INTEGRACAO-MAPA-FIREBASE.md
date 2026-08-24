@@ -155,8 +155,14 @@ Consistente e sem conflito nas três:
   `claimPioneerKit`. O comentário de `billing_validacao_firebase.dart` diz o
   porquê com todas as letras: *"sem que o app precise mandar um uid — que seria
   falsificável"*.
-- **App Check:** integrado em A (`firebase_app_check: ^0.4.6`), **desligado por
-  padrão**, com ativação prevista para antes da abertura pública.
+- **App Check:** integrado em A (`firebase_app_check: ^0.4.6`) e **ATIVADO no
+  cliente** desde a OS 50.1 — `main.dart` chama `activate()` entre
+  `Firebase.initializeApp()` e `runApp()`, com Play Integrity no release e o
+  provedor de depuração fora dele, por constante de compilação. O que continua
+  desligado é o *enforcement* desta codebase (`claimPioneerKit` e vizinhas), que
+  lê `ENFORCE_APP_CHECK` — ver `docs/KIT-PIONEIROS-2026-SEGURANCA.md` §7. As
+  codebases `social`, `ranking`, `conta`, `mesas` e `moderacao` exigem App Check
+  **no código**, e não por variável de ambiente: nelas não há chave a ligar.
 
 Não há segunda origem de identidade. **Nada a consolidar aqui** — só a preservar.
 

@@ -823,7 +823,7 @@ void main() {
     test('a falha de identidade não carrega token nem segredo no detalhe', () async {
       amb.auth.add('uid-a');
       await _assentar();
-      amb.fonte.falhar(MotivoFalhaIdentidade.naoAutenticado);
+      amb.fonte.falhar(MotivoFalhaIdentidade.credencialOuAtestacao);
       await _assentar();
 
       final texto = amb.sessao.estado.falha.toString();

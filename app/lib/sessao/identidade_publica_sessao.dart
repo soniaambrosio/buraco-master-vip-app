@@ -92,9 +92,32 @@ enum EstadoPerfil {
 /// A separação entre transitório e definitivo existe para a UI: só o primeiro
 /// justifica oferecer "tentar de novo".
 enum MotivoFalhaIdentidade {
-  /// O backend recusou por falta de autenticação. Não adianta repetir com a
-  /// mesma credencial.
-  naoAutenticado,
+  /// A autoridade recusou por CREDENCIAL OU ATESTAÇÃO, sem dizer qual das duas
+  /// (`unauthenticated`).
+  ///
+  /// -------------------------------------------------------------------------
+  /// O NOME É COMPRIDO PORQUE O CÓDIGO É AMBÍGUO
+  /// -------------------------------------------------------------------------
+  ///
+  /// Este motivo já se chamou `naoAutenticado`, e o nome era uma conclusão que
+  /// o código recebido não autoriza. Em `firebase-functions` 6.x — a faixa que
+  /// `functions-social/package.json` declara — uma callable com
+  /// `enforceAppCheck` responde `unauthenticated` em TRÊS situações diferentes:
+  ///
+  ///   - o token de autenticação é inválido;
+  ///   - o token de App Check é INVÁLIDO;
+  ///   - o token de App Check está AUSENTE.
+  ///
+  /// Nos dois últimos a sessão do jogador está viva e intacta, e repetir é
+  /// justamente o que resolve. Traduzir isso para "não adianta repetir" é
+  /// afirmar um fato que ninguém provou — e foi o que este arquivo fez até a
+  /// ativação do App Check no cliente Android.
+  ///
+  /// O TRANSPORTE NÃO DESFAZ A AMBIGUIDADE, porque não tem como. Quem decide é
+  /// a camada que sabe se existe sessão local: ver
+  /// [identidadeAdmiteNovaTentativa]. Mesmo vocabulário, e pelo mesmo motivo,
+  /// de `MotivoFalhaRanking.credencialOuAtestacao`.
+  credencialOuAtestacao,
 
   /// Rede, timeout, indisponibilidade, `aborted`. Repetir resolve.
   indisponivel,
@@ -110,10 +133,40 @@ enum MotivoFalhaIdentidade {
   /// um erro desconhecido deixaria o jogador preso sem saída.
   desconhecida;
 
+  /// Repetir resolve, INDEPENDENTE de haver sessão local?
+  ///
+  /// [credencialOuAtestacao] está FORA de propósito: a resposta dele não cabe
+  /// no motivo sozinho — depende de existir sessão viva, e quem sabe disso é
+  /// [identidadeAdmiteNovaTentativa]. Ler este getter no lugar daquele é
+  /// exatamente o defeito que a ativação do App Check tornou visível.
   bool get transitoria =>
       this == MotivoFalhaIdentidade.indisponivel ||
       this == MotivoFalhaIdentidade.desconhecida;
 }
+
+/// Vale a pena oferecer "tentar de novo" para [motivo], decidido num lugar só.
+///
+/// A regra é a mesma que `faseDaFalhaDeRanking` já fixou do outro lado do
+/// aplicativo: `unauthenticated` cobre credencial recusada E App Check ausente
+/// ou inválido, então COM SESSÃO LOCAL VIVA o estado é neutro e a nova
+/// tentativa é permitida; sem ela, e só aí, a recusa é terminal.
+///
+/// [haSessaoLocal] não tem valor padrão, e é de propósito: um padrão faria a
+/// chamada esquecida escolher um lado sozinha.
+///
+/// NADA AQUI DESLOGA NINGUÉM. Este predicado decide se aparece um botão, e
+/// nunca se a sessão continua — §10: falha de identidade não derruba o resto
+/// da sessão.
+bool identidadeAdmiteNovaTentativa(
+  MotivoFalhaIdentidade motivo, {
+  required bool haSessaoLocal,
+}) => switch (motivo) {
+  MotivoFalhaIdentidade.credencialOuAtestacao => haSessaoLocal,
+  MotivoFalhaIdentidade.indisponivel ||
+  MotivoFalhaIdentidade.desconhecida => true,
+  MotivoFalhaIdentidade.recusado ||
+  MotivoFalhaIdentidade.respostaInvalida => false,
+};
 
 /// Falha ao obter a identidade pública.
 class FalhaIdentidade implements Exception {
@@ -335,6 +388,14 @@ class EstadoIdentidadeSessao {
       fase == FaseIdentidade.disponivel ? identidade?.publicId : null;
 
   /// Vale a pena oferecer "tentar de novo"?
+  ///
+  /// A decisão mora em [identidadeAdmiteNovaTentativa], e não em
+  /// `falha.transitoria`, porque a segunda metade da resposta é justamente o
+  /// que este objeto sabe e o motivo não: se há [uid], há sessão local viva —
+  /// e um `unauthenticated` com sessão viva é recusa de ATESTAÇÃO, que repetir
+  /// resolve.
   bool get podeTentarDeNovo =>
-      fase == FaseIdentidade.falha && (falha?.transitoria ?? false);
+      fase == FaseIdentidade.falha &&
+      falha != null &&
+      identidadeAdmiteNovaTentativa(falha!.motivo, haSessaoLocal: autenticado);
 }

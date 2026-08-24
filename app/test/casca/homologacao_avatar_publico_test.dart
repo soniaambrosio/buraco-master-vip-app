@@ -1384,8 +1384,12 @@ void main() {
     test('H-E01 main.dart continua byte a byte o da base', () {
       // Digest da BASE `d738f458`, com `\r\n` normalizado para `\n`. A OS §11
       // pede que a raiz do aplicativo não tenha sido tocada por esta folha.
+      // RECARIMBADO PELA OS 50.1, que ativou o App Check na porta de
+      // entrada. O caso continua provando o mesmo: que a raiz do aplicativo
+      // nao muda sem alguem decidir que ela mude. Digest anterior:
+      //   8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab
       const digestDaBase =
-          '8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab';
+          '5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321';
       final atual = sha256
           .convert(utf8.encode(_texto('lib/main.dart')))
           .toString();
