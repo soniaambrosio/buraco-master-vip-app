@@ -19,8 +19,10 @@
 // que é proibido — e uma varredura ingênua acusaria a explicação como violação.
 // Pior: o jeito de "consertar" seria apagar a documentação.
 
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // ===========================================================================
@@ -684,6 +686,395 @@ void main() {
       );
     });
   });
+
+  // =========================================================================
+  // A GUARDA EXTERNA DA SUÍTE DO DESENHO DA OBRIGAÇÃO (OS 29-C4)
+  // =========================================================================
+  //
+  // POR QUE ESTA GUARDA MORA AQUI, E NÃO NO ARQUIVO QUE ELA GUARDA.
+  //
+  // `mesa_treino_alvos_reais_test.dart` é o portão do gate `mesac1`, e o caso
+  // que prova o DESENHO da carta obrigatória do lixo é a única coisa daquele
+  // arquivo que ninguém confere. A OS 29-C3 escreveu a conferência lá dentro; a
+  // OS 29-R3 mediu o que isso não pega, e são seis sabotagens:
+  //
+  //   * apagar o grupo inteiro (`mesac1 +26`, `cascaaud +23`);
+  //   * um arquivo-isca de mesmo nome, que troca corpo E guarda no mesmo gesto
+  //     (`build.yml exit 0`, "PORTÃO VERDE");
+  //   * uma isca que LÊ a guarda, cita os nove nomes dela e traz catorze
+  //     `expect` vazios;
+  //   * retirar do caso a afirmação de `USE ESTA`, da borda ou da sombra, uma a
+  //     uma — os nomes sobreviviam no laço "e em nenhuma outra", e o piso de
+  //     afirmações era atingido pelo que sobrava.
+  //
+  // A raiz das quatro é a mesma: a guarda cobrava MENÇÃO, e morava dentro do
+  // que a isca substitui. Aqui ela cobra três coisas de naturezas diferentes, e
+  // é a soma delas que fecha:
+  //
+  //   1. IDENTIDADE — o digest normalizado do arquivo inteiro. Isca, corpo
+  //      trocado, linha a menos: reprova na hora, sem precisar saber o que
+  //      mudou.
+  //   2. FORMA — os nomes e a quantidade EXATA dos casos, e os trechos
+  //      protegidos, delimitados por marcadores que ficam FORA dos corpos e por
+  //      isso sobrevivem a um corpo trocado.
+  //   3. CONTEÚDO — cada prova exigida tem de aparecer DENTRO do argumento de
+  //      um `expect`, o número de vezes pedido. É o que separa afirmar de
+  //      citar, e é o que a contagem de `expect(` nunca separou.
+  //
+  // O digest sozinho seria uma âncora que se realinha: quem esvaziasse o
+  // arquivo atualizaria a constante no mesmo commit e seguiria. Por isso 2 e 3
+  // continuam de pé DEPOIS do realinhamento — e é essa a mutação que a OS 29-C4
+  // acrescentou à campanha.
+  //
+  // A metade RECÍPROCA mora na suíte protegida: ela confere que este bloco
+  // existe, que os casos dele continuam aqui e que o código dele bate com um
+  // digest. Nenhum dos dois cai sozinho, e derrubar o par derruba dois gates.
+  //
+  // O digest deste bloco, que a suíte protegida guarda, é calculado sobre o
+  // CÓDIGO — sem comentário — e sem a linha marcada `[digest-movel]`. As duas
+  // exclusões existem para que os dois arquivos não entrem em recursão e para
+  // que revisar prosa não exija recalcular nada.
+  // >>> GUARDA EXTERNA DA SUITE DO DESENHO - INICIO
+  group('a guarda externa da suíte do desenho da obrigação', () {
+    const alvo = 'test/casca/mesa_treino_alvos_reais_test.dart';
+
+    /// O digest normalizado do arquivo protegido. [digest-movel]
+    const digestDaSuite = '85aa96eb291e9b354e6b690adbdfa56be627f4bc48d74404a10583d277621470'; // [digest-movel]
+
+    /// Os casos da suíte protegida, na ordem em que ela os declara.
+    ///
+    /// Nomes E quantidade: só a quantidade deixaria trocar um caso por outro, e
+    /// só os nomes deixariam acrescentar um caso vazio para inflar o placar.
+    const casosEsperados = <String>[
+      'numa tela larga as onze cartas cabem numa fileira',
+      'em 360 pontos a mão usa duas fileiras',
+      'a mesa não estoura em nenhuma largura nomeada, nem no quadrado',
+      'com a fonte do sistema em 200% o piso continua de pé',
+      'o piso vale nas três larguras nomeadas: 320, 360 e 412',
+      'vale em 400 pontos',
+      'o toque em cada carta acerta a carta, e não a vizinha',
+      'o piso exigido é 48, e o número é conferido e não só usado',
+      'a leitura é 1…11, com as duas fileiras',
+      'a leitura é a mesma em uma e em duas fileiras',
+      'selecionar na fileira de cima não mexe na de baixo',
+      'a reorganização da compra não quebra ordem nem piso',
+      'é anunciada, e só numa carta',
+      'acompanha a INSTÂNCIA, e não o valor e o naipe',
+      'sobrevive à seleção, à desmarcação e ao rebuild',
+      'sobrevive à mudança de fileira',
+      'a compra comum do monte NÃO vira obrigação',
+      'o destaque vermelho dura o que a obrigação durar',
+      'sem obrigação viva, carta nenhuma fica com o destaque',
+      'enquanto a pendência vive, nenhum descarte é aceito',
+      'a baixada com o topo encerra a pendência antes de a vez virar',
+      'cada um tem 48 × 48 de região acionável',
+      'os discos continuam onde a mesa original os desenhou',
+      'os cinco pontos de cada alvo respondem, e só ao dono',
+      'os três alvos não se sobrepõem nem pegam o vizinho',
+      'a mão desabilitada não oferece ação',
+      'nó tocável nenhum fica sem nome',
+      'o jogo baixado diz de quem é, quantas cartas e o que faz',
+      'cada jogador é UM nó, e o avatar não vira o segundo',
+      'os três atributos continuam escritos à mão',
+      'a guarda externa desta suíte existe, e é ela que a protege',
+    ];
+
+    /// O que cada trecho protegido tem de continuar AFIRMANDO, e quantas vezes.
+    ///
+    /// A agulha é procurada dentro do ARGUMENTO de um `expect`, nunca no texto
+    /// solto: citar `temBordaDaObrigacao(` num comentário, num nome de variável
+    /// ou num `reason` não é afirmar nada com ele.
+    const afirmacoes = <String, Map<String, int>>{
+      'SINAIS DA OBRIGACAO': <String, int>{
+        'cor.a': 1,
+        'kContrasteMinimoDaOrientacao': 1,
+        'find.text(kOrientacaoDaObrigacao)': 1,
+        'orientacoesNaCarta(': 2,
+        'temBordaDaObrigacao(': 2,
+        'temSombraDaObrigacao(': 2,
+        'sombraTemGeometria(': 1,
+        'anunciosDaObrigacao(': 1,
+        'homonimas.length': 1,
+      },
+      'GUARDA DO DESENHO DA OBRIGACAO': <String, int>{
+        'selecionadasNaMao(': 2,
+        'fileirasDaMao(': 1,
+        'anunciosDaObrigacao(': 1,
+        'find.text(kOrientacaoDaObrigacao)': 1,
+        'temBordaDaObrigacao(': 1,
+        'temSombraDaObrigacao(': 1,
+        'orientacoesNaCarta(': 1,
+        'cartasNaOrdemDeLeitura(tester)': 1,
+      },
+      'LARGURAS NOMINAIS': <String, int>{
+        'kLargurasNominais': 2,
+        'voltas': 1,
+        'visitadas': 1,
+        '<double>{320, 360, 412}': 1,
+      },
+      'DESTAQUE SEM OBRIGACAO': <String, int>{
+        'anunciosDaObrigacao(': 2,
+        'find.text(kOrientacaoDaObrigacao)': 1,
+        'temBordaDaObrigacao(': 1,
+        'temSombraDaObrigacao(': 1,
+        'orientacoesNaCarta(': 1,
+        'kBaralhosSemObrigacao': 1,
+      },
+      'MOTOR DA OBRIGACAO': <String, int>{
+        'lixoTopoObrigatorio': 4,
+        'j.vez': 3,
+        'j.descartar(': 2,
+        'j.baixar(': 1,
+        'j.comprarLixo(': 2,
+        'j.jaComprou': 1,
+        'm.gemea.id': 2,
+      },
+    };
+
+    /// O que cada trecho protegido tem de continuar CHAMANDO.
+    ///
+    /// Chamada não é afirmação, e por isso a lista é curta: só entra aqui o que
+    /// não pode viver dentro de um `expect` — montar o estado, avançar o
+    /// relógio, cumprir a obrigação, visitar os quatro momentos.
+    const chamadas = <String, Map<String, int>>{
+      'GUARDA DO DESENHO DA OBRIGACAO': <String, int>{
+        'abrirComObrigacaoDoLixo(': 1,
+        'comHomonimaNaMao: true': 1,
+        'pump(kDepoisDoDourado)': 1,
+        'cumprirAObrigacao(': 1,
+        'exigirOsTresSinais(': 5,
+        "momento: 'escolhida'": 1,
+        "momento: 'desmarcada'": 1,
+        "momento: 'no rebuild'": 1,
+        "momento: 'reorganizada'": 1,
+      },
+      'LARGURAS NOMINAIS': <String, int>{'pisoEm(': 1},
+      'DESTAQUE SEM OBRIGACAO': <String, int>{
+        'abrirComObrigacaoDoLixo(': 1,
+        'abrirMesaDeTreino(': 1,
+      },
+      'MOTOR DA OBRIGACAO': <String, int>{'mesaPosta()': 2, 'Jogo(': 1},
+    };
+
+    /// O piso de afirmações de cada trecho protegido.
+    ///
+    /// Grosseiro de propósito: ele não julga qualidade, só impede que o trecho
+    /// vire casca depois que alguém realinhar o digest.
+    const pisoDeAfirmacoes = <String, int>{
+      'SINAIS DA OBRIGACAO': 14,
+      'GUARDA DO DESENHO DA OBRIGACAO': 10,
+      'LARGURAS NOMINAIS': 6,
+      'DESTAQUE SEM OBRIGACAO': 8,
+      'MOTOR DA OBRIGACAO': 14,
+    };
+
+    String semFimDeLinhaDeMaquina(String t) =>
+        t.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+    String digestDe(String t) =>
+        sha256.convert(utf8.encode(semFimDeLinhaDeMaquina(t))).toString();
+
+    String fonte() {
+      final f = File(alvo);
+      expect(
+        f.existsSync(),
+        isTrue,
+        reason: 'a suíte protegida não está em $alvo — e some em silêncio, '
+            'porque ausência de arquivo vira NÃO EXECUTADO no portão',
+      );
+      return semFimDeLinhaDeMaquina(f.readAsStringSync());
+    }
+
+    List<String> codigo(String texto) => <String>[
+          for (final l in texto.split('\n'))
+            if (!l.trimLeft().startsWith('//')) l,
+        ];
+
+    String trecho(String texto, String nome) {
+      final linhas = texto.split('\n');
+      final a = linhas.indexWhere((l) => l.trim() == '// >>> $nome - INICIO');
+      final b = linhas.indexWhere((l) => l.trim() == '// <<< $nome - FIM');
+      expect(
+        a,
+        greaterThanOrEqualTo(0),
+        reason: 'o marcador de início de "$nome" sumiu da suíte protegida',
+      );
+      expect(
+        b,
+        greaterThan(a),
+        reason: 'o marcador de fim de "$nome" sumiu ou trocou de lugar com o '
+            'de início',
+      );
+      return codigo(linhas.sublist(a + 1, b).join('\n')).join('\n');
+    }
+
+    /// Os argumentos de cada `expect(...)`, com parênteses balanceados e aspas
+    /// respeitadas.
+    ///
+    /// Contar `expect(` seria contar menção — a OS 29-R3 passou por uma isca
+    /// com catorze `expect` vazios. O que interessa é o que está DENTRO.
+    List<String> argumentosDeExpect(String corpo) {
+      const chamada = 'expect(';
+      final colado = RegExp(r'[A-Za-z0-9_$.]');
+      final saida = <String>[];
+      var i = 0;
+      while (true) {
+        final k = corpo.indexOf(chamada, i);
+        if (k < 0) break;
+        if (k > 0 && colado.hasMatch(corpo[k - 1])) {
+          i = k + chamada.length;
+          continue;
+        }
+        var p = k + chamada.length;
+        var nivel = 1;
+        String? aspa;
+        while (p < corpo.length && nivel > 0) {
+          final c = corpo[p];
+          if (aspa != null) {
+            if (c == r'\') {
+              p += 2;
+              continue;
+            }
+            if (c == aspa) aspa = null;
+          } else if (c == "'" || c == '"') {
+            aspa = c;
+          } else if (c == '(') {
+            nivel++;
+          } else if (c == ')') {
+            nivel--;
+          }
+          p++;
+        }
+        saida.add(corpo.substring(k + chamada.length, p - 1));
+        i = p;
+      }
+      return saida;
+    }
+
+    List<String> casosDe(String texto) => RegExp(
+          "^\\s*(?:testWidgets|test)\\(\\s*'((?:[^'\\\\]|\\\\.)*)'",
+          multiLine: true,
+        ).allMatches(codigo(texto).join('\n')).map((m) => m.group(1)!).toList();
+
+    test('a suíte protegida está no caminho declarado e bate com o digest', () {
+      final texto = fonte();
+      expect(
+        digestDe(texto),
+        digestDaSuite,
+        reason: 'o conteúdo de $alvo mudou. Se a mudança é legítima, o digest '
+            'novo entra AQUI no mesmo commit — é esse gesto que impede que a '
+            'suíte seja trocada por uma isca de mesmo nome sem ninguém ver',
+      );
+      // Um digest bate com um arquivo vazio tão bem quanto com o certo, se
+      // alguém realinhar os dois. O tamanho é a segunda pergunta.
+      final linhas = texto.split('\n').length;
+      expect(
+        linhas,
+        greaterThan(1000),
+        reason: 'a suíte protegida encolheu para $linhas linhas',
+      );
+    });
+
+    test('os casos da suíte protegida são exatamente estes', () {
+      final casos = casosDe(fonte());
+      expect(
+        casos,
+        orderedEquals(casosEsperados),
+        reason: 'os casos de $alvo deixaram de ser os declarados: um caso '
+            'retirado sai do placar em silêncio, e um caso acrescentado infla '
+            'o placar sem provar nada',
+      );
+      expect(
+        casos.toSet(),
+        hasLength(casos.length),
+        reason: 'dois casos da suíte protegida têm o mesmo nome',
+      );
+    });
+
+    test('cada trecho protegido continua AFIRMANDO o que promete', () {
+      final texto = fonte();
+      for (final nome in pisoDeAfirmacoes.keys) {
+        final corpo = trecho(texto, nome);
+        final argumentos = argumentosDeExpect(corpo);
+        expect(
+          argumentos.length,
+          greaterThanOrEqualTo(pisoDeAfirmacoes[nome]!),
+          reason: 'o trecho "$nome" ficou com ${argumentos.length} afirmações',
+        );
+        for (final e in (afirmacoes[nome] ?? const <String, int>{}).entries) {
+          final quantas = argumentos.where((a) => a.contains(e.key)).length;
+          expect(
+            quantas,
+            greaterThanOrEqualTo(e.value),
+            reason: 'o trecho "$nome" afirma ${e.key} $quantas vez(es), e a '
+                'prova pede ${e.value}: a agulha continuar escrita no arquivo '
+                'não é a mesma coisa que ela estar dentro de um expect',
+          );
+        }
+        for (final e in (chamadas[nome] ?? const <String, int>{}).entries) {
+          final quantas = e.key.allMatches(corpo).length;
+          expect(
+            quantas,
+            greaterThanOrEqualTo(e.value),
+            reason: 'o trecho "$nome" chama ${e.key} $quantas vez(es), e a '
+                'prova pede ${e.value}',
+          );
+        }
+      }
+    });
+
+    test('a suíte exercita 320, 360 e 412 e protege o piso de 48', () {
+      final texto = fonte();
+      expect(
+        texto,
+        contains('const List<double> kLargurasNominais = <double>[320, 360, 412];'),
+        reason: 'as três larguras nomeadas pela OS deixaram de estar '
+            'declaradas em $alvo',
+      );
+      expect(
+        texto,
+        contains('const double kPisoExigido = 48.0;'),
+        reason: 'o piso de toque deixou de ser 48 na suíte protegida',
+      );
+      // O piso é afirmado com desigualdade, e por isso o NÚMERO precisa de uma
+      // afirmação própria: sem ela, baixá-lo de 48 para 46 sai verde.
+      final guardaDoPiso = argumentosDeExpect(codigo(texto).join('\n'))
+          .where((a) => a.replaceAll(' ', '').startsWith('kPisoExigido,48.0'))
+          .toList();
+      expect(
+        guardaDoPiso,
+        isNotEmpty,
+        reason: 'o piso de 48 é usado com greaterThanOrEqualTo e não tem '
+            'guarda própria: baixar a constante do TESTE passaria despercebido',
+      );
+      final larguras = trecho(texto, 'LARGURAS NOMINAIS');
+      for (final l in <String>['320', '360', '412']) {
+        expect(
+          larguras,
+          contains(l),
+          reason: 'o cenário de $l pontos saiu do trecho que os exercita',
+        );
+      }
+    });
+
+    test('a suíte protegida guarda esta auditoria de volta', () {
+      final texto = fonte();
+      for (final t in <String>[
+        "const String kCaminhoDaGuardaExterna = 'test/casca/auditoria_casca_test.dart';",
+        '// >>> GUARDA EXTERNA DA SUITE DO DESENHO - INICIO',
+        'kDigestDaGuardaExterna',
+        'blocoDaGuardaExterna(',
+      ]) {
+        expect(
+          texto,
+          contains(t),
+          reason: 'a metade recíproca da guarda saiu da suíte protegida: sem '
+              'ela, retirar este bloco seria um gesto isolado e silencioso',
+        );
+      }
+    });
+  });
+  // <<< GUARDA EXTERNA DA SUITE DO DESENHO - FIM
 }
 
 // ===========================================================================
