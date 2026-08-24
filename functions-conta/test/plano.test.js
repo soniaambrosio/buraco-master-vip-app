@@ -333,3 +333,56 @@ describe("espelho dos estados de inscricao", () => {
     );
   });
 });
+
+// ===========================================================================
+// O FREIO DE RAJADA DENTRO DA ETAPA DE MODERACAO
+// ===========================================================================
+//
+// `itensAcionaveisForaDoPlano` ja reprovaria um item classificado e esquecido,
+// e por isso os casos abaixo afirmam outra coisa: EM QUE etapa ele esta.
+// Colocado numa etapa qualquer, `chatRitmo` seria apagado — e seria apagado no
+// lugar errado, porque a etapa e a unidade de retomada: uma exclusao que
+// falhasse depois de `moderacaoDoJogador` e retomasse teria o freio ja fora do
+// caminho, e uma que o pendurasse em `encerrar` o deixaria vivo em toda
+// exclusao parcial.
+describe("o freio de rajada mora na etapa de moderacao", () => {
+  test("chatRitmo e realizado por `moderacaoDoJogador`", () => {
+    const etapa = ETAPAS.find((e) => e.itens.includes("moderacao.ritmoDeChat"));
+    assert.ok(etapa, "`moderacao.ritmoDeChat` nao esta em etapa nenhuma");
+    assert.equal(etapa.id, "moderacaoDoJogador");
+  });
+
+  test("ele sai DEPOIS das mensagens, e nao antes", () => {
+    // A ordem dentro da etapa nao e decorativa: o unico produtor do documento
+    // grava nos DOIS desfechos de uma chamada de envio. Varrer as mensagens
+    // primeiro e apagar o contador por ultimo encurta a janela em que uma
+    // chamada em voo o reescreve.
+    const etapa = ETAPAS.find((e) => e.id === "moderacaoDoJogador");
+    assert.ok(
+      etapa.itens.indexOf("moderacao.ritmoDeChat") >
+        etapa.itens.indexOf("moderacao.mensagensDeChat"),
+      "o freio de rajada tem de vir depois da varredura de mensagens"
+    );
+  });
+
+  test("a etapa roda entre trancar e encerrar", () => {
+    // Trancar antes importa aqui mais do que na maioria: e a tranca que impede
+    // o jogador de mandar uma fala nova e recriar o contador que a etapa acabou
+    // de apagar.
+    assert.ok(antesDe("trancar", "moderacaoDoJogador"));
+    assert.ok(antesDe("moderacaoDoJogador", "encerrar"));
+  });
+
+  test("o resumo da etapa admite o contador, e nao so os bloqueios", () => {
+    // O resumo vai para o log e para o relatorio de suporte. Uma etapa que
+    // apaga um dado a mais do que anuncia e a forma silenciosa de a matriz e a
+    // prosa divergirem.
+    //
+    // A AFIRMACAO E SOBRE A LISTA DO QUE SAI, e nao sobre a palavra "rajada"
+    // aparecer em algum lugar: o resumo tambem explica, no fim, que o freio NAO
+    // e disciplina. Procurar so por /rajada/ deixaria passar a remocao do
+    // contador da enumeracao — medido, essa versao do caso escapava.
+    const etapa = ETAPAS.find((e) => e.id === "moderacaoDoJogador");
+    assert.match(etapa.resumo, /as mensagens dele e o contador de rajada/i);
+  });
+});

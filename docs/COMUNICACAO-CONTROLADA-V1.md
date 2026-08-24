@@ -168,6 +168,25 @@ pedidos recusados não contaria como abuso.
 O que o jogador precisa saber volta em `liberaEmMs`, na resposta da chamada —
 informação sobre o próprio pedido dele.
 
+**O que acontece com o estado quando o jogador exclui a conta (OS 48).** O
+documento é `APAGADO`, junto com as mensagens dele, na etapa `moderacaoDoJogador`
+da autoridade de exclusão (`functions-conta`). A decisão e a justificativa vivem
+em `functions-conta/src/inventario.ts`, item `moderacao.ritmoDeChat`, e estão
+escritas por extenso na §4.1 de
+[`EXCLUSAO-DE-CONTA-E-DADOS.md`](EXCLUSAO-DE-CONTA-E-DADOS.md).
+
+A leitura contra a qual essa decisão precisa se defender é *"apagar o freio é
+apagar punição"*, e ela é errada pela distinção que esta seção já faz: o
+`bloqueadoAteMs` é um freio automático de dois minutos, sem responsável e sem
+motivo. A ficha disciplinar é `playerModeration`, `sanctions`, `reports` e
+`moderationAudit` — os quatro são **retidos** pela exclusão de conta, e nenhum
+deles depende deste documento: a evidência de uma denúncia é *copiada* para o
+registro dela, exatamente para sobreviver à expiração (§7.5).
+
+**Esta seção não mudou por causa daquela OS.** Nenhum limite, nenhum cooldown,
+nenhum campo e nenhuma rota foram alterados: o que passou a existir foi um
+destino declarado para o documento no fluxo de exclusão de conta.
+
 ---
 
 ## 6. Mesa Privada: como o texto livre é conquistado (§7)
@@ -298,15 +317,20 @@ campo por onde texto de jogador entre no log**.
 | `moderacao` | `definirCanalDeChat` (ambiente), núcleo de envio, `emitirEventoDeSistema`, `consultarCatalogoDeComunicacao`, `registrarDenuncia` (alvo + evidência) |
 | `mesas` | `chatsPermitidos()`, padrão `apenas_emotes`, `modoDeChat` na sala privada |
 
-| Coleção | Escrita por | Leitura |
-| --- | --- | --- |
-| `chatMessages` | moderacao | admin |
-| `chatChannels` | moderacao (via motor) | admin |
-| `chatRitmo` | moderacao | admin |
-| `salasPrivadas`, `assentosAdmitidos` | **mesas** | moderacao **só lê** |
-| `playerEntitlements` | **billing** | moderacao **só lê**, sem interpretar |
-| `publicIdIndex` | **social** | moderacao **só lê** |
-| `users/{uid}/mutes` | o próprio jogador | moderacao lê para a entrega |
+| Coleção | Escrita por | Leitura | Exclusão de conta |
+| --- | --- | --- | --- |
+| `chatMessages` | moderacao | admin | `APAGAR` (por `autorUid`) |
+| `chatChannels` | moderacao (via motor) | admin | `DESVINCULAR` (`participantes`) |
+| `chatRitmo` | moderacao | admin | `APAGAR` (OS 48) |
+| `salasPrivadas`, `assentosAdmitidos` | **mesas** | moderacao **só lê** | `DESVINCULAR` / `APAGAR` |
+| `playerEntitlements` | **billing** | moderacao **só lê**, sem interpretar | `APAGAR` |
+| `publicIdIndex` | **social** | moderacao **só lê** | `DESVINCULAR` (lápide) |
+| `users/{uid}/mutes` | o próprio jogador | moderacao lê para a entrega | `APAGAR` (dos dois lados) |
+
+A última coluna é **cópia**, e a fonte é `functions-conta/src/inventario.ts`:
+`test/inventario.test.js` cruza a matriz com `firebase/firestore.rules` e
+reprova quando uma coleção declarada lá não tem destino. Foi assim que a lacuna
+de `chatRitmo` apareceu — a coleção nasceu aqui, depois da matriz.
 
 ---
 

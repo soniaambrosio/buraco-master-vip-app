@@ -112,6 +112,17 @@ const COLECOES = [
   "economiaLedger",
   "salasPrivadas",
   "playerCourtesyPass",
+  // A COMPOSICAO CANONICA — as cinco que os casos de `semearComposicao` usam.
+  // Estavam fora da limpeza: cada caso semeia com id fixo e sobrescreve, entao
+  // nenhum quebrava, mas "o documento NAO existe" so e afirmavel se a limpeza
+  // alcancar a colecao. Sem elas, o caso do contador ausente seria vacuo.
+  "playerBillingIdentity",
+  "billingAccountIndex",
+  "chatChannels",
+  "chatMessages",
+  "playerAchievements",
+  // O FREIO DE RAJADA da Comunicacao Controlada.
+  "chatRitmo",
   C_DIARIO,
 ];
 
@@ -402,6 +413,33 @@ async function semearDenuncias(uid = ALVO) {
     .collection("playerModeration")
     .doc(uid)
     .set({ chatSilenciadoAte: "2026-05-01", suspensaoPermanente: false });
+}
+
+/// O FREIO DE RAJADA, na forma exata que o produtor grava.
+///
+/// A forma nao e inventada aqui: `executarEnvioDeMensagem`
+/// (functions-moderacao/src/index.ts) faz `.doc(autorUid).set({ ...proximoRitmo,
+/// atualizadoEm })`, e `proximoRitmo` e o `EstadoDeRitmo.toJson()` de
+/// app/lib/comunicacao/limites.dart — `recentes`, `bloqueadoAteMs` opcional e
+/// `recusasSeguidas`. Semear um formato diferente provaria a exclusao de um
+/// documento que nao existe em lugar nenhum.
+///
+/// O BLOQUEIO VAI SEMEADO DE PROPOSITO: e o campo que faz o documento PARECER
+/// ficha disciplinar, e o caso que prova que apagar o freio nao apaga sancao
+/// precisa que ele esteja la.
+async function semearRitmo(uid = ALVO, bloqueadoAteMs = 1787000000000) {
+  await db
+    .collection("chatRitmo")
+    .doc(uid)
+    .set({
+      recentes: [
+        { emMs: 1786999940000, itemId: "provocar_leve", categoria: "provocar" },
+        { emMs: 1786999950000, itemId: "emoji_riso", categoria: "emoji" },
+      ],
+      bloqueadoAteMs,
+      recusasSeguidas: 5,
+      atualizadoEm: "2026-08-24T00:00:00.000Z",
+    });
 }
 
 const existe = async (caminho) => (await db.doc(caminho).get()).exists;
@@ -1040,5 +1078,230 @@ describe("jogador com passe de cortesia", () => {
 
     assert.equal(await existe("playerCourtesyPass/" + TERCEIRO), true);
     assert.equal(await existe("playerCourtesyPass/" + TERCEIRO + "/cycles/2026-Q3"), true);
+  });
+});
+
+// ===========================================================================
+// O FREIO DE RAJADA — `chatRitmo/{uid}`
+// ===========================================================================
+//
+// A colecao chegou com a Comunicacao Controlada V1, depois da matriz, e ficou
+// sem destino declarado ate esta correcao. O que ela guarda e um CONTADOR: os
+// envios recentes (instante e id de item, nunca conteudo), o instante em que um
+// freio automatico de dois minutos solta, e quantas recusas seguidas houve.
+//
+// OS CASOS ABAIXO EXISTEM POR UM MOTIVO ESPECIFICO. As suites puras provam que
+// a DECISAO foi escrita — classe, alcance, etapa. Nenhuma delas prova que o
+// documento sai. Um `docPorUid` apontando para a colecao errada, ou um
+// `ctx.uid` trocado por `ctx.publicId`, passaria em todas elas.
+describe("o freio de rajada do chat", () => {
+  test("DOCUMENTO PRESENTE: o contador do excluido some", async () => {
+    await semearComum();
+    await semearRitmo();
+    assert.ok(await existe(`chatRitmo/${ALVO}`), "o caso comeca com o documento la");
+
+    await executar(ALVO);
+
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+  });
+
+  test("DOCUMENTO AUSENTE: quem nunca falou e excluido igual", async () => {
+    // `delete` de documento inexistente e sucesso no Firestore. O caso existe
+    // porque a alternativa — ler antes para decidir se apaga — custaria uma
+    // leitura por exclusao e ainda teria corrida.
+    await semearComum();
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false, "o caso comeca sem o documento");
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "concluida");
+    assert.equal(r.etapasConcluidas.length, ETAPAS.length);
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+  });
+
+  test("o contador de OUTRO jogador nao e tocado", async () => {
+    // O erro que este caso pega e o alcance por consulta larga: uma varredura
+    // sem filtro, ou filtrada por um campo que o documento nao tem, levaria o
+    // freio de todo mundo junto.
+    await semearComum();
+    await semearRitmo(ALVO);
+    await semearRitmo(TERCEIRO);
+
+    await executar(ALVO);
+
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+    const doTerceiro = await dados(`chatRitmo/${TERCEIRO}`);
+    assert.ok(doTerceiro, "o freio de quem fica continua valendo");
+    assert.equal(doTerceiro.recusasSeguidas, 5, "e intacto: nem o contador foi zerado");
+  });
+
+  test("apagar o freio NAO apaga a ficha disciplinar", async () => {
+    // A DECISAO INTEIRA DEPENDE DESTA SEPARACAO. `chatRitmo` guarda um bloqueio
+    // temporario e, lido de longe, parece punicao — se apaga-lo levasse junto a
+    // sancao, a exclusao de conta seria o botao de limpar ficha que
+    // `firestore.rules` recusa ao dono. O freio sai; os quatro registros de
+    // moderacao ficam.
+    await semearComum();
+    await semearRitmo();
+    await semearDenuncias();
+
+    await executar(ALVO);
+
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false, "o freio automatico sai");
+    assert.ok(await existe(`playerModeration/${ALVO}`), "o estado disciplinar FICA");
+    assert.ok(await existe("sanctions/s1"), "a sancao FICA");
+    assert.ok(await existe(`reports/${TERCEIRO}|intent-2`), "a denuncia sofrida FICA");
+  });
+
+  test("REPETICAO IDEMPOTENTE: a segunda chamada converge sem erro", async () => {
+    await semearComum();
+    await semearRitmo();
+
+    const primeira = await executar(ALVO);
+    const segunda = await executar(ALVO);
+
+    assert.equal(primeira.estado, "concluida");
+    assert.equal(segunda.repeticao, true);
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+  });
+
+  test("FALHA INTERMEDIARIA: parou antes da moderacao, o contador continua la", async () => {
+    // Sem conta no Auth, `trancar` falha e a execucao para na primeira etapa. O
+    // que importa e o estado coerente: nada foi apagado pela metade, e o
+    // documento espera a retomada em vez de sumir por acidente.
+    await db.collection("playerIdentities").doc(ALVO).set({ uid: ALVO, publicId: PUBLIC_ID });
+    await db.collection("users").doc(ALVO).set({ criadoEm: "2026-01-01" });
+    await semearRitmo();
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "parcial");
+    assert.equal(
+      r.etapasConcluidas.includes("moderacaoDoJogador"),
+      false,
+      "a etapa do freio nem chegou a rodar"
+    );
+    assert.ok(await existe(`chatRitmo/${ALVO}`), "e por isso o documento continua la");
+  });
+
+  test("RETOMADA: a segunda tentativa apaga o contador que a falha deixou", async () => {
+    await db.collection("playerIdentities").doc(ALVO).set({ uid: ALVO, publicId: PUBLIC_ID });
+    await db.collection("users").doc(ALVO).set({ criadoEm: "2026-01-01" });
+    await semearRitmo();
+
+    assert.equal((await executar(ALVO)).estado, "parcial");
+    await criarContaAuth(ALVO);
+    const retomada = await executar(ALVO);
+
+    assert.equal(retomada.estado, "concluida");
+    assert.equal(
+      await existe(`chatRitmo/${ALVO}`),
+      false,
+      "a retomada precisa alcancar o item: uma etapa que so roda na primeira passada deixaria o freio vivo em toda exclusao que falhou uma vez"
+    );
+  });
+
+  test("RESPOSTA ATRASADA: uma escrita tardia nao reabre a conta nem derruba a exclusao", async () => {
+    // O CENARIO REAL: `trancar` desabilita a conta e revoga os refresh tokens,
+    // mas um ID token ja emitido continua valido ate expirar. Uma chamada de
+    // envio em voo pode terminar DEPOIS da etapa e regravar o contador — o
+    // produtor grava nos dois desfechos, inclusive na recusa.
+    //
+    // O QUE ESTE CASO AFIRMA E O LIMITE, e nao a ausencia: o maximo que uma
+    // escrita atrasada deixa e o contador de rajada. Nem perfil, nem carteira,
+    // nem identidade, nem conta voltam — e o UID que sobra no documento nao
+    // resolve para pessoa nenhuma, porque o corte do vinculo ja aconteceu.
+    // A janela e a mesma de todo item APAGAR da matriz, e nao uma propriedade
+    // desta colecao; fecha-la seria mexer na autoridade de comunicacao. Esta
+    // registrada na §7 de docs/EXCLUSAO-DE-CONTA-E-DADOS.md.
+    await semearComum();
+    await semearRitmo();
+
+    await executar(ALVO);
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+
+    // A chamada em voo termina agora.
+    await semearRitmo();
+
+    const repetida = await executar(ALVO);
+    assert.equal(repetida.repeticao, true, "convergir, e nao refazer nem falhar");
+
+    assert.equal(await existe(`users/${ALVO}`), false, "o perfil nao volta");
+    assert.equal(await existe(`wallets/${ALVO}`), false, "a carteira nao volta");
+    assert.equal(await existe(`playerIdentities/${ALVO}`), false, "o mapa de identidade nao volta");
+    await assert.rejects(() => auth.getUser(ALVO), /user-not-found|no user record/i);
+
+    const residuo = await dados(`chatRitmo/${ALVO}`);
+    assert.equal(
+      residuo.recentes.some((r) => typeof r.conteudo === "string"),
+      false,
+      "e o residuo nao carrega conteudo de mensagem: o dominio recusa grava-lo aqui"
+    );
+  });
+
+  test("TROCA A->B: a conta nova nao herda o freio da antiga", async () => {
+    // O UID do Authentication nao e reciclado, entao a heranca so aconteceria
+    // se o documento tivesse sido RETIDO e a mesma chave voltasse. O caso prova
+    // o efeito por construcao: excluida a conta A com bloqueio ativo, a conta B
+    // comeca sem freio nenhum — nao ha `bloqueadoAteMs` para herdar.
+    await semearComum(ALVO, PUBLIC_ID);
+    await semearRitmo(ALVO);
+
+    await executar(ALVO);
+
+    // B e outra conta da mesma pessoa: outro UID, outro publicId.
+    await semearComum(AMIGO, PUBLIC_AMIGO);
+
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+    assert.equal(
+      await existe(`chatRitmo/${AMIGO}`),
+      false,
+      "a conta nova nasce sem estado de ritmo — e documento ausente e o estado de quem nunca falou"
+    );
+  });
+
+  test("SUBCOLECOES: o contador e um documento plano, e continua sendo", async () => {
+    // `delete` no pai NAO apaga subcolecao no Firestore — foi assim que
+    // `playerEntitlements/interno` e `playerAchievements/items` ganharam item
+    // proprio. Se `chatRitmo` passar a ter subcolecao um dia, ela precisa de
+    // linha na matriz, e este caso e quem cobra.
+    await semearComum();
+    await semearRitmo();
+
+    const subs = await db.doc(`chatRitmo/${ALVO}`).listCollections();
+    assert.deepEqual(
+      subs.map((c) => c.id),
+      [],
+      "apareceu subcolecao sob `chatRitmo/{uid}`: classifique-a em inventario.ts, porque apagar o pai nao a alcanca"
+    );
+  });
+
+  test("EXCLUSAO INTEGRAL: o freio sai junto com todo o resto, numa passada so", async () => {
+    // O caso que amarra esta correcao aos demais: o jogador inteiro, com tudo o
+    // que as outras suites semeiam, mais o contador. Se acrescentar o item
+    // tivesse quebrado alguma etapa, e aqui que apareceria.
+    await semearComum();
+    await semearVip();
+    await semearComposicao();
+    await semearMesas();
+    await semearDenuncias();
+    await semearRitmo();
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "concluida");
+    assert.deepEqual(
+      ETAPAS.map((e) => e.id).filter((id) => !r.etapasConcluidas.includes(id)),
+      [],
+      "nenhuma etapa ficou para tras"
+    );
+
+    assert.equal(await existe(`chatRitmo/${ALVO}`), false);
+    assert.equal(await existe("chatMessages/msg-do-alvo"), false);
+    assert.equal(await existe(`playerAchievements/${ALVO}`), false);
+    assert.equal(await existe(`playerBillingIdentity/${ALVO}`), false);
+    assert.equal(await existe(`tentativasDeCodigo/${ALVO}`), false);
+    assert.ok(await existe(`playerModeration/${ALVO}`), "a moderacao continua retida");
+    assert.ok(await existe("chatMessages/msg-do-amigo"), "a fala do amigo continua dele");
   });
 });

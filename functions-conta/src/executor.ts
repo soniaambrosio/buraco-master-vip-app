@@ -349,6 +349,21 @@ async function apagarModeracao(ctx: Contexto): Promise<void> {
     "participantes",
     ctx.uid
   );
+
+  // FREIO DE RAJADA. `chatRitmo/{uid}` e o contador de anti-spam da Comunicacao
+  // Controlada — `recentes`, `bloqueadoAteMs`, `recusasSeguidas` —, e a chave E o
+  // uid: nao ha consulta, e um `delete` de documento que pode nao existir e
+  // idempotente por construcao no Firestore.
+  //
+  // POR ULTIMO NA ETAPA, e nao por gosto: as varreduras acima podem demorar, e o
+  // unico produtor do documento (`executarEnvioDeMensagem`, em
+  // functions-moderacao) grava nos DOIS desfechos de uma chamada em voo.
+  // Apagar antes da varredura deixaria a janela aberta por mais tempo.
+  //
+  // ISTO NAO E APAGAR PUNICAO: quem decide isso e `inventario.ts`, e a razao
+  // esta la. `playerModeration`, `sanctions` e `reports` seguem RETIDOS, e este
+  // documento nao e nenhum dos tres.
+  await db().collection("chatRitmo").doc(ctx.uid).delete();
 }
 
 async function apagarRastreabilidade(ctx: Contexto): Promise<void> {

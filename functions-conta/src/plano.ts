@@ -233,9 +233,16 @@ export const ETAPAS: readonly Etapa[] = [
       // porque a mesa e de mais gente.
       "moderacao.mensagensDeChat",
       "moderacao.canaisDeChat",
+      // O FREIO DE RAJADA sai por ULTIMO entre os itens de chat, e a ordem tem
+      // razao: enquanto houver mensagem do excluido a varrer, uma chamada em voo
+      // que escape da tranca ainda reescreve `chatRitmo`. Apagado depois, o
+      // documento nao e recriado por nada que esta etapa faca — e o `delete` de
+      // documento inexistente e sucesso, entao a ordem nao custa nada quando o
+      // jogador nunca falou.
+      "moderacao.ritmoDeChat",
     ],
     resumo:
-      "Bloqueios, silenciamentos e comprovantes de denuncia — as listas dele e as referencias a ele nas listas dos outros. Denuncias, sancoes e estado disciplinar NAO entram: sao retidos.",
+      "Bloqueios, silenciamentos e comprovantes de denuncia — as listas dele e as referencias a ele nas listas dos outros —, as mensagens dele e o contador de rajada. Denuncias, sancoes e estado disciplinar NAO entram: sao retidos, e o freio de rajada nao e nenhum dos tres.",
   },
   {
     id: "rastreabilidadeDoJogador",
