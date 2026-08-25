@@ -227,13 +227,19 @@ fonte é o código, e `test/inventario.test.js` é quem percebe.
 
 | Classe | Itens |
 |---|---|
-| APAGAR | 22 |
+| APAGAR | 33 |
 | RETER | 21 |
-| DESVINCULAR | 3 |
+| DESVINCULAR | 8 |
 | ANONIMIZAR | 4 |
 | NAO_APLICAVEL | 11 |
 
-Total: 61 caminhos classificados.
+Total: 77 caminhos classificados.
+
+> A contagem acima estava **congelada em 61** desde o fechamento da OS v1 e não
+> acompanhou as coleções que chegaram depois (Mesas, Economia, Passe de
+> Cortesia, a composição canônica e, agora, `chatRitmo`). Foi corrigida aqui.
+> A fonte continua sendo `functions-conta/src/inventario.ts`: quando este número
+> divergir de novo, é a prosa que está errada.
 
 ### Autenticação
 
@@ -281,7 +287,80 @@ Total: 61 caminhos classificados.
 | `playerModeration/{uid}` | **RETER** | — | O efeito consolidado (silenciado ate, suspenso ate, permanente). E O PONTO EXATO que firebase/firestore.rules descreve como 'onde morre a tentativa de apagar a propria punicao'. Uma exclusao que o apagasse seria essa tentativa, com outro nome. Fica, e o UID que o chaveia ja nao resolve para pessoa nenhuma. |
 | `moderationAudit/{eventoId}` | **RETER** | — | Trilha administrativa. Por desenho, nem o admin apaga — 'para que a trilha nao possa ser limpa por quem a gerou'. |
 | `moderationTasks/{chaveTarefa}` | **RETER** | — | Barreira de idempotencia. Apagar reabriria intencoes ja gastas — uma denuncia repetida com o mesmo intent id voltaria a ser aceita. O ganho de privacidade seria zero; o custo, uma porta de reprocessamento. |
+| `chatChannels/{canalId}` | **DESVINCULAR** | `participantes` | O CANAL É DA MESA, e a mesa é de mais gente. Sai o UID de `participantes`; o canal continua enquanto tiver finalidade compartilhada. |
+| `chatMessages/{messageId}` | **APAGAR** | — | Mensagem comum não é registro compartilhado: é fala de UMA pessoa. As dos outros participantes permanecem, porque a consulta é por `autorUid`. |
+| `chatRitmo/{uid}` | **APAGAR** | — | CONTADOR DE RAJADA, e não ficha disciplinar. Guarda `recentes` (instante e id de item — nunca conteúdo), `bloqueadoAteMs` e `recusasSeguidas`; o horizonte de decisão são dois minutos e o freio máximo dura dois minutos. Ver §4.1. |
 
+#### 4.1 `chatRitmo/{uid}` — por que APAGAR, e não RETER (OS 48)
+
+A coleção nasceu com a **Comunicação Controlada V1**, depois desta matriz, e
+por um período foi a única coleção declarada em `firebase/firestore.rules` sem
+destino aqui — o estado que `test/inventario.test.js` existe para denunciar, e
+que ele denunciou.
+
+**O que o documento guarda.** Três campos, e nenhum a mais
+(`EstadoDeRitmo.toJson`, em `app/lib/comunicacao/limites.dart`):
+
+| Campo | O que é | Vida útil |
+|---|---|---|
+| `recentes[]` | `{emMs, itemId?, categoria?}` de cada envio. **Nunca conteúdo** — o domínio recusa gravá-lo aqui, para não criar uma segunda cópia da mensagem fora do documento dela. | aparado ao `horizonte`: 2 minutos |
+| `bloqueadoAteMs` | Instante em que o freio automático solta. | `bloqueioPorAbuso` = 2 minutos |
+| `recusasSeguidas` | Recusas de ritmo seguidas; zera a cada envio aceito. | até o próximo aceite |
+
+Identidade, só pela **chave**: não há apelido, avatar, `publicId` nem e-mail.
+
+**Quem escreve e quem lê.** Um produtor e um consumidor, os dois em
+`functions-moderacao/src/index.ts`: `executarEnvioDeMensagem` grava (nos dois
+desfechos — sem isso, uma rajada de pedidos recusados não contaria como abuso)
+e `lerRitmo` lê. Para o cliente, `firestore.rules` nega **leitura e escrita**.
+`functions-conta` não a tocava.
+
+**A decisão: `APAGAR`.** As três alternativas foram consideradas:
+
+- **RETER** seria a leitura errada mais provável, e ela tem uma razão de
+  parecer certa: o documento guarda um *bloqueio*, e a doutrina desta matriz
+  retém `playerModeration`, `sanctions`, `reports` e `moderationAudit`
+  justamente para que a exclusão de conta não seja o botão de limpar ficha que
+  `firestore.rules` recusa ao dono. **Só que o freio não é nenhuma das quatro.**
+  As duas fontes dizem isso por escrito, e antes desta OS: o campo
+  `bloqueadoAteMs` é documentado como *"ISTO NÃO É SANÇÃO. Sanção é decisão de
+  moderação, tem responsável, motivo e trilha. Isto é um freio automático de
+  minutos, sem julgamento e sem registro disciplinar"*, e o bloco `chatRitmo`
+  das regras separa a coleção de `playerModeration` pelo mesmo motivo. Apagar o
+  contador **não apaga punição nenhuma**: os quatro registros disciplinares
+  continuam RETIDOS e não dependem dele — a evidência de uma denúncia é
+  *copiada* para o registro dela, por desenho (§7.5 da Comunicação Controlada).
+  E não há evasão a comprar: excluir a conta destrói o acesso, o que custa
+  infinitamente mais do que esperar dois minutos.
+- **ANONIMIZAR** não se aplica: não há campo de rosto a substituir. O único
+  dado de pessoa é a chave, e trocar a chave é criar outro documento.
+- **DESVINCULAR** não corta nada, pela mesma razão: a ponte para a identidade
+  **é** a chave, e a classe existe para cortar um campo preservando o fato.
+
+**Por que reter seria pior do que inútil.** Não há TTL sobre esta coleção — o
+`expiraEm` da §7.5 da Comunicação Controlada é de `chatMessages`, não daqui. Um
+documento retido ficaria para sempre guardando o padrão de envio de dois
+minutos de uma conta que não existe mais, sem ninguém que volte a lê-lo: o
+único leitor de produto é `lerRitmo`, e ele só é chamado com `req.auth.uid` de
+conta viva.
+
+**Recriação de conta.** O UID do Authentication não é reciclado, então uma conta
+nova nunca herdaria a chave. Ainda assim o efeito é provado por construção: com
+o documento apagado, não existe `bloqueadoAteMs` a herdar, e documento ausente é
+exatamente o estado de quem nunca falou (`EstadoDeRitmo.fromJson` devolve estado
+vazio para ausência **e** para dado ilegível — dado que não existe não
+restringe).
+
+**Onde a decisão vive.** Item `moderacao.ritmoDeChat` (`docPorUid`), etapa
+`moderacaoDoJogador`, executado por último entre os itens de chat — as varreduras
+de mensagem podem demorar, e o produtor grava nos dois desfechos de uma chamada
+em voo, então apagar o contador antes delas alargaria a janela.
+
+**O que esta OS não fez, de propósito:** nada da política funcional do chat
+mudou. Nenhum limite, nenhum cooldown, nenhuma rota, nenhuma regra do Firestore,
+nenhuma tela. A correção é inteiramente do lado da autoridade de exclusão.
+
+---
 ### Rastreabilidade de partidas
 
 | Caminho | Classe | Campos afetados | Justificativa |
@@ -353,8 +432,8 @@ Total: 61 caminhos classificados.
 
 | Suíte | Alvo | Resultado |
 |---|---|---|
-| `functions-conta` — unidade (`npm test`) | matriz, plano, diário, reautenticação, provas estruturais | **81 passam** |
-| `functions-conta` — integração (`npm run test:emulador`) | Firestore + Auth reais, os dez casos da OS | **27 passam** |
+| `functions-conta` — unidade (`npm test`) | matriz, plano, diário, reautenticação, provas estruturais | **92 passam** |
+| `functions-conta` — integração (`npm run test:emulador`) | Firestore + Auth reais, os dez casos da OS + as coleções que chegaram depois | **48 passam** |
 | `app` — `flutter test` (com overlay de seeds do CI) | suíte Flutter inteira, incluindo os 31 casos novos de exclusão | **684 passam** |
 | `app` — os sete arquivos `teste_*.dart` | motor, encerramento, moderação, social, integração, espectador | **549 passam** |
 | `flutter analyze` | `lib/conta`, tela, `configuracoes_screen`, `main.dart`, `test/conta` | **sem erro novo** |
@@ -390,6 +469,65 @@ chamaria. Mesma técnica de `functions-ranking/test/identidade.test.js`.
 * Toda etapa declarada em `plano.ts` tem execução em `executor.ts` — conferido no
   **carregamento do módulo**, não no teste: uma etapa sem execução seria saltada
   em silêncio e a exclusão terminaria "concluída" tendo deixado dado para trás.
+
+### 5.3 O freio de rajada (OS 48)
+
+Onze casos novos em `integracao.emulador.test.js`, no bloco
+`o freio de rajada do chat`. A suíte passou de **37 para 48**, e os 37
+anteriores continuam passando na mesma execução.
+
+| Caso | O que é afirmado |
+|---|---|
+| documento presente | o contador do excluído sai |
+| documento ausente | quem nunca falou é excluído igual, e a etapa conclui — `delete` de documento inexistente é sucesso |
+| terceiro intocado | o freio de quem fica continua valendo, com o contador não zerado |
+| ficha disciplinar | o freio sai e `playerModeration`, `sanctions` e `reports` **ficam** — a prova de que apagar não é limpar ficha |
+| repetição idempotente | a segunda chamada converge com `repeticao`, sem erro |
+| falha intermediária | parou antes de `moderacaoDoJogador`; o documento espera a retomada em vez de sumir por acidente |
+| retomada | a segunda tentativa alcança o item — uma etapa que só rodasse na primeira passada deixaria o freio vivo em toda exclusão que falhou uma vez |
+| resposta atrasada | uma escrita tardia não reabre a conta nem derruba a exclusão; o resíduo é o contador e nada mais (§7.4) |
+| troca A→B | a conta nova nasce sem estado de ritmo: não há `bloqueadoAteMs` a herdar |
+| subcoleções | `chatRitmo/{uid}` é documento plano — e o caso reprova no dia em que deixar de ser, porque `delete` no pai não apaga subcoleção |
+| exclusão integral | o jogador inteiro numa passada: as 11 etapas concluem, o freio sai junto, e a moderação continua retida |
+
+#### Campanha negativa
+
+`ferramentas/exclusao/` — **19 sabotagens, nenhum sobrevivente.**
+
+* **18 mutações de código** (`campanha.sh` → `campanha_chat_ritmo.js`): oito na
+  matriz (classe trocada pelas quatro alternativas, chave desviada para
+  `publicId`, coleção com plural a mais, alcance `semAcao`, justificativa
+  esvaziada), quatro no plano (item fora da etapa, item em duas etapas, ordem
+  invertida, resumo que esconde o que apaga) e seis no executor (tratamento
+  removido, UID desviado por `publicId` e por sufixo, coleção errada, varredura
+  sem filtro levando o freio de todo mundo, e a exclusão apagando também a ficha
+  disciplinar).
+* **1 sabotagem de portão** (`portao_nao_executado.sh`): as cinco formas de a
+  suíte **não ter rodado** — marcador `nao_<gate>`, resultado ausente, `exit`
+  vazio, `exit` não numérico e `exit 1` — para `contafn` **e** `contaemu`,
+  contra o agregador real `scripts/ci/portao_os_integracao.sh`. É a sabotagem
+  que as outras dezoito pressupõem resolvida: `contaemu` é o único lugar onde o
+  apagamento acontece de verdade, e depende de emulador, que é justamente o tipo
+  de passo que "pula quando o ambiente não está pronto".
+
+O arnês recusa três coisas em vez de contá-las como cobertura, e cada recusa é
+consequência de um laudo mentiroso já visto nesta árvore: âncora ausente ou
+ambígua **para a campanha inteira** (em vez de virar sobrevivente); falha de
+compilação e *timeout* saem como `INVALIDA`, nunca como "pega"; e a árvore
+intacta tem de dar verde **antes e depois**, com conferência byte a byte da
+restauração.
+
+A primeira volta desta campanha teve **dois escapes**, e os dois eram do arnês e
+do guarda, não do código:
+
+1. a mutação da justificativa trocava só a primeira frase — **mutante
+   equivalente**: o resto do texto continuava citando `sanctions`,
+   `playerModeration` e `limites.dart`, então o argumento seguia escrito e o
+   portão tinha razão em não reprovar. Passou a substituir o valor inteiro, e o
+   guarda passou a exigir também a palavra `RETIDOS` — citar os registros sem
+   dizer que eles **ficam** não defende decisão nenhuma;
+2. a mutação que tirava o contador do resumo da etapa escapava porque o guarda
+   procurava `/rajada/` e a palavra aparecia numa segunda frase do mesmo resumo.
 
 ---
 
@@ -434,7 +572,26 @@ garante nesse escopo.
    a varredura existe; hoje ela não acha nada. É o que garante que o Hall seja
    tratado no dia em que alguém passar a escrevê-lo.
 
-4. **Nada foi implantado.** A OS proíbe deploy, migração e execução em produção,
+4. **Uma escrita atrasada ainda pode deixar resíduo — e não é específico de
+   `chatRitmo`.** `trancar` desabilita a conta e revoga os refresh tokens, mas um
+   ID token já emitido continua válido até expirar; uma chamada em voo pode
+   terminar depois da etapa que apagou o dado dela. A janela vale para **todo**
+   item APAGAR da matriz. O que a OS 48 acrescentou foi a medida do limite para
+   o caso do freio de rajada: o máximo que sobra é o contador — nem perfil, nem
+   carteira, nem identidade, nem conta voltam, e o UID remanescente já não
+   resolve para pessoa nenhuma. Fechar isso de verdade exigiria que cada
+   autoridade produtora consultasse `accountDeletions/{uid}` antes de gravar,
+   o que é mudança nas autoridades, não nesta.
+
+5. **O cruzamento com as regras é cego para a remoção da própria regra.**
+   `test/inventario.test.js` acusa coleção *declarada e não classificada*. O
+   caminho inverso — apagar o bloco `match /colecao/{id}` de
+   `firebase/firestore.rules` — faz a coleção deixar de ser cobrada, e nenhuma
+   suíte reprova. Vale para as 77 linhas da matriz igualmente. Fechar isso é
+   mudar o critério de cobertura (cruzar também contra os `.collection("…")` do
+   código das Functions), e não o destino de uma coleção.
+
+6. **Nada foi implantado.** A OS proíbe deploy, migração e execução em produção,
    e nada disso foi feito. Antes de um deploy futuro: publicar os dois
    `fieldOverrides`, subir o codebase `conta`, e conferir a região
    (`southamerica-east1`) contra o cliente.
@@ -449,10 +606,18 @@ garante nesse escopo.
 | `aad09df` | `functions-conta`: matriz, plano, diário, reautenticação, executor, callables |
 | `b304f59` | os dez casos da OS contra Firestore e Auth reais |
 | `d251c14` | cliente Flutter: porta, adaptador, controlador, tela e entrada em Configurações |
+| `f0694d8` | **OS 48** — destino de `chatRitmo/{uid}`: matriz, plano, executor, 11 casos de emulador e a campanha negativa de `ferramentas/exclusao/` |
 
 ---
 
 ## 9. O que veio depois
+
+**OS 48 — destino canônico de `chatRitmo/{uid}`.** A Comunicação Controlada V1
+criou uma coleção depois desta matriz e não a classificou; o gate `contafn`
+ficou vermelho na base com `actual: [ 'chatRitmo' ]`. A correção decidiu
+`APAGAR`, escreveu a justificativa na matriz (§4.1), acrescentou o item à etapa
+`moderacaoDoJogador`, e provou o efeito contra o emulador. Ela **não alterou** a
+política de comunicação: nem limite, nem cooldown, nem rota, nem regra, nem tela.
 
 A camada de **conformidade de publicação** que sucede esta OS — recurso web
 externo de exclusão, Política de Privacidade, preenchimento do Data Safety e o

@@ -922,6 +922,15 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
     porque:
       "MENSAGEM COMUM NAO E REGISTRO COMPARTILHADO: ela e fala DE UMA PESSOA, e o conteudo e dela. Apagar as mensagens do excluido nao derruba a conversa de ninguem — as dos outros participantes permanecem, porque a consulta e por `autorUid`. NAO se retem a colecao inteira por precaucao: evidencia ja vinculada a um caso de moderacao ou seguranca segue a politica daquele caso, com finalidade, prazo e fundamento proprios, e fica FORA do caminho normal do produto — nao e este item que a autoriza, e este item nao a alcanca.",
   },
+  {
+    id: "moderacao.ritmoDeChat",
+    caminho: "chatRitmo/{uid}",
+    dominio: "moderacao",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "chatRitmo" },
+    porque:
+      "CONTADOR DE RAJADA, E NAO FICHA DISCIPLINAR. Guarda `recentes` (instante e id de item — o proprio dominio recusa gravar conteudo aqui), `bloqueadoAteMs` e `recusasSeguidas`; o horizonte de decisao e de dois minutos e o freio maximo dura dois minutos. NAO E SANCAO, e as duas fontes dizem isso por escrito: `EstadoDeRitmo.bloqueadoAteMs` em app/lib/comunicacao/limites.dart ('ISTO NAO E SANCAO... um freio automatico de minutos, sem julgamento e sem registro disciplinar') e o bloco `chatRitmo` de firebase/firestore.rules, que separa a colecao de `playerModeration` justamente para nao confundir freio com disciplina. Por isso apaga-la NAO e o botao de limpar ficha que a doutrina proibe: `reports`, `sanctions`, `playerModeration` e `moderationAudit` continuam RETIDOS e nao dependem deste documento — a evidencia de uma denuncia e COPIADA para o registro dela. Reter seria guardar o padrao de envio de dois minutos de uma conta que nao existe mais, sem TTL declarado (o `expiraEm` da §7.5 e de `chatMessages`, nao daqui) e sem ninguem que volte a le-lo: o unico leitor de produto e `lerRitmo`, e ele so e chamado por `req.auth.uid` de conta viva. A chave E o uid, entao um `delete` de documento que pode nao existir e idempotente por construcao.",
+  },
 
   // =========================================================================
   // CONQUISTAS

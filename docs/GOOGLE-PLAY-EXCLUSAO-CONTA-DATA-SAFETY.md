@@ -184,6 +184,9 @@ classes da matriz.
 | Informações de compra | **Desvinculado** (transação permanece; vínculo com a conta é cortado) |
 | Token interno da compra | **Apagado** |
 | Itens, coleções, carteira de fichas | **Apagado** |
+| Mensagens no app — falas do próprio jogador | **Apagado** (a consulta é por `autorUid`; a fala dos outros participantes permanece) |
+| Mensagens no app — canal da mesa | **Desvinculado** (o canal é de mais gente; sai o UID de `participantes`) |
+| Mensagens no app — contador de anti-spam (`chatRitmo`) | **Apagado**. Não é ficha disciplinar: guarda instante e id de item dos envios recentes (nunca conteúdo), o instante em que um freio automático de 2 min solta, e a contagem de recusas seguidas. Ver §4.1 de EXCLUSAO-DE-CONTA-E-DADOS.md |
 | Denúncias, sanções, estado de moderação | **Retido** |
 | Sinais antifraude | **Retido** |
 | Trilhas administrativas | **Retido** |

@@ -275,3 +275,121 @@ describe("as decisoes que a OS destaca", () => {
     }
   });
 });
+
+// ===========================================================================
+// O FREIO DE RAJADA — `chatRitmo/{uid}`
+// ===========================================================================
+//
+// A colecao nasceu com a Comunicacao Controlada V1, DEPOIS da matriz, e por um
+// tempo foi a unica declarada em `firestore.rules` sem destino aqui — o estado
+// que o teste de cobertura acima existe para denunciar.
+//
+// O RISCO DE ELA SER LIDA ERRADO E CONCRETO, e por isso os casos abaixo sao
+// nominais em vez de genericos: o documento guarda um BLOQUEIO por abuso, e um
+// leitor apressado conclui "isso e punicao, entao e RETER como sancao" — ou o
+// contrario, "excluir a conta apaga o bloqueio, logo isto e o botao de limpar
+// ficha". As duas leituras estao erradas pela mesma razao, e ela e a distincao
+// que o dominio e as regras ja fazem: freio automatico de minutos nao e
+// decisao de moderacao. A ficha disciplinar e `playerModeration`, `sanctions`,
+// `reports` e `moderationAudit`, e os quatro continuam RETIDOS.
+describe("o freio de rajada e apagado, e nao retido", () => {
+  test("chatRitmo esta classificado, e a decisao e APAGAR", () => {
+    const item = itemPorId("moderacao.ritmoDeChat");
+    assert.ok(item, "`chatRitmo` precisa ter destino declarado na matriz");
+    assert.equal(item.classe, CLASSE.APAGAR);
+  });
+
+  test("o freio NAO herda a retencao da ficha disciplinar", () => {
+    // O caso que a troca silenciosa produziria: alguem le "bloqueio" e alinha
+    // `chatRitmo` com `playerModeration`. A afirmacao e por igualdade, e nao
+    // por desigualdade, para que baixar a classe para qualquer outra coisa
+    // reprove — e nao so a troca para RETER.
+    const freio = itemPorId("moderacao.ritmoDeChat");
+    const disciplina = itemPorId("moderacao.playerModeration");
+    assert.equal(disciplina.classe, CLASSE.RETER, "a ficha disciplinar continua retida");
+    assert.notEqual(
+      freio.classe,
+      disciplina.classe,
+      "contagem de rajada nao e disciplina: app/lib/comunicacao/limites.dart diz `ISTO NAO E SANCAO` no proprio campo `bloqueadoAteMs`"
+    );
+    assert.equal(freio.classe, CLASSE.APAGAR);
+  });
+
+  test("a chave e o UID, e nao o publicId", () => {
+    // Se o caminho fosse `chatRitmo/{publicId}`, o executor acharia o documento
+    // por outra chave — e uma conta sem identidade publica (caminho normal, ver
+    // `lerPublicId`) simplesmente nao teria o freio apagado.
+    const item = itemPorId("moderacao.ritmoDeChat");
+    assert.equal(item.caminho, "chatRitmo/{uid}");
+    assert.equal(item.alcance.modo, "docPorUid");
+    assert.equal(item.alcance.colecao, "chatRitmo");
+  });
+
+  test("o freio nao declara campos: APAGAR nao corta coluna", () => {
+    // `campos` num item APAGAR seria instrucao morta — e o sinal de que alguem
+    // comecou a escrever DESVINCULAR e mudou de ideia pela metade.
+    const item = itemPorId("moderacao.ritmoDeChat");
+    assert.equal(item.campos, undefined);
+  });
+
+  test("a justificativa nomeia por que apagar NAO e limpar ficha", () => {
+    // A OS proibe apagar sem justificativa, e a suite ja exige 40 caracteres.
+    // Aqui a exigencia e de CONTEUDO: a decisao so e defensavel se disser que
+    // a ficha disciplinar continua em outro lugar. Um `porque` generico de
+    // tamanho suficiente passaria no teste global e nao neste.
+    const item = itemPorId("moderacao.ritmoDeChat");
+    for (const palavra of [
+      // os registros disciplinares, nomeados
+      "sanctions",
+      "playerModeration",
+      // e a AFIRMACAO sobre eles: que ficam. Citar sem dizer o destino nao
+      // defende decisao nenhuma.
+      "RETIDOS",
+      // a fonte de onde vem "isto nao e sancao", para que a afirmacao seja
+      // conferivel em vez de assertiva
+      "limites.dart",
+    ]) {
+      assert.ok(
+        item.porque.includes(palavra),
+        `a justificativa de chatRitmo precisa citar '${palavra}'`
+      );
+    }
+  });
+});
+
+// ===========================================================================
+// A COERENCIA ENTRE O CAMINHO E O ALCANCE
+// ===========================================================================
+//
+// Nasceu com a linha acima, e vale para a matriz inteira. O teste de cobertura
+// cruza `firestore.rules` com o CAMINHO; nada cruzava o caminho com o ALCANCE.
+// Trocar so `alcance.colecao` — um plural a mais, um typo — deixava o item
+// declarado, coberto e apontando para uma colecao que nao existe: a exclusao
+// varreria o nada e todas as suites puras continuariam verdes.
+describe("o alcance aponta para a colecao do proprio caminho", () => {
+  test("docPorUid e docPorPublicId varrem a raiz do caminho", () => {
+    for (const item of INVENTARIO) {
+      if (item.alcance.modo !== "docPorUid" && item.alcance.modo !== "docPorPublicId") {
+        continue;
+      }
+      assert.equal(
+        item.alcance.colecao,
+        colecaoRaizDe(item),
+        `${item.id}: o alcance varre '${item.alcance.colecao}' e o caminho declara '${colecaoRaizDe(item)}'`
+      );
+    }
+  });
+
+  test("consultaPorCampo de colecao RAIZ tambem bate com o caminho", () => {
+    // `grupo: true` fica de fora: uma consulta collection-group varre a
+    // subcolecao por nome, e a raiz do caminho e o documento dono.
+    for (const item of INVENTARIO) {
+      if (item.alcance.modo !== "consultaPorCampo" || item.alcance.grupo) continue;
+      assert.equal(
+        item.alcance.colecao,
+        colecaoRaizDe(item),
+        `${item.id}: consulta '${item.alcance.colecao}' e declara '${colecaoRaizDe(item)}'`
+      );
+    }
+  });
+});
