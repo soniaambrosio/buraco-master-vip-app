@@ -306,10 +306,17 @@ jobs:
           # deixa rastro nenhum: a contagem cai e o portão segue verde. Nomear o
           # caminho é o que faz o sumiço doer. Mesma disciplina — e mesmo
           # formato — do `auditoria_casca_test.dart` logo acima.
+          # `ancora_provas_visuais_test.dart` (OS 29-C6) entra nesta lista pelo
+          # mesmo motivo, e resolve um a mais: ela é o TERCEIRO nó que torna as
+          # provas visuais da carta obrigatória obrigatórias de fato, e a única
+          # coisa que reprova quando alguém tira a entrada dela do
+          # `ci-os-integracao.yml`. Se ela pudesse sumir daqui em silêncio, o
+          # gesto de apagar entrada e arquivo juntos sairia verde.
           for obrigatoria in \
             app/test/casca/mesa_treino_caracterizacao_test.dart \
             app/test/casca/mesa_treino_acessivel_test.dart \
             app/test/casca/mesa_treino_alvos_reais_test.dart \
+            app/test/casca/ancora_provas_visuais_test.dart \
             app/test/cartas/disposicao_da_mao_test.dart; do
             if [ ! -f "$obrigatoria" ]; then
               echo "ERRO: $obrigatoria não encontrado — a suíte da Mesa de Treino é OBRIGATÓRIA."

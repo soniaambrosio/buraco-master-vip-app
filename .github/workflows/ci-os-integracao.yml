@@ -150,6 +150,13 @@ jobs:
             fi
             ( cd app_build && flutter test "$t" --reporter expanded ) 2>&1 | tee "t_$k.log"; echo ${PIPESTATUS[0]} > "exit_$k"
           }
+          # CARIMBO DA ÂNCORA DAS PROVAS VISUAIS (OS 29-C6).
+          #
+          # Escrito ANTES de qualquer suíte rodar, e por isso mais VELHO que
+          # todo log desta execução. É o que distingue "as suítes rodaram
+          # agora" de "alguém guardou os logs de uma corrida antiga e os
+          # reapresentou": `ancoravis` exige que cada log seja posterior a ele.
+          date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis
           roda motor      test/teste_motor.dart
           roda resil      test/teste_motor_resiliencia.dart
           roda encerr     test/teste_encerramento.dart
@@ -200,6 +207,63 @@ jobs:
           # cobrir sem montar a mesa cinquenta vezes.
           exige mesac1     test/casca/mesa_treino_alvos_reais_test.dart
           exige disposicao test/cartas/disposicao_da_mao_test.dart
+          # OS 29-C6 — A ÂNCORA EXTERNA DAS PROVAS VISUAIS DA CARTA OBRIGATÓRIA.
+          #
+          # `cascaaud` e `mesac1` se guardam MUTUAMENTE desde a OS 29-C4, e a
+          # OS 29-C5 deu às duas metades a mesma força. Sobrou o residual C10:
+          # esvaziar as duas metades no MESMO commit e realinhar o digest que
+          # sobra sai VERDE, com o placar da árvore íntegra. Não é defeito de
+          # nenhuma das duas — guarda mútua de dois nós não tem âncora fora de
+          # si.
+          #
+          # `ancoravis` é o terceiro nó. Ele carrega cópia PRÓPRIA das listas de
+          # casos, das declarações exigidas, das agulhas, dos pisos e dos
+          # digests do código das duas metades; e lê a EVIDÊNCIA desta execução
+          # — o carimbo acima, os marcadores de saída e os logs de `cascaaud` e
+          # `mesac1`, que a esta altura já existem. Por isso ele vem DEPOIS das
+          # duas, e não antes.
+          exige ancoravis  test/casca/ancora_provas_visuais_test.dart
+          # O VÍNCULO DE CONTEÚDO DA PRÓPRIA ÂNCORA.
+          #
+          # Uma âncora que só é obrigatória não é âncora: esvaziá-la sairia
+          # verde com o placar de zero caso. Estas três declarações são o que a
+          # prende, e cada uma fecha um gesto diferente:
+          #
+          #   * ANCORA_DIGEST reprova QUALQUER edição da âncora que não passe
+          #     por aqui — inclusive esvaziá-la mantendo os nomes;
+          #   * ANCORA_PISO reprova a âncora que roda e não prova, porque o
+          #     número conferido é o placar REAL do executor, lido do log dela;
+          #   * e a própria âncora afirma, em Dart, que estas três linhas
+          #     continuam VIVAS e com estes valores. Baixar o piso aqui reprova
+          #     lá; esvaziar a âncora lá derruba o placar aqui. Nenhum dos dois
+          #     gestos se basta, e é essa a diferença entre uma âncora e um
+          #     digest que se realinha.
+          #
+          # E o digest tem DOIS donos, de propósito. Um digest com um dono só é
+          # um digest que se realinha: quem esvazia a âncora atualiza a linha
+          # aqui no mesmo commit e segue — foi exatamente esse gesto que a OS
+          # 29-C5 registrou como residual C10, um degrau abaixo. O segundo dono
+          # é o CONTRATO desta autoridade, que é prosa revisável e não código
+          # que ninguém lê. Os dois têm de dizer o mesmo número.
+          ANCORA_ARQUIVO=app/test/casca/ancora_provas_visuais_test.dart
+          ANCORA_CONTRATO=docs/ANCORA-PROVAS-VISUAIS-CARTA-OBRIGATORIA-V1.md
+          ANCORA_DIGEST=5fd548ac9beb9d29e4e7a125717025c12ed55534eb927004f6bba9dbff0924da
+          ANCORA_PISO=16
+          d=$(tr -d "\r" < "$ANCORA_ARQUIVO" | sha256sum | cut -d" " -f1)
+          if [ "$d" != "$ANCORA_DIGEST" ]; then
+            echo "ÂNCORA ALTERADA: digest $d, declarado $ANCORA_DIGEST" | tee -a t_ancoravis.log
+            echo 1 > exit_ancoravis
+          fi
+          c=$(grep -oE "^ancora-digest: [0-9a-f]{64}$" "$ANCORA_CONTRATO" | tail -1 | sed "s/.*: //")
+          if [ "$c" != "$ANCORA_DIGEST" ]; then
+            echo "CONTRATO DIVERGE: contrato $c, alvo $ANCORA_DIGEST" | tee -a t_ancoravis.log
+            echo 1 > exit_ancoravis
+          fi
+          n=$(grep -oE "\+[0-9]+: All tests passed!" t_ancoravis.log | grep -oE "[0-9]+" | tail -1)
+          if [ -z "$n" ] || [ "$n" -lt "$ANCORA_PISO" ]; then
+            echo "ÂNCORA ABAIXO DO PISO: placar '$n', piso $ANCORA_PISO" | tee -a t_ancoravis.log
+            echo 1 > exit_ancoravis
+          fi
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
@@ -367,11 +431,11 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao ancoravis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           # Mesma declaração do veredito. Cada passo é um shell próprio, então
           # ela se repete — e a conferência que impede as duas de divergirem
           # mora no veredito, que é quem reprova.
-          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao"
+          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao ancoravis"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -429,7 +493,7 @@ jobs:
         run: |
           # A lista do veredito mora numa variável, e não literal no `for`, para
           # que a conferência lá embaixo leia a MESMA lista que o laço percorre.
-          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao billing torneiosfn socialdom socialfn socialemu regras"
+          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao ancoravis billing torneiosfn socialdom socialfn socialemu regras"
 
           # GATES QUE NÃO PODEM DEIXAR DE EXECUTAR.
           #
@@ -448,7 +512,7 @@ jobs:
           # Este é o mesmo mecanismo aprovado na OS 12.1-C1 para `torneiosa11y`,
           # e de propósito não é outro: um segundo agregador, com outra lista e
           # outro runner, seria uma segunda autoridade sobre o mesmo veredito.
-          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao"
+          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao ancoravis"
           obrigatorio() {
             case " $OBRIGATORIOS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
           }
