@@ -110,19 +110,27 @@ gates_com_contrato() {
 # resultados <dir> — monta a evidencia de um run bem-sucedido, na ordem certa:
 # o carimbo primeiro, os logs depois. A relacao vem da FONTE.
 #
-# A linha de log carrega os DOIS contadores de uma vez — o `+N` do Flutter e o
-# `casos ok: N` dos portoes em bash — porque `contador` e por gate e a fixture
-# nao tem como conhecer o vocabulario de cada um. Os numeros sao folgados de
-# proposito: quem mede piso de casos EXECUTADOS e o caso que reescreve, ele
-# mesmo, o log do gate que quer medir (T31, C2-22).
+# A linha de log carrega os TRES contadores de uma vez — o `+N` do Flutter, o
+# `casos ok: N` dos portoes em bash e o `pass N` do `node --test` — porque
+# `contador` e por gate e a fixture nao tem como conhecer o vocabulario de cada
+# um. Os numeros sao folgados de proposito: quem mede piso de casos EXECUTADOS
+# e o caso que reescreve, ele mesmo, o log do gate que quer medir (T31, C2-22).
 resultados() {
   local d="$1" k
   rm -rf "$d"
   mkdir -p "$d"
   printf 'run 1 — carimbo desta execucao\n' > "$d/carimbo_execucao"
   for k in $(gates_com_contrato "$W/$FONTE_W"); do
-    printf '00:12 +999: All tests passed! | casos ok: 999 | casos com falha: 0\n' \
-      > "$d/t_$k.log"
+    {
+      printf '00:12 +999: All tests passed! | casos ok: 999 | casos com falha: 0\n'
+      # O rodape do `node --test`, no MESMO log. Os gates de codebase Node —
+      # `comunicacaoemu` (OS 24-C3), `composloja` e `rankingfn` (OS 40-C1) —
+      # declaram `contador` proprio, e a FASE B cobra log de TODO gate
+      # contratado. Escrever os tres vocabularios de uma vez e o que mantem a
+      # derivacao valendo: a alternativa seria a fixture voltar a conhecer NOME
+      # de gate, que e exatamente o que a OS 46 aposentou.
+      printf 'tests 999\npass 999\nfail 0\n'
+    } > "$d/t_$k.log"
   done
   # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
   # ordem carimbo -> log ficar inequivoca sem esperar o relogio.
@@ -263,6 +271,17 @@ awk '/^comunicacao$/ { pulando = 1; next }
      pulando && /^[[:blank:]]/ { next }
      { pulando = 0; print }' "$BASE/$FONTE_W" > "$W/$FONTE_W"
 esperar 1 "T22 — gate protegido removido da fonte => VERMELHO (N6)" "perdeu o contrato"
+
+# T22b — o MESMO ataque, mirado no gate que a OS 24-C3 acrescentou. Ele tem caso
+# proprio porque foi o ultimo a entrar, e um gate novo e justamente o que passa
+# despercebido: se `comunicacaoemu` cair de `CONTRATOS_MINIMOS` ou perder o
+# bloco na fonte, ele vira o unico gate protegido so em PRESENCA e EXECUCAO —
+# o buraco que esta arquitetura veio fechar, reaberto pelo gate mais recente.
+reset
+awk '/^comunicacaoemu$/ { pulando = 1; next }
+     pulando && /^[[:blank:]]/ { next }
+     { pulando = 0; print }' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+esperar 1 "T22b — comunicacaoemu sem contrato => VERMELHO (OS 24-C3)" "perdeu o contrato"
 
 reset
 printf '\ngatequenaoexiste\n    suite      app/test/chat/chat_test.dart\n    executor   roda gatequenaoexiste test/chat/chat_test.dart\n    sha256     0000000000000000000000000000000000000000000000000000000000000000\n    provas     1\n    exige      void main\n' \

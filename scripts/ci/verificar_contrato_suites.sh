@@ -165,6 +165,18 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # declarado e nunca importado, parecendo integrado. Um gate que some sem
 # reprovar repetiria exatamente esse desaparecimento.
 #
+# `comunicacaoemu` entra pela OS 24-C3, e entra AQUI e nao so na fonte: um gate
+# novo que ficasse de fora desta relacao seria o unico sem contrato de conteudo
+# — protegido em presenca e execucao, e desprotegido no que a suite PROVA. Era
+# exatamente o buraco que a arquitetura P veio fechar, reaberto pela porta dos
+# fundos no gate mais recente.
+# `composloja` entra junto, e nao por simetria: e nele que mora `CL-05`, a
+# assinatura que reprova quando alguem apaga registro E produtor de um gate na
+# mesma edicao. Sem contrato, a propria ancora podia ser esvaziada em silencio —
+# bastava tirar um nome da lista `DA_COMUNICACAO` para o gate mais novo deixar
+# de ser exigido, e nenhuma guarda diria nada. Guarda que nao sobrevive a
+# propria remocao nao e guarda.
+#
 # As tres reguas abaixo sao a razao de a remocao deixar de ser silenciosa. Elas
 # nao substituem o contrato: o contrato mora na fonte unica e pode CRESCER com
 # decisao nova; o que estas linhas proibem e ele ENCOLHER — perder a chave,
@@ -172,9 +184,9 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 #
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip torneiobase appcheckandroid rankingfn"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:72 admvip:48 torneiobase:56 appcheckandroid:26 rankingfn:57"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:80 admvip:48 torneiobase:56 appcheckandroid:26 rankingfn:465"
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip torneiobase appcheckandroid rankingfn comunicacaoemu composloja"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:72 admvip:48 torneiobase:56 appcheckandroid:26 rankingfn:57 comunicacaoemu:32 composloja:20"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:80 admvip:48 torneiobase:56 appcheckandroid:26 rankingfn:465 comunicacaoemu:34 composloja:35"
 
 # O piso de BLOCOS NORMATIVOS. `exige` sozinho ja reprova quando some inteiro —
 # "nao declara nenhum 'exige'" —, e essa era toda a protecao que existia. Apagar

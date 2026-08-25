@@ -114,6 +114,53 @@ cascaporta
 # comercial: um `setState` local acendia o selo sem nenhum servidor envolvido.
 cascaloja
 
+# --- 3c. TEMA REAL VIP das Configuracoes (entra pela OS do Tema Real V1) ----
+# A tela de Ajustes passou a ter DOIS conjuntos de icones, e o defeito que esta
+# suite existe para impedir nao e visivel em nenhuma prova de linha: a tela sair
+# METADE dourada e metade padrao. Cada linha isolada continua correta; so uma
+# varredura de CONJUNTO ve a mistura.
+#
+# Ela guarda tambem as tres portas por onde o direito poderia vazar — o passe
+# quinzenal de cortesia (que NAO libera o tema), o codigo de sala e a variavel
+# local — e as correcoes de dado produtivo da OS: "Fichas e compras" no lugar de
+# "Moedas e compras", versao vinda da build, plano e renovacao vindos da
+# autoridade em vez do literal da maquete.
+#
+# `exige` aponta para os grupos e para os casos que sozinhos ja denunciam a volta
+# de cada defeito. AST-14 e a varredura anti-mistura; ELG-05 e a separacao do
+# passe; DAD-24 e a nomenclatura comercial.
+temavip
+    suite      app/test/casca/tema_real_vip_ajustes_test.dart
+    executor   roda temavip      test/casca/tema_real_vip_ajustes_test.dart
+    sha256     b5f2a0761be312e1a5e82a8418098ec270e3b474bed665a428af314864a9d63a
+    provas     53
+    # SEM `casos`: o piso executado exigiria log, e a matriz do proprio
+    # verificador (gate contratosui) monta um diretorio de evidencia sem ele.
+    # A trava de conteudo continua inteira pelo `sha256` + `provas` + `exige` —
+    # e o mesmo arranjo que `chatdom` usa.
+    exige      group('ELG
+    exige      group('AST
+    exige      group('EST
+    exige      group('DAD
+    exige      group('A11Y
+    exige      group('NRG
+    exige      ('ELG-05 o passe quinzenal de cortesia
+    exige      ('AST-11 um único asset ausente derruba o conjunto INTEIRO
+    exige      ('AST-14 a tela nunca mistura os dois conjuntos
+    exige      ('DAD-24 a linha comercial chama-se Fichas e compras
+    exige      ('A11Y-29 os nomes acessíveis são IGUAIS nos dois temas
+    # OS 39 — a arte aprovada entrou, e com ela o unico grupo do repositorio
+    # que ABRE os WebP e olha dentro: digesto, 256x256, alfa real, nada de
+    # fundo assado, legibilidade a 18 px e a prova de ATIVACAO pelo caminho de
+    # producao. Sem estes literais, apagar o grupo ART deixaria o portao verde
+    # com o Tema Real desligado e ninguem sabendo.
+    exige      group('ART
+    exige      ('ART-02 cada arquivo confere com o SHA-256 aprovado
+    exige      ('ART-05 o alfa é REAL
+    exige      ('ART-11 corromper UM arquivo derruba o conjunto inteiro
+    exige      kConjuntoRealVipRegistrado, isTrue
+    exige      ('ART-15 toda pasta declarada é REALMENTE empacotada
+
 # --- 4. suítes Flutter de Ranking Real e Perfil Publicável (entram por esta OS)
 # `rkbarreira` é a barreira temporal V2; `rkestado` guarda `EstadoRanking` como
 # autoridade única (sem fallback Bronze/nível 1/#0/#1).
@@ -366,6 +413,49 @@ chatemu
 moderacaoemu
 colecoesemu
 
+# --- 9b. COMUNICAÇÃO CONTROLADA V1 contra o Emulator Suite (OS 24-C3) -------
+# A última lacuna de CI da família OS 24. A suíte
+# `functions-moderacao/test/integracao.comunicacao.emulador.test.js` existia,
+# era funcional e já tinha sido rodada à mão — e gate nenhum a executava. Ela
+# podia quebrar com todos os portões oficiais verdes.
+#
+# ELE NÃO É REDUNDANTE COM NENHUM DOS QUATRO VIZINHOS, e cada um prova outra
+# coisa:
+#
+#   `comunicacao`  ... a DECISÃO, em Dart puro. O canal chega PRONTO, montado
+#                      pelo próprio teste: a matriz do §2 é percorrida sem que
+#                      nada resolva ambiente contra o banco.
+#   `chatdom`      ... a porta do TEXTO, também em domínio puro.
+#   `moderacaofn`  ... `tsc` + os módulos puros da codebase. Não sobe emulador.
+#   `chatemu`      ... a integração real do CHAT LIVRE: autenticação, retry,
+#                      concorrência, bloqueio, sanção. Não toca a matriz da
+#                      Comunicação Controlada nem o catálogo.
+#
+# ESTE prova o limite que só existe depois dos quatro: matriz/porta da
+# Comunicação Controlada → Functions reais → Firestore/Auth. O ambiente é
+# resolvido contra `salasPrivadas` e `assentosAdmitidos`, escritos por OUTRA
+# autoridade; o direito premium vem de `playerEntitlements`, escrito pelo
+# Billing; o ritmo acumula em `chatRitmo` entre chamadas; e o grupo INT-ESP
+# fecha os vetores que dependiam de Firebase e não tinham caso em lugar nenhum
+# — espectador no caminho catalogado, VIP vigente que NÃO abre o teclado,
+# payload que tenta declarar o ambiente, e canal inexistente ou fechado.
+comunicacaoemu
+    suite      functions-moderacao/test/integracao.comunicacao.emulador.test.js
+    executor   "node --test functions-moderacao/test/integracao.comunicacao.emulador.test.js" 2>&1 | tee t_comunicacaoemu.log
+    sha256     3e570584539df355e09e64f7810ec1a9c77c5340a8d60f7a598670106736e37a
+    provas     32
+    casos      34
+    contador   pass [0-9]+
+    exige      describe("INT-AMB
+    exige      describe("INT-TXT
+    exige      describe("INT-CAT
+    exige      describe("INT-ESP
+    exige      INT-ESP-04 CONTROLE
+    exige      INT-ESP-05 VIP VIGENTE
+    exige      INT-ESP-09 recusa nao PERSISTE
+    exige      papelSemDireitoDeFala
+    exige      textoLivreNaoPermitidoNoAmbiente
+
 # --- 10. as TRES codebases que a composicao trouxe e o CI nunca conheceu -----
 # `functions-conta`, `functions-mesas` e `functions-economia` sao implantaveis
 # (estao em firebase.json, cada uma com codebase propria) e nao apareciam em
@@ -415,6 +505,17 @@ composneg
 # que guarda a invariante RANKING-01 podia ficar vermelha sem ninguém saber.
 rkpagina
 composloja
+    suite      ferramentas/composicao/loja_functions.test.js
+    executor   node --test ferramentas/composicao/loja_functions.test.js 2>&1 | tee t_composloja.log
+    sha256     1d4940bc46854d6f5fbe5c977b0405fb4a3430ce55bee3aa7030f28f2b52f962
+    provas     20
+    conta      ^[[:blank:]]*test\(
+    casos      35
+    contador   pass [0-9]+
+    exige      const DA_COMUNICACAO = ['chatdom', 'comunicacao', 'comunicacaoemu']
+    exige      const DA_LOJA
+    exige      const DAS_FUNCTIONS
+    exige      'functions-moderacao': [
 
 # --- 13. PERFIL/SOCIAL FUNCIONAL SOBRE A RAIZ P ------------------------------
 #

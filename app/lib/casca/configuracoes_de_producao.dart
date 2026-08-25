@@ -23,6 +23,8 @@
 // esta tela poder sumir sem se preocupar em navegar: ela não sobrevive à
 // própria ação.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../screens/configuracoes_screen.dart';
@@ -33,11 +35,14 @@ import '../services/configuracoes_service.dart';
 import '../screens/excluir_conta_screen.dart';
 import '../conta/controlador_exclusao.dart';
 import '../conta/fonte_exclusao_firebase.dart';
+import '../billing/acesso_vip.dart';
 import '../billing/entitlement_repositorio.dart';
 import '../billing/gerenciar_assinatura.dart';
 import '../sessao/escopo_sessao.dart';
-import '../sessao/escopo_sessao.dart';
+import '../elegibilidade/entitlement.dart';
 import '../sessao/identidade_publica_sessao.dart';
+import '../tema/iconografia_ajustes.dart';
+import '../tema/resolucao_tema_ajustes.dart';
 import 'escopo_autenticacao.dart';
 import 'loja_de_producao.dart';
 
@@ -49,11 +54,54 @@ const String kVersaoDoAplicativo = String.fromEnvironment(
 );
 
 class ConfiguracoesDeProducao extends StatefulWidget {
-  const ConfiguracoesDeProducao({super.key});
+  const ConfiguracoesDeProducao({
+    super.key,
+    this.observarEntitlement = _entitlementDeProducao,
+    this.verificarConjuntoReal,
+    this.aoDiagnosticar,
+  });
+
+  /// A escuta de `playerEntitlements/{uid}` — a MESMA porta que a Loja usa.
+  ///
+  /// Injetavel porque o teste precisa encenar assinante, carencia, expirado e
+  /// falha de leitura sem Firebase; producao nao passa nada e recebe o
+  /// repositorio real.
+  final FonteEntitlement observarEntitlement;
+
+  /// Pre-checagem do conjunto luxuoso INTEIRO. `null` = a de producao.
+  final Future<bool> Function()? verificarConjuntoReal;
+
+  /// Para onde vai o diagnostico sanitizado do fallback de iconografia.
+  ///
+  /// NAO E `debugPrint`, e a diferenca importa: a auditoria da casca proibe
+  /// que esta camada escreva em log, porque e por log que credencial e
+  /// identidade vazam sem ninguem ver. O diagnostico existe, e formado
+  /// (`ResolucaoDeTema.diagnostico`, vocabulario fechado, sem uid e sem
+  /// e-mail), e so vai a algum lugar se quem monta a tela disser para onde.
+  /// Em producao ninguem diz, e nada e escrito.
+  final void Function(String diagnostico)? aoDiagnosticar;
 
   @override
   State<ConfiguracoesDeProducao> createState() =>
       _ConfiguracoesDeProducaoState();
+}
+
+/// A escuta real de `playerEntitlements/{uid}`.
+///
+/// O `try` NAO e paranoia: `EntitlementRepositorio()` toca
+/// `FirebaseFirestore.instance` no construtor, e num build sem Firebase isso
+/// LANCA — derrubando a arvore inteira por causa de um tema cosmetico. O
+/// desfecho certo desse caso e DUVIDA, nao 'nao e VIP': um fluxo de erro
+/// vira `SituacaoVip.erro`, que o resolvedor le como estado desconhecido e
+/// responde com Tema Padrao. Devolver `Stream.empty()` diria 'ainda
+/// carregando' para sempre; devolver `ausente(uid)` afirmaria que a pessoa
+/// nao assina, o que ninguem verificou.
+Stream<EntitlementVip> _entitlementDeProducao(String uid) {
+  try {
+    return EntitlementRepositorio().observar(uid);
+  } catch (erro, pilha) {
+    return Stream<EntitlementVip>.error(erro, pilha);
+  }
 }
 
 class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
@@ -62,6 +110,31 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
 
   /// Um logout em voo. Impede o segundo toque de disparar um segundo comando.
   bool _saindo = false;
+
+  /// O PORTAO VIP desta tela. Ele guarda fatos (uid, documento, se falhou) e
+  /// recomputa a vigencia contra o relogio a cada leitura — e por isso um
+  /// direito que vence com a tela aberta deixa de valer na reconstrucao
+  /// seguinte, sem escrita no Firestore e sem relogio proprio aqui.
+  late final PortaoVip _portao = PortaoVip(fonte: widget.observarEntitlement);
+  StreamSubscription<AcessoVip>? _escutaVip;
+
+  /// O uid que o portao esta seguindo. Trocar de conta reancora o portao e
+  /// zera a resolucao ANTES de qualquer leitura nova: nao existe instante em
+  /// que o tema do jogador anterior sirva de cache para o proximo.
+  String? _uid;
+
+  /// A resolucao corrente. Comeca no Padrao, sempre — inclusive para quem vai
+  /// se revelar assinante um quadro depois.
+  ResolucaoDeTema _tema = const ResolucaoDeTema(
+    tema: TemaIconografia.padrao,
+    estado: EstadoTemaVip.desconhecido,
+    motivo: MotivoDoTema.autoridadeIndefinida,
+  );
+
+  /// Serializa as resolucoes: a checagem do conjunto e assincrona, e sem isto
+  /// uma resposta velha poderia chegar depois de uma nova e reacender o tema
+  /// de um direito que ja caiu.
+  int _geracaoDaResolucao = 0;
 
   @override
   void initState() {
@@ -76,6 +149,54 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
         // assíncrona sem dono e derrubaria a tela inteira por causa de uma
         // preferência de som.
         .catchError((Object _) {});
+    _escutaVip = _portao.mudancas.listen((_) => _resolverTema());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final uid = EscopoSessao.identidadeDe(context).uid;
+    if (uid == _uid) return;
+    _uid = uid;
+    // A projecao visual da conta anterior sai da tela ANTES de a nova ser
+    // consultada. Sem isto, o intervalo entre trocar de conta e o primeiro
+    // evento do Firestore mostraria o VIP de quem saiu.
+    _tema = const ResolucaoDeTema(
+      tema: TemaIconografia.padrao,
+      estado: EstadoTemaVip.desconhecido,
+      motivo: MotivoDoTema.autoridadeIndefinida,
+    );
+    _portao.usarSessao(uid);
+  }
+
+  @override
+  void dispose() {
+    _escutaVip?.cancel();
+    _portao.encerrar();
+    super.dispose();
+  }
+
+  /// Reavalia o tema INTEIRO a partir do retrato corrente da autoridade.
+  Future<void> _resolverTema() async {
+    final geracao = ++_geracaoDaResolucao;
+    final resolucao = await resolverTemaDeAjustes(
+      acesso: _portao.atual,
+      verificarConjunto: widget.verificarConjuntoReal,
+    );
+    if (!mounted || geracao != _geracaoDaResolucao) return;
+    if (resolucao.tema == _tema.tema && resolucao.motivo == _tema.motivo) {
+      // Nada mudou para a tela. Reconstruir aqui seria reconstrucao por
+      // evento de rede, e a §12 proibe que a troca de tema mexa em estado.
+      _tema = resolucao;
+      return;
+    }
+    if (resolucao.tema == TemaIconografia.padrao &&
+        resolucao.motivo != MotivoDoTema.concedido) {
+      // Diagnostico tecnico SANITIZADO: nem uid, nem e-mail, nem caminho de
+      // arquivo, nem mensagem de excecao. So o vocabulario fechado da §7.
+      widget.aoDiagnosticar?.call(resolucao.diagnostico);
+    }
+    setState(() => _tema = resolucao);
   }
 
   void _aviso(String texto) {
@@ -100,17 +221,81 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
   PerfilResumo _cabecalho(EstadoIdentidadeSessao estado) {
     final identidade = estado.identidade;
     final apelido = identidade?.apelido.trim() ?? '';
+    final acesso = _portao.atual;
     return PerfilResumo(
       apelido: apelido.isNotEmpty
           ? apelido
           : (identidade?.publicId ?? 'Jogador(a)'),
-      // O e-mail não é exibido: ele não ajuda quem já está logado e é dado
-      // pessoal à mostra numa tela que se abre no meio de uma mesa.
-      email: '',
-      vip: false,
-      // Nulo, e não zero: sem autoridade de economia, "0 moedas disponíveis" é
-      // uma afirmação sobre a carteira de alguém que ninguém consultou.
-      moedas: null,
+      // Tela PRIVADA da propria pessoa: aqui o e-mail da conta pode aparecer.
+      // No Perfil publico, nao — e por isso ele vem do provedor de
+      // AUTENTICACAO e nunca da `IdentidadePublica`, que e o que terceiros veem.
+      email: EscopoAutenticacao.de(context).emailDaConta ?? '',
+      // Avatar publico canonico. Nao ha coroa fixa por cima da identidade: a
+      // coroa so aparece como fallback de quem nao tem apelido nem avatar, como
+      // ja era antes desta OS.
+      avatar: identidade?.avatarRef,
+      // O SELO VEM DA AUTORIDADE. `liberado` significa 'vigente agora', medido
+      // pelo portao contra o relogio; a tela nao o deriva do plano escrito ao
+      // lado nem de coisa nenhuma que ela mesma desenhe.
+      vip: acesso.liberado,
+      assinatura: _assinaturaNaTela(acesso),
+      // Nulo, e nao zero: sem autoridade de economia, "0 fichas disponiveis" e
+      // uma afirmacao sobre a carteira de alguem que ninguem consultou.
+      fichas: null,
+    );
+  }
+
+  /// O identificador do plano, quando ele tem a forma de um id da Play.
+  ///
+  /// E o identificador TECNICO, e nao um nome bonito: o nome comercial
+  /// ('Mensal', 'Anual') vem do periodo que a consulta da Play devolve, e essa
+  /// consulta nao acontece nesta tela — `playerEntitlements` guarda o produto,
+  /// nao o catalogo. Inventar 'Mensal' a partir do produto seria afirmar um
+  /// periodo que ninguem consultou, que e o defeito que a §10 nomeia. Sem
+  /// identificador valido a tela cai em 'Plano VIP', que nao afirma periodo.
+  static String? _identificadorDoPlano(String? produtoId) {
+    final id = produtoId?.trim();
+    if (id == null || id.isEmpty) return null;
+    return kFormatoIdentificadorPlay.hasMatch(id) ? id : null;
+  }
+
+  /// Traduz o retrato da autoridade para a linha 'Assinatura VIP' da §10.
+  ///
+  /// Cada estado da Play vira um estado da tela; nenhum vira texto aqui. Quem
+  /// escreve a frase e a propria tela, a partir dos CAMPOS — plano, data e
+  /// renovacao —, o que e o oposto de 'Renova em 24/08 · Mensal' fixo.
+  AssinaturaVipNaTela _assinaturaNaTela(AcessoVip acesso) {
+    if (acesso.situacao == SituacaoVip.carregando ||
+        acesso.situacao == SituacaoVip.erro) {
+      return const AssinaturaVipNaTela();
+    }
+    final direito = acesso.entitlement;
+    if (direito == null) {
+      return acesso.situacao == SituacaoVip.semSessao
+          ? const AssinaturaVipNaTela()
+          : const AssinaturaVipNaTela(
+              situacao: SituacaoAssinaturaVip.semAssinatura,
+            );
+    }
+    final situacao = switch (direito.estado) {
+      EstadoEntitlement.nuncaTeve => SituacaoAssinaturaVip.semAssinatura,
+      EstadoEntitlement.ativo => SituacaoAssinaturaVip.ativa,
+      EstadoEntitlement.emCarencia => SituacaoAssinaturaVip.emCarencia,
+      EstadoEntitlement.canceladoVigente =>
+        SituacaoAssinaturaVip.renovacaoCancelada,
+      EstadoEntitlement.emEspera => SituacaoAssinaturaVip.emEspera,
+      EstadoEntitlement.pausado => SituacaoAssinaturaVip.pausada,
+      EstadoEntitlement.pendente => SituacaoAssinaturaVip.pendente,
+      EstadoEntitlement.expirado => SituacaoAssinaturaVip.expirada,
+      EstadoEntitlement.revogado => SituacaoAssinaturaVip.expirada,
+      EstadoEntitlement.reembolsado => SituacaoAssinaturaVip.expirada,
+      EstadoEntitlement.desconhecido => SituacaoAssinaturaVip.indisponivel,
+    };
+    return AssinaturaVipNaTela(
+      situacao: situacao,
+      plano: _identificadorDoPlano(direito.produtoId),
+      validoAte: direito.expiraEm,
+      renovacaoAutomatica: direito.renovacaoAutomatica,
     );
   }
 
@@ -163,6 +348,7 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
   @override
   Widget build(BuildContext context) {
     return ConfiguracoesScreen(
+      icones: _tema.icones,
       perfil: _cabecalho(EscopoSessao.identidadeDe(context)),
       config: _config,
       onVoltar: () => Navigator.of(context).maybePop(),
@@ -177,8 +363,8 @@ class _ConfiguracoesDeProducaoState extends State<ConfiguracoesDeProducao> {
         onAssinaturaVip: () => Navigator.of(context).push(
           MaterialPageRoute<void>(builder: (_) => const LojaDeProducao()),
         ),
-        onMoedasCompras: () =>
-            _aviso('A compra de moedas ainda não está disponível.'),
+        onFichasECompras: () =>
+            _aviso('A compra de fichas ainda não está disponível.'),
         onBloqueados: () =>
             _aviso('A lista de bloqueados ainda não está disponível.'),
         onRegras: _abrirRegras,

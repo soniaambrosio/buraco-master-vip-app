@@ -132,6 +132,18 @@ jobs:
           echo "assets da tela configurar mesa copiados: $N arquivos"
           if [ "$N" -lt 8 ]; then echo "ERRO: esperava 8 assets da tela configurar mesa, veio $N"; exit 1; fi
 
+      - name: Copy VIP table assets (fundo e dorso da Mesa VIP)
+        # LACUNA ANTIGA, encontrada pela guarda ART-15 da OS 39: o pubspec
+        # declara `assets/mesa_vip/` e `montar_app.sh` a copia, mas ESTE
+        # workflow nunca a copiou. O APK de depuracao saia sem as duas artes, e
+        # nada acusava — `mesa_vip_preview_screen.dart` so falharia no aparelho.
+        run: |
+          mkdir -p app_build/assets/mesa_vip
+          cp app/assets/mesa_vip/*.webp app_build/assets/mesa_vip/
+          N=$(find app_build/assets/mesa_vip -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "assets da mesa VIP copiados: $N arquivos"
+          if [ "$N" -lt 2 ]; then echo "ERRO: esperava 2 assets da mesa VIP, veio $N"; exit 1; fi
+
       - name: Copy loja cosmetics assets (placeholder se faltar arte)
         run: |
           mkdir -p app_build/assets/loja
@@ -176,6 +188,21 @@ jobs:
           echo "--- peso da colecao no bundle ---"
           du -sh app_build/assets/colecoes/pioneiros_2026
           ls -l app_build/assets/colecoes/pioneiros_2026/
+
+      - name: Copy Tema Real VIP icons (Ajustes)
+        # Contagem EXATA, e pelo mesmo motivo do Kit acima: sobrar e tao grave
+        # quanto faltar. Aqui e pior, porque o fallback do Tema Real e POR
+        # CONJUNTO — 27 arquivos no bundle nao dao 27 icones luxuosos, dao a tela
+        # inteira em Tema Padrao, sem erro nenhum, para um assinante que pagou.
+        # O 29o arquivo tambem reprova: seria arte fora do contrato entrando no
+        # bundle sem chave.
+        run: |
+          mkdir -p app_build/assets/ajustes/real
+          cp app/assets/ajustes/real/*.webp app_build/assets/ajustes/real/
+          N=$(find app_build/assets/ajustes/real -maxdepth 1 -type f -name '*.webp' | wc -l)
+          echo "Tema Real VIP: $N icones copiados"
+          if [ "$N" -ne 28 ]; then echo "ERRO: esperava EXATAMENTE 28 icones, veio $N"; exit 1; fi
+          du -sh app_build/assets/ajustes/real
 
       # NOTA DE COMPOSIÇÃO DA RC. Aqui viviam dois passos da linhagem de
       # WS-auth que saíram nesta união, e nenhum dos dois se perdeu:

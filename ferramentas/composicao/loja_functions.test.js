@@ -348,7 +348,14 @@ describe('CL-05 — um lado perdendo os gates na uniao da fonte unica', () => {
    * Esta ancora e o que impede a repeticao: o nome tem de estar na fonte, e
    * apaga-lo reprova AQUI mesmo que o workflow seja apagado junto.
    */
-  const DA_COMUNICACAO = ['chatdom', 'comunicacao'];
+  /**
+   * `comunicacaoemu` entra pela OS 24-C3, e pelo mesmo motivo que os outros
+   * dois: ele e a UNICA prova de que a matriz da Comunicacao Controlada
+   * sobrevive a travessia ate o Firestore. Apagar o registro E o passo na mesma
+   * edicao continua deixando PN-10 e PN-12 verdes — os conjuntos ficam iguais,
+   * so que menores —, e e esta assinatura que reprova nesse caso.
+   */
+  const DA_COMUNICACAO = ['chatdom', 'comunicacao', 'comunicacaoemu'];
 
   test('os gates da Comunicacao Controlada V1 continuam obrigatorios', () => {
     const gates = new Set(gatesDaFonte());

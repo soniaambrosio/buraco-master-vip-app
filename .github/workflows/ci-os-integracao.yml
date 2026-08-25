@@ -276,6 +276,14 @@ jobs:
           # exibe saldo, pacote nem cosmético de maquete — nem acende VIP sem o
           # backend.
           roda cascaloja    test/casca/loja_de_producao_test.dart
+          # OS Tema Real VIP e Iconografia Canonica das Configuracoes V1. A
+          # suite que impede as tres regressoes que ninguem mais enxerga: um
+          # icone padrao sumir, o conjunto luxuoso entrar pela metade, e o passe
+          # quinzenal de cortesia virar chave do tema. Prova tambem que o
+          # cabecalho consome sessao e autoridade — e nao maquete —, que a linha
+          # comercial chama-se "Fichas e compras", e que o tema nao muda nome
+          # acessivel, alvo de toque nem preferencia gravada.
+          roda temavip      test/casca/tema_real_vip_ajustes_test.dart
           # OS Leitor Real de Ranking (barreira temporal V2) e Perfil
           # Publicável (CI-01). `rkestado` é o que impede a volta do fallback
           # Bronze / nível 1 / colocação #0 e #1; `rkbarreira` é a barreira
@@ -541,6 +549,49 @@ jobs:
           firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \
             "cd functions-moderacao && node --test test/integracao.chat.emulador.test.js" 2>&1 | tee t_chatemu.log
           echo ${PIPESTATUS[0]} > exit_chatemu
+
+      # GATE OBRIGATÓRIO (fail-closed no portão final). Entra pela OS 24-C3.
+      - name: "3i-b — COMUNICAÇÃO CONTROLADA V1 contra o Emulator Suite"
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          # POR QUE ESTE PASSO É SEPARADO DO 3i, e não um segundo arquivo na
+          # mesma linha de `node --test`: os dois gates provam LIMITES
+          # diferentes, e um passo só faria o vermelho de um se confundir com o
+          # do outro. `chatemu` prova o CHAT LIVRE contra o banco; este prova a
+          # matriz da Comunicação Controlada contra o banco — o ambiente
+          # resolvido contra `salasPrivadas`/`assentosAdmitidos`, o direito lido
+          # de `playerEntitlements`, o ritmo acumulando em `chatRitmo`, e o
+          # grupo INT-ESP (espectador no caminho catalogado, VIP que não abre o
+          # teclado, payload que tenta declarar ambiente, canal fechado).
+          #
+          # Rodar os dois arquivos juntos também mentiria na contagem: `node
+          # --test` executa ARQUIVOS EM PARALELO, e as duas suítes gravam em
+          # `chatMessages` — a medição de concorrência de uma cairia dentro da
+          # rajada da outra.
+          #
+          # A suíte NÃO está em `npm test` de propósito (ela exige emulador e o
+          # bundle do domínio); é este passo que a torna obrigatória.
+          if [ ! -f functions-moderacao/lib/index.js ]; then
+            echo "functions-moderacao nao foi compilado no passo 3h" > nao_comunicacaoemu; exit 0
+          fi
+          if [ ! -f functions-moderacao/test/integracao.comunicacao.emulador.test.js ]; then
+            echo "suite de integracao da comunicacao ausente" > nao_comunicacaoemu; exit 0
+          fi
+          npm i -g firebase-tools 2>&1 | tail -2
+          # Mesmo motivo do passo 3i: a codebase inteira mais o bundle do
+          # domínio estouram os 10s de descoberta padrão, e a falha apareceria
+          # como se a suíte estivesse quebrada.
+          export FUNCTIONS_DISCOVERY_TIMEOUT=120
+          # O caminho COMPLETO, a partir da raiz, e não `cd functions-moderacao
+          # && node --test test/...`: é este literal que o contrato de conteúdo
+          # da fonte única guarda como `executor`, e ele precisa NOMEAR a suíte
+          # que diz rodar. Um executor que cita só `test/...` casaria com
+          # qualquer suíte de qualquer codebase.
+          firebase emulators:exec --only firestore,auth,functions:moderacao --project demo-bmv \
+            "node --test functions-moderacao/test/integracao.comunicacao.emulador.test.js" 2>&1 | tee t_comunicacaoemu.log
+          echo ${PIPESTATUS[0]} > exit_comunicacaoemu
+
       # GATE OBRIGATÓRIO 2/3 (fail-closed no portão final).
       - name: "3h — codebase MODERACAO: Moderação com Firebase Emulator (chamadas reais)"
         if: ${{ !cancelled() }}

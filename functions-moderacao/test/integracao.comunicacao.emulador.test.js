@@ -54,6 +54,7 @@ const DONO = "uidDonoPrivada";
 const CONVIDADO = "uidConvidadoPrivada";
 const PENETRA = "uidPenetraPrivada";
 const VIZINHO = "uidVizinhoPublica";
+const PLATEIA = "uidPlateiaEspectadora";
 const MOTOR = "uidMotorPartidas";
 
 const CODIGO_PRIVADA = "PRIV4D4X";
@@ -70,6 +71,12 @@ const PUBLIC_ID_DONO = "PD0000000000A";
 const PUBLIC_ID_CONVIDADO = "PC0000000000A";
 const PUBLIC_ID_PENETRA = "PP0000000000A";
 const PUBLIC_ID_VIZINHO = "PV0000000000A";
+const PUBLIC_ID_PLATEIA = "PE0000000000A";
+
+const CANAL_ESP_PRIVADA = "canalEspPrivadaInt";
+const CANAL_ESP_PUBLICA = "canalEspPublicaInt";
+const CANAL_ESP_VIP = "canalEspVipInt";
+const CANAL_ESP_FECHADO = "canalEspFechadoInt";
 
 const LIMITE_CHAMADA_MS = 30_000;
 const caminhoUrl = (c) => c.split("/").map(encodeURIComponent).join("/");
@@ -207,6 +214,7 @@ before(async () => {
     [CONVIDADO, PUBLIC_ID_CONVIDADO],
     [PENETRA, PUBLIC_ID_PENETRA],
     [VIZINHO, PUBLIC_ID_VIZINHO],
+    [PLATEIA, PUBLIC_ID_PLATEIA],
   ]) {
     await gravar(`playerIdentities/${uid}`, { publicId: txt(pub) });
     // O mapa reverso, como functions-social o escreve. E por ele que a denuncia
@@ -240,7 +248,9 @@ beforeEach(async () => {
   // e estado, e um arnes limpa estado entre casos. Os casos de INT-R NAO
   // dependem desta limpeza — eles medem a acumulacao dentro de UM caso.
   await Promise.all(
-    [DONO, CONVIDADO, PENETRA, VIZINHO].map((uid) => apagar(`chatRitmo/${uid}`))
+    [DONO, CONVIDADO, PENETRA, VIZINHO, PLATEIA].map((uid) =>
+      apagar(`chatRitmo/${uid}`)
+    )
   );
 });
 
@@ -747,5 +757,312 @@ describe("INT-DEN — denuncia (§9.3, §9.5)", () => {
     assert.equal(ev.instantes.arrayValue.values.length, 3);
     // E a evidencia NAO carrega texto nenhum: o id e a versao dizem tudo.
     assert.equal(JSON.stringify(ev).includes("fallback"), false);
+  });
+});
+
+// ===========================================================================
+// INT-ESP — o PAPEL, o DIREITO e o CANAL, no limite real (OS 24-C3)
+// ===========================================================================
+//
+// POR QUE ESTE GRUPO ENTRA COM O GATE `comunicacaoemu`, e o que so ele fecha.
+//
+// A rehomologacao da OS 24 provou a linha do espectador no DOMINIO (grupo ESP
+// de app/test/comunicacao/comunicacao_test.dart) e provou que o dominio recusa
+// texto livre fora da Mesa Privada. Nenhuma das duas provas atravessa a
+// Function: elas recebem o canal PRONTO, montado pelo proprio teste.
+//
+// Aqui o canal e declarado pela porta REAL, o papel e o que a autoridade
+// gravou em `chatChannels`, o direito VIP vem de `playerEntitlements` e o
+// veredito volta por HTTP. Sao os vetores da §11 da OS 24-C3 que dependiam de
+// Firebase/Functions e nao tinham caso em lugar nenhum:
+//
+//   * espectador nao envia comunicacao CATALOGADA — o dominio ja recusava, e
+//     aqui se prova que a recusa sobrevive a resolucao de papel do servidor;
+//   * VIP VIGENTE nao abre o teclado: assinatura amplia CATALOGO, e o
+//     documento de direito esta gravado e valido no proprio caso;
+//   * payload que declara ambiente/modo/tipo e recusado pela FORMA;
+//   * canal inexistente e canal FECHADO nao viram gravacao.
+//
+// O CONTROLE (INT-ESP-04) e parte da prova: sem ele, uma recusa por item
+// invalido se disfarcaria de recusa por papel e o grupo ficaria verde pelo
+// motivo errado.
+describe("INT-ESP — papel, direito e canal contra o banco", () => {
+  /// As tres especies catalogadas que valem em toda mesa online e nao exigem
+  /// direito nenhum. Se a recusa viesse do ITEM, viria tambem para o sentado —
+  /// e o controle abaixo mostra que nao vem.
+  const CATALOGADOS = [
+    { tipo: "fala_catalogada", itemId: "elogiar_boa_jogada_01" },
+    { tipo: "reacao_catalogada", itemId: "reacao_aplauso_01" },
+    { tipo: "emoji_catalogado", itemId: "emoji_joia_01" },
+  ];
+
+  before(async () => {
+    // Mesa Privada COM sala registrada: o modo mais permissivo que existe no
+    // sistema. Recusar aqui e o que torna a prova forte.
+    const priv = await declararCanal({
+      canalId: CANAL_ESP_PRIVADA,
+      tipoPartida: "privada",
+      categoriaCompetitiva: "casual",
+      codigoDaSala: CODIGO_PRIVADA,
+      participantes: [
+        { uid: DONO, papel: "jogador_sentado" },
+        { uid: CONVIDADO, papel: "jogador_sentado" },
+        { uid: PLATEIA, papel: "espectador" },
+      ],
+      aberto: true,
+    });
+    assert.equal(priv.status, 200, priv.texto);
+
+    const pub = await declararCanal({
+      canalId: CANAL_ESP_PUBLICA,
+      tipoPartida: "publica",
+      categoriaCompetitiva: "casual",
+      participantes: [
+        { uid: DONO, papel: "jogador_sentado" },
+        { uid: VIZINHO, papel: "jogador_sentado" },
+        { uid: PLATEIA, papel: "espectador" },
+      ],
+      aberto: true,
+    });
+    assert.equal(pub.status, 200, pub.texto);
+
+    const vip = await declararCanal({
+      canalId: CANAL_ESP_VIP,
+      tipoPartida: "publica",
+      categoriaCompetitiva: "vip_ranqueada",
+      participantes: [
+        { uid: DONO, papel: "jogador_sentado" },
+        { uid: VIZINHO, papel: "jogador_sentado" },
+        { uid: PLATEIA, papel: "espectador" },
+      ],
+      aberto: true,
+    });
+    assert.equal(vip.status, 200, vip.texto);
+
+    // O canal FECHADO nasce fechado pela propria porta.
+    const fechado = await declararCanal({
+      canalId: CANAL_ESP_FECHADO,
+      tipoPartida: "publica",
+      categoriaCompetitiva: "casual",
+      participantes: [
+        { uid: DONO, papel: "jogador_sentado" },
+        { uid: VIZINHO, papel: "jogador_sentado" },
+      ],
+      aberto: false,
+    });
+    assert.equal(fechado.status, 200, fechado.texto);
+  });
+
+  // ---- espectador, nas TRES mesas ----------------------------------------
+  for (const [rotulo, canal] of [
+    ["Mesa Privada", CANAL_ESP_PRIVADA],
+    ["Mesa Publica", CANAL_ESP_PUBLICA],
+    ["Mesa VIP", CANAL_ESP_VIP],
+  ]) {
+    test(`INT-ESP-01 espectador nao envia catalogado em ${rotulo}`, async () => {
+      for (const item of CATALOGADOS) {
+        const r = await comoMotor(
+          {
+            intentId: intent(`esp01-${canal}-${item.tipo}`),
+            canalId: canal,
+            tipo: item.tipo,
+            itemId: item.itemId,
+          },
+          PLATEIA
+        );
+        assert.notEqual(r.status, 200, `${item.tipo} em ${rotulo} foi ACEITA`);
+        assert.match(r.texto, /papelSemDireitoDeFala/);
+        // Zero confirmacao falsa: nada de mensagem na resposta da recusa.
+        assert.equal(r.json?.result?.mensagem, undefined);
+      }
+    });
+  }
+
+  test("INT-ESP-02 espectador nao envia TEXTO na Mesa Privada", async () => {
+    const r = await comoMotor(
+      {
+        intentId: intent("esp02"),
+        canalId: CANAL_ESP_PRIVADA,
+        conteudo: "me deixem falar",
+      },
+      PLATEIA
+    );
+    assert.notEqual(r.status, 200);
+    assert.match(r.texto, /papelSemDireitoDeFala/);
+  });
+
+  test("INT-ESP-03 espectador nao entra na ENTREGA de quem fala", async () => {
+    // A outra direcao da linha do §2: observar nao concede participacao.
+    const r = await comoMotor(
+      {
+        intentId: intent("esp03"),
+        canalId: CANAL_ESP_PUBLICA,
+        tipo: "fala_catalogada",
+        itemId: "elogiar_boa_jogada_01",
+      },
+      DONO
+    );
+    assert.equal(r.status, 200, r.texto);
+    assert.deepEqual(r.json.result.destinatarios, [VIZINHO]);
+  });
+
+  test("INT-ESP-04 CONTROLE: o MESMO item passa para quem esta SENTADO", async () => {
+    // Sem este caso, uma recusa por item invalido se disfarcaria de recusa por
+    // papel e o grupo inteiro ficaria verde pelo motivo errado.
+    //
+    // AUTOR E ITEM DISTINTOS POR MESA, e nao por gosto: o freio de `chatRitmo`
+    // tem cooldown POR ITEM e por autor, e repetir o mesmo par nas tres mesas
+    // fazia o controle reprovar por `ritmoExcedido` — uma recusa de ritmo
+    // travestida de recusa de papel, que e exatamente o erro que este caso
+    // existe para impedir.
+    for (const [rotulo, canal, autor, item] of [
+      ["Mesa Privada", CANAL_ESP_PRIVADA, CONVIDADO, CATALOGADOS[0]],
+      ["Mesa Publica", CANAL_ESP_PUBLICA, VIZINHO, CATALOGADOS[1]],
+      ["Mesa VIP", CANAL_ESP_VIP, DONO, CATALOGADOS[2]],
+    ]) {
+      const r = await comoMotor(
+        {
+          intentId: intent(`esp04-${canal}`),
+          canalId: canal,
+          tipo: item.tipo,
+          itemId: item.itemId,
+        },
+        autor
+      );
+      assert.equal(
+        r.status,
+        200,
+        `${item.tipo} devia passar para o SENTADO em ${rotulo}: ${r.texto}`
+      );
+      assert.equal(r.json.result.mensagem.itemId, item.itemId);
+    }
+  });
+
+  // ---- VIP nao abre o teclado --------------------------------------------
+  test("INT-ESP-05 VIP VIGENTE nao libera texto livre em Publica nem em VIP", async () => {
+    // O direito esta gravado e VALIDO — e nao e disso que o teclado depende.
+    await gravar(`playerEntitlements/${VIZINHO}`, {
+      vipAtivo: bool(true),
+      estado: txt("ativo"),
+      expiraEm: txt(new Date(Date.now() + 30 * 86400000).toISOString()),
+    });
+
+    for (const [rotulo, canal] of [
+      ["Mesa Publica", CANAL_ESP_PUBLICA],
+      ["Mesa VIP", CANAL_ESP_VIP],
+    ]) {
+      const r = await comoMotor(
+        {
+          intentId: intent(`esp05-${canal}`),
+          canalId: canal,
+          conteudo: "sou VIP, logo digito",
+        },
+        VIZINHO
+      );
+      assert.notEqual(r.status, 200, `texto livre passou em ${rotulo}`);
+      assert.match(r.texto, /textoLivreNaoPermitidoNoAmbiente/);
+      assert.match(r.texto, /"familia":"ambiente"/);
+    }
+
+    // E o mesmo assinante segue com o CATALOGO aberto: a recusa e do teclado,
+    // e nao da pessoa.
+    const cat = await comoMotor(
+      {
+        intentId: intent("esp05-cat"),
+        canalId: CANAL_ESP_VIP,
+        tipo: "reacao_catalogada",
+        itemId: "reacao_aplauso_01",
+      },
+      VIZINHO
+    );
+    assert.equal(cat.status, 200, cat.texto);
+  });
+
+  // ---- o payload nao redefine o ambiente ---------------------------------
+  test("INT-ESP-06 payload que declara ambiente/modo/tipo e recusado", async () => {
+    for (const campo of [
+      "ambiente",
+      "modo",
+      "tipoMesa",
+      "codigoDaSala",
+      "chatCompleto",
+    ]) {
+      const r = await comoMotor(
+        {
+          intentId: intent(`esp06-${campo}`),
+          canalId: CANAL_ESP_PUBLICA,
+          conteudo: "abre o teclado",
+          [campo]: campo === "chatCompleto" ? true : "mesa_privada",
+        },
+        VIZINHO
+      );
+      assert.notEqual(r.status, 200, `o campo ${campo} foi ACEITO`);
+      assert.match(r.texto, /payloadComCampoProibido/);
+      assert.match(r.texto, new RegExp(campo));
+    }
+  });
+
+  // ---- canal inexistente e canal fechado ---------------------------------
+  test("INT-ESP-07 canal inexistente nao vira gravacao valida", async () => {
+    const r = await comoMotor(
+      {
+        intentId: intent("esp07"),
+        canalId: "canalQueNuncaExistiu",
+        tipo: "fala_catalogada",
+        itemId: "elogiar_boa_jogada_01",
+      },
+      DONO
+    );
+    assert.notEqual(r.status, 200);
+    assert.equal(await ler("chatChannels/canalQueNuncaExistiu"), null);
+  });
+
+  test("INT-ESP-08 canal FECHADO nao aceita fala", async () => {
+    const r = await comoMotor(
+      {
+        intentId: intent("esp08"),
+        canalId: CANAL_ESP_FECHADO,
+        tipo: "fala_catalogada",
+        itemId: "elogiar_boa_jogada_01",
+      },
+      DONO
+    );
+    assert.notEqual(r.status, 200);
+    assert.match(r.texto, /canalFechado/);
+  });
+
+  // ---- a recusa nao deixa rastro -----------------------------------------
+  test("INT-ESP-09 recusa nao PERSISTE: a mesma intencao segue livre", async () => {
+    // A prova de nao-persistencia sem contar colecao (contagem satura e mente):
+    // se a recusa tivesse gravado algo sob esta intencao, a idempotencia
+    // devolveria `jaEnviada` ou conflito no segundo envio. Ela nao devolve.
+    const mesmaIntencao = intent("esp09");
+
+    const recusado = await comoMotor(
+      {
+        intentId: mesmaIntencao,
+        canalId: CANAL_ESP_PUBLICA,
+        conteudo: "texto proibido aqui",
+      },
+      DONO
+    );
+    assert.notEqual(recusado.status, 200);
+    assert.match(recusado.texto, /textoLivreNaoPermitidoNoAmbiente/);
+
+    const aceito = await comoMotor(
+      {
+        intentId: mesmaIntencao,
+        canalId: CANAL_ESP_PUBLICA,
+        tipo: "fala_catalogada",
+        itemId: "elogiar_boa_jogada_01",
+      },
+      DONO
+    );
+    assert.equal(
+      aceito.status,
+      200,
+      `a intencao recusada deixou rastro: ${aceito.texto}`
+    );
+    assert.equal(aceito.json.result.jaEnviada ?? false, false);
   });
 });
