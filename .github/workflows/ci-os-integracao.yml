@@ -284,6 +284,10 @@ jobs:
           # comercial chama-se "Fichas e compras", e que o tema nao muda nome
           # acessivel, alvo de toque nem preferencia gravada.
           roda temavip      test/casca/tema_real_vip_ajustes_test.dart
+          # OS de saneamento da falsa recompensa do Treino: a tela de Resultado
+          # nao pode voltar a prometer fichas por assistir anuncio, e a
+          # continuidade (convidar, jogar novamente, sair) tem de continuar de pe.
+          roda treinosan    test/mesa/saneamento_recompensa_treino_test.dart
           # OS Leitor Real de Ranking (barreira temporal V2) e Perfil
           # Publicável (CI-01). `rkestado` é o que impede a volta do fallback
           # Bronze / nível 1 / colocação #0 e #1; `rkbarreira` é a barreira
