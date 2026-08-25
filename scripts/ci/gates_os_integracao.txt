@@ -174,7 +174,7 @@ comunicacao
     exige      ('CTR-02
     exige      ('PRI-19
     exige      ('ESP-01
-    exige      'ESP-02 CONTROLE
+    exige      'ESP-02 CONTROLE: o mesmo item passa para quem está SENTADO em ${mesa.key}',
     exige      ['mesa_privada/completo']
 
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
@@ -188,8 +188,8 @@ portaoci
     casos      38
     contador   casos ok: [0-9]+
     exige      HERDADOS=
-    exige      GATES="[a-z]+ [a-z]+
-    exige      for k in [a-z]+ [a-z]+ [a-z]+
+    exige      grep -qE 'GATES="[a-z]+ [a-z]+
+    exige      grep -qE 'for k in [a-z]+ [a-z]+ [a-z]+'
     exige      esperar 0 "C01
     exige      esperar 1 "C09
     exige      ok "C14
@@ -206,21 +206,31 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     88a7494c1c657a6bc9e85bbcb200ab238a001420a0dbaab93a04f8f54eb12a91
-    provas     44
+    sha256     6ddaeedbb2f2ba014a0f7681500adc3d88c952bc4ada1567a35ec1d3fb989356
+    provas     61
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      40
+    casos      57
     contador   casos ok: [0-9]+
-    exige      T01 CONTROLE
-    exige      T08 — suite trocada por expect(1, 1)
-    exige      T21 — TODOS os contratos removidos
-    exige      T28 — marcador fabricado, sem log
-    exige      T29 — log ANTERIOR ao carimbo
-    exige      T34 CONTROLE
-    exige      T35 — suite tirada do alvo oficial
-    exige      T36 — suite-isca acrescentada ao alvo
-    exige      T40 — segunda suite do gate removida da fonte
-    exige      T41 — contrato de rankingfn esvaziado
+    exige      esperar 0 "T01 CONTROLE
+    exige      esperar 1 "T08 — suite trocada por expect(1, 1)
+    exige      esperar 1 "T21 — TODOS os contratos removidos
+    exige      esperar 1 "T28 — marcador fabricado, sem log
+    exige      esperar 1 "T29 — log ANTERIOR ao carimbo
+    exige      esperar 0 "T34 CONTROLE
+    exige      esperar 1 "T35 — suite tirada do alvo oficial
+    exige      esperar 1 "T36 — suite-isca acrescentada ao alvo
+    exige      esperar 1 "T40 — segunda suite do gate removida da fonte
+    exige      esperar 1 "T41 — contrato de rankingfn esvaziado
+    exige      esperar 0 "T27 CONTROLE
+    exige      ok "T42 — a relacao de contratados da fonte e EXATAMENTE a congelada
+    exige      esperar 1 "T43 — agulha so em comentario de BLOCO
+    exige      esperar 1 "T47 — agulha so em comentario NO FIM de linha de codigo
+    exige      esperar 1 "T49 — analisador lexico apagado
+    exige      esperar 1 "T51 — relacao de conteudo retirada da fonte
+    exige      esperar 1 "T56 — relacao E afirmacao retiradas juntas
+    exige      esperar 1 "T57 — gate que ganhou contrato e nao tem log
+    exige      CONTRATADOS_CONGELADOS="comunicacao chatdom portaoci contratosui rankingfn
+    exige      for k in $CONTRATADOS; do
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
@@ -298,7 +308,7 @@ rankingfn
     exige      casosDeclaradosEm(GUARDA)
     exige      corpoDoCaso(GUARDA, "SF-01")
     exige      corpoDoCaso(GUARDA, "SF-02")
-    exige      functions-ranking/test/superficie.test.js
+    exige      GUARDA = "functions-ranking/test/superficie.test.js"
     suite      functions-ranking/test/superficie.test.js
     sha256     89599b79dfbd8827e35c5723b5c16a71da60a70a42f602d4343c7355e0c5c62c
     provas     3

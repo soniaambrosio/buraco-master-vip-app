@@ -148,8 +148,72 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 rankingfn:57"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 rankingfn:465"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:61 rankingfn:57"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:57 rankingfn:465"
+
+# `PISOS_EXIGE` — QUANTAS relacoes de conteudo cada gate tem de continuar tendo.
+#
+# A rehomologacao OS 40-R2 mediu o buraco que faltava: TIRAR UMA LINHA `exige` DA
+# FONTE nao reprovava nada. As relacoes protegiam a suite, e nada protegia as
+# relacoes — o manifesto guardava a si mesmo. Com a afirmacao apagada no mesmo
+# commit, a arvore ficava inteiramente verde.
+#
+# Este piso e a metade generica da defesa, e vale para os dezesseis contratos:
+# uma relacao a menos reprova aqui, do lado de fora, mesmo que ninguem tenha
+# escrito o conjunto nominal daquele gate. A outra metade — o conjunto NOMINAL
+# EXATO — esta em `RELACOES_CONGELADAS`, logo abaixo.
+readonly PISOS_EXIGE="comunicacao:10 chatdom:6 portaoci:6 contratosui:20 rankingfn:15 \
+avatarcanon:4 avatarhml:4 perfilvis:4 rknavpub:4 compavrank:3 compnavpub:3 \
+socialestado:3 socialleitor:3 socialtela:2 audsocial:4 a11yamigos:3"
+
+# ---------------------------------------------------------------------------
+# `RELACOES_CONGELADAS` — O CONJUNTO NOMINAL EXATO DA FOLHA (OS 40-C2)
+# ---------------------------------------------------------------------------
+#
+# Contagem sozinha nao basta. Com um piso e so um piso, trocar uma relacao por
+# outra, renomear uma, ou DUPLICAR outra para conservar a quantidade continua
+# passando — e trocar uma exigencia de `PF-01` por uma da superficie, tambem.
+# O que fecha isso e o conjunto, POR SUITE, escrito por extenso e FORA do bloco
+# que ele guarda.
+#
+# A comparacao e de IGUALDADE EXATA, linha a linha e na ordem: retirada,
+# renomeacao, duplicacao, reordenacao e troca entre as duas suites do gate
+# reprovam todas pelo mesmo caminho, cada uma nomeando o que mudou. E a
+# cardinalidade sai de graca e por suite — SETE em `passe.test.js` (as de
+# `PF-01`) e OITO em `superficie.test.js`, quinze no gate.
+#
+# RECIPROCIDADE: `SUITES_CONGELADAS` e `ALVOS_CONGELADOS` fecham as outras duas
+# pontas. Sem elas, renomear a suite na fonte faria o conjunto congelado dela
+# deixar de casar com qualquer coisa — e um conjunto que nao casa com nada nao
+# reprova nada. Com elas, alvo, suite e afirmacao respondem um pelo outro.
+#
+# Formato: uma linha `@ <gate> <suite>` abre um bloco; as linhas seguintes sao as
+# relacoes daquele bloco, uma por linha, LITERAIS. Nenhuma relacao pode comecar
+# com `@ ` — nenhuma comeca, e a fonte reprova se alguem escrever uma.
+readonly SUITES_CONGELADAS="rankingfn:functions-ranking/test/passe.test.js,functions-ranking/test/superficie.test.js"
+readonly ALVOS_CONGELADOS="rankingfn:functions-ranking/package.json"
+
+RELACOES_CONGELADAS="$(cat <<'RELACOES_DA_FOLHA'
+@ rankingfn functions-ranking/test/passe.test.js
+test("PF-01:
+SUPERFICIE_IMPLANTADA = {
+[...esperados].sort(),
+casosDeclaradosEm(GUARDA)
+corpoDoCaso(GUARDA, "SF-01")
+corpoDoCaso(GUARDA, "SF-02")
+GUARDA = "functions-ranking/test/superficie.test.js"
+@ rankingfn functions-ranking/test/superficie.test.js
+test("SF-01:
+test("SF-02:
+test("SF-03:
+const ALVO_OFICIAL =
+casosDeclaradosEm(PASSE).includes("PF-01")
+corpoDoCaso(PASSE, "PF-01")
+listaLiteral(fonte, codebase, "'")
+pkg.scripts.test,
+RELACOES_DA_FOLHA
+)"
+readonly RELACOES_CONGELADAS
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
@@ -226,20 +290,141 @@ fi
 contratados=''
 com_contrato=0
 
-# `codigo_de <arquivo>` — o conteudo SEM COMENTARIO, lido uma vez so.
+# ---------------------------------------------------------------------------
+# A BUSCA DA AGULHA — codigo executavel, e nao texto que se parece com codigo
+# ---------------------------------------------------------------------------
 #
-# A busca ignora linha de comentario porque repetir os literais num comentario e
-# a forja mais barata que existe contra busca textual — e uma suite esvaziada com
-# os comentarios intactos satisfaria o contrato sem provar nada. `"//` esta na
-# lista porque e como este repositorio comenta JSON, onde nao ha `//` de verdade.
+# Ate a OS 40-C2 a busca acontecia sobre o arquivo com as LINHAS de comentario
+# removidas por expressao regular. A rehomologacao OS 40-R2 mediu o que sobrava:
+# comentario de BLOCO, comentario no fim de uma linha de codigo, string, texto de
+# template, expressao regular e `reason:` de mensagem continuavam satisfazendo o
+# contrato. Bastava mudar a agulha de lugar, recarimbar o `sha256` e trivializar
+# a guarda ao lado — e a arvore inteira ficava verde.
 #
-# O byte NUL sai junto com o CR: ha .dart neste repositorio com NUL no meio de um
-# literal (a suite da Comunicacao prova a recusa de caractere de controle usando
-# o proprio caractere de controle), e sem isto o bash avisa que ignorou o byte —
-# barulho que nao muda o casamento de literal nenhum.
+# Mais expressao regular nao fecha isso, e por um motivo que nao e de esforco:
+# uma varredura sem estado nao sabe se um `//` esta dentro de uma string, nem se
+# uma aspa esta dentro de um comentario. Quem responde e um LEXER — leitura
+# caractere a caractere, com estado —, e ele mora em `codigo_executavel.awk`.
+#
+# A regra que ele aplica, e a decisao que ela carrega, estao escritas la. Aqui
+# fica so o que este script precisa saber: A AGULHA CONTA QUANDO AO MENOS UM
+# CARACTERE DA OCORRENCIA E CODIGO. `test("PF-01:` conta porque `test(` e codigo;
+# o mesmo texto dentro de outra string nao conta, porque a ocorrencia inteira e
+# conteudo de literal.
+#
+# O NUL sai junto com o CR na entrada do lexer: ha .dart neste repositorio com
+# NUL no meio de um literal (a suite da Comunicacao prova a recusa de caractere
+# de controle usando o proprio caractere de controle).
 # A ASSINATURA NAO PASSA POR AQUI: ela le o arquivo direto, byte a byte.
-codigo_de() {
-  tr -d '\r\000' < "$1" | grep -avE '^[[:blank:]]*("//|//|#)'
+LEXICO="$(dirname "$0")/codigo_executavel.awk"
+if [ ! -s "$LEXICO" ]; then
+  printf 'CONTRATO DE SUITE: analisador lexico ausente em %s — a guarda foi desligada\n' "$LEXICO"
+  exit 1
+fi
+
+AGULHAS="$(mktemp)" || {
+  printf 'CONTRATO DE SUITE: nao ha diretorio temporario para a lista de agulhas\n'
+  exit 1
+}
+AG_A="$AGULHAS.a"
+AG_B="$AGULHAS.b"
+AG_OUT="$AGULHAS.out"
+trap 'rm -f "$AGULHAS" "$AG_A" "$AG_B" "$AG_OUT"' EXIT
+
+# A LINGUAGEM VEM DA EXTENSAO, e uma extensao desconhecida REPROVA. Adivinhar
+# "deve ser codigo" seria a porta de saida: bastaria renomear a suite para uma
+# extensao que o lexer nao conhece e a agulha voltaria a valer em qualquer lugar.
+# Devolve em `LINGUA` — sem substituicao de comando, que e um fork por chamada.
+lingua_de() {
+  case "$1" in
+    *.js | *.mjs | *.cjs | *.ts) LINGUA='js' ;;
+    *.dart) LINGUA='dart' ;;
+    *.sh | *.bash) LINGUA='sh' ;;
+    *.json) LINGUA='json' ;;
+    *) LINGUA='' ;;
+  esac
+}
+
+# `analisar <arquivo> <lista>` — o veredito do lexer, uma linha por resposta.
+#
+# `CONTA_ERE` vai pelo AMBIENTE, e nao por `-v`: o `awk` interpreta sequencias de
+# escape no valor de `-v`, e o `\(` do contador padrao viraria abre-parentese de
+# grupo — a contagem passaria a medir outra coisa, em silencio.
+analisar() {
+  lingua_de "$1"
+  if [ -z "$LINGUA" ]; then
+    printf 'SEMLINGUA\t%s\n' "$1"
+    return 0
+  fi
+  tr -d '\r\000' < "$1" | awk -v ling="$LINGUA" -v agulhas="$2" -f "$LEXICO"
+}
+
+# `conferir_agulhas <arquivo> <lista> <onde> [ere-de-contagem]` — reprova, e diz
+# por que. Devolve QUANTAS agulhas falharam, e deixa em `PROVAS_REAIS` a
+# contagem de declaracoes que a mesma leitura apurou.
+#
+# `<onde>` ja traz a preposicao ("de 'app/...'", "do alvo '...'"): as mensagens
+# desta guarda sao lidas por uma matriz de casos, e trocar a frase e trocar o que
+# aquela matriz mede.
+#
+# O laco le de um ARQUIVO, e nao de um cano nem de uma substituicao de comando:
+# `erro` incrementa `falhas`, e um subshell levaria o incremento embora — o modo
+# mais silencioso de um verificador inteiro deixar de reprovar.
+conferir_agulhas() {
+  local arq="$1" lista="$2" onde="$3" ere="${4:-}" tipo agulha faltou=0
+  PROVAS_REAIS=0
+  CONTA_ERE="$ere" analisar "$arq" "$lista" > "$AG_OUT"
+  while IFS=$'\t' read -r tipo agulha; do
+    case "$tipo" in
+      '') continue ;;
+      PROVAS) PROVAS_REAIS="$agulha"; continue ;;
+      AUSENTE) erro "o bloco $agulha sumiu $onde" ;;
+      INERTE) erro "o bloco $agulha aparece $onde SO como comentario, string, template ou regex — e texto, e nao codigo executavel" ;;
+      SEMCODIGO) erro "a analise lexica nao achou uma linha de codigo $onde — o arquivo inteiro e texto inerte" ;;
+      ABERTO) erro "a leitura $onde termina dentro de $agulha — codigo aberto, e ausencia nao pode virar verde" ;;
+      SEMLINGUA) erro "o verificador nao sabe ler $onde: extensao fora de .js/.ts/.dart/.sh/.json" ;;
+      *) erro "resposta desconhecida do analisador lexico $onde: '$tipo'" ;;
+    esac
+    faltou=$((faltou + 1))
+  done < "$AG_OUT"
+  return "$faltou"
+}
+
+# `relacoes_de <gate> <suite>` — o conjunto congelado daquele par, devolvido em
+# `RELACOES_DA_SUITE`. So expansao de parametro, sem `awk` por chamada: esta
+# guarda e chamada dezesseis vezes por execucao, e a matriz de
+# `teste_contrato_suites.sh` a executa cinquenta e sete vezes.
+relacoes_de() {
+  local todo=$'\n'"$RELACOES_CONGELADAS" marca=$'\n'"@ $1 $2"$'\n'
+  RELACOES_DA_SUITE=''
+  case "$todo" in
+    *"$marca"*) ;;
+    *) return 0 ;;
+  esac
+  RELACOES_DA_SUITE="${todo#*"$marca"}"
+  case "$RELACOES_DA_SUITE" in
+    *$'\n@ '*) RELACOES_DA_SUITE="${RELACOES_DA_SUITE%%$'\n@ '*}" ;;
+  esac
+  RELACOES_DA_SUITE="${RELACOES_DA_SUITE%$'\n'}"
+}
+
+# `gate_congelado <gate>` — o gate tem conjunto nominal escrito aqui?
+gate_congelado() {
+  case $'\n'"$RELACOES_CONGELADAS" in
+    *$'\n'"@ $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+# `contar <texto>` — linhas nao vazias, devolvidas em `QUANTAS`. Mesma razao.
+contar() {
+  local l
+  QUANTAS=0
+  while IFS= read -r l; do
+    [ -n "$l" ] && QUANTAS=$((QUANTAS + 1))
+  done <<CONTAGEM
+$1
+CONTAGEM
 }
 
 # `conferir_suite` — o bloco de UMA suite, fechado.
@@ -268,15 +453,20 @@ conferir_suite() {
     fi
   fi
 
+  # As validacoes de formato sao casamento de padrao do proprio bash, e nao um
+  # `printf | grep` por atributo. Nao e microotimizacao: sao quatro processos por
+  # suite, dezesseis suites por execucao e cinquenta e sete execucoes na matriz
+  # que confere esta guarda — e uma bancada que leva meia hora e uma bancada que
+  # ninguem roda antes de commitar.
   if [ -z "$sha_esperado" ]; then
     erro "a entrada '$chave' nao declara 'sha256'"
-  elif ! printf '%s' "$sha_esperado" | grep -Eq '^[0-9a-f]{64}$'; then
+  elif [ "${#sha_esperado}" -ne 64 ] || [ -z "${sha_esperado##*[!0-9a-f]*}" ]; then
     erro "o 'sha256' de '$chave' nao e um digest de 64 hex: '$sha_esperado'"
     sha_esperado=''
   fi
   if [ -z "$provas_esperadas" ]; then
     erro "a entrada '$chave' nao declara 'provas'"
-  elif ! printf '%s' "$provas_esperadas" | grep -Eq '^[0-9]+$'; then
+  elif [ -z "${provas_esperadas##*[!0-9]*}" ]; then
     erro "o 'provas' de '$chave' nao e um numero: '$provas_esperadas'"
     provas_esperadas=''
   else
@@ -285,11 +475,64 @@ conferir_suite() {
   if [ -z "$exige_lista" ]; then
     erro "a entrada '$chave' nao declara nenhum 'exige'"
   fi
+  contar "$exige_lista"
+  exige_do_gate=$((exige_do_gate + QUANTAS))
+
+  # ---- o conjunto NOMINAL, congelado fora do bloco que ele guarda ---------
+  #
+  # Roda ANTES de olhar o arquivo, e roda mesmo com a suite ausente: uma relacao
+  # adulterada nao pode ficar escondida atras de um arquivo que sumiu.
+  #
+  # Igualdade EXATA, na ordem. Retirada, renomeacao, duplicacao para conservar a
+  # quantidade, reordenacao e troca de uma exigencia entre as duas suites do gate
+  # reprovam todas aqui, e a mensagem diz qual das cinco foi.
+  if gate_congelado "$chave"; then
+    local congeladas n_falta n_extra n_dec n_cong
+    relacoes_de "$chave" "$suite"
+    congeladas="$RELACOES_DA_SUITE"
+    if [ -z "$congeladas" ]; then
+      erro "a suite '$suite' (gate $chave) nao esta na relacao congelada — suite trocada, renomeada ou acrescentada sem decisao"
+    elif [ "$exige_lista" = "$congeladas" ]; then
+      contar "$congeladas"
+      printf 'ok   relacoes   %-12s %s nominal(is)  %s\n' "$chave" \
+        "$QUANTAS" "$suite"
+    else
+      printf '%s\n' "$congeladas" > "$AG_A"
+      printf '%s\n' "$exige_lista" > "$AG_B"
+      contar "$congeladas"; n_cong=$QUANTAS
+      contar "$exige_lista"; n_dec=$QUANTAS
+      erro "as relacoes 'exige' de '$suite' (gate $chave) nao sao as congeladas"
+      n_falta=0
+      while IFS= read -r sumida; do
+        [ -z "$sumida" ] && continue
+        erro "  a relacao congelada sumiu da fonte: $sumida"
+        n_falta=$((n_falta + 1))
+      done <<RELACOES_QUE_SUMIRAM
+$(grep -Fxv -f "$AG_B" "$AG_A")
+RELACOES_QUE_SUMIRAM
+      n_extra=0
+      while IFS= read -r extra; do
+        [ -z "$extra" ] && continue
+        erro "  a fonte declara uma relacao que nao esta congelada: $extra"
+        n_extra=$((n_extra + 1))
+      done <<RELACOES_INVENTADAS
+$(grep -Fxv -f "$AG_A" "$AG_B")
+RELACOES_INVENTADAS
+      if [ "$n_falta" -eq 0 ] && [ "$n_extra" -eq 0 ]; then
+        if [ "$n_dec" -ne "$n_cong" ]; then
+          erro "  a cardinalidade mudou: $n_dec declarada(s) contra $n_cong congelada(s) — relacao duplicada"
+        else
+          erro "  mesmos literais e mesma cardinalidade: a ORDEM das relacoes mudou"
+        fi
+      fi
+    fi
+  fi
 
   [ -z "$arquivo" ] && return 0
 
   local sha_real
-  sha_real="$(tr -d '\r' < "$arquivo" | sha256sum | awk '{print $1}')"
+  sha_real="$(tr -d '\r' < "$arquivo" | sha256sum)"
+  sha_real="${sha_real%% *}"
   if [ -n "$sha_esperado" ]; then
     if [ "$sha_real" = "$sha_esperado" ]; then
       printf 'ok   assinatura %-12s %s...\n' "$chave" "${sha_real:0:16}"
@@ -301,34 +544,26 @@ conferir_suite() {
     fi
   fi
 
-  local ere_conta provas_reais
-  ere_conta="${conta_ere:-$CONTA_PADRAO}"
-  provas_reais="$(tr -d '\r' < "$arquivo" | grep -acE "$ere_conta")" || provas_reais=0
+  # UMA leitura do arquivo responde as duas perguntas: quantas declaracoes ele
+  # ainda tem, e se cada agulha do contrato esta em codigo executavel. Eram duas
+  # varreduras, e o arquivo e o mesmo.
+  local faltando=0
+  printf '%s\n' "$exige_lista" > "$AGULHAS"
+  conferir_agulhas "$arquivo" "$AGULHAS" "de '$suite' (gate $chave)" "${conta_ere:-$CONTA_PADRAO}"
+  faltando=$?
+
   if [ -n "$provas_esperadas" ]; then
-    if [ "$provas_reais" -ge "$provas_esperadas" ]; then
-      printf 'ok   provas     %-12s %s >= %s\n' "$chave" "$provas_reais" "$provas_esperadas"
+    if [ "$PROVAS_REAIS" -ge "$provas_esperadas" ]; then
+      printf 'ok   provas     %-12s %s >= %s\n' "$chave" "$PROVAS_REAIS" "$provas_esperadas"
     else
-      erro "'$suite' (gate $chave) tem $provas_reais declaracoes e o piso e $provas_esperadas"
+      erro "'$suite' (gate $chave) tem $PROVAS_REAIS declaracoes e o piso e $provas_esperadas"
     fi
   fi
 
-  local codigo faltando=0 padrao
-  codigo="$(codigo_de "$arquivo")"
-  while IFS= read -r padrao; do
-    [ -z "$padrao" ] && continue
-    case "$codigo" in
-      *"$padrao"*) ;;
-      *)
-        erro "o bloco $padrao sumiu de '$suite' (gate $chave)"
-        faltando=$((faltando + 1))
-        ;;
-    esac
-  done <<CONTRATO_EXIGE
-$exige_lista
-CONTRATO_EXIGE
+  contar "$exige_lista"
   if [ "$faltando" -eq 0 ] && [ -n "$exige_lista" ]; then
-    printf 'ok   blocos     %-12s %s conferido(s)\n' "$chave" \
-      "$(printf '%s\n' "$exige_lista" | grep -c .)"
+    printf 'ok   blocos     %-12s %s em codigo executavel\n' "$chave" \
+      "$QUANTAS"
   fi
 }
 
@@ -350,6 +585,32 @@ conferir_entrada() {
   conferir_suite
   if [ "$suites_do_gate" -eq 0 ]; then
     erro "a entrada '$chave' nao declara 'suite'"
+  fi
+
+  # ---- a outra ponta da reciprocidade: QUAIS suites, e QUAL alvo ---------
+  #
+  # `RELACOES_CONGELADAS` congela as afirmacoes POR SUITE. Sozinho isso teria um
+  # jeito de morrer calado: renomear a suite na fonte faria o conjunto daquela
+  # suite deixar de casar com qualquer bloco — e um conjunto que nao casa com
+  # nada nao reprova nada. Aqui se fecha o triangulo: alvo, suite e afirmacao
+  # respondem um pelo outro, e nenhum dos tres pode mudar sozinho.
+  local congelado
+  congelado="$(piso_de "$SUITES_CONGELADAS" "$chave")"
+  if [ -n "$congelado" ]; then
+    local declaradas
+    declaradas="$(espremer "$caminhos_do_gate")"
+    declaradas="${declaradas// /,}"
+    if [ "$declaradas" = "$congelado" ]; then
+      printf 'ok   suites     %-12s %s\n' "$chave" "$congelado"
+    else
+      erro "as suites de '$chave' nao sao as congeladas"
+      erro "  congeladas $congelado"
+      erro "  na fonte   ${declaradas:-(nenhuma)}"
+    fi
+  fi
+  congelado="$(piso_de "$ALVOS_CONGELADOS" "$chave")"
+  if [ -n "$congelado" ] && [ "$alvo" != "$congelado" ]; then
+    erro "o 'alvo' de '$chave' nao e o congelado: '${alvo:-(nenhum)}' em vez de '$congelado'"
   fi
 
   # ---- o executor --------------------------------------------------------
@@ -397,38 +658,41 @@ conferir_entrada() {
         esac
       fi
 
-      local codigo_alvo caminho rel_alvo padrao
-      codigo_alvo="$(codigo_de "$arq_alvo")"
+      local caminho rel_alvo faltando_alvo=0
 
       # CADA suite declarada tem de estar NOMEADA no alvo. E aqui que "a suite
       # saiu do comando oficial" vira vermelho — e o gate continuaria verde se
       # esta linha nao existisse, porque uma suite que nao roda nao reclama.
+      #
+      # A leitura do alvo tambem passa pelo lexer, em modo `json`: la NADA e
+      # inerte, exceto o par de chave de comentario `"//...": ...` — que e como
+      # este repositorio documenta `scripts`. Repetir o caminho de uma suite numa
+      # chave de prosa continua nao substituindo roda-la, e agora quem sabe disso
+      # e um leitor com estado, e nao um casamento de linha.
+      local no_alvo t a
       for caminho in $caminhos_do_gate; do
         rel_alvo="${caminho#"$dir_alvo"/}"
-        case "$codigo_alvo" in
-          *"$rel_alvo"*)
-            printf 'ok   no alvo    %-12s %s\n' "$chave" "$rel_alvo"
-            ;;
-          *) erro "o alvo '$alvo' nao roda a suite '$rel_alvo' (gate $chave)" ;;
-        esac
+        printf '%s\n' "$rel_alvo" > "$AGULHAS"
+        analisar "$arq_alvo" "$AGULHAS" > "$AG_OUT"
+        no_alvo=1
+        while IFS=$'\t' read -r t a; do
+          case "$t" in '' | PROVAS) continue ;; esac
+          no_alvo=0
+        done < "$AG_OUT"
+        if [ "$no_alvo" -eq 1 ]; then
+          printf 'ok   no alvo    %-12s %s\n' "$chave" "$rel_alvo"
+        else
+          erro "o alvo '$alvo' nao roda a suite '$rel_alvo' (gate $chave)"
+        fi
       done
 
-      local faltando_alvo=0
-      while IFS= read -r padrao; do
-        [ -z "$padrao" ] && continue
-        case "$codigo_alvo" in
-          *"$padrao"*) ;;
-          *)
-            erro "o literal exigido sumiu do alvo '$alvo' (gate $chave): $padrao"
-            faltando_alvo=$((faltando_alvo + 1))
-            ;;
-        esac
-      done <<CONTRATO_EXIGE_ALVO
-$exigealvo_lista
-CONTRATO_EXIGE_ALVO
+      printf '%s\n' "$exigealvo_lista" > "$AGULHAS"
+      conferir_agulhas "$arq_alvo" "$AGULHAS" "do alvo '$alvo' (gate $chave)"
+      faltando_alvo=$?
+      contar "$exigealvo_lista"
       if [ "$faltando_alvo" -eq 0 ] && [ -n "$exigealvo_lista" ]; then
         printf 'ok   comando    %-12s %s literal(is) no alvo\n' "$chave" \
-          "$(printf '%s\n' "$exigealvo_lista" | grep -c .)"
+          "$QUANTAS"
       fi
     fi
   fi
@@ -460,6 +724,14 @@ CONTRATO_EXIGE_ALVO
   # Sobre a SOMA das `provas` das suites do gate: um gate de uma suite so — que
   # e o caso de todos menos `rankingfn` — se comporta exatamente como antes.
   local piso
+  piso="$(piso_de "$PISOS_EXIGE" "$chave")"
+  if [ -n "$piso" ]; then
+    if [ "$exige_do_gate" -lt "$piso" ]; then
+      erro "o piso de relacoes de conteudo de '$chave' caiu de $piso para $exige_do_gate na fonte"
+    else
+      printf 'ok   piso       %-12s exige %s >= %s\n' "$chave" "$exige_do_gate" "$piso"
+    fi
+  fi
   piso="$(piso_de "$PISOS_PROVAS" "$chave")"
   if [ -n "$piso" ]; then
     if [ "$provas_do_gate" -lt "$piso" ]; then
@@ -530,6 +802,7 @@ suite_aberta=0
 suites_do_gate=0
 provas_do_gate=0
 caminhos_do_gate=''
+exige_do_gate=0
 
 # `abrir_suite` — comeca um bloco de suite, fechando o anterior se houver.
 #
@@ -651,6 +924,7 @@ $valor"
   suites_do_gate=0
   provas_do_gate=0
   caminhos_do_gate=''
+  exige_do_gate=0
 done < "$fonte"
 
 conferir_entrada
