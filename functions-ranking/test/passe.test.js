@@ -650,45 +650,169 @@ describe("PASSE/FRONTEIRA — o que esta OS promete NÃO ter feito", () => {
   /// Código sem comentários. O bundle e os módulos deste repositório documentam
   /// as decisões em prosa longa, e uma varredura por ausência que não separe as
   /// duas coisas reprova justamente o texto que explica a decisão certa.
-  function codigoDe(fonte) {
+  ///
+  /// A `sentinela` é o que TEM de sobrar depois da limpeza. Sem ela, um bloco de
+  /// comentário mal fechado apagaria o arquivo inteiro e toda busca por ausência
+  /// ficaria verde — que é o modo mais silencioso de uma guarda textual morrer.
+  function semComentario(fonte, sentinela) {
     const limpo = fonte.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "").replace(/^[ \t]*\/\/\/.*$/gm, "");
-    assert.ok(limpo.includes("export"), "a limpeza comeu o código");
+    assert.ok(limpo.includes(sentinela), "a limpeza comeu o código: `" + sentinela + "` sumiu");
     return limpo;
+  }
+
+  const codigoDe = (fonte) => semComentario(fonte, "export");
+
+  /// Os identificadores dos casos DECLARADOS numa suíte — `test("XX-99: ...")` —,
+  /// lidos do CÓDIGO.
+  ///
+  /// LIDOS DO CÓDIGO, e não do texto cru. A versão anterior desta guarda fazia
+  /// `arquivo.includes("SF-01")` sobre o arquivo inteiro: apagar `SF-01` e
+  /// `SF-02` mantendo o cabeçalho que os DESCREVE deixava PF-01 verde, porque o
+  /// cabeçalho cita os dois nomes. Era a forja mais barata que existe contra
+  /// busca textual, e a rehomologação OS 40-R1 a mediu.
+  function casosDeclaradosEm(arquivo) {
+    const codigo = semComentario(leia(arquivo), "require(");
+    return [...codigo.matchAll(/(?:^|[^\w$.])test\(\s*["']([A-Za-z]{2}-[0-9]{2})\s*:/g)].map((m) => m[1]);
+  }
+
+  /// O corpo declarado de um caso: do `test("<id>:` até a próxima DECLARAÇÃO de
+  /// caso, ou até o fim do arquivo. Sempre sobre o código sem comentário — um
+  /// corpo trivializado cujo comentário antigo ficou por cima não pode continuar
+  /// respondendo pelo corpo que sumiu.
+  function corpoDoCaso(arquivo, id) {
+    const codigo = semComentario(leia(arquivo), "require(");
+    const abre = new RegExp('test\\(\\s*["\']' + id + '\\s*:').exec(codigo);
+    assert.ok(abre !== null, "o caso " + id + " não é declarado em " + arquivo);
+    const resto = codigo.slice(abre.index + abre[0].length);
+    const proximo = /(?:^|[^\w$.])test\(\s*["'][A-Za-z]{2}-[0-9]{2}\s*:/.exec(resto);
+    return proximo === null ? resto : resto.slice(0, proximo.index);
+  }
+
+  /// A SUPERFÍCIE IMPLANTADA DE CADA CODEBASE, POR NOME.
+  ///
+  /// ERA UMA CONTAGEM, E A CONTAGEM MENTIU. O piso dizia `9` para
+  /// `functions-moderacao` porque foi tirado em `c9efc20` — uma linhagem que
+  /// ainda não continha `6986de9` (Comunicação Controlada V1), e a raiz P
+  /// contém. O caso reprovava com `11 !== 9` sem dizer QUAIS onze, e um número
+  /// não distingue "entrou um export novo" de "trocaram um export por outro".
+  ///
+  /// NOMINAL responde as três perguntas que o número não respondia: algum sumiu?
+  /// algum foi renomeado? entrou um décimo segundo que ninguém aprovou? E torna
+  /// a atualização uma DECISÃO legível no diff, com o nome da função dentro dela.
+  ///
+  /// AUTORIDADE: `ferramentas/composicao/loja_functions.test.js` congela a mesma
+  /// superfície para as NOVE codebases. Esta relação guarda as QUATRO que a OS do
+  /// passe se comprometeu a não mexer, e `test/superficie.test.js` prova que as
+  /// duas não podem divergir — nem uma delas voltar a valer por contagem.
+  const SUPERFICIE_IMPLANTADA = {
+    "functions/src/index.ts": [
+      "aoConcluirEdicao", "cancelarInscricaoTorneio", "consolidarConvitesDaTemporada",
+      "inscreverEmTorneio", "receberResultadoPartida", "responderConviteEncerramento",
+      "tickTorneios",
+    ],
+    // AS DUAS ÚLTIMAS SÃO A DECISÃO DESTA CORREÇÃO, e não acomodação de merge.
+    // `emitirEventoDeSistema` é a ÚNICA porta por onde nasce evento sem autor
+    // (§8 da Comunicação Controlada: usuário comum não fabrica "Você recebeu um
+    // presente"), e `consultarCatalogoDeComunicacao` é a leitura do catálogo
+    // autoritativo de que a UI precisa para desenhar fala pronta sem inventar
+    // texto. As duas nasceram em `6986de9`, ANTES da raiz P, e já estão nomeadas
+    // em `contrato/chat-transporte-v1.json` (`funcoes.eventoDeSistema` e
+    // `funcoes.catalogo`), em `docs/COMUNICACAO-CONTROLADA-V1.md` e na lista
+    // congelada da composição. O piso de 9 é que era anterior a elas.
+    "functions-moderacao/src/index.ts": [
+      "aplicarSancao", "bloquearJogador", "consultarCatalogoDeComunicacao",
+      "consultarContato", "definirCanalDeChat", "desbloquearJogador",
+      "emitirEventoDeSistema", "enviarMensagemChat", "enviarMensagemChatPeloMotor",
+      "registrarDenuncia", "revogarSancao",
+    ],
+    // A INTENÇÃO ORIGINAL DE PF-01 CONTINUA INTEIRA: a OS do Passe não exportou
+    // Function nenhuma. Estes onze são os mesmos de `0b0aa63`, e
+    // `functions-ranking/src` não foi tocado nem pelo Passe nem pela composição
+    // Perfil/Social — as duas árvores dão o mesmo hash.
+    "functions-ranking/src/index.ts": [
+      "abrirRanking", "abrirTemporadaDeRanking", "aoRegistrarResultadoOficial",
+      "apurarRanking", "consultarHall", "consultarJogadorPorIdPublico",
+      "diagnosticarRanking", "encerrarTemporadaDeRanking", "paginarRanking",
+      "processarResultado", "reprocessarBacklogDeRanking",
+    ],
+    "functions-social/src/index.ts": [
+      "aceitarSolicitacaoAmizade", "aoBloquearJogador", "atualizarPerfilPublico",
+      "buscarJogadoresPorApelido", "cancelarSolicitacaoAmizade",
+      "enviarSolicitacaoAmizade", "listarAmigos", "listarSolicitacoesEnviadas",
+      "listarSolicitacoesRecebidas", "localizarJogadorPorIdentidade",
+      "obterMinhaIdentidade", "reconciliarPerfilSocial", "recusarSolicitacaoAmizade",
+      "removerAmizade", "verPerfilPublico",
+    ],
+  };
+
+  /// O que uma entrada de fato exporta, lido SEM comentário e por nome.
+  ///
+  /// A MESMA leitura de `exportsDe` em
+  /// `ferramentas/composicao/loja_functions.test.js`, de propósito: duas listas
+  /// congeladas extraídas de formas diferentes poderiam discordar sem ninguém
+  /// ter mexido em código nenhum.
+  function exportsDe(arquivo) {
+    const fonte = codigoDe(leia(arquivo));
+    const achados = new Set();
+    for (const m of fonte.matchAll(/^\s*export\s+const\s+([A-Za-z0-9_]+)/gm)) achados.add(m[1]);
+    for (const m of fonte.matchAll(/exports\.([A-Za-z0-9_]+)\s*=/g)) achados.add(m[1]);
+    return [...achados].sort();
   }
 
   test("PF-01: NENHUMA Cloud Function produtiva nova é exportada", () => {
     // §11.20 e §12.12. Neste repositório `index.ts` reexporta tudo: um `export`
-    // a mais vira Cloud Function implantada. A contagem é fixa POR CODEBASE, e
-    // mexer nela passa a exigir mexer neste teste — de propósito.
-    // [COMPOSICAO canonica] DUAS CONTAGENS SUBIRAM, e as duas sao DECISAO — nao
-    // acomodacao de merge. A intencao de PF-01 nao mudou: a OS do Passe continua
-    // sem exportar Function nenhuma. O que mudou foi o mundo em volta dela.
+    // a mais vira Cloud Function implantada. A relação é NOMINAL e fixa POR
+    // CODEBASE, e mexer nela passa a exigir mexer nesta lista — de propósito.
     //
-    //   moderacao 6 -> 9   O Chat Livre Seguro trouxe `definirCanalDeChat`,
-    //                      `enviarMensagemChat` e `enviarMensagemChatPeloMotor`.
-    //                      Sao a superficie do chat, e sem elas o codebase de
-    //                      moderacao entra na composicao sem o produto que a
-    //                      linhagem existe para entregar.
-    //
-    //   social 14 -> 15    `reconciliarPerfilSocial`, que ja vinha na linhagem
-    //                      irma (`auditoria/passe-vip-quinzenal-cortesia-v1`) e
-    //                      na de Mesas. O retrato de 14 e anterior as duas.
-    //
-    // As outras duas contagens NAO se mexeram, e e isso que mantem o teste util:
-    // se `functions/` ou `functions-ranking` crescerem, ele continua reprovando.
-    const esperado = {
-      "functions/src/index.ts": 7,
-      "functions-moderacao/src/index.ts": 9,
-      "functions-ranking/src/index.ts": 11,
-      "functions-social/src/index.ts": 15,
-    };
-    for (const [arquivo, quantos] of Object.entries(esperado)) {
-      const achados = (leia(arquivo).match(/^export const /gm) || []).length;
-      assert.equal(achados, quantos, arquivo + " mudou de superfície de deploy");
+    // A comparação é de CONJUNTO ORDENADO, e não de tamanho: sumir, renomear e
+    // acrescentar reprovam pelo mesmo caminho, cada um nomeando o que mudou.
+    for (const [arquivo, esperados] of Object.entries(SUPERFICIE_IMPLANTADA)) {
+      assert.deepEqual(
+        exportsDe(arquivo),
+        [...esperados].sort(),
+        arquivo + " mudou de superfície de deploy"
+      );
     }
+
     // E o módulo do passe não é alcançável a partir do index do ranking.
     assert.ok(!/from "\.\/passe"|require\("\.\/passe"\)/.test(leia("functions-ranking/src/index.ts")),
       "o index não importa o passe: ele não tem endpoint");
+
+    // A GUARDA DESTA GUARDA MORA FORA DAQUI, e é isso que a torna guarda: trocar
+    // a relação acima por um `assert.ok(true)` ficaria verde se quem cobra o
+    // formato de PF-01 vivesse dentro de PF-01.
+    //
+    // A AUTORIDADE, DESDE A OS 40-C1, É O CONTRATO DE `rankingfn` EM
+    // `scripts/ci/gates_os_integracao.txt` — externo a este codebase, conferido
+    // por `scripts/ci/verificar_contrato_suites.sh` antes de qualquer teste
+    // rodar. O que sobra aqui é redundância deliberada, e ela é sobre a OUTRA
+    // suíte: presença no alvo, declaração REAL dos casos e corpo que ainda
+    // compara. Um par recíproco finito cai calado quando as duas pontas caem
+    // juntas; por isso ele deixou de ser a única prova.
+    const GUARDA = "functions-ranking/test/superficie.test.js";
+
+    // 1. A guarda continua no alvo explícito do `npm test`. Esta é a metade que
+    //    a versão anterior não tinha: era a PRÓPRIA `superficie.test.js` que
+    //    cobrava a própria presença, e uma suíte fora do alvo não roda para
+    //    reclamar de estar fora do alvo.
+    const alvo = JSON.parse(leia("functions-ranking/package.json")).scripts.test;
+    assert.ok(alvo.includes("test/superficie.test.js"), "a guarda saiu do `npm test`");
+    assert.ok(alvo.includes("test/passe.test.js"), "PF-01 saiu do `npm test`");
+
+    // 2. SF-01 e SF-02 são DECLARAÇÕES, e não menções. Manter os nomes no
+    //    cabeçalho não satisfaz mais: a leitura é do código sem comentário.
+    const declarados = casosDeclaradosEm(GUARDA);
+    for (const caso of ["SF-01", "SF-02", "SF-03"]) {
+      assert.ok(declarados.includes(caso), "a guarda " + caso + " de PF-01 sumiu");
+    }
+
+    // 3. E CADA UMA AINDA COMPARA. Um corpo trocado por `assert.ok(true)` mantém
+    //    a declaração, o nome do arquivo e o registro no alvo — e é exatamente
+    //    esse o buraco que a assinatura da fonte única fecha do lado de fora e
+    //    que estas três linhas fecham do lado de dentro.
+    assert.ok(/assert\.deepEqual\(/.test(corpoDoCaso(GUARDA, "SF-01")), "SF-01 virou fachada");
+    assert.ok(/assert\.deepEqual\(/.test(corpoDoCaso(GUARDA, "SF-02")), "SF-02 virou fachada");
+    assert.ok(/ALVO_OFICIAL/.test(corpoDoCaso(GUARDA, "SF-03")), "SF-03 virou fachada");
   });
 
   test("PF-02: NENHUM scheduler novo foi criado", () => {
