@@ -726,9 +726,19 @@ void main() {
   // continuam de pé DEPOIS do realinhamento — e é essa a mutação que a OS 29-C4
   // acrescentou à campanha.
   //
-  // A metade RECÍPROCA mora na suíte protegida: ela confere que este bloco
-  // existe, que os casos dele continuam aqui e que o código dele bate com um
-  // digest. Nenhum dos dois cai sozinho, e derrubar o par derruba dois gates.
+  // A metade RECÍPROCA mora na suíte protegida, e cobra deste bloco as MESMAS
+  // cinco coisas que ele cobra dela: identidade (digest), nomes e quantidade
+  // dos casos, forma (as declarações de topo), conteúdo dentro do PRIMEIRO
+  // argumento de cada `expect`, e um piso de afirmações NÃO TRIVIAIS.
+  //
+  // A simetria não é elegância. A OS 29-R4 mediu as três assimetrias que
+  // sobraram da OS 29-C4, e as três saíam com o placar da árvore íntegra:
+  // trivializar este bloco mantendo marcadores, nomes e caminho e realinhar o
+  // digest no mesmo commit; esvaziar o corpo da metade recíproca e realinhar o
+  // outro digest; e citar a agulha num `reason`, que contava como afirmá-la
+  // porque a busca lia a lista inteira de argumentos.
+  //
+  // Agora derrubar o par derruba os dois gates.
   //
   // O digest deste bloco, que a suíte protegida guarda, é calculado sobre o
   // CÓDIGO — sem comentário — e sem a linha marcada `[digest-movel]`. As duas
@@ -739,7 +749,7 @@ void main() {
     const alvo = 'test/casca/mesa_treino_alvos_reais_test.dart';
 
     /// O digest normalizado do arquivo protegido. [digest-movel]
-    const digestDaSuite = '85aa96eb291e9b354e6b690adbdfa56be627f4bc48d74404a10583d277621470'; // [digest-movel]
+    const digestDaSuite = '31b1ed5af468cf0c088bb0ab5b7ca2419f47650f7f98b228a4ff9fabab5e19c9'; // [digest-movel]
 
     /// Os casos da suíte protegida, na ordem em que ela os declara.
     ///
@@ -860,6 +870,32 @@ void main() {
     ///
     /// Grosseiro de propósito: ele não julga qualidade, só impede que o trecho
     /// vire casca depois que alguém realinhar o digest.
+    /// O trecho da suíte onde mora a metade recíproca.
+    ///
+    /// Ele é conferido À PARTE, e de propósito — ver `pisoDeAfirmacoes` logo
+    /// abaixo e o último caso deste grupo.
+    const kTrechoDaReciprocidade = 'RECIPROCIDADE DA GUARDA';
+
+    /// O que a metade recíproca tem de continuar AFIRMANDO sobre esta guarda,
+    /// dentro do primeiro argumento de um `expect`.
+    const afirmacoesDaReciprocidade = <String, int>{
+      'externa.existsSync()': 1,
+      'digestNormalizado(bloco)': 1,
+      'casos': 2,
+      'bloco': 3,
+      'naoTriviais.length': 1,
+      'quantas': 1,
+    };
+
+    /// O piso de afirmações NÃO TRIVIAIS da metade recíproca.
+    const pisoDaReciprocidade = 8;
+
+    /// O piso de afirmações de cada trecho protegido.
+    ///
+    /// `kTrechoDaReciprocidade` NÃO entra aqui, e o último caso deste grupo
+    /// reprova se entrar: o que a metade recíproca afirma é sobre ESTA guarda,
+    /// não sobre o produto, e contá-lo aqui a deixaria satisfazer sozinha o
+    /// piso que existe para medir o que ela não prova.
     const pisoDeAfirmacoes = <String, int>{
       'SINAIS DA OBRIGACAO': 14,
       'GUARDA DO DESENHO DA OBRIGACAO': 10,
@@ -908,6 +944,104 @@ void main() {
       return codigo(linhas.sublist(a + 1, b).join('\n')).join('\n');
     }
 
+    /// Verdadeiro se a aspa em [k] abre uma string CRUA (`r'...'`).
+    ///
+    /// `r'\'` é uma string crua de UM caractere. Um varredor que trate a barra
+    /// como escape consome a aspa de fechamento, perde o sincronismo e passa a
+    /// ler o resto do arquivo como se fosse texto — e daí em diante não enxerga
+    /// `expect` nenhum. São quatro caracteres para desligar a conferência.
+    bool aspaCrua(String fonte, int k) =>
+        k > 0 &&
+        fonte[k - 1] == 'r' &&
+        (k == 1 || !RegExp(r'[A-Za-z0-9_$]').hasMatch(fonte[k - 2]));
+
+    /// O texto sem comentário, respeitando aspas para que uma `//` dentro de
+    /// string literal não seja confundida com início de comentário.
+    ///
+    /// `codigo()` tira a linha que COMEÇA com `//`; esta tira também o
+    /// comentário que vem depois do código, que é onde cabe citar a agulha sem
+    /// afirmar nada com ela.
+    String semComentarios(String fonte) {
+      final saida = StringBuffer();
+      var i = 0;
+      String? aspa;
+      var crua = false;
+      while (i < fonte.length) {
+        final c = fonte[i];
+        final proximo = i + 1 < fonte.length ? fonte[i + 1] : '';
+        if (aspa != null) {
+          saida.write(c);
+          if (c == r'\' && !crua) {
+            if (proximo.isNotEmpty) saida.write(proximo);
+            i += 2;
+            continue;
+          }
+          if (c == aspa) aspa = null;
+          i++;
+          continue;
+        }
+        if (c == '/' && proximo == '/') {
+          while (i < fonte.length && fonte[i] != '\n') {
+            i++;
+          }
+          continue;
+        }
+        if (c == '/' && proximo == '*') {
+          i += 2;
+          while (i < fonte.length &&
+              !(fonte[i] == '*' && i + 1 < fonte.length && fonte[i + 1] == '/')) {
+            i++;
+          }
+          i += 2;
+          continue;
+        }
+        if (c == "'" || c == '"') {
+          aspa = c;
+          crua = aspaCrua(fonte, i);
+        }
+        saida.write(c);
+        i++;
+      }
+      return saida.toString();
+    }
+
+    /// O mesmo texto com o CONTEÚDO das strings esvaziado, aspas preservadas.
+    ///
+    /// Escrever `temBordaDaObrigacao(` dentro de uma string é citar o nome, não
+    /// afirmar com ele: `expect('temBordaDaObrigacao(', isNotEmpty)` passa
+    /// sempre, em qualquer árvore, e não olha para o programa.
+    String semTextoDeString(String fonte) {
+      final saida = StringBuffer();
+      var i = 0;
+      String? aspa;
+      var crua = false;
+      while (i < fonte.length) {
+        final c = fonte[i];
+        if (aspa != null) {
+          if (c == r'\' && !crua) {
+            i += 2;
+            continue;
+          }
+          if (c == aspa) {
+            aspa = null;
+            saida.write(c);
+          }
+          i++;
+          continue;
+        }
+        if (c == "'" || c == '"') {
+          aspa = c;
+          crua = aspaCrua(fonte, i);
+          saida.write(c);
+          i++;
+          continue;
+        }
+        saida.write(c);
+        i++;
+      }
+      return saida.toString();
+    }
+
     /// Os argumentos de cada `expect(...)`, com parênteses balanceados e aspas
     /// respeitadas.
     ///
@@ -928,16 +1062,18 @@ void main() {
         var p = k + chamada.length;
         var nivel = 1;
         String? aspa;
+        var crua = false;
         while (p < corpo.length && nivel > 0) {
           final c = corpo[p];
           if (aspa != null) {
-            if (c == r'\') {
+            if (c == r'\' && !crua) {
               p += 2;
               continue;
             }
             if (c == aspa) aspa = null;
           } else if (c == "'" || c == '"') {
             aspa = c;
+            crua = aspaCrua(corpo, p);
           } else if (c == '(') {
             nivel++;
           } else if (c == ')') {
@@ -950,6 +1086,95 @@ void main() {
       }
       return saida;
     }
+
+    /// Os argumentos POSICIONAIS de um `expect`, separados na vírgula de nível
+    /// zero. Tudo a partir do primeiro nomeado fica de fora.
+    List<String> posicionais(String argumentos) {
+      final saida = <String>[];
+      var inicio = 0;
+      var nivel = 0;
+      String? aspa;
+      var crua = false;
+      for (var p = 0; p < argumentos.length; p++) {
+        final c = argumentos[p];
+        if (aspa != null) {
+          if (c == r'\' && !crua) {
+            p++;
+            continue;
+          }
+          if (c == aspa) aspa = null;
+          continue;
+        }
+        if (c == "'" || c == '"') {
+          aspa = c;
+          crua = aspaCrua(argumentos, p);
+          continue;
+        }
+        if (c == '(' || c == '[' || c == '{') {
+          nivel++;
+        } else if (c == ')' || c == ']' || c == '}') {
+          nivel--;
+        } else if (c == ',' && nivel == 0) {
+          saida.add(argumentos.substring(inicio, p));
+          inicio = p + 1;
+        }
+      }
+      saida.add(argumentos.substring(inicio));
+      final corte = saida.indexWhere(
+        (s) => RegExp(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s*:').hasMatch(s),
+      );
+      return corte < 0 ? saida : saida.sublist(0, corte);
+    }
+
+    /// Uma afirmação que passa sem olhar para o programa.
+    ///
+    /// `expect(1, 1)`, `expect(true, isTrue)`, `expect(x || !x, isTrue)` e
+    /// `expect('...', isNotEmpty)` ocupam a linha, entram na contagem e não
+    /// podem reprovar. Contá-las é contar casca.
+    bool afirmacaoTrivial(String afirmacao) {
+      final t = afirmacao.replaceAll(RegExp(r'\s+'), '');
+      if (t.isEmpty) return true;
+      if (RegExp(r'^-?[0-9][0-9._]*$').hasMatch(t)) return true;
+      if (t == 'true' || t == 'false' || t == 'null') return true;
+      if (t == "''" || t == '""') return true;
+      for (final op in const <String>['||', '&&']) {
+        final p = t.split(op);
+        if (p.length == 2 && (p[1] == '!${p[0]}' || p[0] == '!${p[1]}')) {
+          return true;
+        }
+      }
+      for (final op in const <String>['==', '!=']) {
+        final p = t.split(op);
+        if (p.length == 2 && p[0].isNotEmpty && p[0] == p[1]) return true;
+      }
+      return false;
+    }
+
+    /// O que cada `expect` do trecho EFETIVAMENTE avalia: o PRIMEIRO
+    /// argumento posicional, sem comentário e sem texto de string.
+    ///
+    /// POR QUE SÓ O PRIMEIRO. O segundo posicional é o comparador; do
+    /// `reason:` em diante é prosa de reprovação. A OS 29-R4 mediu o custo de
+    /// olhar a lista inteira de argumentos: com a agulha escrita no `reason` e
+    /// a asserção virada em `bordaOk || !bordaOk`, a contagem do trecho não se
+    /// mexia — 2 de 2, dezessete `expect`, placar idêntico ao da árvore
+    /// íntegra.
+    ///
+    /// A ORDEM DAS TRÊS PASSAGENS NÃO É ARBITRÁRIA. As strings são esvaziadas
+    /// ANTES de procurar as chamadas, e não depois: este mesmo arquivo declara
+    /// `const chamada = 'expect(';`, e um varredor que procure `expect(` no
+    /// texto cru acha essa ocorrência DENTRO do literal, começa a balancear
+    /// parênteses de lá e perde o sincronismo do arquivo inteiro. Depois de
+    /// esvaziadas, não sobra parêntese nem aspa dentro de string para
+    /// desalinhar a conta.
+    List<String> afirmacoesDe(String corpo) => <String>[
+          for (final args
+              in argumentosDeExpect(semTextoDeString(semComentarios(corpo))))
+            posicionais(args).first.trim(),
+        ];
+
+    List<String> naoTriviaisDe(String corpo) =>
+        afirmacoesDe(corpo).where((x) => !afirmacaoTrivial(x)).toList();
 
     List<String> casosDe(String texto) => RegExp(
           "^\\s*(?:testWidgets|test)\\(\\s*'((?:[^'\\\\]|\\\\.)*)'",
@@ -995,14 +1220,17 @@ void main() {
       final texto = fonte();
       for (final nome in pisoDeAfirmacoes.keys) {
         final corpo = trecho(texto, nome);
-        final argumentos = argumentosDeExpect(corpo);
+        final afirmado = afirmacoesDe(corpo);
+        final naoTriviais = afirmado.where((x) => !afirmacaoTrivial(x)).toList();
         expect(
-          argumentos.length,
+          naoTriviais.length,
           greaterThanOrEqualTo(pisoDeAfirmacoes[nome]!),
-          reason: 'o trecho "$nome" ficou com ${argumentos.length} afirmações',
+          reason: 'o trecho "$nome" ficou com ${naoTriviais.length} afirmações '
+              'que olham para o programa, de ${afirmado.length} expect: o '
+              'resto é literal, tautologia ou string',
         );
         for (final e in (afirmacoes[nome] ?? const <String, int>{}).entries) {
-          final quantas = argumentos.where((a) => a.contains(e.key)).length;
+          final quantas = naoTriviais.where((a) => a.contains(e.key)).length;
           expect(
             quantas,
             greaterThanOrEqualTo(e.value),
@@ -1012,7 +1240,7 @@ void main() {
           );
         }
         for (final e in (chamadas[nome] ?? const <String, int>{}).entries) {
-          final quantas = e.key.allMatches(corpo).length;
+          final quantas = e.key.allMatches(semComentarios(corpo)).length;
           expect(
             quantas,
             greaterThanOrEqualTo(e.value),
@@ -1038,9 +1266,15 @@ void main() {
       );
       // O piso é afirmado com desigualdade, e por isso o NÚMERO precisa de uma
       // afirmação própria: sem ela, baixá-lo de 48 para 46 sai verde.
-      final guardaDoPiso = argumentosDeExpect(codigo(texto).join('\n'))
-          .where((a) => a.replaceAll(' ', '').startsWith('kPisoExigido,48.0'))
-          .toList();
+      final guardaDoPiso =
+          argumentosDeExpect(
+                  semTextoDeString(semComentarios(codigo(texto).join('\n'))))
+              .map(posicionais)
+              .where((p) =>
+                  p.length >= 2 &&
+                  p[0].replaceAll(' ', '') == 'kPisoExigido' &&
+                  p[1].replaceAll(' ', '') == '48.0')
+              .toList();
       expect(
         guardaDoPiso,
         isNotEmpty,
@@ -1059,6 +1293,25 @@ void main() {
 
     test('a suíte protegida guarda esta auditoria de volta', () {
       final texto = fonte();
+
+      // A METADE RECÍPROCA NÃO SE MEDE PELO LAÇO GENÉRICO.
+      //
+      // Se `kTrechoDaReciprocidade` entrasse em `pisoDeAfirmacoes`, as
+      // afirmações que ela faz SOBRE esta guarda contariam como prova do
+      // produto, e ela passaria a satisfazer sozinha o piso que existe para
+      // medir o que ela não prova. É circular, e sai verde.
+      expect(
+        pisoDeAfirmacoes.containsKey(kTrechoDaReciprocidade),
+        isFalse,
+        reason: '"$kTrechoDaReciprocidade" entrou em pisoDeAfirmacoes',
+      );
+      expect(
+        afirmacoes.containsKey(kTrechoDaReciprocidade),
+        isFalse,
+        reason: '"$kTrechoDaReciprocidade" entrou em afirmacoes',
+      );
+
+      // FORMA — as cadeias de topo continuam escritas.
       for (final t in <String>[
         "const String kCaminhoDaGuardaExterna = 'test/casca/auditoria_casca_test.dart';",
         '// >>> GUARDA EXTERNA DA SUITE DO DESENHO - INICIO',
@@ -1070,6 +1323,28 @@ void main() {
           contains(t),
           reason: 'a metade recíproca da guarda saiu da suíte protegida: sem '
               'ela, retirar este bloco seria um gesto isolado e silencioso',
+        );
+      }
+
+      // CONTEÚDO — e é esta a metade que faltava. As quatro cadeias acima são
+      // declarações de topo: elas continuam escritas depois de o corpo do caso
+      // virar `expect(1, 1)`. A OS 29-R4 mediu esse gesto, com o digest
+      // realinhado no mesmo commit, saindo verde nos dois gates.
+      final corpo = trecho(texto, kTrechoDaReciprocidade);
+      final naoTriviais = naoTriviaisDe(corpo);
+      expect(
+        naoTriviais.length,
+        greaterThanOrEqualTo(pisoDaReciprocidade),
+        reason: 'a metade recíproca ficou com ${naoTriviais.length} '
+            'afirmações que olham para esta guarda',
+      );
+      for (final e in afirmacoesDaReciprocidade.entries) {
+        final quantas = naoTriviais.where((x) => x.contains(e.key)).length;
+        expect(
+          quantas,
+          greaterThanOrEqualTo(e.value),
+          reason: 'a metade recíproca afirma ${e.key} $quantas vez(es), e a '
+              'prova pede ${e.value}',
         );
       }
     });

@@ -139,9 +139,52 @@ const List<String> kCasosDaGuardaExterna = <String>[
   'a suíte protegida guarda esta auditoria de volta',
 ];
 
+/// As declarações que a guarda externa precisa continuar tendo.
+///
+/// Estrutura, e não nome de caso: um bloco pode conservar os cinco nomes e ter
+/// perdido o mapa que diz o que conferir. Todas moram no CÓDIGO do bloco, e
+/// por isso nenhuma é linha de comentário nem a linha do digest móvel.
+const List<String> kDeclaracoesDaGuardaExterna = <String>[
+  'const casosEsperados = <String>[',
+  'const afirmacoes = <String, Map<String, int>>{',
+  'const chamadas = <String, Map<String, int>>{',
+  'const pisoDeAfirmacoes = <String, int>{',
+  'const afirmacoesDaReciprocidade = <String, int>{',
+  'List<String> afirmacoesDe(String corpo)',
+  'bool afirmacaoTrivial(String afirmacao)',
+  'List<String> posicionais(String argumentos)',
+  'String semComentarios(String fonte)',
+  'String semTextoDeString(String fonte)',
+];
+
+/// O que a guarda externa tem de continuar AFIRMANDO, dentro do PRIMEIRO
+/// argumento de um `expect`, e quantas vezes.
+///
+/// É a metade que faltava. Conferir digest, nomes e caminho deixa passar um
+/// bloco com os cinco casos no lugar e `expect(1, 1)` no corpo de cada um: a
+/// OS 29-R4 mediu esse gesto saindo VERDE nos dois gates, com o digest
+/// realinhado no mesmo commit.
+const Map<String, int> kAfirmacoesDaGuardaExterna = <String, int>{
+  'digestDe(texto)': 1,
+  'linhas': 1,
+  'casos': 2,
+  'naoTriviais.length': 2,
+  'quantas': 3,
+  'guardaDoPiso': 1,
+  'larguras': 1,
+  'pisoDeAfirmacoes.containsKey(': 1,
+  'afirmacoes.containsKey(': 1,
+};
+
+/// O piso de afirmações NÃO TRIVIAIS da guarda externa.
+///
+/// Grosseiro de propósito, como o de lá: não julga qualidade, só impede que o
+/// bloco vire casca depois que alguém realinhar o digest.
+const int kPisoDaGuardaExterna = 16;
+
 /// O digest do CÓDIGO da guarda externa — sem comentário, e sem a linha que
 /// carrega o digest desta suíte.
-const String kDigestDaGuardaExterna = '87416b5d07b7882bef3ff0cfaf40471d60929a65ea2a7f70993f08d980be90c8';
+const String kDigestDaGuardaExterna = '02135122f2f25894900c0347b37e2472752fb4f46afbc951a00e3d7c4b0d0aee';
 
 /// O CÓDIGO da guarda externa: as linhas entre os marcadores, sem comentário e
 /// sem a linha móvel.
@@ -186,6 +229,240 @@ String digestNormalizado(String trecho) => sha256
       utf8.encode(trecho.replaceAll('\r\n', '\n').replaceAll('\r', '\n')),
     )
     .toString();
+
+// ---------------------------------------------------------------------------
+// LER A GUARDA EXTERNA COMO ELA LÊ ESTA SUÍTE
+// ---------------------------------------------------------------------------
+//
+// Os varredores abaixo são os mesmos de lá, e estão duplicados de propósito.
+// Importar os de lá faria a conferência depender do arquivo conferido: quem
+// trivializasse a guarda trivializaria junto o instrumento que a mede. A
+// independência é o que faz o par não cair no mesmo gesto.
+
+/// Verdadeiro se a aspa em [k] abre uma string CRUA (`r'...'`).
+///
+/// `r'\'` é uma string crua de UM caractere. Um varredor que trate a barra
+/// como escape consome a aspa de fechamento, perde o sincronismo e passa a
+/// ler o resto do arquivo como se fosse texto — e daí em diante não enxerga
+/// `expect` nenhum. São quatro caracteres para desligar a conferência.
+bool aspaCrua(String fonte, int k) =>
+    k > 0 &&
+    fonte[k - 1] == 'r' &&
+    (k == 1 || !RegExp(r'[A-Za-z0-9_$]').hasMatch(fonte[k - 2]));
+
+/// O texto sem comentário, respeitando aspas para que uma `//` dentro de
+/// string literal não seja confundida com início de comentário.
+///
+/// `codigo()` tira a linha que COMEÇA com `//`; esta tira também o
+/// comentário que vem depois do código, que é onde cabe citar a agulha sem
+/// afirmar nada com ela.
+String semComentarios(String fonte) {
+  final saida = StringBuffer();
+  var i = 0;
+  String? aspa;
+  var crua = false;
+  while (i < fonte.length) {
+    final c = fonte[i];
+    final proximo = i + 1 < fonte.length ? fonte[i + 1] : '';
+    if (aspa != null) {
+      saida.write(c);
+      if (c == r'\' && !crua) {
+        if (proximo.isNotEmpty) saida.write(proximo);
+        i += 2;
+        continue;
+      }
+      if (c == aspa) aspa = null;
+      i++;
+      continue;
+    }
+    if (c == '/' && proximo == '/') {
+      while (i < fonte.length && fonte[i] != '\n') {
+        i++;
+      }
+      continue;
+    }
+    if (c == '/' && proximo == '*') {
+      i += 2;
+      while (i < fonte.length &&
+          !(fonte[i] == '*' && i + 1 < fonte.length && fonte[i + 1] == '/')) {
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    if (c == "'" || c == '"') {
+      aspa = c;
+      crua = aspaCrua(fonte, i);
+    }
+    saida.write(c);
+    i++;
+  }
+  return saida.toString();
+}
+
+/// O mesmo texto com o CONTEÚDO das strings esvaziado, aspas preservadas.
+///
+/// Escrever `temBordaDaObrigacao(` dentro de uma string é citar o nome, não
+/// afirmar com ele: `expect('temBordaDaObrigacao(', isNotEmpty)` passa
+/// sempre, em qualquer árvore, e não olha para o programa.
+String semTextoDeString(String fonte) {
+  final saida = StringBuffer();
+  var i = 0;
+  String? aspa;
+  var crua = false;
+  while (i < fonte.length) {
+    final c = fonte[i];
+    if (aspa != null) {
+      if (c == r'\' && !crua) {
+        i += 2;
+        continue;
+      }
+      if (c == aspa) {
+        aspa = null;
+        saida.write(c);
+      }
+      i++;
+      continue;
+    }
+    if (c == "'" || c == '"') {
+      aspa = c;
+      crua = aspaCrua(fonte, i);
+      saida.write(c);
+      i++;
+      continue;
+    }
+    saida.write(c);
+    i++;
+  }
+  return saida.toString();
+}
+
+/// Os argumentos de cada `expect(...)`, com parênteses balanceados e aspas
+/// respeitadas.
+///
+/// Contar `expect(` seria contar menção — a OS 29-R3 passou por uma isca
+/// com catorze `expect` vazios. O que interessa é o que está DENTRO.
+List<String> argumentosDeExpect(String corpo) {
+  const chamada = 'expect(';
+  final colado = RegExp(r'[A-Za-z0-9_$.]');
+  final saida = <String>[];
+  var i = 0;
+  while (true) {
+    final k = corpo.indexOf(chamada, i);
+    if (k < 0) break;
+    if (k > 0 && colado.hasMatch(corpo[k - 1])) {
+      i = k + chamada.length;
+      continue;
+    }
+    var p = k + chamada.length;
+    var nivel = 1;
+    String? aspa;
+    var crua = false;
+    while (p < corpo.length && nivel > 0) {
+      final c = corpo[p];
+      if (aspa != null) {
+        if (c == r'\' && !crua) {
+          p += 2;
+          continue;
+        }
+        if (c == aspa) aspa = null;
+      } else if (c == "'" || c == '"') {
+        aspa = c;
+        crua = aspaCrua(corpo, p);
+      } else if (c == '(') {
+        nivel++;
+      } else if (c == ')') {
+        nivel--;
+      }
+      p++;
+    }
+    saida.add(corpo.substring(k + chamada.length, p - 1));
+    i = p;
+  }
+  return saida;
+}
+
+/// Os argumentos POSICIONAIS de um `expect`, separados na vírgula de nível
+/// zero. Tudo a partir do primeiro nomeado fica de fora.
+List<String> posicionais(String argumentos) {
+  final saida = <String>[];
+  var inicio = 0;
+  var nivel = 0;
+  String? aspa;
+  var crua = false;
+  for (var p = 0; p < argumentos.length; p++) {
+    final c = argumentos[p];
+    if (aspa != null) {
+      if (c == r'\' && !crua) {
+        p++;
+        continue;
+      }
+      if (c == aspa) aspa = null;
+      continue;
+    }
+    if (c == "'" || c == '"') {
+      aspa = c;
+      crua = aspaCrua(argumentos, p);
+      continue;
+    }
+    if (c == '(' || c == '[' || c == '{') {
+      nivel++;
+    } else if (c == ')' || c == ']' || c == '}') {
+      nivel--;
+    } else if (c == ',' && nivel == 0) {
+      saida.add(argumentos.substring(inicio, p));
+      inicio = p + 1;
+    }
+  }
+  saida.add(argumentos.substring(inicio));
+  final corte = saida.indexWhere(
+    (s) => RegExp(r'^\s*[A-Za-z_][A-Za-z0-9_]*\s*:').hasMatch(s),
+  );
+  return corte < 0 ? saida : saida.sublist(0, corte);
+}
+
+/// Uma afirmação que passa sem olhar para o programa.
+///
+/// `expect(1, 1)`, `expect(true, isTrue)`, `expect(x || !x, isTrue)` e
+/// `expect('...', isNotEmpty)` ocupam a linha, entram na contagem e não
+/// podem reprovar. Contá-las é contar casca.
+bool afirmacaoTrivial(String afirmacao) {
+  final t = afirmacao.replaceAll(RegExp(r'\s+'), '');
+  if (t.isEmpty) return true;
+  if (RegExp(r'^-?[0-9][0-9._]*$').hasMatch(t)) return true;
+  if (t == 'true' || t == 'false' || t == 'null') return true;
+  if (t == "''" || t == '""') return true;
+  for (final op in const <String>['||', '&&']) {
+    final p = t.split(op);
+    if (p.length == 2 && (p[1] == '!${p[0]}' || p[0] == '!${p[1]}')) {
+      return true;
+    }
+  }
+  for (final op in const <String>['==', '!=']) {
+    final p = t.split(op);
+    if (p.length == 2 && p[0].isNotEmpty && p[0] == p[1]) return true;
+  }
+  return false;
+}
+
+/// O que a guarda externa EFETIVAMENTE afirma, e que não é trivial.
+///
+/// As strings são esvaziadas ANTES de procurar as chamadas. O bloco da guarda
+/// declara `const chamada = 'expect(';`, e um varredor que procure `expect(`
+/// no texto cru acha essa ocorrência DENTRO do literal, começa a balancear
+/// parênteses de lá e perde o sincronismo do bloco inteiro — devolvendo quatro
+/// afirmações onde há dezenove. Medido nesta bancada.
+List<String> naoTriviaisDaGuardaExterna(String bloco) => <String>[
+      for (final args
+          in argumentosDeExpect(semTextoDeString(semComentarios(bloco))))
+        posicionais(args).first.trim(),
+    ].where((x) => !afirmacaoTrivial(x)).toList();
+
+/// Os casos da guarda externa, na ordem em que ela os declara.
+List<String> casosDaGuardaExterna(String bloco) => RegExp(
+      "^\\s*(?:testWidgets|test)\\(\\s*'((?:[^'\\\\]|\\\\.)*)'",
+      multiLine: true,
+    ).allMatches(semComentarios(bloco)).map((m) => m.group(1)!).toList();
 
 List<SemanticsNode> _cartasDaArvore(WidgetTester tester) =>
     arvoreDaMesa(tester).where((n) => kCarta.hasMatch(n.label)).toList();
@@ -502,6 +779,15 @@ void exigirOrientacaoVisivel(
     cor.a,
     greaterThan(0),
     reason: '$momento: a orientação está escrita com alfa zero',
+  );
+  // O contraste é afirmado com DESIGUALDADE, e por isso o NÚMERO precisa de
+  // afirmação própria — no primeiro argumento, que é o único lugar que a
+  // guarda externa lê. Sem ela, baixar a constante para 1,0 aprovaria a
+  // orientação escrita da cor do próprio fundo.
+  expect(
+    kContrasteMinimoDaOrientacao,
+    3.0,
+    reason: 'o contraste mínimo da orientação deixou de ser 3:1',
   );
   final contraste = contrasteEntre(cor, fundo);
   expect(
@@ -992,6 +1278,14 @@ void main() {
         voltas,
         3,
         reason: 'o piso foi conferido em $voltas larguras, e não nas três',
+      );
+      // As duas direções, e a nomeada no PRIMEIRO argumento: o conjunto
+      // esperado só do lado do comparador é invisível para a guarda externa.
+      expect(
+        <double>{320, 360, 412}.difference(visitadas),
+        isEmpty,
+        reason: 'largura nomeada que o laço não visitou: '
+            '${<double>{320, 360, 412}.difference(visitadas)}',
       );
       expect(
         visitadas,
@@ -1504,6 +1798,14 @@ void main() {
         baralhos++;
         await encerrarMesaDeTreino(tester);
       }
+      // A conta entra no PRIMEIRO argumento: uma constante que só aparece do
+      // lado do comparador pode ser baixada sem que nada reprove, e a força
+      // desta prova é a repetição.
+      expect(
+        kBaralhosSemObrigacao,
+        60,
+        reason: 'a conta de baralhos sem obrigação deixou de ser 60',
+      );
       expect(
         baralhos,
         kBaralhosSemObrigacao,
@@ -2091,6 +2393,7 @@ void main() {
       expect(kBaralhosSemObrigacao, 60);
     });
 
+    // >>> RECIPROCIDADE DA GUARDA - INICIO
     test('a guarda externa desta suíte existe, e é ela que a protege', () {
       final externa = File(kCaminhoDaGuardaExterna);
       expect(
@@ -2101,18 +2404,8 @@ void main() {
             'arquivo',
       );
       final bloco = blocoDaGuardaExterna(externa.readAsStringSync());
-      for (final nome in kCasosDaGuardaExterna) {
-        expect(
-          bloco,
-          contains(nome),
-          reason: 'a guarda externa perdeu o caso "$nome"',
-        );
-      }
-      expect(
-        bloco,
-        contains(kCaminhoDestaSuite),
-        reason: 'a guarda externa deixou de apontar para esta suíte',
-      );
+
+      // 1 — IDENTIDADE.
       expect(
         digestNormalizado(bloco),
         kDigestDaGuardaExterna,
@@ -2120,6 +2413,66 @@ void main() {
             'digest novo entra aqui no MESMO commit — é esse gesto que impede '
             'que ela seja trivializada sem ninguém ver',
       );
+
+      // 2 — NOMES E QUANTIDADE.
+      //
+      // Ordem e conjunto: só os nomes deixariam acrescentar um caso vazio, e
+      // só a conta deixaria trocar um caso por outro.
+      final casos = casosDaGuardaExterna(bloco);
+      expect(
+        casos,
+        orderedEquals(kCasosDaGuardaExterna),
+        reason: 'os casos da guarda externa deixaram de ser os declarados: '
+            '$casos',
+      );
+      expect(
+        casos.toSet(),
+        hasLength(casos.length),
+        reason: 'dois casos da guarda externa têm o mesmo nome',
+      );
+
+      // 3 — FORMA.
+      //
+      // Um bloco pode conservar os cinco nomes de caso e ter perdido o mapa
+      // que diz o que conferir.
+      for (final d in kDeclaracoesDaGuardaExterna) {
+        expect(
+          bloco,
+          contains(d),
+          reason: 'a guarda externa perdeu a declaração "$d"',
+        );
+      }
+      expect(
+        bloco,
+        contains(kCaminhoDestaSuite),
+        reason: 'a guarda externa deixou de apontar para esta suíte',
+      );
+
+      // 4 — CONTEÚDO, E NÃO TRIVIALIDADE.
+      //
+      // Esta é a metade que faltava, e é a que a OS 29-R4 mediu ausente: com
+      // marcadores, nomes e caminho intactos e o digest realinhado no mesmo
+      // commit, um bloco de `expect(1, 1)` saía verde nos dois gates. Nome de
+      // caso é rótulo; o que prova é o que está dentro do PRIMEIRO argumento
+      // de cada `expect`.
+      final naoTriviais = naoTriviaisDaGuardaExterna(bloco);
+      expect(
+        naoTriviais.length,
+        greaterThanOrEqualTo(kPisoDaGuardaExterna),
+        reason: 'a guarda externa ficou com ${naoTriviais.length} afirmações '
+            'que olham para esta suíte: o resto é literal, tautologia ou '
+            'string',
+      );
+      for (final e in kAfirmacoesDaGuardaExterna.entries) {
+        final quantas = naoTriviais.where((x) => x.contains(e.key)).length;
+        expect(
+          quantas,
+          greaterThanOrEqualTo(e.value),
+          reason: 'a guarda externa afirma ${e.key} $quantas vez(es), e a '
+              'prova pede ${e.value}',
+        );
+      }
     });
+    // <<< RECIPROCIDADE DA GUARDA - FIM
   });
 }
