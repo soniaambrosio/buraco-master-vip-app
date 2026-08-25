@@ -114,13 +114,23 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # 42-C2: a entrada inteira saia da fonte unica, o produtor saia do workflow, a
 # suite saia do disco, e este verificador terminava com "tudo no lugar".
 #
+# `appcheckandroid` guarda a ativacao do App Check na porta de entrada do
+# aplicativo Android — a ordem (`activate()` entre `initializeApp` e `runApp`),
+# a forma (provedor por constante de compilacao, para que o artefato de release
+# nao carregue o provedor de depuracao) e a leitura da recusa. Entrou nesta
+# regua pelo MESMO motivo dos dois acima, e com um agravante: o assunto dele ja
+# desapareceu uma vez. A entrega que ativava App Check existia, provada, numa
+# folha que nenhuma ponta produtiva descendia — e o plugin ficou no pubspec,
+# declarado e nunca importado, parecendo integrado. Um gate que some sem
+# reprovar repetiria exatamente esse desaparecimento.
+#
 # As tres reguas abaixo sao a razao de a remocao deixar de ser silenciosa. Elas
 # nao substituem o contrato: o contrato mora na fonte unica e pode CRESCER com
 # decisao nova; o que estas linhas proibem e ele ENCOLHER — perder a chave,
 # rebaixar o piso de provas, rebaixar o piso de casos executados.
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip torneiobase"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:72 admvip:48 torneiobase:56"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:80 admvip:48 torneiobase:56"
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui admvip torneiobase appcheckandroid"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:72 admvip:48 torneiobase:56 appcheckandroid:26"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:80 admvip:48 torneiobase:56 appcheckandroid:26"
 
 # O piso de BLOCOS NORMATIVOS. `exige` sozinho ja reprova quando some inteiro —
 # "nao declara nenhum 'exige'" —, e essa era toda a protecao que existia. Apagar
@@ -133,7 +143,7 @@ readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:80 admvip:48 tornei
 # que guardam a fixture da FASE B sao a unica coisa que sobra quando alguem
 # apaga um caso da matriz para "consertar" uma sabotagem. Um contrato que perde
 # `exige` um a um continua formalmente completo.
-readonly PISOS_EXIGE="torneiobase:14 contratosui:19"
+readonly PISOS_EXIGE="torneiobase:14 contratosui:19 appcheckandroid:10"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'

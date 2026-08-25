@@ -162,10 +162,17 @@ antes do anúncio.
 
 ## 7. App Check
 
-Integração pronta e **desligada**:
+Cliente **ativado**, exigência **desta codebase** ainda desligada:
 
-- `firebase_app_check` está em `app/pubspec.yaml`;
-- as funções leem `ENFORCE_APP_CHECK` e passam `enforceAppCheck` nas opções.
+- `firebase_app_check` está em `app/pubspec.yaml` e, desde a OS 50.1, é
+  **consumido**: `app/lib/main.dart` chama `activate()` entre
+  `Firebase.initializeApp()` e `runApp()`. Até então o pacote estava declarado e
+  nunca importado — parecia integrado e não atestava nada;
+- as funções **deste codebase** (`firebase/functions`) leem `ENFORCE_APP_CHECK` e
+  passam `enforceAppCheck` nas opções. **Isto não vale para o projeto inteiro:**
+  `functions-social`, `functions-ranking`, `functions-conta`, `functions-mesas` e
+  `functions-moderacao` exigem App Check **no código** — as três primeiras já
+  recusam em produção, e ali não existe chave a ligar nem a desligar.
 
 **Por que desligado:** ligar a exigência antes de existir uma versão publicada do
 aplicativo com App Check configurado derrubaria o resgate de todo mundo,

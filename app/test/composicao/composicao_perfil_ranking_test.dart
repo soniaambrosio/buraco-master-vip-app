@@ -743,12 +743,17 @@ void main() {
       // O merge-base `bc74e30` e as duas entradas têm o MESMO blob para este
       // arquivo. Se a composição o tivesse tocado, seria sinal de que a união
       // extravasou para a raiz — que nenhuma das duas entradas mexeu.
+      //
+      // RECARIMBADO PELA OS 50.1, que ativou o App Check na porta de entrada.
+      // A pergunta deste caso não mudou: ele continua provando que `main.dart`
+      // não muda sem alguém decidir que ele mude. Digest anterior:
+      //   8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab
       final bytes = File('lib/main.dart').readAsBytesSync();
       final normalizado = utf8.decode(bytes).replaceAll('\r\n', '\n');
       final digest = sha256.convert(utf8.encode(normalizado)).toString();
       expect(
         digest,
-        '8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab',
+        '5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321',
         reason: 'main.dart mudou na composição',
       );
     });
