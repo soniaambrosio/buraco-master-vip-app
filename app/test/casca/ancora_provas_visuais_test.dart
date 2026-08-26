@@ -94,6 +94,44 @@ const String kComandoDoPortaoDoApk = 'flutter test test/casca test/cartas';
 const String kCaminhoDoContrato =
     'docs/ANCORA-PROVAS-VISUAIS-CARTA-OBRIGATORIA-V1.md';
 
+/// A autoridade externa INDEPENDENTE de conteúdo e piso desta âncora.
+///
+/// Escrita noutra linguagem e com varredor próprio, de propósito: o digest
+/// desta âncora prova que ela não mudou, e não prova que ela AFIRMA alguma
+/// coisa. Quem só tem digest aceita, no dia em que o digest for realinhado nos
+/// dois donos, uma âncora de dezesseis casos vazios.
+const String kCaminhoDoVerificador = '.github/verificacao/ancora_conteudo.js';
+
+/// O passo do alvo oficial onde as suítes rodam e esta âncora é exigida.
+///
+/// Nome exato, e não "algum passo": cada `run:` é um shell próprio, e um
+/// comando idêntico noutro passo não invoca a mesma função — não invoca função
+/// nenhuma. Foi o que a E2 mediu.
+const String kPassoDasSuites =
+    '1+2 — analyze + suítes Flutter (captura exit codes sem abortar)';
+
+/// O passo do portão do APK que roda a casca, e o que confere o marcador.
+const String kPassoDaCasca =
+    'PORTÃO DE PRODUÇÃO — casca real (roteamento, mocks, dados pessoais)';
+const String kPassoDoMarcador =
+    'PORTÃO DE PRODUÇÃO — o marcador da casca é exigido, e não presumido';
+
+/// O marcador que o portão do APK só escreve DEPOIS da execução verdadeira.
+const String kMarcadorDaCasca = 'marcador_portao_casca';
+
+/// O placar mínimo do diretório inteiro no portão do APK.
+const int kPisoDoPortaoDaCasca = 343;
+
+/// Os vinte vetores contratuais, congelados por nome.
+///
+/// A versão anterior cobrava `C6-01` e `C6-20` e deixava dezoito de fora: dava
+/// para apagar a linha de dezoito ataques do contrato sem que nada reprovasse.
+const List<String> kVetoresDoContrato = <String>[
+  'C6-01', 'C6-02', 'C6-03', 'C6-04', 'C6-05', 'C6-06', 'C6-07', 'C6-08',
+  'C6-09', 'C6-10', 'C6-11', 'C6-12', 'C6-13', 'C6-14', 'C6-15', 'C6-16',
+  'C6-17', 'C6-18', 'C6-19', 'C6-20',
+];
+
 // ===========================================================================
 // A EVIDÊNCIA DO EXECUTOR VERDADEIRO
 // ===========================================================================
@@ -287,7 +325,7 @@ const int kPisoDoPlacarDaSuiteProtegida = 31;
 /// O alvo oficial declara o mesmo número em `ANCORA_PISO` e confere o placar
 /// REAL desta suíte contra ele. Baixar o piso lá reprova aqui; esvaziar esta
 /// âncora derruba o placar lá. Nenhum dos dois gestos se basta.
-const int kCasosDestaAncora = 16;
+const int kCasosDestaAncora = 18;
 
 // ===========================================================================
 // OS VARREDORES
@@ -574,19 +612,140 @@ List<List<String>> declaracoesDe(String texto, String nome) =>
             .toList())
         .toList();
 
-/// O valor de uma atribuição de shell SEM aspas, `NOME=valor`, VIVA — a linha
-/// não pode começar por `#`.
-String? atribuicaoViva(String texto, String nome) {
-  final m = RegExp('^ *' + nome + r'=([^\s#]+)[ \t]*$', multiLine: true)
-      .firstMatch(texto);
-  return m?.group(1);
+// ===========================================================================
+// LER O WORKFLOW COMO PASSOS E COMANDOS, E NÃO COMO UM TEXTÃO
+// ===========================================================================
+//
+// A OS 29-C7 mediu seis maneiras de satisfazer a versão anterior desta âncora
+// sem que nada executasse. As três primeiras têm a mesma raiz: procurar
+// `^ *comando$` no arquivo inteiro confunde TRÊS coisas diferentes —
+//
+//   * um comando que roda;
+//   * uma linha de texto dentro de um heredoc, que é dado e não programa;
+//   * um comando idêntico que mora em OUTRO passo, onde a função que ele
+//     invoca nem existe, porque cada `run:` é um shell próprio.
+//
+// As três saíam `+16: All tests passed`. O que fecha isso não é uma agulha
+// melhor: é parar de olhar o arquivo como texto e passar a olhá-lo como o que
+// ele é — uma lista de passos, cada um com um corpo de shell.
+
+/// O corpo de shell de cada passo do workflow, indexado pelo `name:` do passo.
+///
+/// Só entra o que está DENTRO de um `run:` — o que está fora não é comando.
+Map<String, List<String>> passosDo(String yml) {
+  final linhas = normalizado(yml).split('\n');
+  final saida = <String, List<String>>{};
+  String? passo;
+  var dentroDeRun = false;
+  var recuoDoRun = -1;
+  for (final l in linhas) {
+    final nome = RegExp(r'^ *- name: *"?(.*?)"? *$').firstMatch(l);
+    if (nome != null) {
+      passo = nome.group(1)!;
+      dentroDeRun = false;
+      saida.putIfAbsent(passo, () => <String>[]);
+      continue;
+    }
+    if (RegExp(r'^ *run: *\|').hasMatch(l)) {
+      dentroDeRun = true;
+      recuoDoRun = -1;
+      continue;
+    }
+    if (!dentroDeRun || passo == null) continue;
+    if (l.trim().isEmpty) {
+      saida[passo]!.add('');
+      continue;
+    }
+    final recuo = l.length - l.trimLeft().length;
+    if (recuoDoRun < 0) recuoDoRun = recuo;
+    // O bloco literal do YAML acaba quando o recuo cai abaixo do da primeira
+    // linha dele.
+    if (recuo < recuoDoRun) {
+      dentroDeRun = false;
+      continue;
+    }
+    saida[passo]!.add(l);
+  }
+  return saida;
 }
 
-/// Verdadeiro se o workflow tem a linha [linha] VIVA — sem `#` na frente.
-bool linhaViva(String texto, String linha) => RegExp(
-      '^ *' + RegExp.escape(linha) + r'[ \t]*$',
-      multiLine: true,
-    ).hasMatch(texto);
+/// As linhas de um corpo de shell que são COMANDO: fora de comentário e fora
+/// de heredoc.
+///
+/// O heredoc é o buraco que a E1 mediu. `cat <<'FIM'` … `FIM` é dado: o que
+/// está lá dentro não executa, e mesmo assim casava com a busca de comando.
+List<String> comandosVivos(List<String> corpo) {
+  final saida = <String>[];
+  String? terminador;
+  for (final l in corpo) {
+    if (terminador != null) {
+      if (l.trim() == terminador) terminador = null;
+      continue;
+    }
+    // SEM ASPAS TRIPLAS AQUI, E É DE PROPÓSITO.
+    //
+    // Uma string crua de aspa TRIPLA seria o jeito natural de escrever este
+    // padrão, e foi o que esta linha era. Só que nem o varredor desta âncora
+    // nem o do verificador
+    // independente entendem aspa tripla: os dois leem a segunda aspa como
+    // fechamento, perdem o sincronismo e param de enxergar `expect` do ponto
+    // em diante. Foram 74 afirmações medidas como 3. O verificador reprova a
+    // presença de aspa tripla neste arquivo justamente para que o ponto cego
+    // não volte por descuido.
+    final abre = RegExp("<<-? *['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?").firstMatch(l);
+    if (abre != null) {
+      terminador = abre.group(1);
+      continue;
+    }
+    final t = l.trimLeft();
+    if (t.startsWith('#') || t.isEmpty) continue;
+    saida.add(l.trim());
+  }
+  return saida;
+}
+
+/// Os comandos vivos de um passo nomeado. Passo inexistente devolve lista
+/// vazia, e quem pergunta reprova — nunca "não achei, então está bom".
+List<String> comandosDoPasso(String yml, String passo) {
+  final corpo = passosDo(yml)[passo];
+  return corpo == null ? const <String>[] : comandosVivos(corpo);
+}
+
+/// Quantas vezes [comando] aparece como comando VIVO do passo [passo].
+int vezesNoPasso(String yml, String passo, String comando) =>
+    comandosDoPasso(yml, passo).where((c) => c == comando.trim()).length;
+
+/// A posição do primeiro comando vivo igual a [comando] dentro do passo, ou
+/// `-1`. É o que permite exigir que o carimbo venha ANTES das suítes.
+int posicaoNoPasso(String yml, String passo, String comando) =>
+    comandosDoPasso(yml, passo).indexWhere((c) => c == comando.trim());
+
+/// TODAS as atribuições de shell vivas `NOME=valor` de um passo.
+///
+/// Lista, e não a primeira: a E6 mediu o que a primeira esconde. O Dart lia
+/// `ANCORA_PISO=16` e aprovava; o shell obedecia à segunda linha,
+/// `ANCORA_PISO=1`, porque em shell quem manda é a ÚLTIMA atribuição. Ler a
+/// primeira e obedecer à última é ler um programa que não é o que roda.
+List<String> atribuicoesVivas(String yml, String passo, String nome) => <String>[
+      for (final c in comandosDoPasso(yml, passo))
+        if (RegExp('^' + nome + r'=([^\s#]+)$').hasMatch(c))
+          RegExp('^' + nome + r'=([^\s#]+)$').firstMatch(c)!.group(1)!,
+    ];
+
+/// A ÚNICA atribuição viva de [nome] no passo — e reprova se houver zero, ou
+/// mais de uma.
+String atribuicaoUnica(String yml, String passo, String nome) {
+  final todas = atribuicoesVivas(yml, passo, nome);
+  expect(
+    todas,
+    hasLength(1),
+    reason: 'o passo "$passo" tem ${todas.length} atribuições vivas de $nome '
+        '($todas), e tem de ter exatamente uma: em shell quem decide é a '
+        'ÚLTIMA, e uma âncora que lê a primeira aprova um programa que não é '
+        'o que roda',
+  );
+  return todas.single;
+}
 
 /// O placar com que o `--reporter expanded` fechou o log: o `+N` da linha de
 /// fecho. Devolve `-1` se o log não fechou verde.
@@ -641,25 +800,34 @@ void main() {
       kAlvoOficial,
       'é a autoridade canônica de gates, e sem ela nada aqui é obrigatório',
     );
+    // COMANDO VIVO, EXATO, E NO PASSO CERTO — as três coisas, e não uma.
+    //
+    // A E1 pôs o literal num heredoc; a E2 pôs o comando num passo onde
+    // `roda`/`exige` nem existem. As duas saíam verdes contra a busca de
+    // `^ *comando$` no arquivo inteiro.
+    final naSuite = comandosDoPasso(texto, kPassoDasSuites);
     expect(
-      linhaViva(texto, 'roda $kChaveDaGuarda   $kCaminhoDaGuarda'),
-      isTrue,
-      reason: 'o gate $kChaveDaGuarda deixou de executar $kCaminhoDaGuarda — '
-          'foi apontado para outro caminho, comentado, ou saiu do alvo',
+      naSuite,
+      isNotEmpty,
+      reason: 'o passo "$kPassoDasSuites" sumiu do alvo oficial, ou deixou de '
+          'ter corpo de shell: é nele que as suítes protegidas rodam',
     );
     expect(
-      RegExp(
-        '^ *exige +' +
-            kChaveDaSuiteProtegida +
-            ' +' +
-            RegExp.escape(kCaminhoDaSuiteProtegida) +
-            r'[ \t]*$',
-        multiLine: true,
-      ).hasMatch(texto),
-      isTrue,
+      vezesNoPasso(texto, kPassoDasSuites,
+          'roda $kChaveDaGuarda   $kCaminhoDaGuarda'),
+      1,
+      reason: 'o gate $kChaveDaGuarda não executa $kCaminhoDaGuarda como '
+          'comando vivo do passo das suítes — foi comentado, virou texto '
+          'dentro de um heredoc, mudou de passo, ou saiu do alvo',
+    );
+    expect(
+      vezesNoPasso(texto, kPassoDasSuites,
+          'exige $kChaveDaSuiteProtegida     $kCaminhoDaSuiteProtegida'),
+      1,
       reason: 'o gate $kChaveDaSuiteProtegida não exige '
-          '$kCaminhoDaSuiteProtegida — foi rebaixado para roda, desviado para '
-          'uma isca, ou saiu do alvo',
+          '$kCaminhoDaSuiteProtegida como comando vivo do passo das suítes — '
+          'foi rebaixado para roda, desviado para uma isca, comentado, virou '
+          'texto de heredoc, ou mudou de passo',
     );
     // Executar sem estar nas listas é rodar sem poder reprovar.
     final gates = declaracoesDe(texto, 'GATES');
@@ -686,12 +854,75 @@ void main() {
       'é a segunda porta desta âncora, e a única que sobrevive ao apagamento '
           'da entrada no alvo oficial',
     );
+    // `contains` NÃO DISTINGUE COMANDO DE COMENTÁRIO, e foi o que a E3 mediu:
+    // comentar a linha do diretório inteiro e pôr uma suíte estreita no lugar
+    // saía verde, porque o literal continuava escrito.
+    final naCasca = comandosDoPasso(texto, kPassoDaCasca);
     expect(
-      texto,
-      contains(kComandoDoPortaoDoApk),
-      reason: 'o portão do APK parou de rodar "$kComandoDoPortaoDoApk" — é '
-          'esse comando que faz esta âncora ser executada mesmo depois de '
+      naCasca,
+      isNotEmpty,
+      reason: 'o passo "$kPassoDaCasca" sumiu do portão do APK',
+    );
+    expect(
+      naCasca.where((c) => c.contains(kComandoDoPortaoDoApk)).length,
+      1,
+      reason: 'o portão do APK não roda "$kComandoDoPortaoDoApk" como comando '
+          'vivo — foi comentado, estreitado para uma suíte só, ou virou texto. '
+          'É esse comando que faz esta âncora ser executada mesmo depois de '
           'alguém tirar a entrada dela do alvo oficial',
+    );
+    // E rodar não basta: a E4 mediu `|| true` no fim da linha, que deixa a
+    // suíte inteira reprovar e o portão seguir para o APK.
+    expect(
+      naCasca.where((c) =>
+          c.contains(kComandoDoPortaoDoApk) &&
+          (c.contains('|| true') || c.contains('|| :'))).isEmpty,
+      isTrue,
+      reason: 'o comando do diretório inteiro ganhou um `|| true`: a suíte '
+          'reprova e o portão do APK segue verde',
+    );
+    // E o placar tem de ser CONFERIDO, e não presumido: sem isto, "PORTÃO
+    // VERDE" é uma frase impressa por um `echo` que nada mede.
+    expect(
+      naCasca.any((c) => c.contains(kMarcadorDaCasca)),
+      isTrue,
+      reason: 'o portão do APK não escreve o marcador $kMarcadorDaCasca: sem '
+          'ele não há como exigir, depois, que a execução verdadeira tenha '
+          'acontecido',
+    );
+    expect(
+      naCasca.any((c) => c.contains('$kPisoDoPortaoDaCasca')),
+      isTrue,
+      reason: 'o portão do APK não confere o piso de $kPisoDoPortaoDaCasca '
+          'casos do diretório inteiro',
+    );
+    // E o consumidor do marcador, num passo PRÓPRIO e fail-closed.
+    final noMarcador = comandosDoPasso(texto, kPassoDoMarcador);
+    expect(
+      noMarcador,
+      isNotEmpty,
+      reason: 'o passo "$kPassoDoMarcador" sumiu: o marcador voltaria a ser '
+          'escrito e nunca cobrado',
+    );
+    // O passo cobra o marcador E derruba. As duas coisas moram em linhas
+    // diferentes de um `if`, então são procuradas separadamente — exigir as
+    // duas na MESMA linha reprovaria a forma normal de escrever a guarda.
+    expect(
+      noMarcador.any((c) => c.contains(kMarcadorDaCasca)),
+      isTrue,
+      reason: 'o passo do marcador deixou de olhar para $kMarcadorDaCasca',
+    );
+    expect(
+      noMarcador.any((c) => c.trim() == 'exit 1'),
+      isTrue,
+      reason: 'o passo do marcador deixou de reprovar: sem `exit 1` ele olha '
+          'para o marcador e segue mesmo assim',
+    );
+    expect(
+      noMarcador.any((c) => c.contains('$kPisoDoPortaoDaCasca')),
+      isTrue,
+      reason: 'o passo do marcador deixou de conferir o piso de '
+          '$kPisoDoPortaoDaCasca: um marcador com qualquer número passaria',
     );
     for (final c in <String>[
       kCaminhoDaGuarda,
@@ -997,20 +1228,35 @@ void main() {
 
   test('o comando que executa esta âncora está vivo, e não comentado', () {
     final texto = leitura(kAlvoOficial, 'é quem executa esta âncora');
+    // COMANDO VIVO DO PASSO, e não regex no arquivo inteiro.
+    //
+    // Este caso era o último que ainda lia o alvo como textão, e por isso
+    // aceitava as três coisas que a C7 mediu: o literal dentro de um heredoc,
+    // o comando num passo que não o executa, e a duplicidade. Uma linha
+    // idêntica em lugar nenhum executa nada.
     expect(
-      RegExp(
-        '^ *exige +' +
-            kChaveDoGate +
-            ' +' +
-            RegExp.escape(kCaminhoDestaAncora) +
-            r'[ \t]*$',
-        multiLine: true,
-      ).hasMatch(texto),
-      isTrue,
-      reason: 'o alvo oficial não exige $kCaminhoDestaAncora: o literal '
-          'continuar escrito num comentário não executa nada, e `roda` no '
-          'lugar de `exige` deixa a ausência do arquivo sair como NÃO '
-          'EXECUTADO',
+      vezesNoPasso(texto, kPassoDasSuites,
+          'exige $kChaveDoGate  $kCaminhoDestaAncora'),
+      1,
+      reason: 'o alvo oficial não exige $kCaminhoDestaAncora exatamente uma '
+          'vez como comando vivo do passo das suítes: o literal continuar '
+          'escrito num comentário ou dentro de um heredoc não executa nada, '
+          'um comando idêntico noutro passo não invoca a função que ali nem '
+          'existe, e `roda` no lugar de `exige` deixa a ausência do arquivo '
+          'sair como NÃO EXECUTADO',
+    );
+    // E depois das duas suítes protegidas, senão a evidência que ela lê ainda
+    // não foi produzida quando ela roda.
+    final ondeAncora = posicaoNoPasso(texto, kPassoDasSuites,
+        'exige $kChaveDoGate  $kCaminhoDestaAncora');
+    final ondeMesac1 = posicaoNoPasso(texto, kPassoDasSuites,
+        'exige $kChaveDaSuiteProtegida     $kCaminhoDaSuiteProtegida');
+    expect(
+      ondeAncora,
+      greaterThan(ondeMesac1),
+      reason: 'a âncora é exigida na posição $ondeAncora e $kChaveDaSuiteProtegida '
+          'na $ondeMesac1: rodar a âncora ANTES da suíte que ela audita a faz '
+          'ler evidência que ainda não existe',
     );
   });
 
@@ -1018,7 +1264,7 @@ void main() {
       () {
     final texto = leitura(kAlvoOficial, 'é onde o vínculo desta âncora mora');
 
-    final arquivo = atribuicaoViva(texto, 'ANCORA_ARQUIVO');
+    final arquivo = atribuicaoUnica(texto, kPassoDasSuites, 'ANCORA_ARQUIVO');
     expect(
       arquivo,
       'app/' + kCaminhoDestaAncora,
@@ -1026,7 +1272,7 @@ void main() {
           'para esta âncora — sem isso o digest confere outro arquivo',
     );
 
-    final digest = atribuicaoViva(texto, 'ANCORA_DIGEST');
+    final digest = atribuicaoUnica(texto, kPassoDasSuites, 'ANCORA_DIGEST');
     expect(
       digest,
       digestDe(leitura(kCaminhoDestaAncora, 'é esta âncora')),
@@ -1034,7 +1280,7 @@ void main() {
           'âncora: o passo que a mede está medindo outra coisa',
     );
 
-    final piso = atribuicaoViva(texto, 'ANCORA_PISO');
+    final piso = atribuicaoUnica(texto, kPassoDasSuites, 'ANCORA_PISO');
     expect(
       piso,
       '$kCasosDestaAncora',
@@ -1048,7 +1294,7 @@ void main() {
     // Um digest com um dono só é um digest que se realinha — é o residual C10
     // um degrau abaixo. O contrato desta autoridade é o segundo dono, e o alvo
     // oficial reprova se os dois números divergirem.
-    final contrato = atribuicaoViva(texto, 'ANCORA_CONTRATO');
+    final contrato = atribuicaoUnica(texto, kPassoDasSuites, 'ANCORA_CONTRATO');
     expect(
       contrato,
       kCaminhoDoContrato,
@@ -1078,7 +1324,7 @@ void main() {
       r'echo 1 > exit_ancoravis',
     ]) {
       expect(
-        linhaViva(texto, l),
+        vezesNoPasso(texto, kPassoDasSuites, l) >= 1,
         isTrue,
         reason: 'o verificador externo do alvo oficial perdeu a linha viva '
             '`$l`: as declarações continuariam escritas e ninguém as leria',
@@ -1086,15 +1332,60 @@ void main() {
     }
   });
 
-  test('o produtor do carimbo está vivo no alvo oficial', () {
-    final texto = leitura(kAlvoOficial, 'é quem carimba antes de executar');
-    expect(
-      linhaViva(texto, 'date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis'),
-      isTrue,
-      reason: 'o alvo oficial deixou de escrever carimbo_ancoravis ANTES de '
-          'rodar as suítes. Sem o carimbo, um log guardado de outra execução '
-          'passa por evidência desta',
-    );
+  test('o produtor do carimbo é único, vivo, e vem ANTES das suítes', () {
+    const produtor = 'date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis';
+
+    // O QUE CONTA COMO "A PRIMEIRA EXECUÇÃO" EM CADA PORTÃO.
+    //
+    // No alvo oficial não dá para procurar `flutter test`: a primeira
+    // ocorrência está DENTRO do corpo da função `roda()`, que é definição e
+    // não invocação — procurá-la diria que o carimbo vem depois de rodar
+    // quando ele vem antes. O que executa ali é `roda <chave>` / `exige
+    // <chave>`. No portão do APK não há função nenhuma, e a invocação é o
+    // próprio `flutter test`.
+    // O padrão é ancorado no INÍCIO do comando, e não solto: a linha que
+    // define a função, `roda() { # roda <chave> <caminho>`, carrega a palavra
+    // no comentário de fim de linha e casaria com uma busca frouxa — dizendo
+    // que a primeira execução acontece na definição da função.
+    for (final portao in <List<String>>[
+      <String>[kAlvoOficial, kPassoDasSuites, r'^(roda|exige) +[a-z]'],
+      <String>[kPortaoDoApk, kPassoDaCasca, r'flutter test test/casca'],
+    ]) {
+      final texto = leitura(portao[0], 'é quem carimba antes de executar');
+      final passo = portao[1];
+      final invocacao = portao[2];
+
+      // ÚNICO. Dois produtores não são redundância: o segundo reescreve o
+      // carimbo depois do primeiro, e a partir daí "log posterior ao carimbo"
+      // passa a medir a distância até o produtor errado.
+      expect(
+        vezesNoPasso(texto, passo, produtor),
+        1,
+        reason: 'o passo "$passo" de ${portao[0]} tem '
+            '${vezesNoPasso(texto, passo, produtor)} produtores vivos do '
+            'carimbo, e tem de ter exatamente um: ausência deixa a evidência '
+            'sem data, e duplicidade carimba duas vezes',
+      );
+
+      // E ANTES. Um carimbo posterior aos logs inverte a comparação e
+      // reprovaria a execução honesta — ou, pior, aprovaria a desonesta.
+      final ondeCarimba = posicaoNoPasso(texto, passo, produtor);
+      final primeiroTeste = comandosDoPasso(texto, passo)
+          .indexWhere((c) => RegExp(invocacao).hasMatch(c));
+      expect(
+        primeiroTeste,
+        greaterThanOrEqualTo(0),
+        reason: 'o passo "$passo" de ${portao[0]} não invoca nada que case com "$invocacao"',
+      );
+      expect(
+        ondeCarimba,
+        lessThan(primeiroTeste),
+        reason: 'em ${portao[0]}, o carimbo é escrito na posição $ondeCarimba '
+            'do passo e o primeiro `flutter test` na $primeiroTeste: carimbar '
+            'DEPOIS de rodar torna todo log desta execução anterior ao '
+            'carimbo, e a comparação deixa de significar o que promete',
+      );
+    }
   });
 
   // =========================================================================
@@ -1108,21 +1399,15 @@ void main() {
 
   test('as duas suítes protegidas executaram de verdade, e depois do carimbo',
       () {
+    // FAIL-CLOSED, SEM RAMO DEGRADADO.
+    //
+    // Aqui havia um `if (!carimbo.existsSync()) return`, e a E5 mediu o que ele
+    // custava: no portão do APK, onde carimbo nenhum existia, os dois casos de
+    // evidência saíam VERDES sem olhar evidência alguma — que é precisamente o
+    // "não consegui olhar" saindo igual a "olhei e está certo". Agora os DOIS
+    // portões carimbam, e não ter carimbo é reprovação nominal.
+    leitura(kCarimbo, 'é o carimbo desta execução');
     final carimbo = File(kCarimbo);
-    if (!carimbo.existsSync()) {
-      // Não é um `return` de conveniência: o produtor do carimbo já foi
-      // afirmado no caso acima, e sem execução oficial não há log para ler.
-      expect(
-        linhaViva(
-          leitura(kAlvoOficial, 'é quem carimba'),
-          'date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis',
-        ),
-        isTrue,
-        reason: 'sem carimbo nesta execução, o mínimo é o produtor continuar '
-            'declarado no alvo oficial',
-      );
-      return;
-    }
 
     final quandoCarimbou = carimbo.statSync().modified;
     for (final par in <List<String>>[
@@ -1167,19 +1452,14 @@ void main() {
 
   test('o log de cada suíte protegida chama os casos pelo nome e fecha o '
       'placar', () {
-    final carimbo = File(kCarimbo);
-    if (!carimbo.existsSync()) {
-      expect(
-        linhaViva(
-          leitura(kAlvoOficial, 'é quem carimba'),
-          'date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis',
-        ),
-        isTrue,
-        reason: 'sem carimbo nesta execução, o mínimo é o produtor continuar '
-            'declarado no alvo oficial',
-      );
-      return;
-    }
+    // FAIL-CLOSED, SEM RAMO DEGRADADO.
+    //
+    // Aqui havia um `if (!carimbo.existsSync()) return`, e a E5 mediu o que ele
+    // custava: no portão do APK, onde carimbo nenhum existia, os dois casos de
+    // evidência saíam VERDES sem olhar evidência alguma — que é precisamente o
+    // "não consegui olhar" saindo igual a "olhei e está certo". Agora os DOIS
+    // portões carimbam, e não ter carimbo é reprovação nominal.
+    leitura(kCarimbo, 'é o carimbo desta execução');
 
     final logDaGuarda = leitura(kLogDaGuarda, 'é o log do gate cascaaud');
     final logDaSuite = leitura(kLogDaSuiteProtegida, 'é o log do gate mesac1');
@@ -1234,12 +1514,24 @@ void main() {
       'é o contrato desta autoridade, e é onde a campanha negativa está '
           'registrada',
     );
+    // OS VINTE, E NÃO O PRIMEIRO E O ÚLTIMO.
+    //
+    // Cobrar `C6-01` e `C6-20` deixava dezoito de fora: dava para apagar a
+    // linha de dezoito ataques do contrato sem que nada reprovasse, e a
+    // campanha que dá sentido a esta âncora encolhia em silêncio.
     for (final t in <String>[
-      'C6-01',
-      'C6-20',
+      ...kVetoresDoContrato,
+      // Os escapes da R5 e os gestos coordenados também são congelados: o
+      // contrato é o registro do que já foi medido, e um registro que encolhe
+      // é uma campanha que encolheu.
+      'R5-E1', 'R5-E2', 'R5-E3', 'R5-E4', 'R5-E5', 'R5-E6',
+      'C7-N1', 'C7-N6',
+      'K1', 'K2',
+      'CA1', 'CA2', 'CA3',
       kCaminhoDaGuarda,
       kCaminhoDaSuiteProtegida,
       kCaminhoDestaAncora,
+      kCaminhoDoVerificador,
       kChaveDoGate,
     ]) {
       expect(
@@ -1249,5 +1541,102 @@ void main() {
             'que cobra o residual C10 saiu do repositório',
       );
     }
+  });
+
+  // =========================================================================
+  // 11 — A AUTORIDADE EXTERNA INDEPENDENTE DE CONTEÚDO E PISO
+  // =========================================================================
+  //
+  // O digest prova que esta âncora NÃO MUDOU. Não prova que ela AFIRMA alguma
+  // coisa. No dia em que os dois donos do digest forem realinhados no mesmo
+  // commit — o limite que a própria C6 registrou —, dezesseis casos vazios
+  // passam nos dois. O verificador mede o que o digest não mede, e mede noutra
+  // linguagem, com varredor próprio.
+
+  test('o verificador independente de conteúdo existe e é invocado nos dois '
+      'portões', () {
+    final verificador = leitura(
+      '../' + kCaminhoDoVerificador,
+      'é a autoridade externa independente de conteúdo e piso desta âncora',
+    );
+    // Ele tem de MEDIR, e não apenas existir.
+    for (final t in <String>[
+      'PISO_DE_CASOS',
+      'PISO_DE_AFIRMACOES',
+      'DECLARACOES',
+      'VETORES',
+      'process.exit(1)',
+      // A PROIBIÇÃO DE ASPA TRIPLA, COBRADA DE VOLTA.
+      //
+      // Nem o varredor de lá nem o daqui entendem aspa tripla: os dois leem a
+      // segunda aspa como fechamento e ficam cegos do ponto em diante. Uma
+      // medição assim disse 3 afirmações onde havia 74, e teria dito o mesmo
+      // de uma âncora vazia. A proibição é o que impede o ponto cego de
+      // voltar — e apagá-la seria devolver o defeito em silêncio, então ela
+      // é cobrada daqui.
+      'TRIPLA_S',
+      'TRIPLA_D',
+      'repeat(3)',
+      'aspa tripla',
+    ]) {
+      expect(
+        verificador,
+        contains(t),
+        reason: 'o verificador independente perdeu "$t": sem isso ele deixa de '
+            'medir conteúdo e piso e vira um arquivo que só existe',
+      );
+    }
+
+    // E tem de ser INVOCADO, vivo, nos dois portões — senão é um arquivo que
+    // ninguém roda.
+    const invocacao = 'node .github/verificacao/ancora_conteudo.js';
+    for (final portao in <List<String>>[
+      <String>[kAlvoOficial, kPassoDasSuites],
+      <String>[kPortaoDoApk, kPassoDaCasca],
+    ]) {
+      final texto = leitura(portao[0], 'é um dos dois portões');
+      expect(
+        comandosDoPasso(texto, portao[1]).where((c) => c.contains(invocacao)).length,
+        1,
+        reason: 'o passo "${portao[1]}" de ${portao[0]} não invoca o '
+            'verificador independente exatamente uma vez, como comando vivo',
+      );
+    }
+  });
+
+  test('o portão do APK só carimba VERDE depois da execução verdadeira dos '
+      '$kPisoDoPortaoDaCasca casos', () {
+    final texto = leitura(kPortaoDoApk, 'é o portão que produz o APK');
+    final naCasca = comandosDoPasso(texto, kPassoDaCasca);
+
+    // A ORDEM É A PROVA. O marcador tem de ser escrito DEPOIS do `flutter
+    // test` do diretório inteiro; escrito antes, ele atesta o que ainda não
+    // aconteceu.
+    final ondeRoda =
+        naCasca.indexWhere((c) => c.contains(kComandoDoPortaoDoApk));
+    final ondeMarca =
+        naCasca.indexWhere((c) => c.contains('> $kMarcadorDaCasca'));
+    expect(
+      ondeRoda,
+      greaterThanOrEqualTo(0),
+      reason: 'o portão do APK não roda o diretório inteiro',
+    );
+    expect(
+      ondeMarca,
+      greaterThan(ondeRoda),
+      reason: 'o marcador $kMarcadorDaCasca é escrito na posição $ondeMarca e '
+          'a execução acontece na $ondeRoda: um marcador escrito ANTES atesta '
+          'o que ainda não aconteceu',
+    );
+
+    // E o "PORTÃO VERDE" tem de vir depois do marcador, não antes dele.
+    final ondeAnuncia = naCasca.indexWhere((c) => c.contains('PORTÃO VERDE'));
+    expect(
+      ondeAnuncia,
+      greaterThan(ondeMarca),
+      reason: 'o portão anuncia VERDE na posição $ondeAnuncia, antes de '
+          'carimbar o marcador na $ondeMarca: a frase deixa de ser conclusão e '
+          'volta a ser um `echo`',
+    );
   });
 }

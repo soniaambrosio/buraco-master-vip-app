@@ -245,10 +245,20 @@ jobs:
           # 29-C5 registrou como residual C10, um degrau abaixo. O segundo dono
           # é o CONTRATO desta autoridade, que é prosa revisável e não código
           # que ninguém lê. Os dois têm de dizer o mesmo número.
+          # A AUTORIDADE INDEPENDENTE DE CONTEÚDO E PISO.
+          #
+          # O digest abaixo prova que a âncora NÃO MUDOU. Não prova que ela
+          # AFIRMA alguma coisa: no dia em que os dois donos do digest forem
+          # realinhados no mesmo commit — o limite que a OS 29-C6 registrou em
+          # aberto —, dezesseis casos vazios passam nos dois. Este verificador
+          # mede o que o digest não mede, e mede noutra linguagem, com varredor
+          # próprio, para não cair no mesmo gesto.
+          node .github/verificacao/ancora_conteudo.js . 2>&1 | tee -a t_ancoravis.log
+          if [ ${PIPESTATUS[0]} != 0 ]; then echo 1 > exit_ancoravis; fi
           ANCORA_ARQUIVO=app/test/casca/ancora_provas_visuais_test.dart
           ANCORA_CONTRATO=docs/ANCORA-PROVAS-VISUAIS-CARTA-OBRIGATORIA-V1.md
-          ANCORA_DIGEST=5fd548ac9beb9d29e4e7a125717025c12ed55534eb927004f6bba9dbff0924da
-          ANCORA_PISO=16
+          ANCORA_DIGEST=ca2974d461d54165bce038eca2f2aa0df49eb3a627bc63284ef5cb80b8caf167
+          ANCORA_PISO=18
           d=$(tr -d "\r" < "$ANCORA_ARQUIVO" | sha256sum | cut -d" " -f1)
           if [ "$d" != "$ANCORA_DIGEST" ]; then
             echo "ÂNCORA ALTERADA: digest $d, declarado $ANCORA_DIGEST" | tee -a t_ancoravis.log

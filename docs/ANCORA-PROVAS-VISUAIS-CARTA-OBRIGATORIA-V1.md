@@ -133,7 +133,7 @@ degrau abaixo. O segundo dono é prosa revisável, e não código que ninguém l
 
 O digest vigente, que os dois têm de dizer, é:
 
-ancora-digest: 5fd548ac9beb9d29e4e7a125717025c12ed55534eb927004f6bba9dbff0924da
+ancora-digest: ca2974d461d54165bce038eca2f2aa0df49eb3a627bc63284ef5cb80b8caf167
 
 A âncora, do outro lado, afirma em Dart que essas declarações continuam vivas e
 com **esses** valores — inclusive recalculando o próprio digest e comparando-o
@@ -206,6 +206,122 @@ mais o controle verde. Todas ficam VERMELHAS com causa nominal.
 | C6-18 | manter nomes e esvaziar apenas o conteúdo semântico | `ancoravis` — digest do código, agulhas e piso |
 | C6-19 | remover a campanha que cobra C10 | `ancoravis` — `o contrato desta âncora continua na árvore e nomeia o residual` |
 | C6-20 | estado íntegro | **VERDE**, necessariamente |
+
+---
+
+## 7b. OS 29-C7 — autoridade fail-closed das duas portas e da evidência
+
+A C6 entregou a âncora e registrou dois limites. A C7 mediu **seis** maneiras de
+satisfazê-la sem que nada executasse — todas saindo `+16: All tests passed` — e
+fechou as seis.
+
+| # | o que a sonda fez | por que passava | o que fecha |
+|---|---|---|---|
+| E1 | o literal `exige ancoravis …` dentro de um heredoc | a busca era `^ *comando$` no arquivo inteiro, e heredoc é dado, não programa | `comandosVivos()` descarta corpo de heredoc |
+| E2 | o comando real movido para outro passo | cada `run:` é um shell próprio: `exige` não existe lá, e nada executava | `vezesNoPasso()` exige o comando no passo NOMEADO |
+| E3 | `flutter test test/casca test/cartas` comentado, suíte estreita no lugar | `contains` não distingue comando de comentário | o comando é procurado entre os comandos vivos do passo |
+| E4 | `|| true` no fim da linha do diretório inteiro | o portão anunciava VERDE sem medir nada | o placar é lido do log e comparado com o piso de 343 |
+| E5 | rodar a âncora sem carimbo (a condição do portão do APK) | os dois casos de evidência tinham `if (!carimbo) return` | os dois portões carimbam, e o ramo degradado deixou de existir |
+| E6 | segunda linha `ANCORA_PISO=1` depois da real | o Dart lia a PRIMEIRA, o shell obedecia à ÚLTIMA | `atribuicaoUnica()` exige exatamente uma atribuição viva |
+
+### A autoridade independente de conteúdo e piso
+
+`.github/verificacao/ancora_conteudo.js` mede o que o digest não mede. Digest
+prova que a âncora **não mudou**; não prova que ela **afirma** alguma coisa —
+e no dia em que os dois donos do digest forem realinhados no mesmo commit, uma
+âncora de casos vazios passa nos dois. O verificador conta casos, conta
+afirmações **não triviais** com varredor próprio, cobra as declarações
+estruturais e confere os vinte vetores no contrato. Roda nos **dois** portões.
+
+### O ponto cego que a própria C7 encontrou, e virou invariante
+
+A primeira versão do verificador mediu **3** afirmações onde havia **74**.
+Causa: uma string crua de aspa tripla na âncora. Nenhum dos dois varredores
+entende aspa tripla — os dois leem a segunda aspa como fechamento e ficam cegos
+do ponto em diante. Uma medição assim teria dito o mesmo de uma âncora
+esvaziada. Em vez de ensinar aspa tripla aos dois, o formato é **proibido** no
+arquivo medido, e a proibição é conferida pelo verificador.
+
+### O portão do APK deixou de anunciar sem medir
+
+O passo da casca agora carimba, roda as duas suítes protegidas nomeadas e com
+log próprio, roda o diretório inteiro, **confere o placar contra o piso de 343**
+e só então escreve `marcador_portao_casca`. Um passo seguinte, próprio, exige
+esse marcador e reprova sem ele — o marcador é criado depois da execução
+verdadeira e cobrado depois disso.
+
+### Campanha da C7 — 41 vetores, 39 vermelhos, 2 controles verdes
+
+Cada vetor aplicado **isoladamente** sobre a árvore íntegra, e a árvore
+restaurada e **conferida arquivo a arquivo** depois de cada um: zero falhas de
+restauração em 41.
+
+| grupo | vetores | resultado |
+|---|---|---|
+| Controles íntegros | `INTEGRO`, `C6-20` | **VERDE** |
+| Escapes originais da R5 | `R5-E1`…`R5-E6` | 6 vermelhos |
+| Sondas novas desta OS | `C7-N1`…`C7-N6` | 6 vermelhos |
+| Série contratual da C6 | `C6-01`…`C6-19` | 19 vermelhos |
+| Herdadas da C5 | `C5-H1`, `C5-F4`, `C5-G2` | 3 vermelhos |
+| Controles do carimbo | `CA1` ausência, `CA2` duplicidade, `CA3` ordem | 3 vermelhos |
+| Gestos coordenados | `K1`, `K2` | 2 vermelhos |
+
+Os seis da R5, com a causa nominal de cada um:
+
+| # | enunciado | quem reprova |
+|---|---|---|
+| R5-E1 | tirar `ancoravis` do alvo e comentar o comando do APK | `o portão do APK não roda … como comando vivo` |
+| R5-E2 | comentar somente `flutter test test/casca test/cartas` | idem |
+| R5-E3 | esvaziar a âncora, realinhar os dois digests e baixar o piso | verificador: `4 afirmações … e o piso é 60` |
+| R5-E4 | inserir segunda atribuição depois da legítima | `2 atribuições vivas de ANCORA_PISO ([18, 1])` |
+| R5-E5 | esvaziar a seção contratual preservando só `C6-01` e `C6-20` | `o contrato deixou de registrar o vetor C6-02` |
+| R5-E6 | mover o carimbo para depois de `exige ancoravis` | `o carimbo é escrito na posição 40 … e o primeiro flutter test na 22` |
+
+### Os dois gestos coordenados, congelados
+
+`K1` e `K2` não são sabotagens de um arquivo: são os gestos que tocam vários no
+mesmo commit, que é onde toda guarda por conteúdo encontra o seu limite. Os
+arquivos que cada um toca foram **medidos**, e não estimados:
+
+**K1 — três arquivos.** A âncora esvaziada mantendo os nomes dos casos, e o
+digest dela realinhado nos **dois** donos.
+
+* `app/test/casca/ancora_provas_visuais_test.dart`
+* `.github/workflows/ci-os-integracao.yml`
+* `docs/ANCORA-PROVAS-VISUAIS-CARTA-OBRIGATORIA-V1.md`
+
+**K2 — cinco arquivos.** O residual C10 completo (as duas metades esvaziadas e
+os dois digests do par realinhados em ponto fixo), **mais** os dois digests das
+metades realinhados dentro da própria âncora, **mais** o digest da âncora
+realinhado nos dois donos.
+
+* `app/test/casca/auditoria_casca_test.dart`
+* `app/test/casca/mesa_treino_alvos_reais_test.dart`
+* `app/test/casca/ancora_provas_visuais_test.dart`
+* `.github/workflows/ci-os-integracao.yml`
+* `docs/ANCORA-PROVAS-VISUAIS-CARTA-OBRIGATORIA-V1.md`
+
+São **cinco**, e não quatro. A OS 29-C6 descreveu esse gesto como "de quatro
+arquivos" porque contou as entradas dos dois workflows como uma só e não contou
+o contrato; a medição mostra que `build.yml` **não** é tocado e o contrato **é**.
+Fica corrigido aqui: cinco arquivos, nomeados.
+
+**E eles falham por autoridades COMPLEMENTARES, sem efeito lateral:**
+
+| gesto | âncora (Dart) | verificador (Node) |
+|---|---|---|
+| K1 | **VERDE** `+18` | **VERMELHO** — piso de afirmações |
+| K2 | **VERMELHO** `+14 -4` | **VERDE** |
+
+Nenhuma das duas sozinha pega os dois. K1 esvazia a própria âncora, então ela
+passa a concordar com tudo — e é o verificador, que mede conteúdo e piso em
+implementação independente, que reprova. K2 deixa a âncora intacta e esvazia as
+duas metades — e aí é a âncora que reprova, porque o que ela cobra das metades
+são agulhas e pisos em **cópia própria**, não digests: digest realinha, contagem
+não. O verificador não olha para as metades, e por isso sai verde.
+
+É essa disjunção que justifica as duas existirem. Uma autoridade só, de qualquer
+das duas naturezas, deixaria um dos dois gestos passar.
 
 ---
 

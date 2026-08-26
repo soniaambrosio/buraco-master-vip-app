@@ -331,9 +331,64 @@ jobs:
           # não o alcançaria sozinho. A regra da mão é o que sustenta o piso de
           # toque de toda carta: ela roda no MESMO portão que produz o APK.
           cp -R app/test/cartas/. app_build/test/cartas/
-          cd app_build
-          flutter test test/casca test/cartas --reporter expanded
-          echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
+          # A AUTORIDADE INDEPENDENTE DE CONTEÚDO, ANTES DE QUALQUER COISA.
+          # Digest prova que a âncora não mudou; este passo prova que ela
+          # AFIRMA alguma coisa. Se ela virou casca, para aqui.
+          node .github/verificacao/ancora_conteudo.js .
+          # O CARIMBO, E A EVIDÊNCIA QUE A ÂNCORA VAI LER.
+          #
+          # Até a OS 29-C7 este portão não carimbava, e a âncora, ao rodar aqui,
+          # caía num ramo degradado que saía VERDE sem olhar evidência nenhuma
+          # (E5). Agora as duas suítes protegidas rodam nomeadas e com log
+          # próprio ANTES do diretório inteiro — que é onde a âncora roda e lê
+          # o que elas deixaram.
+          date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis
+          ( cd app_build && flutter test test/casca/auditoria_casca_test.dart --reporter expanded ) 2>&1 | tee t_cascaaud.log
+          echo ${PIPESTATUS[0]} > exit_cascaaud
+          ( cd app_build && flutter test test/casca/mesa_treino_alvos_reais_test.dart --reporter expanded ) 2>&1 | tee t_mesac1.log
+          echo ${PIPESTATUS[0]} > exit_mesac1
+          if [ "$(cat exit_cascaaud)" != "0" ] || [ "$(cat exit_mesac1)" != "0" ]; then
+            echo "ERRO: suíte protegida reprovou antes do diretório inteiro."
+            exit 1
+          fi
+          # O DIRETÓRIO INTEIRO, E O PLACAR CONFERIDO.
+          #
+          # "PORTÃO VERDE" era um `echo` que nada media: bastava um `|| true`
+          # na linha de cima para a suíte inteira reprovar e o APK sair (E4).
+          # Agora o placar de fecho é lido do log do executor e comparado com o
+          # piso; e o marcador só nasce depois disso.
+          ( cd app_build && flutter test test/casca test/cartas --reporter expanded ) 2>&1 | tee t_casca_dir.log
+          CASCA_EXIT=${PIPESTATUS[0]}
+          CASCA_PISO=343
+          CASCA_N=$(grep -oE "\+[0-9]+: All tests passed!" t_casca_dir.log | grep -oE "[0-9]+" | tail -1)
+          if [ "$CASCA_EXIT" != "0" ]; then
+            echo "ERRO: o diretório inteiro reprovou (exit $CASCA_EXIT)."
+            exit 1
+          fi
+          if [ -z "$CASCA_N" ] || [ "$CASCA_N" -lt "$CASCA_PISO" ]; then
+            echo "ERRO: o portão da casca fechou em '$CASCA_N' casos, e o piso é $CASCA_PISO."
+            exit 1
+          fi
+          echo "$CASCA_N" > marcador_portao_casca
+          echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA} com $CASCA_N casos."
+
+      - name: "PORTÃO DE PRODUÇÃO — o marcador da casca é exigido, e não presumido"
+        # O marcador do passo acima só existe se a execução verdadeira tiver
+        # acontecido e fechado acima do piso. Cobrá-lo AQUI, num passo próprio,
+        # é o que impede que alguém apague o `exit 1` de lá e siga: sem o
+        # arquivo, este passo derruba o build antes de qualquer APK.
+        run: |
+          if [ ! -f marcador_portao_casca ]; then
+            echo "ERRO: marcador_portao_casca ausente — o portão da casca não"
+            echo "chegou a concluir a execução verdadeira do diretório inteiro."
+            exit 1
+          fi
+          N=$(cat marcador_portao_casca)
+          if [ -z "$N" ] || [ "$N" -lt 343 ]; then
+            echo "ERRO: marcador_portao_casca diz '$N', e o piso é 343."
+            exit 1
+          fi
+          echo "marcador da casca conferido: $N casos."
 
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
