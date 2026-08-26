@@ -74,6 +74,7 @@
 #   INERTE    <agulha>   ocorre, mas SO em comentario/string/template/regex
 #   SEMCODIGO            o arquivo inteiro foi classificado como inerte
 #   ABERTO    <estado>   o arquivo terminou dentro de comentario ou de string
+#   SEMCASO   <id>       `CASO` foi pedido e o caso NAO e declarado em codigo
 #   SEMLINGUA <ling>     linguagem nao reconhecida (o chamador reprova)
 #
 # SEMCODIGO e ABERTO sao a sentinela: um comentario de bloco sem fechar apagaria
@@ -107,18 +108,44 @@ BEGIN {
   temcodigo = 0
   jsonpula = 0     # 0 nada | 1 procurando o valor | 2 dentro do valor
 
-  # A CONTAGEM DE DECLARACOES VEM NA MESMA LEITURA. Era uma segunda varredura do
-  # mesmo arquivo (`tr | grep -c`), e o arquivo e o mesmo. O padrao chega pelo
-  # AMBIENTE porque `-v` interpreta sequencias de escape, e o `\(` do contador
-  # padrao viraria abre-parentese de grupo — a contagem passaria a medir outra
-  # coisa, em silencio.
+  # A CONTAGEM DE DECLARACOES VEM NA MESMA LEITURA, E SOBRE CODIGO. Era uma
+  # segunda varredura do mesmo arquivo (`tr | grep -c`), e ela contava a linha
+  # CRUA: comentario, string e corpo de heredoc engordavam `provas` de graca. A
+  # OS 40-R3 mediu isso — vinte e sete casos apagados e repostos por um heredoc.
+  # Agora a linha so conta quando o trecho que casa esta em CODIGO.
+  #
+  # O padrao chega pelo AMBIENTE porque `-v` interpreta sequencias de escape, e o
+  # `\(` do contador padrao viraria abre-parentese de grupo — a contagem passaria
+  # a medir outra coisa, em silencio.
   conta = ENVIRON["CONTA_ERE"]
   provas = 0
+
+  # ---------------------------------------------------------------------------
+  # ESCOPO POR CASO (OS 40-C3)
+  # ---------------------------------------------------------------------------
+  #
+  # Com `CASO` definido, as agulhas so contam DENTRO do corpo daquele caso. E a
+  # unica forma de exigir que o titulo e a afirmacao semantica morem no MESMO
+  # caso: sem isso, distribuir os dois entre dois casos-isca satisfaz uma busca
+  # plana, por melhor ancorada que ela esteja.
+  #
+  # O corpo comeca na DECLARACAO — uma chamada de abertura, em codigo, cujo
+  # primeiro literal comeca pelo identificador — e termina na declaracao
+  # seguinte, qualquer que seja ela. Um identificador que so exista dentro de uma
+  # string nunca abre corpo nenhum: quem abre e a CHAMADA, e ela e codigo.
+  caso_alvo = ENVIRON["CASO"]
+  dentro = (caso_alvo == "") ? 1 : 0
+  achou_caso = 0
+  esperando_id = 0     # uma chamada de abertura acabou de ser lida
+  capturando = 0       # estamos dentro do literal que carrega o identificador
+  idbuf = ""
+  palavra = ""         # identificador de codigo sendo acumulado
 }
 
 # ---------------------------------------------------------------------------
 
 function abrestr(qq, ttri, ccru, iitp) {
+  if (esperando_id) { esperando_id = 0; capturando = 1; idbuf = "" }
   q = qq; tri = ttri; cru = ccru; itp = iitp; st = "str"
 }
 
@@ -150,25 +177,41 @@ function marca(k, tipo,   _i) {
 
   if (st == "lin") st = "cod"     # comentario de linha morre no fim da linha
 
-  if (conta != "" && linha ~ conta) provas++
-
   if (ling == "json") lexjson()
   else                lexcod()
+
+  # O corpo do heredoc comeca na linha SEGUINTE a que o abriu.
+  if (her_pend != "") { st = "her"; her_word = her_pend; her_pend = "" }
+
+  # ---- a contagem de declaracoes, SOBRE CODIGO -------------------------
+  #
+  # Depois de lexar, e nao antes: o que decide se a linha conta e a mascara. Uma
+  # declaracao dentro de comentario, de string ou de corpo de heredoc casa com o
+  # padrao e NAO conta, porque o trecho que casou e inerte.
+  if (conta != "" && match(linha, conta) > 0) {
+    if (index(substr(masc, RSTART, RLENGTH), "C") > 0) provas++
+  }
 
   # ---- as agulhas, sobre ESTA linha ------------------------------------
   #
   # Por LINHA, e nao sobre o arquivo inteiro: nenhum valor da fonte unica
   # carrega quebra de linha, entao toda ocorrencia possivel cabe numa linha so.
-  for (j = 1; j <= n; j++) {
-    tam = length(ag[j])
-    de = 1
-    while (de <= len) {
-      p = index(substr(linha, de), ag[j])
-      if (p == 0) break
-      pos = de + p - 1
-      viu[j] = 1
-      if (index(substr(masc, pos, tam), "C") > 0) codigo[j] = 1
-      de = pos + 1
+  #
+  # `dentro` e lido DEPOIS de lexar a linha: assim a propria linha da declaracao
+  # do caso alvo ja conta como corpo, e a linha da declaracao SEGUINTE ja nao
+  # conta mais. Na duvida, para fora — que e o lado fail-closed.
+  if (dentro) {
+    for (j = 1; j <= n; j++) {
+      tam = length(ag[j])
+      de = 1
+      while (de <= len) {
+        p = index(substr(linha, de), ag[j])
+        if (p == 0) break
+        pos = de + p - 1
+        viu[j] = 1
+        if (index(substr(masc, pos, tam), "C") > 0) codigo[j] = 1
+        de = pos + 1
+      }
     }
   }
 }
@@ -177,7 +220,21 @@ function marca(k, tipo,   _i) {
 # O LEXER DE CODIGO — js, dart e sh
 # ---------------------------------------------------------------------------
 
-function lexcod(   c, d, t3) {
+function lexcod(   c, d, t3, c2, qh, corte) {
+  # ---- corpo de heredoc: inerte da abertura ao terminador ----------------
+  #
+  # O corpo de um heredoc e TEXTO, e a OS 40-R3 mediu o que custa trata-lo como
+  # codigo: vinte e sete casos apagados e a contagem de `provas` reposta por um
+  # heredoc de trinta linhas que ninguem executa.
+  if (st == "her") {
+    marca(len, ".")
+    corte = linha
+    if (her_tab) sub(/^\t+/, "", corte)
+    if (corte == her_word) st = "cod"
+    i = len + 1
+    return
+  }
+
   while (i <= len) {
     c = substr(linha, i, 1)
     d = (i < len) ? substr(linha, i + 1, 1) : ""
@@ -198,17 +255,22 @@ function lexcod(   c, d, t3) {
     }
 
     if (st == "str") {
-      if (!cru && c == "\\" && d != "") { marca(2, "."); i += 2; continue }
+      if (!cru && c == "\\" && d != "") {
+        if (capturando) idbuf = idbuf substr(linha, i, 2)
+        marca(2, "."); i += 2; continue
+      }
       if (itp && c == "$" && d == "{") { marca(2, "."); i += 2; empilha("{", "}"); continue }
       if (itp && ling == "sh" && c == "$" && d == "(") { marca(2, "."); i += 2; empilha("(", ")"); continue }
       if (c == q) {
         if (tri) {
           t3 = substr(linha, i, 3)
-          if (t3 == q q q) { marca(3, "."); i += 3; st = "cod"; prev = "q"; continue }
+          if (t3 == q q q) { marca(3, "."); i += 3; st = "cod"; prev = "q"; fecha_id(); continue }
+          if (capturando) idbuf = idbuf c
           marca(1, "."); i++; continue
         }
-        marca(1, "."); i++; st = "cod"; prev = "q"; continue
+        marca(1, "."); i++; st = "cod"; prev = "q"; fecha_id(); continue
       }
+      if (capturando) idbuf = idbuf c
       marca(1, "."); i++; continue
     }
 
@@ -223,12 +285,13 @@ function lexcod(   c, d, t3) {
     }
 
     if (ling == "js" || ling == "dart") {
-      if (c == "/" && d == "/") { marca(2, "."); i += 2; st = "lin"; continue }
-      if (c == "/" && d == "*") { marca(2, "."); i += 2; st = "blo"; continue }
+      if (c == "/" && d == "/") { fecha_palavra(""); marca(2, "."); i += 2; st = "lin"; continue }
+      if (c == "/" && d == "*") { fecha_palavra(""); marca(2, "."); i += 2; st = "blo"; continue }
       if (ling == "js" && c == "/" && regexpode()) {
-        marca(1, "."); i++; st = "rgx"; classe = 0; continue
+        fecha_palavra(""); marca(1, "."); i++; st = "rgx"; classe = 0; continue
       }
       if (ling == "dart" && c == "r" && (d == "'" || d == "\"") && !identchar(prev)) {
+        fecha_palavra("")
         marca(1, ".")
         i++
         c = d
@@ -237,27 +300,95 @@ function lexcod(   c, d, t3) {
         marca(1, "."); i++; abrestr(c, 0, 1, 0); continue
       }
       if (c == "'" || c == "\"") {
+        fecha_palavra("")
         if (ling == "dart") {
           t3 = substr(linha, i, 3)
           if (t3 == c c c) { marca(3, "."); i += 3; abrestr(c, 1, 0, 1); continue }
         }
         marca(1, "."); i++; abrestr(c, 0, 0, (ling == "dart") ? 1 : 0); continue
       }
-      if (ling == "js" && c == "`") { marca(1, "."); i++; abrestr("`", 0, 0, 1); continue }
+      if (ling == "js" && c == "`") { fecha_palavra(""); marca(1, "."); i++; abrestr("`", 0, 0, 1); continue }
     }
 
     if (ling == "sh") {
-      if (c == "#" && inicioDePalavra()) { marca(len - i + 1, "."); i = len + 1; continue }
-      if (c == "$" && d == "'") { marca(2, "."); i += 2; abrestr("'", 0, 0, 0); continue }
-      if (c == "'") { marca(1, "."); i++; abrestr("'", 0, 1, 0); continue }
-      if (c == "\"") { marca(1, "."); i++; abrestr("\"", 0, 0, 1); continue }
-      if (c == "`") { marca(1, "."); i++; abrestr("`", 0, 0, 1); continue }
+      if (c == "#" && inicioDePalavra()) { fecha_palavra(""); marca(len - i + 1, "."); i = len + 1; continue }
+      # `<<WORD`, `<<-WORD`, `<<'WORD'` — e NAO `<<<` (here-string) nem `<<` de
+      # deslocamento aritmetico, que nao abre corpo nenhum.
+      if (c == "<" && d == "<" && substr(linha, i + 2, 1) != "<") {
+        fecha_palavra("")
+        marca(2, "."); i += 2
+        her_tab = 0
+        if (substr(linha, i, 1) == "-") { her_tab = 1; marca(1, "."); i++ }
+        qh = substr(linha, i, 1)
+        if (qh == "'" || qh == "\"") { marca(1, "."); i++ } else qh = ""
+        her_pend = ""
+        while (i <= len) {
+          c2 = substr(linha, i, 1)
+          if (qh != "" && c2 == qh) { marca(1, "."); i++; break }
+          if (qh == "" && !identchar(c2)) break
+          her_pend = her_pend c2
+          marca(1, "."); i++
+        }
+        continue
+      }
+      if (c == "$" && d == "'") { fecha_palavra(""); marca(2, "."); i += 2; abrestr("'", 0, 0, 0); continue }
+      if (c == "'") { fecha_palavra(""); marca(1, "."); i++; abrestr("'", 0, 1, 0); continue }
+      if (c == "\"") { fecha_palavra(""); marca(1, "."); i++; abrestr("\"", 0, 0, 1); continue }
+      if (c == "`") { fecha_palavra(""); marca(1, "."); i++; abrestr("`", 0, 0, 1); continue }
     }
 
     marca(1, "C")
+    if (identchar(c)) palavra = palavra c
+    else fecha_palavra(c)
     if (c != " " && c != "\t") prev = c
     i++
   }
+}
+
+# `fecha_palavra <proximo>` — o identificador de codigo acabou. Se ele e uma
+# CHAMADA DE ABERTURA de caso, o proximo literal carrega o identificador.
+#
+# Para js/dart a abertura so vale colada no parentese (`test(`); para sh a
+# chamada e um comando e os argumentos vem depois (`esperar 0 "T27 ..."`), entao
+# a espera atravessa as palavras seguintes ate o primeiro literal.
+function fecha_palavra(prox) {
+  if (palavra != "") {
+    if (esperando_bare) {
+      esperando_bare = 0
+      id_de(palavra)
+    } else if (ehAbertura(palavra)) {
+      # `caso_ativo T58` — o identificador e a PALAVRA seguinte, e nao um
+      # literal. Em `sh` o embrulho do caso vem ANTES da chamada que o mede, e
+      # e ele quem delimita o corpo: a sabotagem de um caso mora entre o
+      # embrulho e o `esperar`, nao depois dele.
+      if (ling == "sh" && palavra == "caso_ativo") esperando_bare = 1
+      else if (ling == "sh" || prox == "(") esperando_id = 1
+    }
+  }
+  palavra = ""
+}
+
+function ehAbertura(p) {
+  if (ling == "js" || ling == "dart") return (p == "test" || p == "testWidgets")
+  if (ling == "sh") return (p == "caso_ativo" || p == "esperar" || p == "esperar_igual" || p == "ok" || p == "nok")
+  return 0
+}
+
+# `id_de <identificador>` — abre ou fecha corpo. Um identificador igual ao alvo
+# abre; qualquer outro fecha. Reabrir com o mesmo identificador e inofensivo, e
+# acontece de proposito: o embrulho abre e a chamada medida confirma.
+function id_de(id) {
+  sub(/[ \t:,].*$/, "", id)
+  if (id == "") return
+  if (caso_alvo == "") return
+  if (id == caso_alvo) { dentro = 1; achou_caso = 1 }
+  else                 { dentro = 0 }
+}
+
+function fecha_id() {
+  if (!capturando) return
+  capturando = 0
+  id_de(idbuf)
 }
 
 # `/` abre expressao regular, e nao divisao, quando o ultimo caractere
@@ -337,6 +468,8 @@ END {
   print "PROVAS\t" provas
   if (st == "blo") print "ABERTO\tcomentario de bloco"
   else if (st == "str") print "ABERTO\tstring"
+  else if (st == "her") print "ABERTO\tcorpo de heredoc"
+  if (caso_alvo != "" && !achou_caso) print "SEMCASO\t" caso_alvo
   if (!temcodigo) print "SEMCODIGO"
   for (j = 1; j <= n; j++) {
     if (codigo[j]) continue

@@ -162,7 +162,7 @@ chatdom
 # verde localmente e sem portão próprio é suíte que pode quebrar em silêncio.
 comunicacao
     suite      app/test/comunicacao/comunicacao_test.dart
-    executor   roda comunicacao test/comunicacao/comunicacao_test.dart
+    executor   bash scripts/ci/rodar_comunicacao.sh test/comunicacao/comunicacao_test.dart scripts/ci/testemunha_esp02.sh
     sha256     94af3e9b5bbeaf8944d65579bc243adf336ab9edf5af647cc3b1757fa15b3666
     provas     71
     casos      81
@@ -176,6 +176,34 @@ comunicacao
     exige      ('ESP-01
     exige      'ESP-02 CONTROLE: o mesmo item passa para quem está SENTADO em ${mesa.key}',
     exige      ['mesa_privada/completo']
+    caso        ESP-02
+    exigenocaso for (final especie in catalogados.entries) {
+    exigenocaso canal: canalDe(ambiente: mesa.value, modo: modoDe(mesa.value)),
+    exigenocaso expect(v.aceita, isTrue,
+    suite      scripts/ci/testemunha_esp02.sh
+    sha256     840003d71e9520fca63b67faf5f778057c7255aa7b806a544257478eda2fd750
+    provas     5
+    conta      ^[[:blank:]]*recusa[[:blank:]]
+    exige      if [ "$total_com_o_nome" -ne "$INSTANCIAS_ESPERADAS" ]; then
+    exige      if ! grep -q '"type":"done"' "$RELATORIO"; then
+    exige      if [ "$CARIMBO" -nt "$RELATORIO" ]; then
+    exige      readonly INSTANCIAS_ESPERADAS=3
+    exige      if [ "$fora" -gt 0 ]; then
+    exige      if [ "${escondido[$tid]:-0}" = "1" ]; then
+    exige      success) aprovadas=$((aprovadas + 1)) ;;
+    exige      if [ "${ja_visto_o_nome[$nome]:-0}" = "1" ]; then
+    exige      "$GRUPO_CANONICO $PREFIXO"*)
+    exige      readonly GRUPO_CANONICO='ESP — espectador não fala em ambiente nenhum'
+    suite      scripts/ci/rodar_comunicacao.sh
+    sha256     65367ed5ed5d0da47274aa0f742e49ddde19ec1b3b013646e1bf17697fd161b4
+    provas     7
+    conta      ^[[:blank:]]*printf[[:blank:]]
+    exige      rm -f "$JSON"
+    exige      --reporter expanded --file-reporter="json:$JSON"
+    exige      EX_FLUTTER="${PIPESTATUS[0]}"
+    exige      bash "$TESTEMUNHA" "$JSON" "$SUITE" "$CARIMBO" 2>&1 | tee -a "$LOG"
+    exige      EX_TESTEMUNHA="${PIPESTATUS[0]}"
+    exige      if [ "$EX_FLUTTER" = "0" ] && [ "$EX_TESTEMUNHA" = "0" ]; then
 
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
 # Sem ele, o agregador é a única peça do CI que ninguém verifica.
@@ -205,11 +233,11 @@ portaoci
 # sete sumiram, e a matriz do elo novo seria a proxima peca sem quem a verifique.
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
-    executor   bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     6ddaeedbb2f2ba014a0f7681500adc3d88c952bc4ada1567a35ec1d3fb989356
-    provas     61
+    executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
+    sha256     757c17ff5fc55938fddcf46e596f2e4b897b82d16e72151587cb62cad70941d2
+    provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      57
+    casos      68
     contador   casos ok: [0-9]+
     exige      esperar 0 "T01 CONTROLE
     exige      esperar 1 "T08 — suite trocada por expect(1, 1)
@@ -222,7 +250,7 @@ contratosui
     exige      esperar 1 "T40 — segunda suite do gate removida da fonte
     exige      esperar 1 "T41 — contrato de rankingfn esvaziado
     exige      esperar 0 "T27 CONTROLE
-    exige      ok "T42 — a relacao de contratados da fonte e EXATAMENTE a congelada
+    exige      esperar_igual "T42 — a relacao de contratados da fonte e EXATAMENTE a congelada
     exige      esperar 1 "T43 — agulha so em comentario de BLOCO
     exige      esperar 1 "T47 — agulha so em comentario NO FIM de linha de codigo
     exige      esperar 1 "T49 — analisador lexico apagado
@@ -231,6 +259,28 @@ contratosui
     exige      esperar 1 "T57 — gate que ganhou contrato e nao tem log
     exige      CONTRATADOS_CONGELADOS="comunicacao chatdom portaoci contratosui rankingfn
     exige      for k in $CONTRATADOS; do
+    caso        T27
+    exigenocaso 'posterior ao carimbo' "$TMP/res"
+    caso        T42
+    exigenocaso "$(printf '%s\n' $CONTRATADOS | sort | tr '\n' ' ')"
+    exigenocaso "$(printf '%s\n' $CONTRATADOS_CONGELADOS | sort | tr '\n' ' ')"
+    caso        T58
+    exigenocaso rm -f "$W/scripts/ci/testemunha_contratosui.sh"
+    caso        T59
+    exigenocaso sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
+    suite      scripts/ci/testemunha_contratosui.sh
+    sha256     30f5b04a681836fca20406755fc02cc77ba2b0b864cb5bf2ec3acaf3f82239f2
+    provas     14
+    conta      ^[[:blank:]]*recusa[[:blank:]]
+    exige      for id in $CASOS_OBRIGATORIOS; do
+    exige      bash "$MATRIZ" --caso "$id" > "$saida" 2>&1
+    exige      readonly CASOS_OBRIGATORIOS="\
+    exige      bash "$MATRIZ" --caso "$ID_FABRICADO"
+    exige      if ! cmp -s "$TMPT/anunciados" "$TMPT/congelados"; then
+    exige      if ! grep -q "^ATIVO	$id\$" "$saida"; then
+    exige      if grep -q 'casos ok:' "$saida"; then
+    exige      placar_para_o_log "$verdes" "$vermelhos"
+    exige      readonly GATES_CONTRATADOS="\
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing

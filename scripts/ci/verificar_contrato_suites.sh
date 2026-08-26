@@ -148,8 +148,8 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:61 rankingfn:57"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:57 rankingfn:465"
+readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:49 contratosui:82 rankingfn:57"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:68 rankingfn:465"
 
 # `PISOS_EXIGE` — QUANTAS relacoes de conteudo cada gate tem de continuar tendo.
 #
@@ -162,7 +162,7 @@ readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:57 rankingfn:465"
 # uma relacao a menos reprova aqui, do lado de fora, mesmo que ninguem tenha
 # escrito o conjunto nominal daquele gate. A outra metade — o conjunto NOMINAL
 # EXATO — esta em `RELACOES_CONGELADAS`, logo abaixo.
-readonly PISOS_EXIGE="comunicacao:10 chatdom:6 portaoci:6 contratosui:20 rankingfn:15 \
+readonly PISOS_EXIGE="comunicacao:26 chatdom:6 portaoci:6 contratosui:29 rankingfn:15 \
 avatarcanon:4 avatarhml:4 perfilvis:4 rknavpub:4 compavrank:3 compnavpub:3 \
 socialestado:3 socialleitor:3 socialtela:2 audsocial:4 a11yamigos:3"
 
@@ -425,6 +425,64 @@ contar() {
   done <<CONTAGEM
 $1
 CONTAGEM
+# `conferir_caso <arquivo> <id> <bloco>` — as exigencias que tem de morar DENTRO
+# do corpo daquele caso.
+#
+# Existe porque busca plana nao distingue "o titulo e a afirmacao estao no mesmo
+# caso" de "estao em dois casos-isca". A OS 40-R3 mediu a diferenca: `ESP-02`
+# apagado, a redacao dele emprestada por um literal morto e um caso-isca
+# conservando a contagem deixavam a FASE A inteiramente verde.
+#
+# E o `SEMCASO` e a metade que fecha a outra ponta: o corpo so existe se houver
+# uma CHAMADA de abertura, em codigo, cujo primeiro literal traga o
+# identificador. Titulo em comentario, em string ou em lista morta nao declara
+# caso nenhum.
+conferir_caso() {
+  local arq="$1" id="$2" bloco="$3" tipo agulha faltou=0
+  [ -z "$id" ] && return 0
+  printf '%s' "$bloco" > "$AGULHAS"
+  CASO="$id" analisar "$arq" "$AGULHAS" > "$AG_OUT"
+  while IFS=$'\t' read -r tipo agulha; do
+    case "$tipo" in
+      '' | PROVAS) continue ;;
+      SEMCASO) erro "o caso $agulha nao e DECLARADO EM CODIGO em '$suite' (gate $chave) — titulo em comentario, string ou literal morto nao declara caso" ;;
+      AUSENTE) erro "a afirmacao $agulha sumiu do CORPO do caso $id em '$suite' (gate $chave)" ;;
+      INERTE) erro "a afirmacao $agulha aparece no corpo do caso $id em '$suite' (gate $chave) SO como comentario, string, template ou regex" ;;
+      ABERTO) erro "a leitura de '$suite' (gate $chave) termina dentro de $agulha" ;;
+      SEMLINGUA) erro "o verificador nao sabe ler '$suite' (gate $chave)" ;;
+      *) erro "resposta desconhecida do analisador lexico no caso $id: '$tipo'" ;;
+    esac
+    faltou=$((faltou + 1))
+  done < "$AG_OUT"
+  if [ "$faltou" -eq 0 ]; then
+    contar "$bloco"
+    printf 'ok   caso       %-12s %s com %s afirmacao(oes) no corpo\n' "$chave" "$id" "$QUANTAS"
+  fi
+  casos_do_gate="$casos_do_gate $id"
+  contar "$bloco"
+  exigenocaso_do_gate=$((exigenocaso_do_gate + QUANTAS))
+}
+
+# `percorrer_casos <arquivo>` — le o acumulado `@ <id>` / afirmacoes da suite.
+percorrer_casos() {
+  local arq="$1" ln id_atual='' bloco=''
+  [ -z "$casos_lista" ] && return 0
+  while IFS= read -r ln; do
+    case "$ln" in
+      '@ '*)
+        conferir_caso "$arq" "$id_atual" "$bloco"
+        id_atual="${ln#@ }"
+        bloco=''
+        ;;
+      '') continue ;;
+      *) bloco="$bloco$ln
+" ;;
+    esac
+  done <<CASOS_DA_SUITE
+$casos_lista
+CASOS_DA_SUITE
+  conferir_caso "$arq" "$id_atual" "$bloco"
+}
 }
 
 # `conferir_suite` — o bloco de UMA suite, fechado.
@@ -559,6 +617,9 @@ RELACOES_INVENTADAS
       erro "'$suite' (gate $chave) tem $PROVAS_REAIS declaracoes e o piso e $provas_esperadas"
     fi
   fi
+
+  # ---- as exigencias POR CASO, dentro do corpo de cada uma ---------------
+  percorrer_casos "$arquivo"
 
   contar "$exige_lista"
   if [ "$faltando" -eq 0 ] && [ -n "$exige_lista" ]; then
@@ -794,6 +855,10 @@ sha_esperado=''
 provas_esperadas=''
 casos_esperados=''
 conta_ere=''
+casos_lista=''
+caso_aberto=0
+casos_do_gate=''
+exigenocaso_do_gate=0
 contador_ere=''
 exige_lista=''
 alvo=''
@@ -818,6 +883,8 @@ abrir_suite() {
   sha_esperado=''
   provas_esperadas=''
   conta_ere=''
+  casos_lista=''
+  caso_aberto=0
   exige_lista=''
 }
 
@@ -889,6 +956,23 @@ while IFS= read -r bruta || [ -n "$bruta" ]; do
 $valor"
           fi
           ;;
+        # `caso` abre um escopo, e `exigenocaso` pertence ao caso aberto acima
+        # dele — mesma gramatica de `suite`/`exige`, um nivel abaixo.
+        caso)
+          [ "$suite_aberta" -eq 0 ] && abrir_suite
+          casos_lista="$casos_lista@ $valor
+"
+          caso_aberto=1
+          ;;
+        exigenocaso)
+          [ "$suite_aberta" -eq 0 ] && abrir_suite
+          if [ "$caso_aberto" -eq 0 ]; then
+            erro "'exigenocaso' antes de qualquer 'caso' no contrato de '$chave'"
+          else
+            casos_lista="$casos_lista$valor
+"
+          fi
+          ;;
         alvo)
           [ -n "$alvo" ] && erro "'alvo' repetido em '$chave'"
           alvo="$valor"
@@ -916,6 +1000,8 @@ $valor"
   provas_esperadas=''
   casos_esperados=''
   conta_ere=''
+  casos_lista=''
+  caso_aberto=0
   contador_ere=''
   exige_lista=''
   alvo=''
@@ -924,6 +1010,8 @@ $valor"
   suites_do_gate=0
   provas_do_gate=0
   caminhos_do_gate=''
+  casos_do_gate=''
+  exigenocaso_do_gate=0
   exige_do_gate=0
 done < "$fonte"
 

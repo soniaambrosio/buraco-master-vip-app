@@ -140,10 +140,10 @@ jobs:
           # Mesma razão do passo acima, um degrau adiante: o verificador de
           # conteúdo decide se as suítes protegidas ainda PROVAM, e sem esta
           # matriz ele seria a segunda peça do CI que ninguém verifica.
-          if [ ! -f scripts/ci/teste_contrato_suites.sh ]; then
-            echo "scripts/ci/teste_contrato_suites.sh ausente" > nao_contratosui; exit 0
+          if [ ! -f scripts/ci/testemunha_contratosui.sh ]; then
+            echo "scripts/ci/testemunha_contratosui.sh ausente" > nao_contratosui; exit 0
           fi
-          bash scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
+          bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
           echo ${PIPESTATUS[0]} > exit_contratosui
 
       - name: "0c — CONTRATO DE CONTEÚDO das suítes protegidas (falha fechada)"
@@ -300,7 +300,13 @@ jobs:
           # guarda a porta do TEXTO; esta guarda o AMBIENTE — quem pode dizer o
           # quê em cada superfície —, e o grupo ESP, que é o único lugar onde o
           # espectador é barrado no caminho CATALOGADO.
-          roda comunicacao  test/comunicacao/comunicacao_test.dart
+          # A COMUNICAÇÃO tem DUAS perguntas independentes — a suíte passou, e
+          # o `ESP-02` rodou mesmo três vezes no arquivo declarado — e a conta
+          # entre elas é código versionado, com digest e exigências próprias.
+          # Aqui só sobra a chamada: o que o CI executa é o mesmo arquivo que a
+          # campanha mede, e não uma cópia extraída deste YAML.
+          bash scripts/ci/rodar_comunicacao.sh test/comunicacao/comunicacao_test.dart scripts/ci/testemunha_esp02.sh
+          echo $? > exit_comunicacao
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
           # produz PNG e depende de fonte do sistema, não afirma regressão.
