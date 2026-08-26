@@ -1510,82 +1510,143 @@ void main() {
       });
     });
 
-    testWidgets('ART-14 o Tema Real não acrescenta UM pixel de estouro em '
-        '320/360/412 dp a 100/150/200% de fonte', (t) async {
-      // Nove geometrias, e a razão de serem estas: 320 dp é o telefone pequeno
-      // que ainda existe, 412 dp o grande, 360 dp a mediana; 200% é o teto de
-      // ampliação que o Android oferece nas Configurações do sistema.
+    testWidgets('ART-14 nenhum dos dois temas estoura ou corta em 320/360/412 '
+        'dp a 100/150/200%, e inverter a ordem não muda o resultado', (t) async {
+      // A PROVA ANTERIOR ERA COMPARATIVA, E NÃO PODIA REPROVAR. Ela media o
+      // Tema Padrão e, no mesmo `pumpWidget`, o Tema Real — mesma árvore de
+      // elementos, mesmos `RenderFlex`. O indicador de estouro do Flutter
+      // reporta UMA VEZ por `RenderObject`, então a segunda medição herdava o
+      // sinalizador já consumido e saía vazia; `real.difference(padrão)` era
+      // vazio POR CONSTRUÇÃO. Invertendo a ordem, quem calava era o Padrão.
       //
-      // A prova é COMPARATIVA, e é de propósito. Esta tela já estoura 22 px em
-      // 320 dp a 200% — no cabeçalho, entre o apelido flexível e a pastilha
-      // 'VIP' — e isso é dívida ANTERIOR a esta OS, medida idêntica nos dois
-      // temas. Um limiar absoluto aqui obrigaria esta missão a consertar layout
-      // que ela não veio consertar, ou a afrouxar o número até passar. A
-      // pergunta certa é outra: o ícone luxuoso, que tem a MESMA caixa de 18 px
-      // do glifo, acrescenta alguma coisa? A resposta tem de ser 'nada', e o
-      // teste falha se um único estouro ou corte aparecer só no Tema Real.
+      // Agora cada tema é medido em ÁRVORE NOVA (ver [_medirComposicao]), o
+      // critério é ABSOLUTO — ninguém estoura, ninguém corta — e as duas ordens
+      // têm de dar o mesmo resultado. O controle que prova que esta medição
+      // enxerga estouro é a ART-16.
       final bundle = _BundleDoDisco();
       addTearDown(t.view.reset);
-
-      Future<(Set<String>, Set<String>)> medir(
-        ConjuntoDeIcones icones,
-        double largura,
-        double escala,
-      ) async {
-        t.view.physicalSize = Size(largura * 3, 12000);
-        t.view.devicePixelRatio = 3;
-        final estouros = <String>{};
-        final anterior = FlutterError.onError;
-        FlutterError.onError = (d) => estouros.add(d.exceptionAsString());
-        try {
-          await t.pumpWidget(
-            MediaQuery(
-              data: MediaQueryData(textScaler: TextScaler.linear(escala)),
-              child: _telaCom(
-                icones: icones,
-                bundle: bundle,
-                perfil: const PerfilResumo(
-                  apelido: 'Jogadora',
-                  email: 'jogadora@exemplo.com',
-                  avatar: '👑',
-                  vip: true,
-                  fichas: 1200,
-                ),
-              ),
-            ),
-          );
-          await _assentar(t);
-        } finally {
-          FlutterError.onError = anterior;
-        }
-        return (
-          estouros.where((e) => e.contains('overflowed')).toSet(),
-          _cortesSilenciosos(t).toSet(),
-        );
-      }
 
       for (final largura in const [320.0, 360.0, 412.0]) {
         for (final escala in const [1.0, 1.5, 2.0]) {
           final caso = '${largura.toInt()}dp @ ${(escala * 100).toInt()}%';
-          final (estouroPadrao, cortePadrao) =
-              await medir(conjuntoPadraoDeAjustes, largura, escala);
-          final (estouroReal, corteReal) =
-              await medir(conjuntoRealVipDeAjustes, largura, escala);
 
-          expect(estouroReal.difference(estouroPadrao), isEmpty,
-              reason: '$caso: estouro que só o Tema Real produz');
-          expect(corteReal.difference(cortePadrao), isEmpty,
-              reason: '$caso: corte que só o Tema Real produz');
+          // ---- ordem A: Padrão e depois Real ----------------------------
+          final padraoA = await _medirComposicao(
+            t,
+            _telaCom(
+                icones: conjuntoPadraoDeAjustes,
+                bundle: bundle,
+                perfil: _perfilVipDeMedicao),
+            largura: largura,
+            escala: escala,
+          );
+          final realA = await _medirComposicao(
+            t,
+            _telaCom(
+                icones: conjuntoRealVipDeAjustes,
+                bundle: bundle,
+                perfil: _perfilVipDeMedicao),
+            largura: largura,
+            escala: escala,
+          );
 
-          // E a tela continua INTEIRA no Tema Real: os 28 arquivos, e nenhum
-          // glifo de chave variável sobrando.
+          // A tela continua INTEIRA no Tema Real — a árvore em pé agora é a dele.
           final v = _varrer(t);
           expect(v.assets.difference(chavesDeAssetDoTemaReal.toSet()), isEmpty,
               reason: caso);
           expect(v.glifos.intersection(_glifosVariaveis()), isEmpty,
               reason: '$caso: sobrou glifo padrão na tela real');
+
+          // ---- ordem B: Real e depois Padrão ----------------------------
+          final realB = await _medirComposicao(
+            t,
+            _telaCom(
+                icones: conjuntoRealVipDeAjustes,
+                bundle: bundle,
+                perfil: _perfilVipDeMedicao),
+            largura: largura,
+            escala: escala,
+          );
+          final padraoB = await _medirComposicao(
+            t,
+            _telaCom(
+                icones: conjuntoPadraoDeAjustes,
+                bundle: bundle,
+                perfil: _perfilVipDeMedicao),
+            largura: largura,
+            escala: escala,
+          );
+
+          for (final m in <String, _Medicao>{
+            'padrão (medido 1º)': padraoA,
+            'real (medido 2º)': realA,
+            'real (medido 1º)': realB,
+            'padrão (medido 2º)': padraoB,
+          }.entries) {
+            expect(m.value.estouros, isEmpty,
+                reason: '$caso: ${m.key} estourou — ${m.value.estouros}');
+            expect(m.value.cortes, isEmpty,
+                reason: '$caso: ${m.key} cortou texto — ${m.value.cortes}');
+          }
+
+          // E A ORDEM NÃO PODE IMPORTAR. É esta linha que denuncia uma medição
+          // viciada mesmo quando as duas saem vazias por motivo errado.
+          expect(realA.estouros, realB.estouros,
+              reason: '$caso: o Tema Real depende da ordem de medição');
+          expect(padraoA.estouros, padraoB.estouros,
+              reason: '$caso: o Tema Padrão depende da ordem de medição');
+          expect(realA.cortes, realB.cortes, reason: caso);
+          expect(padraoA.cortes, padraoB.cortes, reason: caso);
         }
       }
+    });
+
+    testWidgets('ART-16 CONTROLE: a medição enxerga estouro plantado em CADA '
+        'tema, inclusive no SEGUNDO medido', (t) async {
+      // Sem este controle, a ART-14 verde não diz nada: um medidor que nunca
+      // enxerga estouro nenhum também passa. Os quatro vetores abaixo são a
+      // prova de que ele enxerga — e o 2º e o 4º são exatamente os que a
+      // árvore reaproveitada calava.
+      final bundle = _BundleDoDisco();
+      addTearDown(t.view.reset);
+      const largura = 320.0;
+      const escala = 2.0;
+
+      Widget tela(ConjuntoDeIcones icones) => _telaCom(
+            icones: icones,
+            bundle: bundle,
+            perfil: _perfilVipDeMedicao,
+          );
+
+      // 1) Padrão limpo medido 1º, Real SABOTADO medido 2º.
+      final padraoLimpo = await _medirComposicao(t, tela(conjuntoPadraoDeAjustes),
+          largura: largura, escala: escala);
+      final realSujo = await _medirComposicao(
+          t, _comEstouroPlantado(tela(conjuntoRealVipDeAjustes), largura),
+          largura: largura, escala: escala);
+      expect(padraoLimpo.estouros, isEmpty);
+      expect(realSujo.estouros, isNotEmpty,
+          reason: 'o SEGUNDO tema medido ficou mudo: a medição está viciada');
+
+      // 2) Real limpo medido 1º, Padrão SABOTADO medido 2º.
+      final realLimpo = await _medirComposicao(t, tela(conjuntoRealVipDeAjustes),
+          largura: largura, escala: escala);
+      final padraoSujo = await _medirComposicao(
+          t, _comEstouroPlantado(tela(conjuntoPadraoDeAjustes), largura),
+          largura: largura, escala: escala);
+      expect(realLimpo.estouros, isEmpty);
+      expect(padraoSujo.estouros, isNotEmpty,
+          reason: 'o SEGUNDO tema medido ficou mudo: a medição está viciada');
+
+      // 3) E medido PRIMEIRO cada um também acusa — simetria completa.
+      final realSujoPrimeiro = await _medirComposicao(
+          t, _comEstouroPlantado(tela(conjuntoRealVipDeAjustes), largura),
+          largura: largura, escala: escala);
+      final padraoSujoPrimeiro = await _medirComposicao(
+          t, _comEstouroPlantado(tela(conjuntoPadraoDeAjustes), largura),
+          largura: largura, escala: escala);
+      expect(realSujoPrimeiro.estouros, isNotEmpty);
+      expect(padraoSujoPrimeiro.estouros, isNotEmpty);
     });
 
     test('ART-15 toda pasta declarada é REALMENTE empacotada pelos montadores',
@@ -1644,6 +1705,223 @@ void main() {
           isTrue,
           reason: 'montar_app.sh voltou a aceitar pasta declarada e vazia');
       expect(semComentario.contains('exit 1'), isTrue);
+    });
+
+    testWidgets('ART-17 a matriz de 108 células: zero estouro, zero corte e '
+        'nenhum acionável abaixo de 48 dp', (t) async {
+      // A MATRIZ INTEIRA DA REHOMOLOGAÇÃO, e ela é ABSOLUTA. A OS 39-R1 mediu
+      // aqui 12 células com 22 px de estouro, 86 com texto cortado e 108 com um
+      // acionável de 47,0 dp. Os três números têm de ser zero, e a contagem de
+      // células é conferida para que reduzir a matriz reprove em vez de aliviar.
+      final bundle = _BundleDoDisco();
+      addTearDown(t.view.reset);
+
+      const larguras = <double>[320.0, 360.0, 412.0];
+      const escalas = <double>[1.0, 1.5, 2.0];
+      expect(larguras, containsAll(<double>[320.0, 360.0, 412.0]),
+          reason: 'a matriz perdeu uma largura');
+      expect(escalas, containsAll(<double>[1.0, 1.5, 2.0]),
+          reason: 'a matriz perdeu uma escala de texto');
+
+      var celulas = 0;
+      final estourou = <String>[];
+      final cortou = <String>[];
+      final alvoPequeno = <String>[];
+      final textoSumido = <String>[];
+
+      Future<void> celula(
+        String rotulo,
+        ConjuntoDeIcones icones,
+        PerfilResumo perfil,
+        double largura,
+        double escala,
+        double altura,
+      ) async {
+        celulas++;
+        final m = await _medirComposicao(
+          t,
+          _telaCom(icones: icones, bundle: bundle, perfil: perfil),
+          largura: largura,
+          escala: escala,
+          altura: altura,
+        );
+        if (m.estouros.isNotEmpty) estourou.add('$rotulo ${m.estouros}');
+        if (m.cortes.isNotEmpty) cortou.add('$rotulo ${m.cortes}');
+        for (final p in _acionaveisPequenos(t)) {
+          alvoPequeno.add('$rotulo $p');
+        }
+        // OS DOIS TEXTOS ESSENCIAIS ESTÃO NA TELA, E COM TAMANHO. Sem isto,
+        // esconder o apelido e o e-mail zeraria estouro e corte de uma vez.
+        for (final texto in <String>[perfil.apelido, perfil.email]) {
+          if (texto.isEmpty) continue;
+          final f = find.text(texto);
+          if (f.evaluate().isEmpty) {
+            textoSumido.add('$rotulo: "$texto" sumiu da tela');
+            continue;
+          }
+          final tam = t.getSize(f.first);
+          if (tam.width <= 0 || tam.height <= 0) {
+            textoSumido.add('$rotulo: "$texto" tem caixa $tam');
+          }
+        }
+      }
+
+      final alturas = <double, double>{320.0: 640.0, 360.0: 800.0, 412.0: 915.0};
+      for (final largura in larguras) {
+        for (final escala in escalas) {
+          for (final tema in const ['publico', 'vip']) {
+            final icones = tema == 'vip'
+                ? conjuntoRealVipDeAjustes
+                : conjuntoPadraoDeAjustes;
+            for (final p in const [
+              [false, true, true],
+              [true, true, true],
+              [false, false, false],
+              [true, false, false],
+            ]) {
+              await celula(
+                '${largura.toInt()}dp@${(escala * 100).toInt()}%|$tema'
+                '|nome=${p[0] ? "longo" : "curto"}'
+                '|selo=${p[1] ? "sim" : "nao"}|saldo=${p[2] ? "sim" : "nao"}',
+                icones,
+                _perfilDeMedicao(longo: p[0], vip: p[1], saldo: p[2]),
+                largura,
+                escala,
+                alturas[largura]!,
+              );
+            }
+          }
+        }
+      }
+      for (final situacao in const [
+        SituacaoAssinaturaVip.ativa,
+        SituacaoAssinaturaVip.expirada,
+        SituacaoAssinaturaVip.indisponivel,
+      ]) {
+        for (final escala in escalas) {
+          for (final tema in const ['publico', 'vip']) {
+            await celula(
+              '320dp@${(escala * 100).toInt()}%|$tema'
+              '|assinatura=${situacao.name}',
+              tema == 'vip' ? conjuntoRealVipDeAjustes : conjuntoPadraoDeAjustes,
+              _perfilDeMedicao(
+                  longo: true, vip: true, saldo: true, situacao: situacao),
+              320,
+              escala,
+              640,
+            );
+          }
+        }
+      }
+      // Superfície alta: a árvore INTEIRA existe, e é onde os acionáveis do pé
+      // da tela aparecem. Sem esta passada, 'Excluir minha conta' nunca é medido.
+      for (final largura in larguras) {
+        for (final escala in escalas) {
+          for (final tema in const ['publico', 'vip']) {
+            await celula(
+              'ALTA|${largura.toInt()}dp@${(escala * 100).toInt()}%|$tema',
+              tema == 'vip' ? conjuntoRealVipDeAjustes : conjuntoPadraoDeAjustes,
+              _perfilDeMedicao(longo: true, vip: true, saldo: true),
+              largura,
+              escala,
+              4000,
+            );
+          }
+        }
+      }
+
+      expect(celulas, 108, reason: 'a matriz encolheu ou cresceu');
+      expect(estourou, isEmpty);
+      expect(cortou, isEmpty);
+      expect(alvoPequeno, isEmpty);
+      expect(textoSumido, isEmpty);
+    });
+
+    testWidgets('ART-19 o saldo desce SÓ quando não cabe: ao lado em 360 dp a '
+        '100%, embaixo em 320 dp a 200%', (t) async {
+      // O REFLUXO É CONDICIONAL, E AS DUAS METADES IMPORTAM. Descer sempre
+      // acrescentaria uma linha de altura a uma tela que já cabia — a §4 chama
+      // isso de rolagem artificial. Nunca descer devolveria ao bloco de nome os
+      // 56 dp em que ele não cabe. A régua é a posição relativa entre a
+      // pastilha de saldo e a última linha do bloco de identidade.
+      final bundle = _BundleDoDisco();
+      addTearDown(t.view.reset);
+      final perfil = _perfilDeMedicao(longo: false, vip: true, saldo: true);
+
+      Future<(Rect, Rect)> geometria(double largura, double escala) async {
+        await _medirComposicao(
+          t,
+          _telaCom(icones: conjuntoRealVipDeAjustes, bundle: bundle, perfil: perfil),
+          largura: largura,
+          escala: escala,
+        );
+        final email = find.text(perfil.email);
+        final saldo = find.text('${perfil.fichas}');
+        expect(email, findsOneWidget);
+        expect(saldo, findsOneWidget);
+        return (
+          t.getTopLeft(email.first) & t.getSize(email.first),
+          t.getTopLeft(saldo.first) & t.getSize(saldo.first),
+        );
+      }
+
+      // Cabe: a pastilha divide a faixa com o bloco de identidade.
+      final (emailLargo, saldoLargo) = await geometria(360, 1.0);
+      expect(saldoLargo.top, lessThan(emailLargo.bottom),
+          reason: '360 dp a 100%: o saldo desceu sem precisar — '
+              'a tela ganhou altura à toa');
+
+      // Não cabe: a pastilha desce INTEIRA, abaixo da última linha do bloco.
+      final (emailApertado, saldoApertado) = await geometria(320, 2.0);
+      expect(saldoApertado.top, greaterThanOrEqualTo(emailApertado.bottom),
+          reason: '320 dp a 200%: o saldo continuou ao lado e espremeu o '
+              'bloco de nome');
+
+      // E o refluxo não some com nada: os dois textos e o selo continuam lá.
+      expect(find.text(perfil.apelido), findsOneWidget);
+      expect(find.text('VIP'), findsOneWidget);
+    });
+
+    testWidgets('ART-18 a pastilha VIP continua na tela em toda a matriz, e só '
+        'quando há direito', (t) async {
+      // A pastilha é o que empurrava a fileira para fora da tela, e some com
+      // ela seria a correção mais barata e mais errada: quem paga perde o
+      // distintivo. Este caso existe para que essa saída não passe calada.
+      final bundle = _BundleDoDisco();
+      addTearDown(t.view.reset);
+      for (final largura in const [320.0, 360.0, 412.0]) {
+        for (final escala in const [1.0, 1.5, 2.0]) {
+          for (final icones in [conjuntoPadraoDeAjustes, conjuntoRealVipDeAjustes]) {
+            final caso = '${largura.toInt()}dp@${(escala * 100).toInt()}%';
+            await _medirComposicao(
+              t,
+              _telaCom(
+                  icones: icones,
+                  bundle: bundle,
+                  perfil: _perfilDeMedicao(longo: true, vip: true, saldo: true)),
+              largura: largura,
+              escala: escala,
+            );
+            expect(find.text('VIP'), findsOneWidget,
+                reason: '$caso: a pastilha VIP sumiu de quem tem direito');
+            expect(t.getSize(find.text('VIP')).width, greaterThan(0),
+                reason: '$caso: a pastilha VIP virou caixa vazia');
+
+            await _medirComposicao(
+              t,
+              _telaCom(
+                  icones: icones,
+                  bundle: bundle,
+                  perfil:
+                      _perfilDeMedicao(longo: true, vip: false, saldo: true)),
+              largura: largura,
+              escala: escala,
+            );
+            expect(find.text('VIP'), findsNothing,
+                reason: '$caso: a pastilha VIP apareceu para quem não tem');
+          }
+        }
+      }
     });
   });
 }
@@ -1717,3 +1995,133 @@ double _alturaTocavelDe(WidgetTester t, String rotulo) {
   if (alvo.evaluate().isEmpty) return t.getSize(texto).height;
   return t.getSize(alvo.first).height;
 }
+
+// ---------------------------------------------------------------------------
+// Medição de composição — o que faz a ART-14 poder reprovar
+// ---------------------------------------------------------------------------
+
+/// O que uma composição produziu.
+class _Medicao {
+  const _Medicao(this.estouros, this.cortes);
+
+  /// Primeiras linhas dos avisos `… overflowed by N pixels …`.
+  final Set<String> estouros;
+
+  /// Textos que o `maxLines` cortou sem levantar erro nenhum.
+  final Set<String> cortes;
+}
+
+/// Mede UMA composição, sempre numa ÁRVORE NOVA.
+///
+/// A árvore nova da primeira linha não é higiene — é o que dá validade à
+/// medição. O indicador de estouro do Flutter marca `_overflowReportNeeded`
+/// por `RenderObject` e o consome no primeiro relatório; um segundo
+/// `pumpWidget` sobre a mesma árvore reaproveita os mesmos `RenderFlex` e sai
+/// LIMPO mesmo estourando igual. Sem descartar a árvore, "o segundo tema não
+/// estoura" é uma afirmação sobre a ordem, não sobre o tema.
+Future<_Medicao> _medirComposicao(
+  WidgetTester t,
+  Widget composicao, {
+  required double largura,
+  required double escala,
+  double altura = 12000,
+}) async {
+  await t.pumpWidget(const SizedBox.shrink());
+  await t.pump();
+  t.view.physicalSize = Size(largura * 3, altura * 3);
+  t.view.devicePixelRatio = 3;
+  final estouros = <String>{};
+  final anterior = FlutterError.onError;
+  FlutterError.onError = (d) {
+    final texto = d.exceptionAsString();
+    if (texto.contains('overflowed')) estouros.add(texto.split('\n').first);
+  };
+  try {
+    await t.pumpWidget(MediaQuery(
+      data: MediaQueryData(textScaler: TextScaler.linear(escala)),
+      child: composicao,
+    ));
+    await _assentar(t);
+  } finally {
+    FlutterError.onError = anterior;
+  }
+  return _Medicao(estouros, _cortesSilenciosos(t).toSet());
+}
+
+/// A mesma composição, com um estouro PLANTADO de 40 px.
+///
+/// A tela continua sendo construída — o que se acrescenta é uma caixa rígida
+/// mais larga que a viewport, e é o `Row` de fora que reclama.
+Widget _comEstouroPlantado(Widget tela, double largura) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Row(
+        children: [SizedBox(width: largura + 40, child: tela)],
+      ),
+    );
+
+/// Acionáveis com largura OU altura efetiva abaixo de 48 dp.
+///
+/// A régua é a área real do `RenderBox` que responde ao toque, e não o padding
+/// declarado: o botão Voltar media 47,0 x 47,0 porque o `IconButton` soma 8 de
+/// padding a um ícone de 31.
+List<String> _acionaveisPequenos(WidgetTester t) {
+  final pequenos = <String>[];
+  final alvos = find.byWidgetPredicate((w) =>
+      w is InkWell ||
+      w is InkResponse ||
+      w is IconButton ||
+      w is TextButton ||
+      w is FilledButton);
+  for (final elemento in alvos.evaluate()) {
+    final ro = elemento.renderObject;
+    if (ro is! RenderBox || !ro.hasSize) continue;
+    if (ro.size.width <= 0 || ro.size.height <= 0) continue;
+    if (ro.size.width >= 47.95 && ro.size.height >= 47.95) continue;
+    final textos = <String>[];
+    void desce(Element e) {
+      final w = e.widget;
+      if (w is Text && (w.data ?? '').isNotEmpty) textos.add(w.data!);
+      e.visitChildren(desce);
+    }
+
+    elemento.visitChildren(desce);
+    pequenos.add('${elemento.widget.runtimeType} '
+        '${ro.size.width.toStringAsFixed(1)}x'
+        '${ro.size.height.toStringAsFixed(1)} '
+        '[${textos.take(1).join()}]');
+  }
+  return pequenos;
+}
+
+/// O perfil das medições de layout: VIP, com selo e com saldo — o pior caso.
+const PerfilResumo _perfilVipDeMedicao = PerfilResumo(
+  apelido: 'Jogadora',
+  email: 'jogadora@exemplo.com',
+  avatar: '👑',
+  vip: true,
+  fichas: 1200,
+);
+
+/// Perfis da matriz. O apelido longo e o e-mail longo são deliberados: é onde
+/// a quebra tem de acontecer sem cortar.
+PerfilResumo _perfilDeMedicao({
+  required bool longo,
+  required bool vip,
+  required bool saldo,
+  SituacaoAssinaturaVip situacao = SituacaoAssinaturaVip.ativa,
+}) =>
+    PerfilResumo(
+      apelido: longo ? 'Mariazinha das Graças Albuquerque' : 'Ana',
+      email: longo ? 'mariazinha.albuquerque@exemplo.com.br' : 'ana@ex.com',
+      avatar: '👑',
+      vip: vip,
+      assinatura: AssinaturaVipNaTela(
+        situacao: situacao,
+        plano: situacao == SituacaoAssinaturaVip.indisponivel
+            ? null
+            : 'Master VIP mensal',
+        validoAte: DateTime.utc(2026, 9, 22),
+        renovacaoAutomatica: situacao == SituacaoAssinaturaVip.ativa,
+      ),
+      fichas: saldo ? 1200 : null,
+    );

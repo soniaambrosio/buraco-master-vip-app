@@ -115,8 +115,21 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # de ser exigido, e nenhuma guarda diria nada. Guarda que nao sobrevive a
 # propria remocao nao e guarda.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui comunicacaoemu composloja"
-readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:37 comunicacaoemu:32 composloja:20"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:34 comunicacaoemu:34 composloja:35"
+readonly PISOS_PROVAS="comunicacao:71 chatdom:60 portaoci:49 contratosui:39 comunicacaoemu:32 composloja:20 temavip:57"
+
+# Gates cujo piso de provas e OBRIGATORIO estar na tabela acima.
+#
+# POR QUE ESTA SEGUNDA LISTA EXISTE. Ate aqui, um gate sem linha em
+# PISOS_PROVAS nao era um erro: `piso_de` devolvia vazio e a conferencia era
+# PULADA em silencio. A OS 39-R1 mediu o custo disso — `temavip` nao tinha
+# piso, e baixar `provas 53` para `provas 10' na fonte unica deixava este
+# verificador, o `composneg` e a propria suite TODOS VERDES. O numero
+# declarado na fonte protegia a suite, e nada protegia o numero.
+#
+# Agora a ausencia de piso REPROVA, e reprova pelo nome do gate. Apagar a
+# linha do `temavip` na tabela acima nao alivia nada: cai aqui.
+readonly PISOS_OBRIGATORIOS="comunicacao chatdom portaoci contratosui comunicacaoemu composloja temavip"
+readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:36 comunicacaoemu:34 composloja:35"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
@@ -138,6 +151,15 @@ piso_de() {
     esac
   done
   printf '%s' ''
+}
+
+# Este gate PRECISA ter piso? Ver o comentario de PISOS_OBRIGATORIOS.
+piso_e_obrigatorio() {
+  local alvo="$1" nome
+  for nome in $PISOS_OBRIGATORIOS; do
+    [ "$nome" = "$alvo" ] && return 0
+  done
+  return 1
 }
 
 # Espaco em branco espremido: o YAML alinha `roda <gate>  <caminho>` em colunas,
@@ -276,6 +298,9 @@ conferir_entrada() {
   # ---- os pisos escritos AQUI nao podem ser rebaixados na fonte ----------
   local piso
   piso="$(piso_de "$PISOS_PROVAS" "$chave")"
+  if [ -z "$piso" ] && piso_e_obrigatorio "$chave"; then
+    erro "o gate '$chave' perdeu o piso de provas em PISOS_PROVAS deste verificador"
+  fi
   if [ -n "$piso" ] && [ -n "$provas_esperadas" ]; then
     if [ "$provas_esperadas" -lt "$piso" ]; then
       erro "o piso de provas de '$chave' foi baixado de $piso para $provas_esperadas na fonte"

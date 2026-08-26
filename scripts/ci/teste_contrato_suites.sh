@@ -96,9 +96,9 @@ resultados() {
   printf '00:09 +137: All tests passed!\n' > "$d/t_chatdom.log"
   # Tema Real VIP das Configuracoes: gate COM contrato, e por isso a fase B
   # exige log dele tambem — marcador sem log e marcador sem execucao.
-  printf '00:04 +38: All tests passed!\n' > "$d/t_temavip.log"
+  printf '00:31 +57: All tests passed!\n' > "$d/t_temavip.log"
   printf 'casos ok: 38 | casos com falha: 0\nTESTE DO PORTAO: VERDE\n' > "$d/t_portaoci.log"
-  printf 'casos ok: 35 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
+  printf 'casos ok: 37 | casos com falha: 0\nTESTE DO CONTRATO: VERDE\n' > "$d/t_contratosui.log"
   # O gate de emulador da Comunicacao Controlada (OS 24-C3). O rodape e o do
   # `node --test`, e nao o `+N` do Flutter — por isso o contrato dele declara
   # um `contador` proprio, e por isso este fixture nao pode copiar o formato
@@ -308,6 +308,25 @@ printf '\n== a margem continua sendo a autoridade ==\n'
 reset
 sed -i 's/^comunicacao$/  comunicacao/' "$W/$FONTE_W"
 esperar 1 "T33 — gate indentado por engano => VERMELHO, e nao some em silencio" 'recusou a fonte'
+
+
+printf '\n== o piso externo do temavip ==\n'
+
+# O BURACO QUE A OS 39-R1 MEDIU. `temavip` nao tinha linha em PISOS_PROVAS, e
+# um gate sem piso tinha a conferencia PULADA em silencio: baixar `provas 53`
+# para `provas 10` na fonte unica deixava este verificador, o `composneg` e a
+# propria suite todos verdes. Os dois casos abaixo fecham as duas metades —
+# tirar o piso e rebaixar o numero na fonte.
+
+reset
+sed -i 's/ temavip:57//' "$W/scripts/ci/verificar_contrato_suites.sh"
+esperar 1 "T35 — temavip sem piso em PISOS_PROVAS => VERMELHO nominal" \
+  "perdeu o piso de provas"
+
+reset
+sed -i 's/^    provas     57$/    provas     10/' "$W/$FONTE_W"
+esperar 1 "T36 — piso do temavip rebaixado na fonte => VERMELHO" \
+  'o piso de provas de .temavip. foi baixado'
 
 printf '\n== controle final ==\n'
 

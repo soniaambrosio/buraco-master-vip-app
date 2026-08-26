@@ -283,7 +283,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                       child: ListView(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 22),
                         children: [
-                          _perfilCard(),
+                          _perfilCard(context),
                           _secao(
                             titulo: 'CONTA',
                             chave: IconeAjustes.secaoConta,
@@ -518,6 +518,11 @@ class ConfiguracoesScreen extends StatelessWidget {
           IconButton(
             tooltip: 'Voltar',
             onPressed: onVoltar,
+            // 48 dp EXPLICITOS. O padrao do IconButton e padding 8 em volta do
+            // icone, e com o icone de 31 isso da 47,0 x 47,0 — um decimo de
+            // milimetro abaixo do minimo, o bastante para reprovar a regua e
+            // pequeno demais para alguem notar a olho.
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             icon: IconeDeAjustes(
               conjunto: icones,
               chave: IconeAjustes.voltar,
@@ -551,7 +556,24 @@ class ConfiguracoesScreen extends StatelessWidget {
     );
   }
 
-  Widget _perfilCard() {
+  /// O cartao de identidade do topo.
+  ///
+  /// TRES PECAS DISPUTAM A MESMA LINHA — avatar, bloco de identidade e pastilha
+  /// de saldo —, e em 320 dp com fonte a 200% elas nao cabem: o bloco de
+  /// identidade sobrava com 56 dp para uma pastilha `VIP` de 70,8 dp, e a
+  /// fileira estourava 22 px. Encolher fonte, esconder o saldo ou tirar o selo
+  /// resolveria o numero e pioraria a tela.
+  ///
+  /// O que se faz aqui e REFLUXO: quando a largura nao comporta os tres lado a
+  /// lado, a pastilha de saldo desce para uma linha propria. A decisao e
+  /// MEDIDA, nao estimada — [_larguraDaPastilhaDeSaldo] e [_pisoDoBlocoDeNome]
+  /// usam `TextPainter` com a mesma escala de texto que a tela vai usar. Por
+  /// isso a tela a 100% continua exatamente como era: o refluxo so acontece
+  /// quando ele e a unica saida.
+  Widget _perfilCard(BuildContext context) {
+    final escala = MediaQuery.textScalerOf(context);
+    final saldo = perfil.fichas;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
@@ -560,116 +582,194 @@ class ConfiguracoesScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _borda),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF2B1B0C),
-              border: Border.all(color: _ouro, width: 1.4),
-            ),
-            child: Text(
-              _marcaDoAvatar(perfil),
-              style: const TextStyle(
-                color: _ouroClaro,
-                fontSize: 21,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, restricoes) {
+          final identidade = Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _avatarDoPerfil(),
+              const SizedBox(width: 12),
+              Expanded(child: _blocoDeIdentidade()),
+            ],
+          );
+
+          if (saldo == null) return identidade;
+
+          final precisa = _kAvatar +
+              12 +
+              _pisoDoBlocoDeNome(escala) +
+              8 +
+              _larguraDaPastilhaDeSaldo(saldo, escala);
+
+          if (restricoes.maxWidth >= precisa) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        perfil.apelido,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _texto,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                    if (perfil.vip) ...[
-                      const SizedBox(width: 7),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _roxo.withValues(alpha: .16),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: _roxo.withValues(alpha: .70),
-                          ),
-                        ),
-                        child: const Text(
-                          'VIP',
-                          style: TextStyle(
-                            color: Color(0xFFE2C9FF),
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  perfil.email,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: _textoSec, fontSize: 11),
-                ),
+                Expanded(child: identidade),
+                const SizedBox(width: 8),
+                _pastilhaDeSaldo(saldo),
               ],
-            ),
+            );
+          }
+
+          // Nao coube: o saldo desce inteiro, sem encolher e sem sumir.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              identidade,
+              const SizedBox(height: 10),
+              _pastilhaDeSaldo(saldo),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Lado do circulo do avatar.
+  static const double _kAvatar = 52;
+
+  Widget _avatarDoPerfil() {
+    return Container(
+      width: _kAvatar,
+      height: _kAvatar,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF2B1B0C),
+        border: Border.all(color: _ouro, width: 1.4),
+      ),
+      child: Text(
+        _marcaDoAvatar(perfil),
+        style: const TextStyle(
+          color: _ouroClaro,
+          fontSize: 21,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  /// Estilo do apelido. Fora do `build` porque a medicao do piso precisa dele.
+  static const TextStyle _estiloApelido = TextStyle(
+    color: _texto,
+    fontSize: 16,
+    fontWeight: FontWeight.w900,
+  );
+
+  static const TextStyle _estiloSelo = TextStyle(
+    color: Color(0xFFE2C9FF),
+    fontSize: 9,
+    fontWeight: FontWeight.w900,
+  );
+
+  static const TextStyle _estiloSaldo = TextStyle(
+    color: _ouroClaro,
+    fontSize: 12,
+    fontWeight: FontWeight.w900,
+  );
+
+  /// Apelido, selo e e-mail.
+  ///
+  /// O apelido e o selo vivem num `Wrap`, e nao num `Row`: se os dois nao
+  /// couberem lado a lado, o selo DESCE — antes ele espremia o apelido ate zero
+  /// e estourava mesmo assim.
+  ///
+  /// Nem o apelido nem o e-mail tem `maxLines`. Os dois sao texto essencial —
+  /// o apelido identifica a pessoa e o e-mail identifica a CONTA —, e cortar
+  /// qualquer um deles com reticencias e perder informacao que a tela existe
+  /// para dar. Sem `maxLines` eles quebram em mais linhas, que e o que texto
+  /// ampliado precisa poder fazer.
+  Widget _blocoDeIdentidade() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 7,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(perfil.apelido, style: _estiloApelido),
+            if (perfil.vip) _seloVip(),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(
+          perfil.email,
+          style: const TextStyle(color: _textoSec, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  Widget _seloVip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: _roxo.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _roxo.withValues(alpha: .70)),
+      ),
+      child: const Text('VIP', style: _estiloSelo),
+    );
+  }
+
+  /// A pastilha de saldo. So existe quando ha saldo a mostrar — ver
+  /// [PerfilResumo.fichas].
+  Widget _pastilhaDeSaldo(int saldo) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: _cardSecundario,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _borda),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconeDeAjustes(
+            conjunto: icones,
+            chave: IconeAjustes.saldoDeFichas,
+            cor: _ouro,
+            tamanho: 17,
           ),
-          const SizedBox(width: 8),
-          // A pastilha de saldo só aparece quando há saldo a mostrar. Ver
-          // [PerfilResumo.fichas].
-          if (perfil.fichas case final int saldo)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-              decoration: BoxDecoration(
-                color: _cardSecundario,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _borda),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconeDeAjustes(
-                    conjunto: icones,
-                    chave: IconeAjustes.saldoDeFichas,
-                    cor: _ouro,
-                    tamanho: 17,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$saldo',
-                    style: const TextStyle(
-                      color: _ouroClaro,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          const SizedBox(width: 4),
+          Text('$saldo', style: _estiloSaldo),
         ],
       ),
     );
+  }
+
+  /// Quanto a pastilha de saldo ocupa, NA ESCALA DE TEXTO DESTA TELA.
+  ///
+  /// 9 + 9 de padding, 17 de icone (que nao escala), 4 de respiro, mais o
+  /// numero medido, mais 1 + 1 de borda.
+  static double _larguraDaPastilhaDeSaldo(int saldo, TextScaler escala) =>
+      9 + 17 + 4 + _larguraDoTexto('$saldo', _estiloSaldo, escala) + 9 + 2;
+
+  /// O MINIMO que o bloco de identidade precisa para nao estourar.
+  ///
+  /// O selo inteiro, o respiro, e espaco para quatro caracteres do apelido —
+  /// abaixo disso a linha nao serve para nada, e e melhor o saldo descer.
+  static double _pisoDoBlocoDeNome(TextScaler escala) =>
+      7 + _larguraDoTexto('VIP', _estiloSelo, escala) + 7 + 2 +
+      7 +
+      _larguraDoTexto('MMMM', _estiloApelido, escala);
+
+  static double _larguraDoTexto(
+    String texto,
+    TextStyle estilo,
+    TextScaler escala,
+  ) {
+    final pintor = TextPainter(
+      text: TextSpan(text: texto, style: estilo),
+      textDirection: TextDirection.ltr,
+      textScaler: escala,
+      maxLines: 1,
+    )..layout();
+    final largura = pintor.width;
+    pintor.dispose();
+    return largura;
   }
 
   Widget _secao({
@@ -1140,6 +1240,11 @@ class ConfiguracoesScreen extends StatelessWidget {
         onPressed: callbacks.onExcluirConta,
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          // 48 dp de alvo, sem 48 dp de ENFASE: o piso de toque cresce, e o
+          // desenho continua o mais discreto da tela — texto pequeno,
+          // sublinhado, vermelho apagado. Alvo acessivel nao e destaque
+          // visual.
+          minimumSize: const Size(48, 48),
         ),
         icon: IconeDeAjustes(
           conjunto: icones,
