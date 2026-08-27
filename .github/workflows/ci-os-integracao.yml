@@ -65,7 +65,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Node (firebase-tools e testes das Functions)
         uses: actions/setup-node@v4
@@ -530,7 +530,7 @@ jobs:
           git config user.email "ci@bmv.local"
           git config user.name "CI BMV Evidencias"
           if git ls-remote --exit-code origin ci-evidencias >/dev/null 2>&1; then
-            git fetch --depth 1 origin ci-evidencias && git checkout ci-evidencias
+            git fetch --depth 1 origin ci-evidencias && git checkout -B ci-evidencias FETCH_HEAD
           else
             git checkout --orphan ci-evidencias && git rm -rf . >/dev/null 2>&1 || true
           fi
