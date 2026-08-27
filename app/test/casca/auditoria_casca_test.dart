@@ -19,8 +19,10 @@
 // que é proibido — e uma varredura ingênua acusaria a explicação como violação.
 // Pior: o jeito de "consertar" seria apagar a documentação.
 
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // ===========================================================================
@@ -135,6 +137,283 @@ List<File> _fontesDoCliente() =>
         })
         .toList()
       ..sort((a, b) => a.path.compareTo(b.path));
+
+// ===========================================================================
+// FONTE ÚNICA DE GATES — o que o portão `a11yterm` é, declarado num lugar só
+// ===========================================================================
+//
+// POR QUE AQUI, E NÃO NUM ARQUIVO NOVO.
+//
+// Este arquivo já é a autoridade que diz o que TEM de existir na casca, já roda
+// num gate obrigatório dos dois portões, e já carrega o mesmo contrato para a
+// suíte do Perfil visitado. Uma segunda fonte de gates seria uma segunda
+// verdade: no dia em que as duas divergissem, nenhuma seria autoridade.
+//
+// O que estas constantes declaram — e o grupo lá embaixo cobra — é a
+// identidade inteira do gate: caminho, nome, piso, os nomes dos casos, a
+// origem deles, quem os executa, que marcador deixam, que log produzem e em
+// que listas dos dois workflows o gate aparece.
+
+/// O caminho canônico da suíte protegida, a partir da raiz do app.
+const String kCaminhoA11yTerm = 'test/casca/a11y_estados_terminais_test.dart';
+
+/// O identificador do gate nos dois portões.
+const String kGateA11yTerm = 'a11yterm';
+
+/// O identificador da TESTEMUNHA — o passo que lê o resultado real.
+const String kGateA11yTermAtestado = 'a11ytermat';
+
+/// Os vinte e um casos da entrega original, com o nome COMPLETO — grupo e
+/// caso —, exatamente como o executor os reporta.
+///
+/// ESTA LISTA É O CONTRATO. Ela não descreve a suíte: ela a define. Um caso
+/// que sai daqui só sai por decisão explícita de quem edita esta lista, e o
+/// diff mostra qual. Uma suíte trivial com o caminho certo não satisfaz
+/// nenhuma das vinte e uma linhas.
+///
+/// Os nomes ficam aqui, e não lá, porque uma relação nominal guardada dentro
+/// do arquivo que ela guarda morre junto com ele.
+const List<String> kCasosOriginaisA11yTerm = <String>[
+  'espera estourada o título é anunciado, e como cabeçalho',
+  'espera estourada o cabeçalho é ÚNICO — a mensagem não é cabeçalho',
+  'espera estourada a mensagem chega inteira e sem jargão',
+  'espera estourada a ampulheta NÃO entra na árvore',
+  'espera estourada nada de gráfico sobra sem descrição',
+  'espera estourada a ordem de foco é título, mensagem, ação',
+  'espera estourada a ação tem nome, papel e estado',
+  'espera estourada o callback continua sendo o de antes: volta a esperar',
+  'espera estourada nada de sensível na árvore',
+  'mudança dinâmica a transição é anunciada — e UMA vez',
+  'mudança dinâmica o estado de abertura da rota NÃO é anunciado por cima',
+  'mudança dinâmica descartada antes do teto, a casca não fala depois',
+  'mudança dinâmica descartada depois de falar, não repete',
+  'aviso terminal título é cabeçalho, detalhe não, e nenhuma ação é oferecida',
+  'aviso terminal o triângulo NÃO entra na árvore',
+  'escala de texto espera estourada em 100%: sem estouro, e operável',
+  'escala de texto aviso terminal em 100%: sem estouro',
+  'escala de texto espera estourada em 150%: sem estouro, e operável',
+  'escala de texto aviso terminal em 150%: sem estouro',
+  'escala de texto espera estourada em 200%: sem estouro, e operável',
+  'escala de texto aviso terminal em 200%: sem estouro',
+];
+
+/// Os casos que a OS 20-C1 acrescentou, também pelo nome completo.
+///
+/// Separados dos originais de propósito: os de cima são a entrega homologada e
+/// não podem encolher; os de baixo são a correção, e o dia em que um deles
+/// mudar de nome tem de ser um dia em que alguém editou ESTA lista.
+const List<String> kCasosDaCorrecaoA11yTerm = <String>[
+  'moldura semântica espera estourada: a moldura é um container semântico PRÓPRIO',
+  'moldura semântica espera estourada: TRÊS filhos explícitos, na ordem de leitura',
+  'moldura semântica aviso terminal: a moldura é um container semântico PRÓPRIO',
+  'moldura semântica aviso terminal: DOIS filhos explícitos, e nenhuma ação',
+  'moldura semântica os filhos não são fundidos: cada texto é um nó',
+  'moldura semântica o emoji não é filho do container em nenhum dos dois estados',
+  'relógio da espera o relógio nasce armado com o teto configurado',
+  'relógio da espera descartada a casca, o relógio da espera é CANCELADO',
+  'o portão desta suíte o verificador externo existe',
+  'o portão desta suíte o verificador externo cobra ESTA suíte pelo nome',
+];
+
+/// As três larguras e as três escalas da matriz responsiva.
+///
+/// Dezoito casos nascem delas — três por três por dois estados — e por isso os
+/// nomes não cabem numa lista literal. O que se cobra é a MATRIZ: tirar 320 dp,
+/// ou tirar a escala de 200%, muda estas duas linhas, e a contagem cai junto.
+const List<String> kLargurasDaMatrizA11yTerm = <String>['320', '360', '412'];
+const List<String> kEscalasDaMatrizA11yTerm = <String>['1.0', '1.5', '2.0'];
+
+/// Um caso declarado no arquivo, com nome completo e corpo.
+class _CasoDeclarado {
+  _CasoDeclarado({
+    required this.nome,
+    required this.literal,
+    required this.corpo,
+  });
+
+  /// O nome completo — grupos e caso, unidos por espaço, como o executor o
+  /// reporta.
+  final String nome;
+
+  /// O nome veio de um literal simples, sem interpolação.
+  ///
+  /// Um nome interpolado (`'... em $onde: ...'`) não pode ser cobrado por
+  /// igualdade: ele só existe depois de executado. Os casos da matriz são
+  /// assim de propósito; os vinte e um originais NÃO podem ser.
+  final bool literal;
+
+  /// O corpo do closure, já sem comentários.
+  final String corpo;
+}
+
+/// Lê um literal de string simples a partir de [i], se houver um ali.
+///
+/// Devolve `null` quando o que está no lugar do nome não é uma string literal —
+/// uma variável, uma soma, uma chamada. Isso importa: um nome que não é
+/// literal não pode ser conferido sem executar o arquivo.
+({String texto, int fim})? _literalEm(String s, int i) {
+  while (i < s.length && (s[i] == ' ' || s[i] == '\n' || s[i] == '\r')) {
+    i++;
+  }
+  if (i >= s.length) return null;
+  final String aspa = s[i];
+  if (aspa != "'" && aspa != '"') return null;
+  final b = StringBuffer();
+  i++;
+  while (i < s.length) {
+    final c = s[i];
+    if (c == r'\') {
+      if (i + 1 < s.length) b.write(s[i + 1]);
+      i += 2;
+      continue;
+    }
+    if (c == aspa) return (texto: b.toString(), fim: i + 1);
+    b.write(c);
+    i++;
+  }
+  return null;
+}
+
+/// Do `{` em [i] até a chave que o fecha, pulando strings.
+int _fimDoBloco(String s, int i) {
+  var nivel = 0;
+  String? aspa;
+  while (i < s.length) {
+    final c = s[i];
+    if (aspa != null) {
+      if (c == r'\') {
+        i += 2;
+        continue;
+      }
+      if (c == aspa) aspa = null;
+      i++;
+      continue;
+    }
+    if (c == "'" || c == '"') {
+      aspa = c;
+      i++;
+      continue;
+    }
+    if (c == '{') nivel++;
+    if (c == '}') {
+      nivel--;
+      if (nivel == 0) return i;
+    }
+    i++;
+  }
+  return s.length;
+}
+
+final RegExp _declaracao = RegExp(r'\b(group|testWidgets|test)\s*\(');
+
+/// Todos os casos declarados no código, com o nome completo montado a partir
+/// dos grupos que os contêm.
+///
+/// Trabalha sobre o código JÁ DESPOJADO DE COMENTÁRIOS. É o que impede a
+/// sabotagem mais barata de todas: escrever os vinte e um nomes num bloco de
+/// comentário e apagar a suíte.
+List<_CasoDeclarado> _casosDeclarados(String codigo) {
+  final saida = <_CasoDeclarado>[];
+  // (nome do grupo, índice em que o bloco dele termina)
+  final grupos = <({String nome, int fim})>[];
+
+  for (final m in _declaracao.allMatches(codigo)) {
+    // Grupos cujo bloco já terminou antes desta declaração saem da pilha.
+    grupos.removeWhere((g) => g.fim < m.start);
+
+    final lido = _literalEm(codigo, m.end);
+    if (lido == null) continue;
+
+    var j = lido.fim;
+    while (j < codigo.length && codigo[j] != '{') {
+      // O corpo é o primeiro bloco depois do nome. Um `)` antes dele quer
+      // dizer que a chamada acabou sem corpo — não é declaração de caso.
+      if (codigo[j] == ';') break;
+      j++;
+    }
+    if (j >= codigo.length || codigo[j] != '{') continue;
+    final int fim = _fimDoBloco(codigo, j);
+
+    if (m.group(1) == 'group') {
+      grupos.add((nome: lido.texto, fim: fim));
+      continue;
+    }
+    final String prefixo = grupos.map((g) => g.nome).join(' ');
+    saida.add(
+      _CasoDeclarado(
+        nome: prefixo.isEmpty ? lido.texto : '$prefixo ${lido.texto}',
+        literal: !lido.texto.contains(r'$'),
+        corpo: codigo.substring(j + 1, fim),
+      ),
+    );
+  }
+  return saida;
+}
+
+/// O corpo do auxiliar privado [nome], se ele existir no mesmo arquivo.
+///
+/// Um caso pode delegar o que afirma a um auxiliar — é o que os seis casos de
+/// escala fazem, para caber por extenso sem repetir trinta linhas seis vezes.
+/// A auditoria segue essa delegação UM nível: o suficiente para não confundir
+/// delegação com esvaziamento, e raso o bastante para não virar um
+/// interpretador de Dart.
+String? _corpoDoAuxiliar(String codigo, String nome) {
+  // A DECLARAÇÃO, e não a chamada: é a que tem corpo logo depois dos
+  // parâmetros. Percorre todas as ocorrências e fica com a primeira seguida
+  // de `{` antes de qualquer `;`.
+  for (final o in RegExp('\\b$nome\\s*\\(').allMatches(codigo)) {
+    var j = o.end;
+    var nivel = 1;
+    while (j < codigo.length && nivel > 0) {
+      if (codigo[j] == '(') nivel++;
+      if (codigo[j] == ')') nivel--;
+      j++;
+    }
+    while (j < codigo.length && codigo[j] != '{' && codigo[j] != ';') {
+      j++;
+    }
+    if (j < codigo.length && codigo[j] == '{') {
+      return codigo.substring(j + 1, _fimDoBloco(codigo, j));
+    }
+  }
+  return null;
+}
+
+final RegExp _chamadaPrivada = RegExp(r'\b(_[A-Za-z0-9_]+)\s*\(');
+
+/// O corpo, mais o dos auxiliares privados que ele chama.
+String _corpoEstendido(String corpo, String codigo) {
+  final b = StringBuffer(corpo);
+  for (final m in _chamadaPrivada.allMatches(corpo)) {
+    final String? auxiliar = _corpoDoAuxiliar(codigo, m.group(1)!);
+    if (auxiliar != null) b.write(auxiliar);
+  }
+  return b.toString();
+}
+
+/// O caso afirma alguma coisa — direto, ou pelo auxiliar que chama.
+bool _afirmaAlgo(String corpo, String codigo) =>
+    _corpoEstendido(corpo, codigo).contains('expect(');
+
+/// Quanto programa há no corpo do PRÓPRIO caso.
+///
+/// Sem estender pelos auxiliares: estendido, o número inflaria com o corpo de
+/// `_lendoATela` e passaria a aprovar um caso literalmente vazio. Quem cobra a
+/// afirmação é [_afirmaAlgo]; este número só pega o corpo que não escreve nada.
+int _materiaDoCorpo(String corpo) =>
+    corpo.replaceAll(RegExp(r'\s+'), '').length;
+
+/// A assinatura material dos vinte e um casos da entrega original.
+///
+/// É o SHA-256 dos corpos deles, sem comentários e com o espaço em branco
+/// colapsado — para que reescrever a prosa ou passar o formatador não vire
+/// vermelho, e mexer no programa vire.
+///
+/// COBRE OS BLOCOS PROTEGIDOS, E NÃO O ARQUIVO: acrescentar casos novos, como
+/// os dez da OS 20-C1, não pede recarimbo. Mexer no que já foi homologado
+/// pede — e o recarimbo aparece no diff, ao lado da mudança que o motivou.
+const String kAssinaturaDosCasosOriginaisA11yTerm =
+    '19b7480ab4647995c253bef032142132f8c17be62e934befc3a6249af08498cf';
 
 void main() {
   late Set<String> alcancaveis;
@@ -545,6 +824,577 @@ void main() {
         reason: 'perfilvis saiu do portão verde/vermelho — passaria a rodar '
             'sem poder reprovar',
       );
+    });
+  });
+
+  // =========================================================================
+  // O PORTÃO DOS ESTADOS TERMINAIS SEMÂNTICOS — `a11yterm`
+  // =========================================================================
+  //
+  // OS 20-C1. O bloco acima protege a suíte do Perfil visitado contra o
+  // apagamento; este vai além, porque o ataque contra um gate de
+  // acessibilidade não precisa apagar nada: basta esvaziar.
+  //
+  // O defeito que a suíte `a11yterm` fecha é invisível para quem enxerga a
+  // tela. Ninguém tropeça nele por acidente, e ninguém percebe quando ele
+  // volta. Uma suíte com o caminho certo, os arquivos no lugar e vinte e um
+  // `testWidgets` de corpo vazio deixaria o portão verde e a tela quebrada.
+  //
+  // Por isso o que se cobra aqui não é a existência de um arquivo, e sim a
+  // identidade inteira do gate: o caminho, os NOMES dos casos, a origem deles,
+  // a contagem, a matéria dos corpos, quem os executa nos dois portões, o
+  // marcador que deixam e a testemunha que lê o resultado real.
+  group('o portão dos estados terminais semânticos', () {
+    final File suite = File(kCaminhoA11yTerm);
+    final File portao = File('../.github/workflows/ci-os-integracao.yml');
+    final File construcao = File('../.github/workflows/build.yml');
+
+    /// Os casos declarados na suíte canônica, lidos do código sem comentários.
+    List<_CasoDeclarado> lerCasos() => _casosDeclarados(_codigo(suite));
+
+    test('a suíte existe no caminho canônico', () {
+      expect(
+        suite.existsSync(),
+        isTrue,
+        reason:
+            'a suíte $kCaminhoA11yTerm sumiu. Apagar, renomear ou mover são a '
+            'mesma coisa daqui: o gate $kGateA11yTerm passa a não ter o que '
+            'executar. Se o arquivo mudou de nome, mude kCaminhoA11yTerm no '
+            'MESMO commit.',
+      );
+    });
+
+    test('os vinte e um casos originais estão lá, um por um, pelo nome', () {
+      // O tamanho da lista é cobrado contra um literal, e não contra ela
+      // mesma: uma relação nominal que se mede pelo próprio comprimento
+      // aprova qualquer encolhimento.
+      expect(
+        kCasosOriginaisA11yTerm,
+        hasLength(21),
+        reason: 'a relação nominal da entrega original tem VINTE E UM casos',
+      );
+
+      final Set<String> declarados =
+          lerCasos().map((c) => c.nome).toSet();
+      final List<String> faltando = kCasosOriginaisA11yTerm
+          .where((n) => !declarados.contains(n))
+          .toList();
+      expect(
+        faltando,
+        isEmpty,
+        reason:
+            'estes casos da entrega original não são mais declarados na suíte '
+            'canônica: $faltando',
+      );
+    });
+
+    test('os casos da correção também estão lá, pelo nome', () {
+      expect(kCasosDaCorrecaoA11yTerm, hasLength(10));
+      final Set<String> declarados = lerCasos().map((c) => c.nome).toSet();
+      final List<String> faltando = kCasosDaCorrecaoA11yTerm
+          .where((n) => !declarados.contains(n))
+          .toList();
+      expect(faltando, isEmpty, reason: 'casos da OS 20-C1 ausentes: $faltando');
+    });
+
+    test('os nomes protegidos são literais, e não interpolação', () {
+      final Map<String, bool> literalPorNome = <String, bool>{
+        for (final c in lerCasos()) c.nome: c.literal,
+      };
+      for (final n in <String>[
+        ...kCasosOriginaisA11yTerm,
+        ...kCasosDaCorrecaoA11yTerm,
+      ]) {
+        expect(
+          literalPorNome[n],
+          isTrue,
+          reason:
+              'o caso "$n" deixou de ser um nome escrito por extenso. Nome '
+              'montado em tempo de execução não pode ser cobrado sem executar '
+              'a suíte — e é assim que um laço esconde a remoção de um caso.',
+        );
+      }
+    });
+
+    test('nenhum nome se repete', () {
+      final List<String> nomes = lerCasos().map((c) => c.nome).toList();
+      final Set<String> unicos = nomes.toSet();
+      expect(
+        unicos,
+        hasLength(nomes.length),
+        reason:
+            'há nome duplicado na suíte. Duplicar é o jeito barato de repor '
+            'contagem sem repor prova: '
+            '${nomes.where((n) => nomes.where((o) => o == n).length > 1).toSet()}',
+      );
+    });
+
+    test('a suíte tem pelo menos os quarenta e nove casos que declara', () {
+      // A CONTA, POR EXTENSO. Trinta e um casos são escritos por nome — os 21
+      // originais e os 10 da correção. Dois são escritos uma vez e nascem
+      // dezoito vezes, um por combinação da matriz responsiva. 31 + 18 = 49.
+      //
+      // Os números são literais de propósito. Um piso derivado do tamanho das
+      // próprias listas encolhe junto com elas e aprova qualquer remoção.
+      final List<_CasoDeclarado> casos = lerCasos();
+      final int porNome = casos.where((c) => c.literal).length;
+      final int porMatriz = casos.where((c) => !c.literal).length;
+
+      expect(
+        porNome,
+        greaterThanOrEqualTo(31),
+        reason:
+            'a suíte tem $porNome casos escritos por nome, e o piso é 31 '
+            '(21 originais + 10 da OS 20-C1)',
+      );
+      expect(
+        porMatriz,
+        2,
+        reason:
+            'os casos gerados pela matriz responsiva são DOIS — um por estado '
+            'terminal. Vieram $porMatriz.',
+      );
+
+      final int combinacoes =
+          kLargurasDaMatrizA11yTerm.length * kEscalasDaMatrizA11yTerm.length;
+      expect(combinacoes, 9, reason: 'três larguras por três escalas');
+      expect(
+        porNome + porMatriz * combinacoes,
+        greaterThanOrEqualTo(49),
+        reason:
+            'a suíte $kCaminhoA11yTerm caiu abaixo do piso de 49 casos '
+            'executados',
+      );
+    });
+
+    test('a matriz responsiva mantém as três larguras e as três escalas', () {
+      final String codigo = _codigo(suite);
+      for (final l in kLargurasDaMatrizA11yTerm) {
+        expect(
+          codigo,
+          contains(l),
+          reason: 'a largura de $l dp saiu da matriz responsiva',
+        );
+      }
+      for (final e in kEscalasDaMatrizA11yTerm) {
+        expect(
+          codigo,
+          contains(e),
+          reason: 'a escala de $e saiu da matriz responsiva',
+        );
+      }
+      // As duas listas juntas, e não só os números soltos pelo arquivo.
+      expect(
+        codigo.replaceAll(' ', ''),
+        contains('<double>[320,360,412]'),
+        reason: 'a lista de larguras da matriz mudou',
+      );
+      expect(
+        codigo.replaceAll(' ', ''),
+        contains('<double>[1.0,1.5,2.0]'),
+        reason: 'a lista de escalas da matriz mudou',
+      );
+    });
+
+    test('nenhum caso protegido está desligado', () {
+      final String codigo = _codigo(suite);
+      expect(
+        RegExp(r'\bskip\s*:').hasMatch(codigo),
+        isFalse,
+        reason:
+            'a suíte ganhou um `skip`. Caso desligado continua contando na '
+            'lista de nomes e não prova nada.',
+      );
+      expect(
+        RegExp(r'\bsolo\s*:\s*true').hasMatch(codigo),
+        isFalse,
+        reason: 'um `solo: true` cala todos os outros casos do arquivo',
+      );
+    });
+
+    test('os corpos dos casos protegidos têm matéria', () {
+      final String codigo = _codigo(suite);
+      final Map<String, String> corpoPorNome = <String, String>{
+        for (final c in lerCasos()) c.nome: c.corpo,
+      };
+      for (final n in <String>[
+        ...kCasosOriginaisA11yTerm,
+        ...kCasosDaCorrecaoA11yTerm,
+      ]) {
+        final String corpo = (corpoPorNome[n] ?? '').trim();
+        expect(
+          _afirmaAlgo(corpo, codigo),
+          isTrue,
+          reason:
+              'o caso "$n" não afirma nada — nem no próprio corpo, nem no '
+              'auxiliar que ele chama. Nome preservado e corpo esvaziado é o '
+              'ataque que a contagem sozinha não vê.',
+        );
+        expect(
+          _materiaDoCorpo(corpo),
+          greaterThan(20),
+          reason: 'o corpo do caso "$n" foi reduzido a quase nada',
+        );
+      }
+    });
+
+    test('os nomes protegidos vivem SÓ no caminho canônico', () {
+      // Repartir os vinte e um nomes por um arquivo isca faz a contagem
+      // total continuar batendo enquanto a suíte canônica esvazia. O que
+      // impede isso é a ORIGEM: quem declara cada nome.
+      final List<File> outros = Directory('test')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('_test.dart'))
+          .where((f) => _barras(f.path) != _barras(suite.path))
+          .where((f) => !_barras(f.path).endsWith(kCaminhoA11yTerm))
+          .toList();
+
+      final infratores = <String>[];
+      for (final f in outros) {
+        final Set<String> nomes =
+            _casosDeclarados(_codigo(f)).map((c) => c.nome).toSet();
+        for (final n in <String>[
+          ...kCasosOriginaisA11yTerm,
+          ...kCasosDaCorrecaoA11yTerm,
+        ]) {
+          if (nomes.contains(n)) infratores.add('${_barras(f.path)}: "$n"');
+        }
+      }
+      expect(
+        infratores,
+        isEmpty,
+        reason:
+            'estes casos são declarados FORA do caminho canônico — o portão '
+            'executaria um arquivo e a prova estaria em outro: $infratores',
+      );
+    });
+
+    test('a assinatura material dos casos originais não mudou', () {
+      // O digest cobre os CORPOS dos vinte e um casos da entrega homologada, e
+      // não o arquivo inteiro: acrescentar casos novos não pede recarimbo,
+      // mexer no que já foi aprovado pede.
+      //
+      // Recarimbar não é escapatória. Trivializar um corpo muda o digest, e
+      // quem recarimbar continua reprovando em `os corpos dos casos protegidos
+      // têm matéria` e na relação nominal — que não dependem deste número.
+      final Map<String, String> corpoPorNome = <String, String>{
+        for (final c in lerCasos()) c.nome: c.corpo,
+      };
+      final b = StringBuffer();
+      for (final n in kCasosOriginaisA11yTerm) {
+        b.write(n);
+        b.write(' ');
+        b.write((corpoPorNome[n] ?? '').replaceAll(RegExp(r'\s+'), ' ').trim());
+      }
+      expect(
+        sha256.convert(utf8.encode(b.toString())).toString(),
+        kAssinaturaDosCasosOriginaisA11yTerm,
+        reason:
+            'o corpo de algum dos vinte e um casos originais mudou. Se a '
+            'mudança é deliberada, recarimbe kAssinaturaDosCasosOriginaisA11yTerm '
+            'no MESMO commit — e explique no assunto do commit o que mudou.',
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // A fiação: os dois portões
+    // -----------------------------------------------------------------------
+    //
+    // Rodando de `app/`, ou de `app_build/` no CI, os workflows ficam um nível
+    // acima. Fora dessas duas situações o arquivo pode não estar alcançável — e
+    // aí o caso não tem o que afirmar, em vez de afirmar errado. No CI ELE
+    // ESTÁ alcançável, porque `app_build` nasce ao lado de `.github`.
+
+    test('o build.yml executa a suíte e reprova a ausência dela', () {
+      if (!construcao.existsSync()) return;
+      final String texto = construcao.readAsStringSync();
+      expect(
+        texto,
+        contains('app/$kCaminhoA11yTerm'),
+        reason:
+            'o passo da casca no build.yml parou de conferir o caminho da '
+            'suíte. `flutter test test/casca` é um DIRETÓRIO: ele fica verde '
+            'com o diretório vazio.',
+      );
+      expect(
+        texto,
+        contains('flutter test test/casca'),
+        reason: 'o passo que roda a casca sumiu do build.yml',
+      );
+      expect(
+        texto,
+        contains('app/test/casca/auditoria_casca_test.dart'),
+        reason:
+            'o build.yml parou de conferir o caminho DESTE arquivo — sem isso, '
+            'apagar o verificador some com o contrato inteiro em silêncio',
+      );
+      // A execução NOMINAL, no portão do APK. `flutter test test/casca` roda
+      // um diretório: ele não distingue "a suíte passou" de "a suíte foi
+      // esvaziada", e é esse o ataque contra um gate de acessibilidade.
+      expect(
+        texto,
+        contains(r'flutter test "$SUITE" --reporter expanded'),
+        reason:
+            'o build.yml deixou de chamar a suíte PELO NOME, e voltou a '
+            'depender só da execução do diretório',
+      );
+      expect(
+        texto,
+        contains('SUITE=$kCaminhoA11yTerm'),
+        reason: 'a chamada nominal do build.yml aponta para outro arquivo',
+      );
+      expect(
+        texto,
+        contains('.github/scripts/testemunha_a11yterm.js'),
+        reason: 'a testemunha material saiu do build.yml',
+      );
+      // A GUARDA DO OVERLAY, que é a outra porta do mesmo passo. Sem ela, uma
+      // suíte que não chega ao `app_build` faz o `flutter test` reclamar de
+      // arquivo inexistente — e reclamar é o melhor caso. Este `if` transforma
+      // "não chegou" em vermelho com nome, antes de qualquer outra coisa.
+      expect(
+        texto,
+        contains(r'if [ ! -f "app_build/$SUITE" ]; then'),
+        reason:
+            'o passo de acessibilidade parou de conferir que a suíte chegou ao '
+            'overlay',
+      );
+    });
+
+    test('o ci-os-integracao executa a suíte como OBRIGATÓRIA', () {
+      if (!portao.existsSync()) return;
+      final String texto = portao.readAsStringSync();
+
+      expect(
+        texto,
+        contains('roda_obrigatorio $kGateA11yTerm $kCaminhoA11yTerm'),
+        reason:
+            'o gate $kGateA11yTerm não executa mais a suíte canônica, ou '
+            'deixou de ser obrigatório. `roda` trata arquivo ausente como NÃO '
+            'EXECUTADO, e NÃO EXECUTADO não reprova.',
+      );
+      // Este arquivo — o verificador — também não pode sumir em silêncio.
+      expect(
+        texto,
+        contains('roda_obrigatorio cascaaud test/casca/auditoria_casca_test.dart'),
+        reason:
+            'o gate cascaaud voltou a ser opcional. Ele é quem carrega o '
+            'contrato nominal: apagado, o portão seguiria verde sem contrato.',
+      );
+    });
+
+    test('o gate está nas TRÊS listas do portão', () {
+      if (!portao.existsSync()) return;
+      final String texto = portao.readAsStringSync();
+
+      // O laço que decide verde/vermelho, e não qualquer `for k in`.
+      //
+      // Este arquivo tem QUATRO laços sobre chaves de gate, e três deles não
+      // decidem nada: dois montam a evidência publicada e um cobra marcador
+      // dos obrigatórios. A primeira versão desta prova perguntava se a chave
+      // aparecia em ALGUM laço — e a resposta continuava sim depois de ela sair
+      // deste, porque seguia na lista dos obrigatórios logo abaixo.
+      //
+      // O laço que decide é reconhecido pelo que faz: é o único que levanta
+      // `fail`. É por ele que o run fica vermelho.
+      final RegExp lacoPrincipal = RegExp(
+        r'for k in ([^;]*); do\s*\n\s*if \[ -f "exit_\$k" \]; then\s*\n'
+        r'\s*v=\$\(cat "exit_\$k"\)[^\n]*\n\s*\[ "\$v" = "0" \] \|\| fail=1',
+      );
+      final Match? principal = lacoPrincipal.firstMatch(texto);
+      expect(
+        principal,
+        isNotNull,
+        reason:
+            'o laço que decide verde/vermelho sumiu do portão — sem ele nenhum '
+            'gate reprova coisa nenhuma',
+      );
+
+      for (final k in <String>[
+        kGateA11yTerm,
+        kGateA11yTermAtestado,
+        'cascaaud',
+      ]) {
+        expect(
+          RegExp('GATES="[^"]*\\b$k\\b').hasMatch(texto),
+          isTrue,
+          reason: '$k saiu da evidência publicada',
+        );
+        expect(
+          principal!.group(1)!.split(RegExp(r'\s+')),
+          contains(k),
+          reason:
+              '$k saiu do portão verde/vermelho — passaria a rodar sem poder '
+              'reprovar',
+        );
+      }
+      // A terceira lista: a dos obrigatórios, que é o que transforma
+      // "marcador ausente" em vermelho. Sem ela, matar o passo antes da hora
+      // devolve o run ao verde.
+      final RegExp obrigatorios = RegExp(
+        r'for k in ([^;]*); do\s*\n\s*if \[ ! -f "exit_\$k" \]',
+      );
+      final Match? m = obrigatorios.firstMatch(texto);
+      expect(
+        m,
+        isNotNull,
+        reason:
+            'o laço que reprova gate SEM MARCADOR sumiu do portão. Ele é o que '
+            'impede o passo morrer cedo e o run continuar verde.',
+      );
+      for (final k in <String>[
+        kGateA11yTerm,
+        kGateA11yTermAtestado,
+        'cascaaud',
+      ]) {
+        expect(
+          m!.group(1)!.split(RegExp(r'\s+')),
+          contains(k),
+          reason: '$k saiu da lista dos gates obrigatórios',
+        );
+      }
+
+      // E A DECISÃO CHEGA À SAÍDA DO PASSO.
+      //
+      // As três listas não valem nada se o passo terminar em `exit 0`: a
+      // tabela sai vermelha no log e o run segue verde. É a sabotagem mais
+      // barata do arquivo inteiro — um caractere — e a única prova contra ela
+      // é cobrar que a última palavra do portão seja o contador de falhas.
+      expect(
+        RegExp(r'echo "resultado: \$\(\[ \$fail -eq 0 \][^\n]*\n\s*exit \$fail')
+            .hasMatch(texto),
+        isTrue,
+        reason:
+            'o portão verde/vermelho não termina mais em `exit \$fail`. '
+            'Trocado por `exit 0`, ele imprime o veredito e não o aplica.',
+      );
+    });
+
+    test('a execução deixa as provas que a testemunha precisa ler', () {
+      if (!portao.existsSync()) return;
+      final String texto = portao.readAsStringSync();
+
+      // Cada literal abaixo é uma prova que a execução tem de PRODUZIR. Sem
+      // ela, a testemunha fica sem o que conferir e o gate volta a acreditar
+      // no próprio código de saída.
+      for (final marca in <String>[
+        r'date -u +%s > "carimbo_$k"', // o instante ANTES da execução
+        r'"json:../rel_$k.json"', // o relatório de máquina do Flutter
+        r'echo ${PIPESTATUS[0]} > "exit_$k"', // o marcador de execução
+        r'tee "t_$k.log"', // o log real
+      ]) {
+        expect(
+          texto,
+          contains(marca),
+          reason:
+              '`roda_obrigatorio` parou de produzir `$marca` — sem essa prova '
+              'a testemunha material não tem o que conferir',
+        );
+      }
+      // A limpeza é parte da prova: sem ela, artefato de execução anterior —
+      // ou plantado à mão — passaria por resultado desta.
+      expect(
+        texto,
+        contains(r'rm -f "exit_$k" "t_$k.log" "rel_$k.json" "carimbo_$k"'),
+        reason: '`roda_obrigatorio` parou de limpar os artefatos antes de rodar',
+      );
+    });
+
+    test('a testemunha material existe e é chamada nos DOIS portões', () {
+      final File testemunha =
+          File('../.github/scripts/testemunha_a11yterm.js');
+      const String chamada =
+          'node .github/scripts/testemunha_a11yterm.js . '
+          'app_build/test/casca/auditoria_casca_test.dart';
+
+      // Se a raiz do repositório está alcançável — e no CI ela está, porque
+      // `app_build` nasce ao lado de `.github` —, a ausência da testemunha é
+      // vermelho, e não silêncio.
+      if (portao.existsSync() || construcao.existsSync()) {
+        expect(
+          testemunha.existsSync(),
+          isTrue,
+          reason:
+              '.github/scripts/testemunha_a11yterm.js sumiu. Sem ela os dois '
+              'portões voltam a acreditar no próprio código de saída.',
+        );
+      }
+
+      if (testemunha.existsSync()) {
+        final String js = testemunha.readAsStringSync();
+        // Ela lê a relação nominal DAQUI, e não de uma cópia. É isso que
+        // impede a segunda fonte de gates: apagar a lista desta fonte faz a
+        // testemunha reprovar, e não afrouxar.
+        expect(
+          js,
+          contains('kCasosOriginaisA11yTerm'),
+          reason:
+              'a testemunha parou de ler a relação nominal da fonte única — '
+              'ou passou a carregar uma cópia própria',
+        );
+        expect(
+          js,
+          contains('kCaminhoA11yTerm'),
+          reason: 'a testemunha parou de ler o caminho canônico daqui',
+        );
+        expect(
+          RegExp(r'const PISO = 21;').hasMatch(js),
+          isTrue,
+          reason:
+              'o piso de 21 casos mudou na testemunha sem mudar aqui — as duas '
+              'autoridades divergiram',
+        );
+        for (final marca in <String>[
+          'exit_\${GATE}',
+          't_\${GATE}.log',
+          'rel_\${GATE}.json',
+          'carimbo_\${GATE}',
+        ]) {
+          expect(
+            js,
+            contains(marca),
+            reason: 'a testemunha parou de olhar para `$marca`',
+          );
+        }
+      }
+
+      if (portao.existsSync()) {
+        final String texto = portao.readAsStringSync();
+        expect(
+          texto,
+          contains(chamada),
+          reason:
+              'o ci-os-integracao parou de chamar a testemunha material do '
+              'gate $kGateA11yTerm',
+        );
+        expect(
+          texto,
+          contains('echo "\$v" > exit_$kGateA11yTermAtestado'),
+          reason:
+              'a testemunha deixou de gravar o próprio marcador — sem ele, '
+              'matar o passo antes da hora devolve o run ao verde',
+        );
+      }
+
+      if (construcao.existsSync()) {
+        final String texto = construcao.readAsStringSync();
+        expect(
+          texto,
+          contains(chamada),
+          reason: 'o build.yml parou de chamar a testemunha material',
+        );
+        expect(
+          texto,
+          contains('date -u +%s > carimbo_a11yterm'),
+          reason: 'o build.yml parou de carimbar a execução',
+        );
+        expect(
+          texto,
+          contains('"json:../rel_a11yterm.json"'),
+          reason: 'o build.yml parou de produzir o relatório de máquina',
+        );
+      }
     });
   });
 }

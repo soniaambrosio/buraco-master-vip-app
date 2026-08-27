@@ -319,6 +319,41 @@ jobs:
           flutter test test/casca --reporter expanded
           echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DE ACESSIBILIDADE — estados terminais da casca (a11yterm)"
+        # OS 20-C1. O passo acima roda `flutter test test/casca` — um DIRETÓRIO.
+        # Ele não distingue "a suíte passou" de "a suíte foi esvaziada", e é
+        # justamente esse o ataque contra um gate de acessibilidade: o defeito
+        # que ele fecha é invisível para quem enxerga a tela, então ninguém
+        # tropeça nele por acidente e ninguém percebe quando volta.
+        #
+        # Aqui a suíte é chamada PELO NOME, produzindo carimbo, log, marcador e
+        # relatório de máquina; e a mesma testemunha do outro portão confere o
+        # que saiu — placar real, zero falhas, zero desligados, origem de cada
+        # caso no caminho canônico e a relação nominal inteira, lida da fonte
+        # única de gates. Ela não acredita em texto verde escrito à mão.
+        run: |
+          SUITE=test/casca/a11y_estados_terminais_test.dart
+          if [ ! -f "app_build/$SUITE" ]; then
+            echo "ERRO: $SUITE não chegou ao overlay — o portão de acessibilidade é OBRIGATÓRIO."
+            exit 1
+          fi
+          if [ ! -f .github/scripts/testemunha_a11yterm.js ]; then
+            echo "ERRO: a testemunha material sumiu — sem ela este portão volta a acreditar no próprio exit code."
+            exit 1
+          fi
+          command -v node >/dev/null || { echo "ERRO: node ausente no runner — a testemunha não tem como rodar."; exit 1; }
+          rm -f exit_a11yterm t_a11yterm.log rel_a11yterm.json carimbo_a11yterm
+          date -u +%s > carimbo_a11yterm
+          # Um segundo de folga: carimbo e log são comparados com granularidade
+          # de segundo, e um log gravado no MESMO segundo não prova ordem.
+          sleep 1
+          set +e
+          ( cd app_build && flutter test "$SUITE" --reporter expanded --file-reporter="json:../rel_a11yterm.json" ) 2>&1 | tee t_a11yterm.log
+          echo ${PIPESTATUS[0]} > exit_a11yterm
+          set -e
+          node .github/scripts/testemunha_a11yterm.js . app_build/test/casca/auditoria_casca_test.dart
+          echo "PORTÃO VERDE: estados terminais da casca operáveis por quem não vê a tela, no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
         # validado por perfil de build, protocolo 2 no handshake, renovação de
