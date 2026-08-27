@@ -58,6 +58,15 @@ jobs:
   validar:
     runs-on: ubuntu-latest
     steps:
+      - name: Carimbo deste run (data a evidência)
+        run: |
+          # ESCRITO ANTES DE QUALQUER LOG EXISTIR. É por ele que
+          # `verificar_a11yrank.sh` distingue evidência PRODUZIDA aqui de
+          # evidência remanescente: um `t_<gate>.log` mais velho que este
+          # arquivo não é evidência deste run.
+          date -u +%Y-%m-%dT%H:%M:%SZ > carimbo_execucao
+          echo "run ${{ github.run_id }} @ ${{ github.sha }}" >> carimbo_execucao
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -181,7 +190,7 @@ jobs:
           # Ela NAO substitui o gate `a11yrank`: aquele prova que os casos
           # passam, este prova que os casos EXISTEM e continuam sendo 35.
           ALVO="app/test/ranking/a11y_ranking_cabecalho_escala_test.dart"
-          MINIMO=35
+          MINIMO=55
           st=0
 
           if [ ! -f "$ALVO" ]; then
@@ -217,6 +226,26 @@ jobs:
           echo $st > exit_a11yguard
           echo "guarda a11y = $st"
           exit 0
+
+      - name: "2c — CONTRATO EXTERNO do gate A11Y do Ranking (falha fechada)"
+        if: always()
+        run: |
+          # SEM `set +e`, e de propósito. O Actions roda cada `run:` com
+          # `bash -e {0}`: se o verificador sair diferente de zero, o passo
+          # aborta e o job vai a pique AQUI — sem depender de ser somado no
+          # portão lá na frente.
+          #
+          # É essa independência que fecha S9 e S17. A OS 19-R1 mediu as duas:
+          # trocar `exit $fail` por `exit 0`, e apagar o `fail=1` da ausência
+          # de marcador preservando a mensagem, deixavam o job verde porque a
+          # ÚNICA decisão do CI morava naquele último passo. Agora há uma
+          # segunda, num arquivo versionado que o YAML apenas invoca — e o
+          # verificador confere que a própria invocação continua escrita aqui.
+          #
+          # FASE A + FASE B numa chamada só: o diretório de resultados é a raiz
+          # do workspace, que é onde `roda()` grava `t_<gate>.log` e
+          # `exit_<gate>`.
+          bash scripts/ci/verificar_a11yrank.sh . .github/workflows/ci-os-integracao.yml .
 
       - name: "3a — codebase BILLING (functions-billing), sem emulador"
         run: |

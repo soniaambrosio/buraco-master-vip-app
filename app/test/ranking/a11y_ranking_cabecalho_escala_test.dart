@@ -56,6 +56,14 @@ const contaA = 'P0A1B2C3D4E5';
 const alvoX = 'PXX1XX2XX3XX';
 const alvoY = 'PYY1YY2YY3YY';
 
+/// O PISO VISUAL da coluna de colocação, a 100%.
+///
+/// Fixado AQUI, e não importado de `kLarguraDaColocacao`: importar a constante
+/// faria a prova concordar com qualquer valor que a produção escolhesse, e
+/// baixá-la de 44 para 20 passaria sem ninguém dizer nada. O número está no
+/// teste para que mudá-lo seja uma decisão que aparece no diff.
+const double kPisoDaColocacao = 44;
+
 /// Um apelido longo de verdade. É o apelido comprido que revela o corte a 200%.
 const nomeLongo = 'Mariana Aparecida Nascimento';
 
@@ -191,8 +199,12 @@ class TransporteRegulavel extends TransporteRanking {
 
 /// Superfície de telefone. Um teste de widget nasce em 800x600 lógicos — mais
 /// largo que qualquer telefone —, e é justamente a largura que esta OS mede.
-void telefone(WidgetTester tester) {
-  tester.view.physicalSize = const Size(1080, 2340);
+///
+/// [larguraDp] existe para a matriz geometrica da A5, que varre 320, 360 e 412.
+/// O padrao 360 e o telefone de sempre: quem ja chamava `telefone(tester)`
+/// continua medindo exatamente a mesma superficie.
+void telefone(WidgetTester tester, {double larguraDp = 360}) {
+  tester.view.physicalSize = Size(larguraDp * 3, 2340);
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
 }
@@ -293,6 +305,75 @@ void dentroDaLargura(WidgetTester tester, String contexto) {
   }
 }
 
+
+/// Rola a lista até [alvo] existir na árvore.
+///
+/// A `ListView` só constrói o que cabe na viewport, e com fonte grande a linha
+/// de `#123` nasce fora dela: medir sem rolar mediria a AUSÊNCIA da linha e
+/// chamaria isso de aprovação. Devolve `false` quando o alvo não aparece, e é
+/// a prova que reprova — não um `skip` silencioso.
+Future<bool> rolarAte(WidgetTester tester, Finder alvo) async {
+  if (alvo.evaluate().isNotEmpty) return true;
+  if (find.byType(ListView).evaluate().isEmpty) return false;
+  for (var i = 0; i < 30; i++) {
+    await tester.drag(find.byType(ListView), const Offset(0, -160));
+    await tester.pump();
+    if (alvo.evaluate().isNotEmpty) return true;
+  }
+  return false;
+}
+
+/// A geometria de UMA coluna de colocação.
+class ColunaDeColocacao {
+  const ColunaDeColocacao({
+    required this.texto,
+    required this.caixa,
+    required this.pintado,
+    required this.cortado,
+  });
+
+  /// O que está escrito: `#2`, `#123`, `—`.
+  final String texto;
+
+  /// A caixa RESERVADA — o `SizedBox` que a `Row` respeita.
+  final Rect caixa;
+
+  /// O retângulo do parágrafo desenhado dentro dela.
+  final Rect pintado;
+
+  /// O `maxLines` cortou alguma coisa?
+  final bool cortado;
+}
+
+/// Todas as colunas de colocação que desenham [texto], na árvore montada.
+///
+/// Mede o `SizedBox` ANCESTRAL do parágrafo, que é a largura que a linha
+/// reserva — e não a largura dos glifos. A fonte de teste é quadrada e mente
+/// sobre largura de glifo; sobre CAIXA e POSIÇÃO ela não mente.
+List<ColunaDeColocacao> colunasDe(WidgetTester tester, String texto) {
+  final saida = <ColunaDeColocacao>[];
+  final alvo = find.text(texto);
+  for (var i = 0; i < alvo.evaluate().length; i++) {
+    final umTexto = alvo.at(i);
+    final caixa = find.ancestor(of: umTexto, matching: find.byType(SizedBox));
+    if (caixa.evaluate().isEmpty) continue;
+    final render = umTexto.evaluate().first.renderObject as RenderParagraph;
+    saida.add(
+      ColunaDeColocacao(
+        texto: texto,
+        caixa: tester.getTopLeft(caixa.first) & tester.getSize(caixa.first),
+        pintado: tester.getTopLeft(umTexto) & tester.getSize(umTexto),
+        cortado: render.didExceedMaxLines,
+      ),
+    );
+  }
+  return saida;
+}
+
+/// Onde a coluna do NOME começa, em coordenadas da tela.
+double inicioDoNome(WidgetTester tester, String nome) =>
+    tester.getTopLeft(find.text(nome).first).dx;
+
 // ===========================================================================
 // Montagem — sempre pelo caminho real
 // ===========================================================================
@@ -309,8 +390,9 @@ void abrirSessao() {
 Future<void> montar(
   WidgetTester tester, {
   double escala = 1.0,
+  double larguraDp = 360,
 }) async {
-  telefone(tester);
+  telefone(tester, larguraDp: larguraDp);
   ranking.aoMudarSessao(geracao: 1, publicId: contaA);
   await tester.pumpWidget(
     MediaQuery(
@@ -700,6 +782,315 @@ void main() {
         expect(texto, contains(esperado), reason: '"$esperado" fora do alcance');
       }
       semEstouro(tester, 'rolagem a 200%');
+    });
+  });
+
+
+  // =========================================================================
+  // A5 — a GEOMETRIA da coluna de colocação
+  // =========================================================================
+  //
+  // POR QUE ESTE GRUPO EXISTE. A OS 19-R1 mediu o buraco: restaurar
+  // `width: 44` fixo na linha do Ranking deixava os 35 casos anteriores
+  // VERDES. E deixava por construção — sem `maxLines`, o número simplesmente
+  // quebra em mais linhas dentro da caixa apertada, então não há estouro para
+  // `semEstouro` ver, não há corte para `textosCortados` ver, e o texto
+  // continua "alcançável" para a varredura de rolagem. A tela regredia e a
+  // suíte aplaudia.
+  //
+  // O que faltava era medir a CAIXA. Estas provas medem a largura que a linha
+  // RESERVA para a colocação, onde a coluna do nome começa, e a relação entre
+  // as duas — nunca a largura dos glifos. A fonte de `flutter_test` é quadrada
+  // e mente sobre largura de glifo; sobre caixa e posição ela não mente.
+  group('A5 — geometria da coluna de colocação', () {
+    for (final larguraDp in const [320.0, 360.0, 412.0]) {
+      for (final escala in const [1.0, 1.5, 1.75, 2.0]) {
+        final rotulo = '${larguraDp.toInt()}dp @ ${(escala * 100).round()}%';
+
+        testWidgets('A5 $rotulo — a coluna da colocação reserva largura '
+            'escalável, e o nome começa depois dela', (tester) async {
+          final handle = tester.ensureSemantics();
+          await montar(tester, escala: escala, larguraDp: larguraDp);
+
+          final esperada = kPisoDaColocacao * escala;
+          final medidas = <ColunaDeColocacao>[];
+
+          // ---- fase 1: o topo da tabela, sem rolar --------------------
+          // `#1` é o nome CURTO de terceiro; `#2` é o nome LONGO de quem
+          // está logado. As duas linhas convivem na mesma tela.
+          for (final numero in const ['#1', '#2']) {
+            final colunas = colunasDe(tester, numero);
+            expect(
+              colunas,
+              isNotEmpty,
+              reason: '$rotulo: a linha $numero não chegou à árvore',
+            );
+            medidas.addAll(colunas);
+          }
+          final colunaDoDono = colunasDe(tester, '#2').first;
+          expect(
+            inicioDoNome(tester, nomeLongo),
+            greaterThanOrEqualTo(colunaDoDono.caixa.right - 0.5),
+            reason: '$rotulo: o nome invade a coluna da colocação',
+          );
+          expect(
+            inicioDoNome(tester, nomeLongo),
+            closeTo(colunaDoDono.caixa.right, 1.0),
+            reason: '$rotulo: a coluna do nome não acompanhou a colocação',
+          );
+          dentroDaLargura(tester, 'topo da tabela a $rotulo');
+
+          // ---- fase 2: a colocação de TRÊS DÍGITOS --------------------
+          // Ela nasce fora da viewport quando a fonte cresce. Rolar é
+          // obrigatório: medir sem rolar mediria a ausência da linha e
+          // chamaria isso de aprovação.
+          expect(
+            await rolarAte(tester, find.text('#123')),
+            isTrue,
+            reason: '$rotulo: a linha #123 não é alcançável nem rolando',
+          );
+          final tresDigitos = colunasDe(tester, '#123');
+          expect(tresDigitos, isNotEmpty, reason: '$rotulo: #123 sem caixa');
+          medidas.addAll(tresDigitos);
+          expect(
+            inicioDoNome(tester, 'Centesimo Vigesimo Terceiro'),
+            greaterThanOrEqualTo(tresDigitos.first.caixa.right - 0.5),
+            reason: '$rotulo: #123 e o nome se sobrepõem',
+          );
+
+          // ---- o que vale para TODAS as colunas medidas ---------------
+          for (final c in medidas) {
+            expect(
+              c.caixa.width,
+              closeTo(esperada, 0.5),
+              reason: '$rotulo: "${c.texto}" reservou ${c.caixa.width} '
+                  'quando a escala pede $esperada',
+            );
+            expect(
+              c.cortado,
+              isFalse,
+              reason: '$rotulo: "${c.texto}" foi cortado',
+            );
+            expect(
+              c.pintado.right,
+              lessThanOrEqualTo(c.caixa.right + 0.5),
+              reason: '$rotulo: "${c.texto}" transborda a caixa reservada',
+            );
+            expect(
+              c.pintado.left,
+              greaterThanOrEqualTo(c.caixa.left - 0.5),
+              reason: '$rotulo: "${c.texto}" começa antes da caixa',
+            );
+          }
+
+          // ALINHAMENTO: todas as linhas reservam a MESMA largura e começam
+          // na MESMA coluna. Uma tabela em que cada linha reserva o seu não
+          // é uma tabela.
+          final larguras = medidas.map((c) => c.caixa.width).toSet();
+          expect(
+            larguras.length,
+            1,
+            reason: '$rotulo: as linhas reservaram larguras diferentes: '
+                '$larguras',
+          );
+          final esquerdas = medidas.map((c) => c.caixa.left).toSet();
+          expect(
+            esquerdas.length,
+            1,
+            reason: '$rotulo: as colunas não estão alinhadas: $esquerdas',
+          );
+
+          // E o resto da tela continua de pé.
+          expect(textosCortados(tester), isEmpty, reason: 'corte a $rotulo');
+          expect(find.byType(ListView), findsOneWidget);
+          expect(cabecalhos(tester), contains('Ranking'));
+          semEstouro(tester, 'geometria a $rotulo');
+          handle.dispose();
+        });
+      }
+
+      testWidgets('A5p ${larguraDp.toInt()}dp — a largura reservada cresce '
+          'estritamente com a escala, e o número não ganha linha', (
+        tester,
+      ) async {
+        // A PROVA DE PROGRESSÃO, e ela é toda RELATIVA. Nenhuma asserção aqui
+        // depende de quanto um glifo mede: o que se afirma é que a caixa
+        // multiplica pelo mesmo fator do texto, e que por isso o número
+        // continua ocupando as mesmas linhas que ocupava a 100%.
+        const escalas = <double>[1.0, 1.5, 1.75, 2.0];
+        final larguraPorEscala = <double, double>{};
+        final alturaPorEscala = <double, double>{};
+
+        for (final escala in escalas) {
+          abrirSessao();
+          await montar(tester, escala: escala, larguraDp: larguraDp);
+          expect(
+            await rolarAte(tester, find.text('#123')),
+            isTrue,
+            reason: '#123 inalcançável a ${escala}x',
+          );
+          final c = colunasDe(tester, '#123').first;
+          larguraPorEscala[escala] = c.caixa.width;
+          alturaPorEscala[escala] = c.caixa.height;
+          semEstouro(tester, 'progressão a ${escala}x');
+        }
+
+        final piso = larguraPorEscala[1.0]!;
+        expect(
+          piso,
+          closeTo(kPisoDaColocacao, 0.5),
+          reason: 'a 100% o piso visual original mudou: $piso',
+        );
+
+        for (var i = 1; i < escalas.length; i++) {
+          final anterior = larguraPorEscala[escalas[i - 1]]!;
+          final atual = larguraPorEscala[escalas[i]]!;
+          expect(
+            atual,
+            greaterThan(anterior),
+            reason: 'a largura não cresceu de ${escalas[i - 1]}x '
+                'para ${escalas[i]}x: $anterior -> $atual',
+          );
+          expect(
+            atual / piso,
+            closeTo(escalas[i], 0.02),
+            reason: 'a largura não acompanhou a escala ${escalas[i]}x',
+          );
+        }
+
+        // INVARIÂNCIA DE LINHAS. Altura dividida pela escala é constante
+        // quando — e só quando — o número continua cabendo nas mesmas linhas.
+        // Com a caixa presa em 44, `#123` passa a precisar de mais linhas à
+        // medida que a fonte cresce, e é aqui que isso aparece sem que uma
+        // única largura de glifo seja afirmada.
+        final referencia = alturaPorEscala[1.0]!;
+        for (final escala in escalas) {
+          expect(
+            alturaPorEscala[escala]! / escala,
+            closeTo(referencia, 1.0),
+            reason: 'a ${escala}x o número #123 passou a ocupar mais linhas: '
+                '${alturaPorEscala[escala]} para escala $escala',
+          );
+        }
+      });
+    }
+  });
+
+
+  // =========================================================================
+  // A6 — a suíte guarda o VERIFICADOR que guarda a suíte
+  // =========================================================================
+  //
+  // O PAR, E POR QUE ELE PRECISA SER UM PAR. `scripts/ci/verificar_a11yrank.sh`
+  // é a autoridade externa do gate: é ele que sabe o caminho canônico, o piso
+  // de casos e os blocos que não podem sumir daqui. Sem nada olhando para ele,
+  // bastava trocar o `exit 1` final por `exit 0` e a autoridade inteira virava
+  // enfeite — em silêncio, num arquivo que ninguém mais lê.
+  //
+  // Nenhum dos dois lados guarda o DIGEST do outro: isso seria um ciclo, e um
+  // ciclo não fecha. O verificador guarda o CONTEÚDO desta suíte; esta suíte
+  // guarda as INVARIANTES dele. Neutralizar um acende o outro.
+  group('A6 — o contrato externo continua sendo autoridade', () {
+    final verificador = File('../scripts/ci/verificar_a11yrank.sh');
+
+    test('A6a — o verificador existe e é alcançável a partir da suíte', () {
+      expect(
+        verificador.existsSync(),
+        isTrue,
+        reason: 'o contrato externo do gate a11yrank sumiu do repositório',
+      );
+    });
+
+    test('A6b — ele decide: reprovação sai com exit diferente de zero', () {
+      final fonte = verificador.readAsStringSync();
+      // Sem comentário: a explicação da sabotagem cita o próprio literal que
+      // se procura, e uma prova de presença que lê comentário aprova o texto
+      // que descreve a remoção.
+      final codigo = fonte
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('#'))
+          .join('\n');
+      expect(
+        codigo,
+        contains('exit 1'),
+        reason: 'o verificador deixou de reprovar — vira enfeite',
+      );
+      expect(
+        codigo,
+        contains(r'if [ "$falhas" -eq 0 ]'),
+        reason: 'o verificador perdeu a decisão derivada da contagem de falhas',
+      );
+    });
+
+    test('A6c — o piso e o caminho canônico continuam declarados nele', () {
+      final codigo = verificador
+          .readAsStringSync()
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('#'))
+          .join('\n');
+      expect(codigo, contains('readonly PISO_CASOS=55'));
+      expect(
+        codigo,
+        contains(
+          'readonly SUITE=\'app/test/ranking/'
+          'a11y_ranking_cabecalho_escala_test.dart\'',
+        ),
+        reason: 'o verificador aponta para outra suíte',
+      );
+      expect(
+        codigo,
+        contains("readonly LARGURAS='320 360 412'"),
+        reason: 'a matriz de larguras saiu do contrato externo',
+      );
+      expect(
+        codigo,
+        contains("readonly ESCALAS='100 150 175 200'"),
+        reason: 'a matriz de escalas saiu do contrato externo',
+      );
+    });
+
+    test('A6d — os dois marcadores continuam exigidos', () {
+      final codigo = verificador
+          .readAsStringSync()
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('#'))
+          .join('\n');
+      // CONTAGEM, e nao presenca. O literal aparece tres vezes no
+      // verificador — lista obrigatoria do portao, evidencia publicada e
+      // marcadores da FASE B —, e tirar UMA delas deixaria as outras duas
+      // satisfazendo um `contains`. Piso, e nao existencia.
+      final ocorrencias = RegExp(
+        r'for chave in a11yrank a11yguard; do',
+      ).allMatches(codigo).length;
+      expect(
+        ocorrencias,
+        greaterThanOrEqualTo(3),
+        reason: 'o verificador parou de exigir um dos dois marcadores '
+            'em algum dos tres pontos (achei $ocorrencias)',
+      );
+    });
+
+    test('A6e — o workflow continua invocando o verificador', () {
+      final yml = File('../.github/workflows/ci-os-integracao.yml');
+      expect(yml.existsSync(), isTrue);
+      final codigo = yml
+          .readAsStringSync()
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('#'))
+          .join('\n');
+      expect(
+        codigo,
+        contains('bash scripts/ci/verificar_a11yrank.sh'),
+        reason: 'o passo 2c sumiu do workflow: a autoridade externa não roda',
+      );
+      expect(
+        codigo,
+        contains(
+          'roda a11yrank   test/ranking/'
+          'a11y_ranking_cabecalho_escala_test.dart',
+        ),
+        reason: 'o executor do gate saiu do workflow',
+      );
     });
   });
 
