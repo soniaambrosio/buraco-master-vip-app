@@ -88,6 +88,225 @@ contem_gate() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# A INVOCAÇÃO OFICIAL DA TESTEMUNHA DO `contratosui` — O PASSO ZERO (OS 40-C4)
+# ---------------------------------------------------------------------------
+#
+# O que o CI de fato executa, por extenso, e ESPREMIDO — o YAML alinha em
+# colunas, e uma guarda que dependesse da largura do alinhamento reprovaria na
+# próxima vez que alguém alinhasse a tabela.
+readonly INVOCACAO_OFICIAL='bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log'
+readonly CAPTURA_OFICIAL='echo ${PIPESTATUS[0]} > exit_contratosui'
+# O NÚCLEO é o que identifica uma CHAMADA à testemunha, e não uma menção a ela.
+# `if [ ! -f scripts/ci/testemunha_contratosui.sh ]` cita o arquivo e não o
+# executa; `bash scripts/ci/testemunha_contratosui.sh` executa.
+readonly NUCLEO_INVOCACAO='bash scripts/ci/testemunha_contratosui.sh'
+readonly PASSO_DA_TESTEMUNHA='0b'
+readonly CONSUMIDOR_DA_EVIDENCIA='scripts/ci/verificar_contrato_suites.sh'
+
+# `classificar_workflow <yml> <saida>` — um registro por linha:
+#
+#   <linha>\t<passo>\t<CODIGO|COMENTARIO|HEREDOC|PASSO>\t<conteúdo espremido>
+#
+# É a diferença entre "o texto está no arquivo" e "o CI executa aquilo". Uma
+# linha comentada, uma linha dentro de heredoc e uma linha viva são três coisas
+# distintas, e as três se parecem para um `grep`.
+#
+# A LEITURA É FEITA SÓ COM EXPANSÃO DE PARÂMETRO, sem `sed`/`awk`/`tr` por
+# linha. Não é microotimização: são novecentas linhas de YAML, e um `fork` por
+# linha nesta plataforma custa mais que a matriz inteira do agregador — uma
+# bancada que ninguém roda antes de commitar é uma bancada que não guarda nada.
+ASPA_SIMPLES="'"
+ASPA_DUPLA='"'
+
+classificar_workflow() {
+  local arq="$1" saida="$2"
+  local n=0 passo=0 bruta linha nu espremida fim_heredoc='' resto
+  {
+    while IFS= read -r bruta || [ -n "$bruta" ]; do
+      n=$((n + 1))
+      linha="${bruta%$'\r'}"
+      nu="${linha#"${linha%%[![:blank:]]*}"}"
+      espremida="${nu//$'\t'/ }"
+      while [ "$espremida" != "${espremida//  / }" ]; do
+        espremida="${espremida//  / }"
+      done
+      espremida="${espremida% }"
+
+      # Dentro de heredoc NADA é código: é dado que o shell entrega a outro
+      # programa. Uma invocação escondida aí é texto, e texto não roda.
+      if [ -n "$fim_heredoc" ]; then
+        [ "$nu" = "$fim_heredoc" ] && fim_heredoc=''
+        printf '%s\t%s\tHEREDOC\t%s\n' "$n" "$passo" "$espremida"
+        continue
+      fi
+
+      case "$linha" in
+        '      - name: '*)
+          passo=$((passo + 1))
+          printf '%s\t%s\tPASSO\t%s\n' "$n" "$passo" "$espremida"
+          continue
+          ;;
+      esac
+
+      case "$nu" in
+        '#'*)
+          printf '%s\t%s\tCOMENTARIO\t%s\n' "$n" "$passo" "$espremida"
+          continue
+          ;;
+      esac
+
+      printf '%s\t%s\tCODIGO\t%s\n' "$n" "$passo" "$espremida"
+
+      # ABERTURA DE HEREDOC, depois de classificar a própria linha: o `<<` mora
+      # numa linha de código, e o que vira dado é o que vem DEPOIS dela.
+      case "$nu" in
+        *'<<'*)
+          resto="${nu##*<<}"
+          resto="${resto#-}"
+          resto="${resto#"${resto%%[![:blank:]]*}"}"
+          resto="${resto%%[[:blank:]]*}"
+          # AS ASPAS SAEM POR VARIAVEL, e nao por barra invertida dentro de
+          # `"..."`. `\'` ali nao e escape em sh: a analise lexica do proprio
+          # contrato de conteudo lê aquilo como uma string que nunca fecha, e um
+          # arquivo "aberto" faz TODA agulha virar texto inerte.
+          resto="${resto//$ASPA_SIMPLES/}"
+          resto="${resto//$ASPA_DUPLA/}"
+          [ -n "$resto" ] && fim_heredoc="$resto"
+          ;;
+      esac
+    done < "$arq"
+  } > "$saida"
+}
+
+# `guarda_invocacao_testemunha <yml>` — exit 0 só quando a invocação oficial
+# está viva, única, exata, no passo certo, ligada ao `tee` real, antes de quem
+# consome a evidência dela, e com o código de saída capturado logo em seguida.
+#
+# Cada recusa é NOMEADA. Uma guarda que responde "não" sem dizer qual das oito
+# perguntas falhou é uma guarda que ninguém consegue consertar sem afrouxar.
+guarda_invocacao_testemunha() {
+  local yml="$1" reg="$TMP/classificado.txt" ruim=0
+  local ln passo tipo texto
+  local linha_inv=0 passo_inv=0 vivas=0
+  local linha_cap=0 passo_cap=0 capturas=0
+  local passo_consumidor=0 evidencia_antes=0 entre=0
+
+  classificar_workflow "$yml" "$reg"
+
+  while IFS=$'\t' read -r ln passo tipo texto; do
+    case "$tipo" in
+      CODIGO)
+        if [ "$texto" = "$INVOCACAO_OFICIAL" ]; then
+          vivas=$((vivas + 1))
+          [ "$linha_inv" -eq 0 ] && { linha_inv="$ln"; passo_inv="$passo"; }
+        fi
+        if [ "$texto" = "$CAPTURA_OFICIAL" ]; then
+          capturas=$((capturas + 1))
+          [ "$linha_cap" -eq 0 ] && { linha_cap="$ln"; passo_cap="$passo"; }
+        fi
+        case "$texto" in
+          *"$NUCLEO_INVOCACAO"*)
+            if [ "$texto" != "$INVOCACAO_OFICIAL" ]; then
+              printf 'INVOCACAO: chamada da testemunha com forma NAO OFICIAL na linha %s: %s\n' "$ln" "$texto"
+              ruim=1
+            fi
+            case "$texto" in
+              echo*|printf*|*'echo '*"$NUCLEO_INVOCACAO"*|*'printf '*"$NUCLEO_INVOCACAO"*)
+                printf 'INVOCACAO: a linha %s IMPRIME a invocacao em vez de executa-la: %s\n' "$ln" "$texto"
+                ruim=1
+                ;;
+            esac
+            case "$texto" in
+              *'|| true'*|*'|| :'*|*'||true'*|*'|| /bin/true'*|*'|| echo'*|*'; true'*|*'|| exit 0'*)
+                printf 'INVOCACAO: a linha %s neutraliza o codigo de saida da testemunha: %s\n' "$ln" "$texto"
+                ruim=1
+                ;;
+            esac
+            ;;
+        esac
+        case "$texto" in
+          *"$CONSUMIDOR_DA_EVIDENCIA"*)
+            [ "$passo_consumidor" -eq 0 ] && passo_consumidor="$passo"
+            ;;
+        esac
+        ;;
+      COMENTARIO | HEREDOC)
+        case "$texto" in
+          *"$NUCLEO_INVOCACAO"*)
+            printf 'INVOCACAO: a invocacao aparece como %s na linha %s — texto nao executa: %s\n' "$tipo" "$ln" "$texto"
+            ruim=1
+            ;;
+        esac
+        ;;
+    esac
+  done < "$reg"
+
+  if [ "$vivas" -eq 0 ]; then
+    printf 'INVOCACAO: o workflow nao tem a invocacao oficial VIVA: %s\n' "$INVOCACAO_OFICIAL"
+    ruim=1
+  elif [ "$vivas" -gt 1 ]; then
+    printf 'INVOCACAO: a invocacao oficial aparece %s vezes — duplicada, e o exit lido nao e o de ninguem\n' "$vivas"
+    ruim=1
+  fi
+
+  if [ "$capturas" -ne 1 ]; then
+    printf 'INVOCACAO: a captura oficial do codigo de saida aparece %s vez(es): %s\n' "$capturas" "$CAPTURA_OFICIAL"
+    ruim=1
+  fi
+
+  if [ "$linha_inv" -gt 0 ]; then
+    # O PASSO CERTO. Mover a invocação para outro passo a tira do lugar em que a
+    # evidência é produzida antes de ser consumida.
+    passo_nome="$(awk -F'\t' -v p="$passo_inv" '$3 == "PASSO" && $2 == p { print $4 }' "$reg")"
+    case "$passo_nome" in
+      *"\"$PASSO_DA_TESTEMUNHA "*) ;;
+      *)
+        printf 'INVOCACAO: a invocacao esta no passo "%s", e nao no passo %s\n' "$passo_nome" "$PASSO_DA_TESTEMUNHA"
+        ruim=1
+        ;;
+    esac
+
+    # A CAPTURA VEM LOGO DEPOIS, no mesmo passo, e SEM NADA NO MEIO. Uma linha
+    # entre as duas troca o `PIPESTATUS` que é lido: o exit deixa de ser o da
+    # testemunha sem que uma letra da invocação mude.
+    if [ "$linha_cap" -le "$linha_inv" ] || [ "$passo_cap" -ne "$passo_inv" ]; then
+      printf 'INVOCACAO: a captura do codigo de saida nao vem logo depois da invocacao (linha %s contra %s)\n' \
+        "$linha_cap" "$linha_inv"
+      ruim=1
+    else
+      entre="$(awk -F'\t' -v a="$linha_inv" -v b="$linha_cap" \
+        '$3 == "CODIGO" && $1 > a && $1 < b { n++ } END { print n + 0 }' "$reg")"
+      if [ "$entre" -ne 0 ]; then
+        printf 'INVOCACAO: ha %s linha(s) de codigo entre a invocacao e a captura do PIPESTATUS\n' "$entre"
+        ruim=1
+      fi
+    fi
+
+    # A EVIDÊNCIA NÃO PODE NASCER ANTES DA EXECUÇÃO. Um `exit_contratosui` ou um
+    # `t_contratosui.log` escrito antes da invocação é resultado fabricado.
+    evidencia_antes="$(awk -F'\t' -v a="$linha_inv" '
+      $3 == "CODIGO" && $1 < a && ($4 ~ /> *exit_contratosui/ || $4 ~ /t_contratosui\.log/) { n++ }
+      END { print n + 0 }' "$reg")"
+    if [ "$evidencia_antes" -ne 0 ]; then
+      printf 'INVOCACAO: %s linha(s) criam evidencia de contratosui ANTES da execucao verdadeira\n' "$evidencia_antes"
+      ruim=1
+    fi
+
+    # ANTES DE QUEM CONSOME. A FASE A e a FASE B leem o que este passo produziu.
+    if [ "$passo_consumidor" -eq 0 ]; then
+      printf 'INVOCACAO: o workflow nao tem nenhum consumidor vivo de %s\n' "$CONSUMIDOR_DA_EVIDENCIA"
+      ruim=1
+    elif [ "$passo_inv" -ge "$passo_consumidor" ]; then
+      printf 'INVOCACAO: a invocacao (passo %s) nao vem antes de quem consome a evidencia dela (passo %s)\n' \
+        "$passo_inv" "$passo_consumidor"
+      ruim=1
+    fi
+  fi
+
+  return "$ruim"
+}
+
 printf '== invariantes da fonte única ==\n'
 
 # A fonte tem que continuar declarando TODO gate que já era obrigatório antes
@@ -258,17 +477,36 @@ fi
 
 # O verificador de CONTEÚDO e a matriz dele. `contratosui` sem produtor seria
 # gate fantasma; produtor sem gate seria CI-02 outra vez.
+#
+# A INVOCAÇÃO DO PASSO ZERO NÃO É MAIS UM `grep`, e a razão está medida. Até a
+# OS 40-C3 esta prova procurava a linha `bash scripts/ci/teste_contrato_suites.sh`
+# — a chamada DIRETA à matriz. A C3 trocou o executor pela TESTEMUNHA EXTERNA,
+# que passou a receber a matriz como argumento, e a agulha deixou de casar: o
+# `portaoci` reprovou a árvore íntegra, e a rehomologação OS 40-R4 encerrou em
+# FAIL por regressão fail-closed. Um portão que reprova o repositório correto é
+# a pressão mais forte que existe para alguém afrouxar o portão.
+#
+# A correção não é atualizar a agulha. Uma agulha textual não distingue a linha
+# VIVA da linha comentada, da que está dentro de um `echo`, da que mora num
+# heredoc, da duplicada, nem da que foi movida para outro passo — e cada uma
+# dessas é uma forma de desligar a testemunha conservando o texto. Quem responde
+# é `guarda_invocacao_testemunha`, logo abaixo: ela classifica o YAML linha a
+# linha e cobra a invocação oficial VIVA, ÚNICA, com os argumentos exatos, no
+# passo correto, ligada ao `tee` real, antes de quem consome a evidência dela, e
+# sem nada entre a chamada e a captura do código de saída.
 faltando=""
 contem_gate contratosui || faltando=" contratosui-fora-da-fonte"
-grep -q 'bash scripts/ci/teste_contrato_suites.sh' "$YML" || faltando="$faltando matriz-sem-passo"
+guarda_invocacao_testemunha "$YML" > "$TMP/i10.txt" 2>&1 \
+  || faltando="$faltando invocacao-oficial-desligada"
 [ "$(grep -c 'scripts/ci/verificar_contrato_suites\.sh' "$YML")" -ge 2 ] \
   || faltando="$faltando verificador-sem-as-duas-fases"
 grep -qE 'verificar_contrato_suites\.sh [^|]*\.github/workflows/ci-os-integracao\.yml \.$' "$YML" \
   || faltando="$faltando fase-B-ausente"
 if [ -z "$faltando" ]; then
-  ok "I10 — o contrato de conteúdo tem gate, matriz e as duas fases no YAML"
+  ok "I10 — o contrato de conteúdo tem gate, invocação oficial viva e as duas fases no YAML"
 else
   nok "I10 — a guarda de conteúdo foi desligada:$faltando"
+  sed 's/^/        | /' "$TMP/i10.txt"
 fi
 
 # E a fonte única tem de continuar carregando o contrato das suítes protegidas.
@@ -287,6 +525,231 @@ if [ -z "$sem_contrato" ]; then
 else
   nok "I11 — suíte protegida sem contrato de conteúdo na fonte única:$sem_contrato"
 fi
+
+printf '\n== a invocação oficial da testemunha, sabotada de onze maneiras ==\n'
+
+# UMA GUARDA QUE NUNCA REPROVOU NÃO É GUARDA. I10 prova que a árvore íntegra
+# passa; sem os vetores abaixo, um `guarda_invocacao_testemunha` que devolvesse
+# zero para tudo passaria em I10 do mesmo jeito — e foi exatamente assim que a
+# invocação oficial ficou sem prova nenhuma entre a C3 e a R4.
+#
+# Cada vetor parte de uma CÓPIA descartável do workflow íntegro, declara a
+# âncora que pretende atingir, aplica UMA sabotagem e confere a pós-condição
+# antes de julgar. Uma sabotagem que não aconteceu não pode virar verde: é o
+# mesmo instrumento que `teste_contrato_suites.sh` usa, e pela mesma razão.
+
+readonly LINHA_INVOCACAO_ERE='^ *bash scripts/ci/testemunha_contratosui\.sh scripts/ci/teste_contrato_suites\.sh 2>&1 \| tee t_contratosui\.log'
+readonly LINHA_CAPTURA_ERE='^ *echo \$\{PIPESTATUS\[0\]\} > exit_contratosui'
+
+FORJA_DIG=''
+FORJA_MOTIVO=''
+FORJA_ARQ=''
+
+# `forjar <nome> <ere> <n>` — a cópia íntegra, com a âncora conferida ANTES da
+# sabotagem. Âncora que casa um número diferente do declarado é âncora que
+# envelheceu, e medir com ela é medir outra coisa.
+forjar() {
+  local nome="$1" ere="$2" n="$3" viu
+  FORJA_ARQ="$TMP/$nome"
+  FORJA_DIG=''
+  FORJA_MOTIVO=''
+  cp "$YML" "$FORJA_ARQ"
+  viu="$(grep -cE "$ere" "$FORJA_ARQ")" || viu=0
+  if [ "$viu" -ne "$n" ]; then
+    FORJA_MOTIVO="a âncora /$ere/ casa $viu vez(es) na cópia e o vetor declara $n"
+    return 1
+  fi
+  FORJA_DIG="$(tr -d '\r' < "$FORJA_ARQ" | sha256sum)"
+  return 0
+}
+
+# `esperar_invocacao <exit> <desc> <ere-pos> <n-pos> [agulha]` — o veredito.
+#
+# `<ere-pos>` vazio significa CONTROLE: a cópia não pode ter mudado um byte.
+esperar_invocacao() {
+  local esperado="$1" desc="$2" ere="$3" n="${4:-}" agulha="${5:-}" real agora viu
+  if [ -n "$FORJA_MOTIVO" ]; then
+    nok "$desc — INSTRUMENTO INVÁLIDO: $FORJA_MOTIVO"
+    return
+  fi
+  agora="$(tr -d '\r' < "$FORJA_ARQ" | sha256sum)"
+  if [ -z "$ere" ]; then
+    if [ "$agora" != "$FORJA_DIG" ]; then
+      nok "$desc — INSTRUMENTO INVÁLIDO: o controle mudou o workflow, e ele não devia mudar"
+      return
+    fi
+  else
+    if [ "$agora" = "$FORJA_DIG" ]; then
+      nok "$desc — INSTRUMENTO INVÁLIDO: a sabotagem não mudou um byte da cópia"
+      return
+    fi
+    viu="$(grep -cE "$ere" "$FORJA_ARQ")" || viu=0
+    if [ "$viu" -ne "$n" ]; then
+      nok "$desc — INSTRUMENTO INVÁLIDO: a pós-condição /$ere/ aparece $viu vez(es), e o vetor declara $n"
+      return
+    fi
+  fi
+  guarda_invocacao_testemunha "$FORJA_ARQ" > "$TMP/guarda.txt" 2>&1
+  real=$?
+  if [ "$real" != "$esperado" ]; then
+    nok "$desc — esperado exit $esperado, obtido $real"
+    sed 's/^/        | /' "$TMP/guarda.txt"
+    return
+  fi
+  if [ -n "$agulha" ] && ! grep -qF "$agulha" "$TMP/guarda.txt"; then
+    nok "$desc — exit $real correto, mas a recusa não é a esperada (/$agulha/)"
+    sed 's/^/        | /' "$TMP/guarda.txt"
+    return
+  fi
+  ok "$desc (exit $real)"
+}
+
+# A00 — CONTROLE. Sem ele, uma guarda que reprovasse SEMPRE passaria nos onze
+# vetores abaixo e a seção inteira deixaria de medir.
+forjar a00.yml "$LINHA_INVOCACAO_ERE" 1
+esperar_invocacao 0 "A00 CONTROLE — cópia íntegra do workflow => guarda VERDE" ''
+
+# A01 — a invocação simplesmente sumiu.
+if forjar a01.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "\|bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh|d" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A01 — invocação ausente => VERMELHO" "$LINHA_INVOCACAO_ERE" 0 \
+  'nao tem a invocacao oficial VIVA'
+
+# A02 — a invocação virou comentário. O texto continua no arquivo, e o CI não
+# executa uma linha sequer dela.
+if forjar a02.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|^\( *\)bash scripts/ci/testemunha_contratosui.sh|\1# bash scripts/ci/testemunha_contratosui.sh|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A02 — invocação comentada => VERMELHO" '^ *# bash scripts/ci/testemunha_contratosui' 1 \
+  'aparece como COMENTARIO'
+
+# A03 — `echo` da invocação: ela é IMPRESSA, e não executada.
+if forjar a03.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|^\( *\)bash scripts/ci/testemunha_contratosui.sh|\1echo bash scripts/ci/testemunha_contratosui.sh|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A03 — invocação dentro de um echo => VERMELHO" '^ *echo bash scripts/ci/testemunha_contratosui' 1 \
+  'IMPRIME a invocacao'
+
+# A04 — a invocação dentro de heredoc. É dado entregue a outro programa, e o
+# `grep` que a C3 usava não sabia a diferença.
+if forjar a04.yml "$LINHA_INVOCACAO_ERE" 1; then
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    l ~ /^ *bash scripts\/ci\/testemunha_contratosui\.sh scripts\/ci\/teste_contrato_suites\.sh/ {
+      print "          cat <<FIMDOHEREDOC > /dev/null"
+      print l
+      print "FIMDOHEREDOC"
+      next
+    }
+    { print l }
+  ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A04 — invocação dentro de heredoc => VERMELHO" '^FIMDOHEREDOC' 1 \
+  'aparece como HEREDOC'
+
+# A05 — duplicada. Com duas chamadas na mesma pipeline de passo, o
+# `PIPESTATUS` lido não é o de nenhuma das duas com certeza.
+if forjar a05.yml "$LINHA_INVOCACAO_ERE" 1; then
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    { print l }
+    l ~ /^ *bash scripts\/ci\/testemunha_contratosui\.sh scripts\/ci\/teste_contrato_suites\.sh/ { print l }
+  ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A05 — invocação duplicada => VERMELHO" "$LINHA_INVOCACAO_ERE" 2 \
+  'duplicada'
+
+# A06 — deslocada para um passo depois de quem consome a evidência dela.
+if forjar a06.yml "$LINHA_INVOCACAO_ERE" 1; then
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    l ~ /^ *bash scripts\/ci\/testemunha_contratosui\.sh scripts\/ci\/teste_contrato_suites\.sh/ { guardada = l; next }
+    { print l }
+    l ~ /flutter analyze --no-fatal-infos/ && guardada != "" { print guardada; guardada = "" }
+  ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A06 — invocação movida para outro passo => VERMELHO" "$LINHA_INVOCACAO_ERE" 1 \
+  'nao vem antes de quem consome'
+
+# A07 — o `tee` real removido: a evidência do run deixa de nascer da execução.
+if forjar a07.yml "$LINHA_INVOCACAO_ERE" 1; then
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    l ~ /^ *bash scripts\/ci\/testemunha_contratosui\.sh scripts\/ci\/teste_contrato_suites\.sh/ {
+      sub(/ 2>&1 .*$/, "", l)
+    }
+    { print l }
+  ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A07 — argumentos removidos (o tee real) => VERMELHO" "$LINHA_INVOCACAO_ERE" 0 \
+  'forma NAO OFICIAL'
+
+# A08 — argumento TROCADO: a testemunha continua sendo chamada, e passa a
+# observar outra matriz.
+if forjar a08.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh|testemunha_contratosui.sh scripts/ci/isca_de_matriz.sh|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A08 — argumento trocado por outra matriz => VERMELHO" 'isca_de_matriz\.sh' 1 \
+  'forma NAO OFICIAL'
+
+# A09 — argumento ACRESCENTADO: um diretório de evidência escolhido por quem
+# chama é o atalho que a própria testemunha existe para não ter.
+if forjar a09.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|teste_contrato_suites.sh 2>&1|teste_contrato_suites.sh /tmp/preparado 2>\&1|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A09 — argumento acrescentado => VERMELHO" '/tmp/preparado' 1 \
+  'forma NAO OFICIAL'
+
+# A10 — a testemunha substituída pela chamada DIRETA à matriz. É a forma exata
+# que existia antes da C3: a matriz volta a emitir o próprio boletim.
+if forjar a10.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh|bash scripts/ci/teste_contrato_suites.sh|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A10 — testemunha trocada por chamada direta à matriz => VERMELHO" \
+  '^ *bash scripts/ci/teste_contrato_suites\.sh 2>&1' 1 'nao tem a invocacao oficial VIVA'
+
+# A11 — `|| true`: o vermelho da testemunha vira verde sem uma letra da
+# invocação mudar de lugar.
+if forjar a11.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|tee t_contratosui.log|tee t_contratosui.log \|\| true|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A11 — || true anexado à invocação => VERMELHO" 'tee t_contratosui\.log \|\| true' 1 \
+  'neutraliza o codigo de saida'
+
+# A12 — a mesma neutralização com `; true`, que um casamento por `||` não pega.
+if forjar a12.yml "$LINHA_INVOCACAO_ERE" 1; then
+  sed -i "s|tee t_contratosui.log|tee t_contratosui.log ; true|" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A12 — ; true anexado à invocação => VERMELHO" 'tee t_contratosui\.log ; true' 1 \
+  'neutraliza o codigo de saida'
+
+# A13 — evidência FABRICADA antes da execução verdadeira.
+if forjar a13.yml "$LINHA_CAPTURA_ERE" 1; then
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    l ~ /^ *bash scripts\/ci\/testemunha_contratosui\.sh scripts\/ci\/teste_contrato_suites\.sh/ {
+      print "          echo 0 > exit_contratosui"
+    }
+    { print l }
+  ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A13 — exit_contratosui fabricado ANTES da execução => VERMELHO" \
+  '^ *echo 0 > exit_contratosui' 1 'ANTES da execucao verdadeira'
+
+# A14 — a captura afastada da invocação: o `PIPESTATUS` lido passa a ser o de
+# outra linha, e o exit da testemunha deixa de chegar ao portão.
+if forjar a14.yml "$LINHA_CAPTURA_ERE" 1; then
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    l ~ /^ *echo \$\{PIPESTATUS\[0\]\} > exit_contratosui/ {
+      print "          echo intruso | tee -a t_intruso.log"
+    }
+    { print l }
+  ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
+fi
+esperar_invocacao 1 "A14 — linha intrusa entre a invocação e a captura => VERMELHO" \
+  '^ *echo intruso \| tee -a t_intruso\.log' 1 'entre a invocacao e a captura'
 
 printf '\n== matriz do agregador ==\n'
 

@@ -147,9 +147,9 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 #
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
-readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn"
-readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:49 contratosui:82 rankingfn:57"
-readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:68 rankingfn:465"
+readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn autverif"
+readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:56 contratosui:82 rankingfn:57 autverif:14"
+readonly PISOS_CASOS="comunicacao:81 portaoci:53 contratosui:68 rankingfn:465 autverif:66"
 
 # `PISOS_EXIGE` — QUANTAS relacoes de conteudo cada gate tem de continuar tendo.
 #
@@ -162,9 +162,9 @@ readonly PISOS_CASOS="comunicacao:81 portaoci:38 contratosui:68 rankingfn:465"
 # uma relacao a menos reprova aqui, do lado de fora, mesmo que ninguem tenha
 # escrito o conjunto nominal daquele gate. A outra metade — o conjunto NOMINAL
 # EXATO — esta em `RELACOES_CONGELADAS`, logo abaixo.
-readonly PISOS_EXIGE="comunicacao:26 chatdom:6 portaoci:6 contratosui:29 rankingfn:15 \
+readonly PISOS_EXIGE="comunicacao:35 chatdom:6 portaoci:6 contratosui:29 rankingfn:15 \
 avatarcanon:4 avatarhml:4 perfilvis:4 rknavpub:4 compavrank:3 compnavpub:3 \
-socialestado:3 socialleitor:3 socialtela:2 audsocial:4 a11yamigos:3"
+socialestado:3 socialleitor:3 socialtela:2 audsocial:4 a11yamigos:3 autverif:11"
 
 # ---------------------------------------------------------------------------
 # `RELACOES_CONGELADAS` — O CONJUNTO NOMINAL EXATO DA FOLHA (OS 40-C2)
@@ -214,6 +214,57 @@ pkg.scripts.test,
 RELACOES_DA_FOLHA
 )"
 readonly RELACOES_CONGELADAS
+
+# ---------------------------------------------------------------------------
+# `CASOS_CONGELADOS` — O CONJUNTO NOMINAL DE `exigenocaso`, POR CASO (OS 40-C4)
+# ---------------------------------------------------------------------------
+#
+# `exigenocaso` existia, era LIDO, e era acumulado em `exigenocaso_do_gate` — e
+# ninguem nunca comparava aquele numero com coisa alguma. A rehomologacao OS
+# 40-R4 mediu o preco disso no escape `S10`: tirar da fonte a relacao
+# `expect(v.aceita, isTrue,` do bloco `ESP-02`, trocar a afirmacao funcional da
+# suite por uma trivial e recarimbar os digests permitidos deixava a cadeia
+# estatica inteiramente VERDE. A guarda POR CASO — a unica que distingue "o
+# titulo e a afirmacao estao no mesmo caso" de "estao em dois casos-isca" —
+# podia ser desligada uma linha por vez, sem reprovar nada.
+#
+# O que fecha isso e o mesmo mecanismo de `RELACOES_CONGELADAS`, um nivel
+# abaixo: o conjunto exato, POR SUITE, escrito por extenso e FORA do manifesto
+# que ele guarda. A comparacao e de IGUALDADE EXATA, linha a linha e na ordem —
+# retirada, renomeacao, duplicacao, reordenacao, troca de caso e troca de suite
+# reprovam todas pelo mesmo caminho, cada uma nomeando o que mudou.
+#
+# `PISOS_EXIGENOCASO`, logo abaixo, e a metade generica: a CARDINALIDADE por
+# gate, cobrada mesmo onde ninguem escreveu o conjunto nominal. Sao as duas
+# metades da mesma defesa, como `PISOS_EXIGE` e `RELACOES_CONGELADAS`.
+#
+# Formato: uma linha `& <gate> <suite>` abre um bloco; dentro dele, `@ <caso>`
+# abre um caso e as linhas seguintes sao as relacoes daquele caso, LITERAIS. E
+# exatamente o acumulado que o leitor monta em `casos_lista`.
+CASOS_CONGELADOS="$(cat <<'CASOS_DA_FOLHA'
+& comunicacao app/test/comunicacao/comunicacao_test.dart
+@ ESP-02
+for (final especie in catalogados.entries) {
+canal: canalDe(ambiente: mesa.value, modo: modoDe(mesa.value)),
+expect(v.aceita, isTrue,
+& contratosui scripts/ci/teste_contrato_suites.sh
+@ T27
+'posterior ao carimbo' "$TMP/res"
+@ T42
+"$(printf '%s\n' $CONTRATADOS | sort | tr '\n' ' ')"
+"$(printf '%s\n' $CONTRATADOS_CONGELADOS | sort | tr '\n' ' ')"
+@ T58
+rm -f "$W/scripts/ci/testemunha_contratosui.sh"
+@ T59
+sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
+CASOS_DA_FOLHA
+)"
+readonly CASOS_CONGELADOS
+
+# QUANTAS relacoes `exigenocaso` cada gate tem de continuar tendo. A metade
+# generica de `CASOS_CONGELADOS`: vale para o gate inteiro, e reprova a retirada
+# de uma linha mesmo antes de olhar QUAL linha era.
+readonly PISOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
@@ -416,6 +467,36 @@ gate_congelado() {
   return 1
 }
 
+# `casos_congelados_de <gate> <suite>` — o bloco `@ caso`/relacoes daquele par,
+# devolvido em `CASOS_DA_SUITE_CONGELADOS`. Mesma mecanica de `relacoes_de`, um
+# nivel abaixo, e pela mesma razao: so expansao de parametro, sem um `awk` por
+# chamada.
+casos_congelados_de() {
+  local todo=$'\n'"$CASOS_CONGELADOS" marca=$'\n'"& $1 $2"$'\n'
+  CASOS_DA_SUITE_CONGELADOS=''
+  case "$todo" in
+    *"$marca"*) ;;
+    *) return 0 ;;
+  esac
+  CASOS_DA_SUITE_CONGELADOS="${todo#*"$marca"}"
+  case "$CASOS_DA_SUITE_CONGELADOS" in
+    *$'\n& '*) CASOS_DA_SUITE_CONGELADOS="${CASOS_DA_SUITE_CONGELADOS%%$'\n& '*}" ;;
+  esac
+  CASOS_DA_SUITE_CONGELADOS="${CASOS_DA_SUITE_CONGELADOS%$'\n'}"
+}
+
+# `suite_com_casos_congelados <gate> <suite>` — este par tem bloco escrito aqui?
+#
+# Existe para separar as duas recusas: "a suite perdeu os casos que ela tinha" e
+# "a fonte inventou casos que ninguem decidiu". Sem a distincao, acrescentar um
+# `caso` novo numa suite qualquer passaria despercebido.
+suite_com_casos_congelados() {
+  case $'\n'"$CASOS_CONGELADOS" in
+    *$'\n'"& $1 $2"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+
 # `contar <texto>` — linhas nao vazias, devolvidas em `QUANTAS`. Mesma razao.
 contar() {
   local l
@@ -584,6 +665,59 @@ RELACOES_INVENTADAS
         fi
       fi
     fi
+  fi
+
+  # ---- o conjunto NOMINAL DE `exigenocaso`, por caso (OS 40-C4) -----------
+  #
+  # Mesma mecanica do bloco acima, um nivel abaixo, e pela mesma razao: sem ele,
+  # `exigenocaso` era acumulado e nunca comparado com nada — e era possivel
+  # tirar uma relacao POR CASO, trivializar a afirmacao correspondente na suite,
+  # recarimbar o digest e conservar a cadeia estatica inteira verde. E o escape
+  # `S10` da OS 40-R4.
+  #
+  # Roda ANTES de olhar o arquivo, e roda mesmo com a suite ausente: uma relacao
+  # de caso adulterada nao pode ficar escondida atras de um arquivo que sumiu.
+  local casos_declarados="${casos_lista%$'\n'}"
+  if suite_com_casos_congelados "$chave" "$suite"; then
+    local casos_cong n_falta_c n_extra_c n_dec_c n_cong_c
+    casos_congelados_de "$chave" "$suite"
+    casos_cong="$CASOS_DA_SUITE_CONGELADOS"
+    if [ "$casos_declarados" = "$casos_cong" ]; then
+      contar "$casos_cong"
+      printf 'ok   exigenocaso %-11s %s linha(s) nominal(is)  %s\n' "$chave" \
+        "$QUANTAS" "$suite"
+    else
+      printf '%s\n' "$casos_cong" > "$AG_A"
+      printf '%s\n' "$casos_declarados" > "$AG_B"
+      contar "$casos_cong"; n_cong_c=$QUANTAS
+      contar "$casos_declarados"; n_dec_c=$QUANTAS
+      erro "as relacoes por caso de '$suite' (gate $chave) nao sao as congeladas"
+      n_falta_c=0
+      while IFS= read -r sumida_c; do
+        [ -z "$sumida_c" ] && continue
+        erro "  a linha congelada de 'caso'/'exigenocaso' sumiu da fonte: $sumida_c"
+        n_falta_c=$((n_falta_c + 1))
+      done <<CASOS_QUE_SUMIRAM
+$(grep -Fxv -f "$AG_B" "$AG_A")
+CASOS_QUE_SUMIRAM
+      n_extra_c=0
+      while IFS= read -r extra_c; do
+        [ -z "$extra_c" ] && continue
+        erro "  a fonte declara uma linha de caso que nao esta congelada: $extra_c"
+        n_extra_c=$((n_extra_c + 1))
+      done <<CASOS_INVENTADOS
+$(grep -Fxv -f "$AG_A" "$AG_B")
+CASOS_INVENTADOS
+      if [ "$n_falta_c" -eq 0 ] && [ "$n_extra_c" -eq 0 ]; then
+        if [ "$n_dec_c" -ne "$n_cong_c" ]; then
+          erro "  a cardinalidade por caso mudou: $n_dec_c declarada(s) contra $n_cong_c congelada(s) — relacao duplicada"
+        else
+          erro "  mesmos literais e mesma cardinalidade: a ORDEM ou o CASO de destino mudou"
+        fi
+      fi
+    fi
+  elif [ -n "$casos_declarados" ]; then
+    erro "a suite '$suite' (gate $chave) declara 'caso'/'exigenocaso' e NAO esta no conjunto congelado — relacao por caso acrescentada, movida de suite ou renomeada sem decisao"
   fi
 
   [ -z "$arquivo" ] && return 0
@@ -791,6 +925,19 @@ conferir_entrada() {
       erro "o piso de relacoes de conteudo de '$chave' caiu de $piso para $exige_do_gate na fonte"
     else
       printf 'ok   piso       %-12s exige %s >= %s\n' "$chave" "$exige_do_gate" "$piso"
+    fi
+  fi
+  # `exigenocaso` tem piso PROPRIO, e nao herda o de `exige`. Sao vocabularios
+  # diferentes: `exige` cobra o arquivo inteiro, `exigenocaso` cobra o CORPO de
+  # um caso nomeado. Ate a OS 40-C4 o segundo era acumulado e nunca comparado —
+  # o piso de `exige` continuava satisfeito enquanto a guarda por caso era
+  # desmontada linha a linha.
+  piso="$(piso_de "$PISOS_EXIGENOCASO" "$chave")"
+  if [ -n "$piso" ]; then
+    if [ "$exigenocaso_do_gate" -lt "$piso" ]; then
+      erro "o piso de relacoes POR CASO de '$chave' caiu de $piso para $exigenocaso_do_gate na fonte"
+    else
+      printf 'ok   piso       %-12s exigenocaso %s >= %s\n' "$chave" "$exigenocaso_do_gate" "$piso"
     fi
   fi
   piso="$(piso_de "$PISOS_PROVAS" "$chave")"

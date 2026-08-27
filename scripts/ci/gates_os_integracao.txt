@@ -195,25 +195,34 @@ comunicacao
     exige      "$GRUPO_CANONICO $PREFIXO"*)
     exige      readonly GRUPO_CANONICO='ESP — espectador não fala em ambiente nenhum'
     suite      scripts/ci/rodar_comunicacao.sh
-    sha256     65367ed5ed5d0da47274aa0f742e49ddde19ec1b3b013646e1bf17697fd161b4
+    sha256     c46cadfedafda4ac56620ab9334d347e5fb68bece5552d063bfaabc87d86388a
     provas     7
     conta      ^[[:blank:]]*printf[[:blank:]]
+    exige      RAIZ="$(cd "$AQUI/../.." && pwd)"
+    exige      if [ "$#" -gt 2 ]; then
+    exige      JSON="$RAIZ/maquina_comunicacao.json"
+    exige      JSON_PARA_O_FLUTTER='../maquina_comunicacao.json'
     exige      rm -f "$JSON"
-    exige      --reporter expanded --file-reporter="json:$JSON"
+    exige      date -u +%Y-%m-%dT%H:%M:%SZ > "$MARCA"
+    exige      --reporter expanded --file-reporter="json:$JSON_PARA_O_FLUTTER"
     exige      EX_FLUTTER="${PIPESTATUS[0]}"
-    exige      bash "$TESTEMUNHA" "$JSON" "$SUITE" "$CARIMBO" 2>&1 | tee -a "$LOG"
+    exige      if [ ! -s "$JSON" ]; then
+    exige      elif [ "$MARCA" -nt "$JSON" ]; then
+    exige      if ! grep -q "\"path\":\"[^\"]*$SUITE\"" "$JSON"; then
+    exige      if [ "$VISIVEIS_JSON" -ne "$PICO_LOG" ]; then
+    exige      bash "$RAIZ/$TESTEMUNHA" "$JSON" "$SUITE" "$CARIMBO" 2>&1 | tee -a "$LOG"
     exige      EX_TESTEMUNHA="${PIPESTATUS[0]}"
-    exige      if [ "$EX_FLUTTER" = "0" ] && [ "$EX_TESTEMUNHA" = "0" ]; then
+    exige      if [ "$EX_FLUTTER" = "0" ] && [ "$EX_RELATORIO" = "0" ] && [ "$EX_TESTEMUNHA" = "0" ]; then
 
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
 # Sem ele, o agregador é a única peça do CI que ninguém verifica.
 portaoci
     suite      scripts/ci/teste_portao_os_integracao.sh
     executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
-    sha256     0ae02bb66558b78dce60d8aa9fb2f01a4eb22bdb6346f66cf22f578e47ba0195
-    provas     49
+    sha256     f2b7b9b873b9ec87889efba7f0fc3d1d73c09919cd16f06361ea1fae03d802f4
+    provas     56
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      38
+    casos      53
     contador   casos ok: [0-9]+
     exige      HERDADOS=
     exige      grep -qE 'GATES="[a-z]+ [a-z]+
@@ -234,7 +243,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     757c17ff5fc55938fddcf46e596f2e4b897b82d16e72151587cb62cad70941d2
+    sha256     a543752be0248106d3303c65c2d8e4fa31a9661157cbc0605edd00369ce16d27
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -269,7 +278,7 @@ contratosui
     caso        T59
     exigenocaso sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
     suite      scripts/ci/testemunha_contratosui.sh
-    sha256     30f5b04a681836fca20406755fc02cc77ba2b0b864cb5bf2ec3acaf3f82239f2
+    sha256     e6bddbd605c7c95ae536d01200453a40df17335b0fc8aedf9c09e917e05d1c2e
     provas     14
     conta      ^[[:blank:]]*recusa[[:blank:]]
     exige      for id in $CASOS_OBRIGATORIOS; do
@@ -281,6 +290,36 @@ contratosui
     exige      if grep -q 'casos ok:' "$saida"; then
     exige      placar_para_o_log "$verdes" "$vermelhos"
     exige      readonly GATES_CONTRATADOS="\
+
+# --- 6c. a AUTORIDADE EXTERNA dos tres verificadores (entra pela OS 40-C4) ---
+# `portaoci` prova o agregador; `contratosui` prova o verificador de conteudo.
+# As TRES pecas que DECIDEM — `verificar_contrato_suites.sh`,
+# `portao_os_integracao.sh` e `codigo_executavel.awk` — nao tinham digest
+# proprio, inventario proprio nem prova de que suas decisoes materiais
+# continuam la. A OS 40-R4 mediu o custo em V04, V06 e V06+E01.
+#
+# Esta autoridade guarda as tres, e NAO se guarda: quem responde por ela e este
+# contrato (digest, piso e `exige`), o passo `0a` do workflow e os vetores
+# V01..V10 da matriz de `contratosui`.
+autverif
+    suite      scripts/ci/autoridade_verificadores.sh
+    executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
+    sha256     7eca9c6f9799e135114dfc3e8ef822b42fc99a3d19a6b558d7b80deda5a4f535
+    provas     14
+    conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
+    casos      66
+    contador   casos ok: [0-9]+
+    exige      readonly INVENTARIO="\
+    exige      readonly MINIMOS_PROVAS=
+    exige      readonly MINIMOS_CASOS=
+    exige      readonly MINIMOS_EXIGE=
+    exige      readonly MINIMOS_EXIGENOCASO=
+    exige      if [ "$VALOR" -lt "$minimo" ]; then
+    exige      if [ "$real" = "$esperado" ]; then
+    exige      if [ "$antecipadas" -ne 0 ]; then
+    exige      *ABERTO*) ok "sonda        comentario de bloco sem fechar responde ABERTO" ;;
+    exige      vivas_de "$raiz/$arq_atual" "$vivo"
+    exige      viu="$(grep -cF -- "$literal" "$vivo")" || viu=0
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing

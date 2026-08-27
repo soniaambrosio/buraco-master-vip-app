@@ -134,6 +134,26 @@ jobs:
           bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
           echo ${PIPESTATUS[0]} > exit_portaoci
 
+      - name: "0a — AUTORIDADE EXTERNA dos três verificadores materiais"
+        run: |
+          set +e
+          # A terceira peça do passo zero, e a que faltava. `portaoci` prova o
+          # AGREGADOR, `contratosui` prova o VERIFICADOR DE CONTEÚDO — e as três
+          # peças que DECIDEM (o verificador de conteúdo, o agregador e o
+          # analisador léxico) não tinham digest próprio, inventário próprio nem
+          # prova de que suas decisões materiais continuam lá. A OS 40-R4 mediu
+          # o custo em V04, V06 e V06+E01: piso removido do mapa, comparação
+          # neutralizada e declaração movida para heredoc conservavam a cadeia
+          # oficial inteiramente verde.
+          #
+          # Roda ANTES do contrato de conteúdo: um verificador adulterado tem de
+          # aparecer como verificador adulterado, e não como "as suítes passaram".
+          if [ ! -f scripts/ci/autoridade_verificadores.sh ]; then
+            echo "scripts/ci/autoridade_verificadores.sh ausente" > nao_autverif; exit 0
+          fi
+          bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
+          echo ${PIPESTATUS[0]} > exit_autverif
+
       - name: "0b — teste do VERIFICADOR de contrato das suítes protegidas"
         run: |
           set +e

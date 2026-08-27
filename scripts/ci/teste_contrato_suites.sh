@@ -226,7 +226,7 @@ YML_W=".github/workflows/ci-os-integracao.yml"
 # Aceitar `sem_mutacao` em qualquer caso abriria a saida mais barata de todas:
 # trocar a sabotagem por "nao mexo em nada" e continuar verde. A relacao abaixo
 # esta escrita por extenso, e `T68` prova que um caso fora dela e recusado.
-readonly CONTROLES_SEM_MUTACAO="T01 T27 T34 T42 T66"
+readonly CONTROLES_SEM_MUTACAO="T01 T27 T34 T42 T66 T77"
 
 # `veredito_unico <desc>` — cada caso produz UM veredito terminal.
 #
@@ -586,7 +586,7 @@ CONTRATADOS="$(sed -e 's/\r$//' "$FONTE" | awk '
 
 CONTRATADOS_CONGELADOS="comunicacao chatdom portaoci contratosui rankingfn \
 avatarcanon avatarhml perfilvis rknavpub compavrank compnavpub \
-socialestado socialleitor socialtela audsocial a11yamigos"
+socialestado socialleitor socialtela audsocial a11yamigos autverif"
 
 # `casos_de <gate>` — o piso de casos EXECUTADOS declarado no contrato dele.
 casos_de() {
@@ -643,6 +643,31 @@ recarimbar() {
     return 1
   }
   mv "$W/$FONTE_W.novo" "$W/$FONTE_W"
+}
+
+# recarimbar_autoridade <arquivo> — realinha o digesto daquele arquivo DENTRO da
+# autoridade externa, em $W.
+#
+# Existe pela mesma razao que `recarimbar`: quem adultera um verificador atualiza
+# o digesto no mesmo commit, e uma bancada que nao fizesse isso mediria sempre o
+# digesto e nunca a DECISAO. E o RECARIMBO COORDENADO que a OS 40-C4 manda
+# exercitar — o vetor entrega ao atacante tudo o que ele controla, e cobra que a
+# autoridade continue reprovando pelo que ele NAO controla.
+recarimbar_autoridade() {
+  local alvo="$1" novo
+  novo="$(tr -d '\r' < "$W/$alvo" | sha256sum | awk '{print $1}')"
+  ALVO_DIG="$alvo" NOVO_DIG="$novo" awk '
+    { l = $0; sub(/\r$/, "", l); nf = split(l, c, " ") }
+    nf == 2 && c[1] == ENVIRON["ALVO_DIG"] && c[2] ~ /^[0-9a-f]{64}$/ {
+      print ENVIRON["ALVO_DIG"] " " ENVIRON["NOVO_DIG"]; feito = 1; next
+    }
+    { print l }
+    END { if (!feito) exit 3 }
+  ' "$W/scripts/ci/autoridade_verificadores.sh" > "$TMP/aut.novo" || {
+    printf 'teste do contrato: recarimbo da autoridade para %s nao pegou\n' "$alvo" >&2
+    return 1
+  }
+  mv "$TMP/aut.novo" "$W/scripts/ci/autoridade_verificadores.sh"
 }
 
 # trocar_linha <arquivo> <linha exata> <linha nova> — sabotagem com ANCORA
@@ -710,6 +735,48 @@ esperar() {
   ok "$desc (exit $real)"
 }
 
+# `esperar_autoridade <exit> <desc> [agulha]` — o mesmo veredito, sobre a
+# AUTORIDADE EXTERNA DOS VERIFICADORES (OS 40-C4).
+#
+# Ela e a peca que responde pelos tres arquivos que DECIDEM — o verificador de
+# conteudo, o agregador e o analisador lexico —, e por isso nao pode ser medida
+# pelo mesmo `esperar` que roda o verificador: o que se pergunta aqui e outra
+# coisa. Fora isso o instrumento e o MESMO: declaracao obrigatoria, ancora
+# conferida, pos-condicao cobrada, e recusa de reportar verde quando a sabotagem
+# nao aconteceu.
+esperar_autoridade() {
+  local esperado="$1" desc="$2" agulha="${3:-}" real
+  local id="${desc%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  if [ "$INSTRUMENTO_DECLARADO" -eq 0 ]; then
+    invalido "o vetor nao declarou 'ancora' nem 'sem_mutacao'"
+  fi
+  if [ "$INSTRUMENTO" -eq 0 ]; then
+    nok "$desc — INSTRUMENTO INVALIDO: $MOTIVO_INSTRUMENTO"
+    return
+  fi
+  bash "$W/scripts/ci/autoridade_verificadores.sh" "$W" "$W/$YML_W" \
+    > "$TMP/saida.txt" 2>&1
+  real=$?
+  if [ "$real" != "$esperado" ]; then
+    nok "$desc — esperado exit $esperado, obtido $real"
+    sed 's/^/        | /' "$TMP/saida.txt"
+    return
+  fi
+  if [ -n "$agulha" ] && ! grep -qE "$agulha" "$TMP/saida.txt"; then
+    nok "$desc — exit $real correto, mas a saida nao diz por que (/$agulha/)"
+    sed 's/^/        | /' "$TMP/saida.txt"
+    return
+  fi
+  ok "$desc (exit $real)"
+}
+
 printf '== controle ==\n'
 
 if caso_ativo T01; then
@@ -738,7 +805,7 @@ fi
 
 if caso_ativo T04; then
   reset T04
-  ancora "$FONTE_W" '^[a-z]' 63
+  ancora "$FONTE_W" '^[a-z]' 64
   printf 'analyze\nanalyze\n' > "$W/$FONTE_W"
   efeito '^analyze$' 2
   esperar 1 "T04 — fonte com gate duplicado => VERMELHO (o leitor recusa)" 'recusou a fonte'
@@ -746,7 +813,7 @@ fi
 
 if caso_ativo T05; then
   reset T05
-  ancora "$FONTE_W" '^[a-z]' 63
+  ancora "$FONTE_W" '^[a-z]' 64
   : > "$W/$FONTE_W"
   efeito '.' 0
   esperar 1 "T05 — fonte esvaziada => VERMELHO (N20)" 'recusou a fonte'
@@ -808,10 +875,10 @@ fi
 
 if caso_ativo T12; then
   reset T12
-  ancora "$FONTE_W" '^    sha256     [0-9a-f]{64}$' 20
+  ancora "$FONTE_W" '^    sha256     [0-9a-f]{64}$' 21
   sed -i 's/^\(    sha256     \)[0-9a-f]\{64\}$/\10000000000000000000000000000000000000000000000000000000000000000/' \
     "$W/$FONTE_W"
-  efeito '^    sha256     0{64}$' 20
+  efeito '^    sha256     0{64}$' 21
   esperar 1 "T12 — assinatura adulterada => VERMELHO" 'mudou e a assinatura nao'
 fi
 
@@ -829,7 +896,7 @@ printf '\n== o contrato tem de estar completo ==\n'
 
 if caso_ativo T14; then
   reset T14
-  ancora "$FONTE_W" '^    sha256     ' 20
+  ancora "$FONTE_W" '^    sha256     ' 21
   sed -i '/^    sha256     /d' "$W/$FONTE_W"
   efeito '^    sha256     ' 0
   esperar 1 "T14 — contrato sem sha256 => VERMELHO" "nao declara 'sha256'"
@@ -837,7 +904,7 @@ fi
 
 if caso_ativo T15; then
   reset T15
-  ancora "$FONTE_W" '^    exige      ' 119
+  ancora "$FONTE_W" '^    exige      ' 139
   sed -i '/^    exige      /d' "$W/$FONTE_W"
   efeito '^    exige      ' 0
   esperar 1 "T15 — contrato sem nenhum exige => VERMELHO" "nao declara nenhum 'exige'"
@@ -845,7 +912,7 @@ fi
 
 if caso_ativo T16; then
   reset T16
-  ancora "$FONTE_W" '^    provas     ' 20
+  ancora "$FONTE_W" '^    provas     ' 21
   sed -i '/^    provas     /d' "$W/$FONTE_W"
   efeito '^    provas     ' 0
   esperar 1 "T16 — contrato sem provas => VERMELHO" "nao declara 'provas'"
@@ -853,7 +920,7 @@ fi
 
 if caso_ativo T17; then
   reset T17
-  ancora "$FONTE_W" '^    suite      ' 20
+  ancora "$FONTE_W" '^    suite      ' 21
   sed -i '/^    suite      /d' "$W/$FONTE_W"
   efeito '^    suite      ' 0
   esperar 1 "T17 — contrato sem suite => VERMELHO" "nao declara 'suite'"
@@ -887,7 +954,7 @@ printf '\n== o contrato nao pode encolher ==\n'
 
 if caso_ativo T21; then
   reset T21
-  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 233
+  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 260
   # QUALQUER atributo indentado, e nao uma lista de nomes. A lista escrita a mao
   # ficou para tras quando a OS 40-C1 acrescentou `alvo` e `exigealvo`: o caso
   # continuava vermelho, mas por OUTRO motivo — sobrava contrato, e a mensagem
@@ -1359,6 +1426,289 @@ if caso_ativo T59; then
   sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
   efeito 'scripts/ci/isca\.sh' 3
   esperar 1 "T59 — workflow deixou de invocar a testemunha => VERMELHO" 'nao tem a linha do executor'
+fi
+
+printf '\n== `exigenocaso` deixou de ser acumulado e ignorado (OS 40-C4) ==\n'
+
+# O TERCEIRO ESCAPE DA FAMILIA, e o que a OS 40-R4 mediu como `S10`. As relacoes
+# POR CASO eram lidas e acumuladas em `exigenocaso_do_gate` — e aquele numero
+# nunca era comparado com coisa alguma. A guarda que distingue "o titulo e a
+# afirmacao estao no mesmo caso" de "estao em dois casos-isca" podia ser
+# desmontada uma linha por vez, e com a afirmacao trivializada ao lado a arvore
+# ficava verde de ponta a ponta.
+
+if caso_ativo T69; then
+  reset T69
+  # S10, INTEIRO: a relacao sai da fonte, a afirmacao funcional vira trivial na
+  # suite, e o digest e recarimbado — tudo o que o atacante controla.
+  ancora "$FONTE_W" '^    exigenocaso expect\(v\.aceita, isTrue,$' 1
+  sed -i '/^    exigenocaso expect(v.aceita, isTrue,$/d' "$W/$FONTE_W"
+  sed -i 's|^          expect(v.aceita, isTrue,$|          expect(true, isTrue,|' \
+    "$W/app/test/comunicacao/comunicacao_test.dart"
+  recarimbar "app/test/comunicacao/comunicacao_test.dart"
+  efeito '^    exigenocaso expect\(v\.aceita, isTrue,$' 0
+  esperar 1 "T69 — S10: relacao POR CASO retirada + afirmacao trivializada + recarimbo => VERMELHO" \
+    'sumiu da fonte'
+fi
+
+if caso_ativo T70; then
+  reset T70
+  # A relacao sai da fonte E o piso generico e rebaixado no verificador. Quem
+  # reprova aqui e o conjunto NOMINAL — a outra metade da defesa.
+  ancora "$FONTE_W" '^    exigenocaso canal: canalDe' 1
+  sed -i '/^    exigenocaso canal: canalDe/d' "$W/$FONTE_W"
+  sed -i 's|^readonly PISOS_EXIGENOCASO="comunicacao:3 |readonly PISOS_EXIGENOCASO="comunicacao:2 |' \
+    "$W/scripts/ci/verificar_contrato_suites.sh"
+  efeito '^    exigenocaso canal: canalDe' 0
+  esperar 1 "T70 — relacao retirada da fonte com o piso rebaixado junto => VERMELHO (conjunto nominal)" \
+    'nao sao as congeladas'
+fi
+
+if caso_ativo T71; then
+  reset T71
+  # A entrada sai do conjunto NOMINAL e da fonte, juntas. Quem reprova agora e o
+  # PISO — a primeira metade. As duas se cobrem.
+  ancora "$FONTE_W" '^    exigenocaso for \(final especie in catalogados\.entries\) \{$' 1
+  sed -i '/^    exigenocaso for (final especie in catalogados.entries) {$/d' "$W/$FONTE_W"
+  sed -i '/^for (final especie in catalogados.entries) {$/d' \
+    "$W/scripts/ci/verificar_contrato_suites.sh"
+  efeito '^    exigenocaso for \(final especie in catalogados\.entries\) \{$' 0
+  esperar 1 "T71 — entrada retirada do conjunto nominal E da fonte => VERMELHO (piso)" \
+    'piso de relacoes POR CASO'
+fi
+
+if caso_ativo T72; then
+  reset T72
+  ancora "$FONTE_W" '^    exigenocaso expect\(v\.aceita, isTrue,$' 1
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    { print l }
+    l == "    exigenocaso expect(v.aceita, isTrue," { print l }
+  ' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+  efeito '^    exigenocaso expect\(v\.aceita, isTrue,$' 2
+  esperar 1 "T72 — relacao POR CASO duplicada na fonte => VERMELHO" \
+    'cardinalidade por caso mudou'
+fi
+
+if caso_ativo T73; then
+  reset T73
+  # A relacao continua na fonte, no gate certo, na suite certa — e sob OUTRO
+  # caso. E a forma que uma contagem sozinha nunca pegaria.
+  ancora "$FONTE_W" '^    exigenocaso .posterior ao carimbo.' 1
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    index(l, "exigenocaso ") == 5 && index(l, "posterior ao carimbo") > 0 { guardada = l; next }
+    { print l }
+    l == "    caso        T42" && guardada != "" { print guardada; guardada = "" }
+  ' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+  efeito '^    exigenocaso .posterior ao carimbo.' 1
+  esperar 1 "T73 — relacao POR CASO movida para outro caso => VERMELHO" \
+    'nao sao as congeladas'
+fi
+
+if caso_ativo T74; then
+  reset T74
+  # A agulha continua no arquivo, e so como COMENTARIO. Busca plana aceitaria.
+  ancora_arquivo "app/test/comunicacao/comunicacao_test.dart"
+  sed -i 's|^          expect(v.aceita, isTrue,$|          // expect(v.aceita, isTrue,|' \
+    "$W/app/test/comunicacao/comunicacao_test.dart"
+  recarimbar "app/test/comunicacao/comunicacao_test.dart"
+  efeito '^          // expect\(v\.aceita, isTrue,$' 1
+  esperar 1 "T74 — a afirmacao do caso mantida SO em comentario => VERMELHO" \
+    'SO como comentario'
+fi
+
+if caso_ativo T75; then
+  reset T75
+  # A afirmacao trocada por uma trivial, com a fonte INTACTA e o digest
+  # recarimbado: o corpo do caso deixa de conter o que o contrato cobra.
+  ancora_arquivo "app/test/comunicacao/comunicacao_test.dart"
+  sed -i 's|^          expect(v.aceita, isTrue,$|          expect(true, isTrue,|' \
+    "$W/app/test/comunicacao/comunicacao_test.dart"
+  recarimbar "app/test/comunicacao/comunicacao_test.dart"
+  efeito '^          expect\(true, isTrue,$' 1
+  esperar 1 "T75 — afirmacao trocada por expect(true, isTrue, com recarimbo => VERMELHO" \
+    'sumiu do CORPO do caso'
+fi
+
+if caso_ativo T76; then
+  reset T76
+  # `caso`/`exigenocaso` ACRESCENTADOS numa suite que nao tem conjunto congelado.
+  # Sem esta recusa, a guarda por caso poderia ser diluida em suites novas.
+  ausencia "$FONTE_W" '^    caso        AUT-01$'
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    { print l }
+    l == "    provas     60" { print "    caso        AUT-01"; print "    exigenocaso expect(1, 1);" }
+  ' "$BASE/$FONTE_W" > "$W/$FONTE_W"
+  efeito '^    caso        AUT-01$' 1
+  esperar 1 "T76 — caso/exigenocaso acrescentados fora do conjunto congelado => VERMELHO" \
+    'NAO esta no conjunto congelado'
+fi
+
+printf '\n== a AUTORIDADE EXTERNA dos tres verificadores (OS 40-C4) ==\n'
+
+# `V01`–`V10` da OS 40-R4 mediram o que faltava: as tres pecas que DECIDEM —
+# `verificar_contrato_suites.sh`, `portao_os_integracao.sh` e
+# `codigo_executavel.awk` — nao tinham digesto proprio, inventario proprio nem
+# prova de que suas decisoes materiais continuam la.
+#
+# TODO VETOR ABAIXO RECARIMBA O QUE O ATACANTE CONTROLA. Sem isso, cada caso
+# reprovaria pelo digesto e nenhum mediria a decisao — seriam onze copias do
+# mesmo T12.
+
+if caso_ativo T77; then
+  reset T77
+  sem_mutacao 'CONTROLE: a autoridade sobre a arvore integra'
+  esperar_autoridade 0 "T77 CONTROLE — autoridade sobre a arvore integra => VERDE" 'AUTORIDADE DOS VERIFICADORES: VERDE'
+fi
+
+if caso_ativo T78; then
+  reset T78
+  # V04 — `contratosui` retirado dos mapas de piso. A chave some, `piso_de`
+  # devolve vazio, a comparacao nao roda, e nada reprova.
+  ancora "scripts/ci/verificar_contrato_suites.sh" 'contratosui:[0-9]' 4
+  sed -i 's/ contratosui:[0-9]*//g' "$W/scripts/ci/verificar_contrato_suites.sh"
+  recarimbar_autoridade "scripts/ci/verificar_contrato_suites.sh"
+  efeito 'contratosui:[0-9]' 0
+  esperar_autoridade 1 "T78 — V04: contratosui retirado dos mapas de piso => VERMELHO" \
+    "saiu de 'PISOS_"
+fi
+
+if caso_ativo T79; then
+  reset T79
+  # V06 — a comparacao de piso neutralizada. Os mapas ficam, as mensagens ficam,
+  # e nenhum piso e cobrado.
+  ancora "scripts/ci/verificar_contrato_suites.sh" '[-]lt "\$piso"' 4
+  sed -i 's/-lt "\$piso"/-lt 0/g' "$W/scripts/ci/verificar_contrato_suites.sh"
+  recarimbar_autoridade "scripts/ci/verificar_contrato_suites.sh"
+  efeito '[-]lt "\$piso"' 0
+  esperar_autoridade 1 "T79 — V06: comparacao de piso neutralizada => VERMELHO" \
+    'decisao material'
+fi
+
+if caso_ativo T80; then
+  reset T80
+  # V06 + E01 — a comparacao neutralizada, E os literais repostos dentro de um
+  # heredoc. Uma busca textual acharia os quatro; o leitor de codigo VIVO, que e
+  # o desta autoridade, nao acha nenhum.
+  ancora "scripts/ci/verificar_contrato_suites.sh" '[-]lt "\$piso"' 4
+  sed -i 's/-lt "\$piso"/-lt 0/g' "$W/scripts/ci/verificar_contrato_suites.sh"
+  {
+    printf '\n'
+    printf 'cat <<HEREDOC_DA_FORJA > /dev/null\n'
+    printf '  if [ "$exige_do_gate" -lt "$piso" ]; then\n'
+    printf '  if [ "$exigenocaso_do_gate" -lt "$piso" ]; then\n'
+    printf '  if [ "$provas_do_gate" -lt "$piso" ]; then\n'
+    printf '  elif [ "$casos_esperados" -lt "$piso" ]; then\n'
+    printf 'HEREDOC_DA_FORJA\n'
+  } >> "$W/scripts/ci/verificar_contrato_suites.sh"
+  recarimbar_autoridade "scripts/ci/verificar_contrato_suites.sh"
+  efeito '[-]lt "\$piso"' 4
+  esperar_autoridade 1 "T80 — V06+E01: comparacao neutralizada e literais repostos em heredoc => VERMELHO" \
+    'decisao material'
+fi
+
+if caso_ativo T81; then
+  reset T81
+  # V07 — `erro()` esvaziado, com a MENSAGEM preservada. O verificador continua
+  # imprimindo tudo o que imprimia, e nunca mais reprova.
+  ancora "scripts/ci/verificar_contrato_suites.sh" '^  falhas=1$' 1
+  sed -i '/^  falhas=1$/d' "$W/scripts/ci/verificar_contrato_suites.sh"
+  recarimbar_autoridade "scripts/ci/verificar_contrato_suites.sh"
+  efeito '^  falhas=1$' 0
+  esperar_autoridade 1 "T81 — V07: erro() esvaziado com as mensagens preservadas => VERMELHO" \
+    'decisao material'
+fi
+
+if caso_ativo T82; then
+  reset T82
+  # V08 — saida antecipada verde. Uma linha, e tudo o que vinha depois aprova.
+  ausencia "scripts/ci/verificar_contrato_suites.sh" '^exit 0$'
+  sed -i '0,/^set -u$/s//set -u\nexit 0/' "$W/scripts/ci/verificar_contrato_suites.sh"
+  recarimbar_autoridade "scripts/ci/verificar_contrato_suites.sh"
+  efeito '^exit 0$' 1
+  esperar_autoridade 1 "T82 — V08: exit 0 antecipado no verificador => VERMELHO" \
+    'saida antecipada verde'
+fi
+
+if caso_ativo T83; then
+  reset T83
+  # V09 — o lexer trocado por busca textual simples: o laco que responde por
+  # agulha e desligado, e TODAS as declaracoes materiais continuam la, vivas.
+  # Quem pega e a SONDA DE COMPORTAMENTO — nenhum recarimbo satisfaz uma resposta
+  # que precisa ser calculada.
+  ancora "scripts/ci/codigo_executavel.awk" '^  for \(j = 1; j <= n; j\+\+\) \{$' 1
+  sed -i 's|^  for (j = 1; j <= n; j++) {$|  for (j = 1; j <= n \&\& 0; j++) {|' \
+    "$W/scripts/ci/codigo_executavel.awk"
+  recarimbar_autoridade "scripts/ci/codigo_executavel.awk"
+  efeito '^  for \(j = 1; j <= n && 0; j\+\+\) \{$' 1
+  esperar_autoridade 1 "T83 — V09: lexer trocado por busca textual simples => VERMELHO" \
+    'ele virou busca textual'
+fi
+
+if caso_ativo T84; then
+  reset T84
+  # O piso de `exigenocaso` rebaixado NO VERIFICADOR. A matriz nao pega isso —
+  # o verificador e quem declara o piso, e um piso menor continua satisfeito.
+  # Quem pega e esta autoridade, de fora.
+  ancora "scripts/ci/verificar_contrato_suites.sh" '^readonly PISOS_EXIGENOCASO="comunicacao:3' 1
+  sed -i 's|^readonly PISOS_EXIGENOCASO="comunicacao:3 |readonly PISOS_EXIGENOCASO="comunicacao:1 |' \
+    "$W/scripts/ci/verificar_contrato_suites.sh"
+  recarimbar_autoridade "scripts/ci/verificar_contrato_suites.sh"
+  efeito '^readonly PISOS_EXIGENOCASO="comunicacao:1 ' 1
+  esperar_autoridade 1 "T84 — piso de exigenocaso rebaixado no verificador => VERMELHO" \
+    'caiu de 3 para 1'
+fi
+
+if caso_ativo T85; then
+  reset T85
+  # O agregador esvaziado: `falhou=1` some das seis decisoes, e o portao passa a
+  # ficar verde sobre gate vermelho. Com o digesto recarimbado no mesmo golpe.
+  ancora "scripts/ci/portao_os_integracao.sh" '^ +falhou=1$' 6
+  sed -i '/^ *falhou=1$/d' "$W/scripts/ci/portao_os_integracao.sh"
+  recarimbar_autoridade "scripts/ci/portao_os_integracao.sh"
+  efeito '^ +falhou=1$' 0
+  esperar_autoridade 1 "T85 — agregador esvaziado com o digesto recarimbado => VERMELHO" \
+    'decisao material'
+fi
+
+if caso_ativo T86; then
+  reset T86
+  # O verificador RETIRADO do inventario da autoridade. Sem registro nao ha
+  # digesto, e sem digesto a peca deixaria de ser guardada em silencio.
+  ancora "scripts/ci/autoridade_verificadores.sh" '^scripts/ci/portao_os_integracao\.sh [0-9a-f]' 1
+  sed -i '/^scripts\/ci\/portao_os_integracao\.sh [0-9a-f]/d' \
+    "$W/scripts/ci/autoridade_verificadores.sh"
+  efeito '^scripts/ci/portao_os_integracao\.sh [0-9a-f]' 0
+  esperar_autoridade 1 "T86 — verificador retirado do inventario da autoridade => VERMELHO" \
+    'NAO tem digesto no inventario'
+fi
+
+if caso_ativo T87; then
+  reset T87
+  # DOIS registros para o mesmo caminho: a comparacao passaria a depender de qual
+  # deles fosse lido primeiro.
+  ancora "scripts/ci/autoridade_verificadores.sh" '^scripts/ci/codigo_executavel\.awk [0-9a-f]' 1
+  awk '
+    { l = $0; sub(/\r$/, "", l) }
+    { print l }
+    l ~ /^scripts\/ci\/codigo_executavel\.awk [0-9a-f]/ { print "scripts/ci/codigo_executavel.awk 0000000000000000000000000000000000000000000000000000000000000000" }
+  ' "$BASE/scripts/ci/autoridade_verificadores.sh" > "$W/scripts/ci/autoridade_verificadores.sh"
+  efeito '^scripts/ci/codigo_executavel\.awk [0-9a-f]' 2
+  esperar_autoridade 1 "T87 — digesto duplicado no inventario => VERMELHO" \
+    'registros de digesto'
+fi
+
+if caso_ativo T88; then
+  reset T88
+  # A tentativa de neutralizar a PROPRIA autoridade. Ela nao se guarda — quem
+  # responde por ela e o contrato de conteudo, com digesto e `exige` na fonte.
+  ancora "scripts/ci/autoridade_verificadores.sh" '^readonly MINIMOS_EXIGENOCASO=' 1
+  sed -i '/^readonly MINIMOS_EXIGENOCASO=/d' "$W/scripts/ci/autoridade_verificadores.sh"
+  efeito '^readonly MINIMOS_EXIGENOCASO=' 0
+  esperar 1 "T88 — a propria autoridade adulterada => VERMELHO no contrato de conteudo" \
+    'mudou e a assinatura nao'
 fi
 
 printf '\n== controle final ==\n'
