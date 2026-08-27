@@ -316,6 +316,7 @@ jobs:
             app/test/casca/mesa_treino_caracterizacao_test.dart \
             app/test/casca/mesa_treino_acessivel_test.dart \
             app/test/casca/mesa_treino_alvos_reais_test.dart \
+            app/test/casca/ancora_provas_visuais_test.dart \
             app/test/casca/autoridade_ancora_visual_test.dart \
             app/test/cartas/disposicao_da_mao_test.dart; do
             if [ ! -f "$obrigatoria" ]; then

@@ -179,6 +179,36 @@ conveniência: é a única afirmação honesta disponível ali, e ela é fail-cl
 
 ---
 
+## 7. Campanha negativa
+
+Dezenove sabotagens, cada uma aplicada **isoladamente** sobre a árvore íntegra,
+mais o controle verde. Todas ficam VERMELHAS com causa nominal.
+
+| # | sabotagem | quem reprova | resultado esperado |
+|---|---|---|---|
+| C6-01 | C10 verbatim: esvaziar as duas metades e realinhar todos os digests | `ancoravis` — `o código das duas metades bate com o digest desta âncora` | VERMELHO |
+| C6-02 | apagar os dois casos protegidos, preservando comentários e nomes | `ancoravis` — `os casos das duas metades são exatamente estes` | VERMELHO |
+| C6-03 | trivializar os dois corpos com assertivas tautológicas | `ancoravis` — digest do código, piso de afirmações e agulhas | VERMELHO |
+| C6-04 | retirar `auditoria_casca_test.dart` do alvo | `ancoravis` — `o alvo oficial executa as duas suítes protegidas` | VERMELHO |
+| C6-05 | retirar `mesa_treino_alvos_reais_test.dart` do alvo | `ancoravis` — idem | VERMELHO |
+| C6-06 | retirar ambas do alvo | `ancoravis` — idem | VERMELHO |
+| C6-07 | desviar o alvo inteiro para suíte-isca | `ancoravis` — caminho declarado e comando do portão do APK | VERMELHO |
+| C6-08 | apagar a entrada externa que torna as provas obrigatórias | `ancoravis`, executada pelo portão do APK — `a entrada desta âncora está viva nas três listas do veredito` | VERMELHO |
+| C6-09 | apagar entrada, produtor e arquivos juntos | `build.yml` — a lista de arquivos obrigatórios nomeados um a um | VERMELHO |
+| C6-10 | comentar o comando vivo mantendo o literal | `ancoravis` — `o comando que executa esta âncora está vivo, e não comentado` | VERMELHO |
+| C6-11 | fabricar marcador sem executar as suítes | `ancoravis` — `as duas suítes protegidas executaram de verdade` | VERMELHO |
+| C6-12 | fornecer log anterior ao carimbo | `ancoravis` — idem, pela comparação com o carimbo | VERMELHO |
+| C6-13 | reduzir o piso ao valor sabotado | `ancoravis` — `o vínculo de conteúdo desta âncora está declarado no alvo oficial` | VERMELHO |
+| C6-14 | neutralizar o verificador externo | `ancoravis` — as quatro linhas vivas do bloco de conferência | VERMELHO |
+| C6-15 | neutralizar somente a nova guarda | alvo oficial — `sha256sum` contra `ANCORA_DIGEST` | VERMELHO |
+| C6-16 | neutralizar guarda e realinhar seu digest | alvo oficial — placar real abaixo de `ANCORA_PISO` | VERMELHO |
+| C6-17 | renomear um caso preservando a quantidade | `ancoravis` — `os casos das duas metades são exatamente estes` | VERMELHO |
+| C6-18 | manter nomes e esvaziar apenas o conteúdo semântico | `ancoravis` — digest do código, agulhas e piso | VERMELHO |
+| C6-19 | remover a campanha que cobra C10 | `ancoravis` — `o contrato desta âncora continua na árvore e nomeia o residual` | VERMELHO |
+| C6-20 | estado íntegro, sem nenhuma alteração na árvore | **VERDE**, necessariamente | VERDE |
+
+---
+
 ## 8. O que continua aberto, e é registrado como tal
 
 1. **Um gesto coordenado de muitos arquivos** não é distinguível de uma entrega

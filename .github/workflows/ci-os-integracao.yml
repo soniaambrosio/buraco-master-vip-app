@@ -482,7 +482,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao autancora billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao ancoravis autancora billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           # Mesma declaração do veredito. Cada passo é um shell próprio, então
           # ela se repete — e a conferência que impede as duas de divergirem
           # mora no veredito, que é quem reprova.
@@ -544,7 +544,7 @@ jobs:
         run: |
           # A lista do veredito mora numa variável, e não literal no `for`, para
           # que a conferência lá embaixo leia a MESMA lista que o laço percorre.
-          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao autancora billing torneiosfn socialdom socialfn socialemu regras"
+          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao ancoravis autancora billing torneiosfn socialdom socialfn socialemu regras"
 
           # GATES QUE NÃO PODEM DEIXAR DE EXECUTAR.
           #
