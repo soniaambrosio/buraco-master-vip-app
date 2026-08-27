@@ -133,7 +133,7 @@ degrau abaixo. O segundo dono é prosa revisável, e não código que ninguém l
 
 O digest vigente, que os dois têm de dizer, é:
 
-ancora-digest: 5fd548ac9beb9d29e4e7a125717025c12ed55534eb927004f6bba9dbff0924da
+ancora-digest: 02ebf8be2ccf0fa91b78dda8eb8e7770266249b8c96f7db8f94c47a64225e292
 
 A âncora, do outro lado, afirma em Dart que essas declarações continuam vivas e
 com **esses** valores — inclusive recalculando o próprio digest e comparando-o
@@ -179,43 +179,22 @@ conveniência: é a única afirmação honesta disponível ali, e ela é fail-cl
 
 ---
 
-## 7. Campanha negativa
-
-Dezenove sabotagens, cada uma aplicada **isoladamente** sobre a árvore íntegra,
-mais o controle verde. Todas ficam VERMELHAS com causa nominal.
-
-| # | sabotagem | quem reprova |
-|---|---|---|
-| C6-01 | C10 verbatim: esvaziar as duas metades e realinhar todos os digests | `ancoravis` — `o código das duas metades bate com o digest desta âncora` |
-| C6-02 | apagar os dois casos protegidos, preservando comentários e nomes | `ancoravis` — `os casos das duas metades são exatamente estes` |
-| C6-03 | trivializar os dois corpos com assertivas tautológicas | `ancoravis` — digest do código, piso de afirmações e agulhas |
-| C6-04 | retirar `auditoria_casca_test.dart` do alvo | `ancoravis` — `o alvo oficial executa as duas suítes protegidas` |
-| C6-05 | retirar `mesa_treino_alvos_reais_test.dart` do alvo | `ancoravis` — idem |
-| C6-06 | retirar ambas do alvo | `ancoravis` — idem |
-| C6-07 | desviar o alvo inteiro para suíte-isca | `ancoravis` — caminho declarado e comando do portão do APK |
-| C6-08 | apagar a entrada externa que torna as provas obrigatórias | `ancoravis`, executada pelo portão do APK — `a entrada desta âncora está viva nas três listas do veredito` |
-| C6-09 | apagar entrada, produtor e arquivos juntos | `build.yml` — a lista de arquivos obrigatórios nomeados um a um |
-| C6-10 | comentar o comando vivo mantendo o literal | `ancoravis` — `o comando que executa esta âncora está vivo, e não comentado` |
-| C6-11 | fabricar marcador sem executar as suítes | `ancoravis` — `as duas suítes protegidas executaram de verdade` |
-| C6-12 | fornecer log anterior ao carimbo | `ancoravis` — idem, pela comparação com o carimbo |
-| C6-13 | reduzir o piso ao valor sabotado | `ancoravis` — `o vínculo de conteúdo desta âncora está declarado no alvo oficial` |
-| C6-14 | neutralizar o verificador externo | `ancoravis` — as quatro linhas vivas do bloco de conferência |
-| C6-15 | neutralizar somente a nova guarda | alvo oficial — `sha256sum` contra `ANCORA_DIGEST` |
-| C6-16 | neutralizar guarda e realinhar seu digest | alvo oficial — placar real abaixo de `ANCORA_PISO` |
-| C6-17 | renomear um caso preservando a quantidade | `ancoravis` — `os casos das duas metades são exatamente estes` |
-| C6-18 | manter nomes e esvaziar apenas o conteúdo semântico | `ancoravis` — digest do código, agulhas e piso |
-| C6-19 | remover a campanha que cobra C10 | `ancoravis` — `o contrato desta âncora continua na árvore e nomeia o residual` |
-| C6-20 | estado íntegro | **VERDE**, necessariamente |
-
----
-
 ## 8. O que continua aberto, e é registrado como tal
 
-1. **Um gesto de quatro arquivos coordenados** — reescrever A, B, C e as duas
-   entradas dos dois workflows no mesmo commit — não é distinguível de uma
-   entrega legítima por nenhuma máquina desta árvore. É o limite estrutural de
-   toda guarda por conteúdo, e o degrau seguinte é revisão humana, não mais um
-   nó.
+1. **Um gesto coordenado de muitos arquivos** não é distinguível de uma entrega
+   legítima por nenhuma máquina desta árvore. É o limite estrutural de toda
+   guarda por conteúdo, e o degrau seguinte é revisão humana, não mais um nó.
+
+   **Atualizado pela OS 29-C7.** Quando este parágrafo foi escrito, o gesto
+   eram quatro arquivos. A OS 29-R5 mediu que ele era MENOR do que isto diz —
+   `{C,W}` bastava, com as duas metades intactas, porque tudo o que decidia o
+   que a âncora É morava nos arquivos que aquele gesto já estava tocando. A OS
+   29-C7 fechou isso com um QUARTO nó,
+   `app/test/casca/autoridade_ancora_visual_test.dart` (gate `autancora`), que
+   carrega cópia própria do caminho, do piso, dos nomes dos casos e do digest
+   do CÓDIGO desta âncora — e que esta âncora guarda de volta. O residual
+   vigente, declarado com o tamanho que ele tem, está no §8 do contrato daquela
+   autoridade: `docs/AUTORIDADE-EXTERNA-ANCORA-VISUAL-V1.md`.
 
 2. **`ci-os-integracao.yml` só dispara em `push` para
    `integracao/os-final-backend-flutter` e por `workflow_dispatch`.** A metade

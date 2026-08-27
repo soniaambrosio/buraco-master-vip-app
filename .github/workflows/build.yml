@@ -316,7 +316,7 @@ jobs:
             app/test/casca/mesa_treino_caracterizacao_test.dart \
             app/test/casca/mesa_treino_acessivel_test.dart \
             app/test/casca/mesa_treino_alvos_reais_test.dart \
-            app/test/casca/ancora_provas_visuais_test.dart \
+            app/test/casca/autoridade_ancora_visual_test.dart \
             app/test/cartas/disposicao_da_mao_test.dart; do
             if [ ! -f "$obrigatoria" ]; then
               echo "ERRO: $obrigatoria não encontrado — a suíte da Mesa de Treino é OBRIGATÓRIA."
@@ -331,9 +331,45 @@ jobs:
           # não o alcançaria sozinho. A regra da mão é o que sustenta o piso de
           # toque de toda carta: ela roda no MESMO portão que produz o APK.
           cp -R app/test/cartas/. app_build/test/cartas/
+          # A EXECUÇÃO VIVA DESTA PORTA, E A EVIDÊNCIA QUE ELA PRODUZ (OS 29-C7).
+          #
+          # A OS 29-R5 mediu o que a presença TEXTUAL do comando não prova: um `#`
+          # na frente da linha deixava o literal escrito, a auditoria satisfeita e o
+          # passo sem executar teste nenhum — e o passo saindo VERDE. Presença não
+          # é autoridade. Daqui para baixo o portão CONSOME o exit real da execução
+          # e confere o placar contra um piso: zero teste com exit 0 fica VERMELHO.
+          #
+          # A âncora e a autoridade externa são fail-closed: elas não rodam sem
+          # saber por qual porta estão sendo executadas, nem sem um carimbo NOVO
+          # desta execução. O nome da porta e o carimbo nascem aqui, e o carimbo
+          # viaja também por ambiente — um arquivo guardado de outra corrida não
+          # casa com o valor que este shell acabou de gerar.
+          rm -f t_apk_casca.log carimbo_ancoravis porta_ancoravis
+          BMV_PORTA_ANCORAVIS=portao-apk
+          BMV_CARIMBO_ANCORAVIS="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)-$$-${RANDOM}"
+          export BMV_PORTA_ANCORAVIS BMV_CARIMBO_ANCORAVIS
+          printf '%s' "$BMV_PORTA_ANCORAVIS" > porta_ancoravis
+          printf '%s' "$BMV_CARIMBO_ANCORAVIS" > carimbo_ancoravis
+          APK_PISO=369
           cd app_build
-          flutter test test/casca test/cartas --reporter expanded
-          echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA}."
+          set +e
+          flutter test test/casca test/cartas --reporter expanded 2>&1 | tee ../t_apk_casca.log
+          APK_EXIT=${PIPESTATUS[0]}
+          set -e
+          if [ "$APK_EXIT" != "0" ]; then
+            echo "PORTÃO VERMELHO: a execução das suítes saiu com $APK_EXIT."
+            exit 1
+          fi
+          APK_PLACAR=$(grep -oE "\+[0-9]+: All tests passed!" ../t_apk_casca.log | grep -oE "[0-9]+" | tail -1)
+          if [ -z "$APK_PLACAR" ]; then
+            echo "PORTÃO VERMELHO: a execução não fechou placar — nenhum teste rodou."
+            exit 1
+          fi
+          if [ "$APK_PLACAR" -lt "$APK_PISO" ]; then
+            echo "PORTÃO VERMELHO: placar $APK_PLACAR abaixo do piso $APK_PISO."
+            exit 1
+          fi
+          echo "PORTÃO VERDE: casca de produção validada no commit ${GITHUB_SHA} (placar $APK_PLACAR, piso $APK_PISO)."
 
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço

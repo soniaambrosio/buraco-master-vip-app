@@ -156,7 +156,21 @@ jobs:
           # todo log desta execução. É o que distingue "as suítes rodaram
           # agora" de "alguém guardou os logs de uma corrida antiga e os
           # reapresentou": `ancoravis` exige que cada log seja posterior a ele.
-          date -u +%Y-%m-%dT%H:%M:%S.%NZ > carimbo_ancoravis
+          # A ORDEM AQUI FAZ PARTE DO CONTRATO (OS 29-C7): limpeza, carimbo novo,
+          # suites protegidas, logs, `ancoravis`, `autancora`, veredito. A OS 29-R5
+          # mediu o que a mera presenca do produtor nao prova: deslocado para
+          # DEPOIS das suites, o carimbo passa a ser mais novo que os logs e a
+          # comparacao que denuncia evidencia reapresentada inverte de sinal.
+          #
+          # O carimbo tambem viaja por AMBIENTE. Um arquivo `carimbo_ancoravis`
+          # guardado de outra corrida e reapresentado nao casa com o valor que este
+          # shell acabou de gerar, e a ancora reprova nominalmente.
+          rm -f carimbo_ancoravis porta_ancoravis t_cascaaud.log t_mesac1.log t_ancoravis.log t_autancora.log exit_cascaaud exit_mesac1 exit_ancoravis exit_autancora nao_cascaaud nao_mesac1 nao_ancoravis nao_autancora
+          BMV_PORTA_ANCORAVIS=alvo-oficial
+          BMV_CARIMBO_ANCORAVIS="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)-$$-${RANDOM}"
+          export BMV_PORTA_ANCORAVIS BMV_CARIMBO_ANCORAVIS
+          printf '%s' "$BMV_PORTA_ANCORAVIS" > porta_ancoravis
+          printf '%s' "$BMV_CARIMBO_ANCORAVIS" > carimbo_ancoravis
           roda motor      test/teste_motor.dart
           roda resil      test/teste_motor_resiliencia.dart
           roda encerr     test/teste_encerramento.dart
@@ -247,8 +261,8 @@ jobs:
           # que ninguém lê. Os dois têm de dizer o mesmo número.
           ANCORA_ARQUIVO=app/test/casca/ancora_provas_visuais_test.dart
           ANCORA_CONTRATO=docs/ANCORA-PROVAS-VISUAIS-CARTA-OBRIGATORIA-V1.md
-          ANCORA_DIGEST=5fd548ac9beb9d29e4e7a125717025c12ed55534eb927004f6bba9dbff0924da
-          ANCORA_PISO=16
+          ANCORA_DIGEST=02ebf8be2ccf0fa91b78dda8eb8e7770266249b8c96f7db8f94c47a64225e292
+          ANCORA_PISO=22
           d=$(tr -d "\r" < "$ANCORA_ARQUIVO" | sha256sum | cut -d" " -f1)
           if [ "$d" != "$ANCORA_DIGEST" ]; then
             echo "ÂNCORA ALTERADA: digest $d, declarado $ANCORA_DIGEST" | tee -a t_ancoravis.log
@@ -263,6 +277,43 @@ jobs:
           if [ -z "$n" ] || [ "$n" -lt "$ANCORA_PISO" ]; then
             echo "ÂNCORA ABAIXO DO PISO: placar '$n', piso $ANCORA_PISO" | tee -a t_ancoravis.log
             echo 1 > exit_ancoravis
+          fi
+          # OS 29-C7 — A AUTORIDADE EXTERNA DA PROPRIA ANCORA.
+          #
+          # A OS 29-R5 mediu o residual que a C6 deixou: esvaziar a ancora,
+          # recarimbar os DOIS donos do digest (este arquivo e o contrato dela) e
+          # baixar `ANCORA_PISO` para 1 sai VERDE. Os tres numeros que decidem o
+          # que a ancora e moram todos nos arquivos que o gesto ja esta tocando.
+          #
+          # `autancora` e o quarto no. Ele carrega copia PROPRIA do caminho
+          # canonico da ancora, do piso de casos, da relacao NOMINAL dos casos e do
+          # digest do CODIGO dela — e nenhum desses numeros e calculado a partir do
+          # alvo que ele verifica. Esvaziar a ancora reprova aqui mesmo depois de
+          # recarimbar `ANCORA_DIGEST` e o contrato, porque o que ele confere e o
+          # conteudo, e nao o carimbo.
+          #
+          # E a ancora guarda esta autoridade de volta, com o mesmo rigor: remover,
+          # neutralizar ou recarimbar `autancora` reprova em `ancoravis`, no laco
+          # de arquivos obrigatorios do `build.yml` e nas linhas vivas abaixo.
+          exige autancora  test/casca/autoridade_ancora_visual_test.dart
+          AUTORIDADE_ARQUIVO=app/test/casca/autoridade_ancora_visual_test.dart
+          AUTORIDADE_CONTRATO=docs/AUTORIDADE-EXTERNA-ANCORA-VISUAL-V1.md
+          AUTORIDADE_DIGEST=ae604af3652b97e7b4957bfaaee8205ac2b1d877cc879a1b7b8142b1e1acc29a
+          AUTORIDADE_PISO=20
+          da=$(tr -d "\r" < "$AUTORIDADE_ARQUIVO" | sha256sum | cut -d" " -f1)
+          if [ "$da" != "$AUTORIDADE_DIGEST" ]; then
+            echo "AUTORIDADE ALTERADA: digest $da, declarado $AUTORIDADE_DIGEST" | tee -a t_autancora.log
+            echo 1 > exit_autancora
+          fi
+          ca=$(grep -oE "^autoridade-digest: [0-9a-f]{64}$" "$AUTORIDADE_CONTRATO" | tail -1 | sed "s/.*: //")
+          if [ "$ca" != "$AUTORIDADE_DIGEST" ]; then
+            echo "CONTRATO DIVERGE: contrato $ca, alvo $AUTORIDADE_DIGEST" | tee -a t_autancora.log
+            echo 1 > exit_autancora
+          fi
+          na=$(grep -oE "\+[0-9]+: All tests passed!" t_autancora.log | grep -oE "[0-9]+" | tail -1)
+          if [ -z "$na" ] || [ "$na" -lt "$AUTORIDADE_PISO" ]; then
+            echo "AUTORIDADE ABAIXO DO PISO: placar '$na', piso $AUTORIDADE_PISO" | tee -a t_autancora.log
+            echo 1 > exit_autancora
           fi
           # Gerador de evidência visual: roda e é reportado, mas NÃO entra no
           # portão, por decisão registrada no cabeçalho do próprio arquivo — ele
@@ -431,11 +482,11 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao ancoravis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao autancora billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           # Mesma declaração do veredito. Cada passo é um shell próprio, então
           # ela se repete — e a conferência que impede as duas de divergirem
           # mora no veredito, que é quem reprova.
-          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao ancoravis"
+          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao ancoravis autancora"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -493,7 +544,7 @@ jobs:
         run: |
           # A lista do veredito mora numa variável, e não literal no `for`, para
           # que a conferência lá embaixo leia a MESMA lista que o laço percorre.
-          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao ancoravis billing torneiosfn socialdom socialfn socialemu regras"
+          LISTA="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis mesacar mesaa11y mesac1 disposicao autancora billing torneiosfn socialdom socialfn socialemu regras"
 
           # GATES QUE NÃO PODEM DEIXAR DE EXECUTAR.
           #
@@ -512,7 +563,7 @@ jobs:
           # Este é o mesmo mecanismo aprovado na OS 12.1-C1 para `torneiosa11y`,
           # e de propósito não é outro: um segundo agregador, com outra lista e
           # outro runner, seria uma segunda autoridade sobre o mesmo veredito.
-          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao ancoravis"
+          OBRIGATORIOS="mesacar mesaa11y mesac1 disposicao ancoravis autancora"
           obrigatorio() {
             case " $OBRIGATORIOS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
           }
