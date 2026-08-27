@@ -19,8 +19,10 @@
 // que é proibido — e uma varredura ingênua acusaria a explicação como violação.
 // Pior: o jeito de "consertar" seria apagar a documentação.
 
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // ===========================================================================
@@ -549,32 +551,295 @@ void main() {
   });
 
   // =========================================================================
-  // O PORTÃO DA ACESSIBILIDADE DO RESULTADO EXISTE, E A AUSÊNCIA DELE REPROVA
+  // O PORTÃO DA OS 16 — CONTRATO EXTERNO, PISOS E OS TRÊS WORKFLOWS
   // =========================================================================
   //
   // Mesma disciplina do grupo acima, e pelo mesmo motivo: apagar um arquivo de
-  // suíte SILENCIA o gate dele — ausência vira NÃO EXECUTADO, e NÃO EXECUTADO
-  // não derruba o portão. A garantia mora fora do que ela garante.
+  // suíte SILENCIA o gate dele. Só que a OS 16-R1 mostrou que EXISTIR não
+  // basta. Três destruições continuavam saindo verdes:
   //
-  // O que esta suíte protege é um defeito que não quebra nada: a tela de fim de
-  // partida continua mostrando o placar certo com um botão de 27 pt e texto de
-  // 6,6 pt. Nenhum teste funcional reclama disso. Só a medida reclama.
-  group('o portão da acessibilidade do Resultado', () {
-    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+  //   1. trocar a suíte inteira por `expect(1 + 1, 2)`;
+  //   2. baixar os pisos de 48 dp e 11 pt para 24 e 6 — na tela E na suíte, de
+  //      forma coordenada, porque a comparação é `>=` e o número esperado
+  //      morava dentro do próprio arquivo comparado;
+  //   3. apagar os workflows, porque a checagem era `if (!existe) return`.
+  //
+  // A correção é fixar a régua FORA de quem a declara e de quem a usa. Este
+  // grupo é a autoridade que os gates já reconhecem (`cascaaud` no agregador e
+  // o portão da casca no `build.yml`). O contrato externo é
+  // `app/test/casca/contrato_os16_resultado.txt`, e o digest dele está gravado
+  // aqui, em literal: recarimbar o contrato junto com a sabotagem reprova neste
+  // arquivo, e recarimbar também este arquivo ainda reprova em
+  // `ferramentas/ci/portao_os16.sh`, que guarda 48 e 11 em literal.
+  //
+  // NÃO EXISTE `return` NESTE GRUPO. Ausência é reprovação.
+  group('o portão da OS 16 — Resultado legível e tocável', () {
+    test('o contrato externo existe, é a versão esperada e não foi recarimbado',
+        () {
+      final bruto = _obrigatorio(_caminhoContratoOS16);
+      expect(
+        bruto.trim(),
+        isNotEmpty,
+        reason: 'contrato vazio equivale a contrato ausente',
+      );
+      expect(
+        _campo(bruto, 'contrato'),
+        'os16-resultado-legivel-tocavel',
+        reason: 'a identidade do contrato mudou',
+      );
+      expect(
+        _campo(bruto, 'versao'),
+        kVersaoContratoOS16,
+        reason: 'versão inesperada do contrato da OS 16',
+      );
+      expect(
+        _digestOS16(bruto),
+        kDigestContratoOS16,
+        reason: 'o contrato da OS 16 foi reescrito. Se a mudança é legítima, '
+            'ela sobe a versão e recarimba os TRÊS lugares — contrato, esta '
+            'autoridade e o verificador. Se não é, acabou de ser pega',
+      );
+      for (final chave in const <String>[
+        'suite',
+        'suite_digest_sha256',
+        'suite_casos',
+        'produtivo',
+        'produtivo_digest_sha256',
+        'piso_alvo_dp',
+        'piso_fonte_pt',
+        'verificador',
+        'invocacao',
+      ]) {
+        expect(
+          _quantos(bruto, chave),
+          1,
+          reason: 'a chave "$chave" tem de aparecer exatamente uma vez',
+        );
+      }
+    });
 
-    test('a suíte existe na árvore', () {
+    test('a suíte oficial está no caminho do contrato, com o digest dele', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      final caminho = _campo(contrato, 'suite');
+      expect(
+        caminho,
+        'app/test/casca/a11y_resultado_partida_test.dart',
+        reason: 'o caminho da suíte oficial foi redirecionado',
+      );
+      final fonte = _obrigatorio(caminho);
+      expect(
+        _digestOS16(fonte),
+        _campo(contrato, 'suite_digest_sha256'),
+        reason: 'a suíte que mede alvo tocável e tipografia do Resultado não é '
+            'mais a que o contrato protege',
+      );
+      // A cópia que o gate REALMENTE executa vive dentro do scaffold. Se ela
+      // sumir, o `flutter test test/casca` roda sem a suíte e ninguém percebe.
       expect(
         File('test/casca/a11y_resultado_partida_test.dart').existsSync(),
         isTrue,
-        reason: 'a suíte que mede alvo tocável e tipografia da tela de '
-            'Resultado sumiu — e some em silêncio',
+        reason: 'a suíte não chegou ao diretório que o portão da casca roda',
       );
     });
 
-    test('o workflow a executa e a considera no portão', () {
-      if (!workflow.existsSync()) return;
-      final texto = workflow.readAsStringSync();
+    test('a cardinalidade e os nomes dos casos são os do contrato', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      final esperados = int.parse(_campo(contrato, 'suite_casos'));
+      final arquivo = File('../${_campo(contrato, 'suite')}');
+      final codigo = _semStrings(_codigo(arquivo));
+      final nomes = _codigo(arquivo);
 
+      final chamadas = RegExp(r'(^|[^A-Za-z0-9_$])(testWidgets|test)\s*\(')
+          .allMatches(codigo)
+          .length;
+      expect(
+        chamadas,
+        esperados,
+        reason: 'a suíte tem $chamadas caso(s) executável(is) e o contrato '
+            'exige $esperados — trocar a suíte por um teste trivial cai aqui',
+      );
+
+      final lista = _repetida(contrato, 'caso');
+      expect(
+        lista.length,
+        esperados,
+        reason: 'o contrato lista ${lista.length} nome(s) para uma '
+            'cardinalidade de $esperados',
+      );
+      for (final nome in lista) {
+        expect(
+          nome.allMatches(nomes).length,
+          1,
+          reason: 'caso obrigatório ausente, renomeado ou duplicado: "$nome"',
+        );
+      }
+    });
+
+    test('os pisos de 48 dp e 11 pt têm UMA atribuição, com esse valor', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      expect(
+        _campo(contrato, 'piso_alvo_dp'),
+        '${kPisoAlvoOS16.toInt()}',
+        reason: 'o contrato afrouxou o piso de alvo tocável',
+      );
+      expect(
+        _campo(contrato, 'piso_fonte_pt'),
+        '${kPisoFonteOS16.toInt()}',
+        reason: 'o contrato afrouxou o piso tipográfico',
+      );
+
+      for (final linha in _repetida(contrato, 'declaracao')) {
+        final campos = linha.split(RegExp(r'\s+'));
+        expect(campos.length, greaterThanOrEqualTo(3),
+            reason: 'declaração malformada: "$linha"');
+        final caminho = campos[0];
+        final simbolo = campos[1];
+        final valor = double.parse(campos[2]);
+        expect(
+          <double>[kPisoAlvoOS16, kPisoFonteOS16],
+          contains(valor),
+          reason: '"$simbolo" está declarado como $valor, fora da régua '
+              '($kPisoAlvoOS16 / $kPisoFonteOS16)',
+        );
+
+        final codigo = _semStrings(_codigo(File('../$caminho')));
+        final atribuicoes = RegExp('(^|[^A-Za-z0-9_])$simbolo\\s*=[^=]')
+            .allMatches(codigo)
+            .toList();
+        expect(
+          atribuicoes.length,
+          1,
+          reason: '"$simbolo" tem ${atribuicoes.length} atribuição(ões) em '
+              '$caminho — a legítima pode estar escondida atrás de uma isca',
+        );
+        final trecho = codigo.substring(atribuicoes.single.start);
+        final numero = RegExp('$simbolo\\s*=\\s*([0-9]+(\\.[0-9]+)?)')
+            .firstMatch(trecho)!
+            .group(1)!;
+        expect(
+          double.parse(numero),
+          valor,
+          reason: '"$simbolo" vale $numero em $caminho — a régua exige $valor',
+        );
+      }
+
+      // Declarar o piso não basta: ele tem de ser COBRADO. Sem isto, trocar a
+      // comparação por um número solto deixaria a constante intacta.
+      for (final linha in _repetida(contrato, 'exigencia')) {
+        final partes = linha.split(RegExp(r'\s+'));
+        final caminho = partes[0];
+        final minimo = int.parse(partes[1]);
+        final literal = partes.sublist(2).join(' ');
+        final codigo = _semStrings(_codigo(File('../$caminho')));
+        expect(
+          literal.allMatches(codigo).length,
+          greaterThanOrEqualTo(minimo),
+          reason: '"$literal" aparece menos de $minimo vez(es) em $caminho',
+        );
+      }
+    });
+
+    test('a tela produtiva está byte a byte como a OS 16 a aprovou', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      final caminho = _campo(contrato, 'produtivo');
+      expect(
+        caminho,
+        'app/lib/screens/resultado_partida_screen.dart',
+        reason: 'o caminho da tela produtiva foi redirecionado',
+      );
+      expect(
+        _digestOS16(_obrigatorio(caminho)),
+        _campo(contrato, 'produtivo_digest_sha256'),
+        reason: 'a tela de Resultado mudou sem passar por uma OS',
+      );
+    });
+
+    test('o verificador nomeado no contrato está na árvore', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      final caminho = _campo(contrato, 'verificador');
+      expect(
+        caminho,
+        'ferramentas/ci/portao_os16.sh',
+        reason: 'o contrato aponta outro verificador',
+      );
+      expect(
+        _obrigatorio(caminho).trim(),
+        isNotEmpty,
+        reason: 'o verificador da OS 16 sumiu ou ficou vazio',
+      );
+    });
+
+    test('os TRÊS workflows existem e invocam o portão da OS 16, vivo', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      final invocacao = _campo(contrato, 'invocacao');
+      final declarados = _repetida(contrato, 'workflow');
+      expect(
+        declarados.length,
+        3,
+        reason: 'a OS 16 protege exatamente três workflows',
+      );
+
+      for (final entrada in declarados) {
+        final partes = entrada.split('|').map((s) => s.trim()).toList();
+        final caminho = partes[0];
+        final passo = partes[1];
+        final ancora = partes[2];
+
+        // Ausência REPROVA. Era exatamente aqui que morava o `if (!existe)
+        // return` que deixava apagar os três workflows sem consequência.
+        final texto = _obrigatorio(caminho);
+        final linhas = texto.split('\n');
+
+        final vivas = _invocacoesVivas(linhas, invocacao);
+        expect(
+          vivas.length,
+          1,
+          reason: '$caminho tem ${vivas.length} invocação(ões) viva(s) de '
+              '"$invocacao" — esperava exatamente uma. Comando comentado, '
+              'dentro de echo/printf/heredoc ou duplicado não conta',
+        );
+
+        final linha = linhas[vivas.single - 1];
+        for (final neutralizador in const <String>[
+          '|| true',
+          '|| :',
+          '||:',
+          '|| echo',
+          '/bin/true',
+          '; true',
+          '|| exit 0',
+          '/dev/null',
+        ]) {
+          expect(
+            linha.contains(neutralizador),
+            isFalse,
+            reason: '$caminho neutraliza o portão com "$neutralizador"',
+          );
+        }
+
+        final iPasso = _primeiraLinhaCom(linhas, passo);
+        expect(iPasso, greaterThan(0),
+            reason: '$caminho não tem o passo "$passo"');
+        expect(
+          vivas.single,
+          greaterThan(iPasso),
+          reason: '$caminho: a invocação está fora do passo "$passo"',
+        );
+
+        final iAncora = _primeiraLinhaCom(linhas, ancora);
+        expect(iAncora, greaterThan(0),
+            reason: '$caminho perdeu a âncora "$ancora"');
+        expect(
+          vivas.single,
+          lessThan(iAncora),
+          reason: '$caminho: o portão foi deslocado para depois de "$ancora" '
+              '— rodaria tarde demais para impedir o artefato',
+        );
+      }
+    });
+
+    test('o agregador continua executando e CONTANDO o gate a11yres', () {
+      final texto = _obrigatorio('.github/workflows/ci-os-integracao.yml');
       expect(
         texto,
         contains('roda a11yres    test/casca/a11y_resultado_partida_test.dart'),
@@ -593,19 +858,132 @@ void main() {
       );
     });
 
-    test('o portão obrigatório da casca a alcança pelo diretório', () {
+    test('o portão obrigatório da casca alcança a suíte pelo diretório', () {
       // O `build.yml` roda `flutter test test/casca` inteiro, e é ele que
       // bloqueia o APK. Enquanto a suíte morar neste diretório, ela entra
       // nesse portão sem precisar de nome no workflow.
-      final build = File('../.github/workflows/build.yml');
-      if (!build.existsSync()) return;
-      final texto = build.readAsStringSync();
       expect(
-        texto,
+        _obrigatorio('.github/workflows/build.yml'),
         contains('flutter test test/casca --reporter expanded'),
         reason: 'o portão da casca deixou de rodar o diretório inteiro, e a '
             'suíte de acessibilidade do Resultado saiu do gate do APK',
       );
     });
   });
+}
+
+// ===========================================================================
+// RÉGUA E FERRAMENTAS DA OS 16
+// ===========================================================================
+//
+// Os dois pisos e a versão do contrato ficam AQUI, em literal, porque esta
+// autoridade é externa à suíte que os usa e à tela que os declara. O digest do
+// contrato também: é ele que impede o recarimbo silencioso.
+
+const double kPisoAlvoOS16 = 48;
+const double kPisoFonteOS16 = 11;
+const String kVersaoContratoOS16 = '1.0.0';
+const String kDigestContratoOS16 =
+    '3e3a85f2ba53b87ca2e7f310568dc57604ffdb27930fbf6d65cb6f43b311f133';
+
+const String _caminhoContratoOS16 =
+    'app/test/casca/contrato_os16_resultado.txt';
+
+/// Lê um caminho RELATIVO À RAIZ do repositório. No CI o scaffold nasce dentro
+/// da raiz, então `..` é a raiz — a mesma convenção que o resto deste arquivo
+/// já usava para chegar aos workflows.
+///
+/// Ausência é FALHA, nunca `return`. Este era o buraco da OS 16-R1.
+String _obrigatorio(String caminhoNaRaiz) {
+  final f = File('../$caminhoNaRaiz');
+  if (!f.existsSync()) {
+    fail('OS 16: arquivo obrigatório ausente: $caminhoNaRaiz — ausência NÃO é '
+        'conformidade');
+  }
+  return f.readAsStringSync().replaceAll('\r', '');
+}
+
+/// SHA-256 do conteúdo com o CR fora. O repositório está em
+/// `core.autocrlf=true`: o mesmo commit chega em CRLF no Windows e em LF no
+/// runner. O que o digest protege é o conteúdo, não o final de linha.
+String _digestOS16(String conteudo) =>
+    sha256.convert(utf8.encode(conteudo.replaceAll('\r', ''))).toString();
+
+/// O único valor de uma chave `chave: valor` do contrato.
+String _campo(String contrato, String chave) {
+  final achados = _repetida(contrato, chave);
+  if (achados.length != 1) {
+    fail('OS 16: a chave "$chave" aparece ${achados.length} vez(es) no '
+        'contrato — esperava exatamente uma');
+  }
+  return achados.single;
+}
+
+int _quantos(String contrato, String chave) => _repetida(contrato, chave).length;
+
+/// Todos os valores de uma chave repetível (`caso`, `workflow`, `declaracao`).
+List<String> _repetida(String contrato, String chave) {
+  final saida = <String>[];
+  for (final linha in contrato.split('\n')) {
+    if (!linha.startsWith('$chave:')) continue;
+    saida.add(linha.substring(chave.length + 1).trim());
+  }
+  return saida;
+}
+
+/// O fonte sem comentários E sem o CONTEÚDO das strings. Um `test(` escrito
+/// dentro de uma string vira `''` e some — iscas textuais não contam como caso.
+String _semStrings(String codigo) {
+  final saida = StringBuffer();
+  var i = 0;
+  String? aspa;
+  while (i < codigo.length) {
+    final c = codigo[i];
+    if (aspa != null) {
+      if (c == r'\') {
+        i += 2;
+        continue;
+      }
+      if (c == aspa) {
+        aspa = null;
+        saida.write(c);
+      }
+      i++;
+      continue;
+    }
+    if (c == "'" || c == '"') aspa = c;
+    saida.write(c);
+    i++;
+  }
+  return saida.toString();
+}
+
+/// As linhas (1-based) em que a invocação aparece como COMANDO: fora de
+/// comentário, fora de `echo`/`printf`/heredoc e fora de string.
+List<int> _invocacoesVivas(List<String> linhas, String invocacao) {
+  final vivas = <int>[];
+  for (var i = 0; i < linhas.length; i++) {
+    final linha = linhas[i];
+    final p = linha.indexOf(invocacao);
+    if (p < 0) continue;
+    if (linha.trimLeft().startsWith('#')) continue;
+    final antes = linha.substring(0, p);
+    if (antes.contains('echo') ||
+        antes.contains('printf') ||
+        antes.contains('<<')) {
+      continue;
+    }
+    if ('"'.allMatches(antes).length.isOdd) continue;
+    if ("'".allMatches(antes).length.isOdd) continue;
+    vivas.add(i + 1);
+  }
+  return vivas;
+}
+
+/// A primeira linha (1-based) que contém [trecho]; 0 se não houver.
+int _primeiraLinhaCom(List<String> linhas, String trecho) {
+  for (var i = 0; i < linhas.length; i++) {
+    if (linhas[i].contains(trecho)) return i + 1;
+  }
+  return 0;
 }

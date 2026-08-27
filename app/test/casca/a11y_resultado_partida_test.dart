@@ -36,6 +36,9 @@
 // casos de vitória, derrota e empate são montados com os mesmos valores que a
 // mesa entregaria, e a suíte confere que a tela os mostra sem alterar nenhum.
 
+@Timeout(Duration(minutes: 5))
+library;
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -59,6 +62,12 @@ const double kFonteMinima = 11.0;
 /// Superfície de telefone usada no resto da suíte da Casca: 360 x 780 lógicos.
 /// É a MENOR largura produtiva — todo estouro horizontal aparece aqui antes de
 /// aparecer em qualquer aparelho maior.
+/// Teto de rolagem do instrumento. Toda busca por rolagem desta suite para
+/// aqui: sem teto, um controle que nunca aparece vira travamento, e
+/// travamento nao e sabotagem detectada nem controle verde — e falha do
+/// instrumento. O numero fica registrado no contrato externo da OS 16.
+const int kMaxRolagens = 24;
+
 const Size kTelefoneFisico = Size(1080, 2340);
 const double kDpr = 3;
 
@@ -367,7 +376,8 @@ List<String> _rotulosSemanticos(WidgetTester tester) {
 Future<void> _tocar(WidgetTester tester, Finder alvo) async {
   final rolagem = find.byType(Scrollable);
   if (rolagem.evaluate().isNotEmpty) {
-    await tester.scrollUntilVisible(alvo, 120, scrollable: rolagem.first);
+    await tester.scrollUntilVisible(alvo, 120,
+        scrollable: rolagem.first, maxScrolls: kMaxRolagens);
   }
   await tester.tap(alvo);
   await tester.pump();
@@ -880,7 +890,7 @@ void main() {
 
       // O último controle da tela é o mais fundo — se ele chega, todos chegam.
       final anuncio = find.widgetWithText(TextButton, 'ASSISTIR');
-      await tester.scrollUntilVisible(anuncio, 200);
+      await tester.scrollUntilVisible(anuncio, 200, maxScrolls: kMaxRolagens);
       await tester.tap(anuncio);
       await tester.pump();
       expect(
@@ -890,7 +900,7 @@ void main() {
       );
 
       final lobby = find.widgetWithText(OutlinedButton, 'VOLTAR AO LOBBY');
-      await tester.scrollUntilVisible(lobby, -200);
+      await tester.scrollUntilVisible(lobby, -200, maxScrolls: kMaxRolagens);
       await tester.tap(lobby);
       await tester.pump();
       expect(b.voltarLobby, 1, reason: 'o botão de lobby não responde em 200%');
@@ -1107,7 +1117,7 @@ void main() {
       await _montar(tester, b, escala: 2.0);
 
       final principal = find.widgetWithText(ElevatedButton, 'VAMOS JOGAR?');
-      await tester.scrollUntilVisible(principal, 200);
+      await tester.scrollUntilVisible(principal, 200, maxScrolls: kMaxRolagens);
       await tester.tap(principal);
       await tester.pump();
       expect(b.chamadas, <String>['convidarRevanche:1']);

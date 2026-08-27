@@ -1,0 +1,4 @@
+# O verificador da OS 16 e qualquer outro script de portao precisam chegar em
+# LF nas duas plataformas: com core.autocrlf=true o checkout no Windows viraria
+# CRLF e o bash reprovaria o proprio portao por sintaxe.
+*.sh text eol=lf

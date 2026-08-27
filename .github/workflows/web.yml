@@ -188,6 +188,21 @@ jobs:
           print('OK: assets declarados no pubspec para o build web (inclui torneios/premiacao).')
           PY
 
+      - name: "PORTÃO OS 16 — contrato, pisos e provas do Resultado"
+        # A OS 16 corrigiu a tela de fim de partida (botão de 27 pt, texto de
+        # 6,6 pt) e deixou uma suíte que MEDE a árvore renderizada. O que não
+        # existia era a catraca: a suíte podia virar `expect(1+1, 2)`, os pisos
+        # de 48 dp e 11 pt podiam cair para 24 e 6, e este passo podia sumir —
+        # tudo continuando verde, porque ausência era tratada como conformidade.
+        #
+        # O verificador é externo à suíte e a este arquivo. Ele confere o
+        # contrato versionado, o digest dos bytes protegidos, a cardinalidade e
+        # os nomes dos casos, as atribuições efetivas dos pisos e a presença
+        # viva deste passo nos TRÊS workflows do repositório. Ausência de
+        # qualquer peça REPROVA.
+        run: |
+          bash ferramentas/ci/portao_os16.sh
+
       - name: Build Flutter Web (release)
         # base-href tem que casar com o caminho do GitHub Pages (nome do repo).
         run: cd app_build && flutter build web --release --base-href /buraco-master-vip-app/

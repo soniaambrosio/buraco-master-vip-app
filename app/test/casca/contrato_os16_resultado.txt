@@ -1,0 +1,144 @@
+# CONTRATO OS 16 — RESULTADO LEGÍVEL E TOCÁVEL
+#
+# Autoridade EXTERNA das provas da OS 16. Não é código de teste, não é
+# workflow: é o registro versionado de QUAL suíte é a oficial, QUANTOS casos
+# ela tem, COMO cada um se chama, QUAIS bytes estão protegidos e QUAIS pisos
+# não podem cair. Existe porque a OS 16-R1 mostrou que a implementação estava
+# certa e a catraca não: a suíte podia virar `expect(1+1, 2)`, os pisos podiam
+# cair de 48/11 para 24/6 e os workflows podiam sumir — tudo continuando verde.
+#
+# QUEM LÊ ESTE ARQUIVO
+#   1. `ferramentas/ci/portao_os16.sh` — o verificador. Confere tudo o que está
+#      aqui e mantém os pisos 48 e 11 em literal DENTRO DELE, para que nenhum
+#      valor esperado seja recalculado a partir do valor adulterado.
+#   2. `app/test/casca/auditoria_casca_test.dart` — a autoridade que os gates já
+#      reconhecem (`cascaaud` no agregador e o portão da casca no `build.yml`).
+#      Ela guarda o DIGEST DESTE ARQUIVO. Recarimbar o contrato junto com a
+#      sabotagem não basta: a autoridade reprova, e mesmo que a autoridade também
+#      fosse recarimbada, os literais do verificador continuariam reprovando.
+#
+# FORMATO: uma entrada por linha, `chave: valor`. Linhas iniciadas por `#` são
+# prosa. Chaves repetíveis: `declaracao`, `exigencia`, `workflow`, `caso`.
+#
+# A versão é IMUTÁVEL. Mudar o conteúdo protegido exige subir a versão aqui, no
+# verificador e na autoridade — três lugares, de propósito.
+
+contrato: os16-resultado-legivel-tocavel
+versao: 1.0.0
+verificador: ferramentas/ci/portao_os16.sh
+autoridade: app/test/casca/auditoria_casca_test.dart
+
+# ---------------------------------------------------------------------------
+# A SUÍTE OFICIAL
+# ---------------------------------------------------------------------------
+# `suite_casos` é a contagem de CHAMADAS a `test(`/`testWidgets(` no fonte
+# despojado de comentários e com o conteúdo das strings esvaziado — um `test(`
+# escrito dentro de comentário, de string, de `echo` ou de heredoc não conta.
+# `suite_casos_executaveis` é o que o runner reporta, maior porque há casos
+# gerados em laço (escala de 100%, 150% e 200%, e os desfechos da partida).
+# Os digests são SHA-256 do conteúdo com o CR removido: o repositório está em
+# `core.autocrlf=true` e o mesmo commit chega em CRLF no Windows e em LF no CI.
+
+suite: app/test/casca/a11y_resultado_partida_test.dart
+suite_digest_sha256: 31f8cfa6b2034f8e7a675216116b8ac6af6708377c8559193eac748e4c1e6415
+suite_casos: 36
+suite_casos_executaveis: 57
+
+produtivo: app/lib/screens/resultado_partida_screen.dart
+produtivo_digest_sha256: d25d3a55fe20d215073fb3ce8f2628708c733a94ed0be8033dab09efc4e07d42
+
+# ---------------------------------------------------------------------------
+# PISOS
+# ---------------------------------------------------------------------------
+# 48 dp é o alvo tocável do Material e do WCAG 2.5.5. 11 pt é o chão tipográfico
+# desta tela — o relatório da OS 16 mediu de 6,6 a 9 pt aqui.
+#
+# `declaracao: <arquivo> <simbolo> <valor>` — o símbolo tem de ter EXATAMENTE
+# UMA atribuição efetiva no arquivo, com esse valor. É o que impede a
+# atribuição-isca: a legítima escondida atrás de outra, ou o piso duplicado.
+
+piso_alvo_dp: 48
+piso_fonte_pt: 11
+
+declaracao: app/test/casca/a11y_resultado_partida_test.dart kAlvoMinimo 48
+declaracao: app/test/casca/a11y_resultado_partida_test.dart kFonteMinima 11
+declaracao: app/lib/screens/resultado_partida_screen.dart _alvoMinimo 48
+declaracao: app/lib/screens/resultado_partida_screen.dart _fsMinima 11
+
+# `exigencia: <arquivo> <minimo> <literal>` — o piso tem de ser COBRADO, não só
+# declarado. Sem isto, trocar a comparação por um número solto deixaria a
+# constante intacta e a prova oca.
+
+exigencia: app/test/casca/a11y_resultado_partida_test.dart 7 greaterThanOrEqualTo(kAlvoMinimo)
+exigencia: app/test/casca/a11y_resultado_partida_test.dart 1 greaterThanOrEqualTo(kFonteMinima)
+
+# ---------------------------------------------------------------------------
+# OS TRÊS WORKFLOWS
+# ---------------------------------------------------------------------------
+# `workflow: <caminho> | <passo> | <âncora>`
+#   caminho — a AUSÊNCIA de qualquer um deles reprova; não há `skip`, não há
+#             aviso-e-passa;
+#   passo   — o nome do passo que precisa conter a invocação viva do portão;
+#   âncora  — o que aquele workflow produz e que não pode sair sem o portão ter
+#             rodado. A invocação tem de estar ANTES dela. É assim que um passo
+#             deslocado para o fim do arquivo é pego.
+
+invocacao: bash ferramentas/ci/portao_os16.sh
+
+workflow: .github/workflows/build.yml | PORTÃO OS 16 — contrato, pisos e provas do Resultado | flutter test test/casca --reporter expanded
+workflow: .github/workflows/ci-os-integracao.yml | PORTÃO OS 16 — contrato, pisos e provas do Resultado | roda a11yres    test/casca/a11y_resultado_partida_test.dart
+workflow: .github/workflows/web.yml | PORTÃO OS 16 — contrato, pisos e provas do Resultado | flutter build web --release
+
+# ---------------------------------------------------------------------------
+# INSTRUMENTO
+# ---------------------------------------------------------------------------
+# Tetos fixos da campanha e da própria suíte. Travamento, estouro de rolagem ou
+# resultado inconclusivo é FALHA DO INSTRUMENTO — nunca sabotagem detectada e
+# nunca controle verde. Os números não se recalibram: são estes, do começo ao
+# fim da campanha.
+
+instrumento_max_rolagens: 24
+instrumento_timeout_s: 1800
+
+# ---------------------------------------------------------------------------
+# OS 36 CASOS, POR NOME
+# ---------------------------------------------------------------------------
+# Cada nome tem de aparecer EXATAMENTE UMA VEZ no fonte despojado de
+# comentários. Ausente, renomeado ou duplicado reprova.
+
+caso: fim de partida, fonte em $pct%
+caso: fim de rodada, fonte em $pct%
+caso: o botão de amizade — o de 27 pt do relatório
+caso: nenhuma área de toque se sobrepõe a outra
+caso: o piso não depende do tema: com shrinkWrap segue 48
+caso: todo botão é anunciado como botão e com nome
+caso: os três botões de amizade dizem de QUEM são
+caso: o estado habilitado chega ao leitor de tela
+caso: o foco percorre os controles na ordem visual
+caso: a ordem de leitura segue a ordem visual
+caso: $estado, fonte em $pct%
+caso: a microtipografia do relatório não existe mais
+caso: a hierarquia entre título, placar, detalhe e ação continua
+caso: o texto cresce de verdade quando o sistema amplia
+caso: a tela não escolhe fonte menor para caber
+caso: $estado em $pct%, sem overflow
+caso: nem no estado VIP, nem com o convite já enviado, nem com o
+caso: numa tela ainda mais estreita — 320 pt lógicos, 200%
+caso: o conteúdo que não cabe rola, e não é cortado
+caso: em 200% todo controle é alcançável por rolagem e responde
+caso: ${caso['nome']} em $pct%
+caso: o detalhamento mostra os mesmos números das duas duplas
+caso: placar e detalhe são idênticos em 100% e em 200%
+caso: a ação principal convida para a revancha
+caso: com o convite enviado, a ação principal joga de novo
+caso: o convite da faixa chama convidar, e só ele
+caso: voltar ao lobby chama voltar ao lobby
+caso: a próxima rodada chama continuar
+caso: o anúncio chama ver anúncio
+caso: adicionar amigo leva o ASSENTO certo, e não o índice
+caso: controles desabilitados continuam desabilitados
+caso: em 200% os toques continuam indo para o mesmo lugar
+caso: o arquivo foi mesmo lido, e sem comentário
+caso: não há FittedBox nem Transform encolhendo texto
+caso: a tela não impõe textScaler nenhum
+caso: o SizedBox de 27 pt não voltou
