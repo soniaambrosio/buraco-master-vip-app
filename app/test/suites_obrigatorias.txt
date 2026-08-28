@@ -32,6 +32,10 @@
 # Linha vazia e linha comecando com `#` sao ignoradas. Duas colunas exatas —
 # uma terceira e erro, para que um caminho com espaco nao passe despercebido.
 #
+# Alem do registro, o verificador exige que o CONTRATO EXTERNO dos alvos —
+# `test/contrato_alvos_amigos.txt` — continue de pe: o piso de 48 pontos, as 75
+# identidades e a impressao digital dos corpos. Ver o cabecalho daquele arquivo.
+#
 # O verificador exige de cada entrada:
 #   * o arquivo existe no disco;
 #   * o workflow tem uma linha `roda <chave> <caminho>` igualzinha;
@@ -42,5 +46,7 @@
 # que remove-la exige remover tambem a linha daqui — o que aparece no diff, que
 # e exatamente o ponto: o desligamento deixa de ser silencioso.
 
-a11yamigos   test/amigos/a11y_alvos_amigos_test.dart
-suitesobrig  test/ci/suites_obrigatorias_test.dart
+a11yamigos test/amigos/a11y_alvos_amigos_test.dart
+matrizamigos test/amigos/matriz_amigos_test.dart
+cascav2 test/casca/homologacao_casca_v2_test.dart
+suitesobrig test/ci/suites_obrigatorias_test.dart

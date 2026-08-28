@@ -653,10 +653,28 @@ void main() {
   testWidgets('Amigos navega, e o que abre consulta a autoridade', (
     tester,
   ) async {
+    // ---------------------------------------------------------------------
+    // A ABA INICIAL MUDOU, E ESTE CASO ANDOU JUNTO — SEM PERDER O QUE PROVAVA
+    // ---------------------------------------------------------------------
+    //
+    // Quando este caso nasceu, Amigos abria direto na lista de `listarAmigos`,
+    // e por isso ele afirmava aquela consulta. A composição de presença trouxe
+    // a aba ONLINE como entrada, e a leitura preguiçosa da falha que apareceu
+    // aqui seria "trocar `listarAmigos` por `listarOnline` e seguir".
+    //
+    // Não é isso que este caso existe para provar. Ele prova que o nome
+    // desenhado VEIO DA AUTORIDADE e não da maquete — e essa propriedade não
+    // depende de qual aba abre. Então as duas são exercidas: a inicial, e a de
+    // amigos escolhida explicitamente, cada uma com um nome DIFERENTE vindo do
+    // transporte. Trocar a expectativa sem andar o fluxo até a segunda lista
+    // deixaria `listarAmigos` sem nenhuma testemunha nesta cadeia.
     final b = _Bancada(uidInicial: 'uid-A');
     addTearDown(b.fechar);
+    b.social.respostaOnline = paginaFalsa([
+      jogadorFalso('P0ONLINE00001', apelido: 'Bia'),
+    ]);
     b.social.respostaAmigos = paginaFalsa([
-      jogadorFalso('P0AMIGO000001', apelido: 'Bia'),
+      jogadorFalso('P0AMIGO000001', apelido: 'Dora'),
     ]);
 
     await _abrirAplicativo(tester, b);
@@ -675,11 +693,22 @@ void main() {
       reason: 'Amigos ainda avisa "em breve" depois de ter destino',
     );
 
+    // A ENTRADA é a presença: quem abre a tela vê a aba Online, e o nome que
+    // aparece é o que `listarAmigosOnline` devolveu.
+    expect(b.social.chamadasDe('listarOnline'), 1);
+    expect(find.text('Bia'), findsOneWidget);
+    expect(find.text('Dora'), findsNothing);
+
+    // E a lista de amigos continua a UMA escolha de distância, com consulta
+    // própria e nome próprio.
+    await tester.tap(find.text('Todos'));
+    await tester.pumpAndSettle();
+    expect(b.social.chamadasDe('listarAmigos'), 1);
+    expect(find.text('Dora'), findsOneWidget);
+
     // O NOME VEIO DA AUTORIDADE, e não do arquivo. Se algum dia a maquete
     // voltar ao caminho, é aqui que aparece: 'Cláudia' e 'Beto' são dela.
-    expect(find.text('Bia'), findsOneWidget);
     expect(find.text('Cláudia'), findsNothing);
     expect(find.text('Beto'), findsNothing);
-    expect(b.social.chamadasDe('listarAmigos'), 1);
   });
 }

@@ -1,0 +1,147 @@
+# contrato_alvos_amigos.txt — o piso de toque e as 75 identidades da suite de
+# alvos de Amigos, congelados FORA da suite que eles descrevem.
+#
+# ---------------------------------------------------------------------------
+# POR QUE ESTE ARQUIVO EXISTE
+# ---------------------------------------------------------------------------
+#
+# `test/amigos/a11y_alvos_amigos_test.dart` declara o piso (`const double _piso
+# = 48.0;`) e os 75 casos dentro de si. Enquanto os dois moram so la, afrouxar a
+# regra e edicao de UM arquivo:
+#
+#   * baixar `_piso` para 40 deixa a suite verde, porque ela compara com ela
+#     mesma;
+#   * apagar 74 casos e deixar um trivial deixa a cadeia verde, porque ninguem
+#     de fora sabe quantos deviam ser;
+#   * mover os 75 nomes para comentarios ou para uma lista morta deixa qualquer
+#     contagem textual satisfeita.
+#
+# Este arquivo e a testemunha de fora. Ele nao executa nada — quem executa
+# continua sendo o gate `a11yamigos`, na mesma fonte canonica de sempre. Ele so
+# diz o que a suite TEM de ser.
+#
+# ---------------------------------------------------------------------------
+# QUEM LE, E POR QUE SAO DOIS
+# ---------------------------------------------------------------------------
+#
+#   * `scripts/ci/verificar_suites_obrigatorias.sh`, no passo 0, que falha
+#     FECHADO antes de qualquer teste rodar;
+#   * `test/ci/suites_obrigatorias_test.dart`, que roda como gate `suitesobrig`
+#     e da o mesmo vermelho na maquina de quem edita.
+#
+# Os dois carregam os mesmos numeros CARIMBADOS no proprio corpo. Isso e
+# deliberado e nao e redundancia: afrouxar o piso passa a exigir mudanca neste
+# arquivo, no shell e no Dart — tres arquivos, duas naturezas de autoridade,
+# tudo visivel no diff. Recarimbar so aqui reprova nos dois.
+#
+# ---------------------------------------------------------------------------
+# FORMATO
+# ---------------------------------------------------------------------------
+#
+#   <chave><espacos><valor>          — duas colunas exatas
+#   caso <NN> <identidade completa>  — a identidade e o resto da linha
+#
+# Linha vazia e linha comecando com `#` sao ignoradas.
+#
+#   piso         o piso de toque em pontos logicos, como a suite o declara
+#   suite        o caminho canonico da suite, relativo a raiz do app
+#   declaracoes  quantos SITIOS `testWidgets(` existem na fonte
+#   casos        quantas identidades esses sitios produzem ao rodar
+#   afirmacoes   quantos `expect(` os corpos desses sitios somam
+#   comparacoes  quantas vezes a suite compara area medida com o piso
+#   digest       sha256 dos nomes E dos corpos normalizados dos casos
+#
+# `declaracoes` e menor que `casos` porque cinco sitios vivem em lacos sobre as
+# dez cenas: 25 sitios simples + 5 x 10 = 75.
+#
+# O `digest` NAO e do arquivo cru. Ele e do material analisado — as 75
+# identidades em ordem, mais o corpo de cada sitio com comentarios fora e espaco
+# colapsado. Comentario editado nao o move; afirmacao trocada por trivial move.
+# Quem o calcula e o analisador de `suites_obrigatorias_test.dart`, que separa
+# codigo de comentario e de literal antes de contar qualquer coisa.
+#
+# ENTRAR AQUI E UMA DECISAO, e sair tambem.
+
+piso         48.0
+suite        test/amigos/a11y_alvos_amigos_test.dart
+declaracoes  30
+casos        75
+afirmacoes   71
+comparacoes  17
+digest       f5f1d3879b9a5745b364298114eb8a911e474b1325163d72e89b24b6652e3ad6
+
+caso 01 1 — o piso de 48 pontos 1a — o Voltar mede ao menos 48x48 (media 44x44 na base)
+caso 02 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — todos + carregar mais
+caso 03 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — pedidos recebidos
+caso 04 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — pedidos enviados
+caso 05 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — busca com resultado
+caso 06 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — busca truncada
+caso 07 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — falha de lista
+caso 08 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — falha de busca
+caso 09 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — vazio
+caso 10 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — carregando
+caso 11 1 — o piso de 48 pontos 1b — nenhum alvo mede menos de 48x48 — fora do escopo
+caso 12 1 — o piso de 48 pontos 1c — o inventário nominal preserva os controles essenciais
+caso 13 1 — o piso de 48 pontos 1d — recebidas oferece Aceitar e Recusar, ambos no piso
+caso 14 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — todos + carregar mais
+caso 15 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — pedidos recebidos
+caso 16 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — pedidos enviados
+caso 17 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — busca com resultado
+caso 18 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — busca truncada
+caso 19 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — falha de lista
+caso 20 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — falha de busca
+caso 21 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — vazio
+caso 22 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — carregando
+caso 23 2 — a área nova não invade a do vizinho 2a — nenhuma interseção parcial — fora do escopo
+caso 24 2 — a área nova não invade a do vizinho 2b — o botão ampliado continua CABENDO na linha dele
+caso 25 2 — a área nova não invade a do vizinho 2c — Aceitar e Recusar continuam separados
+caso 26 3 — tocar na borda nova aciona o controle certo 3a — os quatro cantos do Voltar voltam
+caso 27 3 — tocar na borda nova aciona o controle certo 3b — as bordas de cada aba trocam para a aba daquele rótulo
+caso 28 3 — tocar na borda nova aciona o controle certo 3c — os cantos de Aceitar aceitam, e com o publicId da linha
+caso 29 3 — tocar na borda nova aciona o controle certo 3d — os cantos de Recusar recusam, e nunca aceitam
+caso 30 3 — tocar na borda nova aciona o controle certo 3e — a borda ampliada do botão NÃO abre o Perfil da linha
+caso 31 3 — tocar na borda nova aciona o controle certo 3f — os cantos de Limpar busca limpam a busca
+caso 32 3 — tocar na borda nova aciona o controle certo 3g — a borda da linha abre o Perfil daquele publicId
+caso 33 3 — tocar na borda nova aciona o controle certo 3h — a borda de Adicionar solicita amizade, com o publicId da busca
+caso 34 3 — tocar na borda nova aciona o controle certo 3i — a borda de Cancelar cancela o pedido enviado
+caso 35 3 — tocar na borda nova aciona o controle certo 3j — a borda de Tentar de novo relê a lista
+caso 36 3 — tocar na borda nova aciona o controle certo 3k — a borda de Carregar mais pagina com o cursor
+caso 37 4 — a semântica exemplar continua de pé 4a — as abas continuam declarando papel e seleção
+caso 38 4 — a semântica exemplar continua de pé 4b — as linhas continuam anunciadas por extenso, e o avatar continua fora
+caso 39 4 — a semântica exemplar continua de pé 4c — os botões continuam com papel de botão e habilitados
+caso 40 4 — a semântica exemplar continua de pé 4d — o campo de busca continua campo, com o tooltip de limpar
+caso 41 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — todos + carregar mais
+caso 42 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — todos + carregar mais
+caso 43 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — todos + carregar mais
+caso 44 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — pedidos recebidos
+caso 45 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — pedidos recebidos
+caso 46 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — pedidos recebidos
+caso 47 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — pedidos enviados
+caso 48 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — pedidos enviados
+caso 49 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — pedidos enviados
+caso 50 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — busca com resultado
+caso 51 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — busca com resultado
+caso 52 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — busca com resultado
+caso 53 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — busca truncada
+caso 54 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — busca truncada
+caso 55 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — busca truncada
+caso 56 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — falha de lista
+caso 57 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — falha de lista
+caso 58 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — falha de lista
+caso 59 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — falha de busca
+caso 60 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — falha de busca
+caso 61 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — falha de busca
+caso 62 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — vazio
+caso 63 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — vazio
+caso 64 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — vazio
+caso 65 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — carregando
+caso 66 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — carregando
+caso 67 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — carregando
+caso 68 4 — a semântica exemplar continua de pé 4e — nenhum anúncio duplicado — fora do escopo
+caso 69 4 — a semântica exemplar continua de pé 4f — a ordem de foco desce a tela — fora do escopo
+caso 70 4 — a semântica exemplar continua de pé 4g — nenhum UID na árvore — fora do escopo
+caso 71 5 — vazio, carregando, erro e conteúdo 5a — vazio diz a frase da aba, e não desenha alvo de lista
+caso 72 5 — vazio, carregando, erro e conteúdo 5b — carregando mostra o progresso
+caso 73 5 — vazio, carregando, erro e conteúdo 5c — erro oferece Tentar de novo, no piso
+caso 74 5 — vazio, carregando, erro e conteúdo 5d — conteúdo continua desenhando quem o servidor mandou
+caso 75 5 — vazio, carregando, erro e conteúdo 5e — fora do escopo diz o motivo, e o Voltar continua no piso

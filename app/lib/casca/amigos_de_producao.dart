@@ -68,6 +68,13 @@ import 'navegacao_perfil_publico.dart';
 /// de texto mais um botão.
 const double kAlturaMinimaDaLinhaSocial = 56;
 
+/// Quanto da altura da tela o cabeçalho pode ocupar antes de virar rolagem.
+///
+/// O resto — nunca menos de 40% — é da lista. Um cabeçalho que cresce com a
+/// escala de texto até engolir a tela deixa o conteúdo inalcançável, e é o que
+/// acontecia a 200% num telefone de 640 de altura.
+const double _fracaoMaximaDoCabecalho = 0.6;
+
 /// O piso de ÁREA EFETIVA de qualquer controle desta superfície, em pontos.
 ///
 /// 48 é o número de `kMinInteractiveDimension` e o alvo mínimo da WCAG 2.5.8.
@@ -249,26 +256,62 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
           ),
         ),
         child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _topo(context),
-              _cartaoIndicacao(social),
-              _busca(),
-              // Fora do escopo não há a quem perguntar. A tela diz isso e não
-              // desenha aba nenhuma: abas vazias pareceriam "você não tem
-              // amigos", que é uma afirmação que ninguém pode fazer daqui.
-              if (social == null)
-                const Expanded(
-                  child: _AvisoSocial(
-                    mensagem: 'Amigos indisponível fora do aplicativo.',
+          child: LayoutBuilder(
+            builder: (context, limites) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // O CABEÇALHO ROLA POR DENTRO QUANDO NÃO CABE.
+                //
+                // Antes ele era uma pilha rígida, e a conta fechava enquanto o
+                // texto era pequeno. Com o cartão de indicação — topo, cartão,
+                // busca e abas — a pilha passa de 900 pontos a 200% de texto:
+                // num telefone de 640 de altura, as três abas nasciam em y=855
+                // e NÃO HAVIA COMO ALCANÇÁ-LAS. Não era corte de estilo; era a
+                // tela inteira ficando inoperante para quem amplia a fonte.
+                //
+                // `ConstrainedBox` + `SingleChildScrollView`, e não `Flexible`:
+                // um filho flexível FROUXO que ocupe menos que a fatia dele
+                // deixa a sobra no fim da coluna, e a lista descolaria do pé da
+                // tela em todo telefone em que hoje ela encosta. Assim o
+                // cabeçalho continua com a ALTURA NATURAL enquanto couber, e só
+                // vira rolagem quando passa do teto — e o `Expanded` de baixo
+                // sempre recebe o resto exato, sem vão.
+                //
+                // O teto é fração da tela, e não um número em pontos: o que
+                // precisa ser garantido é que SEMPRE sobre altura para a lista,
+                // em qualquer aparelho.
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: limites.maxHeight * _fracaoMaximaDoCabecalho,
                   ),
-                )
-              else ...[
-                if (!_emModoBusca(social)) _abas(social),
-                Expanded(child: _conteudo(social)),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _topo(context),
+                        _cartaoIndicacao(social),
+                        _busca(),
+                        // Fora do escopo não há a quem perguntar: a tela diz
+                        // isso e não desenha aba nenhuma. Abas vazias
+                        // pareceriam "você não tem amigos", que é uma afirmação
+                        // que ninguém pode fazer daqui.
+                        if (social != null && !_emModoBusca(social))
+                          _abas(social),
+                      ],
+                    ),
+                  ),
+                ),
+                if (social == null)
+                  const Expanded(
+                    child: _AvisoSocial(
+                      mensagem: 'Amigos indisponível fora do aplicativo.',
+                    ),
+                  )
+                else
+                  Expanded(child: _conteudo(social)),
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -303,16 +346,24 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
           ),
         ),
         const SizedBox(width: 2),
-        const Text(
-          'Amigos',
-          style: TextStyle(
-            color: AmigosDeProducao._ouroClaro,
-            fontSize: 17,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .4,
+        // `Expanded` no lugar de `Text` + `Spacer`, e a troca nao e estilo. Com
+        // largura NATURAL o titulo somava com os dois alvos de 48 e estourava a
+        // linha a 200% de texto num telefone de 320 dp — 8,4 pontos para fora,
+        // empurrando o "Aparecer offline" junto. Aqui ele recebe o que sobra e
+        // QUEBRA, em vez de empurrar. O `Spacer` sai porque `Expanded` ja ocupa
+        // o vao; manter os dois faria eles disputarem o mesmo espaco.
+        const Expanded(
+          child: Text(
+            'Amigos',
+            maxLines: 2,
+            style: TextStyle(
+              color: AmigosDeProducao._ouroClaro,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              letterSpacing: .4,
+            ),
           ),
         ),
-        const Spacer(),
         Builder(
           builder: (context) {
             final social = EscopoSocial.talvezDe(context);
@@ -446,21 +497,33 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
             ],
           ),
           const SizedBox(height: 8),
-          Row(
+          // `Wrap`, e nao `Row`. O `Expanded` da esquerda nao protegia nada:
+          // quem transbordava era o BOTAO, cuja largura natural passa de 400
+          // pontos a 200% de texto e nao cabe em telefone nenhum — nem no de
+          // 412 dp. Num `Row` o filho sem flex e medido solto e vaza; num
+          // `Wrap` ele nasce limitado a largura da caixa e, quando nao cabe ao
+          // lado da frase, desce inteiro para a linha seguinte. O rotulo QUEBRA
+          // em duas linhas em vez de ser cortado, e a fonte nao encolhe.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
-              const Expanded(
-                child: Text(
-                  '🪙 500 para cada jogador',
-                  style: TextStyle(
-                    color: Color(0xFF70E7B0),
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+              const Text(
+                '🪙 500 para cada jogador',
+                style: TextStyle(
+                  color: Color(0xFF70E7B0),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               TextButton(
                 onPressed: social == null ? null : () => _usarCodigo(social),
-                child: const Text('Usar um código'),
+                child: const Text(
+                  'Usar um código',
+                  textAlign: TextAlign.center,
+                ),
               ),
             ],
           ),
@@ -470,38 +533,22 @@ class _AmigosDeProducaoState extends State<AmigosDeProducao> {
   }
 
   Future<void> _usarCodigo(LeitorSocial social) async {
-    final controle = TextEditingController();
+    // O CONTROLADOR É DO DIÁLOGO, e não desta função.
+    //
+    // Antes ele nascia aqui e era descartado na linha seguinte ao `await`. Só
+    // que `showDialog` devolve quando a rota é FECHADA, e a rota ainda leva uma
+    // animação inteira para sair da árvore: o `TextField` reconstrói pelo menos
+    // mais uma vez, com o controlador já descartado, e o framework acusa
+    // "A TextEditingController was used after being disposed". Dali em diante o
+    // quadro fica sujo e o erro contamina até o teste seguinte.
+    //
+    // Um `StatefulWidget` resolve pela ordem certa: o controlador vive e morre
+    // com o widget que o usa, e o `dispose` acontece depois da desmontagem, e
+    // não antes dela.
     final codigo = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF241812),
-        title: const Text(
-          'Código de quem convidou você',
-          style: TextStyle(color: AmigosDeProducao._ouroClaro),
-        ),
-        content: TextField(
-          controller: controle,
-          autofocus: true,
-          textCapitalization: TextCapitalization.characters,
-          style: const TextStyle(color: AmigosDeProducao._texto),
-          decoration: const InputDecoration(
-            hintText: 'Cole o código aqui',
-            hintStyle: TextStyle(color: AmigosDeProducao._textoSec),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controle.text),
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
+      builder: (context) => const _DialogoDeCodigo(),
     );
-    controle.dispose();
     if (codigo == null || codigo.trim().isEmpty || !mounted) return;
     try {
       await social.registrarIndicacao(codigo);
@@ -1031,6 +1078,11 @@ class _LinhaSocial extends StatelessWidget {
     // do domínio de moderação e não têm porta aqui; desenhá-las como botão que
     // não faz nada seria pior que não desenhá-las.
     final desenhaveis = acoes.where(kAcoesDeAmizade.contains).toList();
+    final controlesFinais = <Widget>[
+      if (onChamar != null) _BotaoChamar(onTap: onChamar!),
+      for (final acao in desenhaveis)
+        _BotaoDeAcao(acao: acao, onTap: () => onAgir(acao)),
+    ];
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -1100,21 +1152,35 @@ class _LinhaSocial extends StatelessWidget {
                       color: AmigosDeProducao._ouro,
                     ),
                   )
-                else ...[
-                  if (onChamar != null)
-                    Padding(
+                // Os controles do fim da linha vivem num `Wrap` DENTRO de um
+                // `Flexible`, e nao soltos no `Row`.
+                //
+                // Soltos, cada um era medido com largura natural: "Chamar pra
+                // jogar" pede mais de 250 pontos a 150% de texto, e a linha
+                // estourava em 320, 360 e 412 dp. O `Expanded` do nome nao
+                // ajudava — ele cede espaco, mas o filho sem flex nao aceita
+                // menos do que pede.
+                //
+                // `Flexible` limita a FAIXA dos controles a uma parte da linha;
+                // `Wrap` distribui os botoes dentro dela, empilhando quando nao
+                // cabem lado a lado. Cada botao herda a largura da faixa como
+                // teto, entao o rotulo quebra em vez de vazar. Nenhum deles
+                // encolhe abaixo dos 48 de alvo: o piso e do `tapTargetSize`,
+                // que independe da largura.
+                else if (controlesFinais.isNotEmpty)
+                  Flexible(
+                    flex: 2,
+                    child: Padding(
                       padding: const EdgeInsets.only(left: 6),
-                      child: _BotaoChamar(onTap: onChamar!),
-                    ),
-                  for (final acao in desenhaveis)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 6),
-                      child: _BotaoDeAcao(
-                        acao: acao,
-                        onTap: () => onAgir(acao),
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: controlesFinais,
                       ),
                     ),
-                ],
+                  ),
               ],
             ),
           ),
@@ -1122,6 +1188,61 @@ class _LinhaSocial extends StatelessWidget {
       ),
     );
   }
+}
+
+/// O diálogo que pede o código de quem convidou.
+///
+/// Existe como widget PRÓPRIO por causa do controlador: ver o comentário em
+/// [_AmigosDeProducaoState._usarCodigo].
+class _DialogoDeCodigo extends StatefulWidget {
+  const _DialogoDeCodigo();
+
+  @override
+  State<_DialogoDeCodigo> createState() => _DialogoDeCodigoState();
+}
+
+class _DialogoDeCodigoState extends State<_DialogoDeCodigo> {
+  final _controle = TextEditingController();
+
+  @override
+  void dispose() {
+    _controle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    // A 200% de texto num telefone de 320, o título de duas linhas mais o campo
+    // mais os dois botões passam da altura que o diálogo tem para ocupar, e a
+    // coluna transborda 48 pontos — o campo some para fora do cartão. `scrollable`
+    // faz o miolo rolar em vez de vazar; nada encolhe e nada é cortado.
+    scrollable: true,
+    backgroundColor: const Color(0xFF241812),
+    title: const Text(
+      'Código de quem convidou você',
+      style: TextStyle(color: AmigosDeProducao._ouroClaro),
+    ),
+    content: TextField(
+      controller: _controle,
+      autofocus: true,
+      textCapitalization: TextCapitalization.characters,
+      style: const TextStyle(color: AmigosDeProducao._texto),
+      decoration: const InputDecoration(
+        hintText: 'Cole o código aqui',
+        hintStyle: TextStyle(color: AmigosDeProducao._textoSec),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancelar'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _controle.text),
+        child: const Text('Confirmar'),
+      ),
+    ],
+  );
 }
 
 class _BotaoChamar extends StatelessWidget {

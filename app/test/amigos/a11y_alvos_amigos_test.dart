@@ -516,21 +516,40 @@ void main() {
     testWidgets(
       '1c — o inventário nominal preserva os controles essenciais',
       (tester) => _comSemantica(tester, () async {
+        // IGUALDADE EXATA E ORDENADA, e não `contains`.
+        //
+        // `contains` responde "o controle X ainda existe?", que é metade da
+        // pergunta. Ele fica verde com um alvo A MAIS — um botão novo que
+        // ninguém reviu —, com um alvo DUPLICADO e com a ordem de leitura
+        // trocada, que é justamente a travessia que o leitor de tela anuncia.
+        // A lista abaixo é a cena inteira, na ordem em que o foco a percorre:
+        // zero extra, zero ausente, zero duplicata fora das que o desenho
+        // explica (uma linha e um "Chamar pra jogar" por jogador).
+        //
+        // SOBRE O "Remover" QUE ESTAVA AQUI ANTES DA COMPOSIÇÃO. Ele não
+        // sumiu: saiu da LISTA e passou a ser oferecido pelo Perfil, onde
+        // quem declara as ações é o servidor (`verPerfilPublico`), e não uma
+        // dedução do cliente a partir da aba. A tela diz isso no próprio
+        // cabeçalho — "NÃO DEDUZ BOTÃO" — e a lista era a única exceção. O
+        // caminho novo é provado ponta a ponta em `matriz_amigos_test.dart`,
+        // grupo 3; sem aquela prova, esta ausência seria um desaparecimento
+        // silencioso de capacidade, e não uma mudança de autoridade.
         await comAmigos(tester);
-        final nomes = _alvos(tester).map((a) => a.nome).toList();
-        for (final nome in const [
+        expect(_alvos(tester).map((a) => a.nome).toList(), <String>[
           'Voltar',
           'Aparecer offline',
           'Copiar',
           'Usar um código',
+          'Buscar por apelido ou código…',
           'Online',
           'Todos',
           'Pedidos',
+          '', // a linha de Bia
+          'Chamar pra jogar',
+          '', // a linha de Caio
           'Chamar pra jogar',
           'Carregar mais',
-        ]) {
-          expect(nomes, contains(nome), reason: 'faltou o controle $nome');
-        }
+        ]);
         expect(_linhas(_alvos(tester)), hasLength(2));
       }),
     );

@@ -167,6 +167,11 @@ jobs:
           # maquete e do dado pessoal no código distribuído.
           roda casca      test/casca/casca_producao_test.dart
           roda cascaaud   test/casca/auditoria_casca_test.dart
+          # A matriz de HOMOLOGACAO da Casca V2 — os casos que a suite da
+          # entrega nao cobria. Ela rodava fora do portao ate a OS 17 C2: uma
+          # suite de homologacao inteira podia ficar vermelha sem que o run
+          # mudasse de cor.
+          roda cascav2    test/casca/homologacao_casca_v2_test.dart
           # OS Identidade do Perfil Publico Visitado: quando A abre o perfil de
           # B, os QUATRO campos — nome, avatar, liga e numeros — vem do
           # `publicId` de B. O defeito que este gate fecha nao quebrava nada:
@@ -181,6 +186,13 @@ jobs:
           # que ele fecha e silenciosa — `visualDensity: compact` de volta num
           # botao nao quebra nada visivel, e derruba o alvo de 48 para 40.
           roda a11yamigos test/amigos/a11y_alvos_amigos_test.dart
+          # OS 17 C2 — a matriz responsiva dos quatro controles que a
+          # composicao trouxe (320/360/412 dp por 100/150/200%), a decisao da
+          # aba inicial, o destino da remocao de amizade e a terceira perna da
+          # instrumentacao. Entra no portao porque o defeito que ela fecha
+          # deixava a tela INOPERANTE a 200% de texto num telefone de 640: as
+          # abas nasciam fora da viewport e nao havia rolagem para alcanca-las.
+          roda matrizamigos test/amigos/matriz_amigos_test.dart
           # A metade RAPIDA da guarda de instrumentacao: o mesmo manifesto do
           # passo 0, lido em Dart, para o vermelho aparecer em `flutter test` na
           # maquina de quem edita. Ele nao substitui o passo 0 — apagar ESTE
@@ -370,7 +382,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao rankingfn rankingint identint auditident regras"
+          GATES="suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascav2 perfilvis a11yamigos matrizamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -421,7 +433,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud perfilvis a11yamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao regras; do
+          for k in suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascav2 perfilvis a11yamigos matrizamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
