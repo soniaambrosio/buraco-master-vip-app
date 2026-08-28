@@ -18,6 +18,12 @@
 #   scripts/ci/portao_os_integracao.sh        decide se o CI inteiro e VERDE
 #   scripts/ci/codigo_executavel.awk          decide o que e CODIGO e o que e TEXTO
 #
+# [OS 40-C5] SAO QUATRO. A quarta entrou depois, pela mesma razao e um andar
+# acima:
+#
+#   scripts/ci/teste_portao_os_integracao.sh  decide se a EXECUCAO de cada passo
+#                                             zero esta viva, unica e ordenada
+#
 # Nenhuma delas tinha digest proprio, inventario proprio nem prova de que suas
 # decisoes materiais continuam la. A rehomologacao OS 40-R4 mediu o preco disso
 # na campanha `V01`–`V10`: tirar `contratosui` dos mapas de piso (`V04`),
@@ -60,10 +66,18 @@ workflow="${2:-}"
 # ---------------------------------------------------------------------------
 # O INVENTARIO CONGELADO — os tres, nominalmente
 # ---------------------------------------------------------------------------
+# [OS 40-C5] O QUARTO ENTROU, e nao por simetria. `teste_portao_os_integracao.sh`
+# deixou de ser so a matriz do agregador: e nele que mora a RELACAO CONGELADA
+# dos passos zero protegidos e a guarda lexica que responde se a execucao de
+# cada um deles esta viva. A OS 40-R5 tirou a execucao do passo `0a` e forjou a
+# evidencia; a partir daqui, quem apagar aquela relacao muda um arquivo com
+# digesto E com decisoes materiais congelados FORA dele — a fonte unica tem a
+# outra metade, e as duas teriam de cair juntas.
 readonly INVENTARIO="\
 scripts/ci/verificar_contrato_suites.sh \
 scripts/ci/portao_os_integracao.sh \
-scripts/ci/codigo_executavel.awk"
+scripts/ci/codigo_executavel.awk \
+scripts/ci/teste_portao_os_integracao.sh"
 
 # ---------------------------------------------------------------------------
 # OS DIGESTOS NORMALIZADOS — `tr -d '\r' | sha256sum`
@@ -77,9 +91,10 @@ scripts/ci/codigo_executavel.awk"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh 79643b753059ab6560b3ff5379076c5f8eafa2939592788fd00b69f4c86fcff8
+scripts/ci/verificar_contrato_suites.sh 04fb377f3af09485c4d8bb37ef37c4b2c8e691c1487d6920fa5d9013f491e9c4
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 96af7aa868fdf4492541f812fad037bb62082521d84b6712ad5d095fec971dfb
+scripts/ci/teste_portao_os_integracao.sh 5e073b79975a19254fe3acbcca574db91790315882030feded012d8eb219eb24
 DIGESTOS_CONGELADOS
 )"
 readonly DIGESTOS
@@ -114,6 +129,8 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 1 if [ "$PROVAS_REAIS" -ge "$provas_esperadas" ]; then
 1 if [ "$maior" -ge "$casos_esperados" ]; then
 1 elif [ "$carimbo" -nt "$log" ]; then
+1 GUARDA_PASSO_ZERO="$(dirname "$0")/teste_portao_os_integracao.sh"
+1 bash "$GUARDA_PASSO_ZERO" --guarda "$workflow"
 @ scripts/ci/portao_os_integracao.sh
 1 if [ "$valor" = "0" ]; then
 6 falhou=1
@@ -130,6 +147,19 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 1 if (caso_alvo != "" && !achou_caso) print "SEMCASO\t" caso_alvo
 9 st = "cod"
 1 if (ling != "js" && ling != "dart" && ling != "sh" && ling != "json") {
+@ scripts/ci/teste_portao_os_integracao.sh
+1 readonly PASSOS_ZERO_PROTEGIDOS='portaoci autverif contratosui'
+1 readonly CONSUMIDOR_DA_EVIDENCIA=
+1 campo_do_passo() {
+1 guarda_passo_zero() {
+1 guarda_passo_zero_sem_relacao() {
+1 guarda_invocacao_passo_zero() {
+1 guarda_passo_zero "$reg" "$k" || ruim=1
+1 guarda_passo_zero_sem_relacao "$reg" || ruim=1
+1 guarda_invocacao_passo_zero "$YML_GUARDA"
+1 vetores_do_passo_zero portaoci
+1 vetores_do_passo_zero autverif
+1 vetores_do_passo_zero contratosui
 DECISOES_MATERIAIS
 )"
 readonly EXIGENCIAS
@@ -145,8 +175,8 @@ readonly EXIGENCIAS
 # Aqui a chave e OBRIGATORIA e o valor tem PISO. Um numero menor do que o
 # congelado abaixo e regressao de prova, mesmo que a comparacao continue escrita.
 readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:56 contratosui:82 rankingfn:57 autverif:14"
-readonly MINIMOS_CASOS="comunicacao:81 portaoci:53 contratosui:68 rankingfn:465 autverif:66"
-readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:6 contratosui:29 rankingfn:15 autverif:11"
+readonly MINIMOS_CASOS="comunicacao:81 portaoci:101 contratosui:68 rankingfn:465 autverif:82"
+readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:22 contratosui:29 rankingfn:15 autverif:14"
 readonly MINIMOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
 # A propria invocacao, que o workflow tem de continuar carregando. Apagar o
@@ -203,7 +233,17 @@ vivas_de() {
           resto="${resto%%[[:blank:]]*}"
           resto="${resto//$aspa_simples/}"
           resto="${resto//$aspa_dupla/}"
-          [ -n "$resto" ] && fim_heredoc="$resto"
+          # SO ABRE HEREDOC COM PALAVRA DE VERDADE (OS 40-C5). `<<` tambem
+          # aparece DENTRO de aspas — `case "$nu" in *'<<'*)` e
+          # `resto="${nu##*<<}"` sao duas linhas de codigo do proprio
+          # classificador do passo zero. Lidas como abertura, elas engoliam
+          # tres quartos daquele arquivo: as decisoes materiais dele apareciam
+          # zero vezes, e a autoridade reprovava a arvore integra. Um delimitador
+          # de heredoc e um identificador; `*)` e `}` nao sao.
+          case "$resto" in
+            '' | *[!A-Za-z0-9_]* | [0-9]*) ;;
+            *) fim_heredoc="$resto" ;;
+          esac
           ;;
       esac
     done < "$arq"
@@ -476,16 +516,25 @@ if [ -z "$workflow" ]; then
 elif [ ! -s "$workflow" ]; then
   recusa "o workflow informado esta ausente em '$workflow'"
 else
-  conteudo="$(tr -d '\r' < "$workflow")"
+  # SOBRE CODIGO VIVO, e nao sobre o texto do arquivo (OS 40-C5).
+  #
+  # Ate aqui esta secao lia o YAML inteiro com `grep -F`. A OS 40-R5 mostrou o
+  # preco: um literal posto em heredoc satisfaz busca textual e nao executa uma
+  # linha. Era uma das duas metades do escape — a outra, a que decide, e a
+  # guarda lexica dos passos zero, que responde por ORDEM, unicidade e forma.
+  # Esta continua respondendo so pela PRESENCA, e agora pela presenca em codigo
+  # que roda. As duas leituras sao independentes, e e de proposito.
+  vivo_workflow="$TMPA/vivo_workflow"
+  vivas_de "$workflow" "$vivo_workflow"
   for alvo in scripts/ci/verificar_contrato_suites.sh scripts/ci/portao_os_integracao.sh \
-              "$INVOCACAO_PROPRIA"; do
-    if printf '%s\n' "$conteudo" | grep -Fq -- "$alvo"; then
+              scripts/ci/teste_portao_os_integracao.sh "$INVOCACAO_PROPRIA"; do
+    if grep -Fq -- "$alvo" "$vivo_workflow"; then
       ok "workflow     $alvo continua no caminho oficial"
     else
-      recusa "o workflow nao referencia mais '$alvo' — a peca saiu do caminho oficial"
+      recusa "o workflow nao referencia mais '$alvo' em codigo vivo — a peca saiu do caminho oficial"
     fi
   done
-  if printf '%s\n' "$conteudo" | grep -Fq -- "exit_$GATE_PROPRIO"; then
+  if grep -Fq -- "exit_$GATE_PROPRIO" "$vivo_workflow"; then
     ok "workflow     o passo produz exit_$GATE_PROPRIO"
   else
     recusa "o workflow nao produz 'exit_$GATE_PROPRIO' — gate declarado sem produtor"

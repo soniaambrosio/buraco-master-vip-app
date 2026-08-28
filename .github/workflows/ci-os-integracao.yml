@@ -131,6 +131,11 @@ jobs:
           if [ ! -f scripts/ci/teste_portao_os_integracao.sh ]; then
             echo "scripts/ci/teste_portao_os_integracao.sh ausente" > nao_portaoci; exit 0
           fi
+          # A EVIDÊNCIA ANTERIOR MORRE ANTES DA EXECUÇÃO (OS 40-C5). Log e
+          # marcador que sobrevivam ao checkout não podem ser confundidos com o
+          # que esta corrida produziu, e `atime` não serve de prova: a FASE A
+          # ABRE o log durante as próprias leituras, então acesso não é execução.
+          rm -f t_portaoci.log exit_portaoci
           bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
           echo ${PIPESTATUS[0]} > exit_portaoci
 
@@ -148,9 +153,19 @@ jobs:
           #
           # Roda ANTES do contrato de conteúdo: um verificador adulterado tem de
           # aparecer como verificador adulterado, e não como "as suítes passaram".
+          #
+          # [OS 40-C5] A OS 40-R5 retirou ESTA execução e pôs no lugar um log de
+          # uma linha e um `exit_autverif` com zero dentro. A cadeia oficial
+          # inteira ficou verde — `portaoci` 53/53, FASE A exit 0, agregador
+          # 64/64, FASE B 17 contratos — sem que a autoridade rodasse. A linha
+          # abaixo é agora congelada por `guarda_invocacao_passo_zero`, cobrada
+          # em dois lugares do caminho oficial (o passo `0` e a FASE A), e a
+          # purga logo acima dela impede que evidência de outra corrida seja
+          # confundida com a desta.
           if [ ! -f scripts/ci/autoridade_verificadores.sh ]; then
             echo "scripts/ci/autoridade_verificadores.sh ausente" > nao_autverif; exit 0
           fi
+          rm -f t_autverif.log exit_autverif
           bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
           echo ${PIPESTATUS[0]} > exit_autverif
 
@@ -163,6 +178,7 @@ jobs:
           if [ ! -f scripts/ci/testemunha_contratosui.sh ]; then
             echo "scripts/ci/testemunha_contratosui.sh ausente" > nao_contratosui; exit 0
           fi
+          rm -f t_contratosui.log exit_contratosui
           bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
           echo ${PIPESTATUS[0]} > exit_contratosui
 

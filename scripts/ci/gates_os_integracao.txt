@@ -216,13 +216,20 @@ comunicacao
 
 # --- 6. teste do PRÓPRIO portão (entra por esta OS) -------------------------
 # Sem ele, o agregador é a única peça do CI que ninguém verifica.
+#
+# A OS 40-C5 acrescentou a esta suíte a AUTORIDADE LÉXICA DOS PASSOS ZERO: a
+# relação congelada dos passos que produzem evidência obrigatória, a guarda que
+# cobra a invocação viva/única/ordenada de cada um deles, e sessenta e três
+# vetores (vinte e um por passo) que a sabotam e exigem vermelho. O digest, o
+# piso de casos e o piso de relações sobem no MESMO commit — um piso que fica
+# para trás deixa de notar que os vetores sumiram.
 portaoci
     suite      scripts/ci/teste_portao_os_integracao.sh
     executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
-    sha256     f2b7b9b873b9ec87889efba7f0fc3d1d73c09919cd16f06361ea1fae03d802f4
+    sha256     5e073b79975a19254fe3acbcca574db91790315882030feded012d8eb219eb24
     provas     56
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      53
+    casos      101
     contador   casos ok: [0-9]+
     exige      HERDADOS=
     exige      grep -qE 'GATES="[a-z]+ [a-z]+
@@ -230,6 +237,22 @@ portaoci
     exige      esperar 0 "C01
     exige      esperar 1 "C09
     exige      ok "C14
+    exige      readonly PASSOS_ZERO_PROTEGIDOS='portaoci autverif contratosui'
+    exige      readonly CONSUMIDOR_DA_EVIDENCIA='scripts/ci/verificar_contrato_suites.sh'
+    exige      guarda_invocacao_passo_zero "$YML" > "$TMP/i10.txt" 2>&1
+    exige      guarda_passo_zero "$reg" "$k" || ruim=1
+    exige      guarda_passo_zero_sem_relacao "$reg" || ruim=1
+    exige      vetores_do_passo_zero portaoci
+    exige      vetores_do_passo_zero autverif
+    exige      vetores_do_passo_zero contratosui
+    exige      esperar_passo 0 "PZ00[$chave] CONTROLE
+    exige      esperar_passo 1 "PZ01[$chave]
+    exige      esperar_passo 1 "PZ04[$chave]
+    exige      esperar_passo 1 "PZ14[$chave]
+    exige      esperar_passo 1 "PZ15[$chave]
+    exige      esperar_passo 1 "PZ16[$chave]
+    exige      esperar_passo 1 "PZ18[$chave]
+    exige      esperar_passo 1 "PZ19[$chave]
 
 # --- 6b. o CONTRATO DE CONTEUDO das suites protegidas (entra pela OS 32) -----
 # `portaoci` prova o AGREGADOR; este prova o VERIFICADOR DE CONTEUDO, a peca
@@ -243,7 +266,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     a543752be0248106d3303c65c2d8e4fa31a9661157cbc0605edd00369ce16d27
+    sha256     33a9fca625f2168cb40ab2b7a2eadabcbdfdaad81a971028dcf82e738021d171
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -304,10 +327,10 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     7eca9c6f9799e135114dfc3e8ef822b42fc99a3d19a6b558d7b80deda5a4f535
+    sha256     88e2dab915d8c5fea6db0f4578b25d8c020f2ea6c0a5fb014af721e2a3797a45
     provas     14
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
-    casos      66
+    casos      82
     contador   casos ok: [0-9]+
     exige      readonly INVENTARIO="\
     exige      readonly MINIMOS_PROVAS=
@@ -320,6 +343,9 @@ autverif
     exige      *ABERTO*) ok "sonda        comentario de bloco sem fechar responde ABERTO" ;;
     exige      vivas_de "$raiz/$arq_atual" "$vivo"
     exige      viu="$(grep -cF -- "$literal" "$vivo")" || viu=0
+    exige      vivas_de "$workflow" "$vivo_workflow"
+    exige      if grep -Fq -- "$alvo" "$vivo_workflow"; then
+    exige      scripts/ci/teste_portao_os_integracao.sh "$INVOCACAO_PROPRIA"; do
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing

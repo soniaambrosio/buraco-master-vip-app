@@ -904,7 +904,11 @@ fi
 
 if caso_ativo T15; then
   reset T15
-  ancora "$FONTE_W" '^    exige      ' 139
+  # 139 -> 158 na OS 40-C5: a fonte ganhou dezesseis relacoes em `portaoci` — a
+  # guarda lexica dos passos zero e os vetores dela — e tres em `autverif`. A
+  # ancora e de CARDINALIDADE EXATA, e por isso sobe junto com a fonte: nao e
+  # afrouxamento, e o instrumento continuando a medir a fonte que existe.
+  ancora "$FONTE_W" '^    exige      ' 158
   sed -i '/^    exige      /d' "$W/$FONTE_W"
   efeito '^    exige      ' 0
   esperar 1 "T15 — contrato sem nenhum exige => VERMELHO" "nao declara nenhum 'exige'"
@@ -954,7 +958,8 @@ printf '\n== o contrato nao pode encolher ==\n'
 
 if caso_ativo T21; then
   reset T21
-  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 260
+  # 260 -> 279 na OS 40-C5, pelas mesmas dezenove relacoes novas.
+  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 279
   # QUALQUER atributo indentado, e nao uma lista de nomes. A lista escrita a mao
   # ficou para tras quando a OS 40-C1 acrescentou `alvo` e `exigealvo`: o caso
   # continuava vermelho, mas por OUTRO motivo — sobrava contrato, e a mensagem
