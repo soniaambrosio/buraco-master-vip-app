@@ -27,6 +27,15 @@
 # REGRA DURA: ausência é REPROVAÇÃO. Não existe caminho neste script em que um
 # arquivo que não está lá produza saída zero.
 #
+# E a partir da OS 16-C2 a decisão sobre o PASSO dos workflows não é mais
+# textual. A R2 reprovou a C1 porque cinco gestos de uma linha —
+# `continue-on-error: true` depois de `run:`, `if: false` antes ou depois, e
+# `exit 0` na linha seguinte dentro do mesmo `run:` — mantinham o caminho
+# oficial verde sem o portão decidir nada. A seção 6b delega essa decisão à
+# autoridade estrutural nomeada no contrato, que lê os três workflows com um
+# parser YAML de verdade. Ela é o MESMO arquivo que a autoridade Dart dos gates
+# importa: uma implementação, dois consumidores.
+#
 # Uso:   bash ferramentas/ci/portao_os16.sh [raiz-do-repositorio]
 # Saída: 0 = VERDE.  1 = VERMELHO (todas as falhas são listadas).
 
@@ -41,7 +50,7 @@ cd "$RAIZ" || { echo "PORTÃO OS 16: raiz '$RAIZ' inacessível."; exit 1; }
 PISO_ALVO=48
 PISO_FONTE=11
 CONTRATO_ID='os16-resultado-legivel-tocavel'
-CONTRATO_VERSAO='1.0.0'
+CONTRATO_VERSAO='1.1.0'
 CONTRATO='app/test/casca/contrato_os16_resultado.txt'
 EU='ferramentas/ci/portao_os16.sh'
 
@@ -129,7 +138,9 @@ for chave in contrato versao verificador autoridade suite suite_digest_sha256 \
              suite_casos suite_casos_executaveis produtivo \
              produtivo_digest_sha256 piso_alvo_dp \
              piso_fonte_pt invocacao instrumento_max_rolagens \
-             instrumento_timeout_s; do
+             instrumento_timeout_s passo_autoridade \
+             passo_autoridade_digest_sha256 passo_cli \
+             passo_cli_digest_sha256 passo_cli_invocacao; do
   n=$(quantos "$chave")
   [ "$n" = "1" ] || reprova C03 "chave '$chave' aparece $n vez(es) no contrato — esperava exatamente 1"
 done
@@ -408,6 +419,88 @@ $LINHAS_WF
 EOF
 
 # ===========================================================================
+# 6b. O PASSO LIDO COMO YAML — a decisão que a OS 16-R2 exigiu
+# ===========================================================================
+#
+# A seção 6 acima é TEXTUAL: linha, substring, janela entre o nome do passo e a
+# invocação. Ela continua valendo — é barata e pega o grosso —, mas a R2 provou
+# que ela não basta. Cinco gestos de uma linha mantinham o caminho oficial
+# verde:
+#
+#   `continue-on-error: true` DEPOIS de `run:` (fora da janela), `if: false`
+#   antes ou depois dele (ninguém olhava `if:`), e `exit 0` na linha seguinte
+#   dentro do mesmo `run:` (a linha da invocação continuava impecável).
+#
+# `if:`, `continue-on-error:` e o corpo de um `run:` não são texto próximo: são
+# NÓS de um documento YAML. Bash não tem parser YAML — Dart tem, e o SDK está no
+# PATH dos três workflows, que configuram o Flutter antes deste passo.
+#
+# A decisão é delegada à autoridade estrutural do contrato. Ela NÃO é uma
+# segunda implementação: é o MESMO arquivo que `auditoria_casca_test.dart`
+# importa. As duas autoridades não têm como discordar porque não são duas.
+#
+# Ausência de ferramenta é REPROVAÇÃO. Não há caminho aqui em que `dart`
+# faltando, pacote não resolvido ou exceção do parser produza saída zero.
+echo "== 6b. estrutura do passo (YAML real)"
+PASSO_AUT=$(campo passo_autoridade)
+PASSO_CLI=$(campo passo_cli)
+PASSO_INV=$(campo passo_cli_invocacao)
+PASSO_AUT_ESPERADA='app/test/casca/passo_os16_yaml.dart'
+PASSO_CLI_ESPERADA='ferramentas/ci/passo_os16/bin/passo_os16.dart'
+PASSO_INV_ESPERADA='dart run ferramentas/ci/passo_os16/bin/passo_os16.dart'
+PASSO_PKG='ferramentas/ci/passo_os16'
+
+f0=$FALHAS
+
+[ "$PASSO_AUT" = "$PASSO_AUT_ESPERADA" ] \
+  || reprova E01 "autoridade estrutural redirecionada: '$PASSO_AUT' != '$PASSO_AUT_ESPERADA'"
+[ "$PASSO_CLI" = "$PASSO_CLI_ESPERADA" ] \
+  || reprova E02 "CLI da autoridade estrutural redirecionada: '$PASSO_CLI' != '$PASSO_CLI_ESPERADA'"
+[ "$PASSO_INV" = "$PASSO_INV_ESPERADA" ] \
+  || reprova E03 "invocação contratada da CLI divergente: '$PASSO_INV' != '$PASSO_INV_ESPERADA'"
+
+# Os bytes das duas peças, contra o contrato. Esvaziar a autoridade estrutural
+# tem de reprovar tão rápido quanto sabotar o workflow.
+for par in "$PASSO_AUT_ESPERADA|passo_autoridade_digest_sha256" \
+           "$PASSO_CLI_ESPERADA|passo_cli_digest_sha256"; do
+  arq=${par%%|*}
+  chave=${par##*|}
+  if [ ! -f "$arq" ]; then
+    reprova E04 "peça da autoridade estrutural ausente: $arq — ausência NÃO é conformidade"
+    continue
+  fi
+  d=$(digest "$arq")
+  [ "$d" = "$(campo "$chave")" ] \
+    || reprova E05 "digest de $arq divergente: $d != $(campo "$chave")"
+done
+
+[ -f "$PASSO_PKG/pubspec.yaml" ] \
+  || reprova E06 "o pacote que dá package:yaml sumiu: $PASSO_PKG/pubspec.yaml"
+
+# A CLI tem de IMPORTAR a autoridade, não reimplementá-la por conta própria.
+if [ -f "$PASSO_CLI_ESPERADA" ]; then
+  grep -qF -- 'passo_os16_yaml.dart' "$PASSO_CLI_ESPERADA" \
+    || reprova E07 "a CLI não importa mais $PASSO_AUT_ESPERADA — viraria uma segunda opinião"
+fi
+
+if ! command -v dart >/dev/null 2>&1; then
+  reprova E08 "o SDK do Dart não está no PATH — sem ele NÃO há leitura estrutural do YAML, e ferramenta ausente é REPROVAÇÃO, nunca conformidade"
+elif [ ! -f "$PASSO_CLI_ESPERADA" ] || [ ! -f "$PASSO_AUT_ESPERADA" ]; then
+  reprova E09 "a autoridade estrutural não está na árvore — nada a executar"
+else
+  if ! ( cd "$PASSO_PKG" && { dart pub get --offline || dart pub get; } ) >/dev/null 2>&1; then
+    reprova E10 "package:yaml não pôde ser resolvido para $PASSO_PKG — a leitura estrutural NÃO roda, e isso é vermelho"
+  fi
+  SAIDA_PASSO=$(dart run ferramentas/ci/passo_os16/bin/passo_os16.dart . 2>&1)
+  RC_PASSO=$?
+  printf '%s\n' "$SAIDA_PASSO" | sed 's/^/  /'
+  [ "$RC_PASSO" = "0" ] \
+    || reprova E11 "a autoridade estrutural do passo REPROVOU (saída $RC_PASSO)"
+fi
+
+[ "$FALHAS" = "$f0" ] && ok "os três passos são canônicos pela leitura do YAML"
+
+# ===========================================================================
 # 7. INSTRUMENTO — os tetos ficam registrados no contrato
 # ===========================================================================
 echo "== 7. instrumento"
@@ -444,7 +537,7 @@ fi
 # ===========================================================================
 echo
 if [ "$FALHAS" = "0" ]; then
-  echo "PORTÃO OS 16: VERDE — contrato $CONTRATO_ID v$CONTRATO_VERSAO, pisos $PISO_ALVO dp / $PISO_FONTE pt, 3 workflows vivos."
+  echo "PORTÃO OS 16: VERDE — contrato $CONTRATO_ID v$CONTRATO_VERSAO, pisos $PISO_ALVO dp / $PISO_FONTE pt, 3 passos canônicos lidos como YAML."
   exit 0
 fi
 echo "PORTÃO OS 16: VERMELHO — $FALHAS falha(s)."

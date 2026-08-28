@@ -1,0 +1,24 @@
+# pubspec.yaml — o pacote MÍNIMO que dá `package:yaml` ao verificador do passo.
+#
+# `ferramentas/ci/portao_os16.sh` roda em bash e precisa decidir sobre NÓS de um
+# documento YAML: `if:`, `continue-on-error:` e o corpo de um `run:` não são
+# texto próximo, e foi por tratá-los como texto que a OS 16-R2 reprovou. Bash
+# não tem parser YAML; Dart tem, e o SDK já está no PATH dos três workflows
+# (todos configuram o Flutter antes do passo do portão).
+#
+# Este pacote não tem código próprio: `bin/passo_os16.dart` é uma casca fina
+# sobre `app/test/casca/passo_os16_yaml.dart`, que é o MESMO arquivo lido pela
+# autoridade Dart dos gates. Uma implementação, dois consumidores — as duas
+# autoridades não têm como discordar, porque não são duas.
+#
+# A única dependência é `yaml`, que já vive na árvore como transitiva do app.
+name: passo_os16
+description: Verificador estrutural do passo do portão da OS 16 nos workflows.
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  yaml: ^3.1.2

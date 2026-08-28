@@ -12,6 +12,14 @@
 # artefato de build, aparece assim que a suite roda na arvore de verdade.
 /app/build/
 
+# Resolucao de `dart pub get` do pacote minimo que da package:yaml ao portao da
+# OS 16 (ferramentas/ci/passo_os16). Os dois sao artefato de maquina: o
+# `.dart_tool/` grava caminhos absolutos e o lock se refaz sozinho a cada
+# `pub get`. Versionar qualquer um deixaria a arvore suja toda vez que o portao
+# rodasse — e arvore suja e o ruido que esconde sabotagem.
+/ferramentas/ci/passo_os16/.dart_tool/
+/ferramentas/ci/passo_os16/pubspec.lock
+
 # Log do emulador do Firestore.
 firestore-debug.log
 ui-debug.log

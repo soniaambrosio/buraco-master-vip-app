@@ -24,7 +24,7 @@
 # verificador e na autoridade — três lugares, de propósito.
 
 contrato: os16-resultado-legivel-tocavel
-versao: 1.0.0
+versao: 1.1.0
 verificador: ferramentas/ci/portao_os16.sh
 autoridade: app/test/casca/auditoria_casca_test.dart
 
@@ -88,6 +88,38 @@ invocacao: bash ferramentas/ci/portao_os16.sh
 workflow: .github/workflows/build.yml | PORTÃO OS 16 — contrato, pisos e provas do Resultado | flutter test test/casca --reporter expanded
 workflow: .github/workflows/ci-os-integracao.yml | PORTÃO OS 16 — contrato, pisos e provas do Resultado | roda a11yres    test/casca/a11y_resultado_partida_test.dart
 workflow: .github/workflows/web.yml | PORTÃO OS 16 — contrato, pisos e provas do Resultado | flutter build web --release
+
+# ---------------------------------------------------------------------------
+# A AUTORIDADE ESTRUTURAL DO PASSO
+# ---------------------------------------------------------------------------
+# A OS 16-R2 reprovou a C1 porque a decisao sobre o passo era TEXTUAL: janela
+# entre o nome do passo e a linha do comando, numero de linha, substring.
+# Cinco gestos de uma linha — "continue-on-error: true" depois de "run:",
+# "if: false" antes ou depois dele, e um "exit 0" na linha seguinte —
+# mantinham o caminho oficial verde sem o portao decidir nada.
+#
+# "if:", "continue-on-error:" e o corpo de um "run:" nao sao texto proximo:
+# sao NOS de um documento YAML. Quem decide sobre eles le o documento como
+# documento. E o que faz `passo_autoridade`, com package:yaml.
+#
+# Ela e UMA implementacao com DOIS consumidores, e por isso nao ha duas
+# autoridades para discordarem:
+#   * `app/test/casca/auditoria_casca_test.dart` a importa — e o caminho de
+#     `cascaaud` e de `flutter test test/casca`;
+#   * `passo_cli` a importa tambem — e o caminho de
+#     `ferramentas/ci/portao_os16.sh`, que a executa por
+#     `passo_cli_invocacao`.
+#
+# Os digests estao aqui pelo mesmo motivo dos outros: esvaziar a autoridade
+# estrutural tem de reprovar tao rapido quanto sabotar o workflow. E o portao
+# em bash tem de CONTINUAR chamando a CLI: por isso a invocacao dela tambem e
+# contratada, e a autoridade Dart confere que ela esta la.
+
+passo_autoridade: app/test/casca/passo_os16_yaml.dart
+passo_autoridade_digest_sha256: 27940a4d3cf7e6be50da94f3118b281893a4c421871a088fea28640b2b358ec8
+passo_cli: ferramentas/ci/passo_os16/bin/passo_os16.dart
+passo_cli_digest_sha256: 790168a8473d690d84525e42df6d7b1471e001641372ae8ff39c3215156a4978
+passo_cli_invocacao: dart run ferramentas/ci/passo_os16/bin/passo_os16.dart
 
 # ---------------------------------------------------------------------------
 # INSTRUMENTO

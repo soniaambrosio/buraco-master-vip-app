@@ -25,6 +25,11 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// A autoridade ESTRUTURAL do passo do portão da OS 16. É o mesmo arquivo que a
+// CLI de `ferramentas/ci/portao_os16.sh` importa — uma implementação, dois
+// consumidores. Ver `passo_os16_yaml.dart` para o porquê de ler YAML como YAML.
+import 'passo_os16_yaml.dart';
+
 // ===========================================================================
 // Ferramentas
 // ===========================================================================
@@ -838,6 +843,128 @@ void main() {
       }
     });
 
+    // =======================================================================
+    // A DECISÃO ESTRUTURAL — o que a OS 16-R2 exigiu
+    // =======================================================================
+    //
+    // O caso acima é TEXTUAL: linha, substring, janela. A R2 provou que isso
+    // não basta. Cinco gestos MENORES que a raiz completa deixavam o caminho
+    // oficial verde: `continue-on-error: true` depois de `run:` (fora da
+    // janela), `if: false` antes ou depois dele (ninguém olhava `if:`), e
+    // `exit 0` na linha seguinte dentro do mesmo `run:` (a linha da invocação
+    // continuava impecável, e o código de saída do passo virava 0).
+    //
+    // `if:`, `continue-on-error:` e o corpo de um `run:` não são texto
+    // próximo — são NÓS de um documento YAML. Este caso lê os três workflows
+    // com `package:yaml` e exige o passo canônico: único, exato, alcançável e
+    // anterior à âncora. Ver `passo_os16_yaml.dart`.
+    test('o passo do portão é canônico nos TRÊS workflows, lido como YAML', () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+      final invocacao = _campo(contrato, 'invocacao');
+      final declarados = _repetida(contrato, 'workflow');
+      expect(
+        declarados.length,
+        3,
+        reason: 'a OS 16 protege exatamente três workflows',
+      );
+
+      final falhas = <String>[];
+      for (final entrada in declarados) {
+        final partes = entrada.split('|').map((s) => s.trim()).toList();
+        expect(partes.length, 3,
+            reason: 'entrada de workflow malformada: "$entrada"');
+        // Ausência REPROVA: `_obrigatorio` chama `fail`, nunca devolve vazio.
+        falhas.addAll(auditarPassoOS16(
+          caminho: partes[0],
+          textoYaml: _obrigatorio(partes[0]),
+          nomePasso: partes[1],
+          invocacao: invocacao,
+          ancora: partes[2],
+        ).map((f) => f.toString()));
+      }
+
+      expect(
+        falhas,
+        isEmpty,
+        reason: 'o passo do portão deixou de ser canônico:\n'
+            '${falhas.join('\n')}',
+      );
+    });
+
+    test('a autoridade estrutural está íntegra, e o portão em bash a executa',
+        () {
+      final contrato = _obrigatorio(_caminhoContratoOS16);
+
+      final autoridade = _campo(contrato, 'passo_autoridade');
+      expect(
+        autoridade,
+        'app/test/casca/passo_os16_yaml.dart',
+        reason: 'a autoridade estrutural do passo foi redirecionada',
+      );
+      expect(
+        _digestOS16(_obrigatorio(autoridade)),
+        _campo(contrato, 'passo_autoridade_digest_sha256'),
+        reason: 'a autoridade estrutural do passo foi reescrita sem passar por '
+            'uma OS — esvaziá-la deixaria os dois caminhos oficiais cegos',
+      );
+
+      final cli = _campo(contrato, 'passo_cli');
+      expect(
+        cli,
+        'ferramentas/ci/passo_os16/bin/passo_os16.dart',
+        reason: 'a CLI da autoridade estrutural foi redirecionada',
+      );
+      final fonteCli = _obrigatorio(cli);
+      expect(
+        _digestOS16(fonteCli),
+        _campo(contrato, 'passo_cli_digest_sha256'),
+        reason: 'a CLI da autoridade estrutural foi reescrita',
+      );
+      expect(
+        fonteCli,
+        contains('passo_os16_yaml.dart'),
+        reason: 'a CLI parou de importar a autoridade — viraria uma segunda '
+            'opinião, e duas opiniões podem discordar',
+      );
+      expect(
+        _obrigatorio('ferramentas/ci/passo_os16/pubspec.yaml'),
+        contains('yaml:'),
+        reason: 'o pacote que dá package:yaml à CLI perdeu a dependência',
+      );
+
+      // E o portão em bash tem de CONTINUAR executando a CLI. Sem esta prova,
+      // apagar a seção 6b tiraria a leitura estrutural do caminho do CI sem
+      // nada ficar vermelho.
+      final portao = _obrigatorio(_campo(contrato, 'verificador'));
+      final invocacaoCli = _campo(contrato, 'passo_cli_invocacao');
+      final linhas = portao.split('\n');
+      final vivas = _invocacoesVivas(linhas, invocacaoCli);
+      expect(
+        vivas.length,
+        1,
+        reason: 'o portão em bash executa "$invocacaoCli" ${vivas.length} '
+            'vez(es) — esperava exatamente uma, viva',
+      );
+      final linha = linhas[vivas.single - 1];
+      for (final neutralizador in const <String>[
+        '|| true',
+        '|| :',
+        '||:',
+        '|| echo',
+        '/bin/true',
+        '; true',
+        '|| exit 0',
+        '/dev/null',
+      ]) {
+        expect(
+          linha.contains(neutralizador),
+          isFalse,
+          reason: 'o portão neutraliza a autoridade estrutural com '
+              '"$neutralizador"',
+        );
+      }
+    });
+
     test('o agregador continua executando e CONTANDO o gate a11yres', () {
       final texto = _obrigatorio('.github/workflows/ci-os-integracao.yml');
       expect(
@@ -882,9 +1009,9 @@ void main() {
 
 const double kPisoAlvoOS16 = 48;
 const double kPisoFonteOS16 = 11;
-const String kVersaoContratoOS16 = '1.0.0';
+const String kVersaoContratoOS16 = '1.1.0';
 const String kDigestContratoOS16 =
-    '3e3a85f2ba53b87ca2e7f310568dc57604ffdb27930fbf6d65cb6f43b311f133';
+    '9625794e8f88dc2b397bc3cfad22b2360977807beb3f5fe0944f402a82a3d18e';
 
 const String _caminhoContratoOS16 =
     'app/test/casca/contrato_os16_resultado.txt';
