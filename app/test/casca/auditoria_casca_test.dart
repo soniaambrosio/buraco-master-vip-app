@@ -163,6 +163,26 @@ const String kGateA11yTerm = 'a11yterm';
 /// O identificador da TESTEMUNHA — o passo que lê o resultado real.
 const String kGateA11yTermAtestado = 'a11ytermat';
 
+/// O identificador da AUTORIDADE EXTERNA — o passo que lê a cadeia inteira.
+const String kGateA11yTermAutoridade = 'a11yaut';
+
+/// O manifesto da cadeia, a partir da raiz do repositório.
+///
+/// OS 20-C2. Ele é a SEGUNDA NATUREZA do contrato: dados, não programa, e lido
+/// por um verificador que não é Dart e não roda no executor do Flutter. É nele
+/// que mora a obrigação material de cada um dos vinte e um casos homologados —
+/// as operações que cada um exercita e os resultados que observa.
+///
+/// POR QUE OBRIGAÇÃO, E NÃO DIGEST. A OS 20-R2 trocou os vinte e um corpos por
+/// `expect(1, 1)` e recarimbou [kAssinaturaDosCasosOriginaisA11yTerm]: os dois
+/// portões seguiram verdes. Um digest é recalculável por quem edita — ele
+/// registra que alguém mexeu, não impede que a matéria suma. Uma obrigação
+/// nominal, não: nenhum `expect(1, 1)` contém `_atravessarOTeto`.
+const String kManifestoA11yTerm = '.github/gates/a11yterm.manifesto.json';
+
+/// O verificador externo e fail-closed da cadeia.
+const String kAutoridadeA11yTerm = '.github/scripts/autoridade_a11yterm.js';
+
 /// Os vinte e um casos da entrega original, com o nome COMPLETO — grupo e
 /// caso —, exatamente como o executor os reporta.
 ///
@@ -852,6 +872,39 @@ void main() {
     /// Os casos declarados na suíte canônica, lidos do código sem comentários.
     List<_CasoDeclarado> lerCasos() => _casosDeclarados(_codigo(suite));
 
+    /// O texto do workflow, ou a reprovação por ele não existir.
+    ///
+    /// OS 20-C2 §5 — O DEFEITO QUE ESTE MÉTODO FECHA.
+    ///
+    /// Até a OS 20-C1 estas afirmações começavam com
+    /// `if (!arquivo.existsSync()) return;`. A intenção era não afirmar
+    /// besteira quando a raiz do repositório não estivesse alcançável. O efeito
+    /// foi outro: apagar, mover ou renomear um workflow virou CONFORMIDADE.
+    ///
+    /// E não é uma conformidade inofensiva. O provedor continua executando
+    /// `.github/workflows/apk.yml` depois de `build.yml` ser renomeado —
+    /// quem para de existir é a fiscalização, não o pipeline.
+    ///
+    /// Ausência agora é vermelho. Nas duas situações em que este arquivo roda
+    /// de verdade — `app/` no repositório e `app_build/` no CI — a raiz ESTÁ
+    /// um nível acima, e o arquivo está lá. Se não estiver, alguém o tirou.
+    String exigirWorkflow(File f, String porque) {
+      if (!f.existsSync()) {
+        fail(
+          'o workflow ${_barras(f.path)} não existe. Apagar, mover, renomear '
+          'ou trocar a extensão são a mesma coisa daqui, e nenhuma delas é '
+          'conformidade: o provedor segue executando o arquivo renomeado e '
+          'só a fiscalização para. $porque',
+        );
+      }
+      final String t = f.readAsStringSync();
+      if (t.trim().isEmpty) {
+        fail('o workflow ${_barras(f.path)} está vazio — esvaziar é apagar '
+            'com o caminho preservado');
+      }
+      return t;
+    }
+
     test('a suíte existe no caminho canônico', () {
       expect(
         suite.existsSync(),
@@ -1107,8 +1160,10 @@ void main() {
     // ESTÁ alcançável, porque `app_build` nasce ao lado de `.github`.
 
     test('o build.yml executa a suíte e reprova a ausência dela', () {
-      if (!construcao.existsSync()) return;
-      final String texto = construcao.readAsStringSync();
+      final String texto = exigirWorkflow(
+        construcao,
+        'É ele que executa a suíte pelo NOME no portão do APK.',
+      );
       expect(
         texto,
         contains('app/$kCaminhoA11yTerm'),
@@ -1163,8 +1218,10 @@ void main() {
     });
 
     test('o ci-os-integracao executa a suíte como OBRIGATÓRIA', () {
-      if (!portao.existsSync()) return;
-      final String texto = portao.readAsStringSync();
+      final String texto = exigirWorkflow(
+        portao,
+        'É ele que roda o gate $kGateA11yTerm como OBRIGATÓRIO.',
+      );
 
       expect(
         texto,
@@ -1185,8 +1242,10 @@ void main() {
     });
 
     test('o gate está nas TRÊS listas do portão', () {
-      if (!portao.existsSync()) return;
-      final String texto = portao.readAsStringSync();
+      final String texto = exigirWorkflow(
+        portao,
+        'São as três listas dele que transformam gate vermelho em run vermelho.',
+      );
 
       // O laço que decide verde/vermelho, e não qualquer `for k in`.
       //
@@ -1272,8 +1331,10 @@ void main() {
     });
 
     test('a execução deixa as provas que a testemunha precisa ler', () {
-      if (!portao.existsSync()) return;
-      final String texto = portao.readAsStringSync();
+      final String texto = exigirWorkflow(
+        portao,
+        'É ele que produz carimbo, log, marcador e relatório de máquina.',
+      );
 
       // Cada literal abaixo é uma prova que a execução tem de PRODUZIR. Sem
       // ela, a testemunha fica sem o que conferir e o gate volta a acreditar
@@ -1311,7 +1372,10 @@ void main() {
       // Se a raiz do repositório está alcançável — e no CI ela está, porque
       // `app_build` nasce ao lado de `.github` —, a ausência da testemunha é
       // vermelho, e não silêncio.
-      if (portao.existsSync() || construcao.existsSync()) {
+      // OS 20-C2: era aqui que a ausência virava silêncio. A testemunha só
+      // era cobrada SE algum workflow existisse — e quem apagasse os dois
+      // levava, de brinde, a dispensa de ter testemunha.
+      {
         expect(
           testemunha.existsSync(),
           isTrue,
@@ -1321,7 +1385,7 @@ void main() {
         );
       }
 
-      if (testemunha.existsSync()) {
+      {
         final String js = testemunha.readAsStringSync();
         // Ela lê a relação nominal DAQUI, e não de uma cópia. É isso que
         // impede a segunda fonte de gates: apagar a lista desta fonte faz a
@@ -1338,12 +1402,27 @@ void main() {
           contains('kCaminhoA11yTerm'),
           reason: 'a testemunha parou de ler o caminho canônico daqui',
         );
+        // O PISO DELA NÃO É MAIS ESCRITO NELA.
+        //
+        // OS 20-C2 §6. Ele valia 21 aqui, 21 na testemunha e 21 na autoridade:
+        // três números para a mesma coisa. A OS 20-R2 baixou os três numa
+        // passada só e os dois portões ficaram verdes com seis casos a menos.
+        // Agora a testemunha lê o piso do manifesto, que é conferido contra
+        // esta fonte E contra a autoridade externa.
         expect(
-          RegExp(r'const PISO = 21;').hasMatch(js),
-          isTrue,
+          js,
+          contains(kManifestoA11yTerm),
           reason:
-              'o piso de 21 casos mudou na testemunha sem mudar aqui — as duas '
-              'autoridades divergiram',
+              'a testemunha voltou a carregar um piso próprio. Um número '
+              'escrito à mão no arquivo que ele protege é a constante mais '
+              'barata de baixar que existe.',
+        );
+        expect(
+          RegExp(r'const PISO = \d+;').hasMatch(js),
+          isFalse,
+          reason:
+              'a testemunha reintroduziu um piso literal — é a terceira '
+              'verdade que a OS 20-C2 tirou de circulação',
         );
         for (final marca in <String>[
           'exit_\${GATE}',
@@ -1359,8 +1438,11 @@ void main() {
         }
       }
 
-      if (portao.existsSync()) {
-        final String texto = portao.readAsStringSync();
+      {
+        final String texto = exigirWorkflow(
+          portao,
+          'É um dos dois portadores da testemunha material.',
+        );
         expect(
           texto,
           contains(chamada),
@@ -1377,8 +1459,11 @@ void main() {
         );
       }
 
-      if (construcao.existsSync()) {
-        final String texto = construcao.readAsStringSync();
+      {
+        final String texto = exigirWorkflow(
+          construcao,
+          'É o outro portador da testemunha material.',
+        );
         expect(
           texto,
           contains(chamada),
@@ -1395,6 +1480,325 @@ void main() {
           reason: 'o build.yml parou de produzir o relatório de máquina',
         );
       }
+    });
+
+    // -----------------------------------------------------------------------
+    // OS 20-C2 — A SEGUNDA NATUREZA
+    // -----------------------------------------------------------------------
+    //
+    // Até aqui o contrato era Dart, e só. Uma suíte que aprova os próprios
+    // nomes, a própria cardinalidade, os próprios pisos e a própria assinatura
+    // é uma autoridade que se confirma sozinha — e a OS 20-R2 mostrou o preço:
+    // baixar 21 para 15 em duas listas coordenadas, ou trocar os vinte e um
+    // corpos por `expect(1, 1)` e recarimbar o digest, deixou os dois portões
+    // verdes.
+    //
+    // O que estas provas fixam é a OUTRA natureza: um manifesto de DADOS, lido
+    // por um verificador que não é Dart, não roda no executor do Flutter e não
+    // depende desta suíte para nada. Os números vivem nos dois lados, e os dois
+    // lados se cobram: baixar um piso numa peça só passa a ser divergência, e
+    // divergência é vermelho nas duas.
+
+    final File manifesto = File('../$kManifestoA11yTerm');
+    final File autoridade = File('../$kAutoridadeA11yTerm');
+
+    /// O manifesto decodificado, ou a reprovação por ele não estar lá.
+    Map<String, dynamic> lerManifesto() {
+      if (!manifesto.existsSync()) {
+        fail(
+          '$kManifestoA11yTerm não existe. Ele é a autoridade externa da '
+          'cadeia: nele moram a obrigação material de cada um dos vinte e um '
+          'casos e os pisos que esta fonte repete. Sem ele não há o que '
+          'conferir — e "nada a conferir" não é aprovação.',
+        );
+      }
+      final String bruto = manifesto.readAsStringSync();
+      if (bruto.trim().isEmpty) {
+        fail('$kManifestoA11yTerm está vazio — manifesto vazio não é manifesto');
+      }
+      final Object? lido = jsonDecode(bruto);
+      if (lido is! Map<String, dynamic>) {
+        fail('$kManifestoA11yTerm não é um objeto JSON');
+      }
+      return lido;
+    }
+
+    test('o manifesto da cadeia existe, é legível e declara suas seções', () {
+      final Map<String, dynamic> m = lerManifesto();
+      for (final chave in <String>[
+        'caminhoCanonicoDaSuite',
+        'fonteUnicaDeGates',
+        'testemunha',
+        'autoridade',
+        'marcasDaCadeia',
+        'workflowsCanonicos',
+        'invocacoes',
+        'invocacoesCompartilhadas',
+        'cruzamento',
+        'pisos',
+        'minimos',
+        'casosProtegidos',
+      ]) {
+        expect(
+          m.containsKey(chave),
+          isTrue,
+          reason:
+              'o manifesto perdeu a seção "$chave". Reduzi-lo a um objeto sem '
+              'obrigações deixaria a autoridade externa sem trabalho, e um '
+              'verificador sem trabalho é sempre verde.',
+        );
+      }
+      expect(
+        m['caminhoCanonicoDaSuite'],
+        kCaminhoA11yTerm,
+        reason:
+            'o manifesto e esta fonte apontam para arquivos diferentes — '
+            'enquanto isso durar, nenhum dos dois é autoridade',
+      );
+    });
+
+    test('o manifesto protege os VINTE E UM casos, pelo nome e na ordem', () {
+      final List<dynamic> protegidos =
+          lerManifesto()['casosProtegidos'] as List<dynamic>;
+      // Contra um literal, e não contra o tamanho da própria lista: uma
+      // cardinalidade que se mede por si mesma aprova qualquer encolhimento.
+      expect(
+        protegidos,
+        hasLength(21),
+        reason:
+            'o manifesto declara ${protegidos.length} casos protegidos, e a '
+            'relação homologada são VINTE E UM. Reduzir a relação é o ataque, '
+            'não a correção dele.',
+      );
+      final List<String> doManifesto = protegidos
+          .map((e) => (e as Map<String, dynamic>)['nome'] as String)
+          .toList();
+      expect(
+        doManifesto,
+        kCasosOriginaisA11yTerm,
+        reason:
+            'a relação nominal do manifesto divergiu da desta fonte. As duas '
+            'são a mesma lista escrita em duas naturezas, e é a igualdade '
+            'delas que impede o recarimbo coordenado de uma peça só.',
+      );
+    });
+
+    test('cada caso protegido carrega obrigação material própria', () {
+      final List<dynamic> protegidos =
+          lerManifesto()['casosProtegidos'] as List<dynamic>;
+      final Set<String> vistos = <String>{};
+      for (final dynamic bruto in protegidos) {
+        final Map<String, dynamic> c = bruto as Map<String, dynamic>;
+        final String nome = c['nome'] as String;
+        final List<dynamic> exige = (c['exige'] ?? <dynamic>[]) as List<dynamic>;
+        // A OBRIGAÇÃO É O QUE NÃO SE RECARIMBA. Um digest some com a matéria e
+        // volta a ser verde por recálculo; uma lista de operações exigidas,
+        // não: `expect(1, 1)` não contém `_atravessarOTeto`.
+        expect(
+          exige.length,
+          greaterThanOrEqualTo(3),
+          reason:
+              'o caso "$nome" ficou com ${exige.length} obrigações materiais. '
+              'Esvaziar a lista `exige` é autorizar a trivialização do corpo '
+              'sem tocar em contagem nenhuma.',
+        );
+        expect(
+          (c['afirmacoesMinimas'] as int?) ?? 0,
+          greaterThanOrEqualTo(1),
+          reason: 'o caso "$nome" deixou de exigir qualquer afirmação',
+        );
+        expect(
+          (c['porque'] as String?)?.trim().isNotEmpty,
+          isTrue,
+          reason:
+              'o caso "$nome" perdeu a explicação do que se perde quando a '
+              'obrigação dele cai',
+        );
+        expect(
+          vistos.add(nome),
+          isTrue,
+          reason:
+              'o caso "$nome" aparece duas vezes no manifesto — duplicar repõe '
+              'contagem sem repor obrigação',
+        );
+      }
+    });
+
+    test('os pisos do manifesto batem com os literais desta fonte', () {
+      final Map<String, dynamic> pisos =
+          lerManifesto()['pisos'] as Map<String, dynamic>;
+      // Os mesmos números que os casos acima cobram por extenso. Escritos aqui
+      // de novo, de propósito: baixar um piso passa a exigir editar o
+      // manifesto, esta fonte e a autoridade externa, e as três se conferem.
+      const Map<String, int> homologados = <String, int>{
+        'a11yterm': 49,
+        'relacaoNominalOriginal': 21,
+        'casosDaCorrecao': 10,
+        'casosPorNome': 31,
+        'casosDaMatriz': 2,
+        'combinacoesDaMatriz': 9,
+        'testemunha': 21,
+      };
+      homologados.forEach((String k, int v) {
+        expect(
+          pisos[k],
+          v,
+          reason:
+              'o piso "$k" vale $v aqui e ${pisos[k]} no manifesto. '
+              'Divergiram: baixar o piso numa peça só é exatamente o ataque '
+              'que a OS 20-R2 executou.',
+        );
+      });
+      expect(
+        kCasosOriginaisA11yTerm,
+        hasLength(homologados['relacaoNominalOriginal']),
+      );
+      expect(
+        kCasosDaCorrecaoA11yTerm,
+        hasLength(homologados['casosDaCorrecao']),
+      );
+    });
+
+    test('a autoridade externa existe e é chamada VIVA nos dois portões', () {
+      const String chamada = 'node $kAutoridadeA11yTerm .';
+
+      expect(
+        autoridade.existsSync(),
+        isTrue,
+        reason:
+            '$kAutoridadeA11yTerm sumiu. Ela é o único caminho executável que '
+            'permanece alcançável quando um dos workflows desaparece: sem ela, '
+            'apagar `build.yml` volta a ser conformidade.',
+      );
+
+      final String daConstrucao = exigirWorkflow(
+        construcao,
+        'É um dos dois portadores da autoridade externa.',
+      );
+      final String doPortao = exigirWorkflow(
+        portao,
+        'É o outro portador da autoridade externa.',
+      );
+
+      // NOS DOIS, DE PROPÓSITO. Apagado o `ci-os-integracao.yml`, quem ainda
+      // executa no provedor é o `build.yml` — e é por ele que a ausência do
+      // companheiro fica vermelha. Apagado o `build.yml`, vale o inverso.
+      // Apagados os dois, nada executa lá: essa é uma dependência da raiz
+      // integrada, e nenhuma folha a fecha sozinha.
+      expect(
+        daConstrucao,
+        contains(chamada),
+        reason:
+            'o build.yml parou de chamar a autoridade externa — sem ela, o '
+            'sumiço do ci-os-integracao.yml deixa de ter caminho que reprove',
+      );
+      expect(
+        doPortao,
+        contains(chamada),
+        reason:
+            'o ci-os-integracao parou de chamar a autoridade externa — sem '
+            'ela, o sumiço do build.yml deixa de ter caminho que reprove',
+      );
+      expect(
+        doPortao,
+        contains('echo "\$v" > exit_$kGateA11yTermAutoridade'),
+        reason:
+            'a autoridade deixou de gravar o próprio marcador — sem ele, '
+            'matar o passo antes da hora devolve o run ao verde',
+      );
+    });
+
+    test('a autoridade externa não pode ser ESVAZIADA', () {
+      // O ATAQUE QUE ELA NÃO PEGA SOZINHA.
+      //
+      // Apagar a autoridade é vermelho: os dois workflows conferem o caminho
+      // antes de chamá-la, e a prova acima cobra a existência. Mas TROCAR o
+      // conteúdo dela por `process.exit(0)` deixa o arquivo no lugar, a
+      // chamada viva nos dois portões e o exit em zero — e ela nunca chega a
+      // conferir nada, nem a si mesma.
+      //
+      // Quem pega isso precisa ser de outra natureza e rodar num gate que não
+      // dependa dela. É este arquivo, em Dart, no gate `cascaaud`, que é
+      // obrigatório nos dois portões.
+      final Map<String, dynamic> m = lerManifesto();
+      final List<dynamic> exige =
+          (m['autoridadeExige'] ?? <dynamic>[]) as List<dynamic>;
+      expect(
+        exige.length,
+        greaterThanOrEqualTo(10),
+        reason:
+            'o manifesto declara ${exige.length} marcas da autoridade, e o '
+            'homologado são DEZ. Encurtar a lista é autorizar o esvaziamento.',
+      );
+
+      expect(autoridade.existsSync(), isTrue, reason: 'a autoridade sumiu');
+      final String js = autoridade.readAsStringSync();
+      for (final dynamic bruto in exige) {
+        final Map<String, dynamic> marca = bruto as Map<String, dynamic>;
+        expect(
+          js,
+          contains(marca['texto'] as String),
+          reason:
+              'a autoridade externa perdeu "${marca['texto']}" — '
+              '${marca['porque']}',
+        );
+      }
+
+      // Os pisos homologados também vivem LÁ, como literais. É a terceira
+      // natureza: baixar um número exige editar o manifesto, esta fonte e a
+      // autoridade, e as três se conferem.
+      for (final String literal in <String>[
+        'a11yterm: 49,',
+        'relacaoNominalOriginal: 21,',
+        'casosPorNome: 31,',
+        'obrigacoesMateriais: 21,',
+      ]) {
+        expect(
+          js,
+          contains(literal),
+          reason:
+              'o piso "$literal" saiu da autoridade externa — as três '
+              'naturezas divergiram, e enquanto isso durar nenhuma é autoridade',
+        );
+      }
+    });
+
+    test('o gate da autoridade está nas TRÊS listas do portão', () {
+      final String texto = exigirWorkflow(
+        portao,
+        'São as três listas dele que transformam gate vermelho em run vermelho.',
+      );
+      expect(
+        RegExp('GATES="[^"]*\\b$kGateA11yTermAutoridade\\b').hasMatch(texto),
+        isTrue,
+        reason: '$kGateA11yTermAutoridade saiu da evidência publicada',
+      );
+      // O LACO QUE DECIDE, e nao qualquer `for k in`. Sao quatro os laços
+      // sobre chaves de gate neste arquivo, e três não decidem nada: dois
+      // montam a evidência publicada — e o `in` deles é `$GATES`, não a
+      // lista — e um cobra marcador dos obrigatórios. O que decide é o único
+      // que levanta `fail`.
+      final RegExp lacoPrincipal = RegExp(
+        r'for k in ([^;]*); do\s*\n\s*if \[ -f "exit_\$k" \]; then\s*\n'
+        r'\s*v=\$\(cat "exit_\$k"\)[^\n]*\n\s*\[ "\$v" = "0" \] \|\| fail=1',
+      );
+      expect(
+        lacoPrincipal.firstMatch(texto)?.group(1)?.split(RegExp(r'\s+')),
+        contains(kGateA11yTermAutoridade),
+        reason:
+            '$kGateA11yTermAutoridade saiu do portão verde/vermelho — passaria '
+            'a rodar sem poder reprovar',
+      );
+      final RegExp obrigatorios = RegExp(
+        r'for k in ([^;]*); do\s*\n\s*if \[ ! -f "exit_\$k" \]',
+      );
+      expect(
+        obrigatorios.firstMatch(texto)?.group(1)?.split(RegExp(r'\s+')),
+        contains(kGateA11yTermAutoridade),
+        reason:
+            '$kGateA11yTermAutoridade saiu da lista dos obrigatórios — matar o '
+            'passo antes da hora voltaria a devolver o run ao verde',
+      );
     });
   });
 }

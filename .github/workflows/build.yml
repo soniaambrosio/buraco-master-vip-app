@@ -354,6 +354,35 @@ jobs:
           node .github/scripts/testemunha_a11yterm.js . app_build/test/casca/auditoria_casca_test.dart
           echo "PORTÃO VERDE: estados terminais da casca operáveis por quem não vê a tela, no commit ${GITHUB_SHA}."
 
+      - name: "PORTÃO DA CADEIA — autoridade externa fail-closed (a11yterm)"
+        # OS 20-C2 §5. O passo acima prova o que a suíte PRODUZIU. Este prova
+        # que a cadeia inteira ainda existe e ainda é executável — e é o único
+        # caminho que continua rodando no provedor quando o OUTRO workflow
+        # desaparece.
+        #
+        # É deliberado que ele viva nos dois workflows: apagado o
+        # `ci-os-integracao.yml`, quem ainda executa é este arquivo, e é por
+        # aqui que a ausência do companheiro fica vermelha. Apagado este, quem
+        # reprova é o outro. Apagados os dois, nada executa no provedor — e essa
+        # é uma dependência da raiz integrada, não uma propriedade que uma folha
+        # possa fechar sozinha.
+        #
+        # Ele roda NU: sem `|| true`, sem segundo plano e sem descarte de saída.
+        # O `exit` dele é o `exit` do passo.
+        run: |
+          if [ ! -f .github/scripts/autoridade_a11yterm.js ]; then
+            echo "ERRO: a autoridade externa da cadeia a11yterm sumiu."
+            echo "Sem ela, apagar ou renomear um workflow volta a ser conformidade."
+            exit 1
+          fi
+          if [ ! -f .github/gates/a11yterm.manifesto.json ]; then
+            echo "ERRO: o manifesto da cadeia a11yterm sumiu — sem ele não há obrigação material."
+            exit 1
+          fi
+          command -v node >/dev/null || { echo "ERRO: node ausente no runner."; exit 1; }
+          node .github/scripts/autoridade_a11yterm.js .
+          echo "PORTÃO VERDE: cadeia a11yterm íntegra no commit ${GITHUB_SHA}."
+
       - name: "PORTÃO DE SEGURANÇA — conexão publicável (endereço, sessão, vazamento)"
         # Prova o que falta para o app publicado manter a sessão real: endereço
         # validado por perfil de build, protocolo 2 no handshake, renovação de

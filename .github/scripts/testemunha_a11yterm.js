@@ -42,12 +42,55 @@ const fs = require('fs');
 const path = require('path');
 
 const GATE = 'a11yterm';
-const PISO = 21;
+
+/// O piso NAO e escrito aqui.
+///
+/// OS 20-C2. Ele valia 21 neste arquivo, 21 na fonte de gates e 21 na
+/// autoridade — tres numeros para a mesma coisa, e a OS 20-R2 mostrou o que
+/// isso custa: baixar os tres numa passada so deixou os dois portoes verdes
+/// com seis casos a menos. Um piso escrito a mao no arquivo que ele protege e
+/// a mais barata das constantes de baixar.
+///
+/// Agora ele vem do manifesto, que e conferido contra a autoridade externa e
+/// contra a fonte de gates. Manifesto ausente, ilegivel ou sem o piso NAO e
+/// "sem piso": e reprovacao.
+const MANIFESTO = '.github/gates/a11yterm.manifesto.json';
+
+function pisoDoManifesto() {
+  let bruto;
+  try {
+    bruto = fs.readFileSync(MANIFESTO, 'utf8');
+  } catch (e) {
+    reprova(
+      `${MANIFESTO} nao pode ser lido (${e.code}) — sem ele esta testemunha ` +
+        `nao tem piso, e "sem piso" nao e "qualquer piso serve"`,
+    );
+    return null;
+  }
+  let m;
+  try {
+    m = JSON.parse(bruto);
+  } catch (e) {
+    reprova(`${MANIFESTO} nao e JSON valido: ${e.message}`);
+    return null;
+  }
+  const v = m && m.pisos && m.pisos.relacaoNominalOriginal;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+    reprova(
+      `${MANIFESTO} nao declara pisos.relacaoNominalOriginal como inteiro`,
+    );
+    return null;
+  }
+  return v;
+}
 
 const [dirArtefatos, fonteDeGates] = process.argv.slice(2);
 
 const erros = [];
 const reprova = (m) => erros.push(m);
+
+/// O piso de casos nominais, vindo da autoridade de dados e nao daqui.
+const PISO = pisoDoManifesto();
 
 /// O conteúdo do arquivo, ou `null` se ele NÃO EXISTE.
 ///
@@ -116,6 +159,13 @@ const nominais = contrato && listaDeStrings(contrato, 'kCasosOriginaisA11yTerm')
 if (contrato !== null && !caminhoCanonico) {
   reprova('kCaminhoA11yTerm sumiu da fonte única de gates');
 }
+if (PISO === null) {
+  // Nao ha o que conferir sem piso, e "nada a conferir" nao pode virar
+  // aprovacao: as comparacoes adiante com `null` seriam todas falsas.
+  for (const e of erros) console.log(`TESTEMUNHA ${GATE} REPROVOU: ${e}`);
+  process.exit(1);
+}
+
 if (contrato !== null && (!nominais || nominais.length < PISO)) {
   reprova(
     `kCasosOriginaisA11yTerm tem ${nominais ? nominais.length : 0} casos na ` +

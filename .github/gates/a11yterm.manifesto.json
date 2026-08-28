@@ -1,0 +1,732 @@
+{
+  "versao": 1,
+  "os": "OS 20-C2",
+  "proposito": "Autoridade externa e fail-closed da cadeia a11yterm: inventario dos workflows, unicidade dos portadores, invocacao viva e obrigacao material de cada um dos vinte e um casos homologados.",
+  "caminhoCanonicoDaSuite": "test/casca/a11y_estados_terminais_test.dart",
+  "fonteUnicaDeGates": "app/test/casca/auditoria_casca_test.dart",
+  "testemunha": ".github/scripts/testemunha_a11yterm.js",
+  "autoridade": ".github/scripts/autoridade_a11yterm.js",
+  "marcasDaCadeia": [
+    "a11yterm",
+    "a11ytermat",
+    "a11yaut",
+    "a11y_estados_terminais_test.dart",
+    "testemunha_a11yterm.js",
+    "autoridade_a11yterm.js"
+  ],
+  "workflowsCanonicos": [
+    {
+      "caminho": ".github/workflows/build.yml",
+      "papel": "portao do APK",
+      "consumoDoExit": [
+        {
+          "id": "a11y.suite.ausente.reprova",
+          "regex": "if \\[ ! -f \"app_build/\\$SUITE\" \\]; then[\\s\\S]{0,400}?exit 1",
+          "porque": "a suite que nao chega ao overlay tem de reprovar antes de qualquer outra coisa"
+        },
+        {
+          "id": "a11y.testemunha.ausente.reprova",
+          "regex": "if \\[ ! -f \\.github/scripts/testemunha_a11yterm\\.js \\]; then[\\s\\S]{0,300}?exit 1",
+          "porque": "a testemunha ausente tem de reprovar, e nao ser ignorada"
+        },
+        {
+          "id": "a11y.marcador.do.exit",
+          "regex": "echo \\$\\{PIPESTATUS\\[0\\]\\} > exit_a11yterm",
+          "porque": "sem o marcador a testemunha nao tem o que conferir"
+        },
+        {
+          "id": "a11y.autoridade.sem.rede",
+          "regex": "node \\.github/scripts/autoridade_a11yterm\\.js \\.\\s*$",
+          "flags": "m",
+          "porque": "a autoridade tem de rodar nua: qualquer sufixo a transformaria em enfeite"
+        }
+      ],
+      "proibidoNoVivo": [
+        {
+          "id": "build.marcador.literal",
+          "regex": "echo\\s+0\\s*>\\s*\"?exit_",
+          "porque": "um marcador de sucesso escrito a mao dispensa a execucao: o passo passa a afirmar que a suite passou sem a suite ter rodado"
+        },
+        {
+          "id": "build.placar.forjado",
+          "regex": "All tests passed",
+          "porque": "o placar verde e produzido pelo Flutter, nunca por um `echo`. Escrito a mao, ele engana a testemunha, que le o log"
+        },
+        {
+          "id": "a11y.autoridade.neutralizada",
+          "regex": "autoridade_a11yterm\\.js[^\\n]*(\\|\\||&\\s*$|> ?/dev/null)",
+          "porque": "a chamada da autoridade foi neutralizada por `||`, segundo plano ou descarte de saida"
+        }
+      ]
+    },
+    {
+      "caminho": ".github/workflows/ci-os-integracao.yml",
+      "papel": "portao de integracao",
+      "consumoDoExit": [
+        {
+          "id": "ci.laco.decide",
+          "regex": "for k in ([^;]*); do\\s*\\n\\s*if \\[ -f \"exit_\\$k\" \\]; then\\s*\\n\\s*v=\\$\\(cat \"exit_\\$k\"\\)[^\\n]*\\n\\s*\\[ \"\\$v\" = \"0\" \\] \\|\\| fail=1",
+          "porque": "e o unico laco que levanta `fail`, e por ele o run fica vermelho"
+        },
+        {
+          "id": "ci.obrigatorios.sem.marcador",
+          "regex": "for k in ([^;]*); do\\s*\\n\\s*if \\[ ! -f \"exit_\\$k\" \\]",
+          "porque": "sem ele, matar o passo antes da hora devolve o run ao verde"
+        },
+        {
+          "id": "ci.exit.fail",
+          "regex": "echo \"resultado: \\$\\(\\[ \\$fail -eq 0 \\][^\\n]*\\n\\s*exit \\$fail",
+          "porque": "trocado por `exit 0`, o portao imprime o veredito e nao o aplica"
+        },
+        {
+          "id": "ci.testemunha.exit.lido",
+          "regex": "node \\.github/scripts/testemunha_a11yterm\\.js[^\\n]*\\n\\s*v=\\$\\?",
+          "porque": "o codigo de saida da testemunha tem de ser LIDO. Trocado por `v=0`, ela reprova no log e o passo termina verde"
+        },
+        {
+          "id": "ci.autoridade.exit.lido",
+          "regex": "node \\.github/scripts/autoridade_a11yterm\\.js \\.\\n\\s*v=\\$\\?",
+          "porque": "o codigo de saida da autoridade tem de ser LIDO — e o que vira o marcador exit_a11yaut e a reprovacao do passo"
+        },
+        {
+          "id": "ci.roda_obrigatorio.produz.provas",
+          "regex": "echo \\$\\{PIPESTATUS\\[0\\]\\} > \"exit_\\$k\"",
+          "porque": "e o marcador que a testemunha e o portao leem"
+        }
+      ],
+      "proibidoNoVivo": [
+        {
+          "id": "ci.autoridade.neutralizada",
+          "regex": "autoridade_a11yterm\\.js[^\\n]*(\\|\\| *true|\\|\\| *:|&\\s*$)",
+          "porque": "a chamada da autoridade foi neutralizada"
+        },
+        {
+          "id": "ci.desvio.por.chave",
+          "regex": "\\[ \"\\$k\" =",
+          "porque": "`roda_obrigatorio` nao compara a CHAVE do gate com nada. Um ramo `if [ \"$k\" = \"a11yterm\" ]` dentro dela e um desvio feito sob medida para um gate so — o caminho por onde se forja o resultado dele sem tocar em mais nada"
+        },
+        {
+          "id": "ci.relatorio.forjado",
+          "regex": "rel_a11yterm\\.json",
+          "porque": "neste portao o relatorio de maquina e sempre `rel_$k.json`, produzido pelo `--file-reporter` do Flutter. O nome literal so aparece quando alguem escreve o arquivo por fora"
+        },
+        {
+          "id": "ci.marcador.literal",
+          "regex": "echo\\s+0\\s*>\\s*\"?exit_",
+          "porque": "marcador de sucesso escrito a mao dispensa a execucao. O legitimo e `echo ${PIPESTATUS[0]}`, que so vale zero se o teste passou"
+        },
+        {
+          "id": "ci.placar.forjado",
+          "regex": "All tests passed",
+          "porque": "o placar verde vem do Flutter, nunca de um `echo` — e a testemunha le exatamente esse log"
+        }
+      ]
+    }
+  ],
+  "workflowsPermitidosSemCadeia": [
+    ".github/workflows/web.yml"
+  ],
+  "invocacoes": [
+    {
+      "id": "ci.gate.a11yterm",
+      "portador": ".github/workflows/ci-os-integracao.yml",
+      "comando": "roda_obrigatorio a11yterm test/casca/a11y_estados_terminais_test.dart"
+    },
+    {
+      "id": "ci.gate.cascaaud",
+      "portador": ".github/workflows/ci-os-integracao.yml",
+      "comando": "roda_obrigatorio cascaaud test/casca/auditoria_casca_test.dart"
+    },
+    {
+      "id": "ci.marcador.testemunha",
+      "portador": ".github/workflows/ci-os-integracao.yml",
+      "comando": "echo \"$v\" > exit_a11ytermat"
+    },
+    {
+      "id": "build.suite.nominal",
+      "portador": ".github/workflows/build.yml",
+      "comando": "SUITE=test/casca/a11y_estados_terminais_test.dart"
+    }
+  ],
+  "invocacoesCompartilhadas": [
+    {
+      "id": "testemunha.material",
+      "comando": "node .github/scripts/testemunha_a11yterm.js . app_build/test/casca/auditoria_casca_test.dart",
+      "porque": "ela le o resultado REAL da execucao — placar, origem de cada caso e a relacao nominal inteira — e nao acredita em texto verde escrito a mao"
+    },
+    {
+      "id": "autoridade.externa",
+      "comando": "node .github/scripts/autoridade_a11yterm.js .",
+      "porque": "e ela que reprova workflow ausente, movido, renomeado ou duplicado, e a materia trivializada dos vinte e um casos. Chamada nos DOIS portoes de proposito: e assim que cada um fiscaliza o outro."
+    }
+  ],
+  "cruzamento": [
+    {
+      "portador": ".github/workflows/build.yml",
+      "exigeIntegridadeDe": ".github/workflows/ci-os-integracao.yml",
+      "comando": "node .github/scripts/autoridade_a11yterm.js .",
+      "porque": "apagado o ci-os-integracao.yml, o unico caminho que AINDA executa no provedor e o build.yml — e e por ele que a ausencia do outro reprova"
+    },
+    {
+      "portador": ".github/workflows/ci-os-integracao.yml",
+      "exigeIntegridadeDe": ".github/workflows/build.yml",
+      "comando": "node .github/scripts/autoridade_a11yterm.js .",
+      "porque": "apagado, movido ou renomeado o build.yml, quem ainda executa e o ci-os-integracao.yml"
+    }
+  ],
+  "pisos": {
+    "a11yterm": 49,
+    "relacaoNominalOriginal": 21,
+    "casosDaCorrecao": 10,
+    "casosPorNome": 31,
+    "casosDaMatriz": 2,
+    "combinacoesDaMatriz": 9,
+    "testemunha": 21
+  },
+  "minimos": {
+    "autoridadeExige": 10,
+    "invocacoes": 4,
+    "invocacoesCompartilhadas": 2,
+    "cruzamento": 2,
+    "literais": 27,
+    "obrigacoesMateriais": 21
+  },
+  "afirmacoesConstantes": [
+    "expect(1, 1)",
+    "expect(true, isTrue)",
+    "expect(false, isFalse)",
+    "expect('ok', 'ok')",
+    "expect(0, 0)",
+    "expect(1, equals(1))"
+  ],
+  "autoridadeExige": [
+    {
+      "texto": "PISOS_HOMOLOGADOS",
+      "porque": "sao os pisos escritos como literais na autoridade — a terceira natureza que impede baixar um numero numa peca so"
+    },
+    {
+      "texto": "MINIMOS_HOMOLOGADOS",
+      "porque": "e o piso do proprio manifesto: sem ele, reduzir a lista de obrigacoes deixaria a autoridade sem trabalho e sempre verde"
+    },
+    {
+      "texto": "ocorrenciasVivas",
+      "porque": "e o que distingue comando VIVO de presenca textual — sem ela a autoridade volta a ser um `grep`"
+    },
+    {
+      "texto": "semHeredocs",
+      "porque": "sem ela, comando plantado em heredoc conta como invocacao"
+    },
+    {
+      "texto": "semRamosMortos",
+      "porque": "sem ela, comando em ramo inalcancavel conta como invocacao"
+    },
+    {
+      "texto": "mascaraDeString",
+      "porque": "sem ela, comando escrito dentro de string conta como invocacao"
+    },
+    {
+      "texto": "casosProtegidos",
+      "porque": "e a obrigacao material dos vinte e um casos"
+    },
+    {
+      "texto": "a11yterm.manifesto.json",
+      "porque": "e de onde a autoridade tira o contrato"
+    },
+    {
+      "texto": "workflowsCanonicos",
+      "porque": "e o inventario que reprova workflow ausente, movido ou renomeado"
+    },
+    {
+      "texto": "invocacoesCompartilhadas",
+      "porque": "e o cruzamento pelo qual cada portao fiscaliza o outro"
+    }
+  ],
+  "testemunhaExige": [
+    {
+      "texto": "kCasosOriginaisA11yTerm",
+      "porque": "ela le a relacao nominal da fonte unica, e nao de uma copia"
+    },
+    {
+      "texto": "kCaminhoA11yTerm",
+      "porque": "ela le o caminho canonico da fonte unica"
+    },
+    {
+      "texto": "MANIFESTO",
+      "porque": "o piso dela vem do manifesto: um piso escrito a mao no proprio arquivo e uma terceira verdade, e a mais barata de baixar"
+    },
+    {
+      "texto": "exit_${GATE}",
+      "porque": "sem o marcador ela nao sabe se o gate rodou"
+    },
+    {
+      "texto": "rel_${GATE}.json",
+      "porque": "e o relatorio que prova que os casos NOMEADOS executaram"
+    },
+    {
+      "texto": "carimbo_${GATE}",
+      "porque": "sem ele um log velho passa por resultado desta execucao"
+    }
+  ],
+  "literaisFixadosNaFonteDeGates": [
+    {
+      "texto": "'espera estourada o título é anunciado, e como cabeçalho'",
+      "porque": "e o nome do caso protegido no 1 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada o cabeçalho é ÚNICO — a mensagem não é cabeçalho'",
+      "porque": "e o nome do caso protegido no 2 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada a mensagem chega inteira e sem jargão'",
+      "porque": "e o nome do caso protegido no 3 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada a ampulheta NÃO entra na árvore'",
+      "porque": "e o nome do caso protegido no 4 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada nada de gráfico sobra sem descrição'",
+      "porque": "e o nome do caso protegido no 5 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada a ordem de foco é título, mensagem, ação'",
+      "porque": "e o nome do caso protegido no 6 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada a ação tem nome, papel e estado'",
+      "porque": "e o nome do caso protegido no 7 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada o callback continua sendo o de antes: volta a esperar'",
+      "porque": "e o nome do caso protegido no 8 na relacao nominal"
+    },
+    {
+      "texto": "'espera estourada nada de sensível na árvore'",
+      "porque": "e o nome do caso protegido no 9 na relacao nominal"
+    },
+    {
+      "texto": "'mudança dinâmica a transição é anunciada — e UMA vez'",
+      "porque": "e o nome do caso protegido no 10 na relacao nominal"
+    },
+    {
+      "texto": "'mudança dinâmica o estado de abertura da rota NÃO é anunciado por cima'",
+      "porque": "e o nome do caso protegido no 11 na relacao nominal"
+    },
+    {
+      "texto": "'mudança dinâmica descartada antes do teto, a casca não fala depois'",
+      "porque": "e o nome do caso protegido no 12 na relacao nominal"
+    },
+    {
+      "texto": "'mudança dinâmica descartada depois de falar, não repete'",
+      "porque": "e o nome do caso protegido no 13 na relacao nominal"
+    },
+    {
+      "texto": "'aviso terminal título é cabeçalho, detalhe não, e nenhuma ação é oferecida'",
+      "porque": "e o nome do caso protegido no 14 na relacao nominal"
+    },
+    {
+      "texto": "'aviso terminal o triângulo NÃO entra na árvore'",
+      "porque": "e o nome do caso protegido no 15 na relacao nominal"
+    },
+    {
+      "texto": "'escala de texto espera estourada em 100%: sem estouro, e operável'",
+      "porque": "e o nome do caso protegido no 16 na relacao nominal"
+    },
+    {
+      "texto": "'escala de texto aviso terminal em 100%: sem estouro'",
+      "porque": "e o nome do caso protegido no 17 na relacao nominal"
+    },
+    {
+      "texto": "'escala de texto espera estourada em 150%: sem estouro, e operável'",
+      "porque": "e o nome do caso protegido no 18 na relacao nominal"
+    },
+    {
+      "texto": "'escala de texto aviso terminal em 150%: sem estouro'",
+      "porque": "e o nome do caso protegido no 19 na relacao nominal"
+    },
+    {
+      "texto": "'escala de texto espera estourada em 200%: sem estouro, e operável'",
+      "porque": "e o nome do caso protegido no 20 na relacao nominal"
+    },
+    {
+      "texto": "'escala de texto aviso terminal em 200%: sem estouro'",
+      "porque": "e o nome do caso protegido no 21 na relacao nominal"
+    },
+    {
+      "texto": "hasLength(21)",
+      "porque": "e a cardinalidade da relacao nominal, cobrada contra literal"
+    },
+    {
+      "texto": "greaterThanOrEqualTo(31)",
+      "porque": "e o piso dos casos escritos por nome"
+    },
+    {
+      "texto": "greaterThanOrEqualTo(49)",
+      "porque": "e o piso dos casos executados"
+    },
+    {
+      "texto": "hasLength(10)",
+      "porque": "e a cardinalidade dos casos da OS 20-C1"
+    },
+    {
+      "texto": "kCasosOriginaisA11yTerm",
+      "porque": "e a relacao nominal em si"
+    },
+    {
+      "texto": "kCaminhoA11yTerm",
+      "porque": "e o caminho canonico da suite"
+    }
+  ],
+  "casosProtegidos": [
+    {
+      "ordem": 1,
+      "grupo": "espera estourada",
+      "caso": "o título é anunciado, e como cabeçalho",
+      "nome": "espera estourada o título é anunciado, e como cabeçalho",
+      "exige": [
+        "_atravessarOTeto",
+        "getSemantics",
+        "kTituloDaEsperaEstourada",
+        "no.label",
+        "_ehCabecalho",
+        "isTrue"
+      ],
+      "afirmacoesMinimas": 2,
+      "porque": "o titulo do estado deixaria de ser cobrado como CABECALHO, que e o unico jeito de quem nao ve a tela achar o comeco do estado."
+    },
+    {
+      "ordem": 2,
+      "grupo": "espera estourada",
+      "caso": "o cabeçalho é ÚNICO — a mensagem não é cabeçalho",
+      "nome": "espera estourada o cabeçalho é ÚNICO — a mensagem não é cabeçalho",
+      "exige": [
+        "_atravessarOTeto",
+        "_ehCabecalho",
+        "_kMensagemDaEspera",
+        "isFalse"
+      ],
+      "afirmacoesMinimas": 1,
+      "porque": "dois cabecalhos no mesmo estado equivalem a nenhum, e nada mais cobraria a unicidade."
+    },
+    {
+      "ordem": 3,
+      "grupo": "espera estourada",
+      "caso": "a mensagem chega inteira e sem jargão",
+      "nome": "espera estourada a mensagem chega inteira e sem jargão",
+      "exige": [
+        "_atravessarOTeto",
+        "_rotulosEmOrdem",
+        "_kMensagemDaEspera",
+        "contains"
+      ],
+      "afirmacoesMinimas": 1,
+      "porque": "a mensagem poderia sumir da arvore semantica sem sumir da tela."
+    },
+    {
+      "ordem": 4,
+      "grupo": "espera estourada",
+      "caso": "a ampulheta NÃO entra na árvore",
+      "nome": "espera estourada a ampulheta NÃO entra na árvore",
+      "exige": [
+        "_atravessarOTeto",
+        "find.text",
+        "findsOneWidget",
+        "_rotulosEmOrdem",
+        "isEmpty"
+      ],
+      "afirmacoesMinimas": 2,
+      "porque": "o emoji decorativo voltaria a ser anunciado, e a prova de que ele CONTINUA desenhado cairia junto."
+    },
+    {
+      "ordem": 5,
+      "grupo": "espera estourada",
+      "caso": "nada de gráfico sobra sem descrição",
+      "nome": "espera estourada nada de gráfico sobra sem descrição",
+      "exige": [
+        "_atravessarOTeto",
+        "_rotulosEmOrdem",
+        "kTituloDaEsperaEstourada",
+        "_kMensagemDaEspera",
+        "_kAcao"
+      ],
+      "afirmacoesMinimas": 1,
+      "porque": "a igualdade exata dos rotulos e o que impede decoracao falando e informacao perdida."
+    },
+    {
+      "ordem": 6,
+      "grupo": "espera estourada",
+      "caso": "a ordem de foco é título, mensagem, ação",
+      "nome": "espera estourada a ordem de foco é título, mensagem, ação",
+      "exige": [
+        "_atravessarOTeto",
+        "_rotulosEmOrdem",
+        "indexOf",
+        "lessThan",
+        "kTituloDaEsperaEstourada",
+        "_kAcao"
+      ],
+      "afirmacoesMinimas": 2,
+      "porque": "a ordem de leitura deixaria de ser afirmada, e ela nao aparece em rotulo nenhum."
+    },
+    {
+      "ordem": 7,
+      "grupo": "espera estourada",
+      "caso": "a ação tem nome, papel e estado",
+      "nome": "espera estourada a ação tem nome, papel e estado",
+      "exige": [
+        "_atravessarOTeto",
+        "getSemantics",
+        "_kAcao",
+        "isButton",
+        "isEnabled",
+        "Tristate",
+        "isFocused",
+        "SemanticsAction.tap",
+        "hasAction"
+      ],
+      "afirmacoesMinimas": 5,
+      "porque": "um botao sem papel, sem estado de habilitacao ou sem acao de toque nao e operavel pelo leitor de tela."
+    },
+    {
+      "ordem": 8,
+      "grupo": "espera estourada",
+      "caso": "o callback continua sendo o de antes: volta a esperar",
+      "nome": "espera estourada o callback continua sendo o de antes: volta a esperar",
+      "exige": [
+        "_atravessarOTeto",
+        "t.tap",
+        "_kAcao",
+        "SplashOficialScreen",
+        "findsOneWidget",
+        "findsNothing",
+        "resolvida",
+        "_kAlemDoTeto"
+      ],
+      "afirmacoesMinimas": 6,
+      "porque": "o destino do botao deixaria de ser provado: ele poderia navegar para qualquer lugar, ou resolver a sessao sozinho."
+    },
+    {
+      "ordem": 9,
+      "grupo": "espera estourada",
+      "caso": "nada de sensível na árvore",
+      "nome": "espera estourada nada de sensível na árvore",
+      "exige": [
+        "_atravessarOTeto",
+        "_rotulosEmOrdem",
+        "toLowerCase",
+        "token",
+        "credencial",
+        "isFalse"
+      ],
+      "afirmacoesMinimas": 1,
+      "porque": "uid, token e credencial poderiam voltar a ser lidos em voz alta."
+    },
+    {
+      "ordem": 10,
+      "grupo": "mudança dinâmica",
+      "caso": "a transição é anunciada — e UMA vez",
+      "nome": "mudança dinâmica a transição é anunciada — e UMA vez",
+      "exige": [
+        "_capturarAnuncios",
+        "pumpWidget",
+        "_kAlemDoTeto",
+        "kTituloDaEsperaEstourada",
+        "isEmpty"
+      ],
+      "afirmacoesMinimas": 3,
+      "porque": "o anuncio repetido a cada reconstrucao voltaria, e so a reconstrucao pelo PAI o denuncia."
+    },
+    {
+      "ordem": 11,
+      "grupo": "mudança dinâmica",
+      "caso": "o estado de abertura da rota NÃO é anunciado por cima",
+      "nome": "mudança dinâmica o estado de abertura da rota NÃO é anunciado por cima",
+      "exige": [
+        "_capturarAnuncios",
+        "_kTituloDoAviso",
+        "findsOneWidget",
+        "isEmpty",
+        "_kAlemDoTeto"
+      ],
+      "afirmacoesMinimas": 2,
+      "porque": "a casca voltaria a dizer por cima do que o leitor de tela ja anuncia ao abrir a rota."
+    },
+    {
+      "ordem": 12,
+      "grupo": "mudança dinâmica",
+      "caso": "descartada antes do teto, a casca não fala depois",
+      "nome": "mudança dinâmica descartada antes do teto, a casca não fala depois",
+      "exige": [
+        "_capturarAnuncios",
+        "pumpWidget",
+        "SizedBox.shrink",
+        "_kAlemDoTeto",
+        "isEmpty"
+      ],
+      "afirmacoesMinimas": 1,
+      "porque": "um anuncio atrasado descreveria uma tela que ja foi embora."
+    },
+    {
+      "ordem": 13,
+      "grupo": "mudança dinâmica",
+      "caso": "descartada depois de falar, não repete",
+      "nome": "mudança dinâmica descartada depois de falar, não repete",
+      "exige": [
+        "_capturarAnuncios",
+        "_atravessarOTeto",
+        "hasLength",
+        "SizedBox.shrink"
+      ],
+      "afirmacoesMinimas": 2,
+      "porque": "o anuncio poderia repetir depois do descarte, e a contagem e o que prova que nao."
+    },
+    {
+      "ordem": 14,
+      "grupo": "aviso terminal",
+      "caso": "título é cabeçalho, detalhe não, e nenhuma ação é oferecida",
+      "nome": "aviso terminal título é cabeçalho, detalhe não, e nenhuma ação é oferecida",
+      "exige": [
+        "_ehCabecalho",
+        "getSemantics",
+        "_kTituloDoAviso",
+        "_kDetalheDoAviso",
+        "isTrue",
+        "isFalse",
+        "_rotulosEmOrdem",
+        "FilledButton",
+        "findsNothing"
+      ],
+      "afirmacoesMinimas": 4,
+      "porque": "o estado sem saida voltaria a poder oferecer uma acao que nao existe."
+    },
+    {
+      "ordem": 15,
+      "grupo": "aviso terminal",
+      "caso": "o triângulo NÃO entra na árvore",
+      "nome": "aviso terminal o triângulo NÃO entra na árvore",
+      "exige": [
+        "pumpWidget",
+        "find.text",
+        "findsOneWidget",
+        "_rotulosEmOrdem",
+        "isEmpty"
+      ],
+      "afirmacoesMinimas": 2,
+      "porque": "o triangulo decorativo voltaria a ser anunciado como se fosse informacao."
+    },
+    {
+      "ordem": 16,
+      "grupo": "escala de texto",
+      "caso": "espera estourada em 100%: sem estouro, e operável",
+      "nome": "escala de texto espera estourada em 100%: sem estouro, e operável",
+      "exige": [
+        "_escalaEsperaEstourada(t, 1.0)",
+        "takeException",
+        "isNull",
+        "kTituloDaEsperaEstourada",
+        "_kAcao",
+        "_ehCabecalho",
+        "ensureVisible",
+        "t.tap",
+        "SplashOficialScreen",
+        "_atravessarOTeto",
+        "escala: escala"
+      ],
+      "afirmacoesMinimas": 5,
+      "porque": "o caso delega ao auxiliar; sem a delegacao COM A ESCALA 1.0, a escala de 100% deixaria de medir estouro de layout, cabecalho e alcance da acao."
+    },
+    {
+      "ordem": 17,
+      "grupo": "escala de texto",
+      "caso": "aviso terminal em 100%: sem estouro",
+      "nome": "escala de texto aviso terminal em 100%: sem estouro",
+      "exige": [
+        "_escalaAvisoTerminal(t, 1.0)",
+        "takeException",
+        "isNull",
+        "_kTituloDoAviso",
+        "_ehCabecalho",
+        "_telefone",
+        "escala: escala"
+      ],
+      "afirmacoesMinimas": 3,
+      "porque": "o caso delega ao auxiliar; sem a delegacao COM A ESCALA 1.0, o aviso em 100% deixaria de medir estouro de layout e cabecalho."
+    },
+    {
+      "ordem": 18,
+      "grupo": "escala de texto",
+      "caso": "espera estourada em 150%: sem estouro, e operável",
+      "nome": "escala de texto espera estourada em 150%: sem estouro, e operável",
+      "exige": [
+        "_escalaEsperaEstourada(t, 1.5)",
+        "takeException",
+        "isNull",
+        "kTituloDaEsperaEstourada",
+        "_kAcao",
+        "_ehCabecalho",
+        "ensureVisible",
+        "t.tap",
+        "SplashOficialScreen",
+        "_atravessarOTeto",
+        "escala: escala"
+      ],
+      "afirmacoesMinimas": 5,
+      "porque": "o caso delega ao auxiliar; sem a delegacao COM A ESCALA 1.5, a escala de 150% deixaria de medir estouro de layout, cabecalho e alcance da acao."
+    },
+    {
+      "ordem": 19,
+      "grupo": "escala de texto",
+      "caso": "aviso terminal em 150%: sem estouro",
+      "nome": "escala de texto aviso terminal em 150%: sem estouro",
+      "exige": [
+        "_escalaAvisoTerminal(t, 1.5)",
+        "takeException",
+        "isNull",
+        "_kTituloDoAviso",
+        "_ehCabecalho",
+        "_telefone",
+        "escala: escala"
+      ],
+      "afirmacoesMinimas": 3,
+      "porque": "o caso delega ao auxiliar; sem a delegacao COM A ESCALA 1.5, o aviso em 150% deixaria de medir estouro de layout e cabecalho."
+    },
+    {
+      "ordem": 20,
+      "grupo": "escala de texto",
+      "caso": "espera estourada em 200%: sem estouro, e operável",
+      "nome": "escala de texto espera estourada em 200%: sem estouro, e operável",
+      "exige": [
+        "_escalaEsperaEstourada(t, 2.0)",
+        "takeException",
+        "isNull",
+        "kTituloDaEsperaEstourada",
+        "_kAcao",
+        "_ehCabecalho",
+        "ensureVisible",
+        "t.tap",
+        "SplashOficialScreen",
+        "_atravessarOTeto",
+        "escala: escala"
+      ],
+      "afirmacoesMinimas": 5,
+      "porque": "o caso delega ao auxiliar; sem a delegacao COM A ESCALA 2.0, a escala de 200% deixaria de medir estouro de layout, cabecalho e alcance da acao."
+    },
+    {
+      "ordem": 21,
+      "grupo": "escala de texto",
+      "caso": "aviso terminal em 200%: sem estouro",
+      "nome": "escala de texto aviso terminal em 200%: sem estouro",
+      "exige": [
+        "_escalaAvisoTerminal(t, 2.0)",
+        "takeException",
+        "isNull",
+        "_kTituloDoAviso",
+        "_ehCabecalho",
+        "_telefone",
+        "escala: escala"
+      ],
+      "afirmacoesMinimas": 3,
+      "porque": "o caso delega ao auxiliar; sem a delegacao COM A ESCALA 2.0, o aviso em 200% deixaria de medir estouro de layout e cabecalho."
+    }
+  ]
+}

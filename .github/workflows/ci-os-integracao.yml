@@ -242,6 +242,45 @@ jobs:
           fi
           echo "resultado da testemunha a11yterm: VERDE"
 
+      - name: "2c — AUTORIDADE EXTERNA da cadeia a11yterm (fail-closed)"
+        # OS 20-C2 §5. A OS 20-C1 pos as afirmacoes sobre os workflows DENTRO
+        # da suite Dart, protegidas por `if (!arquivo.existsSync()) return;`.
+        # Com isso, apagar, mover ou renomear um workflow virou CONFORMIDADE: o
+        # provedor continua executando o arquivo renomeado e a fiscalizacao
+        # para, calada.
+        #
+        # Este passo e o caminho executavel que PERMANECE ALCANCAVEL quando o
+        # outro workflow some. Ele reprova:
+        #
+        #   * build.yml ou ci-os-integracao.yml ausente, movido, renomeado, de
+        #     extensao trocada, vazio ou nao classificavel;
+        #   * portador alternativo ou duplicado da cadeia a11yterm;
+        #   * invocacao obrigatoria que existe como TEXTO — comentario, string,
+        #     heredoc, ramo morto, `|| true`, segundo plano — e nao como
+        #     comando vivo;
+        #   * decisao que nao chega ao codigo de saida do passo;
+        #   * os vinte e um casos homologados reduzidos, renomeados, movidos de
+        #     grupo ou com o corpo trivializado.
+        #
+        # A OBRIGACAO DE CADA CASO NAO E UM DIGEST. Um digest e recalculavel por
+        # quem edita: foi assim que a OS 20-R2 trocou os vinte e um corpos por
+        # `expect(1, 1)` e recarimbou. Aqui a obrigacao e nominal e material, e
+        # mora em .github/gates/a11yterm.manifesto.json.
+        #
+        # DUAS AUTORIDADES, COMO NA TESTEMUNHA: este passo reprova por conta
+        # propria com `exit 1` E deixa o marcador `exit_a11yaut`.
+        if: always()
+        run: |
+          set +e
+          node .github/scripts/autoridade_a11yterm.js .
+          v=$?
+          echo "$v" > exit_a11yaut
+          if [ "$v" != "0" ]; then
+            echo "resultado da autoridade a11yterm: VERMELHO"
+            exit 1
+          fi
+          echo "resultado da autoridade a11yterm: VERDE"
+
       - name: "3a — codebase BILLING (functions-billing), sem emulador"
         run: |
           set +e
@@ -404,7 +443,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yterm a11ytermat perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
+          GATES="analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yterm a11ytermat a11yaut perfilvis billing torneiosfn socialdom socialfn socialemu rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -455,7 +494,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yterm a11ytermat perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
+          for k in analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud a11yterm a11ytermat a11yaut perfilvis billing torneiosfn socialdom socialfn socialemu regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1
@@ -469,7 +508,7 @@ jobs:
           # executado. Para os obrigatorios isso reabriria pela porta dos fundos
           # exatamente o que `roda_obrigatorio` fechou: bastaria o passo que os
           # roda morrer antes da hora para o run seguir verde sem eles.
-          for k in a11yterm a11ytermat cascaaud; do
+          for k in a11yterm a11ytermat a11yaut cascaaud; do
             if [ ! -f "exit_$k" ]; then
               echo "gate OBRIGATORIO $k nao deixou marcador de execucao — reprovado."
               fail=1
