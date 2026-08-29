@@ -139,6 +139,27 @@ jobs:
           echo "$st" > exit_suites
           exit "$st"
 
+      - name: "0b — testemunha externa de execução, cobertura e pisos"
+        run: |
+          # A TESTEMUNHA EXTERNA. Ela não repete o que o passo 0 faz.
+          #
+          # O passo 0 e a guarda Dart provam COISAS SOBRE ARQUIVOS: contam
+          # sítios, conferem impressões digitais de REGIÃO e leem manifesto.
+          # Nenhum dos dois sabe dizer se alguma suíte RODOU — um `flutter test`
+          # que nunca foi invocado passa pelos dois.
+          #
+          # Esta testemunha executa os comandos oficiais, lê o RELATÓRIO DE
+          # MÁQUINA que o próprio runner produziu, e confere identidade, ordem e
+          # contagem contra expectativas literais que moram só dentro dela. Ela
+          # também lê os arquivos INTEIROS, e não a região entre marcadores —
+          # que é o ponto cego das outras duas.
+          #
+          # Ela roda as suítes DE NOVO, de propósito: uma testemunha que confia
+          # no resultado de quem ela testemunha não testemunha nada.
+          set +e
+          node scripts/ci/testemunha_amigos.js --raiz . --app app_build 2>&1 | tee t_testemunha.log
+          echo ${PIPESTATUS[0]} > exit_testemunha
+
       - name: "1+2 — analyze + suítes Flutter (captura exit codes sem abortar)"
         run: |
           set +e
@@ -382,7 +403,7 @@ jobs:
         run: |
           RUN="${{ github.run_number }}"; SHA="${{ github.sha }}"; BR="${{ github.ref_name }}"
           EV="run-${RUN}.md"
-          GATES="suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascav2 perfilvis a11yamigos matrizamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao rankingfn rankingint identint auditident regras"
+          GATES="suites testemunha analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascav2 perfilvis a11yamigos matrizamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao rankingfn rankingint identint auditident regras"
           {
             echo "# Evidência CI — run ${RUN}"
             echo
@@ -433,7 +454,7 @@ jobs:
         if: always()
         run: |
           fail=0
-          for k in suites analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascav2 perfilvis a11yamigos matrizamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao regras; do
+          for k in suites testemunha analyze motor resil encerr torneios mtorneios integr colarte colfire colkit social casca cascaaud cascav2 perfilvis a11yamigos matrizamigos suitesobrig billing torneiosfn socialdom socialfn socialemu indicacao regras; do
             if [ -f "exit_$k" ]; then
               v=$(cat "exit_$k"); echo "gate $k = $v"
               [ "$v" = "0" ] || fail=1

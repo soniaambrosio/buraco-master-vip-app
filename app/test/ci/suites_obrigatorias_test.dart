@@ -153,7 +153,7 @@ const _digestCarimbado =
 
 /// A impressão digital da região de decisão do verificador shell.
 const _digestDecisaoVerificador =
-    '716195283bbcfd3d96333bfd365825bb8f985eeea39a9f36fe5bc65bd2494c30';
+    '89db79124a609052111bdb8a5c6013c429a6e4eb2bb38720f102c75f4c7d350f';
 
 const _marcaInicioShell = '# ---8<--- DECISAO INICIO';
 const _marcaFimShell = '# ---8<--- DECISAO FIM';

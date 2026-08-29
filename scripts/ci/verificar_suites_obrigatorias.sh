@@ -72,6 +72,16 @@ workflow="${2:-}"
 #     mede a regiao de decisao DESTE arquivo. Se os carimbos morassem dentro da
 #     regiao, atualizar um mudaria o que o outro mede, e o par nunca fecharia.
 readonly CHAVE_MINIMA="a11yamigos"
+readonly CHAVE_TESTEMUNHA="testemunha"
+# A impressao digital do ARQUIVO INTEIRO da testemunha externa.
+#
+# Ela mora AQUI, fora da regiao de decisao, pelo motivo de sempre: dentro, cada
+# recarimbo mudaria a regiao que a guarda Dart mede, e o par nunca fecharia.
+#
+# E ela e do arquivo INTEIRO, e nao de uma regiao: a testemunha nao tem
+# marcador, e nao pode ter — o ataque que ela existe para pegar e justamente o
+# codigo que se esconde fora da regiao analisada.
+readonly DIGEST_TESTEMUNHA="d2d2db4d42e5d787799c7d7a3b0eb44ec56d088f0f3afc7e2fef82587bfd6e8b"
 readonly PISO_CARIMBADO="48.0"
 readonly CASOS_CARIMBADOS="75"
 readonly DECLARACOES_CARIMBADAS="30"
@@ -87,6 +97,9 @@ manifesto="$raiz/test/suites_obrigatorias.txt"
 contrato="$raiz/test/contrato_alvos_amigos.txt"
 guarda="$raiz/test/ci/suites_obrigatorias_test.dart"
 alvos="$raiz/test/amigos/a11y_alvos_amigos_test.dart"
+# A testemunha externa vive UM NIVEL ACIMA da raiz do app, como o proprio
+# workflow: no CI a raiz e `app_build` e o repositorio e o pai dela.
+testemunha="$raiz/../scripts/ci/testemunha_amigos.js"
 
 falhas=0
 erro() {
@@ -265,6 +278,51 @@ else
     echo "ok   guarda     regiao de decisao intacta"
   else
     erro "a regiao de decisao da guarda Dart mudou (agora $d_guarda)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5 — A TESTEMUNHA EXTERNA continua no disco, e continua registrada
+# ---------------------------------------------------------------------------
+#
+# Este bloco existe por um motivo so: nenhuma guarda cobre a propria remocao.
+# A testemunha le arquivos INTEIROS e EXECUTA os comandos oficiais — e é
+# exatamente por isso que apaga-la seria o ataque barato: some o unico
+# conferente que sabe se alguma suite rodou, e a cadeia de digests continua
+# batendo, porque ela nunca foi medida por ninguem.
+#
+# Quem cobre a remocao DESTE bloco e a guarda Dart, que carimba a regiao de
+# decisao deste arquivo. Os dois juntos so caem num diff que apaga os dois.
+if [ ! -f "$testemunha" ]; then
+  erro "a testemunha externa sumiu de '$testemunha' — sem ela ninguem confere se as suites RODARAM"
+else
+  d_testemunha="$(tr -d '\r' < "$testemunha" | sha256sum | awk '{ print $1 }')"
+  if [ "$d_testemunha" = "$DIGEST_TESTEMUNHA" ]; then
+    echo "ok   testemunha $testemunha"
+  else
+    erro "a testemunha externa foi alterada (agora $d_testemunha). Forjar relatorio dentro dela — trocar o comando oficial por um \`cat\` de evidencia pronta, adiantar o marcador, fixar o desafio num literal — cai aqui."
+  fi
+fi
+
+if [ -n "$conteudo_workflow" ]; then
+  if printf '%s\n' "$conteudo_workflow" | grep -q -- "testemunha_amigos.js"; then
+    echo "ok   invocada   $CHAVE_TESTEMUNHA"
+  else
+    erro "o workflow nao invoca mais a testemunha externa"
+  fi
+
+  if printf '%s\n' "$conteudo_workflow" | grep -E '^[[:space:]]*GATES="' |
+    grep -qw -- "$CHAVE_TESTEMUNHA"; then
+    echo "ok   evidencia  $CHAVE_TESTEMUNHA"
+  else
+    erro "a chave '$CHAVE_TESTEMUNHA' esta fora da lista GATES da evidencia"
+  fi
+
+  if printf '%s\n' "$conteudo_workflow" | grep -E '^[[:space:]]*for k in ' |
+    grep -qw -- "$CHAVE_TESTEMUNHA"; then
+    echo "ok   portao     $CHAVE_TESTEMUNHA"
+  else
+    erro "a chave '$CHAVE_TESTEMUNHA' esta fora da lista do portao"
   fi
 fi
 

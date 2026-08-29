@@ -97,6 +97,24 @@ const _alturaDeMedida = 2000.0;
 /// `test/contrato_alvos_amigos.txt` pelo gate `suitesobrig`.
 const double _piso = 48.0;
 
+/// A fração da altura da tela que a lista SEMPRE conserva.
+///
+/// Ela é o complemento do teto do cabeçalho em `amigos_de_producao.dart`:
+/// a pilha do topo para em 60% da altura disponível e o `Expanded` de baixo
+/// recebe o resto exato — logo, nunca menos de 40% é da lista. Num telefone
+/// de 640 isso são 256 pontos.
+///
+/// O que este número guarda NÃO é a constante do produto. Congelar
+/// `_fracaoMaximaDoCabecalho` por igualdade reprovaria uma melhoria legítima
+/// — baixá-lo para 0.59 dá MAIS espaço à lista — e transformaria a autoridade
+/// em guardiã do valor em vez da propriedade. O que se prova aqui é a
+/// GEOMETRIA que a relação deveria produzir, medida na árvore real.
+///
+/// Conferido POR FORA: `scripts/ci/testemunha_amigos.js` carrega a própria
+/// cópia deste número e da altura de 640, e é a divergência entre as cópias
+/// que denuncia um afrouxamento feito só de um lado.
+const double _fracaoMinimaDaLista = 0.40;
+
 class _Alvo {
   _Alvo({
     required this.nome,
@@ -417,7 +435,8 @@ void main() {
         });
 
         testWidgets(
-          'M4 — sem rolagem horizontal, com rolagem vertical — $ponto',
+          'M4 — sem rolagem horizontal, e a lista Online conserva ao menos 40% '
+          'da altura real de 640 dp — $ponto',
           (tester) async {
             await montar(
               tester,
@@ -440,6 +459,38 @@ void main() {
               reason:
                   '$ponto: não há rolagem vertical nenhuma — o que não couber '
                   'na altura fica inalcançável',
+            );
+
+            // A VIEWPORT MEDIDA NA ÁRVORE, e não `_alturaReal`.
+            //
+            // Dividir pela constante deixaria a prova passar montada na
+            // superfície de medida de 2000: a razão sairia contra um número
+            // que ninguém conferiu, e um cabeçalho que engolisse a tela do
+            // telefone continuaria verde. O denominador aqui é o que o
+            // Flutter realmente construiu, e a igualdade abaixo é o que
+            // amarra a superfície ao telefone contratado.
+            final viewport = tester.getSize(find.byType(MaterialApp)).height;
+            expect(
+              viewport,
+              moreOrLessEquals(_alturaReal, epsilon: 0.01),
+              reason:
+                  '$ponto: a superfície medida é $viewport, e o telefone '
+                  'contratado é $_alturaReal — medir alto esconde o defeito',
+            );
+
+            // E A LISTA, PELO RETÂNGULO DELA. Não pela subtração do
+            // cabeçalho, e não por uma razão escrita à mão: o que interessa
+            // é quanto sobrou de tela para o conteúdo depois que a pilha do
+            // topo cresceu com a escala do texto.
+            final lista = tester.getRect(find.byType(ListView));
+            final fracao = lista.height / viewport;
+            expect(
+              fracao,
+              greaterThanOrEqualTo(_fracaoMinimaDaLista),
+              reason:
+                  '$ponto: a lista ficou com ${lista.height.toStringAsFixed(1)} '
+                  'de $viewport (${(fracao * 100).toStringAsFixed(1)}%), abaixo '
+                  'do piso de ${(_fracaoMinimaDaLista * 100).toStringAsFixed(0)}%',
             );
           },
         );
