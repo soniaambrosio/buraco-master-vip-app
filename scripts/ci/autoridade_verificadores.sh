@@ -91,10 +91,10 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh 04fb377f3af09485c4d8bb37ef37c4b2c8e691c1487d6920fa5d9013f491e9c4
+scripts/ci/verificar_contrato_suites.sh 7e98fb6c082cc731a5e4112564b6e9d4fbed29d688f1b3c2f14cd7a44ad19180
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 96af7aa868fdf4492541f812fad037bb62082521d84b6712ad5d095fec971dfb
-scripts/ci/teste_portao_os_integracao.sh 5e073b79975a19254fe3acbcca574db91790315882030feded012d8eb219eb24
+scripts/ci/teste_portao_os_integracao.sh e0f80407684993506ab1d6b23442eb6dddb39d933f785b083635d4a0035bf003
 DIGESTOS_CONGELADOS
 )"
 readonly DIGESTOS
@@ -160,6 +160,15 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 1 vetores_do_passo_zero portaoci
 1 vetores_do_passo_zero autverif
 1 vetores_do_passo_zero contratosui
+1 case "$resto" in
+1 esperar_classe() {
+1 regra_do_delimitador() {
+1 cmp -s "$TMP/regra_aqui.txt" "$TMP/regra_la.txt"
+1 cmp -s "$TMP/vivas_esp_$a" "$TMP/cod_$a"
+1 if [ "$vista" = "$esperada" ]; then
+1 if (modo == "apendice") {
+1 if (modo == "prologo" && posto == 0 && L[i] ~ /^      - name: /) {
+1 linha_da_amostra() { printf '%s\n' "$1" >> "$AMOSTRA"; }
 DECISOES_MATERIAIS
 )"
 readonly EXIGENCIAS
@@ -174,9 +183,9 @@ readonly EXIGENCIAS
 #
 # Aqui a chave e OBRIGATORIA e o valor tem PISO. Um numero menor do que o
 # congelado abaixo e regressao de prova, mesmo que a comparacao continue escrita.
-readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:56 contratosui:82 rankingfn:57 autverif:14"
-readonly MINIMOS_CASOS="comunicacao:81 portaoci:101 contratosui:68 rankingfn:465 autverif:82"
-readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:22 contratosui:29 rankingfn:15 autverif:14"
+readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:67 contratosui:82 rankingfn:57 autverif:14"
+readonly MINIMOS_CASOS="comunicacao:81 portaoci:158 contratosui:68 rankingfn:465 autverif:91"
+readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:37 contratosui:29 rankingfn:15 autverif:14"
 readonly MINIMOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
 # A propria invocacao, que o workflow tem de continuar carregando. Apagar o

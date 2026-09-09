@@ -148,8 +148,8 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn autverif"
-readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:56 contratosui:82 rankingfn:57 autverif:14"
-readonly PISOS_CASOS="comunicacao:81 portaoci:101 contratosui:68 rankingfn:465 autverif:82"
+readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:67 contratosui:82 rankingfn:57 autverif:14"
+readonly PISOS_CASOS="comunicacao:81 portaoci:158 contratosui:68 rankingfn:465 autverif:91"
 
 # `PISOS_EXIGE` — QUANTAS relacoes de conteudo cada gate tem de continuar tendo.
 #
@@ -162,7 +162,7 @@ readonly PISOS_CASOS="comunicacao:81 portaoci:101 contratosui:68 rankingfn:465 a
 # uma relacao a menos reprova aqui, do lado de fora, mesmo que ninguem tenha
 # escrito o conjunto nominal daquele gate. A outra metade — o conjunto NOMINAL
 # EXATO — esta em `RELACOES_CONGELADAS`, logo abaixo.
-readonly PISOS_EXIGE="comunicacao:35 chatdom:6 portaoci:22 contratosui:29 rankingfn:15 \
+readonly PISOS_EXIGE="comunicacao:35 chatdom:6 portaoci:37 contratosui:29 rankingfn:15 \
 avatarcanon:4 avatarhml:4 perfilvis:4 rknavpub:4 compavrank:3 compnavpub:3 \
 socialestado:3 socialleitor:3 socialtela:2 audsocial:4 a11yamigos:3 autverif:14"
 

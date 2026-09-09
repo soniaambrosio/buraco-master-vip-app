@@ -255,7 +255,25 @@ classificar_workflow() {
           # arquivo "aberto" faz TODA agulha virar texto inerte.
           resto="${resto//$ASPA_SIMPLES/}"
           resto="${resto//$ASPA_DUPLA/}"
-          [ -n "$resto" ] && fim_heredoc="$resto"
+          # A REGRA CANÔNICA DO DELIMITADOR (OS 40-C6) — a MESMA de `vivas_de`,
+          # em `scripts/ci/autoridade_verificadores.sh`, e não uma segunda
+          # gramática. Aceitar qualquer resto não vazio era a assimetria que a
+          # OS 40-R6 mediu: a autoridade externa já só abria heredoc com
+          # PALAVRA DE VERDADE, e este classificador ainda abria com `$ALVO`,
+          # com `b)` e com `3`. Uma ocorrência textual do par jogava todas as
+          # linhas seguintes na classe HEREDOC, CONGELAVA A CONTAGEM DE PASSOS
+          # e escondia a escrita posterior de um log ou de um marcador — com a
+          # cadeia oficial inteira verde. Um delimitador de heredoc é um
+          # identificador; `$ALVO`, `b)` e `3` não são.
+          #
+          # AS DUAS LEITURAS SÃO COMPARADAS, e por isso divergir passa a ser
+          # vermelho em vez de silêncio: `HD01` compara os dois blocos LETRA
+          # POR LETRA, e `HD02` compara o COMPORTAMENTO das duas sobre o mesmo
+          # corpus de falsas aberturas.
+          case "$resto" in
+            '' | *[!A-Za-z0-9_]* | [0-9]*) ;;
+            *) fim_heredoc="$resto" ;;
+          esac
           ;;
       esac
     done < "$arq"
@@ -777,6 +795,25 @@ printf '\n== a invocação de cada passo zero, sabotada de vinte maneiras ==\n'
 # a guarda cobra — se um envelhecer, os dois envelhecem juntos, e o controle
 # `00` acusa antes de qualquer vetor mentir.
 
+# ---------------------------------------------------------------------------
+# A FALSA ABERTURA DE HEREDOC — o instrumento da OS 40-C6
+# ---------------------------------------------------------------------------
+#
+# O PAR `menor-menor` É MONTADO, e nunca escrito colado neste arquivo fora de
+# string. Não é estilo: o leitor de código vivo da autoridade externa procura o
+# par por texto, e um par solto aqui abriria para ele um heredoc que nunca
+# fecha — o arquivo inteiro viraria dado, e as decisões materiais desta suíte
+# apareceriam zero vezes num repositório intacto.
+MENOR2='<''<'
+
+# A OCORRÊNCIA TEXTUAL QUE NÃO É ABERTURA. O resto depois do par é `$ALVO`, e
+# `$` não é caractere de identificador — logo, não é delimitador de heredoc,
+# nem para `vivas_de` nem, desde a OS 40-C6, para `classificar_workflow`. Era
+# com uma linha desta forma que a OS 40-R6 cegava o classificador: tudo o que
+# vinha depois virava HEREDOC, a contagem de passos congelava, e a escrita
+# posterior de um log ou de um marcador deixava de ser inspecionada.
+FALSA_ABERTURA="echo \"deslocamento $MENOR2 \$ALVO\""
+
 FORJA_ARQ=''
 FORJA_DIG=''
 FORJA_MOTIVO=''
@@ -866,11 +903,28 @@ sabotar() {
           if (modo == "antes")    { print rec extra; print L[i]; continue }
           if (modo == "depois")   { print L[i]; print rec extra; continue }
         }
+        # [OS 40-C6] `prologo` — o bloco entra ANTES do primeiro passo do
+        # workflow, e nao colado na invocacao: uma ocorrencia textual anterior
+        # so mede o que se quer medir se ela nao violar, de quebra, a ordem
+        # purga/invocacao/captura que a guarda ja cobrava.
+        if (modo == "prologo" && posto == 0 && L[i] ~ /^      - name: /) {
+          m = split(extra, PART, "~")
+          for (j = 1; j <= m; j++) print PART[j]
+          posto = 1
+        }
         print L[i]
         if (modo == "purga_depois" && esp(L[i]) == extra2) print rec extra
         if (modo == "mover" && guardada != "" && L[i] ~ /flutter analyze --no-fatal-infos/) {
           print guardada; guardada = ""
         }
+      }
+      # [OS 40-C6] `apendice` — o bloco entra DEPOIS de tudo, inclusive depois
+      # de quem consome a evidencia. E a posicao em que a OS 40-R6 fez o
+      # escape material: com a falsa abertura ali, a guarda parava de enxergar
+      # a linha seguinte e a cadeia oficial ficava verde.
+      if (modo == "apendice") {
+        m = split(extra, PART, "~")
+        for (j = 1; j <= m; j++) print PART[j]
       }
     }
   ' "$FORJA_ARQ" > "$FORJA_ARQ.novo" && mv "$FORJA_ARQ.novo" "$FORJA_ARQ"
@@ -918,6 +972,32 @@ esperar_passo() {
     return
   fi
   ok "$desc (exit $real)"
+}
+
+# `esperar_classe <arquivo> <linha espremida> <classe> <descrição>` — a
+# PÓS-CONDIÇÃO INDEPENDENTE de cada falsa abertura (OS 40-C6).
+#
+# Contar só o exit do arnês não basta, e a OS 40-R6 mostrou por quê: um vetor
+# de falsa abertura pode terminar VERMELHO por efeito colateral — porque a
+# cegueira escondeu, de quebra, a própria invocação canônica — e ficar verde
+# sem que a linha decisiva tenha sido sequer olhada. Aqui a pergunta é direta:
+# em que classe o classificador pôs AQUELA linha.
+esperar_classe() {
+  local arq="$1" alvo="$2" esperada="$3" desc="$4" vista
+  if [ -n "$FORJA_MOTIVO" ]; then
+    nok "$desc — INSTRUMENTO INVÁLIDO: $FORJA_MOTIVO"
+    return
+  fi
+  classificar_workflow "$arq" "$TMP/classes.txt"
+  vista="$(ALVO_CL="$alvo" awk -F'	' '
+    $4 == ENVIRON["ALVO_CL"] { print $3; achou = 1; exit }
+    END { if (!achou) print "AUSENTE" }
+  ' "$TMP/classes.txt")"
+  if [ "$vista" = "$esperada" ]; then
+    ok "$desc (classe $vista)"
+  else
+    nok "$desc — esperado $esperada, obtido $vista"
+  fi
 }
 
 # `vetores_do_passo_zero <chave>` — os vinte e um vetores, sobre UMA chave.
@@ -1048,11 +1128,287 @@ vetores_do_passo_zero() {
   # passo zero declarado, e a ordem congelada deixa de valer.
   forjar_passo "$chave" "pz20_$chave.yml" && sabotar titulo
   esperar_passo 1 "PZ20[$chave] — título do passo trocado => VERMELHO" 1 'e nao no passo'
+
+  # -------------------------------------------------------------------------
+  # 21 a 25 — A FALSA ABERTURA DE HEREDOC (OS 40-C6)
+  # -------------------------------------------------------------------------
+  #
+  # A OS 40-C5 endureceu `vivas_de` e deixou este classificador assimétrico:
+  # qualquer resto não vazio depois do par abria heredoc. A OS 40-R6 mediu o
+  # preço — uma ocorrência textual jogava TODAS as linhas seguintes na classe
+  # HEREDOC, congelava a contagem de passos, escondia a escrita posterior do log
+  # e do marcador, e a cadeia oficial inteira ficava VERDE: `portaoci` 101/101,
+  # `autverif` 82/82, FASE A com 17 contratos, guarda `--guarda` com exit 0 e
+  # agregador 64/64, com a evidência de um passo zero fabricada por um `echo`.
+  #
+  # CADA VETOR FAZ DUAS PERGUNTAS. O exit da guarda diz que ela reprovou; a
+  # `esperar_classe` diz que ela reprovou POR TER OLHADO a linha decisiva. Sem a
+  # segunda, um vermelho por efeito colateral — a cegueira escondendo, de
+  # quebra, a própria invocação canônica — passaria por detecção.
+
+  # 21 — falsa abertura DEPOIS de tudo, e o marcador fabricado logo em seguida.
+  forjar_passo "$chave" "pz21_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "echo 0 > $marcador" CODIGO \
+    "PZ21[$chave] — a escrita posterior do marcador continua sendo CÓDIGO"
+  esperar_passo 1 "PZ21[$chave] — falsa abertura escondendo o marcador fabricado => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 22 — falsa abertura e, depois dela, um passo zero material NOVO. Com o
+  # classificador cego, o próprio título deixava de contar como passo.
+  forjar_passo "$chave" "pz22_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA~      - name: \"0d — passo zero fora da relação\"~        run: |~          echo 0 > exit_${chave}intruso"
+  esperar_classe "$FORJA_ARQ" '- name: "0d — passo zero fora da relação"' PASSO \
+    "PZ22[$chave] — o título do passo novo continua sendo PASSO: a contagem não congelou"
+  esperar_passo 1 "PZ22[$chave] — falsa abertura escondendo passo zero fora da relação => VERMELHO" 1 \
+    'nao esta na relacao protegida'
+
+  # 23 — o escape material inteiro: log E marcador forjados atrás da cegueira.
+  forjar_passo "$chave" "pz23_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA~          echo 'casos ok: 999' > $log~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "echo 'casos ok: 999' > $log" CODIGO \
+    "PZ23[$chave] — a forja do log posterior continua sendo CÓDIGO"
+  esperar_passo 1 "PZ23[$chave] — falsa abertura escondendo log e marcador forjados => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 24 — A METADE QUE FALHAVA PARA O OUTRO LADO. Antes da correção, uma
+  # ocorrência textual ANTERIOR aos passos protegidos punha as três invocações
+  # canônicas em HEREDOC e a guarda REPROVAVA o workflow íntegro. Um portão que
+  # reprova a árvore correta é a pressão mais forte que existe para afrouxá-lo.
+  forjar_passo "$chave" "pz24_$chave.yml" && sabotar prologo \
+    "      - name: \"9y — diagnóstico anterior\"~        run: |~          $FALSA_ABERTURA~          echo diagnostico"
+  esperar_classe "$FORJA_ARQ" "$invocacao" CODIGO \
+    "PZ24[$chave] — ocorrência textual ANTERIOR não esconde a invocação canônica"
+  esperar_passo 0 "PZ24[$chave] — ocorrência textual anterior => guarda VERDE" 1
+
+  # 25 — E O HEREDOC DE VERDADE CONTINUA SENDO HEREDOC. A correção fecha a falsa
+  # abertura sem afrouxar a verdadeira: o corpo segue inerte, e depois do
+  # delimitador a classificação volta a ser código.
+  forjar_passo "$chave" "pz25_$chave.yml" && sabotar apendice \
+    "      - name: \"9w — heredoc real da sonda\"~        run: |~          cat $MENOR2 FIM_DA_SONDA > /dev/null~          echo 0 > $marcador~          FIM_DA_SONDA~          echo apos-o-delimitador"
+  esperar_classe "$FORJA_ARQ" "echo 0 > $marcador" HEREDOC \
+    "PZ25[$chave] — o corpo do heredoc REAL continua sendo dado, e não código"
+  esperar_classe "$FORJA_ARQ" 'echo apos-o-delimitador' CODIGO \
+    "PZ25[$chave] — depois do delimitador real a classificação volta a ser código"
+  esperar_passo 0 "PZ25[$chave] — heredoc real com o marcador no corpo => guarda VERDE" 1
 }
 
 vetores_do_passo_zero portaoci
 vetores_do_passo_zero autverif
 vetores_do_passo_zero contratosui
+
+printf '\n== a regra canônica do delimitador, e a matriz de falsas aberturas ==\n'
+
+# ---------------------------------------------------------------------------
+# POR QUE ESTA SEÇÃO EXISTE (OS 40-C6)
+# ---------------------------------------------------------------------------
+#
+# Há DUAS leituras de código vivo nesta árvore, e elas têm de decidir igual
+# sobre a mesma pergunta: `vivas_de`, em `scripts/ci/autoridade_verificadores.sh`,
+# e `classificar_workflow`, aqui. A OS 40-C5 endureceu a primeira e esqueceu a
+# segunda, e a OS 40-R6 mediu o preço dessa assimetria.
+#
+# A correção reusaria a função se pudesse. Não pode: a autoridade externa é um
+# programa que EXECUTA ao ser lido — dar `source` nela para pegar uma função
+# rodaria a autoridade inteira dentro do gate que ela audita —, e um terceiro
+# arquivo só para hospedar o predicado seria um caminho a mais, fora do teto
+# desta OS. A equivalência é então DEMONSTRADA, em dois eixos independentes:
+#
+#   HD01  comparação explícita — o bloco de aceitação do delimitador é extraído
+#         dos DOIS arquivos e comparado LETRA POR LETRA. Divergir vira vermelho
+#         aqui, e não silêncio na próxima OS.
+#   HD02  equivalência nominal — `vivas_de` é EXTRAÍDA do arquivo da autoridade
+#         e executada sobre o MESMO corpus de amostras. Comparar o texto das
+#         duas expressões não bastaria; o que se compara é a DECISÃO.
+#
+# E cada amostra tem PÓS-CONDIÇÃO PRÓPRIA (HD03 em diante): qual classe recebeu
+# a linha decisiva. Um arnês que só olhasse o exit não distinguiria "a guarda
+# enxergou e recusou" de "a guarda recusou por outro motivo".
+
+FORJA_MOTIVO=''
+EU="$AQUI/teste_portao_os_integracao.sh"
+AUTORIDADE_EXTERNA="$AQUI/autoridade_verificadores.sh"
+
+# `regra_do_delimitador <arquivo>` — o bloco de aceitação inteiro, sem recuo e
+# sem comentário. É o predicado, e não uma linha escolhida a dedo.
+regra_do_delimitador() {
+  awk '
+    function nu(s,   l) {
+      l = s; sub(/\r$/, "", l); sub(/^[[:blank:]]+/, "", l); sub(/[[:blank:]]+$/, "", l)
+      return l
+    }
+    { l = nu($0) }
+    l == "case \"$resto\" in" { dentro = 1 }
+    dentro && l !~ /^#/ { print l }
+    dentro && l == "esac" { exit }
+  ' "$1"
+}
+
+# `espremer <arquivo>` — a mesma normalização que `classificar_workflow` aplica,
+# para que as duas leituras possam ser comparadas linha a linha.
+espremer() {
+  awk '{
+    l = $0; sub(/\r$/, "", l); gsub(/\t/, " ", l)
+    sub(/^ +/, "", l); gsub(/  +/, " ", l); sub(/ +$/, "", l)
+    print l
+  }' "$1"
+}
+
+regra_do_delimitador "$EU" > "$TMP/regra_aqui.txt"
+regra_do_delimitador "$AUTORIDADE_EXTERNA" > "$TMP/regra_la.txt"
+if [ ! -s "$TMP/regra_aqui.txt" ]; then
+  nok "HD01 — o bloco de aceitação do delimitador não foi encontrado NESTE arquivo"
+elif [ ! -s "$TMP/regra_la.txt" ]; then
+  nok "HD01 — o bloco de aceitação do delimitador não foi encontrado na autoridade externa"
+elif cmp -s "$TMP/regra_aqui.txt" "$TMP/regra_la.txt"; then
+  ok "HD01 — a regra do delimitador é LETRA POR LETRA a mesma nas duas leituras"
+else
+  nok "HD01 — a regra do delimitador DIVERGIU entre o classificador e a autoridade"
+  diff -u "$TMP/regra_la.txt" "$TMP/regra_aqui.txt" | sed 's/^/        | /'
+fi
+
+# ---------------------------------------------------------------------------
+# AS AMOSTRAS — a matriz ampliada de falsas aberturas
+# ---------------------------------------------------------------------------
+#
+# NENHUMA AMOSTRA TEM LINHA EM BRANCO, e é de propósito: `vivas_de` descarta
+# linha em branco, e a comparação de HD02 é linha a linha.
+AMOSTRA=''
+AMOSTRAS=''
+amostra() { AMOSTRA="$TMP/amostra_$1"; : > "$AMOSTRA"; AMOSTRAS="$AMOSTRAS $1"; }
+linha_da_amostra() { printf '%s\n' "$1" >> "$AMOSTRA"; }
+
+# 1. o par entre ASPAS SIMPLES.
+amostra aspas_simples
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          grep -n '$MENOR2' scripts/ci/portao_os_integracao.sh"
+linha_da_amostra '          echo 0 > exit_portaoci'
+
+# 2. o par entre ASPAS DUPLAS, com resto que não é identificador.
+amostra aspas_duplas
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          $FALSA_ABERTURA"
+linha_da_amostra '          echo 0 > exit_portaoci'
+
+# 3. o par em COMENTÁRIO — e com resto que SERIA um delimitador válido. É a
+#    amostra que separa "o texto está no arquivo" de "o shell abre um heredoc".
+amostra comentario
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          # nota: $MENOR2 AQUI seria uma abertura de verdade"
+linha_da_amostra '          echo 0 > exit_portaoci'
+
+# 4. CANDIDATO COM CONTEÚDO ADICIONAL INCOMPATÍVEL.
+amostra resto_incompativel
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          printf '%s' 'a $MENOR2 b)'"
+linha_da_amostra '          echo 0 > exit_portaoci'
+
+# 5. o par EMBUTIDO EM COMANDO DE DIAGNÓSTICO — deslocamento aritmético, cujo
+#    resto começa por dígito.
+amostra diagnostico
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          awk 'BEGIN { print 2 $MENOR2 3 }' > /dev/null"
+linha_da_amostra '          echo 0 > exit_portaoci'
+
+# 6. falsa abertura ANTES do passo protegido.
+amostra falsa_antes
+linha_da_amostra '      - name: "9y — diagnóstico anterior"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          $FALSA_ABERTURA"
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra '          bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log'
+
+# 7. falsa abertura DEPOIS do passo protegido, com titulo posterior: e a amostra
+#    que prova que a contagem de passos nao congela.
+amostra falsa_depois
+linha_da_amostra '      - name: "0 — passo protegido"'
+linha_da_amostra '        run: |'
+linha_da_amostra '          bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log'
+linha_da_amostra "          $FALSA_ABERTURA"
+linha_da_amostra '      - name: "9z — passo posterior"'
+linha_da_amostra '        run: |'
+linha_da_amostra '          echo 0 > exit_portaoci'
+
+# 8. HEREDOC REAL — corpo ignorado, fechamento correto, e volta ao código.
+amostra heredoc_real
+linha_da_amostra '      - name: "9w — heredoc real"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          cat $MENOR2 FIM_DA_AMOSTRA > /dev/null"
+linha_da_amostra '          echo 0 > exit_portaoci'
+linha_da_amostra '          FIM_DA_AMOSTRA'
+linha_da_amostra '          echo apos-o-delimitador'
+
+# 9. HEREDOC REAL com `-` e delimitador CITADO: as duas formas que a gramática
+#    canônica aceita, e que a correção não pode ter quebrado.
+amostra heredoc_citado
+linha_da_amostra '      - name: "9w — heredoc real citado"'
+linha_da_amostra '        run: |'
+linha_da_amostra "          cat $MENOR2-'FIM_DA_AMOSTRA' > /dev/null"
+linha_da_amostra '          echo 0 > exit_portaoci'
+linha_da_amostra '          FIM_DA_AMOSTRA'
+linha_da_amostra '          echo apos-o-delimitador'
+
+# HD02 — A EQUIVALÊNCIA NOMINAL, sobre o corpus inteiro.
+#
+# A função é EXTRAÍDA por recorte de texto, e não pelo `source` do arquivo
+# inteiro: dar `source` na autoridade externa a EXECUTARIA aqui dentro, e o
+# gate passaria a conter o programa que ele audita.
+sed -n '/^vivas_de() {/,/^}$/p' "$AUTORIDADE_EXTERNA" > "$TMP/vivas_de.sh"
+if [ ! -s "$TMP/vivas_de.sh" ]; then
+  nok "HD02 — nao foi possivel extrair a leitura de codigo vivo da autoridade externa"
+else
+  . "$TMP/vivas_de.sh"
+  for a in $AMOSTRAS; do
+    vivas_de "$TMP/amostra_$a" "$TMP/vivas_$a"
+    classificar_workflow "$TMP/amostra_$a" "$TMP/cls_$a"
+    espremer "$TMP/vivas_$a" > "$TMP/vivas_esp_$a"
+    awk -F'\t' '$3 != "HEREDOC" && $3 != "COMENTARIO" { print $4 }' "$TMP/cls_$a" > "$TMP/cod_$a"
+    if [ ! -s "$TMP/vivas_esp_$a" ]; then
+      nok "HD02[$a] — a leitura da autoridade nao devolveu uma linha sequer: a amostra nao mede nada"
+    elif cmp -s "$TMP/vivas_esp_$a" "$TMP/cod_$a"; then
+      ok "HD02[$a] — as duas leituras concordam sobre o que é código vivo"
+    else
+      nok "HD02[$a] — o classificador e a autoridade DIVERGEM sobre a mesma amostra"
+      diff -u "$TMP/vivas_esp_$a" "$TMP/cod_$a" | sed 's/^/        | /'
+    fi
+  done
+fi
+
+# HD03 em diante — a pós-condição de cada amostra, nominal e independente.
+esperar_classe "$TMP/amostra_aspas_simples" 'echo 0 > exit_portaoci' CODIGO \
+  "HD03 — o par entre ASPAS SIMPLES não abre heredoc: a linha seguinte é código"
+esperar_classe "$TMP/amostra_aspas_duplas" 'echo 0 > exit_portaoci' CODIGO \
+  "HD04 — o par entre ASPAS DUPLAS não abre heredoc: a linha seguinte é código"
+esperar_classe "$TMP/amostra_comentario" "# nota: $MENOR2 AQUI seria uma abertura de verdade" COMENTARIO \
+  "HD05 — o par em COMENTÁRIO é classificado como comentário"
+esperar_classe "$TMP/amostra_comentario" 'echo 0 > exit_portaoci' CODIGO \
+  "HD06 — o par em COMENTÁRIO não abre heredoc: a linha seguinte é código"
+esperar_classe "$TMP/amostra_resto_incompativel" 'echo 0 > exit_portaoci' CODIGO \
+  "HD07 — candidato com conteúdo adicional incompatível não abre heredoc"
+esperar_classe "$TMP/amostra_diagnostico" 'echo 0 > exit_portaoci' CODIGO \
+  "HD08 — o par embutido em comando de diagnóstico não abre heredoc"
+esperar_classe "$TMP/amostra_falsa_antes" 'bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log' CODIGO \
+  "HD09 — ocorrência textual ANTERIOR não esconde a invocação canônica"
+esperar_classe "$TMP/amostra_falsa_antes" '- name: "0 — passo protegido"' PASSO \
+  "HD10 — ocorrência textual ANTERIOR não esconde o título do passo protegido"
+esperar_classe "$TMP/amostra_falsa_depois" '- name: "9z — passo posterior"' PASSO \
+  "HD11 — ocorrência textual POSTERIOR não congela a contagem de passos"
+esperar_classe "$TMP/amostra_falsa_depois" 'echo 0 > exit_portaoci' CODIGO \
+  "HD12 — ocorrência textual POSTERIOR não esconde a escrita do marcador"
+esperar_classe "$TMP/amostra_heredoc_real" 'echo 0 > exit_portaoci' HEREDOC \
+  "HD13 — o corpo do heredoc REAL continua sendo dado, e não código"
+esperar_classe "$TMP/amostra_heredoc_real" 'echo apos-o-delimitador' CODIGO \
+  "HD14 — depois do delimitador REAL a classificação volta a ser código"
+esperar_classe "$TMP/amostra_heredoc_citado" 'echo 0 > exit_portaoci' HEREDOC \
+  "HD15 — heredoc real com recuo e delimitador citado continua reconhecido"
+esperar_classe "$TMP/amostra_heredoc_citado" 'echo apos-o-delimitador' CODIGO \
+  "HD16 — o fechamento do delimitador citado devolve a classificação ao código"
 
 printf '\n== matriz do agregador ==\n'
 

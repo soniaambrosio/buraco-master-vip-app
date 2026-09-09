@@ -226,10 +226,10 @@ comunicacao
 portaoci
     suite      scripts/ci/teste_portao_os_integracao.sh
     executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
-    sha256     5e073b79975a19254fe3acbcca574db91790315882030feded012d8eb219eb24
-    provas     56
+    sha256     e0f80407684993506ab1d6b23442eb6dddb39d933f785b083635d4a0035bf003
+    provas     67
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      101
+    casos      158
     contador   casos ok: [0-9]+
     exige      HERDADOS=
     exige      grep -qE 'GATES="[a-z]+ [a-z]+
@@ -253,6 +253,21 @@ portaoci
     exige      esperar_passo 1 "PZ16[$chave]
     exige      esperar_passo 1 "PZ18[$chave]
     exige      esperar_passo 1 "PZ19[$chave]
+    exige      case "$resto" in
+    exige      *) fim_heredoc="$resto" ;;
+    exige      esperar_classe() {
+    exige      regra_do_delimitador "$EU" > "$TMP/regra_aqui.txt"
+    exige      regra_do_delimitador "$AUTORIDADE_EXTERNA" > "$TMP/regra_la.txt"
+    exige      cmp -s "$TMP/regra_aqui.txt" "$TMP/regra_la.txt"
+    exige      sed -n '/^vivas_de() {/,/^}$/p' "$AUTORIDADE_EXTERNA" > "$TMP/vivas_de.sh"
+    exige      cmp -s "$TMP/vivas_esp_$a" "$TMP/cod_$a"
+    exige      if [ "$vista" = "$esperada" ]; then
+    exige      linha_da_amostra() { printf '%s\n' "$1" >> "$AMOSTRA"; }
+    exige      esperar_passo 1 "PZ21[$chave]
+    exige      esperar_passo 1 "PZ22[$chave]
+    exige      esperar_passo 1 "PZ23[$chave]
+    exige      esperar_passo 0 "PZ24[$chave]
+    exige      esperar_passo 0 "PZ25[$chave]
 
 # --- 6b. o CONTRATO DE CONTEUDO das suites protegidas (entra pela OS 32) -----
 # `portaoci` prova o AGREGADOR; este prova o VERIFICADOR DE CONTEUDO, a peca
@@ -266,7 +281,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     33a9fca625f2168cb40ab2b7a2eadabcbdfdaad81a971028dcf82e738021d171
+    sha256     1ad0f80110e213f406705cc57bb32e1cab7faee65816cb0573ef4a1349beb734
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -327,10 +342,10 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     88e2dab915d8c5fea6db0f4578b25d8c020f2ea6c0a5fb014af721e2a3797a45
+    sha256     f6a95593e8a98fa7739eb1c74b77f9c2b553653f725d5233cf66642dd6bcf785
     provas     14
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
-    casos      82
+    casos      91
     contador   casos ok: [0-9]+
     exige      readonly INVENTARIO="\
     exige      readonly MINIMOS_PROVAS=
