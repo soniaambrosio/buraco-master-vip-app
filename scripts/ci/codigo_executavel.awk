@@ -312,9 +312,28 @@ function lexcod(   c, d, t3, c2, qh, corte) {
 
     if (ling == "sh") {
       if (c == "#" && inicioDePalavra()) { fecha_palavra(""); marca(len - i + 1, "."); i = len + 1; continue }
-      # `<<WORD`, `<<-WORD`, `<<'WORD'` — e NAO `<<<` (here-string) nem `<<` de
-      # deslocamento aritmetico, que nao abre corpo nenhum.
-      if (c == "<" && d == "<" && substr(linha, i + 2, 1) != "<") {
+      # BARRA INVERTIDA FORA DE STRING escapa o proximo caractere. `echo \<<EOF`
+      # nao abre corpo nenhum: o que sobra e `<EOF`, redirecionamento de ENTRADA,
+      # e o shell real segue executando a linha seguinte (OS 40-C7).
+      if (c == "\\") {
+        fecha_palavra("")
+        marca(1, "C"); i++
+        if (i <= len) { marca(1, "C"); i++ }
+        continue
+      }
+      # ARITMETICA `$((...))`: ali o par e DESLOCAMENTO. Sem este estado,
+      # `x=$((1<<2))` abria um heredoc que nunca fecha, o arquivo inteiro virava
+      # INERTE e o contrato reprovava a arvore integra (OS 40-C7).
+      if (c == "$" && d == "(" && substr(linha, i + 2, 1) == "(") {
+        fecha_palavra("")
+        marca(3, "C"); i += 3; arit++; prev = "("
+        continue
+      }
+      if (arit > 0 && c == ")" && d == ")") { marca(2, "C"); i += 2; arit--; prev = ")"; continue }
+      # `<<WORD`, `<<-WORD`, `<<'WORD'` — e NAO `<<<` (here-string), nem o par do
+      # MEIO de um `<<<`, que era lido como abertura ao avancar um caractere, nem
+      # `<<` dentro de aritmetica.
+      if (arit == 0 && c == "<" && d == "<" && substr(linha, i + 2, 1) != "<" && prev != "<") {
         fecha_palavra("")
         marca(2, "."); i += 2
         her_tab = 0

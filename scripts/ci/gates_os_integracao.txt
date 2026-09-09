@@ -226,10 +226,10 @@ comunicacao
 portaoci
     suite      scripts/ci/teste_portao_os_integracao.sh
     executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
-    sha256     e0f80407684993506ab1d6b23442eb6dddb39d933f785b083635d4a0035bf003
-    provas     67
+    sha256     fc8edb6f2ab5cf533d0d4775f17c5cb64edaf260b286c601f39fbe0cb6c0457e
+    provas     74
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      158
+    casos      228
     contador   casos ok: [0-9]+
     exige      HERDADOS=
     exige      grep -qE 'GATES="[a-z]+ [a-z]+
@@ -253,12 +253,24 @@ portaoci
     exige      esperar_passo 1 "PZ16[$chave]
     exige      esperar_passo 1 "PZ18[$chave]
     exige      esperar_passo 1 "PZ19[$chave]
-    exige      case "$resto" in
-    exige      *) fim_heredoc="$resto" ;;
+    exige      abertura_de_heredoc() {
+    exige      abertura_de_heredoc "$nu"
+    exige      case "$delim" in
+    exige      ABERTURA_AMBIGUA=1
     exige      esperar_classe() {
-    exige      regra_do_delimitador "$EU" > "$TMP/regra_aqui.txt"
-    exige      regra_do_delimitador "$AUTORIDADE_EXTERNA" > "$TMP/regra_la.txt"
-    exige      cmp -s "$TMP/regra_aqui.txt" "$TMP/regra_la.txt"
+    exige      leitura_do_heredoc "$EU" > "$TMP/leitura_aqui.txt"
+    exige      leitura_do_heredoc "$AUTORIDADE_EXTERNA" > "$TMP/leitura_la.txt"
+    exige      cmp -s "$TMP/leitura_aqui.txt" "$TMP/leitura_la.txt"
+    exige      shell_abre() {
+    exige      if shell_abre "$linha"; then
+    exige      CORPUS_OPERADOR="${CORPUS_OPERADOR//@@/$MENOR2}"
+    exige      la="$( . "$TMP/leitura_la.sh"; veredito_de "$linha" )"
+    exige      esperar_passo 1 "PZ26[$chave]
+    exige      esperar_passo 1 "PZ27[$chave]
+    exige      esperar_passo 1 "PZ28[$chave]
+    exige      esperar_passo 1 "PZ29[$chave]
+    exige      esperar_passo 0 "PZ30[$chave]
+    exige      esperar_passo 1 "PZ31[$chave]
     exige      sed -n '/^vivas_de() {/,/^}$/p' "$AUTORIDADE_EXTERNA" > "$TMP/vivas_de.sh"
     exige      cmp -s "$TMP/vivas_esp_$a" "$TMP/cod_$a"
     exige      if [ "$vista" = "$esperada" ]; then
@@ -281,7 +293,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     1ad0f80110e213f406705cc57bb32e1cab7faee65816cb0573ef4a1349beb734
+    sha256     c19ed10a98dba56c6224fee5108c79232c8b5be2378bf14aeda333be66572ee3
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -342,10 +354,10 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     f6a95593e8a98fa7739eb1c74b77f9c2b553653f725d5233cf66642dd6bcf785
-    provas     14
+    sha256     5d774cb9844fb8fc1da30db5c337a762ffc9f22e1c6a843c8f8f039aa9f22119
+    provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
-    casos      91
+    casos      96
     contador   casos ok: [0-9]+
     exige      readonly INVENTARIO="\
     exige      readonly MINIMOS_PROVAS=
@@ -361,6 +373,10 @@ autverif
     exige      vivas_de "$workflow" "$vivo_workflow"
     exige      if grep -Fq -- "$alvo" "$vivo_workflow"; then
     exige      scripts/ci/teste_portao_os_integracao.sh "$INVOCACAO_PROPRIA"; do
+    exige      abertura_de_heredoc() {
+    exige      abertura_de_heredoc "$nu"
+    exige      case "$delim" in
+    exige      [ "$ambiguas" -eq 0 ]
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing

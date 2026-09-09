@@ -202,9 +202,189 @@ campo_do_passo() {
 ASPA_SIMPLES="'"
 ASPA_DUPLA='"'
 
+# `abertura_de_heredoc <linha>` — o delimitador do heredoc que ESTA LINHA abre de
+# verdade, devolvido em `ABERTURA_HEREDOC`, e vazio quando ela nao abre nenhum.
+# Em `ABERTURA_AMBIGUA` vai `1` quando a linha NAO pode ser decidida com
+# seguranca — e ai quem chama reprova, em vez de escolher uma leitura.
+#
+# POR QUE E CARACTERE A CARACTERE (OS 40-C7). Ate a OS 40-C6 as duas leituras
+# recortavam o sufixo com `${nu##*<<}` e APAGAVAM todas as aspas antes de
+# perguntar se o que sobrou parecia um identificador. A OS 40-R7 mediu o preco: a
+# aspa apagada era justamente a de FECHAMENTO, que e a UNICA coisa que separa
+#
+#     cat <<ALVO                  o par e operador de redirecionamento
+#     echo "diagnostico <<ALVO"   o par e texto, e nao abre nada
+#
+# Apagada a aspa, as duas formas viravam a mesma, e `echo "diagnostico <<ALVO"`
+# cegava as duas leituras: o resto do workflow ia para a classe HEREDOC, a
+# contagem de passos congelava, um passo zero material novo sumia e a escrita
+# posterior de log e de marcador deixava de ser vista — com a cadeia oficial
+# inteira VERDE.
+#
+# A ORDEM E A CORRECAO: primeiro achar o OPERADOR fora de regiao inerte, e SO
+# DEPOIS ler a citacao que pertence ao token do delimitador. Nao ha parser de
+# shell aqui, nem de YAML: ha a maquina de estados minima que distingue codigo de
+# aspa simples, de aspa dupla, de comentario, de expansao `${...}` e de
+# aritmetica `$((...))` — que e onde o par tambem aparece sem abrir corpo algum.
+#
+# A REFERENCIA E `scripts/ci/codigo_executavel.awk`, o lexer com estado que o
+# contrato de conteudo ja usa, e a concordancia com ele e com o SHELL REAL e
+# medida caso a caso pela matriz `HD`.
+abertura_de_heredoc() {
+  local linha="$1"
+  local n=${#linha}
+  local i=0 j=0 c='' d='' ctx='C' pilha='' delim='' parte='' aberta=0
+  local achadas=0 inicio=1
+  ABERTURA_HEREDOC=''
+  ABERTURA_AMBIGUA=0
+  while [ "$i" -lt "$n" ]; do
+    c="${linha:$i:1}"
+
+    # ASPA SIMPLES: nada la dentro e operador, nem sequer a barra invertida.
+    if [ "$ctx" = 'Q' ]; then
+      [ "$c" = "'" ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
+      i=$((i + 1))
+      continue
+    fi
+    # EXPANSAO DE PARAMETRO: `${nu##*<<}` e um nome com corte, e nao um comando.
+    if [ "$ctx" = 'P' ]; then
+      [ "$c" = '}' ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
+      i=$((i + 1))
+      continue
+    fi
+    # ARITMETICA: `$((1<<2))` e deslocamento, e nao abre corpo nenhum.
+    if [ "$ctx" = 'A' ]; then
+      if [ "${linha:$i:2}" = '))' ]; then
+        ctx="${pilha:0:1}"; pilha="${pilha:1}"; i=$((i + 2))
+        continue
+      fi
+      i=$((i + 1))
+      continue
+    fi
+
+    # Daqui para baixo o contexto e CODIGO ou ASPA DUPLA. A barra invertida
+    # escapa o proximo caractere nos dois: `echo \<<EOF` nao abre heredoc, e o
+    # shell real concorda — o que sobra ali e `<EOF`, redirecionamento de
+    # ENTRADA.
+    if [ "$c" = '\' ]; then i=$((i + 2)); inicio=0; continue; fi
+    if [ "${linha:$i:3}" = '$((' ]; then
+      pilha="$ctx$pilha"; ctx='A'; i=$((i + 3)); inicio=0
+      continue
+    fi
+    # SUBSTITUICAO DE COMANDO VOLTA A SER CODIGO, inclusive dentro de aspas
+    # duplas: `DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'` abre um heredoc de
+    # verdade, e este repositorio tem oito linhas assim.
+    if [ "${linha:$i:2}" = '$(' ]; then
+      pilha="$ctx$pilha"; ctx='C'; i=$((i + 2)); inicio=1
+      continue
+    fi
+    if [ "${linha:$i:2}" = '${' ]; then
+      pilha="$ctx$pilha"; ctx='P'; i=$((i + 2)); inicio=0
+      continue
+    fi
+    if [ "$ctx" = 'D' ]; then
+      [ "$c" = '"' ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
+      i=$((i + 1))
+      continue
+    fi
+
+    case "$c" in
+      "'") pilha="$ctx$pilha"; ctx='Q'; i=$((i + 1)); inicio=0; continue ;;
+      '"') pilha="$ctx$pilha"; ctx='D'; i=$((i + 1)); inicio=0; continue ;;
+      '`') ABERTURA_AMBIGUA=1; return 0 ;;
+      '#') [ "$inicio" -eq 1 ] && break; i=$((i + 1)); inicio=0; continue ;;
+      '(') pilha="$ctx$pilha"; ctx='C'; i=$((i + 1)); inicio=1; continue ;;
+      ')') [ -n "$pilha" ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
+           i=$((i + 1)); inicio=1; continue ;;
+    esac
+
+    # HERE-STRING nao abre corpo: `cat <<<palavra` le a palavra, e a linha
+    # seguinte continua sendo codigo.
+    if [ "${linha:$i:3}" = '<<<' ]; then i=$((i + 3)); inicio=1; continue; fi
+
+    if [ "${linha:$i:2}" = '<<' ]; then
+      j=$((i + 2))
+      [ "${linha:$j:1}" = '-' ] && j=$((j + 1))
+      while [ "$j" -lt "$n" ]; do
+        case "${linha:$j:1}" in
+          [[:blank:]]) j=$((j + 1)) ;;
+          *) break ;;
+        esac
+      done
+      # O TOKEN DO DELIMITADOR, e so ele. A citacao e lida AQUI, depois de o
+      # operador ja ter sido achado: `<<'FIM'`, `<<"FIM"` e `<<\FIM` sao o mesmo
+      # delimitador `FIM`, e a aspa que fecha pertence a ESTE token.
+      delim=''
+      aberta=0
+      while [ "$j" -lt "$n" ]; do
+        d="${linha:$j:1}"
+        case "$d" in
+          "'" | '"')
+            j=$((j + 1)); parte=''
+            while [ "$j" -lt "$n" ] && [ "${linha:$j:1}" != "$d" ]; do
+              parte="$parte${linha:$j:1}"
+              j=$((j + 1))
+            done
+            [ "$j" -ge "$n" ] && { aberta=1; break; }
+            j=$((j + 1)); delim="$delim$parte"
+            ;;
+          '\')
+            j=$((j + 1)); delim="$delim${linha:$j:1}"; j=$((j + 1))
+            ;;
+          [[:blank:]] | ';' | '&' | '|' | '<' | '>' | '(' | ')' | '#')
+            break
+            ;;
+          *)
+            delim="$delim$d"; j=$((j + 1))
+            ;;
+        esac
+      done
+      # CITACAO QUE NAO FECHA NA LINHA: o token do delimitador nao esta inteiro
+      # aqui, e adivinhar qual e seria escolher por conveniencia.
+      [ "$aberta" -eq 1 ] && { ABERTURA_AMBIGUA=1; return 0; }
+      case "$delim" in
+        '') ;;
+        *[!A-Za-z0-9_]* | [0-9]*)
+          # O SHELL ABRE, e esta leitura nao sabe representar. Fechar aqui e a
+          # unica saida honesta: dizer "nao abre" deixaria o corpo do heredoc
+          # ser lido como codigo.
+          ABERTURA_AMBIGUA=1
+          return 0
+          ;;
+        *)
+          achadas=$((achadas + 1))
+          [ -z "$ABERTURA_HEREDOC" ] && ABERTURA_HEREDOC="$delim"
+          ;;
+      esac
+      i="$j"; inicio=1
+      continue
+    fi
+
+    case "$c" in
+      [[:blank:]] | ';' | '&' | '|' | '<' | '>') inicio=1 ;;
+      *) inicio=0 ;;
+    esac
+    i=$((i + 1))
+  done
+
+  # DUAS ABERTURAS NA MESMA LINHA sao dois corpos empilhados, e esta leitura so
+  # sabe seguir um.
+  if [ "$achadas" -gt 1 ]; then
+    ABERTURA_HEREDOC=''
+    ABERTURA_AMBIGUA=1
+    return 0
+  fi
+  # ASPA QUE NAO FECHOU e o par em algum lugar da linha: o estado com que a
+  # proxima linha comecaria nao e conhecido.
+  if [ "$achadas" -eq 0 ] && { [ "$ctx" != 'C' ] || [ -n "$pilha" ]; }; then
+    ABERTURA_AMBIGUA=1
+  fi
+  return 0
+}
+
 classificar_workflow() {
   local arq="$1" saida="$2"
-  local n=0 passo=0 bruta linha nu espremida fim_heredoc='' resto
+  local n=0 passo=0 bruta linha nu espremida fim_heredoc=''
   {
     while IFS= read -r bruta || [ -n "$bruta" ]; do
       n=$((n + 1))
@@ -239,43 +419,22 @@ classificar_workflow() {
           ;;
       esac
 
-      printf '%s\t%s\tCODIGO\t%s\n' "$n" "$passo" "$espremida"
-
-      # ABERTURA DE HEREDOC, depois de classificar a própria linha: o `<<` mora
-      # numa linha de código, e o que vira dado é o que vem DEPOIS dela.
+      # ABERTURA DE HEREDOC, decidida ANTES de imprimir a classe: uma linha que
+      # esta leitura nao consegue decidir com seguranca NAO pode sair como
+      # CODIGO, porque a classe dela e o que a guarda usa para responder.
+      ABERTURA_HEREDOC=''
       case "$nu" in
         *'<<'*)
-          resto="${nu##*<<}"
-          resto="${resto#-}"
-          resto="${resto#"${resto%%[![:blank:]]*}"}"
-          resto="${resto%%[[:blank:]]*}"
-          # AS ASPAS SAEM POR VARIAVEL, e nao por barra invertida dentro de
-          # `"..."`. `\'` ali nao e escape em sh: a analise lexica do proprio
-          # contrato de conteudo lê aquilo como uma string que nunca fecha, e um
-          # arquivo "aberto" faz TODA agulha virar texto inerte.
-          resto="${resto//$ASPA_SIMPLES/}"
-          resto="${resto//$ASPA_DUPLA/}"
-          # A REGRA CANÔNICA DO DELIMITADOR (OS 40-C6) — a MESMA de `vivas_de`,
-          # em `scripts/ci/autoridade_verificadores.sh`, e não uma segunda
-          # gramática. Aceitar qualquer resto não vazio era a assimetria que a
-          # OS 40-R6 mediu: a autoridade externa já só abria heredoc com
-          # PALAVRA DE VERDADE, e este classificador ainda abria com `$ALVO`,
-          # com `b)` e com `3`. Uma ocorrência textual do par jogava todas as
-          # linhas seguintes na classe HEREDOC, CONGELAVA A CONTAGEM DE PASSOS
-          # e escondia a escrita posterior de um log ou de um marcador — com a
-          # cadeia oficial inteira verde. Um delimitador de heredoc é um
-          # identificador; `$ALVO`, `b)` e `3` não são.
-          #
-          # AS DUAS LEITURAS SÃO COMPARADAS, e por isso divergir passa a ser
-          # vermelho em vez de silêncio: `HD01` compara os dois blocos LETRA
-          # POR LETRA, e `HD02` compara o COMPORTAMENTO das duas sobre o mesmo
-          # corpus de falsas aberturas.
-          case "$resto" in
-            '' | *[!A-Za-z0-9_]* | [0-9]*) ;;
-            *) fim_heredoc="$resto" ;;
-          esac
+          abertura_de_heredoc "$nu"
+          if [ "$ABERTURA_AMBIGUA" -eq 1 ]; then
+            printf '%s\t%s\tAMBIGUO\t%s\n' "$n" "$passo" "$espremida"
+            continue
+          fi
           ;;
       esac
+
+      printf '%s\t%s\tCODIGO\t%s\n' "$n" "$passo" "$espremida"
+      [ -n "$ABERTURA_HEREDOC" ] && fim_heredoc="$ABERTURA_HEREDOC"
     done < "$arq"
   } > "$saida"
 }
@@ -526,6 +685,16 @@ guarda_passo_zero_sem_relacao() {
 guarda_invocacao_passo_zero() {
   local yml="$1" reg="$TMP/classificado.txt" k ruim=0
   classificar_workflow "$yml" "$reg"
+  # LINHA INDECIDIVEL REPROVA (OS 40-C7). Uma citacao que nao fecha, duas
+  # aberturas na mesma linha ou um delimitador que esta leitura nao sabe
+  # representar sao motivo de RECUSA, e nao de escolha silenciosa de classe.
+  local ambiguas
+  ambiguas="$(awk -F'	' '$3 == "AMBIGUO" { printf "%s ", $1 }' "$reg")"
+  if [ -n "$ambiguas" ]; then
+    printf 'PASSO ZERO: linha(s) que a leitura lexica nao consegue decidir com seguranca: %s
+' "$ambiguas"
+    ruim=1
+  fi
   for k in $PASSOS_ZERO_PROTEGIDOS; do
     guarda_passo_zero "$reg" "$k" || ruim=1
   done
@@ -813,6 +982,24 @@ MENOR2='<''<'
 # vinha depois virava HEREDOC, a contagem de passos congelava, e a escrita
 # posterior de um log ou de um marcador deixava de ser inspecionada.
 FALSA_ABERTURA="echo \"deslocamento $MENOR2 \$ALVO\""
+
+# A OCORRÊNCIA QUE A OS 40-C6 AINDA DEIXAVA PASSAR — e a razão desta OS. Aqui o
+# resto depois do par é um IDENTIFICADOR PURO, e a aspa que o fecha era apagada
+# antes da decisão: `echo "diagnostico <<ALVO"` virava, para as duas leituras,
+# a mesma coisa que `cat <<ALVO`. O shell executa a linha seguinte; elas
+# jogavam o resto do arquivo na classe HEREDOC.
+FALSA_ABERTURA_CITADA="echo \"diagnostico ${MENOR2}ALVO\""
+
+# A MESMA FORMA, ENTRE ASPAS SIMPLES. A `HD03` da C6 usava um resto que já era
+# recusado por outro motivo (a aspa sobrava sozinha); esta usa o caso que
+# escapava, e num comando que o CI de fato roda.
+FALSA_ABERTURA_SIMPLES="grep -n '${MENOR2}ALVO' scripts/ci/portao_os_integracao.sh"
+
+# A ENTRADA QUE NÃO PODE SER DECIDIDA: a citação não fecha na linha, e com ela
+# não há como saber com que estado a próxima linha começaria. Fail-closed
+# explícito é a única saída honesta — escolher uma leitura aqui seria escolher
+# por conveniência.
+LINHA_AMBIGUA="echo \"abre ${MENOR2}FIM"
 
 FORJA_ARQ=''
 FORJA_DIG=''
@@ -1191,6 +1378,67 @@ vetores_do_passo_zero() {
   esperar_classe "$FORJA_ARQ" 'echo apos-o-delimitador' CODIGO \
     "PZ25[$chave] — depois do delimitador real a classificação volta a ser código"
   esperar_passo 0 "PZ25[$chave] — heredoc real com o marcador no corpo => guarda VERDE" 1
+
+  # -------------------------------------------------------------------------
+  # OS 40-C7 — A FALSA ABERTURA COM DELIMITADOR CITADO
+  # -------------------------------------------------------------------------
+  #
+  # Os vetores `PZ21`-`PZ25` usam a forma cujo resto já era incompatível
+  # (`$ALVO`). A OS 40-R7 mostrou que ela não era a forma perigosa: bastava que
+  # o texto citado fosse um IDENTIFICADOR para as duas leituras voltarem a abrir
+  # um heredoc que o shell não abre. Estes repetem a bateria material com a
+  # forma que escapava — e são eles que separam a C6 da C7.
+
+  # 26 — marcador fabricado atrás da falsa abertura CITADA.
+  forjar_passo "$chave" "pz26_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA_CITADA~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "echo 0 > $marcador" CODIGO \
+    "PZ26[$chave] — falsa abertura CITADA: a escrita posterior do marcador continua sendo CÓDIGO"
+  esperar_passo 1 "PZ26[$chave] — falsa abertura CITADA escondendo o marcador fabricado => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 27 — passo zero material NOVO atrás da falsa abertura citada.
+  forjar_passo "$chave" "pz27_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA_CITADA~      - name: \"0d — passo zero fora da relação\"~        run: |~          echo 0 > exit_${chave}intruso"
+  esperar_classe "$FORJA_ARQ" '- name: "0d — passo zero fora da relação"' PASSO \
+    "PZ27[$chave] — falsa abertura CITADA: o título do passo novo continua sendo PASSO"
+  esperar_passo 1 "PZ27[$chave] — falsa abertura CITADA escondendo passo zero fora da relação => VERMELHO" 1 \
+    'nao esta na relacao protegida'
+
+  # 28 — o escape material da R7 por inteiro: log E marcador forjados.
+  forjar_passo "$chave" "pz28_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA_CITADA~          echo 'casos ok: 999' > $log~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "echo 'casos ok: 999' > $log" CODIGO \
+    "PZ28[$chave] — falsa abertura CITADA: a forja do log posterior continua sendo CÓDIGO"
+  esperar_passo 1 "PZ28[$chave] — falsa abertura CITADA escondendo log e marcador forjados => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 29 — a mesma forma ENTRE ASPAS SIMPLES, num comando que o CI de fato roda.
+  forjar_passo "$chave" "pz29_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA_SIMPLES~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "echo 0 > $marcador" CODIGO \
+    "PZ29[$chave] — falsa abertura entre ASPAS SIMPLES: a escrita posterior continua sendo CÓDIGO"
+  esperar_passo 1 "PZ29[$chave] — falsa abertura entre aspas simples escondendo o marcador => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 30 — E O OUTRO LADO: a mesma ocorrência ANTES dos passos protegidos não pode
+  # reprovar o workflow íntegro. Antes da C7 ela punha as três invocações
+  # canônicas em HEREDOC e a guarda recusava a árvore correta.
+  forjar_passo "$chave" "pz30_$chave.yml" && sabotar prologo \
+    "      - name: \"9y — diagnóstico anterior\"~        run: |~          $FALSA_ABERTURA_CITADA~          echo diagnostico"
+  esperar_classe "$FORJA_ARQ" "$invocacao" CODIGO \
+    "PZ30[$chave] — ocorrência CITADA anterior não esconde a invocação canônica"
+  esperar_passo 0 "PZ30[$chave] — ocorrência CITADA anterior => guarda VERDE" 1
+
+  # 31 — A ENTRADA INDECIDÍVEL FALHA EXPLICITAMENTE. Uma citação que não fecha
+  # na linha não pode ser classificada por conveniência: nem CÓDIGO, nem
+  # HEREDOC. Ela sai como AMBIGUO, e a guarda recusa dizendo qual linha é.
+  forjar_passo "$chave" "pz31_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $LINHA_AMBIGUA~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "$LINHA_AMBIGUA" AMBIGUO \
+    "PZ31[$chave] — citação que não fecha é classificada como AMBIGUO"
+  esperar_passo 1 "PZ31[$chave] — linha indecidível => VERMELHO, com a linha nomeada" 1 \
+    'nao consegue decidir'
 }
 
 vetores_do_passo_zero portaoci
@@ -1229,18 +1477,20 @@ FORJA_MOTIVO=''
 EU="$AQUI/teste_portao_os_integracao.sh"
 AUTORIDADE_EXTERNA="$AQUI/autoridade_verificadores.sh"
 
-# `regra_do_delimitador <arquivo>` — o bloco de aceitação inteiro, sem recuo e
-# sem comentário. É o predicado, e não uma linha escolhida a dedo.
-regra_do_delimitador() {
+# `leitura_do_heredoc <arquivo>` — a FUNÇÃO INTEIRA `abertura_de_heredoc`, do
+# cabeçalho ao fecho, como está escrita no arquivo.
+#
+# NÃO É O BLOCO DE ACEITAÇÃO, e a diferença é a lição da OS 40-R7. Até a C6 esta
+# comparação pegava só o `case` final; a descoberta do operador e o tratamento
+# das aspas — que era ONDE a decisão errava — ficavam de fora. Duas leituras
+# podiam concordar letra por letra no pedaço comparado e estar as duas erradas
+# no pedaço que não era.
+leitura_do_heredoc() {
   awk '
-    function nu(s,   l) {
-      l = s; sub(/\r$/, "", l); sub(/^[[:blank:]]+/, "", l); sub(/[[:blank:]]+$/, "", l)
-      return l
-    }
-    { l = nu($0) }
-    l == "case \"$resto\" in" { dentro = 1 }
-    dentro && l !~ /^#/ { print l }
-    dentro && l == "esac" { exit }
+    { l = $0; sub(/\r$/, "", l) }
+    l == "abertura_de_heredoc() {" { dentro = 1 }
+    dentro { print l }
+    dentro && l == "}" { exit }
   ' "$1"
 }
 
@@ -1254,17 +1504,17 @@ espremer() {
   }' "$1"
 }
 
-regra_do_delimitador "$EU" > "$TMP/regra_aqui.txt"
-regra_do_delimitador "$AUTORIDADE_EXTERNA" > "$TMP/regra_la.txt"
-if [ ! -s "$TMP/regra_aqui.txt" ]; then
-  nok "HD01 — o bloco de aceitação do delimitador não foi encontrado NESTE arquivo"
-elif [ ! -s "$TMP/regra_la.txt" ]; then
-  nok "HD01 — o bloco de aceitação do delimitador não foi encontrado na autoridade externa"
-elif cmp -s "$TMP/regra_aqui.txt" "$TMP/regra_la.txt"; then
-  ok "HD01 — a regra do delimitador é LETRA POR LETRA a mesma nas duas leituras"
+leitura_do_heredoc "$EU" > "$TMP/leitura_aqui.txt"
+leitura_do_heredoc "$AUTORIDADE_EXTERNA" > "$TMP/leitura_la.txt"
+if [ ! -s "$TMP/leitura_aqui.txt" ]; then
+  nok "HD01 — a leitura de abertura de heredoc não foi encontrada NESTE arquivo"
+elif [ ! -s "$TMP/leitura_la.txt" ]; then
+  nok "HD01 — a leitura de abertura de heredoc não foi encontrada na autoridade externa"
+elif cmp -s "$TMP/leitura_aqui.txt" "$TMP/leitura_la.txt"; then
+  ok "HD01 — a leitura INTEIRA do heredoc é LETRA POR LETRA a mesma nas duas autoridades"
 else
-  nok "HD01 — a regra do delimitador DIVERGIU entre o classificador e a autoridade"
-  diff -u "$TMP/regra_la.txt" "$TMP/regra_aqui.txt" | sed 's/^/        | /'
+  nok "HD01 — a leitura de abertura de heredoc DIVERGIU entre o classificador e a autoridade"
+  diff -u "$TMP/leitura_la.txt" "$TMP/leitura_aqui.txt" | sed 's/^/        | /'
 fi
 
 # ---------------------------------------------------------------------------
@@ -1409,6 +1659,130 @@ esperar_classe "$TMP/amostra_heredoc_citado" 'echo 0 > exit_portaoci' HEREDOC \
   "HD15 — heredoc real com recuo e delimitador citado continua reconhecido"
 esperar_classe "$TMP/amostra_heredoc_citado" 'echo apos-o-delimitador' CODIGO \
   "HD16 — o fechamento do delimitador citado devolve a classificação ao código"
+
+printf '\n== o operador de heredoc, contra o SHELL REAL ==\n'
+
+# ---------------------------------------------------------------------------
+# HD17 — O CORPUS DO OPERADOR (OS 40-C7)
+# ---------------------------------------------------------------------------
+#
+# A matriz `HD03`-`HD16` mede a CLASSE da linha decisiva sobre amostras de
+# workflow. Esta mede a decisão CRUA, linha a linha, contra três testemunhas
+# independentes ao mesmo tempo:
+#
+#   1. o SHELL REAL — a sentinela da linha seguinte executa, ou não;
+#   2. a leitura DESTE arquivo;
+#   3. a leitura da AUTORIDADE EXTERNA, extraída e executada num SUBSHELL.
+#
+# A terceira roda em subshell de propósito: dar `source` na leitura de lá dentro
+# deste processo substituiria a leitura daqui no meio da matriz, e a comparação
+# passaria a medir a mesma função duas vezes.
+#
+# POR QUE ELA EXISTE. A OS 40-R7 mediu o preço de comparar as duas leituras
+# entre si sem um terceiro oráculo: as duas removiam as aspas antes de decidir,
+# erravam igual, e por isso CONCORDAVAM. Concordância não é correção. O shell
+# real é o único árbitro que não herda o defeito.
+#
+# O PAR É MONTADO A PARTIR DE `@@`, e nunca escrito colado no corpus: o
+# analisador léxico do contrato de conteúdo lê este arquivo, e um par solto aqui
+# teria de ser decidido por ele antes de esta suíte poder medir coisa alguma.
+CORPUS_OPERADOR="$(cat <<'CORPUS_DO_OPERADOR'
+FIM_DA_SONDA|cat @@FIM_DA_SONDA
+FIM_DA_SONDA|cat @@ FIM_DA_SONDA
+FIM_DA_SONDA|cat @@-FIM_DA_SONDA
+FIM_DA_SONDA|cat @@'FIM_DA_SONDA'
+FIM_DA_SONDA|cat @@"FIM_DA_SONDA"
+FIM_DA_SONDA|cat @@-'FIM_DA_SONDA'
+FIM_DA_SONDA|cat @@-"FIM_DA_SONDA"
+FIM_DA_SONDA|cat @@\FIM_DA_SONDA
+FIM_DA_SONDA|cat @@FIM_DA_SONDA > /dev/null
+FIM_DA_SONDA|EVIDENCIA="$(cat @@'FIM_DA_SONDA'
+NAO|echo "diagnostico @@ALVO"
+NAO|echo 'diagnostico @@ALVO'
+NAO|grep -n '@@ALVO' arquivo.sh
+NAO|grep -n "@@EOF" arquivo.sh
+NAO|printf '%s' "veja @@FIM"
+NAO|echo "a@@b"
+NAO|echo "use: cmd @@HEREDOC_NAME para abrir"
+NAO|awk 'BEGIN{print 2 @@ 3}'
+NAO|echo "deslocamento @@ $ALVO"
+NAO|grep -n '@@' arquivo.sh
+NAO|case "$nu" in *'@@'*) :;; esac
+NAO|resto="${nu##*@@}"
+NAO|x=$((1@@2))
+NAO|x=$((1 @@ N))
+NAO|sed -e 's/@@X//' f
+NAO|node -e "console.log(1@@2)"
+NAO|cat @@<palavra
+NAO|echo \@@EOF
+NAO|foo bar # comentario com @@AQUI
+AMB|echo "abre @@FIM
+AMB|echo 'abre @@FIM
+AMB|cat @@A @@B
+AMB|cat @@2FIM
+AMB|cat @@FIM-DA-SONDA
+CORPUS_DO_OPERADOR
+)"
+CORPUS_OPERADOR="${CORPUS_OPERADOR//@@/$MENOR2}"
+
+# `shell_abre <linha>` — o SHELL REAL como oráculo, e não uma opinião sobre ele.
+# A sentinela da linha seguinte só nasce se aquela linha EXECUTAR: dentro de um
+# corpo de heredoc ela é dado, e nenhum arquivo aparece.
+shell_abre() {
+  rm -f "$TMP/sentinela_shell"
+  {
+    printf '%s\n' "$1"
+    printf 'printf x > "%s"\n' "$TMP/sentinela_shell"
+  } > "$TMP/oraculo.sh"
+  bash "$TMP/oraculo.sh" > /dev/null 2>&1
+  [ ! -f "$TMP/sentinela_shell" ]
+}
+
+# `veredito_de <linha>` — `NAO`, `AMB` ou o delimitador, pela leitura DESTE
+# arquivo.
+veredito_de() {
+  abertura_de_heredoc "$1"
+  if [ "$ABERTURA_AMBIGUA" -eq 1 ]; then printf 'AMB'
+  elif [ -n "$ABERTURA_HEREDOC" ]; then printf '%s' "$ABERTURA_HEREDOC"
+  else printf 'NAO'; fi
+}
+
+cp "$TMP/leitura_la.txt" "$TMP/leitura_la.sh"
+printf '%s\n' 'veredito_de() {' >> "$TMP/leitura_la.sh"
+printf '%s\n' '  abertura_de_heredoc "$1"' >> "$TMP/leitura_la.sh"
+printf '%s\n' '  if [ "$ABERTURA_AMBIGUA" -eq 1 ]; then printf AMB' >> "$TMP/leitura_la.sh"
+printf '%s\n' '  elif [ -n "$ABERTURA_HEREDOC" ]; then printf %s "$ABERTURA_HEREDOC"' >> "$TMP/leitura_la.sh"
+printf '%s\n' '  else printf NAO; fi' >> "$TMP/leitura_la.sh"
+printf '%s\n' '}' >> "$TMP/leitura_la.sh"
+
+hd=17
+while IFS='|' read -r esperado linha; do
+  [ -z "$esperado" ] && continue
+  aqui="$(veredito_de "$linha")"
+  la="$( . "$TMP/leitura_la.sh"; veredito_de "$linha" )"
+  if [ "$aqui" != "$esperado" ]; then
+    nok "HD$hd — esta leitura respondeu '$aqui' e o esperado era '$esperado': $linha"
+  elif [ "$la" != "$esperado" ]; then
+    nok "HD$hd — a autoridade externa respondeu '$la' e o esperado era '$esperado': $linha"
+  elif [ "$esperado" = 'AMB' ]; then
+    ok "HD$hd — entrada indecidível recusada pelas duas leituras: $linha"
+  elif [ "$esperado" = 'NAO' ]; then
+    if shell_abre "$linha"; then
+      nok "HD$hd — o SHELL REAL abriu heredoc onde as leituras disseram que não: $linha"
+    else
+      ok "HD$hd — o par não é operador, e o shell real segue executando: $linha"
+    fi
+  else
+    if shell_abre "$linha"; then
+      ok "HD$hd — abertura real reconhecida como '$esperado', e o shell real concorda: $linha"
+    else
+      nok "HD$hd — as leituras abriram '$esperado' e o SHELL REAL não abriu: $linha"
+    fi
+  fi
+  hd=$((hd + 1))
+done <<CORPUS_MEDIDO
+$CORPUS_OPERADOR
+CORPUS_MEDIDO
 
 printf '\n== matriz do agregador ==\n'
 
