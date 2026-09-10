@@ -91,10 +91,10 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh a06f342acc9e8b5f4623cb59542e0f9b6336e9c911dde646ee33ba0617b4e422
+scripts/ci/verificar_contrato_suites.sh 571b12c5ed78664691a11e04f4177f3cd45dd099aa86260d3f29e69cc6e9dd84
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
-scripts/ci/teste_portao_os_integracao.sh fc8edb6f2ab5cf533d0d4775f17c5cb64edaf260b286c601f39fbe0cb6c0457e
+scripts/ci/teste_portao_os_integracao.sh de368b1850a32070b1c812c8ce73ce32853fee552aa0998108616a283bb13ab7
 DIGESTOS_CONGELADOS
 )"
 readonly DIGESTOS
@@ -161,9 +161,9 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 1 vetores_do_passo_zero autverif
 1 vetores_do_passo_zero contratosui
 2 abertura_de_heredoc() {
-1 abertura_de_heredoc "$nu"
+1 abertura_de_heredoc "$acumulada"
 1 case "$delim" in
-5 ABERTURA_AMBIGUA=1
+6 ABERTURA_AMBIGUA=1
 1 esperar_classe() {
 1 leitura_do_heredoc() {
 1 cmp -s "$TMP/leitura_aqui.txt" "$TMP/leitura_la.txt"
@@ -174,6 +174,12 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 1 if (modo == "apendice") {
 1 if (modo == "prologo" && posto == 0 && L[i] ~ /^      - name: /) {
 1 linha_da_amostra() { printf '%s\n' "$1" >> "$AMOSTRA"; }
+1 if [ "$ctx" = 'S' ]; then
+2 ABERTURA_CONTINUA=1
+1 if [ "$ctx" != 'C' ]; then
+1 ABERTURA_TABS="$tabs"
+1 base=${#pref}
+1 if (modo == "heredoc_ind")
 DECISOES_MATERIAIS
 )"
 readonly EXIGENCIAS
@@ -189,8 +195,8 @@ readonly EXIGENCIAS
 # Aqui a chave e OBRIGATORIA e o valor tem PISO. Um numero menor do que o
 # congelado abaixo e regressao de prova, mesmo que a comparacao continue escrita.
 readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35"
-readonly MINIMOS_CASOS="comunicacao:81 portaoci:228 contratosui:68 rankingfn:465 autverif:96"
-readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:49 contratosui:29 rankingfn:15 autverif:18"
+readonly MINIMOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102"
+readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:29 rankingfn:15 autverif:24"
 readonly MINIMOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
 # A propria invocacao, que o workflow tem de continuar carregando. Apagar o
@@ -255,14 +261,33 @@ abertura_de_heredoc() {
   local linha="$1"
   local n=${#linha}
   local i=0 j=0 c='' d='' ctx='C' pilha='' delim='' parte='' aberta=0
-  local achadas=0 inicio=1
+  local achadas=0 inicio=1 tabs=0
   ABERTURA_HEREDOC=''
   ABERTURA_AMBIGUA=0
+  ABERTURA_TABS=0
+  ABERTURA_CONTINUA=0
   while [ "$i" -lt "$n" ]; do
     c="${linha:$i:1}"
 
-    # ASPA SIMPLES: nada la dentro e operador, nem sequer a barra invertida.
+    # ASPA SIMPLES CRUA: nada la dentro e operador, nem sequer a barra invertida.
     if [ "$ctx" = 'Q' ]; then
+      [ "$c" = "'" ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
+      i=$((i + 1))
+      continue
+    fi
+    # ANSI-C QUOTING NAO E ASPA CRUA (OS 40-C8). Em `$'...'` a barra invertida
+    # ESCAPA o proximo caractere, inclusive a aspa que fecharia o literal.
+    # Tratar os dois como o mesmo estado fechava a citacao cedo, achava o par
+    # `<<` em contexto de codigo e abria um corpo que o shell real NAO abre — e
+    # a linha seguinte, que o shell EXECUTA, sumia da auditoria (OS 40-R8, E1).
+    # `codigo_executavel.awk` ja separava os dois casos, e continua sendo a
+    # referencia desta distincao.
+    if [ "$ctx" = 'S' ]; then
+      if [ "$c" = '\' ]; then
+        [ "$((i + 1))" -ge "$n" ] && ABERTURA_CONTINUA=1
+        i=$((i + 2))
+        continue
+      fi
       [ "$c" = "'" ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
       i=$((i + 1))
       continue
@@ -287,7 +312,15 @@ abertura_de_heredoc() {
     # escapa o proximo caractere nos dois: `echo \<<EOF` nao abre heredoc, e o
     # shell real concorda — o que sobra ali e `<EOF`, redirecionamento de
     # ENTRADA.
-    if [ "$c" = '\' ]; then i=$((i + 2)); inicio=0; continue; fi
+    #
+    # NO FIM DA LINHA ela nao escapa caractere nenhum: apaga a QUEBRA. A linha
+    # logica continua na linha FISICA seguinte, que ainda e codigo executavel, e
+    # o corpo de um heredoc aberto aqui so comeca DEPOIS dela (OS 40-C8; era o
+    # escape E3 da OS 40-R8).
+    if [ "$c" = '\' ]; then
+      [ "$((i + 1))" -ge "$n" ] && ABERTURA_CONTINUA=1
+      i=$((i + 2)); inicio=0; continue
+    fi
     if [ "${linha:$i:3}" = '$((' ]; then
       pilha="$ctx$pilha"; ctx='A'; i=$((i + 3)); inicio=0
       continue
@@ -301,6 +334,12 @@ abertura_de_heredoc() {
     fi
     if [ "${linha:$i:2}" = '${' ]; then
       pilha="$ctx$pilha"; ctx='P'; i=$((i + 2)); inicio=0
+      continue
+    fi
+    # O par `$` + aspa simples so abre ANSI-C em CODIGO. Dentro de aspas duplas
+    # ele e literal, e o shell real nao lhe da tratamento nenhum.
+    if [ "$ctx" = 'C' ] && [ "${linha:$i:2}" = "\$'" ]; then
+      pilha="$ctx$pilha"; ctx='S'; i=$((i + 2)); inicio=0
       continue
     fi
     if [ "$ctx" = 'D' ]; then
@@ -325,7 +364,11 @@ abertura_de_heredoc() {
 
     if [ "${linha:$i:2}" = '<<' ]; then
       j=$((i + 2))
-      [ "${linha:$j:1}" = '-' ] && j=$((j + 1))
+      # `<<-` e a UNICA forma em que o shell remove indentacao do terminador, e
+      # remove somente TABULACOES. Guardar isso aqui e o que permite ao chamador
+      # fechar o corpo pela coluna real, e nao por linha aparada (OS 40-C8, E2).
+      tabs=0
+      [ "${linha:$j:1}" = '-' ] && { tabs=1; j=$((j + 1)); }
       while [ "$j" -lt "$n" ]; do
         case "${linha:$j:1}" in
           [[:blank:]]) j=$((j + 1)) ;;
@@ -374,7 +417,10 @@ abertura_de_heredoc() {
           ;;
         *)
           achadas=$((achadas + 1))
-          [ -z "$ABERTURA_HEREDOC" ] && ABERTURA_HEREDOC="$delim"
+          if [ -z "$ABERTURA_HEREDOC" ]; then
+            ABERTURA_HEREDOC="$delim"
+            ABERTURA_TABS="$tabs"
+          fi
           ;;
       esac
       i="$j"; inicio=1
@@ -395,9 +441,20 @@ abertura_de_heredoc() {
     ABERTURA_AMBIGUA=1
     return 0
   fi
-  # ASPA QUE NAO FECHOU e o par em algum lugar da linha: o estado com que a
-  # proxima linha comecaria nao e conhecido.
-  if [ "$achadas" -eq 0 ] && { [ "$ctx" != 'C' ] || [ -n "$pilha" ]; }; then
+  # A LINHA QUE ACABA DENTRO DE UMA CITACAO E INDECIDIVEL, E ISSO NAO DEPENDE DE
+  # JA TER ACHADO UM DELIMITADOR (OS 40-C8). Antes a conferencia estava presa a
+  # `achadas -eq 0`, e uma linha que abrisse heredoc saia com o delimitador e
+  # ambiguidade ZERO mesmo terminando com aspa aberta (OS 40-R8, E4). A
+  # ambiguidade passa a ter PRECEDENCIA sobre a abertura encontrada.
+  #
+  # `pilha` sozinha NAO e indecidivel: `X="$(cat <<'EOF'` termina em contexto de
+  # CODIGO, dentro de uma substituicao que continua na linha seguinte, e o shell
+  # real ABRE o corpo ali mesmo. So e indecidivel quando a linha acaba DENTRO de
+  # citacao ou expansao — e ai `ctx` deixa de ser 'C'.
+  if [ "$ctx" != 'C' ]; then
+    ABERTURA_HEREDOC=''
+    ABERTURA_AMBIGUA=1
+  elif [ "$achadas" -eq 0 ] && [ -n "$pilha" ]; then
     ABERTURA_AMBIGUA=1
   fi
   return 0
@@ -406,29 +463,84 @@ abertura_de_heredoc() {
 vivas_de() {
   local arq="$1" destino="$2"
   local bruta linha nu fim_heredoc='' ambiguas=0
+  local base=0 aguarda_base=0 pref sh_linha alvo TABV
+  local acumulada='' continuando=0 her_tabs=0 tem_op=0
+  TABV="$(printf '\t')"
   {
     while IFS= read -r bruta || [ -n "$bruta" ]; do
       linha="${bruta%$'\r'}"
       nu="${linha#"${linha%%[![:blank:]]*}"}"
+      # MESMO RECORTE DE BLOCO DA OUTRA LEITURA (OS 40-C8): esta funcao tambem e
+      # chamada sobre o workflow, onde o shell so recebe o bloco `run: |` ja
+      # dedentado. Num `.sh` nao ha bloco, a base fica zero e nada muda.
+      if [ "$aguarda_base" -eq 1 ] && [ -n "$nu" ]; then
+        pref="${linha%%[![:blank:]]*}"
+        base=${#pref}
+        aguarda_base=0
+      fi
+      sh_linha="$linha"
+      if [ "$base" -gt 0 ] && [ -n "$nu" ]; then
+        pref="${linha:0:$base}"
+        case "$pref" in
+          *[![:blank:]]*) base=0 ;;
+          *) sh_linha="${linha:$base}" ;;
+        esac
+      fi
+      # O TERMINADOR FECHA PELA COLUNA REAL: coluna zero sem `<<-`, e com `<<-`
+      # apenas TABULACOES iniciais sao removidas pelo shell.
       if [ -n "$fim_heredoc" ]; then
-        [ "$nu" = "$fim_heredoc" ] && fim_heredoc=''
+        alvo="$sh_linha"
+        if [ "$her_tabs" -eq 1 ]; then
+          while [ "${alvo#"$TABV"}" != "$alvo" ]; do alvo="${alvo#"$TABV"}"; done
+        fi
+        [ "$alvo" = "$fim_heredoc" ] && fim_heredoc=''
         continue
       fi
       case "$nu" in
-        '#'* | '') continue ;;
-      esac
-      ABERTURA_HEREDOC=''
-      case "$nu" in
-        *'<<'*)
-          abertura_de_heredoc "$nu"
-          if [ "$ABERTURA_AMBIGUA" -eq 1 ]; then
-            ambiguas=$((ambiguas + 1))
-            continue
-          fi
+        'run: |' | 'run: |-' | 'run: |+')
+          aguarda_base=1
+          base=0
           ;;
       esac
+      if [ "$continuando" -eq 0 ]; then
+        case "$nu" in
+          '#'* | '') continue ;;
+        esac
+        acumulada="$sh_linha"
+      else
+        acumulada="$acumulada$sh_linha"
+      fi
+      tem_op=0
+      case "$acumulada" in
+        *'<<'*) tem_op=1 ;;
+      esac
+      ABERTURA_HEREDOC=''
+      ABERTURA_AMBIGUA=0
+      ABERTURA_TABS=0
+      ABERTURA_CONTINUA=0
+      case "$acumulada" in
+        *'<<'* | *\\) abertura_de_heredoc "$acumulada" ;;
+      esac
+      # A CONTINUACAO FISICA CONTINUA VIVA: o comando e um so, e a linha
+      # seguinte ainda executa (OS 40-C8).
+      if [ "$ABERTURA_CONTINUA" -eq 1 ]; then
+        acumulada="${acumulada%\\}"
+        continuando=1
+        printf '%s\n' "$linha"
+        continue
+      fi
+      continuando=0
+      if [ "$tem_op" -eq 1 ] && [ "$ABERTURA_AMBIGUA" -eq 1 ]; then
+        ambiguas=$((ambiguas + 1))
+        acumulada=''
+        continue
+      fi
       printf '%s\n' "$linha"
-      [ -n "$ABERTURA_HEREDOC" ] && fim_heredoc="$ABERTURA_HEREDOC"
+      if [ -n "$ABERTURA_HEREDOC" ]; then
+        fim_heredoc="$ABERTURA_HEREDOC"
+        her_tabs="$ABERTURA_TABS"
+      fi
+      acumulada=''
     done < "$arq"
   } > "$destino"
   # LINHA INDECIDIVEL REPROVA (OS 40-C7): quem chama recusa, em vez de seguir

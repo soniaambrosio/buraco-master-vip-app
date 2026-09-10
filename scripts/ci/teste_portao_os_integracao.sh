@@ -234,14 +234,33 @@ abertura_de_heredoc() {
   local linha="$1"
   local n=${#linha}
   local i=0 j=0 c='' d='' ctx='C' pilha='' delim='' parte='' aberta=0
-  local achadas=0 inicio=1
+  local achadas=0 inicio=1 tabs=0
   ABERTURA_HEREDOC=''
   ABERTURA_AMBIGUA=0
+  ABERTURA_TABS=0
+  ABERTURA_CONTINUA=0
   while [ "$i" -lt "$n" ]; do
     c="${linha:$i:1}"
 
-    # ASPA SIMPLES: nada la dentro e operador, nem sequer a barra invertida.
+    # ASPA SIMPLES CRUA: nada la dentro e operador, nem sequer a barra invertida.
     if [ "$ctx" = 'Q' ]; then
+      [ "$c" = "'" ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
+      i=$((i + 1))
+      continue
+    fi
+    # ANSI-C QUOTING NAO E ASPA CRUA (OS 40-C8). Em `$'...'` a barra invertida
+    # ESCAPA o proximo caractere, inclusive a aspa que fecharia o literal.
+    # Tratar os dois como o mesmo estado fechava a citacao cedo, achava o par
+    # `<<` em contexto de codigo e abria um corpo que o shell real NAO abre — e
+    # a linha seguinte, que o shell EXECUTA, sumia da auditoria (OS 40-R8, E1).
+    # `codigo_executavel.awk` ja separava os dois casos, e continua sendo a
+    # referencia desta distincao.
+    if [ "$ctx" = 'S' ]; then
+      if [ "$c" = '\' ]; then
+        [ "$((i + 1))" -ge "$n" ] && ABERTURA_CONTINUA=1
+        i=$((i + 2))
+        continue
+      fi
       [ "$c" = "'" ] && { ctx="${pilha:0:1}"; pilha="${pilha:1}"; }
       i=$((i + 1))
       continue
@@ -266,7 +285,15 @@ abertura_de_heredoc() {
     # escapa o proximo caractere nos dois: `echo \<<EOF` nao abre heredoc, e o
     # shell real concorda — o que sobra ali e `<EOF`, redirecionamento de
     # ENTRADA.
-    if [ "$c" = '\' ]; then i=$((i + 2)); inicio=0; continue; fi
+    #
+    # NO FIM DA LINHA ela nao escapa caractere nenhum: apaga a QUEBRA. A linha
+    # logica continua na linha FISICA seguinte, que ainda e codigo executavel, e
+    # o corpo de um heredoc aberto aqui so comeca DEPOIS dela (OS 40-C8; era o
+    # escape E3 da OS 40-R8).
+    if [ "$c" = '\' ]; then
+      [ "$((i + 1))" -ge "$n" ] && ABERTURA_CONTINUA=1
+      i=$((i + 2)); inicio=0; continue
+    fi
     if [ "${linha:$i:3}" = '$((' ]; then
       pilha="$ctx$pilha"; ctx='A'; i=$((i + 3)); inicio=0
       continue
@@ -280,6 +307,12 @@ abertura_de_heredoc() {
     fi
     if [ "${linha:$i:2}" = '${' ]; then
       pilha="$ctx$pilha"; ctx='P'; i=$((i + 2)); inicio=0
+      continue
+    fi
+    # O par `$` + aspa simples so abre ANSI-C em CODIGO. Dentro de aspas duplas
+    # ele e literal, e o shell real nao lhe da tratamento nenhum.
+    if [ "$ctx" = 'C' ] && [ "${linha:$i:2}" = "\$'" ]; then
+      pilha="$ctx$pilha"; ctx='S'; i=$((i + 2)); inicio=0
       continue
     fi
     if [ "$ctx" = 'D' ]; then
@@ -304,7 +337,11 @@ abertura_de_heredoc() {
 
     if [ "${linha:$i:2}" = '<<' ]; then
       j=$((i + 2))
-      [ "${linha:$j:1}" = '-' ] && j=$((j + 1))
+      # `<<-` e a UNICA forma em que o shell remove indentacao do terminador, e
+      # remove somente TABULACOES. Guardar isso aqui e o que permite ao chamador
+      # fechar o corpo pela coluna real, e nao por linha aparada (OS 40-C8, E2).
+      tabs=0
+      [ "${linha:$j:1}" = '-' ] && { tabs=1; j=$((j + 1)); }
       while [ "$j" -lt "$n" ]; do
         case "${linha:$j:1}" in
           [[:blank:]]) j=$((j + 1)) ;;
@@ -353,7 +390,10 @@ abertura_de_heredoc() {
           ;;
         *)
           achadas=$((achadas + 1))
-          [ -z "$ABERTURA_HEREDOC" ] && ABERTURA_HEREDOC="$delim"
+          if [ -z "$ABERTURA_HEREDOC" ]; then
+            ABERTURA_HEREDOC="$delim"
+            ABERTURA_TABS="$tabs"
+          fi
           ;;
       esac
       i="$j"; inicio=1
@@ -374,9 +414,20 @@ abertura_de_heredoc() {
     ABERTURA_AMBIGUA=1
     return 0
   fi
-  # ASPA QUE NAO FECHOU e o par em algum lugar da linha: o estado com que a
-  # proxima linha comecaria nao e conhecido.
-  if [ "$achadas" -eq 0 ] && { [ "$ctx" != 'C' ] || [ -n "$pilha" ]; }; then
+  # A LINHA QUE ACABA DENTRO DE UMA CITACAO E INDECIDIVEL, E ISSO NAO DEPENDE DE
+  # JA TER ACHADO UM DELIMITADOR (OS 40-C8). Antes a conferencia estava presa a
+  # `achadas -eq 0`, e uma linha que abrisse heredoc saia com o delimitador e
+  # ambiguidade ZERO mesmo terminando com aspa aberta (OS 40-R8, E4). A
+  # ambiguidade passa a ter PRECEDENCIA sobre a abertura encontrada.
+  #
+  # `pilha` sozinha NAO e indecidivel: `X="$(cat <<'EOF'` termina em contexto de
+  # CODIGO, dentro de uma substituicao que continua na linha seguinte, e o shell
+  # real ABRE o corpo ali mesmo. So e indecidivel quando a linha acaba DENTRO de
+  # citacao ou expansao — e ai `ctx` deixa de ser 'C'.
+  if [ "$ctx" != 'C' ]; then
+    ABERTURA_HEREDOC=''
+    ABERTURA_AMBIGUA=1
+  elif [ "$achadas" -eq 0 ] && [ -n "$pilha" ]; then
     ABERTURA_AMBIGUA=1
   fi
   return 0
@@ -385,6 +436,9 @@ abertura_de_heredoc() {
 classificar_workflow() {
   local arq="$1" saida="$2"
   local n=0 passo=0 bruta linha nu espremida fim_heredoc=''
+  local base=0 aguarda_base=0 pref sh_linha alvo TABC
+  local acumulada='' continuando=0 her_tabs=0 tem_op=0
+  TABC="$(printf '\t')"
   {
     while IFS= read -r bruta || [ -n "$bruta" ]; do
       n=$((n + 1))
@@ -396,45 +450,114 @@ classificar_workflow() {
       done
       espremida="${espremida% }"
 
+      # O BLOCO `run: |` E O UNICO LUGAR DO WORKFLOW ONDE MORA SHELL, e o YAML
+      # entrega o bloco DEDENTADO ao bash. A indentacao do bloco e ESTRUTURA; o
+      # que sobra depois dela e CONTEUDO, e o shell a enxerga. Sem essa conta o
+      # terminador era comparado contra a linha inteiramente aparada, e um `EOF`
+      # indentado fechava aqui um corpo que o shell mantem ABERTO — purga,
+      # invocacao e captura viravam dado e a guarda as via vivas (OS 40-R8, E2).
+      #
+      # Nao e um parser de YAML: e o recorte do bloco literal, medido pela
+      # indentacao da primeira linha do bloco. Um arquivo sem `run: |` — os `.sh`
+      # que esta mesma leitura audita — fica com base zero e nada muda.
+      if [ "$aguarda_base" -eq 1 ] && [ -n "$nu" ]; then
+        pref="${linha%%[![:blank:]]*}"
+        base=${#pref}
+        aguarda_base=0
+      fi
+      sh_linha="$linha"
+      if [ "$base" -gt 0 ] && [ -n "$nu" ]; then
+        pref="${linha:0:$base}"
+        case "$pref" in
+          *[![:blank:]]*) base=0 ;;
+          *) sh_linha="${linha:$base}" ;;
+        esac
+      fi
+
       # Dentro de heredoc NADA é código: é dado que o shell entrega a outro
       # programa. Uma invocação escondida aí é texto, e texto não roda.
+      #
+      # O TERMINADOR FECHA PELA COLUNA REAL. Sem `<<-` ele tem de estar na
+      # coluna zero do shell; com `<<-` o shell remove TABULACOES iniciais, e
+      # somente elas — espaco nao vale como tab.
       if [ -n "$fim_heredoc" ]; then
-        [ "$nu" = "$fim_heredoc" ] && fim_heredoc=''
+        alvo="$sh_linha"
+        if [ "$her_tabs" -eq 1 ]; then
+          while [ "${alvo#"$TABC"}" != "$alvo" ]; do alvo="${alvo#"$TABC"}"; done
+        fi
+        [ "$alvo" = "$fim_heredoc" ] && fim_heredoc=''
         printf '%s\t%s\tHEREDOC\t%s\n' "$n" "$passo" "$espremida"
         continue
       fi
 
-      case "$linha" in
-        '      - name: '*)
-          passo=$((passo + 1))
-          printf '%s\t%s\tPASSO\t%s\n' "$n" "$passo" "$espremida"
-          continue
+      case "$nu" in
+        'run: |' | 'run: |-' | 'run: |+')
+          aguarda_base=1
+          base=0
           ;;
       esac
 
-      case "$nu" in
-        '#'*)
-          printf '%s\t%s\tCOMENTARIO\t%s\n' "$n" "$passo" "$espremida"
-          continue
-          ;;
-      esac
+      if [ "$continuando" -eq 0 ]; then
+        case "$linha" in
+          '      - name: '*)
+            passo=$((passo + 1))
+            printf '%s\t%s\tPASSO\t%s\n' "$n" "$passo" "$espremida"
+            continue
+            ;;
+        esac
+
+        case "$nu" in
+          '#'*)
+            printf '%s\t%s\tCOMENTARIO\t%s\n' "$n" "$passo" "$espremida"
+            continue
+            ;;
+        esac
+        acumulada="$sh_linha"
+      else
+        # LINHA FISICA QUE CONTINUA A ANTERIOR: o shell ja apagou a quebra, e o
+        # comando e um so. A decisao vale sobre a linha LOGICA inteira.
+        acumulada="$acumulada$sh_linha"
+      fi
 
       # ABERTURA DE HEREDOC, decidida ANTES de imprimir a classe: uma linha que
       # esta leitura nao consegue decidir com seguranca NAO pode sair como
       # CODIGO, porque a classe dela e o que a guarda usa para responder.
+      tem_op=0
+      case "$acumulada" in
+        *'<<'*) tem_op=1 ;;
+      esac
       ABERTURA_HEREDOC=''
-      case "$nu" in
-        *'<<'*)
-          abertura_de_heredoc "$nu"
-          if [ "$ABERTURA_AMBIGUA" -eq 1 ]; then
-            printf '%s\t%s\tAMBIGUO\t%s\n' "$n" "$passo" "$espremida"
-            continue
-          fi
-          ;;
+      ABERTURA_AMBIGUA=0
+      ABERTURA_TABS=0
+      ABERTURA_CONTINUA=0
+      case "$acumulada" in
+        *'<<'* | *\\) abertura_de_heredoc "$acumulada" ;;
       esac
 
+      # BARRA INVERTIDA NO FIM DA LINHA apaga a QUEBRA: o comando segue na linha
+      # fisica seguinte, que continua sendo CODIGO EXECUTAVEL e tem de ser
+      # auditada como tal. Entrar em HEREDOC aqui escondia a continuacao inteira
+      # (OS 40-R8, E3).
+      if [ "$ABERTURA_CONTINUA" -eq 1 ]; then
+        acumulada="${acumulada%\\}"
+        continuando=1
+        printf '%s\t%s\tCODIGO\t%s\n' "$n" "$passo" "$espremida"
+        continue
+      fi
+      continuando=0
+
+      if [ "$tem_op" -eq 1 ] && [ "$ABERTURA_AMBIGUA" -eq 1 ]; then
+        printf '%s\t%s\tAMBIGUO\t%s\n' "$n" "$passo" "$espremida"
+        acumulada=''
+        continue
+      fi
+
       printf '%s\t%s\tCODIGO\t%s\n' "$n" "$passo" "$espremida"
-      [ -n "$ABERTURA_HEREDOC" ] && fim_heredoc="$ABERTURA_HEREDOC"
+      if [ -n "$ABERTURA_HEREDOC" ]; then
+        fim_heredoc="$ABERTURA_HEREDOC"
+        her_tabs="$ABERTURA_TABS"
+      fi
+      acumulada=''
     done < "$arq"
   } > "$saida"
 }
@@ -1001,6 +1124,17 @@ FALSA_ABERTURA_SIMPLES="grep -n '${MENOR2}ALVO' scripts/ci/portao_os_integracao.
 # por conveniência.
 LINHA_AMBIGUA="echo \"abre ${MENOR2}FIM"
 
+# [OS 40-C8] ANSI-C QUOTING. `$'...'` nao e aspa simples crua: ali a barra
+# invertida ESCAPA o proximo caractere, inclusive a aspa. A OS 40-R8 (E1) usou
+# exatamente esta linha para fechar a citacao cedo, achar o par em contexto de
+# codigo e jogar a linha SEGUINTE — que o shell executa — na classe HEREDOC.
+FALSA_ABERTURA_ANSI="echo \$'a\\'b ${MENOR2}true '"
+
+# [OS 40-C8] CONTINUACAO FISICA DE LINHA. A barra invertida no fim apaga a
+# QUEBRA: o comando segue na linha fisica seguinte, que ainda EXECUTA. Entrar
+# em HEREDOC ao fim da primeira escondia a continuacao inteira (OS 40-R8, E3).
+CONTINUACAO_ABERTA="cat ${MENOR2}FIM_DA_SONDA \\"
+
 FORJA_ARQ=''
 FORJA_DIG=''
 FORJA_MOTIVO=''
@@ -1086,6 +1220,12 @@ sabotar() {
           # viraria dado, e as decisoes materiais desta suite apareceriam zero
           # vezes num repositorio intacto.
           if (modo == "heredoc")  { print rec "cat <" "<FIM_DA_FORJA > /dev/null"; print L[i]; print "FIM_DA_FORJA"; continue }
+          # [OS 40-C8] O MESMO EMBRULHO COM O TERMINADOR INDENTADO. Sem `<<-` o
+          # shell so fecha o corpo com o delimitador na COLUNA ZERO; dois espacos
+          # a mais nao fecham nada, e a invocacao segue sendo dado. Comparar o
+          # terminador contra a linha aparada fazia esta forma parecer viva
+          # (OS 40-R8, E2).
+          if (modo == "heredoc_ind") { print rec "cat <" "<FIM_DA_FORJA > /dev/null"; print rec "  FIM_DA_FORJA"; print L[i]; print rec "FIM_DA_FORJA"; continue }
           if (modo == "mover")    { guardada = L[i]; continue }
           if (modo == "antes")    { print rec extra; print L[i]; continue }
           if (modo == "depois")   { print L[i]; print rec extra; continue }
@@ -1439,6 +1579,34 @@ vetores_do_passo_zero() {
     "PZ31[$chave] — citação que não fecha é classificada como AMBIGUO"
   esperar_passo 1 "PZ31[$chave] — linha indecidível => VERMELHO, com a linha nomeada" 1 \
     'nao consegue decidir'
+
+  # -------------------------------------------------------------------------
+  # OS 40-C8 — OS TRES EIXOS QUE A OS 40-R8 MEDIU E A C7 NAO COBRIA
+  # -------------------------------------------------------------------------
+
+  # 32 — ANSI-C quoting (E1). A linha e um `echo` comum para o shell, e a
+  # sabotagem seguinte EXECUTA. Ela nao pode virar corpo de heredoc.
+  forjar_passo "$chave" "pz32_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $FALSA_ABERTURA_ANSI~          echo 0 > $marcador"
+  esperar_classe "$FORJA_ARQ" "echo 0 > $marcador" CODIGO \
+    "PZ32[$chave] — ANSI-C quoting não cega o restante: a escrita posterior continua sendo CÓDIGO"
+  esperar_passo 1 "PZ32[$chave] — ANSI-C quoting escondendo o marcador fabricado => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 33 — continuação física (E3). A segunda linha física é o MESMO comando, o
+  # shell a executa, e ela tem de ser auditada como código.
+  forjar_passo "$chave" "pz33_$chave.yml" && sabotar apendice \
+    "      - name: \"9z — apêndice da sonda\"~        run: |~          $CONTINUACAO_ABERTA~          ; echo 0 > $marcador~          FIM_DA_SONDA"
+  esperar_classe "$FORJA_ARQ" "; echo 0 > $marcador" CODIGO \
+    "PZ33[$chave] — continuação física: a linha seguinte continua sendo CÓDIGO"
+  esperar_passo 1 "PZ33[$chave] — continuação física escondendo o marcador fabricado => VERMELHO" 1 \
+    'escreve a evidencia'
+
+  # 34 — terminador indentado (E2). O corpo NAO fecha em coluna diferente de
+  # zero: a invocação canônica fica inerte, e a guarda tem de dizer isso.
+  forjar_passo "$chave" "pz34_$chave.yml" && sabotar heredoc_ind
+  esperar_passo 1 "PZ34[$chave] — terminador indentado deixa a invocação inerte => VERMELHO" 1 \
+    'aparece como HEREDOC'
 }
 
 vetores_do_passo_zero portaoci
@@ -1721,6 +1889,11 @@ AMB|echo 'abre @@FIM
 AMB|cat @@A @@B
 AMB|cat @@2FIM
 AMB|cat @@FIM-DA-SONDA
+NAO|echo $'a\'b @@true '
+NAO|echo $'texto @@FIM_DA_SONDA'
+NAO|x=$'a\'b'; echo ok
+AMB|cat @@FIM_DA_SONDA "aberta
+AMB|cat @@FIM_DA_SONDA 'aberta
 CORPUS_DO_OPERADOR
 )"
 CORPUS_OPERADOR="${CORPUS_OPERADOR//@@/$MENOR2}"

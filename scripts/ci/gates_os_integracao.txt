@@ -226,10 +226,10 @@ comunicacao
 portaoci
     suite      scripts/ci/teste_portao_os_integracao.sh
     executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
-    sha256     fc8edb6f2ab5cf533d0d4775f17c5cb64edaf260b286c601f39fbe0cb6c0457e
+    sha256     de368b1850a32070b1c812c8ce73ce32853fee552aa0998108616a283bb13ab7
     provas     74
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      228
+    casos      248
     contador   casos ok: [0-9]+
     exige      HERDADOS=
     exige      grep -qE 'GATES="[a-z]+ [a-z]+
@@ -254,7 +254,7 @@ portaoci
     exige      esperar_passo 1 "PZ18[$chave]
     exige      esperar_passo 1 "PZ19[$chave]
     exige      abertura_de_heredoc() {
-    exige      abertura_de_heredoc "$nu"
+    exige      abertura_de_heredoc "$acumulada"
     exige      case "$delim" in
     exige      ABERTURA_AMBIGUA=1
     exige      esperar_classe() {
@@ -271,6 +271,12 @@ portaoci
     exige      esperar_passo 1 "PZ29[$chave]
     exige      esperar_passo 0 "PZ30[$chave]
     exige      esperar_passo 1 "PZ31[$chave]
+    exige      if [ "$ctx" = 'S' ]; then
+    exige      ABERTURA_CONTINUA=1
+    exige      if [ "$ctx" != 'C' ]; then
+    exige      ABERTURA_TABS="$tabs"
+    exige      base=${#pref}
+    exige      [ "$alvo" = "$fim_heredoc" ] && fim_heredoc=''
     exige      sed -n '/^vivas_de() {/,/^}$/p' "$AUTORIDADE_EXTERNA" > "$TMP/vivas_de.sh"
     exige      cmp -s "$TMP/vivas_esp_$a" "$TMP/cod_$a"
     exige      if [ "$vista" = "$esperada" ]; then
@@ -293,7 +299,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     c19ed10a98dba56c6224fee5108c79232c8b5be2378bf14aeda333be66572ee3
+    sha256     1e73edff502ce0d74f7259d9856e2d8f4be608619c026021a7fd5dbde3b8521c
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -354,10 +360,10 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     5d774cb9844fb8fc1da30db5c337a762ffc9f22e1c6a843c8f8f039aa9f22119
+    sha256     e44d6324e37d79d608b5c3a6c782ade463f01609816faf7bd9cf38ccd07e832a
     provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
-    casos      96
+    casos      102
     contador   casos ok: [0-9]+
     exige      readonly INVENTARIO="\
     exige      readonly MINIMOS_PROVAS=
@@ -374,9 +380,15 @@ autverif
     exige      if grep -Fq -- "$alvo" "$vivo_workflow"; then
     exige      scripts/ci/teste_portao_os_integracao.sh "$INVOCACAO_PROPRIA"; do
     exige      abertura_de_heredoc() {
-    exige      abertura_de_heredoc "$nu"
+    exige      abertura_de_heredoc "$acumulada"
     exige      case "$delim" in
     exige      [ "$ambiguas" -eq 0 ]
+    exige      if [ "$ctx" = 'S' ]; then
+    exige      ABERTURA_CONTINUA=1
+    exige      if [ "$ctx" != 'C' ]; then
+    exige      ABERTURA_TABS="$tabs"
+    exige      base=${#pref}
+    exige      [ "$alvo" = "$fim_heredoc" ] && fim_heredoc=''
 
 # --- 7. codebases Firebase / Node que já eram portão ------------------------
 billing
