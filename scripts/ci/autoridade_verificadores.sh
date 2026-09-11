@@ -94,7 +94,7 @@ DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
 scripts/ci/verificar_contrato_suites.sh 571b12c5ed78664691a11e04f4177f3cd45dd099aa86260d3f29e69cc6e9dd84
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
-scripts/ci/teste_portao_os_integracao.sh de368b1850a32070b1c812c8ce73ce32853fee552aa0998108616a283bb13ab7
+scripts/ci/teste_portao_os_integracao.sh 6579c3c352fbec7d0a7f898f1ab7684211dd0a6b1d7623060be5ac58f74582f7
 DIGESTOS_CONGELADOS
 )"
 readonly DIGESTOS
@@ -482,7 +482,25 @@ vivas_de() {
       if [ "$base" -gt 0 ] && [ -n "$nu" ]; then
         pref="${linha:0:$base}"
         case "$pref" in
-          *[![:blank:]]*) base=0 ;;
+          # DEDENT ESTRUTURAL = FIM DO BLOCO `run:` (OS 40-C9). Uma linha nao
+          # vazia MENOS indentada que a base do bloco literal esta FORA dele:
+          # e YAML estrutural, nao conteudo shell. Cada `run:` do Actions e um
+          # script e um processo proprios, e o estado shell do bloco anterior —
+          # heredoc aberto, continuacao fisica, linha logica em curso — morre no
+          # EOF daquele script; ele NAO atravessa a fronteira nem alcanca o bloco
+          # seguinte. Era o falso verde `NX5` da OS 40-R9: `cat <<true` no fim de
+          # um bloco mantinha `fim_heredoc` vivo e o bloco seguinte sumia como
+          # HEREDOC. O reset vem ANTES do ramo que consome corpo de heredoc, e e
+          # disparado SO pela indentacao: `run: |` ou `- name:` dentro de um corpo
+          # de heredoc estao MAIS indentados que a base, nao chegam aqui, e
+          # continuam dado. Num `.sh` a base e zero e este ramo nao roda.
+          *[![:blank:]]*)
+            base=0
+            fim_heredoc=''
+            her_tabs=0
+            acumulada=''
+            continuando=0
+            ;;
           *) sh_linha="${linha:$base}" ;;
         esac
       fi

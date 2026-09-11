@@ -469,7 +469,25 @@ classificar_workflow() {
       if [ "$base" -gt 0 ] && [ -n "$nu" ]; then
         pref="${linha:0:$base}"
         case "$pref" in
-          *[![:blank:]]*) base=0 ;;
+          # DEDENT ESTRUTURAL = FIM DO BLOCO `run:` (OS 40-C9). Uma linha nao
+          # vazia MENOS indentada que a base do bloco literal esta FORA dele:
+          # e YAML estrutural, nao conteudo shell. Cada `run:` do Actions e um
+          # script e um processo proprios, e o estado shell do bloco anterior —
+          # heredoc aberto, continuacao fisica, linha logica em curso — morre no
+          # EOF daquele script; ele NAO atravessa a fronteira nem alcanca o bloco
+          # seguinte. Era o falso verde `NX5` da OS 40-R9: `cat <<true` no fim de
+          # um bloco mantinha `fim_heredoc` vivo e o bloco seguinte sumia como
+          # HEREDOC. O reset vem ANTES do ramo que consome corpo de heredoc, e e
+          # disparado SO pela indentacao: `run: |` ou `- name:` dentro de um corpo
+          # de heredoc estao MAIS indentados que a base, nao chegam aqui, e
+          # continuam dado. Num `.sh` a base e zero e este ramo nao roda.
+          *[![:blank:]]*)
+            base=0
+            fim_heredoc=''
+            her_tabs=0
+            acumulada=''
+            continuando=0
+            ;;
           *) sh_linha="${linha:$base}" ;;
         esac
       fi
@@ -2067,6 +2085,323 @@ bash "$PORTAO" "$FONTE" "$TMP/sem_dir" > /dev/null 2>&1
 [ "$?" = "2" ] && ok "C18 — diretório de resultados ausente => exit 2" \
                 || nok "C18 — diretório ausente deveria dar exit 2"
 
+
+printf '\n== fronteira de bloco run: cada run: e um script proprio (OS 40-C9) ==\n'
+
+# ---------------------------------------------------------------------------
+# RB01-RB14 — O ESTADO SHELL NAO ATRAVESSA A FRONTEIRA DO BLOCO `run:`
+# ---------------------------------------------------------------------------
+#
+# Cada `run:` do Actions e um script e um processo shell proprios: um heredoc,
+# uma continuacao fisica ou uma citacao aberta ao fim de um bloco morre no EOF
+# daquele script e NAO alcanca o bloco seguinte. A OS 40-R9 mediu o falso verde
+# `NX5`: `cat <<true` no fim de um bloco punha o bloco seguinte inteiro na classe
+# HEREDOC, e a escrita forjada de evidencia sumia da guarda.
+#
+# CADA CASO E MEDIDO EM TRES ORACULOS INDEPENDENTES:
+#   1. o SHELL REAL — cada bloco `run:` extraido como script separado e
+#      executado; a sentinela da carga nasce, ou nao;
+#   2. `classificar_workflow`, desta suite;
+#   3. `vivas_de`, extraida da AUTORIDADE EXTERNA e rodada aqui.
+# O resultado vem primeiro do shell real; so depois se compara as leituras.
+
+RB="$TMP/rb"; mkdir -p "$RB"
+RB_ARQ=''
+rb_novo()  { RB_ARQ="$RB/$1.yml"; : > "$RB_ARQ"; }
+rb_l()     { printf '%s\n' "$1" >> "$RB_ARQ"; }
+rb_passo() { rb_l "      - name: \"$1\""; rb_l "        run: |${2:-}"; }
+
+# vivas_de vem da autoridade externa, extraida por texto e rodada em SUBSHELL:
+# dar source nela no processo principal executaria a autoridade inteira.
+sed -n '/^vivas_de() {/,/^}$/p' "$AUTORIDADE_EXTERNA" > "$TMP/vivas_rb.sh"
+if [ ! -s "$TMP/vivas_rb.sh" ]; then
+  nok "RB00 — nao foi possivel extrair vivas_de da autoridade externa"
+else
+  . "$TMP/vivas_rb.sh"
+fi
+
+# `rb_extrai <yml>` — reparte o workflow em um script por bloco `run:`, dedentado
+# pela base do bloco, exatamente como o Actions entrega ao bash. E um oraculo
+# INDEPENDENTE de classificar_workflow: nao chama nada desta suite.
+rb_extrai() {
+  rm -f "$RB"/b_*.sh
+  RBD="$RB" awk '
+    { line=$0; sub(/\r$/,"",line); match(line,/^ */); i=RLENGTH; nu=substr(line,i+1)
+      if (aguarda && nu!="") { base=i; aguarda=0; inb=1 }
+      if (inb) {
+        if (nu!="" && i<base) { inb=0 }
+        else { print substr(line,base+1) >> (ENVIRON["RBD"] "/b_" nb ".sh"); next }
+      }
+      if (nu=="run: |" || nu=="run: |-" || nu=="run: |+") { nb++; aguarda=1; base=0; inb=0; next }
+    }' "$1"
+}
+
+# `esperar_sentinela <yml> <sentinela> <EXISTE|AUSENTE> <desc>` — o shell real,
+# um bloco por processo.
+esperar_sentinela() {
+  local yml="$1" sen="$2" quer="$3" desc="$4" b real
+  case "$yml" in */*) : ;; *) yml="$RB/$yml.yml" ;; esac
+  rb_extrai "$yml"
+  rm -f "$RB"/S_*
+  for b in "$RB"/b_*.sh; do [ -e "$b" ] || continue; ( cd "$RB" && bash "$b" ) >/dev/null 2>&1; done
+  if [ -e "$RB/$sen" ]; then real=EXISTE; else real=AUSENTE; fi
+  if [ "$real" = "$quer" ]; then
+    ok "$desc (shell real: $real)"
+  else
+    nok "$desc — shell real deu $real, esperado $quer"
+  fi
+}
+
+# `esperar_sentinela_sh <arq> <sentinela> <EXISTE|AUSENTE> <desc>` — arquivo
+# inteiro como UM script (o caso `.sh`, sem repartir por `run:`).
+esperar_sentinela_sh() {
+  local arq="$1" sen="$2" quer="$3" desc="$4" real
+  rm -f "$RB"/S_*
+  ( cd "$RB" && bash "$arq" ) >/dev/null 2>&1
+  if [ -e "$RB/$sen" ]; then real=EXISTE; else real=AUSENTE; fi
+  if [ "$real" = "$quer" ]; then
+    ok "$desc (shell real, script unico: $real)"
+  else
+    nok "$desc — shell real deu $real, esperado $quer"
+  fi
+}
+
+# `esperar_viva <yml> <linha crua> <SIM|NAO> <desc>` — a segunda leitura.
+esperar_viva() {
+  local yml="$1" linha="$2" quer="$3" desc="$4" real
+  vivas_de "$yml" "$RB/vivas.out"
+  if grep -qF -- "$linha" "$RB/vivas.out"; then real=SIM; else real=NAO; fi
+  if [ "$real" = "$quer" ]; then
+    ok "$desc (vivas_de: $real)"
+  else
+    nok "$desc — vivas_de deu $real, esperado $quer"
+  fi
+}
+
+# RB01 — heredoc aberto na ULTIMA linha do bloco; proximo bloco comeca com carga.
+rb_novo RB01
+rb_passo "RB01a — abre heredoc no fim do bloco"
+rb_l "          echo topo > S_RB01a"
+rb_l "          cat <<FIM_RB01"
+rb_passo "RB01b — bloco seguinte"
+rb_l "          echo VIVO > S_RB01b"
+esperar_sentinela RB01 S_RB01b EXISTE "RB01 — a carga do bloco seguinte executa"
+esperar_classe "$RB/RB01.yml" 'echo VIVO > S_RB01b' CODIGO "RB01 — carga do bloco seguinte e CODIGO"
+esperar_viva "$RB/RB01.yml" 'echo VIVO > S_RB01b' SIM "RB01 — carga do bloco seguinte e viva"
+
+# RB02 — mesma coisa com `run: |-` no bloco que abre.
+rb_novo RB02
+rb_passo "RB02a" "-"
+rb_l "          cat <<FIM_RB02"
+rb_passo "RB02b"
+rb_l "          echo VIVO > S_RB02"
+esperar_sentinela RB02 S_RB02 EXISTE "RB02 — run: |- nao deixa o estado atravessar"
+esperar_classe "$RB/RB02.yml" 'echo VIVO > S_RB02' CODIGO "RB02 — carga apos run: |- e CODIGO"
+
+# RB03 — `run: |+`.
+rb_novo RB03
+rb_passo "RB03a" "+"
+rb_l "          cat <<FIM_RB03"
+rb_passo "RB03b"
+rb_l "          echo VIVO > S_RB03"
+esperar_sentinela RB03 S_RB03 EXISTE "RB03 — run: |+ nao deixa o estado atravessar"
+esperar_classe "$RB/RB03.yml" 'echo VIVO > S_RB03' CODIGO "RB03 — carga apos run: |+ e CODIGO"
+
+# RB04 — `cat <<-FIM` sem terminador ao fim do bloco.
+rb_novo RB04
+rb_passo "RB04a"
+rb_l "          cat <<-FIM_RB04"
+rb_passo "RB04b"
+rb_l "          echo VIVO > S_RB04"
+esperar_sentinela RB04 S_RB04 EXISTE "RB04 — cat <<- sem terminador nao atravessa"
+esperar_classe "$RB/RB04.yml" 'echo VIVO > S_RB04' CODIGO "RB04 — carga apos <<- aberto e CODIGO"
+
+# RB05 — barra de continuacao como ultimo caractere shell do bloco A.
+rb_novo RB05
+rb_passo "RB05a"
+rb_l "          echo antes > S_RB05a"
+rb_l "          echo cont \\"
+rb_passo "RB05b"
+rb_l "          echo VIVO > S_RB05"
+if grep -qE 'echo cont \\$' "$RB/RB05.yml"; then
+  ok "RB05 — a barra de continuacao chegou intacta ao vetor"
+else
+  nok "RB05 — a barra de continuacao NAO chegou ao vetor"
+fi
+esperar_sentinela RB05 S_RB05 EXISTE "RB05 — continuacao no fim do bloco nao concatena com o proximo"
+esperar_classe "$RB/RB05.yml" 'echo VIVO > S_RB05' CODIGO "RB05 — carga do proximo bloco e CODIGO"
+esperar_viva "$RB/RB05.yml" 'echo VIVO > S_RB05' SIM "RB05 — carga do proximo bloco e viva"
+
+# RB06 — heredoc REAL, com terminador dentro do MESMO bloco: corpo inerte,
+# codigo posterior vive.
+rb_novo RB06
+rb_passo "RB06 heredoc fechado no bloco"
+rb_l "          cat <<FIM_RB06"
+rb_l "          echo NAO > S_RB06body"
+rb_l "          FIM_RB06"
+rb_l "          echo VIVO > S_RB06"
+esperar_sentinela RB06 S_RB06 EXISTE "RB06 — codigo apos o terminador executa"
+esperar_sentinela RB06 S_RB06body AUSENTE "RB06 — o corpo do heredoc nao executa"
+esperar_classe "$RB/RB06.yml" 'echo NAO > S_RB06body' HEREDOC "RB06 — corpo do heredoc e HEREDOC"
+esperar_classe "$RB/RB06.yml" 'echo VIVO > S_RB06' CODIGO "RB06 — codigo apos o terminador e CODIGO"
+
+# RB07 — texto `run: |` DENTRO do corpo de um heredoc: nao encerra nem reinicia.
+rb_novo RB07
+rb_passo "RB07 run no corpo"
+rb_l "          cat <<FIM_RB07"
+rb_l "          run: |"
+rb_l "          echo NAO > S_RB07body"
+rb_l "          FIM_RB07"
+rb_l "          echo VIVO > S_RB07"
+esperar_sentinela RB07 S_RB07body AUSENTE "RB07 — o corpo com texto run: | nao executa"
+esperar_classe "$RB/RB07.yml" 'echo NAO > S_RB07body' HEREDOC "RB07 — apos texto run: | no corpo, a linha segue HEREDOC"
+esperar_classe "$RB/RB07.yml" 'echo VIVO > S_RB07' CODIGO "RB07 — depois do terminador real volta a CODIGO"
+
+# RB08 — texto `- name:` DENTRO do corpo de um heredoc: nao cria passo.
+rb_novo RB08
+rb_passo "RB08 name no corpo"
+rb_l "          cat <<FIM_RB08"
+rb_l "          - name: fake"
+rb_l "          echo NAO > S_RB08body"
+rb_l "          FIM_RB08"
+rb_l "          echo VIVO > S_RB08"
+esperar_classe "$RB/RB08.yml" '- name: fake' HEREDOC "RB08 — - name: no corpo do heredoc e HEREDOC, nao PASSO"
+esperar_classe "$RB/RB08.yml" 'echo VIVO > S_RB08' CODIGO "RB08 — depois do terminador real volta a CODIGO"
+
+# RB09 — string shell contendo `run: |`: nao e fronteira.
+rb_novo RB09
+rb_passo "RB09 string com run"
+rb_l "          echo \"run: |\" > /dev/null"
+rb_l "          echo VIVO > S_RB09"
+esperar_sentinela RB09 S_RB09 EXISTE "RB09 — a carga apos a string executa"
+esperar_classe "$RB/RB09.yml" 'echo "run: |" > /dev/null' CODIGO "RB09 — string com run: | e CODIGO, nao fronteira"
+esperar_classe "$RB/RB09.yml" 'echo VIVO > S_RB09' CODIGO "RB09 — a carga seguinte e CODIGO"
+
+# RB10 — dois blocos integros consecutivos: nenhum vazamento.
+rb_novo RB10
+rb_passo "RB10a"; rb_l "          echo A > S_RB10a"
+rb_passo "RB10b"; rb_l "          echo B > S_RB10b"
+esperar_sentinela RB10 S_RB10a EXISTE "RB10 — primeiro bloco executa"
+esperar_sentinela RB10 S_RB10b EXISTE "RB10 — segundo bloco executa"
+esperar_classe "$RB/RB10.yml" 'echo A > S_RB10a' CODIGO "RB10 — primeiro bloco e CODIGO"
+esperar_classe "$RB/RB10.yml" 'echo B > S_RB10b' CODIGO "RB10 — segundo bloco e CODIGO"
+
+# RB11 — bloco novo comeca com linha vazia e comentario: base e estado corretos.
+rb_novo RB11
+rb_passo "RB11"
+rb_l ""
+rb_l "          # comentario antes do primeiro comando"
+rb_l "          echo VIVO > S_RB11"
+esperar_sentinela RB11 S_RB11 EXISTE "RB11 — a carga apos vazia+comentario executa"
+esperar_classe "$RB/RB11.yml" '# comentario antes do primeiro comando' COMENTARIO "RB11 — o comentario e COMENTARIO"
+esperar_classe "$RB/RB11.yml" 'echo VIVO > S_RB11' CODIGO "RB11 — a carga apos vazia+comentario e CODIGO"
+
+# RB12 — arquivo `.sh` (coluna zero) com texto `run: |`: nenhum reset artificial;
+# o arquivo inteiro e UM script.
+rb_novo RB12
+rb_l "cat <<FIM_RB12"
+rb_l "run: |"
+rb_l "echo NAO > S_RB12body"
+rb_l "FIM_RB12"
+rb_l "echo VIVO > S_RB12"
+esperar_sentinela_sh "$RB/RB12.yml" S_RB12 EXISTE "RB12 — .sh inteiro e um script; o codigo apos o terminador executa"
+esperar_sentinela_sh "$RB/RB12.yml" S_RB12body AUSENTE "RB12 — o corpo do heredoc no .sh nao executa"
+esperar_classe "$RB/RB12.yml" 'echo NAO > S_RB12body' HEREDOC "RB12 — sem reset artificial: corpo segue HEREDOC apesar do texto run: |"
+
+# RB13 — ambiguidade REAL antes da fronteira: fail-closed no bloco de origem, sem
+# contaminar o seguinte.
+rb_novo RB13
+rb_passo "RB13a ambiguidade"
+rb_l "          echo topo > S_RB13a"
+rb_l "          cat <<FIM_RB13 \"aberta"
+rb_passo "RB13b"
+rb_l "          echo VIVO > S_RB13b"
+esperar_classe "$RB/RB13.yml" 'cat <<FIM_RB13 "aberta' AMBIGUO "RB13 — a citacao que nao fecha e AMBIGUO (fail-closed na origem)"
+esperar_classe "$RB/RB13.yml" 'echo VIVO > S_RB13b' CODIGO "RB13 — o bloco seguinte nao e contaminado: CODIGO"
+esperar_sentinela RB13 S_RB13b EXISTE "RB13 — o bloco seguinte, como script proprio, executa"
+
+# RB14 — tres blocos; o primeiro termina em heredoc aberto; os dois seguintes
+# sao classificados independentemente.
+rb_novo RB14
+rb_passo "RB14a"; rb_l "          cat <<FIM_RB14"
+rb_passo "RB14b"; rb_l "          echo B > S_RB14b"
+rb_passo "RB14c"; rb_l "          echo C > S_RB14c"
+esperar_sentinela RB14 S_RB14b EXISTE "RB14 — segundo bloco executa"
+esperar_sentinela RB14 S_RB14c EXISTE "RB14 — terceiro bloco executa"
+esperar_classe "$RB/RB14.yml" 'echo B > S_RB14b' CODIGO "RB14 — segundo bloco e CODIGO"
+esperar_classe "$RB/RB14.yml" 'echo C > S_RB14c' CODIGO "RB14 — terceiro bloco e CODIGO"
+
+printf '\n== autoprotecao: a correcao de fronteira esta viva (OS 40-C9) ==\n'
+
+# A prova de que o instrumento pega o que deve: duas mutacoes temporarias, em
+# COPIAS FORA do toplevel (dentro de $TMP, destruido no trap), extraidas e
+# rodadas em SUBSHELL. Falha de copia ou de extracao vira FAIL.
+auto_classe() {  # <copia.sh> <yml> <linha espremida> -> ecoa a classe daquela linha
+  local copia="$1" yml="$2" linha="$3" t
+  t="$(mktemp)" || { printf 'SEM_MKTEMP'; return; }
+  awk '/^abertura_de_heredoc\(\) \{/,/^\}$/' "$copia" >  "$t"
+  awk '/^classificar_workflow\(\) \{/,/^\}$/' "$copia" >> "$t"
+  if ! grep -q 'ABERTURA_AMBIGUA' "$t"; then rm -f "$t"; printf 'EXTRACAO_VAZIA'; return; fi
+  (
+    ASPA_SIMPLES="'"; ASPA_DUPLA='"'
+    . "$t"
+    o="$(mktemp)"
+    classificar_workflow "$yml" "$o"
+    awk -F'\t' -v L="$linha" '$4==L{print $3; f=1; exit} END{if(!f)print "AUSENTE"}' "$o"
+    rm -f "$o"
+  )
+  rm -f "$t"
+}
+
+if [ ! -r "$0" ]; then
+  nok "AUTO — nao consigo ler a propria fonte ($0) para as mutacoes"
+else
+  # Prova de vida da bancada: na COPIA INTACTA a carga do bloco B ja e CODIGO.
+  auto_intacta="$(auto_classe "$0" "$RB/RB01.yml" 'echo VIVO > S_RB01b')"
+  if [ "$auto_intacta" = CODIGO ]; then
+    ok "AUTO-0 — copia extraida INTACTA classifica a carga do bloco B como CODIGO"
+  else
+    nok "AUTO-0 — extracao da propria fonte falhou ou divergiu: obtido '$auto_intacta'"
+  fi
+
+  # MUTACAO A — remove o reset da fronteira (restaura o vazamento NX5). A carga
+  # do bloco B tem de voltar a HEREDOC; se continuar CODIGO, a correcao nao era
+  # load-bearing e o instrumento estaria morto.
+  mutA="$TMP/mutA_$$.sh"
+  sed -e "/^            fim_heredoc=''$/d" \
+      -e '/^            her_tabs=0$/d' \
+      -e "/^            acumulada=''$/d" \
+      -e '/^            continuando=0$/d' "$0" > "$mutA"
+  if cmp -s "$0" "$mutA"; then
+    nok "AUTO-A — INSTRUMENTO INVALIDO: a mutacao que remove o reset nao mudou um byte"
+  else
+    resA="$(auto_classe "$mutA" "$RB/RB01.yml" 'echo VIVO > S_RB01b')"
+    if [ "$resA" = HEREDOC ]; then
+      ok "AUTO-A — sem o reset da fronteira o bloco B some como HEREDOC: a correcao e load-bearing"
+    else
+      nok "AUTO-A — esperado HEREDOC na copia sem reset (vazamento), obtido '$resA'"
+    fi
+  fi
+  rm -f "$mutA"
+
+  # MUTACAO B — reset INDISCRIMINADO por TEXTO: zera o estado sempre que a linha
+  # parece `run: |`/`- name:`, sem olhar indentacao. RB07 pega: o texto `run: |`
+  # no CORPO de um heredoc passaria a reiniciar o bloco e o dado viraria codigo.
+  mutB="$TMP/mutB_$$.sh"
+  sed '/if \[ -n "\$fim_heredoc" \]; then/a\
+        case "$nu" in "run: |"*|"- name:"*) fim_heredoc="" ;; esac' "$0" > "$mutB"
+  if cmp -s "$0" "$mutB"; then
+    nok "AUTO-B — INSTRUMENTO INVALIDO: a mutacao do reset indiscriminado nao mudou um byte"
+  else
+    resB="$(auto_classe "$mutB" "$RB/RB07.yml" 'echo NAO > S_RB07body')"
+    if [ "$resB" = CODIGO ]; then
+      ok "AUTO-B — reset indiscriminado por texto transforma corpo de heredoc em codigo: RB07 pega"
+    else
+      nok "AUTO-B — esperado CODIGO na copia com reset indiscriminado (bug), obtido '$resB'"
+    fi
+  fi
+  rm -f "$mutB"
+fi
 printf '\n----------------------------------------\n'
 printf 'casos ok: %d | casos com falha: %d\n' "$passou" "$falhou"
 

@@ -226,10 +226,10 @@ comunicacao
 portaoci
     suite      scripts/ci/teste_portao_os_integracao.sh
     executor   bash scripts/ci/teste_portao_os_integracao.sh 2>&1 | tee t_portaoci.log
-    sha256     de368b1850a32070b1c812c8ce73ce32853fee552aa0998108616a283bb13ab7
-    provas     74
+    sha256     6579c3c352fbec7d0a7f898f1ab7684211dd0a6b1d7623060be5ac58f74582f7
+    provas     92
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
-    casos      248
+    casos      293
     contador   casos ok: [0-9]+
     exige      HERDADOS=
     exige      grep -qE 'GATES="[a-z]+ [a-z]+
@@ -360,7 +360,7 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     e44d6324e37d79d608b5c3a6c782ade463f01609816faf7bd9cf38ccd07e832a
+    sha256     719db9f932f5f9b682815badf4bd844ac43ddd57a5307718371e5c69204df5ca
     provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
     casos      102
