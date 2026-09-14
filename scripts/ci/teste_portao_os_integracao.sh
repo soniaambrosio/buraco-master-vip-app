@@ -2331,6 +2331,133 @@ esperar_sentinela RB14 S_RB14c EXISTE "RB14 — terceiro bloco executa"
 esperar_classe "$RB/RB14.yml" 'echo B > S_RB14b' CODIGO "RB14 — segundo bloco e CODIGO"
 esperar_classe "$RB/RB14.yml" 'echo C > S_RB14c' CODIGO "RB14 — terceiro bloco e CODIGO"
 
+
+printf '\n== RB01-RB14: cobertura tripla completa e nomeada (OS 40-C10) ==\n'
+
+# ---------------------------------------------------------------------------
+# COBERTURA TRIPLA DIRETA — cada RB, os TRES oraculos, com asserção nomeada
+# ---------------------------------------------------------------------------
+#
+# A OS 40-C9 declarou "cada caso medido em tres oraculos", mas so RB01 e RB05
+# tinham chamada direta a `vivas_de`, e RB08 nao tinha execução propria contra o
+# shell real. A C10 completa a matriz: aqui abaixo cada RB01–RB14 ganha a
+# asserção direta que faltava, nomeada com o ID e o oraculo. As ausencias sao
+# testadas COMO ausencia (`vivas_de` NAO emite a linha), nunca inferidas.
+#
+# Os vetores RB01–RB14 ja foram construidos acima e persistem em "$RB"; as
+# funções `esperar_sentinela` (shell real), `esperar_classe`
+# (classificar_workflow) e `esperar_viva` (vivas_de, extraida da autoridade)
+# rodam sobre eles. Nada da lógica de produção dos dois leitores muda nesta OS.
+
+# `esperar_viva_rc <yml> <carga> <desc>` — o eixo `vivas_de` de RB13: a função
+# tem de RECUSAR pela ambiguidade do bloco A (RC != 0) E, ainda assim, ter
+# analisado o bloco B (a carga aparece na saida produzida).
+esperar_viva_rc() {
+  local yml="$1" carga="$2" desc="$3" rc
+  vivas_de "$yml" "$RB/vivas_rc.out"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    nok "$desc — vivas_de devia recusar pela ambiguidade (RC != 0), e deu RC 0"
+  elif ! grep -qF -- "$carga" "$RB/vivas_rc.out"; then
+    nok "$desc — vivas_de recusou, mas nao analisou o bloco B (carga ausente na saida)"
+  else
+    ok "$desc — vivas_de recusa pela ambiguidade (RC=$rc) E analisa o bloco B (carga presente)"
+  fi
+}
+
+# --- shell real que faltava ---
+esperar_sentinela RB07 S_RB07 EXISTE "RB07 [shell real] — o codigo apos o terminador executa"
+esperar_sentinela RB08 S_RB08body AUSENTE "RB08 [shell real] — o corpo do heredoc nao executa"
+esperar_sentinela RB08 S_RB08 EXISTE "RB08 [shell real] — o codigo apos o terminador executa"
+
+# --- classificar_workflow que faltava ---
+esperar_classe "$RB/RB12.yml" 'echo VIVO > S_RB12' CODIGO "RB12 [classificar] — codigo apos o terminador e CODIGO"
+
+# --- vivas_de para cada caso (o eixo que a C9 quase nao mediu) ---
+esperar_viva "$RB/RB02.yml" 'echo VIVO > S_RB02' SIM "RB02 [vivas] — carga do bloco seguinte presente"
+esperar_viva "$RB/RB03.yml" 'echo VIVO > S_RB03' SIM "RB03 [vivas] — carga do bloco seguinte presente"
+esperar_viva "$RB/RB04.yml" 'echo VIVO > S_RB04' SIM "RB04 [vivas] — carga do bloco seguinte presente"
+esperar_viva "$RB/RB06.yml" 'echo NAO > S_RB06body' NAO "RB06 [vivas] — corpo do heredoc AUSENTE"
+esperar_viva "$RB/RB06.yml" 'echo VIVO > S_RB06' SIM "RB06 [vivas] — codigo apos o terminador presente"
+esperar_viva "$RB/RB07.yml" 'echo NAO > S_RB07body' NAO "RB07 [vivas] — corpo (apos texto run: |) AUSENTE"
+esperar_viva "$RB/RB07.yml" 'echo VIVO > S_RB07' SIM "RB07 [vivas] — codigo apos o terminador presente"
+esperar_viva "$RB/RB08.yml" '- name: fake' NAO "RB08 [vivas] — - name: do corpo AUSENTE"
+esperar_viva "$RB/RB08.yml" 'echo NAO > S_RB08body' NAO "RB08 [vivas] — corpo do heredoc AUSENTE"
+esperar_viva "$RB/RB08.yml" 'echo VIVO > S_RB08' SIM "RB08 [vivas] — codigo apos o terminador presente"
+esperar_viva "$RB/RB09.yml" 'echo "run: |" > /dev/null' SIM "RB09 [vivas] — a string com run: | presente (e codigo)"
+esperar_viva "$RB/RB09.yml" 'echo VIVO > S_RB09' SIM "RB09 [vivas] — a carga seguinte presente"
+esperar_viva "$RB/RB10.yml" 'echo A > S_RB10a' SIM "RB10 [vivas] — carga do primeiro bloco presente"
+esperar_viva "$RB/RB10.yml" 'echo B > S_RB10b' SIM "RB10 [vivas] — carga do segundo bloco presente"
+esperar_viva "$RB/RB11.yml" '# comentario antes do primeiro comando' NAO "RB11 [vivas] — o comentario AUSENTE"
+esperar_viva "$RB/RB11.yml" 'echo VIVO > S_RB11' SIM "RB11 [vivas] — a carga apos vazia+comentario presente"
+esperar_viva "$RB/RB12.yml" 'echo NAO > S_RB12body' NAO "RB12 [vivas] — corpo do heredoc no .sh AUSENTE"
+esperar_viva "$RB/RB12.yml" 'echo VIVO > S_RB12' SIM "RB12 [vivas] — codigo apos o terminador presente"
+esperar_viva_rc "$RB/RB13.yml" 'echo VIVO > S_RB13b' "RB13 [vivas]"
+esperar_viva "$RB/RB14.yml" 'echo B > S_RB14b' SIM "RB14 [vivas] — carga do segundo bloco presente"
+esperar_viva "$RB/RB14.yml" 'echo C > S_RB14c' SIM "RB14 [vivas] — carga do terceiro bloco presente"
+
+printf '\n== autoprotecao C10: a cobertura de vivas_de e a do shell real estao vivas ==\n'
+
+# `auto_vivas_presente <copia_autoridade> <yml> <linha>` — extrai `vivas_de` de
+# uma COPIA da autoridade e diz se a linha aparece como codigo vivo. Extracao por
+# texto, execução em SUBSHELL: nunca reimplementada localmente, nunca por source
+# no processo principal.
+auto_vivas_presente() {
+  local copia="$1" yml="$2" linha="$3" t
+  t="$(mktemp)" || { printf 'SEM_MKTEMP'; return; }
+  awk '/^abertura_de_heredoc\(\) \{/,/^\}$/' "$copia" >  "$t"
+  awk '/^vivas_de\(\) \{/,/^\}$/'            "$copia" >> "$t"
+  if ! grep -q 'ambiguas' "$t"; then rm -f "$t"; printf 'EXTRACAO_VAZIA'; return; fi
+  (
+    ASPA_SIMPLES="'"; ASPA_DUPLA='"'
+    . "$t"
+    o="$(mktemp)"
+    vivas_de "$yml" "$o"
+    if grep -qF -- "$linha" "$o"; then printf 'SIM'; else printf 'NAO'; fi
+    rm -f "$o"
+  )
+  rm -f "$t"
+}
+
+# AUTO-C — remover o reset da fronteira de `vivas_de` (na COPIA externa da
+# autoridade) faz RB02/RB04/RB14 perderem a carga do bloco B: ela vira corpo do
+# heredoc aberto no bloco anterior. Prova que a cobertura de `vivas_de` e
+# load-bearing, e nao herdada da igualdade textual do reset.
+mutC="$TMP/mutC_$$.sh"
+sed -e "/^            fim_heredoc=''$/d" \
+    -e '/^            her_tabs=0$/d' \
+    -e "/^            acumulada=''$/d" \
+    -e '/^            continuando=0$/d' "$AUTORIDADE_EXTERNA" > "$mutC"
+if cmp -s "$AUTORIDADE_EXTERNA" "$mutC"; then
+  nok "AUTO-C — INSTRUMENTO INVALIDO: a mutacao que remove o reset de vivas_de nao mudou um byte"
+else
+  falhou_c=0
+  for par in "RB02:echo VIVO > S_RB02" "RB04:echo VIVO > S_RB04" "RB14:echo B > S_RB14b"; do
+    nome="${par%%:*}"; linha="${par#*:}"
+    intacta="$(auto_vivas_presente "$AUTORIDADE_EXTERNA" "$RB/$nome.yml" "$linha")"
+    mutada="$(auto_vivas_presente "$mutC" "$RB/$nome.yml" "$linha")"
+    if [ "$intacta" != SIM ] || [ "$mutada" != NAO ]; then
+      falhou_c=1
+      printf '  (AUTO-C %s: intacta=%s mutada=%s)\n' "$nome" "$intacta" "$mutada"
+    fi
+  done
+  if [ "$falhou_c" -eq 0 ]; then
+    ok "AUTO-C — sem o reset em vivas_de, RB02/RB04/RB14 perdem a carga do bloco B (intacta SIM, mutada NAO)"
+  else
+    nok "AUTO-C — a remocao do reset em vivas_de nao derrubou RB02/RB04/RB14 como devia"
+  fi
+fi
+rm -f "$mutC"
+
+# AUTO-D — adulterar o vetor RB08 para que a linha que deveria ser CORPO fique
+# FORA do heredoc (executavel): o oraculo do SHELL REAL detecta, porque a
+# sentinela passa a nascer. E a prova de que o eixo do shell real nao carimba
+# AUSENTE sem rodar o codigo.
+rb_novo RB08adult
+rb_passo "RB08adult — corpo fora do heredoc"
+rb_l "          cat <<FIM_RB08A"
+rb_l "          FIM_RB08A"
+rb_l "          echo EXEC > S_RB08adult"
+esperar_sentinela RB08adult S_RB08adult EXISTE "AUTO-D — RB08 adulterado (a linha-corpo saiu do heredoc) e o shell real DETECTA a execucao"
 printf '\n== autoprotecao: a correcao de fronteira esta viva (OS 40-C9) ==\n'
 
 # A prova de que o instrumento pega o que deve: duas mutacoes temporarias, em
