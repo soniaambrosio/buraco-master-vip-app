@@ -11,10 +11,12 @@
  *   cenarioDeIndex()   carrega `index.js` inteiro com as portas trocadas (ver
  *                      `carga_index.js`). Alcanca o catalogo, o credito de
  *                      fichas, as duas varreduras administrativas e os logs
- *                      daquele arquivo — que o caminho de modulo nao ve. Em
- *                      compensacao NAO tem relogio injetavel: `index.js` chama
- *                      `new Date()` direto. Isso esta declarado, e nenhum caso de
- *                      ordem depende dele.
+ *                      daquele arquivo — que o caminho de modulo nao ve. Como
+ *                      `index.js` chama `new Date()` direto, sem porta, o
+ *                      instante e ditado POR FORA: o cenario congela `Date` em
+ *                      `AGORA_DE_INDEX` (ou no instante que o caso pedir) e o
+ *                      desfaz depois. Continua sem FILA de instantes, e nenhum
+ *                      caso de ordem depende dele.
  *
  * TOKENS SINTETICOS, SEMPRE. Todo token deste harness comeca com
  * `token_sintetico_`. Nenhum `purchaseToken` da Google tem esse formato, entao
@@ -30,7 +32,11 @@ const { criarProcessadorRtdn } = require('../../rtdn');
 const { FirestoreAdversarial, CARIMBO } = require('./firestore_adversarial');
 const { criarPlayFalsa } = require('./play_falsa');
 const { RelogioFalso } = require('./relogio_falso');
-const { carregarIndex } = require('./carga_index');
+const {
+  carregarIndex,
+  instalarRelogioGlobal,
+  restaurarRelogioGlobal,
+} = require('./carga_index');
 
 const PACOTE = 'io.github.soniaambrosio.buracomastervip';
 const PRODUTO = 'master_vip_mensal';
@@ -70,6 +76,61 @@ const T4 = '2026-08-16T14:00:00.000Z';
 const PASSADO = '2026-07-16T10:00:00.000Z';
 const FUTURO = '2026-09-16T10:00:00.000Z';
 const FUTURO_LONGE = '2026-10-16T10:00:00.000Z';
+
+/**
+ * O instante controlado padrao do cenario de `index.js`.
+ *
+ * E o MESMO T0 em que o relogio do cenario de modulo comeca, de proposito: os
+ * dois caminhos passam a decidir contra o mesmo instante, e um prazo escrito
+ * `FUTURO` significa a mesma coisa nos dois. Antes disto o caminho de index
+ * decidia contra o calendario de quem rodava a suite, que e outro regime de
+ * tempo convivendo com o primeiro sem estar declarado.
+ */
+const AGORA_DE_INDEX = T0;
+
+/**
+ * A BANDA TEMPORAL DA FIXTURE, CONFERIDA NA CARGA.
+ *
+ * `PASSADO` e `FUTURO` sao NOMES de uma relacao, nao datas com significado
+ * proprio: o que importa e que um esteja antes e o outro depois do instante
+ * contra o qual os casos decidem. Enquanto a relacao ficou implicita em quatro
+ * literais, ela pode ser quebrada por uma edicao distraida — e foi assim que a
+ * suite ficou vermelha, quando o instante de decisao andou para fora da banda.
+ * Aqui a relacao e afirmada, e quebra-la para a carga do harness em vez de
+ * produzir nove falhas sem explicacao.
+ */
+{
+  const ms = (i) => new Date(i).getTime();
+  const ordenados = [PASSADO, AGORA_DE_INDEX, FUTURO, FUTURO_LONGE];
+  for (let i = 1; i < ordenados.length; i += 1) {
+    if (!(ms(ordenados[i - 1]) < ms(ordenados[i]))) {
+      throw new Error(
+        'cenario: a banda temporal da fixture deixou de valer. Exige-se '
+        + `PASSADO < AGORA_DE_INDEX < FUTURO < FUTURO_LONGE, e veio ${ordenados.join(' , ')}`
+      );
+    }
+  }
+}
+
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Um instante deslocado de outro. Sempre pela forma COM argumento de `Date`,
+ * que o relogio controlado nao dita — se usasse `new Date()` aqui, o
+ * deslocamento passaria a ser medido a partir do proprio instante congelado e a
+ * funcao deixaria de servir para monta-lo.
+ */
+function deslocarInstante(instante, ms) {
+  const base = new Date(instante).getTime();
+  if (Number.isNaN(base)) throw new Error(`instante invalido: ${instante}`);
+  return new Date(base + ms).toISOString();
+}
+
+/** Um prazo que esta no futuro EM RELACAO ao instante dado, seja ele qual for. */
+const futuroDe = (instante) => deslocarInstante(instante, 30 * DIA_MS);
+
+/** Um prazo que esta no passado EM RELACAO ao instante dado. */
+const passadoDe = (instante) => deslocarInstante(instante, -30 * DIA_MS);
 
 /**
  * As duas pontas da vinculacao, semeadas juntas — como a transacao de
@@ -265,7 +326,13 @@ function cenarioDeModulo({ inicio = T0, maxTentativas, vincular = true } = {}) {
  * `index.js` carregado com portas falsas. Ver o cabecalho de `carga_index.js`
  * para o que exatamente foi trocado e por que nada disto alcanca a rede.
  */
-function cenarioDeIndex({ maxTentativas, catalogo, vincular = true } = {}) {
+function cenarioDeIndex({ maxTentativas, catalogo, vincular = true, agora = AGORA_DE_INDEX } = {}) {
+  // ANTES da carga: `index.js` nao le o relogio ao ser requerido, mas um dia
+  // pode passar a ler, e a ordem certa nao custa nada. A restauracao NAO fica
+  // aqui — ela e responsabilidade do `afterEach` da suite, que roda mesmo
+  // quando o caso lanca. Ver o cabecalho de `carga_index.js`.
+  instalarRelogioGlobal(agora);
+
   const { modulo, db, play } = carregarIndex({ maxTentativas });
 
   if (vincular) {
@@ -300,6 +367,14 @@ function cenarioDeIndex({ maxTentativas, catalogo, vincular = true } = {}) {
     modulo,
     db,
     play,
+    /** O instante contra o qual TUDO neste cenario e decidido. */
+    agora,
+    /** Um prazo no futuro deste cenario — e nao de um calendario qualquer. */
+    futuro: futuroDe(agora),
+    /** Um prazo ja vencido neste cenario. */
+    passado: passadoDe(agora),
+    /** Desfaz o relogio controlado. A suite ja chama isto depois de cada caso. */
+    restaurarRelogio: restaurarRelogioGlobal,
     /** Chama o callable como o runtime chamaria, com identidade ja verificada. */
     chamar(nome, { uid, admin = false, dados = {} } = {}) {
       const auth = uid ? { uid, token: admin ? { admin: true } : {} } : null;
@@ -349,6 +424,11 @@ module.exports = {
   PASSADO,
   FUTURO,
   FUTURO_LONGE,
+  AGORA_DE_INDEX,
+  deslocarInstante,
+  futuroDe,
+  passadoDe,
+  restaurarRelogioGlobal,
   publicoDe,
   internoDe,
   eventoDe,
