@@ -57,7 +57,11 @@ admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || "demo-bmv" });
 
 const { executar, lerPublicId, C_DIARIO } = require("../lib/executor");
 const { ETAPAS } = require("../lib/plano");
-const { APELIDO_ANONIMO, ESTADO_PERFIL_REMOVIDO } = require("../lib/inventario");
+const {
+  APELIDO_ANONIMO,
+  ESTADO_PERFIL_REMOVIDO,
+  itemPorId,
+} = require("../lib/inventario");
 
 const db = admin.firestore();
 const auth = admin.auth();
@@ -112,6 +116,8 @@ const COLECOES = [
   "economiaLedger",
   "salasPrivadas",
   "playerCourtesyPass",
+  // CT1 da OS 40-I1: o contador de rajada do chat.
+  "chatRitmo",
   C_DIARIO,
 ];
 
@@ -1040,5 +1046,156 @@ describe("jogador com passe de cortesia", () => {
 
     assert.equal(await existe("playerCourtesyPass/" + TERCEIRO), true);
     assert.equal(await existe("playerCourtesyPass/" + TERCEIRO + "/cycles/2026-Q3"), true);
+  });
+});
+
+// ===========================================================================
+// O RITMO DE FALA DO CHAT — `chatRitmo/{uid}`
+// ===========================================================================
+//
+// CT1 da OS 40-I1. A colecao estava declarada em `firestore.rules` e ausente da
+// matriz; o guard de cobertura acusou, e a decisao escrita e APAGAR.
+//
+// ESTA SUITE E A UNICA QUE DISTINGUE "declarado" DE "acontece". `executor.ts`
+// NAO le o campo `alcance`: quem apaga e uma linha escrita a mao dentro de
+// `apagarModeracao`. Sem estes casos, a matriz poderia mandar apagar, a previa
+// de `resumirExclusaoDeConta` poderia PROMETER ao jogador que o documento sai, e
+// o documento continuaria no banco — com a suite unitaria inteira verde.
+
+/// A colecao do ritmo, LIDA DA MATRIZ e nao de um literal.
+///
+/// E o que amarra a declaracao ao efeito. Trocar o `alcance` do item por
+/// `semAcao`, ou apontar a colecao para outro nome, faz esta funcao reprovar
+/// antes de qualquer asserticao de banco — enquanto a semeadura, logo abaixo,
+/// continua gravando no caminho REAL. Se as duas pontas saissem da matriz, uma
+/// matriz mentirosa combinaria consigo mesma e a suite passaria.
+function colecaoDoRitmo() {
+  const item = itemPorId("moderacao.ritmoDeChat");
+  assert.ok(item, "o item `moderacao.ritmoDeChat` sumiu da matriz");
+  assert.equal(item.classe, "APAGAR", "a matriz deixou de mandar apagar o ritmo de fala");
+  assert.equal(
+    item.alcance.modo,
+    "docPorUid",
+    "a matriz deixou de dizer COMO alcancar o ritmo de fala"
+  );
+  return item.alcance.colecao;
+}
+
+/// Grava o contador de rajada do ALVO e o do TERCEIRO, no caminho literal.
+///
+/// A forma e a real: `recentes`, `recusasSeguidas` e `bloqueadoAteMs` sao os
+/// campos de `EstadoDeRitmo` (app/lib/comunicacao/limites.dart), e
+/// `atualizadoEm` e o que a Function acrescenta ao gravar.
+async function semearRitmo() {
+  for (const uid of [ALVO, TERCEIRO]) {
+    await db
+      .collection("chatRitmo")
+      .doc(uid)
+      .set({
+        recentes: [
+          { emMs: 1789300000000, itemId: "boa_noite" },
+          { emMs: 1789300030000, itemId: "boa_sorte" },
+        ],
+        recusasSeguidas: 2,
+        bloqueadoAteMs: 1789300300000,
+        atualizadoEm: "2026-09-17T12:00:00.000Z",
+      });
+  }
+}
+
+describe("ritmo de fala do chat", () => {
+  test("o documento do excluido existe antes, e nao existe depois", async () => {
+    await semearComum();
+    await semearRitmo();
+    const colecao = colecaoDoRitmo();
+
+    assert.equal(
+      await existe(`${colecao}/${ALVO}`),
+      true,
+      "a fixture precisa EXISTIR antes, senao o 'depois' nao prova nada"
+    );
+
+    const r = await executar(ALVO);
+
+    assert.ok(
+      r.etapasConcluidas.includes("moderacaoDoJogador"),
+      "a exclusao tem que CHEGAR na etapa material que realiza o item"
+    );
+    assert.equal(await existe(`${colecao}/${ALVO}`), false);
+  });
+
+  test("o ritmo de OUTRO jogador fica inalterado, campo por campo", async () => {
+    await semearComum();
+    await semearRitmo();
+    const colecao = colecaoDoRitmo();
+    const antes = await dados(`${colecao}/${TERCEIRO}`);
+
+    await executar(ALVO);
+
+    const depois = await dados(`${colecao}/${TERCEIRO}`);
+    assert.ok(depois, "o contador do terceiro nao pode sumir por consequencia");
+    assert.deepEqual(depois, antes, "nem sumir, nem ser tocado");
+  });
+
+  test("a chamada repetida continua idempotente", async () => {
+    await semearComum();
+    await semearRitmo();
+    const colecao = colecaoDoRitmo();
+
+    await executar(ALVO);
+    const segunda = await executar(ALVO);
+
+    assert.equal(segunda.repeticao, true);
+    assert.equal(await existe(`${colecao}/${ALVO}`), false);
+    assert.equal(await existe(`${colecao}/${TERCEIRO}`), true);
+  });
+
+  test("falha parcial e retomada nao ressuscitam o documento", async () => {
+    // Sem conta no Auth, `trancar` falha e a exclusao para ANTES de
+    // `moderacaoDoJogador`. O documento tem que continuar la, esperando — e
+    // sumir na retomada, sem voltar depois.
+    await db.collection("playerIdentities").doc(ALVO).set({ uid: ALVO, publicId: PUBLIC_ID });
+    await db.collection("users").doc(ALVO).set({ criadoEm: "2026-01-01" });
+    await db.collection("wallets").doc(ALVO).set({ fichas: 77 });
+    await semearRitmo();
+    const colecao = colecaoDoRitmo();
+
+    const parcial = await executar(ALVO);
+    assert.equal(parcial.estado, "parcial");
+    assert.equal(
+      await existe(`${colecao}/${ALVO}`),
+      true,
+      "parou na primeira etapa: nada depois dela pode ter rodado"
+    );
+
+    await criarContaAuth(ALVO);
+    const retomada = await executar(ALVO);
+
+    assert.equal(retomada.estado, "concluida");
+    assert.equal(await existe(`${colecao}/${ALVO}`), false);
+    assert.equal(
+      await existe(`${colecao}/${TERCEIRO}`),
+      true,
+      "e o do terceiro nunca entrou nesta conta"
+    );
+  });
+
+  test("nenhuma sancao ou denuncia e apagada por consequencia", async () => {
+    // A confusao que esta decisao precisa NAO criar: apagar o contador de
+    // rajada nao e apagar a ficha disciplinar. Sao coisas diferentes, moram em
+    // colecoes diferentes de proposito, e so uma delas sai.
+    await semearComum();
+    await semearDenuncias();
+    await semearRitmo();
+    const colecao = colecaoDoRitmo();
+
+    await executar(ALVO);
+
+    assert.equal(await existe(`${colecao}/${ALVO}`), false, "o contador de rajada sai");
+    assert.ok(await existe("sanctions/s1"), "a sancao FICA");
+    assert.ok(
+      await existe(`playerModeration/${ALVO}`),
+      "e o estado disciplinar tambem: ele e RETIDO na matriz"
+    );
   });
 });

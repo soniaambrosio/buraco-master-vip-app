@@ -923,6 +923,16 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
       "MENSAGEM COMUM NAO E REGISTRO COMPARTILHADO: ela e fala DE UMA PESSOA, e o conteudo e dela. Apagar as mensagens do excluido nao derruba a conversa de ninguem — as dos outros participantes permanecem, porque a consulta e por `autorUid`. NAO se retem a colecao inteira por precaucao: evidencia ja vinculada a um caso de moderacao ou seguranca segue a politica daquele caso, com finalidade, prazo e fundamento proprios, e fica FORA do caminho normal do produto — nao e este item que a autoriza, e este item nao a alcanca.",
   },
 
+  {
+    id: "moderacao.ritmoDeChat",
+    caminho: "chatRitmo/{uid}",
+    dominio: "moderacao",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "chatRitmo" },
+    porque:
+      "ESTADO OPERACIONAL DE RITMO, E DE MAIS NINGUEM. O documento guarda o historico recente de envios do proprio jogador — instante e id de cada fala —, as recusas seguidas e o bloqueio temporario que o freio anti-spam aplica. NAO E SANCAO NEM HISTORICO DISCIPLINAR: a regra do Firestore separa esta colecao de `playerModeration` justamente para que contagem de rajada nao vire disciplina, e e `playerModeration` — retido — que guarda o fundamento de qualquer punicao. Nao preserva direito, pontuacao, prova nem vinculo de terceiro: e chaveado pelo UID e descreve o ritmo DESTE jogador, e de ninguem mais. Encerrada a conta, nao existe agente legitimo que volte a falar por ela: nao ha rajada futura a frear, e reter o documento seria guardar estado pessoal sem finalidade. Por isso e apagado.",
+  },
+
   // =========================================================================
   // CONQUISTAS
   // =========================================================================
