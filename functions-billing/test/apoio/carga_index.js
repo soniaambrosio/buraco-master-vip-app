@@ -35,6 +35,14 @@
  * dominio `.invalid` e sem chave — ele existe so porque `androidPublisher()` faz
  * `JSON.parse` antes de montar o cliente, e o cliente montado e o falso. Nenhum
  * segredo real e lido, e nenhum arquivo de credencial e procurado.
+ *
+ * O RELOGIO TAMBEM E UMA PORTA, E ATE AQUI ELE NAO ERA TROCADO. `index.js`
+ * chama `new Date()` direto, sem parametro injetavel. Enquanto isso valia, o
+ * instante de cada consulta vinha do calendario de quem rodava a suite, e um
+ * caso que declarava prazo "no futuro" tinha validade — no dia em que a data
+ * civil passou daquele valor, nove casos viraram vermelhos sem que uma linha de
+ * codigo mudasse. `instalarRelogioGlobal` fecha esse ultimo vazamento de
+ * ambiente: ver o bloco proprio, mais abaixo.
  */
 
 'use strict';
@@ -63,6 +71,82 @@ const SEGREDO_SINTETICO = JSON.stringify({
 
 /** O que `getFirestore()` deve devolver na proxima carga. Trocado por cenario. */
 const estado = { db: null, play: null };
+
+// ------------------------------------------------------- relogio controlado
+
+/**
+ * A `Date` REAL, capturada na carga deste modulo e nunca mais reatribuida.
+ *
+ * A captura precisa acontecer AQUI, e nao no momento da troca: um cenario
+ * aninhado (Z1 monta dois) instalaria o relogio por cima de um relogio ja
+ * controlado, e uma restauracao que voltasse "para o que estava antes" devolveria
+ * o falso no lugar do verdadeiro. Com a referencia unica, toda restauracao chega
+ * ao original em um passo, quantas vezes for chamada.
+ */
+const DateReal = globalThis.Date;
+
+/** `{instante, ms}` enquanto ha relogio instalado; `null` quando nao ha. */
+let relogioControlado = null;
+
+/**
+ * Dita o instante que `new Date()` e `Date.now()` devolvem.
+ *
+ * POR QUE ISTO E PECA DE PROVA. As afirmacoes "este prazo esta no futuro" e
+ * "este prazo venceu" so tem sentido CONTRA um instante. No caminho de modulo
+ * esse instante e ditado por `RelogioFalso`; no caminho de `index.js` ele vinha
+ * do sistema operacional, e por isso o mesmo codigo produzia veredictos
+ * diferentes em dias diferentes. Ditando o instante, "futuro" e "passado" passam
+ * a ser afirmacoes sobre o instante CONTROLADO do caso, que nao vence nunca.
+ *
+ * SO A FORMA SEM ARGUMENTO E DITADA. `new Date(x)` continua interpretando `x`
+ * exatamente como antes, e disso dependem `RelogioFalso`, a comparacao de
+ * instantes de `entitlement.js` e toda leitura de prazo ja gravado. Mudar a
+ * interpretacao de argumento mudaria o significado dos cenarios de relogio
+ * injetado, que esta correcao nao toca.
+ *
+ * @param {string} instante ISO-8601 UTC
+ * @returns {() => void} a restauracao
+ */
+function instalarRelogioGlobal(instante) {
+  const ms = DateReal.parse(instante);
+  if (Number.isNaN(ms)) {
+    throw new Error(`carga_index: instante controlado invalido: ${instante}`);
+  }
+
+  class DateControlada extends DateReal {
+    constructor(...args) {
+      if (args.length === 0) super(ms);
+      else super(...args);
+    }
+
+    static now() {
+      return ms;
+    }
+  }
+
+  globalThis.Date = DateControlada;
+  relogioControlado = { instante, ms };
+  return restaurarRelogioGlobal;
+}
+
+/**
+ * Devolve `Date` ao original.
+ *
+ * Idempotente de proposito: `adversarial.test.js` a chama depois de CADA caso,
+ * inclusive nos que nunca instalaram relogio e — o que importa — nos que
+ * lancaram no meio. Um caso que falhasse antes de restaurar deixaria `Date`
+ * trocada para todos os seguintes, e a suite passaria a medir o residuo do caso
+ * anterior em vez do proprio cenario.
+ */
+function restaurarRelogioGlobal() {
+  globalThis.Date = DateReal;
+  relogioControlado = null;
+}
+
+/** O instante instalado, ou `null`. Evidencia direta para o teste. */
+function relogioGlobalInstalado() {
+  return relogioControlado ? relogioControlado.instante : null;
+}
 
 function plantar(especificador, exportacoes) {
   const alvo = require.resolve(especificador);
@@ -163,4 +247,11 @@ function carregarIndex({ maxTentativas } = {}) {
   return { modulo, db, play };
 }
 
-module.exports = { carregarIndex, SEGREDO_SINTETICO, CAMINHO_INDEX };
+module.exports = {
+  carregarIndex,
+  SEGREDO_SINTETICO,
+  CAMINHO_INDEX,
+  instalarRelogioGlobal,
+  restaurarRelogioGlobal,
+  relogioGlobalInstalado,
+};

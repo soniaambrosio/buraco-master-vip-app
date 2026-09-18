@@ -34,7 +34,7 @@ const assert = require('node:assert');
 
 const { ESTADO, NOTIFICACAO, interpretarNotificacao } = require('../entitlement');
 const { chaveDaCompra } = require('../entitlementStore');
-const { vinculoBemFormado } = require('../propriedade');
+const { vinculoBemFormado, MOTIVO } = require('../propriedade');
 const {
   PACOTE,
   PRODUTO,
@@ -60,6 +60,10 @@ const {
   PASSADO,
   FUTURO,
   FUTURO_LONGE,
+  AGORA_DE_INDEX,
+  futuroDe,
+  passadoDe,
+  restaurarRelogioGlobal,
   publicoDe,
   internoDe,
   eventoDe,
@@ -73,6 +77,7 @@ const {
 } = require('./apoio/cenario');
 const { FalhaTransitoriaPlay, FalhaPermanentePlay } = require('./apoio/play_falsa');
 const { armadilhaDeRede } = require('./apoio/armadilha_de_rede');
+const { relogioGlobalInstalado } = require('./apoio/carga_index');
 
 /**
  * Armada ANTES de qualquer teste e conferida no fim (X4).
@@ -84,6 +89,21 @@ const { armadilhaDeRede } = require('./apoio/armadilha_de_rede');
  * que for, o teste morre em vez de silenciosamente funcionar.
  */
 const rede = armadilhaDeRede();
+
+/**
+ * O relogio controlado que `cenarioDeIndex` instala e desfeito depois de CADA
+ * caso — inclusive dos que lancam.
+ *
+ * POR QUE AQUI, E NAO NO FIM DE CADA CENARIO. Um caso que falhasse no meio
+ * nunca chegaria a linha da restauracao, e deixaria `Date` trocada para todos os
+ * seguintes: o proximo cenario decidiria contra o instante do caso que quebrou,
+ * e a suite passaria a relatar falhas herdadas em vez das proprias. `afterEach`
+ * roda de todo jeito, e por isso e ele que carrega a garantia. TM1 e TM4 provam
+ * as duas metades disso.
+ */
+test.afterEach(() => {
+  restaurarRelogioGlobal();
+});
 
 /** Prefixos que este dominio pode escrever. Qualquer outro e invasao. */
 const DOMINIO = [
@@ -2289,6 +2309,133 @@ test('W3 falha depois de consolidar o entitlement nao deixa o registro da compra
 });
 
 // ===========================================================================
+// TM — O TEMPO DO CASO E DITADO, E NAO HERDADO DO CALENDARIO
+//
+// O caminho de `index.js` decidia contra `new Date()` do sistema. Enquanto a
+// data civil de quem rodava a suite ficou antes de 2026-09-16T10:00:00.000Z,
+// um prazo escrito `FUTURO` era futuro; no dia em que passou, nove casos
+// viraram vermelhos sem nenhuma mudanca de codigo. Esta secao prova que a
+// relacao "futuro" / "passado" deixou de depender do calendario — e que o
+// relogio ditado nao vaza de um caso para o proximo.
+// ===========================================================================
+
+/** O valor que venceu: o `FUTURO` da fixture, que era uma data civil fixa. */
+const CORTE_ANTIGO = FUTURO;
+/** Um controle bem depois do corte antigo — onde a suite ficava vermelha. */
+const DEPOIS_DO_CORTE = '2027-03-16T10:00:00.000Z';
+
+test('TM1 o relogio controlado de um caso nao sobrevive ao caso', () => {
+  // Este caso nao instala nada: ele le o que o caso ANTERIOR deixou. W3, logo
+  // acima, monta um cenario de index e portanto instala um relogio. Se a
+  // restauracao por `afterEach` sumisse, este assert seria o primeiro a cair.
+  assert.equal(
+    relogioGlobalInstalado(),
+    null,
+    `o caso anterior deixou um relogio instalado: ${relogioGlobalInstalado()}`
+  );
+  assert.equal(globalThis.Date.name, 'Date', 'globalThis.Date nao e a original');
+});
+
+test('TM2 um prazo declarado FUTURO fica ativo nos DOIS relogios controlados', async () => {
+  // A premissa da prova pareada, afirmada e nao suposta: um controle antes do
+  // corte antigo e outro depois dele.
+  assert.ok(
+    new Date(AGORA_DE_INDEX).getTime() < new Date(CORTE_ANTIGO).getTime(),
+    'o controle anterior nao esta antes do corte antigo'
+  );
+  assert.ok(
+    new Date(DEPOIS_DO_CORTE).getTime() > new Date(CORTE_ANTIGO).getTime(),
+    'o controle posterior nao esta depois do corte antigo'
+  );
+
+  for (const agora of [AGORA_DE_INDEX, DEPOIS_DO_CORTE]) {
+    const c = cenarioDeIndex({ agora });
+    assert.equal(c.futuro, futuroDe(agora));
+    c.play.definirAssinatura(TOKEN_A, {
+      estado: c.play.ESTADOS.ATIVA,
+      expiraEm: c.futuro,
+      inicioEm: c.passado,
+      produtoId: PRODUTO,
+    });
+
+    const r = await c.chamar('validarCompraPlay', {
+      uid: U1,
+      dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+    });
+
+    assert.equal(r.aprovada, true, `relogio ${agora}: recusou uma compra valida`);
+    assert.deepEqual(
+      r.entitlement,
+      { estado: ESTADO.ATIVO, vipAtivo: true },
+      `relogio ${agora}: o prazo declarado futuro nao valeu como futuro`
+    );
+    assert.equal(c.publico(U1).vipAtivo, true, `relogio ${agora}`);
+    assert.equal(c.publico(U1).expiraEm, c.futuro, `relogio ${agora}`);
+    assertSoEscreveuNoDominio(c.db);
+
+    c.restaurarRelogio();
+  }
+});
+
+test('TM3 no mesmo relogio posterior, um prazo declarado PASSADO expira', async () => {
+  // A contraparte obrigatoria de TM2: se a correcao tivesse apenas empurrado
+  // tudo para o futuro, este caso ficaria verde por engano. Ele exige que a
+  // expiracao REAL continue acontecendo no mesmo relogio em que TM2 concede.
+  const c = cenarioDeIndex({ agora: DEPOIS_DO_CORTE });
+  assert.equal(c.passado, passadoDe(DEPOIS_DO_CORTE));
+  assert.ok(new Date(c.passado).getTime() < new Date(c.agora).getTime());
+
+  c.play.definirAssinatura(TOKEN_A, {
+    estado: c.play.ESTADOS.ATIVA,
+    expiraEm: c.passado,
+    produtoId: PRODUTO,
+  });
+
+  const r = await c.chamar('validarCompraPlay', {
+    uid: U1,
+    dados: { produtoId: PRODUTO, tokenCompra: TOKEN_A, assinatura: true },
+  });
+
+  // A Play disse ATIVA; o prazo venceu. Quem encerra o acesso e `expiraEm`.
+  assert.equal(r.entitlement.vipAtivo, false, 'um prazo vencido concedeu VIP');
+  assert.equal(r.entitlement.estado, ESTADO.EXPIRADO);
+  assertNaoConcedeu(c, U1, 'prazo ja vencido no relogio controlado');
+  assert.equal(c.publico(U1).expiraEm, c.passado);
+});
+
+test('TM4 a restauracao alcanca a Date ORIGINAL, aninhada e depois de falha', () => {
+  const DateOriginal = globalThis.Date;
+
+  const c = cenarioDeIndex({ agora: DEPOIS_DO_CORTE });
+  assert.equal(c.agora, DEPOIS_DO_CORTE);
+  assert.equal(relogioGlobalInstalado(), DEPOIS_DO_CORTE);
+  assert.equal(new Date().toISOString(), DEPOIS_DO_CORTE);
+
+  // Aninhamento: Z1 monta dois cenarios dentro do mesmo caso. A segunda
+  // instalacao acontece com um relogio falso ja no lugar.
+  const d = cenarioDeIndex({ agora: AGORA_DE_INDEX });
+  assert.equal(d.agora, AGORA_DE_INDEX);
+  assert.equal(relogioGlobalInstalado(), AGORA_DE_INDEX);
+
+  // Uma falha no meio do caso: dai em diante nada mais do cenario roda.
+  assert.throws(() => {
+    throw new Error('falha sintetica no meio do caso');
+  }, /falha sintetica/);
+
+  // O que `afterEach` faz. Uma chamada so, e chega na original — e nao no
+  // relogio falso que estava instalado quando a segunda troca aconteceu.
+  restaurarRelogioGlobal();
+  assert.equal(relogioGlobalInstalado(), null);
+  assert.equal(globalThis.Date, DateOriginal, 'a restauracao devolveu outra Date');
+  assert.notEqual(new Date().toISOString(), AGORA_DE_INDEX);
+  assert.notEqual(new Date().toISOString(), DEPOIS_DO_CORTE);
+
+  // Idempotente: `afterEach` a chama tambem nos casos que nunca instalaram.
+  restaurarRelogioGlobal();
+  assert.equal(globalThis.Date, DateOriginal);
+});
+
+// ===========================================================================
 // Fronteira do dominio e superficie de implantacao
 // ===========================================================================
 
@@ -2338,6 +2485,116 @@ test('X2b o que foi RETIRADO da superficie nao volta por descuido', () => {
   for (const [nome, porque] of Object.entries(RETIRADOS)) {
     assert.equal(c.modulo[nome], undefined, `${nome} voltou a ser exportado. ${porque}`);
   }
+});
+
+test('X3 RTDN de pacote ausente ou divergente e ignorada, sem gastar consulta', async () => {
+  // A ORIGEM E A PRIMEIRA CONFERENCIA, E ELA TEM DUAS METADES.
+  //
+  // 1. A mensagem tem de DIZER de qual pacote veio. A condicao antiga era
+  //    `corpo.packageName && corpo.packageName !== pacote`: pacote alheio era
+  //    recusado, pacote AUSENTE passava. Como o caminho terminal (revogacao,
+  //    anulacao) tira o veredito do proprio payload, era exatamente ele que
+  //    chegava com a unica conferencia de origem desligada.
+  // 2. O verbo tem de ser `ignorar`. Trocar por `reconciliar` nao parece
+  //    perigoso — "vamos so conferir com a Google" —, mas poe uma mensagem de
+  //    terceiro dentro do caminho economico, gastando consulta autoritativa
+  //    sobre token alheio.
+  //
+  // As duas metades sao medidas separadamente, porque uma passa sem a outra.
+
+  const ALHEIO = 'io.github.invasor.appfalso';
+
+  // --- metade 1: a leitura, no ponto exato em que a decisao e tomada ------
+  for (const [rotulo, pacote] of [
+    ['pacote AUSENTE no payload', null],
+    ['pacote vazio no payload', ''],
+    ['pacote de terceiro', ALHEIO],
+  ]) {
+    for (const [forma, corpo] of [
+      ['assinatura', corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A, pacote })],
+      ['anulacao', corpoAnulacao({ token: TOKEN_A, pacote })],
+      ['revogacao', corpoAssinatura(NOTIFICACAO.REVOKED, { token: TOKEN_A, pacote })],
+    ]) {
+      const leitura = interpretarNotificacao(corpo, PACOTE);
+      assert.equal(leitura.acao, 'ignorar', `${rotulo} / ${forma}: nao foi ignorada`);
+      assert.equal(
+        leitura.motivo,
+        MOTIVO.PACOTE_DIVERGENTE,
+        `${rotulo} / ${forma}: motivo errado`
+      );
+    }
+  }
+
+  // Sem pacote oficial configurado a conferencia tambem falha FECHADA: uma
+  // configuracao faltando nao pode virar uma conferencia a menos.
+  for (const oficial of [null, undefined, 42, '']) {
+    const leitura = interpretarNotificacao(
+      corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A }),
+      oficial
+    );
+    assert.equal(leitura.acao, 'ignorar', `pacote oficial ${String(oficial)}: nao foi ignorada`);
+    assert.equal(leitura.motivo, MOTIVO.PACOTE_DIVERGENTE);
+    assert.equal(leitura.detalhe, 'pacote_oficial_ausente');
+  }
+
+  // --- metade 2: o efeito, atravessando o processador de RTDN -------------
+  let n = 0;
+  for (const [rotulo, pacote] of [
+    ['pacote AUSENTE no payload', null],
+    ['pacote vazio no payload', ''],
+    ['pacote de terceiro', ALHEIO],
+  ]) {
+    for (const [forma, monta] of [
+      ['assinatura', () => corpoAssinatura(NOTIFICACAO.RENEWED, { token: TOKEN_A, pacote })],
+      ['anulacao', () => corpoAnulacao({ token: TOKEN_A, pacote })],
+      ['revogacao', () => corpoAssinatura(NOTIFICACAO.REVOKED, { token: TOKEN_A, pacote })],
+    ]) {
+      n += 1;
+      const id = `msg_X3_${n}`;
+      const onde = `${rotulo} / ${forma}`;
+
+      const c = cenarioDeModulo();
+      c.registrarCompra(HASH_A, { uid: U1 });
+      c.semearEntitlement(U1, {
+        estado: ESTADO.ATIVO, vipAtivo: true, expiraEm: FUTURO, hash: HASH_A, token: TOKEN_A, verificadoEm: T0,
+      });
+      // Programada de proposito: se alguma coisa consultar, a consulta
+      // RESPONDE, e o contador denuncia. Deixar o token nao programado faria a
+      // consulta lancar, e uma excecao pode ser confundida com recusa.
+      c.play.definirAssinatura(TOKEN_A, { estado: c.play.ESTADOS.ATIVA, expiraEm: FUTURO_LONGE });
+      c.db.zerarDiario();
+      c.play.zerar();
+      c.relogio.fila(T1);
+
+      const r = await c.rtdn.processarNotificacao(mensagem(monta(), id));
+
+      // A decisao, nominal.
+      assert.equal(r.aplicado, false, `${onde}: aplicou efeito`);
+      assert.equal(r.decisao, MOTIVO.PACOTE_DIVERGENTE, `${onde}: decisao errada`);
+
+      // Zero consulta a Play: a recusa acontece ANTES de gastar rede.
+      assert.equal(c.play.total(), 0, `${onde}: consultou a Play`);
+      assert.deepEqual(c.play.fechamentos, [], `${onde}: fechou junto a Google`);
+
+      // Zero alteracao no entitlement, publico e interno.
+      assert.equal(c.db.escritasEm(publicoDe(U1)), 0, `${onde}: mutou o entitlement`);
+      assert.equal(c.db.escritasEm(internoDe(U1)), 0, `${onde}: mutou o interno`);
+      assert.equal(c.publico(U1).vipAtivo, true, `${onde}: mexeu no direito`);
+      assert.equal(c.publico(U1).expiraEm, FUTURO, `${onde}: mexeu no prazo`);
+
+      // A trilha existe, diz o motivo e nao carrega o token.
+      const evento = c.evento(id);
+      assert.equal(evento.aplicado, false, `${onde}: trilha diz que aplicou`);
+      assert.equal(evento.decisao, MOTIVO.PACOTE_DIVERGENTE, `${onde}: trilha com outro motivo`);
+      assertSemSegredo(JSON.stringify(evento), { tokens: [TOKEN_A], hashes: [HASH_A] });
+      assertSemSegredo(c.textoDosLogs(), { tokens: [TOKEN_A], hashes: [HASH_A] });
+
+      assertSoEscreveuNoDominio(c.db);
+    }
+  }
+
+  // A prova nao pode ter rodado em vazio.
+  assert.equal(n, 9, 'a matriz de X3 encolheu');
 });
 
 test('X4 a suite inteira rodou sem tocar na rede, e as portas sao mesmo as falsas', () => {

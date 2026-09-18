@@ -233,6 +233,11 @@ export const ETAPAS: readonly Etapa[] = [
       // porque a mesa e de mais gente.
       "moderacao.mensagensDeChat",
       "moderacao.canaisDeChat",
+      // RITMO. Contador de rajada do proprio jogador, chaveado pelo uid. Nao e
+      // sancao — `playerModeration` e que guarda disciplina, e fica retido —, e
+      // encerrada a conta nao ha mais fala a frear. Depois do canal para nao
+      // mexer na ordem ja provada: este item nao depende de nenhum outro.
+      "moderacao.ritmoDeChat",
     ],
     resumo:
       "Bloqueios, silenciamentos e comprovantes de denuncia — as listas dele e as referencias a ele nas listas dos outros. Denuncias, sancoes e estado disciplinar NAO entram: sao retidos.",

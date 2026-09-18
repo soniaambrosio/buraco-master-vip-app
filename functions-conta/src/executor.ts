@@ -349,6 +349,18 @@ async function apagarModeracao(ctx: Contexto): Promise<void> {
     "participantes",
     ctx.uid
   );
+
+  // RITMO DE FALA — `chatRitmo/{uid}`. A chave E o uid, entao nao ha consulta, e
+  // um `delete` de documento que pode nao existir e idempotente por construcao
+  // no Firestore: a mesma forma de `tentativasDeCodigo` na etapa `mesas`.
+  //
+  // SAI, e nao fica. O documento guarda o historico recente de envios, as
+  // recusas seguidas e o bloqueio temporario do freio anti-spam. Nao e sancao —
+  // a regra do Firestore separa esta colecao de `playerModeration` justamente
+  // para que contagem de rajada nao vire disciplina, e e `playerModeration`,
+  // RETIDO, que guarda o fundamento de qualquer punicao. Encerrada a conta, nao
+  // ha rajada futura a frear.
+  await db().collection("chatRitmo").doc(ctx.uid).delete();
 }
 
 async function apagarRastreabilidade(ctx: Contexto): Promise<void> {
