@@ -96,6 +96,7 @@ on:
     branches:
       - integracao/os-final-backend-flutter
       - correcao/ci-composicao-perfil-mesa-ranking-v2-v1
+      - 'rc/**'
   workflow_dispatch:
 
 permissions:
