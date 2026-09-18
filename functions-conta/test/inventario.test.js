@@ -275,3 +275,62 @@ describe("as decisoes que a OS destaca", () => {
     }
   });
 });
+
+// ===========================================================================
+// O RITMO DE FALA DO CHAT — a colecao que o guard de cobertura acusou
+// ===========================================================================
+//
+// `chatRitmo/{uid}` nasceu com a Comunicacao Controlada, depois desta matriz, e
+// ficou declarada em `firestore.rules` sem destino escrito aqui. Quem acusou foi
+// o proprio teste de cobertura la em cima — e a correcao e a decisao do dado,
+// nunca uma excecao na lista.
+//
+// AS PROVAS ABAIXO NAO SUBSTITUEM A DO EMULADOR, e vale repetir por que: nada
+// nesta suite observa o documento sair. `executor.ts` nao le o campo `alcance`;
+// ele tem uma execucao escrita a mao por etapa. Entao a matriz pode estar
+// perfeita aqui e o documento continuar no banco. Quem distingue os dois estados
+// e `test/integracao.emulador.test.js`.
+
+describe("o ritmo de fala do chat", () => {
+  test("chatRitmo aparece na matriz UMA unica vez", () => {
+    // Duas decisoes para a mesma colecao sao duas decisoes em conflito, e o
+    // executor obedeceria a que estivesse na etapa — em silencio.
+    const itens = INVENTARIO.filter((i) => colecaoRaizDe(i) === "chatRitmo");
+    assert.equal(itens.length, 1, "uma colecao, uma decisao");
+    assert.equal(itens[0].id, "moderacao.ritmoDeChat");
+    assert.equal(itens[0].caminho, "chatRitmo/{uid}");
+    assert.equal(itens[0].dominio, "moderacao");
+  });
+
+  test("a decisao e APAGAR", () => {
+    // RETER seria guardar estado pessoal de uma conta que nao existe mais, sem
+    // finalidade: encerrada a conta, nao ha rajada futura a frear.
+    assert.equal(itemPorId("moderacao.ritmoDeChat").classe, CLASSE.APAGAR);
+  });
+
+  test("o alcance e o documento chaveado pelo uid", () => {
+    // Um item APAGAR que ninguem sabe localizar e um item que nao vai ser
+    // apagado. A chave E o uid, entao nao ha consulta.
+    const alcance = itemPorId("moderacao.ritmoDeChat").alcance;
+    assert.equal(alcance.modo, "docPorUid");
+    assert.equal(alcance.colecao, "chatRitmo");
+  });
+
+  test("a justificativa diz o que o documento guarda e por que nao e sancao", () => {
+    // O `porque` generico la em cima ja exige 40 caracteres. Este exige
+    // SUBSTANCIA: a decisao so se sustenta se distinguir contagem de rajada de
+    // registro disciplinar, e se nomear a ausencia de finalidade.
+    const porque = itemPorId("moderacao.ritmoDeChat").porque.toLowerCase();
+    for (const termo of ["playermoderation", "sancao", "finalidade"]) {
+      assert.ok(porque.includes(termo), `a justificativa nao trata de '${termo}'`);
+    }
+  });
+
+  test("o estado disciplinar continua RETIDO ao lado dele", () => {
+    // O PAR E O PONTO. Apagar o contador de rajada nao pode virar, por
+    // vizinhanca, o botao de limpar a ficha que `firestore.rules` recusa ao
+    // dono. Se um dia `playerModeration` virar APAGAR, esta linha cai junto.
+    assert.equal(itemPorId("moderacao.playerModeration").classe, CLASSE.RETER);
+    assert.equal(itemPorId("moderacao.ritmoDeChat").classe, CLASSE.APAGAR);
+  });
+});
