@@ -39,3 +39,8 @@ dependencies:
   # `grep versionCode="3"` casa com um comentario, com outro atributo que
   # termine igual, ou com o manifesto de uma dependencia.
   xml: ^7.0.1
+
+dev_dependencies:
+  # Prova da politica do endereco de release (OS PRE-HOM-BMV-RC1). So roda na
+  # maquina e no CI; nada daqui entra no APK/AAB.
+  test: ^1.30.0

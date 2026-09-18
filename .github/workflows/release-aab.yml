@@ -197,6 +197,30 @@ jobs:
       - name: Ferramentas Android do repositorio
         run: dart pub get --directory tools/android
 
+      - name: "PORTAO — testes das ferramentas Android (politica do endereco)"
+        # A politica do endereco (lib/endpoint_de_release.dart) e provada pela
+        # suite abaixo, incluindo a leitura DESTE workflow (EP-W). Roda antes de
+        # o portao usa-la.
+        run: cd tools/android && dart test
+
+      - name: "PORTAO — endereco do servidor autorizado para o release"
+        # OS PRE-HOM-BMV-RC1 (AMB-03). O AAB saia SEM endereco de servidor: o
+        # build nao passava `--dart-define`, `EndpointServidor.urlConfigurada`
+        # nao tem valor padrao, e o app publicado caia em "endereco do servidor
+        # nao configurado" ao tentar o online.
+        #
+        # A FONTE e um arquivo versionado, e nao variavel de repositorio nem
+        # input do disparo: trocar o backend tem de trocar o commit — senao dois
+        # AAB do mesmo SHA apontariam para servidores diferentes e a identidade
+        # da candidata deixaria de fechar. Nao ha fallback: arquivo ausente, sem
+        # valor, placeholder, host local, sem TLS ou porta de desenvolvimento
+        # reprovam aqui, antes de gastar o build.
+        run: |
+          URL=$(dart run tools/android/bin/verificar_endpoint.dart --arquivo=tools/android/release/servidor_url.txt)
+          test -n "$URL" || { echo "ERRO: o verificador nao devolveu endereco."; exit 1; }
+          echo "Endereco autorizado para este release: $URL"
+          echo "BMV_SERVIDOR_URL=$URL" >> "$GITHUB_ENV"
+
       - name: "PORTAO — assets citados no codigo precisam existir e ser empacotados"
         # Cruza tres listas que precisam concordar: os caminhos `assets/...`
         # citados no Dart, os arquivos que existem, e as pastas declaradas no
@@ -501,7 +525,23 @@ jobs:
           PY
 
       - name: Build release AAB
-        run: cd app_build && flutter build appbundle --release
+        # `BMV_SERVIDOR_URL` vem SOMENTE do portao acima (via GITHUB_ENV). O
+        # `test -n` repete a guarda aqui para que remover o portao nao faca o
+        # build voltar a sair vazio em silencio.
+        run: |
+          test -n "${BMV_SERVIDOR_URL}" || { echo "ERRO: BMV_SERVIDOR_URL vazio — o AAB sairia sem servidor."; exit 1; }
+          cd app_build
+          flutter build appbundle --release --dart-define=BMV_SERVIDOR_URL="${BMV_SERVIDOR_URL}"
+
+      - name: "VERIFICACAO FINAL — o endereco autorizado esta DENTRO do AAB"
+        # Prova no artefato, nao no comando: abre o .aab, exige o endereco
+        # autorizado compilado no snapshot AOT (libapp.so) de CADA ABI e recusa
+        # qualquer endereco local de WebSocket que tenha sobrevivido la dentro.
+        run: |
+          dart run tools/android/bin/verificar_endpoint.dart \
+            --arquivo=tools/android/release/servidor_url.txt \
+            --aab=app_build/build/app/outputs/bundle/release/app-release.aab | tee endpoint-no-aab.txt
+          test "${PIPESTATUS[0]}" -eq 0
 
       # ---------------------------------------------------------------------
       # VERIFICACOES DENTRO DO .aab — nada aqui e "confiar que o merge funcionou"
@@ -595,6 +635,7 @@ jobs:
             echo "| tamanho | $(du -h "$AAB" | cut -f1) |"
             echo "| SHA-256 | \`$(sha256sum "$AAB" | cut -d' ' -f1)\` |"
             echo "| commit | \`${GITHUB_SHA}\` |"
+            echo "| servidor (BMV_SERVIDOR_URL) | \`${BMV_SERVIDOR_URL}\` |"
             echo ""
             echo "Baixe o artefato **bmv-aab-teste-interno** e envie MANUALMENTE na"
             echo "faixa **Teste interno** da Play Console. NAO enviar para producao."
@@ -612,6 +653,7 @@ jobs:
           path: |
             app_build/build/app/outputs/bundle/release/app-release.aab
             manifesto-final.xml
+            endpoint-no-aab.txt
           if-no-files-found: error
           retention-days: 30
 

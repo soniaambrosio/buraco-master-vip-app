@@ -1,0 +1,9 @@
+# Endereco do servidor de partida que entra no AAB de release (BMV_SERVIDOR_URL).
+#
+# Fonte UNICA do valor para o release-aab.yml. Trocar este valor muda o commit,
+# e portanto a identidade da candidata (RC n -> RC n+1). Nao e segredo: e um
+# endereco publico. Politica em tools/android/lib/endpoint_de_release.dart:
+# wss:// com dominio publico, porta 443, sem credencial, parametro ou placeholder.
+#
+# PENDENTE (OS PRE-HOM-BMV-RC1): backend autorizado de pre-homologacao ainda
+# nao designado. Sem uma linha de valor abaixo, o portao do release REPROVA.
