@@ -49,6 +49,13 @@ name: Release AAB (Teste interno)
 # ============================================================================
 
 on:
+  # OS PRE-HOM-BMV-RC1: a candidata e gerada a partir de uma branch `rc/**`
+  # publicada. `workflow_dispatch` so e oferecido para workflow que existe na
+  # branch padrao, e este nao existe em `main`. O push e restrito a `rc/**`
+  # de proposito: nenhuma branch de trabalho gera AAB.
+  push:
+    branches:
+      - 'rc/**'
   workflow_dispatch:
     inputs:
       version_code:
@@ -84,9 +91,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: "PORTAO — versao da candidata vem do commit"
+        # versionCode/versionName moram em `tools/android/release/versao.env`,
+        # versionado. Dois AAB do mesmo SHA tem de ter a mesma versao — senao a
+        # identidade da candidata nao fecha. No disparo manual, os inputs tem de
+        # ser IGUAIS ao arquivo; divergencia reprova em vez de escolher um.
+        env:
+          IN_CODE: ${{ inputs.version_code }}
+          IN_NAME: ${{ inputs.version_name }}
+        run: |
+          ARQ=tools/android/release/versao.env
+          test -f "$ARQ" || { echo "ERRO: $ARQ nao existe."; exit 1; }
+          CODE=$(sed -n 's/^VERSION_CODE=\([0-9][0-9]*\)\r\{0,1\}$/\1/p' "$ARQ")
+          NAME=$(sed -n 's/^VERSION_NAME=\([0-9A-Za-z._+-][0-9A-Za-z._+-]*\)\r\{0,1\}$/\1/p' "$ARQ")
+          test "$(printf '%s\n' "$CODE" | grep -c .)" = 1 || { echo "ERRO: $ARQ precisa de exatamente um VERSION_CODE numerico."; exit 1; }
+          test "$(printf '%s\n' "$NAME" | grep -c .)" = 1 || { echo "ERRO: $ARQ precisa de exatamente um VERSION_NAME."; exit 1; }
+          if [ -n "$IN_CODE$IN_NAME" ]; then
+            [ "$IN_CODE" = "$CODE" ] && [ "$IN_NAME" = "$NAME" ] || {
+              echo "ERRO: inputs ($IN_CODE/$IN_NAME) divergem de $ARQ ($CODE/$NAME)."; exit 1; }
+          fi
+          echo "versao da candidata: versionCode=$CODE versionName=$NAME"
+          echo "VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$NAME" >> "$GITHUB_ENV"
+
       - name: "PORTAO — versionCode precisa ser maior que o ultimo enviado (2)"
         env:
-          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_CODE: ${{ env.VERSION_CODE }}
         run: |
           # O ultimo AAB aceito pela Play Console foi o versionCode 2. A Play
           # Console recusa qualquer upload com versionCode menor ou igual, entao
@@ -477,8 +507,8 @@ jobs:
         # Sem fallback: um patch que erra o alvo e segue produz um AAB que
         # compila, parece pronto, e esta assinado com a chave de debug.
         env:
-          VERSION_CODE: ${{ inputs.version_code }}
-          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
         run: |
           dart run tools/android/bin/preparar_release.dart \
             --scaffold=app_build \
@@ -576,8 +606,8 @@ jobs:
         # Library compilada no dex, e igualdade pixel a pixel entre o launcher
         # icon do bundle e a arte oficial versionada.
         env:
-          VERSION_CODE: ${{ inputs.version_code }}
-          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
         run: |
           AAB=app_build/build/app/outputs/bundle/release/app-release.aab
           java -jar bundletool.jar dump manifest --bundle="$AAB" > manifesto-final.xml
@@ -619,8 +649,8 @@ jobs:
 
       - name: "RESUMO DO BUILD"
         env:
-          VERSION_CODE: ${{ inputs.version_code }}
-          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ env.VERSION_CODE }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
         run: |
           AAB=app_build/build/app/outputs/bundle/release/app-release.aab
           {
