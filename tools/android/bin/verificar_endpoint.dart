@@ -26,7 +26,9 @@ void main(List<String> argumentos) {
   }
   final caminho = args['arquivo'];
   if (caminho == null || caminho.isEmpty) {
-    stderr.writeln('uso: --arquivo=<servidor_url.txt> [--aab=<app-release.aab>]');
+    stderr.writeln(
+      'uso: --arquivo=<servidor_url.txt> [--aab=<app-release.aab>]',
+    );
     exit(2);
   }
 
@@ -48,12 +50,16 @@ void main(List<String> argumentos) {
     }
     final c = conferirEndpointNoAab(File(aab).readAsBytesSync(), endpoint);
     stdout.writeln('endpoint autorizado: $endpoint');
-    c.ocorrenciasPorAbi.forEach((so, n) => stdout.writeln('  $so: $n ocorrencia(s)'));
+    c.ocorrenciasPorAbi.forEach(
+      (so, n) => stdout.writeln('  $so: $n ocorrencia(s)'),
+    );
     stdout.writeln('literais ws(s):// no artefato:');
     for (final e in c.enderecosWebSocket.toList()..sort()) {
       stdout.writeln('  $e');
     }
-    stdout.writeln('OK: o endereco autorizado esta compilado em todas as ABIs.');
+    stdout.writeln(
+      'OK: o endereco autorizado esta compilado em todas as ABIs.',
+    );
   } on EndpointDeReleaseInvalido catch (e) {
     stderr.writeln('ERRO: ${e.motivo}');
     exit(1);

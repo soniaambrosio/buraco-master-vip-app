@@ -145,7 +145,9 @@ String validarEndpointDeRelease(String bruto) {
     throw const EndpointDeReleaseInvalido('endereco com usuario/senha');
   }
   if (url.hasQuery || url.hasFragment) {
-    throw const EndpointDeReleaseInvalido('endereco com parametro ou fragmento');
+    throw const EndpointDeReleaseInvalido(
+      'endereco com parametro ou fragmento',
+    );
   }
   if (url.hasPort && url.port != 443) {
     throw EndpointDeReleaseInvalido(
@@ -195,7 +197,10 @@ class ConferenciaDoAab {
 ConferenciaDoAab conferirEndpointNoAab(Uint8List bytesDoAab, String endpoint) {
   final arquivo = ZipDecoder().decodeBytes(bytesDoAab);
   final snapshots = arquivo.files
-      .where((f) => f.isFile && RegExp(r'^base/lib/[^/]+/libapp\.so$').hasMatch(f.name))
+      .where(
+        (f) =>
+            f.isFile && RegExp(r'^base/lib/[^/]+/libapp\.so$').hasMatch(f.name),
+      )
       .toList();
   if (snapshots.isEmpty) {
     throw const EndpointDeReleaseInvalido(
@@ -248,8 +253,7 @@ int _contar(Uint8List palheiro, List<int> agulha) {
 Set<String> _literaisWebSocket(Uint8List bytes) {
   // Le como latin1 (1 byte = 1 caractere) para que os offsets nao se desloquem.
   final texto = latin1.decode(bytes, allowInvalid: true);
-  return RegExp(r'wss?://[A-Za-z0-9._~:/?#\[\]@!&()*+,;=%-]+')
-      .allMatches(texto)
-      .map((m) => m.group(0)!)
-      .toSet();
+  return RegExp(
+    r'wss?://[A-Za-z0-9._~:/?#\[\]@!&()*+,;=%-]+',
+  ).allMatches(texto).map((m) => m.group(0)!).toSet();
 }
