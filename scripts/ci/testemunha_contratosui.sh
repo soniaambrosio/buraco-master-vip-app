@@ -88,10 +88,14 @@ T88 T34"
 # A relacao dos gates que carregam contrato. E o mesmo conjunto que o `T42` da
 # matriz confere — e e de proposito: a matriz confere de dentro, esta
 # testemunha confere de fora, e nenhuma das duas responde pela outra.
+#
+# [OS 40-AC1] `appcheckandroid` entrou nas DUAS listas no mesmo commit — aqui e
+# em `CONTRATADOS_CONGELADOS`, da matriz. Atualizar so uma deixaria as duas
+# pontas discordando, e cada uma apontaria a outra como a errada.
 readonly GATES_CONTRATADOS="\
 comunicacao chatdom portaoci contratosui rankingfn avatarcanon avatarhml \
 perfilvis rknavpub compavrank compnavpub socialestado socialleitor socialtela \
-audsocial a11yamigos autverif"
+audsocial a11yamigos autverif appcheckandroid"
 
 # Identificador que NAO pode existir. A sonda que o usa prova, antes de qualquer
 # outra coisa, que a matriz sabe recusar um caso inexistente: sem isso, um modo

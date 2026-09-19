@@ -584,9 +584,15 @@ CONTRATADOS="$(sed -e 's/\r$//' "$FONTE" | awk '
   }
 ')"
 
+# [OS 40-AC1] `appcheckandroid` ENTRA AQUI POR DECISAO, e nao por derivacao. Ele
+# chegou pela OS 50.1 com contrato completo na fonte, e a relacao derivada o viu
+# no mesmo instante — foi isso que pos `T42` vermelho. Acrescenta-lo a lista e o
+# gesto que a OS 40 exige de todo gate novo com contrato: dizer, por extenso e
+# fora da fonte, que ele passou a fazer parte do conjunto que a evidencia cobre.
 CONTRATADOS_CONGELADOS="comunicacao chatdom portaoci contratosui rankingfn \
 avatarcanon avatarhml perfilvis rknavpub compavrank compnavpub \
-socialestado socialleitor socialtela audsocial a11yamigos autverif"
+socialestado socialleitor socialtela audsocial a11yamigos autverif \
+appcheckandroid"
 
 # `casos_de <gate>` — o piso de casos EXECUTADOS declarado no contrato dele.
 casos_de() {
@@ -805,7 +811,8 @@ fi
 
 if caso_ativo T04; then
   reset T04
-  ancora "$FONTE_W" '^[a-z]' 64
+  # [OS 40-AC1] 64 -> 65: `appcheckandroid` entrou na fonte unica (OS 50.1).
+  ancora "$FONTE_W" '^[a-z]' 65
   printf 'analyze\nanalyze\n' > "$W/$FONTE_W"
   efeito '^analyze$' 2
   esperar 1 "T04 — fonte com gate duplicado => VERMELHO (o leitor recusa)" 'recusou a fonte'
@@ -813,7 +820,8 @@ fi
 
 if caso_ativo T05; then
   reset T05
-  ancora "$FONTE_W" '^[a-z]' 64
+  # [OS 40-AC1] 64 -> 65: `appcheckandroid` entrou na fonte unica (OS 50.1).
+  ancora "$FONTE_W" '^[a-z]' 65
   : > "$W/$FONTE_W"
   efeito '.' 0
   esperar 1 "T05 — fonte esvaziada => VERMELHO (N20)" 'recusou a fonte'
@@ -875,10 +883,12 @@ fi
 
 if caso_ativo T12; then
   reset T12
-  ancora "$FONTE_W" '^    sha256     [0-9a-f]{64}$' 21
+  # [OS 40-AC1] 21 -> 22, na ancora E na pos-condicao: a suite de
+  # `appcheckandroid` e a vigesima segunda com assinatura na fonte.
+  ancora "$FONTE_W" '^    sha256     [0-9a-f]{64}$' 22
   sed -i 's/^\(    sha256     \)[0-9a-f]\{64\}$/\10000000000000000000000000000000000000000000000000000000000000000/' \
     "$W/$FONTE_W"
-  efeito '^    sha256     0{64}$' 21
+  efeito '^    sha256     0{64}$' 22
   esperar 1 "T12 — assinatura adulterada => VERMELHO" 'mudou e a assinatura nao'
 fi
 
@@ -896,7 +906,8 @@ printf '\n== o contrato tem de estar completo ==\n'
 
 if caso_ativo T14; then
   reset T14
-  ancora "$FONTE_W" '^    sha256     ' 21
+  # [OS 40-AC1] 21 -> 22: a assinatura da suite de `appcheckandroid`.
+  ancora "$FONTE_W" '^    sha256     ' 22
   sed -i '/^    sha256     /d' "$W/$FONTE_W"
   efeito '^    sha256     ' 0
   esperar 1 "T14 — contrato sem sha256 => VERMELHO" "nao declara 'sha256'"
@@ -908,7 +919,8 @@ if caso_ativo T15; then
   # guarda lexica dos passos zero e os vetores dela — e tres em `autverif`. A
   # ancora e de CARDINALIDADE EXATA, e por isso sobe junto com a fonte: nao e
   # afrouxamento, e o instrumento continuando a medir a fonte que existe.
-  ancora "$FONTE_W" '^    exige      ' 201
+  # [OS 40-AC1] 201 -> 211: as dez relacoes do contrato de `appcheckandroid`.
+  ancora "$FONTE_W" '^    exige      ' 211
   sed -i '/^    exige      /d' "$W/$FONTE_W"
   efeito '^    exige      ' 0
   esperar 1 "T15 — contrato sem nenhum exige => VERMELHO" "nao declara nenhum 'exige'"
@@ -916,7 +928,8 @@ fi
 
 if caso_ativo T16; then
   reset T16
-  ancora "$FONTE_W" '^    provas     ' 21
+  # [OS 40-AC1] 21 -> 22: o piso de provas de `appcheckandroid`.
+  ancora "$FONTE_W" '^    provas     ' 22
   sed -i '/^    provas     /d' "$W/$FONTE_W"
   efeito '^    provas     ' 0
   esperar 1 "T16 — contrato sem provas => VERMELHO" "nao declara 'provas'"
@@ -924,7 +937,8 @@ fi
 
 if caso_ativo T17; then
   reset T17
-  ancora "$FONTE_W" '^    suite      ' 21
+  # [OS 40-AC1] 21 -> 22: a suite de `appcheckandroid`.
+  ancora "$FONTE_W" '^    suite      ' 22
   sed -i '/^    suite      /d' "$W/$FONTE_W"
   efeito '^    suite      ' 0
   esperar 1 "T17 — contrato sem suite => VERMELHO" "nao declara 'suite'"
@@ -959,7 +973,9 @@ printf '\n== o contrato nao pode encolher ==\n'
 if caso_ativo T21; then
   reset T21
   # 260 -> 279 na OS 40-C5, pelas mesmas dezenove relacoes novas.
-  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 322
+  # [OS 40-AC1] 322 -> 337: os quinze atributos de `appcheckandroid` — suite,
+  # executor, sha256, provas, casos e as dez relacoes `exige`.
+  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 337
   # QUALQUER atributo indentado, e nao uma lista de nomes. A lista escrita a mao
   # ficou para tras quando a OS 40-C1 acrescentou `alvo` e `exigealvo`: o caso
   # continuava vermelho, mas por OUTRO motivo — sobrava contrato, e a mensagem

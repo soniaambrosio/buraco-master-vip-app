@@ -157,9 +157,13 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # declarado e nunca importado, parecendo integrado. Um gate que some sem
 # reprovar repetiria exatamente esse desaparecimento.
 #
+# [OS 40-AC1] O piso de casos de `autverif` sobe de 102 para 105: a autoridade
+# externa passou a conferir as tres chaves de `appcheckandroid` nos mapas acima,
+# e sao tres conferencias executadas a mais. Um piso que fica para tras deixaria
+# as tres sumirem sem ninguem notar.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn autverif appcheckandroid"
 readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35 appcheckandroid:26"
-readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102 appcheckandroid:26"
+readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:105 appcheckandroid:26"
 
 # `PISOS_EXIGE` — QUANTAS relacoes de conteudo cada gate tem de continuar tendo.
 #

@@ -91,7 +91,7 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh 571b12c5ed78664691a11e04f4177f3cd45dd099aa86260d3f29e69cc6e9dd84
+scripts/ci/verificar_contrato_suites.sh bea623d2863f806fae98939b6492477b20e26a13a83fffe40c299f3ade818dfc
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
 scripts/ci/teste_portao_os_integracao.sh 275ec67065583e20a148bd47e08b9bf4f4f2a6db4b81608feffd5865e2d6aa45
@@ -194,9 +194,17 @@ readonly EXIGENCIAS
 #
 # Aqui a chave e OBRIGATORIA e o valor tem PISO. Um numero menor do que o
 # congelado abaixo e regressao de prova, mesmo que a comparacao continue escrita.
-readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35"
-readonly MINIMOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102"
-readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:29 rankingfn:15 autverif:24"
+#
+# [OS 40-AC1] `appcheckandroid` ganhou chave nos tres mapas. A OS 50.1 o
+# registrou em `PISOS_PROVAS`, `PISOS_CASOS` e `PISOS_EXIGE` do verificador —
+# 26, 26 e 10, os mesmos da entrega de origem e os mesmos que a suite mede —, e
+# sem a chave AQUI aquele registro seria exatamente o `V04` outra vez: tirar
+# `appcheckandroid` dos mapas, recarimbar o digesto do verificador, e nada
+# reprovaria. As tres conferencias novas sobem o piso de casos desta propria
+# autoridade de 102 para 105, e ele sobe junto, nos dois lugares.
+readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35 appcheckandroid:26"
+readonly MINIMOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:105 appcheckandroid:26"
+readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:29 rankingfn:15 autverif:24 appcheckandroid:10"
 readonly MINIMOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
 # A propria invocacao, que o workflow tem de continuar carregando. Apagar o

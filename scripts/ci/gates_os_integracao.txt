@@ -299,7 +299,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     1e73edff502ce0d74f7259d9856e2d8f4be608619c026021a7fd5dbde3b8521c
+    sha256     e3f5f29a3476ca628b709930efe0d9f284a4f8b1df4f9405b6344db6ef27b4f6
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -334,7 +334,7 @@ contratosui
     caso        T59
     exigenocaso sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
     suite      scripts/ci/testemunha_contratosui.sh
-    sha256     e6bddbd605c7c95ae536d01200453a40df17335b0fc8aedf9c09e917e05d1c2e
+    sha256     cc8a422cd06c0b63aa569a810048dab3d67cbbec2d05866f43b8dffdcf9c9635
     provas     14
     conta      ^[[:blank:]]*recusa[[:blank:]]
     exige      for id in $CASOS_OBRIGATORIOS; do
@@ -360,10 +360,10 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     f6a1b6839eeb7f21ac005cdd276a840cbfefe561591b33bce0325b9dcd2ce812
+    sha256     2ac4236a6de91c87ca3b3c79d2b1225bd327bcbc19e4f7e7f9e1a776f3c87aa0
     provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
-    casos      102
+    casos      105
     contador   casos ok: [0-9]+
     exige      readonly INVENTARIO="\
     exige      readonly MINIMOS_PROVAS=
@@ -720,6 +720,21 @@ a11yamigos
 # `app/test/casca/auditoria_casca_test.dart` (gate `cascaaud`), pelo mesmo
 # motivo do `perfilvis` — uma guarda escrita dentro do arquivo que ela guarda
 # morre junto com ele.
+#
+# [OS 40-AC1] A AGULHA DA ATIVACAO ANCORA NA CHAMADA QUE CONTA, e nao no
+# literal que e contado. Esta suite prova a ativacao LENDO o fonte de
+# `main.dart`, entao a chamada `FirebaseAppCheck.instance.activate(` so pode
+# aparecer nela como ARGUMENTO de string — e a guarda lexica da OS 40 recusa,
+# por construcao, agulha que mora inteira dentro de string, comentario,
+# template ou regex. Escrita como o literal nu, a relacao reprovava a arvore
+# integra; afrouxar a guarda para aceita-la aceitaria tambem a suite esvaziada
+# cujo texto repete o literal.
+#
+# A agulha abaixo e a linha do caso N02: ela prova que a suite CONTA, no
+# codigo sem comentarios (`_codigo`) da porta de entrada (`porta`, que e
+# `lib/main.dart`), as ocorrencias da chamada — e o caso exige exatamente uma.
+# A metade `_ocorrencias(_codigo(porta), ` e codigo, a metade citada e o
+# literal de sempre, e as duas tem de estar na MESMA linha viva.
 appcheckandroid
     suite      app/test/casca/app_check_android_test.dart
     executor   roda appcheckandroid test/casca/app_check_android_test.dart
@@ -734,5 +749,5 @@ appcheckandroid
     exige      ('N10 a escolha não é feita em tempo de execução
     exige      ('N14 o serverClientId NÃO é procurado em main.dart
     exige      ('N20 com sessão viva, credencial-ou-atestação admite nova tentativa
-    exige      FirebaseAppCheck.instance.activate(
+    exige      _ocorrencias(_codigo(porta), 'FirebaseAppCheck.instance.activate(')
     exige      identidadeAdmiteNovaTentativa(
