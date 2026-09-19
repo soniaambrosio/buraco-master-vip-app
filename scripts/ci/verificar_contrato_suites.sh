@@ -148,8 +148,12 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn autverif"
-readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35"
-readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102"
+readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35 \
+avatarcanon:38 avatarhml:42 perfilvis:25 rknavpub:38 compavrank:21 compnavpub:22 \
+socialestado:28 socialleitor:29 socialtela:18 audsocial:23 a11yamigos:30"
+readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102 \
+avatarcanon:38 avatarhml:42 perfilvis:25 rknavpub:38 compavrank:21 compnavpub:22 \
+socialestado:28 socialleitor:29 socialtela:18 audsocial:23 a11yamigos:75"
 
 # `PISOS_EXIGE` — QUANTAS relacoes de conteudo cada gate tem de continuar tendo.
 #
@@ -266,6 +270,26 @@ readonly CASOS_CONGELADOS
 # de uma linha mesmo antes de olhar QUAL linha era.
 readonly PISOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
+# `AFIRMA_CONGELADO` — piso externo de AFIRMACOES materiais executaveis (`expect(`)
+# por suite Dart, congelado FORA da suite (OS C1-08 / requisito C1-08). Esvaziar o
+# corpo de um caso, mantendo a declaracao, reduz os `expect(` sem mexer em `provas`
+# (que conta declaracoes) — e era o escape T11d. Contado SO em codigo executavel,
+# pelo mesmo lexer de `provas`.
+readonly AFIRMA_CONGELADO="\
+app/test/amigos/descoberta_social_tela_test.dart:50 \
+app/test/amigos/estado_social_test.dart:52 \
+app/test/amigos/leitor_social_test.dart:68 \
+app/test/amigos/auditoria_descoberta_social_test.dart:36 \
+app/test/amigos/a11y_alvos_amigos_test.dart:70 \
+app/test/casca/avatar_publico_canonico_test.dart:123 \
+app/test/casca/homologacao_avatar_publico_test.dart:125 \
+app/test/perfil/identidade_visitada_test.dart:62 \
+app/test/ranking/navegacao_perfil_publico_test.dart:112 \
+app/test/composicao/composicao_avatar_ranking_test.dart:51 \
+app/test/composicao/composicao_navegacao_publica_test.dart:59 \
+app/test/chat/chat_test.dart:116 \
+app/test/comunicacao/comunicacao_test.dart:164"
+
 readonly CONTA_PADRAO='^[[:blank:]]*(test|testWidgets)\('
 readonly CONTADOR_PADRAO='\+[0-9]+'
 
@@ -332,6 +356,13 @@ if [ -n "$workflow" ]; then
   # esta guarda e chamada trinta e quatro vezes pela matriz que a verifica.
   workflow_espremido=$'\n'"$(printf '%s\n' "$conteudo_workflow" |
     tr -s '[:blank:]' ' ' | sed -e 's/^ //' -e 's/ $//')"$'\n'
+
+  # AS LINHAS VIVAS DO WORKFLOW — fora de comentario e de corpo de heredoc
+  # (requisito C1-05). O casamento textual acima responde "o texto esta la"; um
+  # executor preso num heredoc `<<'X' ... X` satisfaz busca textual e NAO executa
+  # (escape T12). Aqui so sobra o que o shell de fato roda. As aspas do heredoc
+  # vao por octal (\047 \042) para o programa nao carregar aspa literal.
+  workflow_vivas=$'\n'"$(printf '%s\n' "$conteudo_workflow" | awk 'function lt(x){sub(/^[ \t]+/,"",x);return x} BEGIN{o="<";o=o o;t=o "<"} {line=$0;sub(/\r$/,"",line); if(her!=""){if(lt(line)==her)her=""; next} if(lt(line) ~ /^#/)next; print line; if(index(line,o)&&!index(line,t)){w=substr(line,index(line,o)+2);sub(/^-/,"",w);sub(/^[ \t]+/,"",w);gsub(/[\047\042]/,"",w);sub(/[^A-Za-z0-9_].*$/,"",w); if(w!="")her=w}}' | tr -s '[:blank:]' ' ' | sed -e 's/^ //' -e 's/ $//')"$'\n'
 
   # A AUTORIDADE LEXICA DOS PASSOS ZERO, NO CAMINHO OFICIAL (OS 40-C5)
   # -------------------------------------------------------------------------
@@ -432,6 +463,64 @@ analisar() {
     return 0
   fi
   tr -d '\r\000' < "$1" | awk -v ling="$LINGUA" -v agulhas="$2" -f "$LEXICO"
+}
+
+# `contar_ere <arquivo> <ere>` — quantas linhas de CODIGO EXECUTAVEL casam com a
+# ERE, pela MESMA leitura lexica de `provas`. Usada pelos pisos de afirmacao e
+# pela recusa de `skip`. Extensao desconhecida devolve 0 (o chamador ja reprova
+# por outros caminhos; aqui a contagem so nao inventa numero).
+contar_ere() {
+  lingua_de "$1"
+  [ -z "$LINGUA" ] && { printf '0'; return 0; }
+  local nc
+  nc="$(tr -d '\r\000' < "$1" | CONTA_ERE="$2" awk -v ling="$LINGUA" -v agulhas=/dev/null -f "$LEXICO" |
+    awk -F'\t' '$1=="PROVAS"{print $2; exit}')"
+  printf '%s' "${nc:-0}"
+}
+
+# `casos_canonicos <log> <ere_contador> <gate>` — o CONTADOR CANONICO da FASE B
+# (requisito C1-06). NUNCA o maior numero do texto: le SO o placar terminal
+# canonico da ferramenta, e recusa pulados, falhas, ausencia e placares
+# conflitantes. Devolve o executado em `CANONICO` (0 quando invalido, com `erro`
+# proprio dizendo por que).
+CANONICO=0
+casos_canonicos() {
+  local log="$1" ere="$2" gate="$3" tool terms nums n f linha
+  CANONICO=0
+  case "$ere" in
+    *pass*) tool=node ;;
+    *'casos ok'*) tool=shell ;;
+    *) tool=flutter ;;
+  esac
+  if [ "$tool" = flutter ]; then
+    terms="$(grep -aoE '\+[0-9]+( ~[0-9]+)?( -[0-9]+)?: All tests passed!' "$log")"
+    if [ -z "$terms" ]; then
+      erro "'$gate' sem placar terminal canonico do Flutter ('+N: All tests passed!') no log — execucao incompleta, falha ou log fabricado"
+      return
+    fi
+    if printf '%s\n' "$terms" | grep -qE '~[1-9]'; then
+      erro "'$gate' registrou teste(s) PULADO(s) (~S) no placar do Flutter — skip nao conta como executado"
+      return
+    fi
+    nums="$(printf '%s\n' "$terms" | grep -oE '^\+[0-9]+' | tr -d '+' | sort -un)"
+    if [ "$(printf '%s\n' "$nums" | grep -c .)" -gt 1 ]; then
+      erro "'$gate' tem placares terminais conflitantes no log: $(printf '%s ' $nums)"
+      return
+    fi
+    CANONICO="$nums"
+  elif [ "$tool" = node ]; then
+    if grep -qE '^#? *fail [1-9]' "$log"; then erro "'$gate' tem caso(s) com FALHA no placar node ('# fail')"; return; fi
+    if grep -qE '^#? *skipped [1-9]' "$log"; then erro "'$gate' tem caso(s) PULADO(s) no placar node ('# skipped')"; return; fi
+    n="$(grep -aoE '(# )?pass [0-9]+' "$log" | grep -oE '[0-9]+' | sort -un | tail -1)"
+    [ -z "$n" ] && { erro "'$gate' sem placar 'pass N' do node --test no log"; return; }
+    CANONICO="$n"
+  else
+    linha="$(grep -aoE 'casos ok: [0-9]+ \| casos com falha: [0-9]+' "$log" | tail -1)"
+    if [ -z "$linha" ]; then erro "'$gate' sem placar 'casos ok: N | casos com falha: F' no log"; return; fi
+    f="$(printf '%s' "$linha" | sed -n 's/.*com falha: \([0-9]*\).*/\1/p')"
+    if [ "${f:-0}" -gt 0 ]; then erro "'$gate' registrou $f caso(s) com FALHA no placar"; return; fi
+    CANONICO="$(printf '%s' "$linha" | sed -n 's/casos ok: \([0-9]*\).*/\1/p')"
+  fi
 }
 
 # `conferir_agulhas <arquivo> <lista> <onde> [ere-de-contagem]` — reprova, e diz
@@ -641,6 +730,19 @@ conferir_suite() {
   contar "$exige_lista"
   exige_do_gate=$((exige_do_gate + QUANTAS))
 
+  # UNICIDADE DAS RELACOES `exige` (requisito C1-02). Trocar uma relacao por
+  # DUPLICATA de outra conserva a cardinalidade e passava no piso — era o escape
+  # T9/T9b. Uma relacao repetida na mesma suite reprova aqui, nomeando o literal.
+  if [ -n "$exige_lista" ]; then
+    local repetida
+    while IFS= read -r repetida; do
+      [ -z "$repetida" ] && continue
+      erro "a relacao 'exige' de '$suite' (gate $chave) esta DUPLICADA: $repetida"
+    done <<EXIGE_DUP
+$(printf '%s\n' "$exige_lista" | sort | uniq -d)
+EXIGE_DUP
+  fi
+
   # ---- o conjunto NOMINAL, congelado fora do bloco que ele guarda ---------
   #
   # Roda ANTES de olhar o arquivo, e roda mesmo com a suite ausente: uma relacao
@@ -773,6 +875,27 @@ CASOS_INVENTADOS
       printf 'ok   provas     %-12s %s >= %s\n' "$chave" "$PROVAS_REAIS" "$provas_esperadas"
     else
       erro "'$suite' (gate $chave) tem $PROVAS_REAIS declaracoes e o piso e $provas_esperadas"
+    fi
+  fi
+
+  # `skip` E FAIL (requisito C1-07), estaticamente: nenhuma suite contratada pode
+  # ter caso marcado `skip: true` em CODIGO. Era metade do escape T11e.
+  local n_skip
+  n_skip="$(contar_ere "$arquivo" 'skip:[[:blank:]]*true')"
+  if [ "${n_skip:-0}" -gt 0 ]; then
+    erro "'$suite' (gate $chave) tem $n_skip caso(s) marcado(s) 'skip: true' em codigo — suite pulada nao prova"
+  fi
+
+  # PISO EXTERNO DE AFIRMACOES executaveis (requisito C1-08). Esvaziar o corpo de
+  # um caso derruba `expect(` sem tocar `provas` — era o escape T11d.
+  local af_piso af_reais
+  af_piso="$(piso_de "$AFIRMA_CONGELADO" "$suite")"
+  if [ -n "$af_piso" ]; then
+    af_reais="$(contar_ere "$arquivo" 'expect\(')"
+    if [ "${af_reais:-0}" -lt "$af_piso" ]; then
+      erro "'$suite' (gate $chave) tem $af_reais afirmacao(oes) 'expect(' em codigo e o piso e $af_piso — corpo de caso esvaziado"
+    else
+      printf 'ok   afirma     %-12s expect %s >= %s  %s\n' "$chave" "$af_reais" "$af_piso" "$suite"
     fi
   fi
 
@@ -926,6 +1049,13 @@ conferir_entrada() {
       *) erro "o workflow nao tem a linha do executor de '$chave': '$alvo_esp'" ;;
     esac
 
+    # E ELE TEM DE ESTAR VIVO, nao so presente (requisito C1-05). Um executor
+    # preso em heredoc ou comentario esta no texto e nao roda — escape T12.
+    case "$workflow_vivas" in
+      *$'\n'"$alvo_esp"$'\n'*) : ;;
+      *) erro "o executor de '$chave' esta no workflow mas NAO em execucao viva (heredoc/comentario): '$alvo_esp'" ;;
+    esac
+
     # O marcador pode ser escrito LITERALMENTE (`echo ... > exit_proveni`) ou
     # pelo auxiliar `roda`, que o monta como "exit_$k". Aceitar so a forma
     # literal reprovaria toda suite Flutter do workflow — e reprovar por engano
@@ -1005,12 +1135,10 @@ conferir_entrada() {
   fi
 
   if [ -n "$casos_esperados" ]; then
-    local ere_contador maior n
+    local ere_contador maior
     ere_contador="${contador_ere:-$CONTADOR_PADRAO}"
-    maior=0
-    for n in $(grep -aoE "$ere_contador" "$log" | grep -oE '[0-9]+'); do
-      [ "$n" -gt "$maior" ] && maior="$n"
-    done
+    casos_canonicos "$log" "$ere_contador" "$chave"
+    maior="$CANONICO"
     if [ "$maior" -ge "$casos_esperados" ]; then
       printf 'ok   casos      %-12s %s >= %s (no log)\n' "$chave" "$maior" "$casos_esperados"
     else

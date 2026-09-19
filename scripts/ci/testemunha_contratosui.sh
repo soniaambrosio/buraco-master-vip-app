@@ -138,6 +138,218 @@ printf 'TESTEMUNHA: desafio desta corrida: %s\n' "$DESAFIO"
 printf 'TESTEMUNHA: matriz sob observacao: %s\n' "$MATRIZ"
 
 # ---------------------------------------------------------------------------
+# 0. O MOTOR DA MATRIZ — ancora externa do proprio verificador (C1-10 / C1-11)
+# ---------------------------------------------------------------------------
+#
+# A matriz imprime `ok <id>` por caso, e ate aqui esta testemunha confiava nesse
+# `ok`. Neutralizar `esperar()` para sempre imprimir `ok` deixava os 88 casos
+# verdes SEM rodar o verificador (escape T11b); inserir na fixture `resultados()`
+# um log de gate que a fonte nao declara passava tambem (escape T11f). O digest da
+# suite, que o sabotador realinha, nao pega nenhum dos dois.
+#
+# A defesa e NOMINAL e mora AQUI, fora da suite auditada: o corpo EXATO das
+# funcoes do motor (a asercao e a fixture de evidencia) esta congelado abaixo, e
+# esta testemunha extrai as mesmas funcoes da matriz sob observacao e compara. Um
+# byte inserido em `esperar` ou `resultados` — mesmo com o digest da suite
+# realinhado — muda a extracao e reprova, nomeando o desvio.
+readonly MOTOR_ESPERADO="$(cat <<'MOTOR_MATRIZ_CONGELADO_FIM'
+esperar() {
+  local esperado="$1" desc="$2" agulha="${3:-}" real dir="${4:-}"
+  local id="${desc%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  # DECLARACAO OBRIGATORIA. Um bloco que nao diz o que pretende atingir — nem
+  # `ancora`, nem `sem_mutacao` — nao pode ser medido: ninguem sabe se a
+  # sabotagem aconteceu, porque ninguem sabe qual era.
+  if [ "$INSTRUMENTO_DECLARADO" -eq 0 ]; then
+    invalido "o vetor nao declarou 'ancora' nem 'sem_mutacao'"
+  fi
+
+  # UMA SABOTAGEM QUE NAO ACONTECEU NAO PODE VIRAR VERDE. Se o instrumento
+  # recusou — ancora com cardinalidade errada, digest que nao mudou,
+  # pos-condicao ausente ou restauracao suja — o caso reprova como INSTRUMENTO
+  # INVALIDO, e nunca como aprovado. Foi por nao ter isto que a OS 40-C3 perdeu
+  # duas corridas inteiras com ancoras envelhecidas.
+  if [ "$INSTRUMENTO" -eq 0 ]; then
+    nok "$desc — INSTRUMENTO INVALIDO: $MOTIVO_INSTRUMENTO"
+    return
+  fi
+  if [ -n "$dir" ]; then
+    bash "$W/scripts/ci/verificar_contrato_suites.sh" "$W" "$W/$YML_W" "$dir" \
+      > "$TMP/saida.txt" 2>&1
+  else
+    bash "$W/scripts/ci/verificar_contrato_suites.sh" "$W" "$W/$YML_W" \
+      > "$TMP/saida.txt" 2>&1
+  fi
+  real=$?
+  if [ "$real" != "$esperado" ]; then
+    nok "$desc — esperado exit $esperado, obtido $real"
+    sed 's/^/        | /' "$TMP/saida.txt"
+    return
+  fi
+  if [ -n "$agulha" ] && ! grep -qE "$agulha" "$TMP/saida.txt"; then
+    nok "$desc — exit $real correto, mas a saida nao diz por que (/$agulha/)"
+    sed 's/^/        | /' "$TMP/saida.txt"
+    return
+  fi
+  ok "$desc (exit $real)"
+}
+esperar_igual() {
+  local desc="$1" derivado="$2" congelado="$3"
+  local id="${desc%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  # A MESMA DECLARACAO OBRIGATORIA DO `esperar`. Sem ela, o unico caso que
+  # termina por aqui seria o unico da matriz cuja declaracao ninguem cobra: o
+  # auditor de cobertura e pre-voo, e nao autoridade. Um vetor que compara dois
+  # conjuntos tambem precisa dizer o que pretende atingir — no caso do oraculo,
+  # dizer que NAO toca a bancada, e essa afirmacao so vale nos controles
+  # congelados.
+  if [ "$INSTRUMENTO_DECLARADO" -eq 0 ]; then
+    invalido "o vetor nao declarou 'ancora' nem 'sem_mutacao'"
+  fi
+  if [ "$INSTRUMENTO" -eq 0 ]; then
+    nok "$desc — INSTRUMENTO INVALIDO: $MOTIVO_INSTRUMENTO"
+    return
+  fi
+  if [ "$derivado" = "$congelado" ]; then
+    ok "$desc"
+  else
+    nok "$desc"
+    printf '        | derivado  %s\n' "$derivado"
+    printf '        | congelado %s\n' "$congelado"
+  fi
+}
+esperar_autoridade() {
+  local esperado="$1" desc="$2" agulha="${3:-}" real
+  local id="${desc%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  if [ "$INSTRUMENTO_DECLARADO" -eq 0 ]; then
+    invalido "o vetor nao declarou 'ancora' nem 'sem_mutacao'"
+  fi
+  if [ "$INSTRUMENTO" -eq 0 ]; then
+    nok "$desc — INSTRUMENTO INVALIDO: $MOTIVO_INSTRUMENTO"
+    return
+  fi
+  bash "$W/scripts/ci/autoridade_verificadores.sh" "$W" "$W/$YML_W" \
+    > "$TMP/saida.txt" 2>&1
+  real=$?
+  if [ "$real" != "$esperado" ]; then
+    nok "$desc — esperado exit $esperado, obtido $real"
+    sed 's/^/        | /' "$TMP/saida.txt"
+    return
+  fi
+  if [ -n "$agulha" ] && ! grep -qE "$agulha" "$TMP/saida.txt"; then
+    nok "$desc — exit $real correto, mas a saida nao diz por que (/$agulha/)"
+    sed 's/^/        | /' "$TMP/saida.txt"
+    return
+  fi
+  ok "$desc (exit $real)"
+}
+esperar_instrumento_invalido() {
+  local desc="$1" agulha="$2"
+  local id="${desc%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  # DECLARACAO OBRIGATORIA. Um bloco que nao diz o que pretende atingir — nem
+  # `ancora`, nem `sem_mutacao` — nao pode ser medido: ninguem sabe se a
+  # sabotagem aconteceu, porque ninguem sabe qual era.
+  if [ "$INSTRUMENTO_DECLARADO" -eq 0 ]; then
+    invalido "o vetor nao declarou 'ancora' nem 'sem_mutacao'"
+  fi
+  if [ "$INSTRUMENTO" -eq 1 ]; then
+    nok "$desc — o instrumento ACEITOU uma declaracao falsa"
+    return
+  fi
+  case "$MOTIVO_INSTRUMENTO" in
+    *"$agulha"*) ok "$desc" ;;
+    *) nok "$desc — recusou, mas por outro motivo: $MOTIVO_INSTRUMENTO" ;;
+  esac
+}
+ok() {
+  local id="${1%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  veredito_unico "$1" || return 0
+  passou=$((passou + 1))
+  printf '  ok    %s\n' "$1"
+}
+nok() {
+  local id="${1%% *}"
+  [ "$MODO" = 'listar' ] && return 0
+  if [ -n "$CASO_ATIVO" ] && [ "$id" != "$CASO_ATIVO" ]; then
+    printf 'teste do contrato: o caso %s anuncia %s — o embrulho e o anuncio divergem\n' "$CASO_ATIVO" "$id" >&2
+    exit 2
+  fi
+  alvo_do_caso "$id" || return 0
+  executou=1
+  veredito_unico "$1" || return 0
+  falhou=$((falhou + 1))
+  printf '  FALHA %s\n' "$1"
+}
+resultados() {
+  local d="$1" k n
+  rm -rf "$d"
+  mkdir -p "$d"
+  printf 'run 1 — carimbo desta execucao\n' > "$d/carimbo_execucao"
+  for k in $CONTRATADOS; do
+    n="$(casos_de "$k")"
+    [ -z "$n" ] && n=1
+    {
+      printf '00:12 +%s: All tests passed!\n' "$n"
+      printf 'casos ok: %s | casos com falha: 0\n' "$n"
+      printf 'pass %s\n' "$n"
+    } > "$d/t_$k.log"
+  done
+  # `sleep 1` nao: a bancada precisa ser rapida. Um deslocamento explicito faz a
+  # ordem carimbo -> log ficar inequivoca sem esperar o relogio.
+  touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
+}
+MOTOR_MATRIZ_CONGELADO_FIM
+)"
+
+readonly MOTOR_NOMES="esperar esperar_igual esperar_autoridade esperar_instrumento_invalido ok nok resultados"
+motor_real="$(awk -v nomes="$MOTOR_NOMES" '
+  BEGIN{ nn=split(nomes, ordem, " ") }
+  { l=$0; sub(/\r$/,"",l); linhas[NR]=l; total=NR
+    if (l ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{$/) { nome=l; sub(/\(\).*/,"",nome); ini[nome]=NR } }
+  END{ for(k=1;k<=nn;k++){ nm=ordem[k]; sidx=ini[nm];
+    if(sidx==""){ print "FALTA:"nm; continue }
+    print linhas[sidx]; for(i=sidx+1;i<=total;i++){ print linhas[i]; if(linhas[i]=="}") break } } }
+' "$MATRIZ")"
+if [ "$motor_real" = "$MOTOR_ESPERADO" ]; then
+  printf 'ok   motor      as funcoes de asercao e fixture da matriz sao as congeladas\n'
+else
+  recusa "o MOTOR da matriz (esperar/ok/nok/esperar_igual/esperar_autoridade/resultados) DIVERGE do congelado — asercao neutralizada ou fixture inventando gate, ainda que o digest da suite tenha sido realinhado"
+fi
+
+# ---------------------------------------------------------------------------
 # 1. A SONDA DO IDENTIFICADOR FABRICADO
 # ---------------------------------------------------------------------------
 bash "$MATRIZ" --caso "$ID_FABRICADO" > "$TMPT/sonda.txt" 2>&1

@@ -91,7 +91,7 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh 571b12c5ed78664691a11e04f4177f3cd45dd099aa86260d3f29e69cc6e9dd84
+scripts/ci/verificar_contrato_suites.sh 1b6cf5b508fc08808a4172184b97bc12a759b84e646cf7e61257f4306f7501b0
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
 scripts/ci/teste_portao_os_integracao.sh 275ec67065583e20a148bd47e08b9bf4f4f2a6db4b81608feffd5865e2d6aa45
