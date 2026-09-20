@@ -177,6 +177,52 @@ service cloud.firestore {
     // ------------------------------------------------------------------
     match /users/{uid} {
 
+      // ------------------------------------------------------------------
+      // O DOCUMENTO RAIZ `users/{uid}` — NEGADO A TODOS, EXPLICITAMENTE.
+      // OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R1.
+      //
+      // ATE AQUI A NEGACAO ERA POR OMISSAO. Os TRES blocos `match /users/{uid}`
+      // deste arquivo (este, o de moderacao e o de projecoes sociais) declaram
+      // apenas SUBCOLECOES, e um `allow` dentro de `match /users/{uid}` nao
+      // alcanca descendente nenhum. O documento raiz caia no fecho
+      // `match /{documento=**}` do fim do arquivo: negado de fato, mas sem que
+      // uma unica linha dissesse isso — e essa ausencia ja produziu leitura
+      // errada num laudo de pre-homologacao. Esta linha nao muda o efeito; ela
+      // torna a decisao legivel no ponto onde alguem vai procura-la.
+      //
+      // A REGRA DE PRODUCAO ANTERIOR (ruleset de 2026-02-24, era FlutterFlow)
+      // concedia `read, write` ao dono neste caminho. ELA NAO E RESTAURADA, e a
+      // razao nao e inercia:
+      //
+      //   * NAO HA LEITOR. A superficie Firestore INTEIRA do aplicativo sao
+      //     quatro caminhos: `users/{uid}/inventory`, `config/featureFlags`,
+      //     `campaigns/{id}` (+ `/eligible/{uid}`) e `playerEntitlements/{uid}`.
+      //     Nenhum deles e este documento.
+      //   * NAO HA ESCRITOR. `functions-conta/src/inventario.ts`, no item
+      //     `conta.usersRaiz`, ja registra o achado: nenhuma Function deste
+      //     repositorio escreve o documento raiz — ele existe como PAI das oito
+      //     subcolecoes. A unica operacao sobre ele e o `delete` da exclusao de
+      //     conta, pelo Admin SDK, que ignora estas regras.
+      //   * DEVOLVER `write` SERIA ABRIR CAMPO LIVRE. Sem produtor, nao existe
+      //     lista de campos legitimos a que prender um `hasOnly`. O dono
+      //     gravaria QUALQUER chave num documento que oito subcolecoes usam como
+      //     pai e que `functions-moderacao` e `functions-social` percorrem. E o
+      //     oposto do que `usuarios/{uid}` faz no Bloco 2/3, onde cada campo de
+      //     servidor esta nomeado e fechado — e a §10 da OS proibe enfraquecer
+      //     aquilo para compensar isto.
+      //   * DEVOLVER SO `read` TAMBEM NAO SE SUSTENTA. Leitura sem leitor nao
+      //     serve a ninguem, e um documento legivel convida a virar deposito.
+      //
+      // O QUE ESTA LINHA NAO ALCANCA: as subcolecoes abaixo, e as dos outros
+      // dois blocos. Regra do Firestore se avalia por documento e se soma por
+      // OR — um `if false` aqui nao retira nada do que outro bloco concede. A
+      // suite prova isso caso a caso, e nao por inspecao.
+      //
+      // COMPATIBILIDADE COM O CLIENTE LEGADO: ENCERRADA POR DECISAO. Ver o
+      // quadro do legado no fim deste arquivo.
+      // ------------------------------------------------------------------
+      allow read, write: if false;
+
       match /inventory/{itemId} {
         allow get, list: if ehDono(uid) || ehAdmin();
 
@@ -812,6 +858,35 @@ service cloud.firestore {
     // registro disciplinar do jogador.
     //
     // Admin le, porque investigar abuso e ler o padrao de envio.
+    //
+    // ------------------------------------------------------------------
+    // RECONCILIACAO — OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R3.
+    //
+    // Um laudo de pre-homologacao registrou que `chatRitmo` "continua presente
+    // nas Rules apesar de existir decisao anterior de apaga-la". A divergencia
+    // e DOCUMENTAL, e se resolve lendo a decisao pelo que ela decide.
+    //
+    // A decisao anterior e a OS 40-I1-CT1 (docs/OS40-I1-CT1-CHAT-RITMO-
+    // INVENTARIO-V1.md). O que ela classificou como `APAGAR` foi um item da
+    // MATRIZ DE RETENCAO da exclusao de conta — `moderacao.ritmoDeChat`, em
+    // functions-conta/src/inventario.ts:927. `APAGAR` ali significa "quando o
+    // JOGADOR pede para sair, o documento DELE e apagado", e o efeito e uma
+    // linha em functions-conta/src/executor.ts:363. Nao significa, e nunca
+    // significou, apagar a COLECAO nem a regra dela; a §6 daquela ordem declara
+    // em letra que ela "nao tocou firestore.rules".
+    //
+    // A COLECAO ESTA VIVA, e tem produtor: `functions-moderacao/src/
+    // comunicacao.ts` (`C_RITMO`) a escreve a cada fala, pelo freio anti-spam.
+    // Remover este bloco nao fecharia porta nenhuma — o Admin SDK ignora estas
+    // regras — e teria tres custos reais: tiraria a leitura do admin, que e a
+    // unica concessao aqui; derrubaria os cinco casos de `chat.test.js` que
+    // provam quem le e quem nao le; e retiraria `chatRitmo` da fonte externa que
+    // `functions-conta/test/inventario.test.js` cruza com a matriz, afrouxando
+    // justamente o guard que detectou a lacuna original.
+    //
+    // DECISAO: o bloco PERMANECE, sem alteracao de condicao. Nenhuma migracao e
+    // necessaria, e nao ha HOLD a abrir.
+    // ------------------------------------------------------------------
     match /chatRitmo/{uid} {
       allow read: if ehAdmin();
       allow write: if false;
@@ -1412,6 +1487,82 @@ service cloud.firestore {
       }
     }
 
+    // =====================================================================
+    // QUADRO DO LEGADO — OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R2.
+    //
+    // O ruleset publicado em producao e de 2026-02-24, tem 707 bytes, e e
+    // ANTERIOR a este repositorio: e da era FlutterFlow, e o blob dele nao
+    // existe no banco de objetos daqui (docs/RECONCILIACAO-ESTADO-PRODUCAO-V1.md
+    // secao 4.1). Ele cobre SEIS caminhos. Um deles, `users`, esta tratado no
+    // Bloco 1/3 acima. Os outros CINCO nao tem bloco neste arquivo, e por isso
+    // passam a ser negados pelo fecho logo abaixo. A OS exige que esse destino
+    // seja DECIDIDO, e nao descoberto. Segue a decisao, caminho a caminho.
+    //
+    // CLASSIFICACAO DE TODOS OS CINCO: LEGADO-ENCERRAR.
+    //
+    //   `global_chat`  — chat global de sala unica da era FlutterFlow. A RC1 nao
+    //                    tem chat global: o texto livre e de MESA PRIVADA, e
+    //                    passa por `chatChannels` + `chatMessages`, com ritmo,
+    //                    bloqueio e sancao (docs/CHAT-LIVRE-SEGURO-V1.md). Um
+    //                    canal global aberto ao lado do controlado seria a
+    //                    segunda autoridade de comunicacao que a OS do chat
+    //                    proibe.
+    //   `tables`       — mesa de jogo da era FlutterFlow. Na RC1 a mesa em tempo
+    //                    real NAO vive no Firestore: vive no servidor WebSocket.
+    //                    O que o Firestore guarda sao `admissoesDeMesa`,
+    //                    `assentosAdmitidos` e `salasPrivadas`. ATENCAO A NAO
+    //                    CONFUNDIR: existe um `tables` NESTE arquivo, mas e a
+    //                    SUBCOLECAO de uma edicao de torneio
+    //                    (`tournaments/{t}/editions/{e}/tables`), outro caminho,
+    //                    com outro produtor, e ela NAO e afetada por esta
+    //                    decisao.
+    //   `seasons`      — temporada da era FlutterFlow (documento `2026_S1`). A
+    //                    temporada da RC1 e `rankingSeasons`, escrita so por
+    //                    Function e com a conferencia de "no maximo uma vigente"
+    //                    na mesma transacao (Bloco 7/7).
+    //   `leaderboards` — classificacao da era FlutterFlow (documento `2026_S1`).
+    //                    A da RC1 e `rankingLadders` + `rankingStandings` +
+    //                    `hallEntries`, e a leitura da LISTA nem passa por regra:
+    //                    passa por `abrirRanking`/`paginarRanking`, que projetam
+    //                    `publicPlayerId` no lugar do uid. Reabrir uma colecao de
+    //                    placar legivel direto desfaria essa projecao.
+    //   `store_products` — catalogo da era FlutterFlow (documento
+    //                    `pack_starter`). Na RC1 o catalogo comercial e
+    //                    `configuracao/billing` e o acervo cosmetico e
+    //                    `collections/{id}/items`; ambos ja declarados acima,
+    //                    ambos com consumidor real.
+    //
+    // A DECISAO NAO FOI INFERIDA DO NOME. Foi medida por varredura: nenhum dos
+    // cinco nomes aparece em `app/lib/`, em `functions*/src/`, em `web/` nem no
+    // servidor. As unicas ocorrencias no repositorio sao os dois relatorios de
+    // auditoria que os inventariaram.
+    //
+    // RISCO DE DADO: NENHUM. Os cinco somam CINCO documentos em producao, um por
+    // colecao, com ids de semente (`pack_starter`, `2026_S1`) — base de
+    // demonstracao, nao base com historico (docs/DIAGNOSTICO-POPULACAO-LEGADA-
+    // VIP.md secao 14.B.1). Negar a regra NAO apaga nada: os documentos
+    // continuam la, alcancaveis pelo Admin SDK, e uma eventual migracao futura
+    // nao perde materia-prima.
+    //
+    // RISCO DE COMPATIBILIDADE: COMPATIBILIDADE ENCERRADA POR DECISAO, com custo
+    // real zero. Nao existe cliente publicado: o aplicativo nunca foi publicado
+    // na Play, e o unico documento de `billingEvents` em producao e a notificacao
+    // de TESTE do console. Nao ha versao antiga em circulacao para quebrar.
+    //
+    // POR QUE O FECHAMENTO E O FECHO FINAL, E NAO CINCO BLOCOS `if false`.
+    // Esta foi a unica alternativa considerada e descartada, e o motivo e
+    // estrutural, nao estetico: `functions-conta/test/inventario.test.js` LE
+    // este arquivo e exige que TODA colecao de primeiro nivel declarada aqui
+    // tenha destino escrito na matriz de retencao da exclusao de conta. Declarar
+    // os cinco — mesmo com `if false` — os tornaria colecoes declaradas sem
+    // destino na matriz e reprovaria aquele guard, e esta OS esta proibida de
+    // alterar Functions. Um bloco `if false` tambem nao acrescentaria efeito
+    // nenhum ao fecho: ele ja nega. A decisao fica escrita AQUI e PROVADA em
+    // `firebase/testes/seguranca.test.js`, que exerce os cinco caminhos em
+    // leitura e escrita, anonimo e autenticado, e falha se qualquer um voltar a
+    // conceder. E o teste, e nao o comentario, que impede a reabertura.
+    // =====================================================================
+
     // ---------------------------------------------------------------------
     // Fecho explicito — NEGACAO PADRAO PARA O BANCO INTEIRO
     // ---------------------------------------------------------------------
@@ -1420,9 +1571,13 @@ service cloud.firestore {
     // futuras de perfil, amigos ou loja. Cada uma precisara do proprio bloco
     // `match` — o Bloco 7/7 e o exemplo mais recente de como isso e feito.
     //
-    // Isso e seguro hoje porque este e o PRIMEIRO firestore.rules do projeto e
-    // nenhuma tela usa Firestore ainda — o app so consome firebase_auth. A
-    // negacao padrao e a postura correta para comecar: uma colecao que ninguem
+    // Isso NAO e mais verdade por "nenhuma tela usar Firestore": o aplicativo
+    // ja consome quatro caminhos (`users/{uid}/inventory`, `config/featureFlags`,
+    // `campaigns/{id}` com `/eligible/{uid}`, e `playerEntitlements/{uid}`). A
+    // frase original desta nota dizia que o app so consumia `firebase_auth`, e
+    // envelheceu — corrigida na OS PRE-HOM-BMV-RC1-B2-RULES-C1 para que ninguem
+    // conclua dela que o fecho e inofensivo por falta de consumidor. O fecho e a
+    // postura correta pelo motivo que continua valendo: uma colecao que ninguem
     // declarou nao deve ficar aberta so porque ninguem se lembrou dela.
     match /{documento=**} {
       allow read, write: if false;

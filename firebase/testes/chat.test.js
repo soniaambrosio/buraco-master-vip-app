@@ -355,6 +355,28 @@ describe('CHAT-RIT — o ritmo não é do cliente', () => {
   test('CHAT-RIT-04 admin lê, porque investigar abuso é ler o padrão de envio', async () => {
     await assertSucceeds(getDoc(doc(comoAdmin(), `chatRitmo/${AUTOR}`)));
   });
+
+  // OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R3. A ordem reconciliou a
+  // divergência documental — a decisão `APAGAR` da OS 40-I1-CT1 é da MATRIZ DE
+  // RETENÇÃO da exclusão de conta, e não um pedido de remover esta regra — e
+  // decidiu que o bloco PERMANECE. Estes dois casos fecham o que faltava da
+  // campanha: o visitante sem sessão, e a ausência de porta aberta por baixo.
+  test('CHAT-RIT-05 quem não tem sessão não lê nem escreve', async () => {
+    await assertFails(getDoc(doc(semLogin(), `chatRitmo/${AUTOR}`)));
+    await assertFails(
+      setDoc(doc(semLogin(), `chatRitmo/${AUTOR}`), { recentes: [] })
+    );
+  });
+
+  test('CHAT-RIT-06 não há caminho permissivo por baixo do documento', async () => {
+    // O bloco declara `chatRitmo/{uid}` e mais nada. Uma subcoleção inventada
+    // aqui cairia no fecho do fim do arquivo — e este caso é o que denuncia se
+    // alguém a abrir depois, inclusive para o admin.
+    for (const db of [comoAutor(), comoAdmin(), semLogin()]) {
+      await assertFails(getDoc(doc(db, `chatRitmo/${AUTOR}/historico/h1`)));
+      await assertFails(setDoc(doc(db, `chatRitmo/${AUTOR}/historico/h1`), { x: 1 }));
+    }
+  });
 });
 
 // ===========================================================================

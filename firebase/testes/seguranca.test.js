@@ -59,6 +59,20 @@ const PROJETO = process.env.GCLOUD_PROJECT || 'buraco-master-vip-testes';
 const CAMPANHA = 'pioneiros_2026';
 const DONO = 'uid_dono';
 const ALHEIO = 'uid_alheio';
+const ADMIN = 'uid_admin';
+
+// Os CINCO caminhos que o ruleset de producao (era FlutterFlow) abria e que a
+// RC1 nao declara. OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R2: a decisao e
+// LEGADO-ENCERRAR para os cinco, e e ESTA lista que a impede de ser desfeita
+// por descuido. O id semeado de cada um e o id REAL do documento que existe em
+// producao, para que o caso exercite o caminho que de fato existe la.
+const LEGADOS = [
+  { colecao: 'global_chat', id: 'msg_semente' },
+  { colecao: 'tables', id: 'mesa_semente' },
+  { colecao: 'seasons', id: '2026_S1' },
+  { colecao: 'leaderboards', id: '2026_S1' },
+  { colecao: 'store_products', id: 'pack_starter' },
+];
 
 const ITENS = [
   'pioneer_2026_crown', 'pioneer_2026_chest', 'pioneer_2026_mascot_bulldog',
@@ -104,6 +118,26 @@ before(async () => {
       source: 'campanha', campaignId: CAMPANHA, campaignVersion: 1,
       unlockedAt: new Date(), equipped: false,
     });
+
+    // O DOCUMENTO RAIZ `users/{uid}`, semeado DE PROPOSITO.
+    //
+    // Um caso que so prova negacao sobre documento inexistente e fraco: o
+    // Firestore nega leitura de documento ausente de qualquer jeito, e o teste
+    // passaria mesmo com a regra aberta. Semeado, `assertFails` so pode vir da
+    // REGRA. O conteudo imita o unico documento que existe em producao neste
+    // caminho — `users/teste_user`, com `displayName` e nada mais —, e
+    // acrescenta um campo de aparencia sensivel para que o caso de escrita
+    // tenha o que tentar adulterar.
+    await setDoc(doc(db, `users/${DONO}`), {
+      displayName: 'Dono Legado',
+      vip: true,
+    });
+
+    // Os cinco caminhos do legado, com os ids que existem em producao. Mesmo
+    // motivo: negacao sobre documento que existe e a unica que prova regra.
+    for (const { colecao, id } of LEGADOS) {
+      await setDoc(doc(db, `${colecao}/${id}`), { semente: true });
+    }
   });
 });
 
@@ -113,6 +147,7 @@ after(async () => {
 
 const comoDono = () => ambiente.authenticatedContext(DONO).firestore();
 const comoAlheio = () => ambiente.authenticatedContext(ALHEIO).firestore();
+const comoAdmin = () => ambiente.authenticatedContext(ADMIN, { admin: true }).firestore();
 const semLogin = () => ambiente.unauthenticatedContext().firestore();
 
 describe('inventario: o cliente nao concede itens', () => {
@@ -211,6 +246,186 @@ describe('catalogo e campanha', () => {
   test('auditoria nao e legivel nem gravavel pelo aplicativo', async () => {
     await assertFails(getDocs(collection(comoDono(), 'audit')));
     await assertFails(setDoc(doc(comoDono(), 'audit/forjado'), { acao: 'nada' }));
+  });
+});
+
+// ===========================================================================
+// RAIZ-U — o documento raiz `users/{uid}`
+// OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R1.
+// ===========================================================================
+//
+// A regra de producao anterior concedia `read, write` ao dono aqui. A RC1 nega
+// a todos, e agora nega EXPLICITAMENTE. Estes casos provam as duas metades da
+// decisao — que a porta fechou, e que fechar esta porta nao fechou nenhuma das
+// oito subcolecoes que penduram deste documento.
+//
+// O CONTROLE POSITIVO abre o bloco de proposito. Sem ele, um emulador que
+// tivesse subido sem carregar as regras faria TODO `assertFails` "passar", e a
+// suite inteira daria verde provando nada. Se a primeira afirmacao falhar, o
+// que esta quebrado e a bancada, nao a regra.
+describe('RAIZ-U — `users/{uid}` e negado a todos', () => {
+  test('RAIZ-U-00 controle positivo: a bancada carregou as regras', async () => {
+    // Um caminho que a RC1 DECLARA como legivel pelo autenticado. Se isto
+    // falha, nenhum `assertFails` abaixo significa coisa alguma.
+    await assertSucceeds(getDoc(doc(comoDono(), 'config/featureFlags')));
+  });
+
+  test('RAIZ-U-01 o dono nao le o proprio documento raiz', async () => {
+    await assertFails(getDoc(doc(comoDono(), `users/${DONO}`)));
+  });
+
+  test('RAIZ-U-02 outro jogador nao le o documento raiz alheio', async () => {
+    await assertFails(getDoc(doc(comoAlheio(), `users/${DONO}`)));
+  });
+
+  test('RAIZ-U-03 nao autenticado nao le', async () => {
+    await assertFails(getDoc(doc(semLogin(), `users/${DONO}`)));
+  });
+
+  test('RAIZ-U-04 nem o admin le pelo cliente', async () => {
+    // Nao ha excecao de admin neste caminho, e a ausencia e deliberada: o
+    // suporte que precisar do documento usa o Admin SDK, que nao passa por aqui.
+    await assertFails(getDoc(doc(comoAdmin(), `users/${DONO}`)));
+  });
+
+  test('RAIZ-U-05 ninguem varre a colecao `users`', async () => {
+    // O `list` e o caso que mais doeria: os ids DESTA colecao sao os UIDs.
+    for (const db of [comoDono(), comoAlheio(), comoAdmin(), semLogin()]) {
+      await assertFails(getDocs(collection(db, 'users')));
+    }
+  });
+
+  test('RAIZ-U-06 o dono nao escreve nem campo inocente', async () => {
+    // `displayName` e exatamente o campo que o unico documento de producao tem.
+    // Negado do mesmo jeito: sem produtor, nao existe campo legitimo aqui.
+    await assertFails(updateDoc(doc(comoDono(), `users/${DONO}`), {
+      displayName: 'outro nome',
+    }));
+  });
+
+  test('RAIZ-U-07 o dono nao adultera campo de aparencia sensivel', async () => {
+    await assertFails(updateDoc(doc(comoDono(), `users/${DONO}`), { vip: true }));
+    await assertFails(setDoc(doc(comoDono(), `users/${DONO}`), {
+      displayName: 'Dono Legado', vip: true,
+    }));
+  });
+
+  test('RAIZ-U-08 o dono nao cria documento raiz novo', async () => {
+    await assertFails(setDoc(doc(comoDono(), `users/${ALHEIO}`), { displayName: 'x' }));
+    await assertFails(setDoc(doc(comoAlheio(), `users/${ALHEIO}`), { displayName: 'x' }));
+  });
+
+  test('RAIZ-U-09 ninguem apaga o documento raiz', async () => {
+    // Apagar e do Admin SDK, na exclusao de conta (`conta.usersRaiz`).
+    for (const db of [comoDono(), comoAlheio(), comoAdmin(), semLogin()]) {
+      await assertFails(deleteDoc(doc(db, `users/${DONO}`)));
+    }
+  });
+});
+
+// As subcolecoes NAO foram atingidas. Este bloco e a contraprova do anterior:
+// regra do Firestore se avalia por documento e se soma por OR, entao um
+// `if false` em `match /users/{uid}` nao pode remover concessao de bloco
+// nenhum. "Nao pode" por leitura do modelo; aqui isso vira medida.
+describe('RAIZ-U — o `if false` do raiz nao desceu para as subcolecoes', () => {
+  test('RAIZ-U-10 o dono continua lendo o proprio inventario', async () => {
+    await assertSucceeds(
+      getDoc(doc(comoDono(), `users/${DONO}/inventory/pioneer_2026_crown`))
+    );
+    await assertSucceeds(
+      getDocs(collection(comoDono(), `users/${DONO}/inventory`))
+    );
+  });
+
+  test('RAIZ-U-11 o dono continua ligando `equipped`', async () => {
+    await assertSucceeds(
+      updateDoc(doc(comoDono(), `users/${DONO}/inventory/pioneer_2026_crown`), {
+        equipped: true,
+      })
+    );
+  });
+
+  test('RAIZ-U-12 o dono continua criando e apagando o proprio silencio', async () => {
+    // `mutes` e a unica subcolecao de `users/{uid}` em que o cliente ESCREVE.
+    // Se o `if false` do pai tivesse descido, seria aqui que apareceria.
+    await assertSucceeds(
+      setDoc(doc(comoDono(), `users/${DONO}/mutes/${ALHEIO}`), {
+        alvoUid: ALHEIO, criadoEm: new Date(),
+      })
+    );
+    await assertSucceeds(deleteDoc(doc(comoDono(), `users/${DONO}/mutes/${ALHEIO}`)));
+  });
+
+  test('RAIZ-U-13 e o isolamento entre jogadores continua de pe', async () => {
+    await assertFails(
+      getDoc(doc(comoAlheio(), `users/${DONO}/inventory/pioneer_2026_crown`))
+    );
+  });
+});
+
+// ===========================================================================
+// LEGADO — os cinco caminhos do ruleset de producao que a RC1 encerra
+// OS PRE-HOM-BMV-RC1-B2-RULES-C1, bloqueador R2.
+// ===========================================================================
+//
+// `global_chat`, `tables`, `seasons`, `leaderboards` e `store_products` eram
+// abertos pelo ruleset da era FlutterFlow e NAO sao declarados neste arquivo de
+// regras: caem no fecho `match /{documento=**}`. A decisao desta OS e
+// LEGADO-ENCERRAR para os cinco, e e ESTE bloco que a torna irreversivel por
+// descuido — nao o comentario no arquivo de regras.
+//
+// OS CINCO DOCUMENTOS ESTAO SEMEADOS com os ids que existem em producao. Negar
+// leitura de documento que nao existe nao prova regra nenhuma; negar leitura de
+// documento que existe, prova.
+describe('LEGADO — os cinco caminhos da era anterior ficam fechados', () => {
+  test('LEGADO-00 controle positivo: um caminho declarado continua legivel', async () => {
+    // Mesma funcao do RAIZ-U-00, e repetido de proposito: este bloco tem que
+    // poder ser lido e executado sozinho sem herdar a garantia do vizinho.
+    await assertSucceeds(getDoc(doc(comoDono(), `campaigns/${CAMPANHA}`)));
+  });
+
+  for (const { colecao, id } of LEGADOS) {
+    const caminho = `${colecao}/${id}`;
+
+    test(`LEGADO-${colecao}-le ninguem le`, async () => {
+      for (const db of [comoDono(), comoAlheio(), comoAdmin(), semLogin()]) {
+        await assertFails(getDoc(doc(db, caminho)));
+      }
+    });
+
+    test(`LEGADO-${colecao}-varre ninguem varre`, async () => {
+      for (const db of [comoDono(), comoAlheio(), comoAdmin(), semLogin()]) {
+        await assertFails(getDocs(collection(db, colecao)));
+      }
+    });
+
+    test(`LEGADO-${colecao}-escreve ninguem escreve`, async () => {
+      for (const db of [comoDono(), comoAlheio(), comoAdmin(), semLogin()]) {
+        // Sobre o documento que existe...
+        await assertFails(updateDoc(doc(db, caminho), { semente: false }));
+        await assertFails(setDoc(doc(db, caminho), { semente: false }));
+        // ...e sobre um que nao existe, que e como colecao morta volta a ganhar
+        // conteudo sem ninguem decidir.
+        await assertFails(setDoc(doc(db, `${colecao}/forjado`), { x: 1 }));
+      }
+    });
+
+    test(`LEGADO-${colecao}-apaga ninguem apaga`, async () => {
+      for (const db of [comoDono(), comoAlheio(), comoAdmin(), semLogin()]) {
+        await assertFails(deleteDoc(doc(db, caminho)));
+      }
+    });
+  }
+
+  test('LEGADO-tables nao confunde a subcolecao de torneio', async () => {
+    // Existe um `tables` NESTE arquivo de regras, e ele e outro caminho:
+    // `tournaments/{t}/editions/{e}/tables`, legivel pelo autenticado. A decisao
+    // de encerrar a colecao de PRIMEIRO NIVEL nao o alcanca, e este caso e o que
+    // separa os dois — se alguem "cumprir" o encerramento mexendo no bloco de
+    // torneios, este caso quebra.
+    await assertSucceeds(
+      getDoc(doc(comoDono(), 'tournaments/t1/editions/e1/tables/mesa1'))
+    );
   });
 });
 
