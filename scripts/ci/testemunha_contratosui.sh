@@ -335,6 +335,29 @@ MOTOR_MATRIZ_CONGELADO_FIM
 )"
 
 readonly MOTOR_NOMES="esperar esperar_igual esperar_autoridade esperar_instrumento_invalido ok nok resultados"
+# X1: exatamente UMA definicao de cada funcao critica, em QUALQUER grafia
+# (`nome() {`, `nome () {`, `function nome {`, `function nome() {`, uma linha ou
+# multilinha). Uma segunda definicao — mesmo em uma linha unica — e a que o Bash
+# usa, e a extracao nominal abaixo, que so via `^nome() {`, guardava "a primeira"
+# e nao a via (escape X1). Zero definicoes ou duas-ou-mais = FAIL. Ignora
+# comentario e corpo de heredoc.
+for _fn in $MOTOR_NOMES; do
+  _ndef="$(awk -v fn="$_fn" '
+    function lt(x){ sub(/^[ \t]+/,"",x); return x }
+    BEGIN{ o="<"; o=o o }
+    { line=$0; sub(/\r$/,"",line)
+      if (her!=""){ if (lt(line)==her) her=""; next }
+      t=lt(line)
+      if (t !~ /^#/ && t ~ ("^(function[ \t]+" fn "([ \t]|\\(|\\{|$)|" fn "[ \t]*\\(\\))")) c++
+      if (index(line,o) && index(line, o "<")==0) { w=substr(line,index(line,o)+2); sub(/^-/,"",w); sub(/^[ \t]+/,"",w); gsub(/[\047\042]/,"",w); sub(/[^A-Za-z0-9_].*$/,"",w); if(w!="") her=w }
+    }
+    END{ print c+0 }
+  ' "$MATRIZ")"
+  if [ "${_ndef:-0}" -ne 1 ]; then
+    recusa "a funcao critica '$_fn' tem ${_ndef:-0} definicao(oes) na matriz (exige exatamente 1) — redefinicao/regrafia do motor (X1)"
+  fi
+done
+
 motor_real="$(awk -v nomes="$MOTOR_NOMES" '
   BEGIN{ nn=split(nomes, ordem, " ") }
   { l=$0; sub(/\r$/,"",l); linhas[NR]=l; total=NR

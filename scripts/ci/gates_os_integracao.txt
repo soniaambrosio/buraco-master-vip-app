@@ -334,7 +334,7 @@ contratosui
     caso        T59
     exigenocaso sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
     suite      scripts/ci/testemunha_contratosui.sh
-    sha256     059b841a4ea4ed8e621a776c2be75fb8b58cb721579f857dcf0288c3b4807224
+    sha256     73d659d19417f4c9a68f5fc13e31bbb8a7294d7a08b6a0219faaf120809f4b70
     provas     15
     conta      ^[[:blank:]]*recusa[[:blank:]]
     exige      for id in $CASOS_OBRIGATORIOS; do
@@ -360,7 +360,7 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     11b66aef75cd411d0cf82f9b3df663347696016b16dfaa15b56507bfa694eab2
+    sha256     b05c3b7240d52ff7e439ffb17d9f2427375b3d124ab8026da2709222fc961c71
     provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
     casos      102

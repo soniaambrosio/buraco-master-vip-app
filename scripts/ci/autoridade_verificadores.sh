@@ -91,7 +91,7 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh 1b6cf5b508fc08808a4172184b97bc12a759b84e646cf7e61257f4306f7501b0
+scripts/ci/verificar_contrato_suites.sh d0849687968ad87529dad09c78a23644d1ab87969fe398978ef402e90c1e6917
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
 scripts/ci/teste_portao_os_integracao.sh 275ec67065583e20a148bd47e08b9bf4f4f2a6db4b81608feffd5865e2d6aa45
@@ -183,6 +183,23 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 DECISOES_MATERIAIS
 )"
 readonly EXIGENCIAS
+
+# ---------------------------------------------------------------------------
+# X2 — O DIGESTO DO MOTOR E DA TESTEMUNHA (a ancora da propria ancora)
+# ---------------------------------------------------------------------------
+#
+# A defesa contra o motor da matriz neutralizado (C1-10) mora em
+# `testemunha_contratosui.sh`. Mas a propria testemunha — e o motor
+# `teste_contrato_suites.sh` — podem ser alterados e ter o `sha256` realinhado NA
+# FONTE. Esta autoridade guarda o digesto dos dois AQUI, fora da fonte, e recusa
+# antes de confiar em seus resultados. E redundancia independente: trocar
+# `[ "$motor_real" = "$MOTOR_ESPERADO" ]` por condicao sempre verdadeira muda a
+# testemunha e cai aqui, mesmo com o sha da fonte recarimbado.
+readonly DIGESTOS_MOTOR="$(cat <<'MOTOR_DIG'
+scripts/ci/teste_contrato_suites.sh 1e73edff502ce0d74f7259d9856e2d8f4be608619c026021a7fd5dbde3b8521c
+scripts/ci/testemunha_contratosui.sh 73d659d19417f4c9a68f5fc13e31bbb8a7294d7a08b6a0219faaf120809f4b70
+MOTOR_DIG
+)"
 
 # ---------------------------------------------------------------------------
 # OS PISOS DOS PISOS — as chaves que os mapas do verificador nao podem perder
@@ -660,6 +677,26 @@ LEITURA_DIGESTO
     recusa "  no disco  $real"
   fi
 done
+
+printf '\n== 2b. digesto do motor e da testemunha (X2) ==\n'
+while IFS= read -r regm; do
+  [ -z "$regm" ] && continue
+  arqm="${regm%% *}"; digm="${regm#* }"
+  if [ ! -s "$raiz/$arqm" ]; then
+    recusa "o motor '$arqm' esta ausente ou vazio — a peca que decide sumiu"
+    continue
+  fi
+  realm="$(tr -d '\r' < "$raiz/$arqm" | sha256sum)"; realm="${realm%% *}"
+  if [ "$realm" = "$digm" ]; then
+    ok "motor        $arqm  ${realm:0:16}..."
+  else
+    recusa "o conteudo de '$arqm' mudou e o digesto desta autoridade nao."
+    recusa "  congelado $digm"
+    recusa "  no disco  $realm"
+  fi
+done <<MOTOR_DIGESTOS
+$DIGESTOS_MOTOR
+MOTOR_DIGESTOS
 
 printf '\n== 3. as decisoes materiais, em codigo vivo ==\n'
 

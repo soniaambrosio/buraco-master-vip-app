@@ -509,11 +509,37 @@ casos_canonicos() {
     fi
     CANONICO="$nums"
   elif [ "$tool" = node ]; then
-    if grep -qE '^#? *fail [1-9]' "$log"; then erro "'$gate' tem caso(s) com FALHA no placar node ('# fail')"; return; fi
-    if grep -qE '^#? *skipped [1-9]' "$log"; then erro "'$gate' tem caso(s) PULADO(s) no placar node ('# skipped')"; return; fi
-    n="$(grep -aoE '(# )?pass [0-9]+' "$log" | grep -oE '[0-9]+' | sort -un | tail -1)"
-    [ -z "$n" ] && { erro "'$gate' sem placar 'pass N' do node --test no log"; return; }
-    CANONICO="$n"
+    # X4: CONTADOR CANONICO do node --test. So o resumo terminal oficial conta —
+    # linhas '# tests/# pass/# fail/# skipped' ANCORADAS, um de cada, coerentes.
+    # Nunca o maior numero do texto: 'pass 999' perdido no log nao vence
+    # '# pass 400'. Um 'pass N' cru, sem '#', tambem nao conta (fecha X4e).
+    local nt np nf ns
+    nt=$(grep -cE '^# tests [0-9]+$' "$log"); np=$(grep -cE '^# pass [0-9]+$' "$log")
+    nf=$(grep -cE '^# fail [0-9]+$' "$log");  ns=$(grep -cE '^# skipped [0-9]+$' "$log")
+    if [ $((nt+np+nf+ns)) -gt 0 ]; then
+      # ha resumo terminal do node --test: exige coerencia estrita
+      if [ "$nt" -ne 1 ] || [ "$np" -ne 1 ] || [ "$nf" -ne 1 ] || [ "$ns" -ne 1 ]; then
+        erro "'$gate' resumo node --test incoerente: # tests=$nt # pass=$np # fail=$nf # skipped=$ns (exige exatamente um de cada, todos presentes)"; return; fi
+      if grep -qE '^# (todo|cancelled) [1-9]' "$log"; then erro "'$gate' resumo node com todo/cancelled diferente de zero"; return; fi
+      local tests pass fail skip
+      tests=$(grep -oE '^# tests [0-9]+$' "$log" | grep -oE '[0-9]+')
+      pass=$(grep -oE '^# pass [0-9]+$' "$log" | grep -oE '[0-9]+')
+      fail=$(grep -oE '^# fail [0-9]+$' "$log" | grep -oE '[0-9]+')
+      skip=$(grep -oE '^# skipped [0-9]+$' "$log" | grep -oE '[0-9]+')
+      if [ "$fail" -ne 0 ]; then erro "'$gate' node # fail = $fail (exige 0)"; return; fi
+      if [ "$skip" -ne 0 ]; then erro "'$gate' node # skipped = $skip (exige 0)"; return; fi
+      if [ "$pass" -ne "$tests" ]; then erro "'$gate' node # pass ($pass) != # tests ($tests)"; return; fi
+      CANONICO="$pass"
+    else
+      # evidencia sintetica coerente da banca (sem resumo '#'): usa o placar
+      # coerente 'casos ok: N | casos com falha: F'. 'pass N' cru sozinho nao vale.
+      local linha f
+      linha="$(grep -aoE 'casos ok: [0-9]+ \| casos com falha: [0-9]+' "$log" | tail -1)"
+      if [ -z "$linha" ]; then erro "'$gate' sem resumo terminal do node --test ('# tests/# pass/# fail/# skipped') e sem placar coerente 'casos ok: N | falha: F'"; return; fi
+      f="$(printf '%s' "$linha" | sed -n 's/.*com falha: \([0-9]*\).*/\1/p')"
+      if [ "${f:-0}" -gt 0 ]; then erro "'$gate' registrou $f caso(s) com falha no placar"; return; fi
+      CANONICO="$(printf '%s' "$linha" | sed -n 's/casos ok: \([0-9]*\).*/\1/p')"
+    fi
   else
     linha="$(grep -aoE 'casos ok: [0-9]+ \| casos com falha: [0-9]+' "$log" | tail -1)"
     if [ -z "$linha" ]; then erro "'$gate' sem placar 'casos ok: N | casos com falha: F' no log"; return; fi
@@ -1054,6 +1080,21 @@ conferir_entrada() {
     case "$workflow_vivas" in
       *$'\n'"$alvo_esp"$'\n'*) : ;;
       *) erro "o executor de '$chave' esta no workflow mas NAO em execucao viva (heredoc/comentario): '$alvo_esp'" ;;
+    esac
+
+    # X3: PROVENIENCIA DO MARCADOR. Para gate executado por 'roda', exit_<gate> e
+    # t_<gate>.log sao produzidos pelo proprio 'roda' (via "$k"), e por isso NUNCA
+    # aparecem literais no workflow. Qualquer escrita literal de exit_<gate>,
+    # t_<gate>.log ou nao_<gate> e evidencia fabricada ao lado de um 'roda' morto
+    # (ex.: sob 'if false; then ... fi') — o escape X3. So vale a evidencia que o
+    # 'roda' de fato produziu.
+    case "$executor" in
+      "roda "*)
+        case "$workflow_vivas" in
+          *"exit_$chave"* | *"t_$chave.log"* | *"nao_$chave"*)
+            erro "o marcador de '$chave' aparece LITERAL no workflow (exit_$chave / t_$chave.log) — gate 'roda' so pode ter evidencia produzida pelo proprio 'roda'; escrita manual e fabricacao" ;;
+        esac
+        ;;
     esac
 
     # O marcador pode ser escrito LITERALMENTE (`echo ... > exit_proveni`) ou
