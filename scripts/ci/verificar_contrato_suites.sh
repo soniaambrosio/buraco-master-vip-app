@@ -148,10 +148,10 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn autverif"
-readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35 \
+readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:88 rankingfn:57 autverif:35 \
 avatarcanon:38 avatarhml:42 perfilvis:25 rknavpub:38 compavrank:21 compnavpub:22 \
 socialestado:28 socialleitor:29 socialtela:18 audsocial:23 a11yamigos:30"
-readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102 \
+readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:115 \
 avatarcanon:38 avatarhml:42 perfilvis:25 rknavpub:38 compavrank:21 compnavpub:22 \
 socialestado:28 socialleitor:29 socialtela:18 audsocial:23 a11yamigos:75"
 
@@ -166,7 +166,7 @@ socialestado:28 socialleitor:29 socialtela:18 audsocial:23 a11yamigos:75"
 # uma relacao a menos reprova aqui, do lado de fora, mesmo que ninguem tenha
 # escrito o conjunto nominal daquele gate. A outra metade — o conjunto NOMINAL
 # EXATO — esta em `RELACOES_CONGELADAS`, logo abaixo.
-readonly PISOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:29 rankingfn:15 \
+readonly PISOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:32 rankingfn:15 \
 avatarcanon:4 avatarhml:4 perfilvis:4 rknavpub:4 compavrank:3 compnavpub:3 \
 socialestado:3 socialleitor:3 socialtela:2 audsocial:4 a11yamigos:3 autverif:24"
 
@@ -345,6 +345,7 @@ eh_gate() {
 
 conteudo_workflow=''
 workflow_espremido=''
+workflow_incondicionais=''
 if [ -n "$workflow" ]; then
   if [ ! -f "$workflow" ]; then
     printf 'CONTRATO DE SUITE: workflow ausente em %s\n' "$workflow"
@@ -387,6 +388,174 @@ if [ -n "$workflow" ]; then
   else
     printf 'ok   passo0     a invocacao viva de cada passo zero protegido esta no lugar\n'
   fi
+
+  # -------------------------------------------------------------------------
+  # PRODUTOR UNICO DA EVIDENCIA DE GATE `roda` (C3-03)
+  # -------------------------------------------------------------------------
+  #
+  # A guarda mais abaixo pergunta "o marcador de '<gate>' aparece LITERAL no
+  # workflow?". A pre-auditoria da C2 mostrou o que essa pergunta nao cobre:
+  #
+  #   X3f   o `roda socialtela` foi para dentro de `if false; then ... fi` e uma
+  #         funcao `fab()` montou "t_$1.log" e "exit_$1" em tempo de execucao
+  #   X3g   o mesmo, com `g=socialtela` e "t_${g}.log"
+  #   X3h   o mesmo, copiando um log valido de outra corrida
+  #   X3i   o mesmo, rodando OUTRO gate e copiando a evidencia dele
+  #
+  # Em nenhum dos quatro o nome do gate aparece colado ao nome do artefato, e
+  # por isso nenhum dos quatro tinha marcador literal. A busca por grafia perde
+  # sempre: ha infinitas maneiras de escrever "t_" concatenado com "socialtela".
+  #
+  # A pergunta muda. Nao e "existe texto parecido com o executor?" e sim "QUEM
+  # PRODUZIU a evidencia deste gate?". Para gate `roda`, a resposta tem de ser
+  # uma so: o auxiliar `roda`, executado de verdade. Isso da tres exigencias:
+  #
+  #   1. UM produtor. Exatamente uma definicao do auxiliar `roda` no workflow.
+  #      Duas definicoes e uma delas pode ser a falsa.
+  #
+  #   2. O PRODUTOR RODA. A linha `roda <gate> <caminho>` tem de estar em
+  #      posicao ALCANCAVEL do passo. Um `roda` dentro de `if false`, de um
+  #      `case` que nao casa ou de uma funcao nunca chamada esta no texto e nao
+  #      executa. E este o coracao dos quatro escapes, e e aqui que os quatro
+  #      morrem, independentemente da grafia que usem depois para fabricar os
+  #      nomes.
+  #
+  #      ALCANCAVEL NAO E "PROFUNDIDADE ZERO" (C3-R1). A primeira versao desta
+  #      guarda media so aninhamento de bloco, e a campanha da C3 mostrou o
+  #      preco disso no vetor X3c:
+  #
+  #          roda socialleitor  test/amigos/leitor_social_test.dart
+  #          exit 0
+  #          roda socialtela    test/amigos/descoberta_social_tela_test.dart
+  #
+  #      `exit 0` nao abre bloco nenhum, entao a linha seguinte continuava em
+  #      profundidade zero e a guarda chegava a imprimir `ok incond socialtela`
+  #      sobre uma linha morta. O passo inteiro morre ali — no X3c foram CINCO
+  #      gates — e a arvore ficava verde de ponta a ponta.
+  #
+  #      Fim lexical de bloco, profundidade zero e alcance real sao tres coisas
+  #      diferentes. Esta guarda mede a terceira: dentro de cada passo, um
+  #      TERMINADOR INCONDICIONAL do fluxo corrente — `exit`, `exit N`,
+  #      `return`, `exec <cmd>` — mata tudo o que vem depois dele naquele passo.
+  #      Nao se procura o literal `exit 0`: procura-se a palavra em posicao de
+  #      comando, o que cobre `exit "$x"`, `cmd && exit 0`, `false || exit 0` e
+  #      sequencias separadas por `;`. Um terminador cuja linha ABRE a propria
+  #      estrutura que o guarda (`if ...; then exit 0; fi`) nao mata o fluxo:
+  #      ali o `exit` e condicional, e essa forma existe no workflow desta
+  #      arvore, nos passos `3a` e `3b`.
+  #
+  #      O passo seguinte comeca fluxo novo: `run:` e outro shell.
+  #
+  #      E FAIL-CLOSED ONDE A LEITURA NAO ALCANCA. Nao se pretende decidir a
+  #      semantica inteira do Bash. A busca do terminador ignora conteudo de
+  #      literal — `echo "| gate | status | exit |"` nao mata nada —, e quando a
+  #      linha TERMINA dentro de aspas a guarda nao sabe o que e codigo dali em
+  #      diante: marca o fluxo como opaco e trata o resto do passo como nao
+  #      alcancavel. "Nao sei se e alcancavel" nao pode virar verde.
+  #
+  #   3. NINGUEM MAIS ESCREVE. Fora do corpo do auxiliar, nenhuma linha viva
+  #      pode ESCREVER num nome de artefato montado com expansao — `> "t_$x"`,
+  #      `tee "t_${x}.log"`, `cp ... "exit_$x"`. Dentro do `roda` a montagem
+  #      dinamica e o mecanismo; fora dele e a fabricacao. Ler nao e escrever:
+  #      o passo de relatorio faz `tail -n 25 "t_$k.log"` e continua legitimo.
+  #
+  # E FAIL-CLOSED NA PROPRIA LEITURA: se os blocos do workflow nao fecham, a
+  # nocao de "profundidade zero" nao vale nada, e a guarda reprova em vez de
+  # adivinhar.
+  #
+  # Isto continua sendo leitura ESTATICA, e leitura estatica tem teto: quem
+  # responde em definitivo "esta evidencia nasceu desta execucao?" e o
+  # observador externo, que ve o processo rodar. Esta guarda e o que o proprio
+  # repositorio consegue afirmar sozinho.
+  PRODUTOR_SAIDA="$(printf '%s\n' "$conteudo_workflow" | awk '
+    function lt(x){ sub(/^[ \t]+/,"",x); return x }
+    function esprem(x){ gsub(/[ \t]+/," ",x); sub(/^ /,"",x); sub(/ $/,"",x); return x }
+    function conta(s, re,   n, t) { n=0; t=" " s; while (match(t, re)) { n++; t=" " substr(t, RSTART+RLENGTH) } return n }
+    function sem_aspas(s,   i, c, st, out) { st=""; out=""; ABERTA=0
+      for (i=1; i<=length(s); i++) { c=substr(s,i,1)
+        if (st=="") { if (c=="\\") { i++; continue }
+          if (c=="\047" || c=="\042") { st=c; out=out " "; continue }
+          out=out c }
+        else if (st=="\047") { if (c=="\047") st="" }
+        else { if (c=="\\") { i++; continue } ; if (c=="\042") st="" } }
+      if (st!="") ABERTA=1
+      return out }
+    BEGIN{ o="<"; o=o o; tt=o "<"; prof=0; ndef=0; corpo=0; morto=0
+      RFECHA="[;&|[:space:]](fi|done|esac)([[:space:]]|;|&|[|]|$)"
+      RABRE="[;&|[:space:]](if|for|while|until|case)[[:space:]]"
+      RTERM="(^|[;&|])[[:space:]]*(exit|return|exec)([[:space:]]|;|$)"
+      Q="[\042\047\140]?"
+      RDIN="(t_|exit_|nao_)[^[:space:]\042\047\140]*[$]" }
+    /^      - name: / { morto=0; prof=0 }
+    {
+      line=$0; sub(/\r$/,"",line)
+      if (her!=""){ if (lt(line)==her) her=""; next }
+      tl=lt(line)
+      if (tl ~ /^#/) next
+      if (index(line,o) && !index(line,tt)) { w=substr(line,index(line,o)+2); sub(/^-/,"",w); sub(/^[ \t]+/,"",w); gsub(/[\047\042]/,"",w); sub(/[^A-Za-z0-9_].*$/,"",w); if(w!="") her=w }
+      nu = sem_aspas(tl)
+      fecha = conta(tl, RFECHA); if (tl == "}") fecha++
+      abre  = conta(tl, RABRE)
+      ehdef = (tl ~ /^roda[[:space:]]*\(\)[[:space:]]*\{/ || tl ~ /^function[[:space:]]+roda([[:space:]]|\(|\{)/)
+      if (tl ~ /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/ || tl ~ /^function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:]]|\(|\{)/) abre++
+      abre_cru = abre
+      m = (abre < fecha ? abre : fecha); abre -= m; fecha -= m
+      if (corpo && tl == "}") corpo = 0
+      prof -= fecha; if (prof < 0) prof = 0
+      if (ehdef) { ndef++; corpo = 1 }
+      if (prof == 0 && !corpo && !morto) printf "INCOND\t%s\n", esprem(tl)
+      if (prof == 0 && !corpo && ABERTA) { printf "OPACO\t%s\n", esprem(tl); morto = 1 }
+      if (prof == 0 && !corpo && !abre_cru && match(" " nu, RTERM)) { printf "MORRE\t%s\n", esprem(tl); morto = 1 }
+      if (!corpo && tl ~ /(t_|exit_|nao_)/) {
+        if (match(tl, ">>?[[:space:]]*" Q RDIN) ||
+            match(tl, "tee([[:space:]]+-[^[:space:]]+)*[[:space:]]+" Q RDIN) ||
+            (tl ~ "(^|[;&|[:space:]])(cp|mv|install|ln|touch|dd|rsync)[[:space:]]" && match(tl, RDIN)))
+          printf "FABRICA\t%s\n", esprem(tl)
+      }
+      prof += abre
+    }
+    END{ printf "RODADEF\t%d\nPROFFIM\t%d\n", ndef, prof }')"
+
+  workflow_incondicionais=$'\n'"$(printf '%s\n' "$PRODUTOR_SAIDA" | sed -n 's/^INCOND\t//p')"$'\n'
+
+  _rodadef="$(printf '%s\n' "$PRODUTOR_SAIDA" | sed -n 's/^RODADEF\t//p')"
+  _proffim="$(printf '%s\n' "$PRODUTOR_SAIDA" | sed -n 's/^PROFFIM\t//p')"
+
+  if [ "${_proffim:-1}" -ne 0 ]; then
+    erro "o workflow nao fecha os blocos que abre (saldo $_proffim) — sem isso nao da para dizer se um 'roda' e incondicional; fail-closed"
+  elif [ "${_rodadef:-0}" -ne 1 ]; then
+    erro "o workflow tem ${_rodadef:-0} definicao(oes) do auxiliar 'roda' (exige exatamente 1) — evidencia de gate 'roda' precisa de PRODUTOR UNICO"
+  else
+    printf 'ok   produtor   o auxiliar roda e unico e os blocos do workflow fecham\n'
+  fi
+
+  _fabricacoes=0
+  while IFS= read -r _lf; do
+    [ -z "$_lf" ] && continue
+    erro "o workflow ESCREVE em nome de artefato montado dinamicamente, fora do auxiliar 'roda' — evidencia de gate 'roda' so pode nascer do proprio 'roda'; fabricacao por nome construido (X3f/X3g/X3h/X3i): $(printf '%s' "$_lf" | cut -c1-140)"
+    _fabricacoes=$((_fabricacoes + 1))
+  done <<FABRICACOES
+$(printf '%s\n' "$PRODUTOR_SAIDA" | sed -n 's/^FABRICA\t//p')
+FABRICACOES
+  [ "$_fabricacoes" -eq 0 ] && \
+    printf 'ok   fabrica    nenhuma escrita em nome de artefato construido fora do auxiliar roda\n'
+
+  # O QUE MATOU O FLUXO, NOMEADO (C3-R1). Nao e recusa por si: um passo pode
+  # terminar cedo de proposito. Vira recusa quando um executor contratado fica
+  # depois disto — e ai quem reprova e a guarda de alcance, logo abaixo, dizendo
+  # qual gate ficou inalcancavel. Aqui so se mostra a linha, para que o motivo
+  # apareca nos autos em vez de o auditor ter de descobri-lo.
+  _mortes=0
+  while IFS= read -r _lm; do
+    [ -z "$_lm" ] && continue
+    printf 'ok   terminador o fluxo do passo termina aqui, e o que vem depois nao e alcancavel: %s\n' \
+      "$(printf '%s' "$_lm" | cut -c1-100)"
+    _mortes=$((_mortes + 1))
+  done <<TERMINADORES
+$(printf '%s\n' "$PRODUTOR_SAIDA" | sed -n -e 's/^MORRE\t//p' -e 's/^OPACO\t//p')
+TERMINADORES
+  [ "$_mortes" -eq 0 ] && \
+    printf 'ok   alcance    nenhum terminador incondicional corta o fluxo de um passo\n'
 fi
 
 # ---------------------------------------------------------------------------
@@ -513,33 +682,56 @@ casos_canonicos() {
     # linhas '# tests/# pass/# fail/# skipped' ANCORADAS, um de cada, coerentes.
     # Nunca o maior numero do texto: 'pass 999' perdido no log nao vence
     # '# pass 400'. Um 'pass N' cru, sem '#', tambem nao conta (fecha X4e).
-    local nt np nf ns
+    #
+    # NAO EXISTE PLACAR ALTERNATIVO (C3-04). Ate a C2 este ramo tinha um segundo
+    # caminho: sem resumo `#`, aceitava `casos ok: N | casos com falha: F`. O
+    # caminho existia para a bancada interna, que fabricava a evidencia dos gates
+    # com o placar de shell — e foi por ele que X4h passou, com um log de
+    # `rankingfn` que nao tinha uma linha de `node --test` e trazia
+    # `casos ok: 999`. Um gate Node sem resumo Node nao rodou `node --test`; um
+    # gate Node com `casos ok:` no lugar do resumo esta contando outra coisa.
+    #
+    # A bancada e que se ajustou ao verificador — a fixture passou a emitir o
+    # resumo canonico. O verificador nao afrouxa para acomodar a bancada, porque
+    # o dia em que afrouxar e o dia em que a bancada vira o contrato.
+    #
+    # Ausencia de resumo = FAIL. Resumo incompleto = FAIL. `casos ok:` no lugar
+    # do resumo = FAIL, e a mensagem diz que foi isso.
+    local nt np nf ns nc ntd ncru
     nt=$(grep -cE '^# tests [0-9]+$' "$log"); np=$(grep -cE '^# pass [0-9]+$' "$log")
     nf=$(grep -cE '^# fail [0-9]+$' "$log");  ns=$(grep -cE '^# skipped [0-9]+$' "$log")
-    if [ $((nt+np+nf+ns)) -gt 0 ]; then
-      # ha resumo terminal do node --test: exige coerencia estrita
-      if [ "$nt" -ne 1 ] || [ "$np" -ne 1 ] || [ "$nf" -ne 1 ] || [ "$ns" -ne 1 ]; then
-        erro "'$gate' resumo node --test incoerente: # tests=$nt # pass=$np # fail=$nf # skipped=$ns (exige exatamente um de cada, todos presentes)"; return; fi
-      if grep -qE '^# (todo|cancelled) [1-9]' "$log"; then erro "'$gate' resumo node com todo/cancelled diferente de zero"; return; fi
-      local tests pass fail skip
-      tests=$(grep -oE '^# tests [0-9]+$' "$log" | grep -oE '[0-9]+')
-      pass=$(grep -oE '^# pass [0-9]+$' "$log" | grep -oE '[0-9]+')
-      fail=$(grep -oE '^# fail [0-9]+$' "$log" | grep -oE '[0-9]+')
-      skip=$(grep -oE '^# skipped [0-9]+$' "$log" | grep -oE '[0-9]+')
-      if [ "$fail" -ne 0 ]; then erro "'$gate' node # fail = $fail (exige 0)"; return; fi
-      if [ "$skip" -ne 0 ]; then erro "'$gate' node # skipped = $skip (exige 0)"; return; fi
-      if [ "$pass" -ne "$tests" ]; then erro "'$gate' node # pass ($pass) != # tests ($tests)"; return; fi
-      CANONICO="$pass"
-    else
-      # evidencia sintetica coerente da banca (sem resumo '#'): usa o placar
-      # coerente 'casos ok: N | casos com falha: F'. 'pass N' cru sozinho nao vale.
-      local linha f
-      linha="$(grep -aoE 'casos ok: [0-9]+ \| casos com falha: [0-9]+' "$log" | tail -1)"
-      if [ -z "$linha" ]; then erro "'$gate' sem resumo terminal do node --test ('# tests/# pass/# fail/# skipped') e sem placar coerente 'casos ok: N | falha: F'"; return; fi
-      f="$(printf '%s' "$linha" | sed -n 's/.*com falha: \([0-9]*\).*/\1/p')"
-      if [ "${f:-0}" -gt 0 ]; then erro "'$gate' registrou $f caso(s) com falha no placar"; return; fi
-      CANONICO="$(printf '%s' "$linha" | sed -n 's/casos ok: \([0-9]*\).*/\1/p')"
-    fi
+    nc=$(grep -cE '^# cancelled [0-9]+$' "$log"); ntd=$(grep -cE '^# todo [0-9]+$' "$log")
+    # `pass N` CRU: a linha termina em `pass <numero>` e NAO e a linha `# pass N`
+    # do resumo. E a forma do X4e — um numero solto que parece placar.
+    ncru=$(grep -aE '(^|[[:space:]])pass [0-9]+[[:space:]]*$' "$log" | grep -cvE '^# pass [0-9]+$')
+    if [ $((nt+np+nf+ns)) -eq 0 ]; then
+      if grep -qaE 'casos ok: [0-9]+' "$log"; then
+        erro "'$gate' e gate Node e o log NAO tem resumo do 'node --test' ('# tests/# pass/# fail/# skipped'); tem placar 'casos ok:', que NUNCA substitui o resumo — evidencia de outra ferramenta ou fabricada (X4h/X4j)"; return; fi
+      if [ "$ncru" -gt 0 ]; then
+        erro "'$gate' e gate Node e o log NAO tem resumo do 'node --test'; tem 'pass N' cru, sem '#', que nao e o resumo terminal (X4e)"; return; fi
+      erro "'$gate' e gate Node e o log NAO tem o resumo terminal do 'node --test' ('# tests/# pass/# fail/# skipped') — sem resumo nao ha execucao provada; fail-closed"; return; fi
+    # ha resumo terminal do node --test: exige coerencia estrita
+    if [ "$nt" -ne 1 ] || [ "$np" -ne 1 ] || [ "$nf" -ne 1 ] || [ "$ns" -ne 1 ]; then
+      erro "'$gate' resumo node --test incoerente: # tests=$nt # pass=$np # fail=$nf # skipped=$ns (exige exatamente um de cada, todos presentes)"; return; fi
+    if [ "$nc" -gt 1 ] || [ "$ntd" -gt 1 ]; then
+      erro "'$gate' resumo node com '# cancelled'/'# todo' repetido (cancelled=$nc todo=$ntd)"; return; fi
+    if grep -qE '^# (todo|cancelled) [1-9]' "$log"; then erro "'$gate' resumo node com todo/cancelled diferente de zero"; return; fi
+    local tests pass fail skip
+    tests=$(grep -oE '^# tests [0-9]+$' "$log" | grep -oE '[0-9]+')
+    pass=$(grep -oE '^# pass [0-9]+$' "$log" | grep -oE '[0-9]+')
+    fail=$(grep -oE '^# fail [0-9]+$' "$log" | grep -oE '[0-9]+')
+    skip=$(grep -oE '^# skipped [0-9]+$' "$log" | grep -oE '[0-9]+')
+    if [ "$fail" -ne 0 ]; then erro "'$gate' node # fail = $fail (exige 0)"; return; fi
+    if [ "$skip" -ne 0 ]; then erro "'$gate' node # skipped = $skip (exige 0)"; return; fi
+    if [ "$pass" -ne "$tests" ]; then erro "'$gate' node # pass ($pass) != # tests ($tests)"; return; fi
+    # CAMPO CONFLITANTE. Um `casos ok:` ao lado de um resumo canonico e dois
+    # placares no mesmo log, e o gate passa a ter duas respostas para a mesma
+    # pergunta. Fail-closed: o log de um gate Node fala uma lingua so.
+    if grep -qaE 'casos ok: [0-9]+' "$log"; then
+      erro "'$gate' tem resumo node E placar 'casos ok:' no mesmo log — dois contadores conflitantes para o mesmo gate; fail-closed"; return; fi
+    if [ "$ncru" -gt 0 ]; then
+      erro "'$gate' tem resumo node E 'pass N' cru sem '#' no mesmo log — texto ambiguo; fail-closed (X4e/X4f)"; return; fi
+    CANONICO="$pass"
   else
     linha="$(grep -aoE 'casos ok: [0-9]+ \| casos com falha: [0-9]+' "$log" | tail -1)"
     if [ -z "$linha" ]; then erro "'$gate' sem placar 'casos ok: N | casos com falha: F' no log"; return; fi
@@ -1093,6 +1285,17 @@ conferir_entrada() {
         case "$workflow_vivas" in
           *"exit_$chave"* | *"t_$chave.log"* | *"nao_$chave"*)
             erro "o marcador de '$chave' aparece LITERAL no workflow (exit_$chave / t_$chave.log) — gate 'roda' so pode ter evidencia produzida pelo proprio 'roda'; escrita manual e fabricacao" ;;
+        esac
+        # E O PRODUTOR TEM DE RODAR (C3-03). Estar vivo, acima, quer dizer "nao
+        # esta em comentario nem em heredoc". Nao quer dizer "executa": um
+        # `roda <gate>` dentro de `if false; then ... fi` passa nas duas guardas
+        # anteriores e nao roda coisa nenhuma — foi por ai que X3f, X3g, X3h e
+        # X3i entraram. A linha do executor tem de estar em profundidade ZERO de
+        # bloco, que e onde estao as outras trinta e sete.
+        case "$workflow_incondicionais" in
+          *$'\n'"$alvo_esp"$'\n'*)
+            printf 'ok   alcance    %-12s o executor esta em posicao ALCANCAVEL do passo\n' "$chave" ;;
+          *) erro "o executor de '$chave' esta no texto e NAO E ALCANCAVEL: '$alvo_esp' — ou esta dentro de bloco (if/case/for/while, corpo de funcao), ou vem depois de um terminador incondicional do fluxo (exit/return/exec), ou depois de construcao que esta guarda nao sabe modelar. Gate 'roda' exige executor que o passo de fato alcance; executor morto nao produz evidencia (X3c/X3d/X3f/X3g/X3h/X3i)" ;;
         esac
         ;;
     esac

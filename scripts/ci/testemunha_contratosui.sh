@@ -373,6 +373,151 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 0-bis. O MOTOR COMPORTAMENTAL — a implementacao que o BASH CARREGOU (C3-01)
+# ---------------------------------------------------------------------------
+#
+# Tudo acima le o TEXTO da matriz. A pre-auditoria da C2 mostrou que ler texto
+# nao basta, e mostrou em cinco formas diferentes:
+#
+#   X1e   true; esperar() { ok "$2"; return 0; }     a definicao nao comeca a linha
+#   X1f   eval 'esperar() { ok "$2"; return 0; }'    nao ha definicao, ha uma string
+#   X1g   source "$(dirname "$0")/.motor_extra.sh"   o corpo nem mora neste arquivo
+#   X1h   . "$(dirname "$0")/.motor_extra.sh"        idem, outra grafia
+#   X1i   __p='esper'; __q='ar'; eval "${__p}${__q}() { ... }"   nem o literal existe
+#
+# Nas cinco, a extracao nominal continua encontrando a funcao congelada, o
+# contador de definicoes continua vendo exatamente uma, o digest da suite e
+# realinhado — e o Bash executa OUTRA COISA. A matriz fica 88/88 verde com a
+# asercao morta.
+#
+# A pergunta certa nao e "qual funcao esta escrita no arquivo". E "qual funcao o
+# Bash vai executar". Quem responde isso e o proprio Bash: `declare -f` devolve a
+# implementacao carregada NAQUELE processo, ja normalizada, venha ela de onde
+# vier — segunda definicao, regrafia, `eval`, `source`, `.` ou concatenacao.
+#
+# COMO. Um processo descartavel roda um caso real da matriz com um observador
+# carregado por `BASH_ENV`. O observador arma um `trap ... DEBUG` e, na PRIMEIRA
+# chamada de uma funcao critica, registra `declare -f` das sete e se desliga.
+# DEBUG, e nao EXIT: a matriz instala o proprio `trap ... EXIT` para limpar o
+# `mktemp`, e um EXIT nosso seria substituido por ele.
+#
+# FAIL-CLOSED. Zero observacoes reprova. Um ataque que impeca a observacao — que
+# limpe o ambiente, que desarme o trap — nao compra silencio: compra vermelho.
+#
+# OS DIGESTOS. Sao o SHA-256 da forma canonica de `declare -f` de cada funcao,
+# na matriz intacta. Ficam aqui, fora da suite auditada, como o corpo textual
+# acima. Esta e uma defesa INTERNA: quem edita esta testemunha alcanca estes
+# valores tambem. Quem responde por isso e o registro externo da cadeia, fora do
+# commit — e e por isso que estes digestos sao o segundo par de olhos, nao o
+# primeiro.
+readonly MOTOR_DIGESTOS="\
+esperar 3f49f6c3833e57f95f8405f09a2d6c56f0e29b0017389a3779aeb9fe7282f5eb
+esperar_igual fca44f3bb00fc7b8fe03ccc7cc47fcd0713b8b7a7adc3d6eab7e23448c365eb2
+esperar_autoridade f795bb3f4766f187100f537fcde2423f5324e12d6fdbc4833c7e8ab193e8b253
+esperar_instrumento_invalido d462aa282f9b4e9dc22c8e95c0f1159df6900c3980abc8aff095d72e055fcbd2
+ok a1484c11d1a92bb5c0109d3ec46946ca57b650ab977d14fcee4099c8f9b2fde1
+nok eb241e48cf1179ccba7cd9315e0df661bbce78f33f49f929652fd504a6888a7f
+resultados 37df18b85a84422730d3a79cff0830b8ed5b97f8d2685a0f10be61752d70f12c"
+
+cat > "$TMPT/observador.sh" <<'BMV_OBSERVADOR_FIM'
+# Observador comportamental do motor da matriz. Carregado por BASH_ENV: o
+# proprio Bash que vai executar a matriz le este arquivo ANTES do script.
+BMV_FUNCOES_CRITICAS='esperar esperar_igual esperar_autoridade esperar_instrumento_invalido ok nok resultados'
+__bmv_registrar_motor() {
+  local destino="${BMV_OBS_DIR:-}" f
+  [ -z "$destino" ] && return 0
+  [ -d "$destino" ] || mkdir -p "$destino" 2>/dev/null || return 0
+  {
+    for f in $BMV_FUNCOES_CRITICAS; do
+      printf '@@ %s\n' "$f"
+      if declare -F "$f" > /dev/null 2>&1; then declare -f "$f"; else printf '(AUSENTE NESTE PROCESSO)\n'; fi
+      printf '@@FIM %s\n' "$f"
+    done
+  } > "$destino/declare_$$.txt" 2>/dev/null
+}
+__bmv_espiar_motor() {
+  local alvo="${BASH_COMMAND%% *}" f
+  case "$alvo" in __bmv_* | declare | trap | local | return) return 0 ;; esac
+  for f in $BMV_FUNCOES_CRITICAS; do
+    if [ "$alvo" = "$f" ] && declare -F "$f" > /dev/null 2>&1; then
+      trap - DEBUG
+      __bmv_registrar_motor
+      return 0
+    fi
+  done
+  return 0
+}
+trap '__bmv_espiar_motor' DEBUG
+BMV_OBSERVADOR_FIM
+
+mkdir -p "$TMPT/decl"
+CASO_SONDA_MOTOR="$(printf '%s\n' $CASOS_OBRIGATORIOS | head -1)"
+BMV_OBS_DIR="$TMPT/decl" BASH_ENV="$TMPT/observador.sh" \
+  bash "$MATRIZ" --caso "$CASO_SONDA_MOTOR" > "$TMPT/sonda_motor.txt" 2>&1
+
+_declaracoes="$(ls "$TMPT/decl"/declare_*.txt 2>/dev/null)"
+if [ -z "$_declaracoes" ]; then
+  recusa "a matriz nao produziu NENHUMA observacao de 'declare -f' ao rodar o caso '$CASO_SONDA_MOTOR' — sem observacao nao ha prova de qual implementacao o Bash carregou; fail-closed"
+else
+  _motor_vivo_ok=1
+  for _fn in $MOTOR_NOMES; do
+    _esperado_fn="$(printf '%s\n' "$MOTOR_DIGESTOS" | awk -v f="$_fn" '$1 == f { print $2 }')"
+    _achou=0
+    _divergente=''
+    for _arq in $_declaracoes; do
+      awk -v f="$_fn" '$0 == "@@ " f { p = 1; next } $0 == "@@FIM " f { p = 0 } p' "$_arq" > "$TMPT/corpo_fn"
+      [ -s "$TMPT/corpo_fn" ] || continue
+      grep -q '(AUSENTE NESTE PROCESSO)' "$TMPT/corpo_fn" && continue
+      _achou=1
+      _real_fn="$(sha256sum < "$TMPT/corpo_fn" | cut -d' ' -f1)"
+      [ "$_real_fn" != "$_esperado_fn" ] && _divergente="$_real_fn"
+    done
+    if [ "$_achou" -eq 0 ]; then
+      recusa "nenhuma observacao registrou a funcao critica '$_fn' no processo que rodou a matriz — o Bash nao carregou o motor esperado; fail-closed"
+      _motor_vivo_ok=0
+    elif [ -n "$_divergente" ]; then
+      recusa "o BASH carregou para '$_fn' uma implementacao DIFERENTE da congelada (declare -f: $_divergente, esperado $_esperado_fn) — redefinicao por segunda definicao, regrafia, eval, source ou dot-source (X1e/X1f/X1g/X1h/X1i)"
+      _motor_vivo_ok=0
+    fi
+  done
+  [ "$_motor_vivo_ok" -eq 1 ] && \
+    printf 'ok   motorvivo  as sete funcoes que o BASH carregou sao as congeladas (declare -f)\n'
+fi
+
+# ---------------------------------------------------------------------------
+# 0-ter. OS MECANISMOS DE REDEFINICAO SILENCIOSA (C3-01)
+# ---------------------------------------------------------------------------
+#
+# A verificacao acima diz QUE o motor foi trocado. Esta diz que a matriz nao tem
+# por onde troca-lo. A matriz intacta nao usa `eval`, nao usa `source` e nao usa
+# dot-source: sao tres construcoes que carregam codigo de origem arbitraria em
+# tempo de execucao, e nenhuma delas e necessaria ao funcionamento normal dela.
+# Onde nao sao necessarias, sao superficie — e X1f, X1g, X1h e X1i sao
+# exatamente essa superficie sendo usada.
+#
+# A leitura ignora comentario e corpo de heredoc: o que conta e o que o shell de
+# fato executa.
+awk 'function lt(x){ sub(/^[ \t]+/,"",x); return x }
+     BEGIN{ o="<"; o=o o; t=o "<" }
+     { line=$0; sub(/\r$/,"",line)
+       if (her!=""){ if (lt(line)==her) her=""; next }
+       if (lt(line) ~ /^#/) next
+       print line
+       if (index(line,o) && !index(line,t)) { w=substr(line,index(line,o)+2); sub(/^-/,"",w); sub(/^[ \t]+/,"",w); gsub(/[\047\042]/,"",w); sub(/[^A-Za-z0-9_].*$/,"",w); if(w!="") her=w }
+     }' "$MATRIZ" > "$TMPT/matriz_vivas"
+
+_carregadores=0
+while IFS= read -r _l; do
+  [ -z "$_l" ] && continue
+  recusa "a matriz tem CARREGADOR DE CODIGO em execucao viva — eval/source/dot-source redefinem funcao critica sem deixar definicao no texto (X1f/X1g/X1h/X1i): $(printf '%s' "$_l" | sed -e 's/^[[:space:]]*//' | cut -c1-120)"
+  _carregadores=$((_carregadores + 1))
+done <<CARREGADORES
+$(grep -hE '(^|[;&|(!{[:space:]])(eval|source)([[:space:]]|$)|(^|[;&|(]|[[:space:]]then|[[:space:]]do)[[:space:]]*\.[[:space:]]+[^[:space:]]' "$TMPT/matriz_vivas")
+CARREGADORES
+[ "$_carregadores" -eq 0 ] && \
+  printf 'ok   carregador nenhum eval/source/dot-source em execucao viva na matriz\n'
+
+# ---------------------------------------------------------------------------
 # 1. A SONDA DO IDENTIFICADOR FABRICADO
 # ---------------------------------------------------------------------------
 bash "$MATRIZ" --caso "$ID_FABRICADO" > "$TMPT/sonda.txt" 2>&1

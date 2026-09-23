@@ -91,7 +91,7 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh d0849687968ad87529dad09c78a23644d1ab87969fe398978ef402e90c1e6917
+scripts/ci/verificar_contrato_suites.sh 54bf7aca73314481753901208c0ce80787764637edd8f61d017974944fdf8af1
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
 scripts/ci/teste_portao_os_integracao.sh 275ec67065583e20a148bd47e08b9bf4f4f2a6db4b81608feffd5865e2d6aa45
@@ -131,6 +131,17 @@ EXIGENCIAS="$(cat <<'DECISOES_MATERIAIS'
 1 elif [ "$carimbo" -nt "$log" ]; then
 1 GUARDA_PASSO_ZERO="$(dirname "$0")/teste_portao_os_integracao.sh"
 1 bash "$GUARDA_PASSO_ZERO" --guarda "$workflow"
+1 if [ "${_proffim:-1}" -ne 0 ]; then
+1 elif [ "${_rodadef:-0}" -ne 1 ]; then
+1 if (prof == 0 && !corpo && !morto) printf "INCOND\t%s\n", esprem(tl)
+1 if (prof == 0 && !corpo && ABERTA) { printf "OPACO\t%s\n", esprem(tl); morto = 1 }
+1 if (prof == 0 && !corpo && !abre_cru && match(" " nu, RTERM)) { printf "MORRE\t%s\n", esprem(tl); morto = 1 }
+1 RTERM="(^|[;&|])[[:space:]]*(exit|return|exec)([[:space:]]|;|$)"
+1 function sem_aspas(s,   i, c, st, out) { st=""; out=""; ABERTA=0
+1 /^      - name: / { morto=0; prof=0 }
+1 printf "FABRICA\t%s\n", esprem(tl)
+1 case "$workflow_incondicionais" in
+1 if [ $((nt+np+nf+ns)) -eq 0 ]; then
 @ scripts/ci/portao_os_integracao.sh
 1 if [ "$valor" = "0" ]; then
 6 falhou=1
@@ -196,8 +207,8 @@ readonly EXIGENCIAS
 # `[ "$motor_real" = "$MOTOR_ESPERADO" ]` por condicao sempre verdadeira muda a
 # testemunha e cai aqui, mesmo com o sha da fonte recarimbado.
 readonly DIGESTOS_MOTOR="$(cat <<'MOTOR_DIG'
-scripts/ci/teste_contrato_suites.sh 1e73edff502ce0d74f7259d9856e2d8f4be608619c026021a7fd5dbde3b8521c
-scripts/ci/testemunha_contratosui.sh 73d659d19417f4c9a68f5fc13e31bbb8a7294d7a08b6a0219faaf120809f4b70
+scripts/ci/teste_contrato_suites.sh 54cbdc45ad7067d831bb4088fd5e97ee74b3e593ffa2d2f74068f379bf4eafb4
+scripts/ci/testemunha_contratosui.sh 1ff4ba186bcae6549f9344de56400736e5f9b5318aecebfc22299367283405fc
 MOTOR_DIG
 )"
 
@@ -211,9 +222,9 @@ MOTOR_DIG
 #
 # Aqui a chave e OBRIGATORIA e o valor tem PISO. Um numero menor do que o
 # congelado abaixo e regressao de prova, mesmo que a comparacao continue escrita.
-readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:82 rankingfn:57 autverif:35"
-readonly MINIMOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:102"
-readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:29 rankingfn:15 autverif:24"
+readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:88 rankingfn:57 autverif:35"
+readonly MINIMOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:115"
+readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:32 rankingfn:15 autverif:24"
 readonly MINIMOS_EXIGENOCASO="comunicacao:3 contratosui:5"
 
 # A propria invocacao, que o workflow tem de continuar carregando. Apagar o

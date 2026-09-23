@@ -623,6 +623,57 @@ resultados() {
   touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
 }
 
+# `contador_de <gate>` — a ERE de contagem que o contrato dele declara. E ela
+# que diz QUAL FERRAMENTA produz o log daquele gate, e e a mesma leitura que o
+# verificador faz.
+contador_de() {
+  sed -e 's/\r$//' "$FONTE" | awk -v alvo="$1" '
+    /^[^ \t#]/ { g = $1; next }
+    g == alvo && $1 == "contador" { sub(/^[ \t]+contador[ \t]+/, ""); print; exit }
+  '
+}
+
+# `fixture_evidencia <dir>` — a evidencia da bancada, na lingua de CADA
+# ferramenta (C3-04).
+#
+# `resultados` monta o diretorio e escreve, em todo log, as tres formas de
+# contador que este repositorio usa. Ate a C2 isso bastava para os gates Node,
+# porque o verificador tinha um segundo caminho: sem o resumo do `node --test`,
+# ele aceitava o `casos ok: N` que a fixture escrevia. Esse caminho existia POR
+# CAUSA da bancada — e foi por ele que o X4h passou, com um log de `rankingfn`
+# sem uma unica linha de `node --test` e um `casos ok: 999`.
+#
+# A C3 fechou o caminho. Quem se ajusta e a bancada: para gate Node, esta funcao
+# reescreve o log com o resumo terminal canonico, que e o que o `node --test`
+# emite de verdade. O verificador nao afrouxa para acomodar quem o testa — no
+# dia em que afrouxar, a bancada vira o contrato.
+#
+# `resultados` fica INTACTA e continua sendo a unica a montar o diretorio: o
+# motor da matriz e materia congelada, conferida de fora. E a relacao de quais
+# gates sao Node vem da FONTE — do `contador` que cita `pass` —, nao de uma
+# lista escrita a mao, que e a mesma porta dos fundos que `resultados` recusa.
+fixture_evidencia() {
+  local d="$1" k n
+  resultados "$d"
+  for k in $CONTRATADOS; do
+    case "$(contador_de "$k")" in
+      *pass*) ;;
+      *) continue ;;
+    esac
+    n="$(casos_de "$k")"
+    [ -z "$n" ] && n=1
+    {
+      printf '# tests %s\n' "$n"
+      printf '# pass %s\n' "$n"
+      printf '# fail 0\n'
+      printf '# skipped 0\n'
+      printf '# cancelled 0\n'
+      printf '# todo 0\n'
+    } > "$d/t_$k.log"
+  done
+  touch -d '+1 hour' "$d"/t_*.log 2>/dev/null || touch "$d"/t_*.log
+}
+
 # recarimbar <suite> — realinha o `sha256` daquela suite na fonte de $W.
 #
 # Sem isto, TODA sabotagem de conteudo reprovaria pela assinatura, e nenhum caso
@@ -908,7 +959,7 @@ if caso_ativo T15; then
   # guarda lexica dos passos zero e os vetores dela — e tres em `autverif`. A
   # ancora e de CARDINALIDADE EXATA, e por isso sobe junto com a fonte: nao e
   # afrouxamento, e o instrumento continuando a medir a fonte que existe.
-  ancora "$FONTE_W" '^    exige      ' 201
+  ancora "$FONTE_W" '^    exige      ' 204
   sed -i '/^    exige      /d' "$W/$FONTE_W"
   efeito '^    exige      ' 0
   esperar 1 "T15 — contrato sem nenhum exige => VERMELHO" "nao declara nenhum 'exige'"
@@ -959,7 +1010,7 @@ printf '\n== o contrato nao pode encolher ==\n'
 if caso_ativo T21; then
   reset T21
   # 260 -> 279 na OS 40-C5, pelas mesmas dezenove relacoes novas.
-  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 322
+  ancora "$FONTE_W" '^    [a-z][a-z0-9_]* ' 325
   # QUALQUER atributo indentado, e nao uma lista de nomes. A lista escrita a mao
   # ficou para tras quando a OS 40-C1 acrescentou `alvo` e `exigealvo`: o caso
   # continuava vermelho, mas por OUTRO motivo — sobrava contrato, e a mensagem
@@ -1019,14 +1070,14 @@ printf '\n== FASE B: o log da execucao ==\n'
 
 if caso_ativo T27; then
   reset T27
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   sem_mutacao 'CONTROLE: a evidencia integra nao e sabotada'
   esperar 0 "T27 CONTROLE — evidencia completa e datada => VERDE" 'posterior ao carimbo' "$TMP/res"
 fi
 
 if caso_ativo T28; then
   reset T28
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   ancora_evidencia 't_comunicacao.log'
   rm -f "$TMP/res/t_comunicacao.log"
   efeito_evidencia ausente
@@ -1035,7 +1086,7 @@ fi
 
 if caso_ativo T29; then
   reset T29
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   ancora_evidencia 't_comunicacao.log'
   printf '00:12 +81: All tests passed!\n' > "$TMP/res/t_comunicacao.log"
   touch -d '-1 hour' "$TMP/res/t_comunicacao.log"
@@ -1045,7 +1096,7 @@ fi
 
 if caso_ativo T30; then
   reset T30
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   ancora_evidencia 'carimbo_execucao'
   rm -f "$TMP/res/carimbo_execucao"
   efeito_evidencia ausente
@@ -1054,7 +1105,7 @@ fi
 
 if caso_ativo T31; then
   reset T31
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   ancora_evidencia 't_comunicacao.log'
   printf '00:00 +3: All tests passed!\n' > "$TMP/res/t_comunicacao.log"
   touch -d '+1 hour' "$TMP/res/t_comunicacao.log"
@@ -1064,7 +1115,7 @@ fi
 
 if caso_ativo T32; then
   reset T32
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   ancora_evidencia 't_portaoci.log'
   : > "$TMP/res/t_portaoci.log"
   efeito_evidencia vazio
@@ -1306,7 +1357,7 @@ printf '\n== a FASE B cobra log de TODO gate contratado, e a relacao vem da font
 
 if caso_ativo T57; then
   reset T57
-  resultados "$TMP/res"
+  fixture_evidencia "$TMP/res"
   ausencia "$FONTE_W" '^    casos      ' analyze
   awk '{ l = $0; sub(/\r$/, "", l); print l }
        l == "analyze" && !f { print "    casos      1"; print "    contador   pass [0-9]+"; f = 1 }' \
