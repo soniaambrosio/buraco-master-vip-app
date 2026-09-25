@@ -7,3 +7,4 @@
 #
 # PENDENTE (OS PRE-HOM-BMV-RC1): backend autorizado de pre-homologacao ainda
 # nao designado. Sem uma linha de valor abaixo, o portao do release REPROVA.
+wss://buraco-servidor-production.up.railway.app
