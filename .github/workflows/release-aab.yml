@@ -359,13 +359,17 @@ jobs:
       # ---------------------------------------------------------------------
 
       - name: "PORTAO DE QUALIDADE — motor de partidas"
+        # `teste_motor.dart` importa `conformidade_fixture.dart` (vetores C8),
+        # que mora ao lado dele. Copiar so o teste fazia a compilacao falhar
+        # antes do primeiro caso: o passo nunca rodou verde. O helper vai junto,
+        # nominalmente — sem `cp -R app/test/.`, que traria as outras suites.
         run: |
           if [ ! -f app/test/teste_motor.dart ]; then
             echo "ERRO: app/test/teste_motor.dart nao encontrado — portao OBRIGATORIO."
             exit 1
           fi
           mkdir -p app_build/test
-          cp app/test/teste_motor.dart app_build/test/
+          cp app/test/teste_motor.dart app/test/conformidade_fixture.dart app_build/test/
           echo "Commit testado: ${GITHUB_SHA}"
           cd app_build
           flutter test test/teste_motor.dart --reporter expanded
