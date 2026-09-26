@@ -91,7 +91,7 @@ scripts/ci/teste_portao_os_integracao.sh"
 # mesmo caminho deixariam a comparacao depender de qual deles fosse lido
 # primeiro.
 DIGESTOS="$(cat <<'DIGESTOS_CONGELADOS'
-scripts/ci/verificar_contrato_suites.sh 54bf7aca73314481753901208c0ce80787764637edd8f61d017974944fdf8af1
+scripts/ci/verificar_contrato_suites.sh 5e7a3c518092f652c6f03d7d5a77a404c7686d7470975e871bbd48f5191379ce
 scripts/ci/portao_os_integracao.sh 1c97a3048b630ec3799f05be3932edc46d0f7598af47b1087767ca8b4cdf66d2
 scripts/ci/codigo_executavel.awk 4ebdcebb72e37959d2825acf7805980fc4a0c36418307f0b8336262a8efa541e
 scripts/ci/teste_portao_os_integracao.sh 275ec67065583e20a148bd47e08b9bf4f4f2a6db4b81608feffd5865e2d6aa45
@@ -208,7 +208,7 @@ readonly EXIGENCIAS
 # testemunha e cai aqui, mesmo com o sha da fonte recarimbado.
 readonly DIGESTOS_MOTOR="$(cat <<'MOTOR_DIG'
 scripts/ci/teste_contrato_suites.sh 54cbdc45ad7067d831bb4088fd5e97ee74b3e593ffa2d2f74068f379bf4eafb4
-scripts/ci/testemunha_contratosui.sh 1ff4ba186bcae6549f9344de56400736e5f9b5318aecebfc22299367283405fc
+scripts/ci/testemunha_contratosui.sh 1f6990a9da65caafbff99f17d59b1b20ccafdc9e5a57ff5c7c310ffb34a28dbb
 MOTOR_DIG
 )"
 
@@ -222,7 +222,7 @@ MOTOR_DIG
 #
 # Aqui a chave e OBRIGATORIA e o valor tem PISO. Um numero menor do que o
 # congelado abaixo e regressao de prova, mesmo que a comparacao continue escrita.
-readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:88 rankingfn:57 autverif:35"
+readonly MINIMOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:92 rankingfn:57 autverif:35"
 readonly MINIMOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:115"
 readonly MINIMOS_EXIGE="comunicacao:35 chatdom:6 portaoci:55 contratosui:32 rankingfn:15 autverif:24"
 readonly MINIMOS_EXIGENOCASO="comunicacao:3 contratosui:5"

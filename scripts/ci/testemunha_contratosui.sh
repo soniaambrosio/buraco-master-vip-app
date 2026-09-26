@@ -650,6 +650,57 @@ if [ "$observados" -ne "$n_cong" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. A EXECUCAO EFETIVA DOS GATES — proveniencia obrigatoria (C4)
+# ---------------------------------------------------------------------------
+#
+# Tudo acima prova o VERIFICADOR. Nada acima prova que os gates do passo "1+2"
+# de fato executaram: a auditoria da C3 mostrou passos em que o texto parecia
+# certo, FASE A, FASE B, agregador e `autverif` ficavam verdes, e so a
+# autoridade externa de proveniencia via que a execucao nao tinha acontecido.
+# Por isso ela deixa de ser instrumento de auditoria e vira condicao NECESSARIA
+# deste gate: sem 39/39 observados, com conjuntos identicos, o `contratosui`
+# reprova — e com ele o agregador.
+#
+# A autoridade e o conjunto esperado chegam de FORA da arvore, pelo ambiente
+# (`BMV_PROV_AUTORIDADE`, `BMV_PROV_REGISTRO`). Sem eles: VERMELHO. Nao existe
+# modo tolerante, aviso nem compensacao por outra autoridade verde.
+#
+# Os dois arquivos que esta secao usa sao guardados AQUI, por digesto exato
+# (`tr -d '\r' | sha256sum`), e nao na fonte nem em `autoridade_verificadores.sh`:
+# o digesto DESTA testemunha ja mora nos dois, entao a corrente fecha sem mexer
+# nas ancoras que a matriz conta nem nas arvores-fixture que ela monta.
+readonly DIGESTOS_PROVENIENCIA="\
+proveniencia_obrigatoria.sh:2e4fd5cb05808ef296a969f7edeb563274b9c523195632c87922a00de7599f3c \
+proveniencia_esperada.tsv:bf251db35fafa00cb49990e556e7f9e1f6d416f2714043d41a689358e5c58d2e"
+PROVENIENCIA="$AQUI/proveniencia_obrigatoria.sh"
+RAIZ_ARVORE="$(cd "$AQUI/../.." && pwd)"
+prov_integra=1
+for par in $DIGESTOS_PROVENIENCIA; do
+  arqp="$AQUI/${par%%:*}"
+  realp="$( { tr -d '\r' < "$arqp" | sha256sum; } 2>/dev/null)"; realp="${realp%% *}"
+  if [ ! -s "$arqp" ] || [ "$realp" != "${par#*:}" ]; then
+    prov_integra=0
+    recusa "a peca da proveniencia '${par%%:*}' sumiu ou mudou e o digesto desta testemunha nao"
+  fi
+done
+if [ ! -f "$PROVENIENCIA" ]; then
+  recusa "a proveniencia obrigatoria sumiu ($PROVENIENCIA) — sem ela nenhum gate tem execucao provada"
+elif [ "$prov_integra" -ne 1 ]; then
+  printf 'TESTEMUNHA: proveniencia obrigatoria NAO executada: suas pecas nao sao as congeladas\n'
+else
+  bash "$PROVENIENCIA" conferir "$RAIZ_ARVORE" > "$TMPT/proveniencia.txt" 2>&1
+  prov=$?
+  cat "$TMPT/proveniencia.txt"
+  if [ "$prov" -ne 0 ]; then
+    recusa "a proveniencia obrigatoria nao fechou (exit $prov) — gate declarado nao e gate executado"
+  elif ! grep -qE '^PROVENIENCIA OBRIGATORIA: VERDE — ([0-9]+)/\1 ' "$TMPT/proveniencia.txt"; then
+    recusa "a proveniencia obrigatoria saiu zero sem o veredito VERDE de identidade — fail-closed"
+  else
+    printf 'ok   proveniencia  execucao de todos os gates esperados observada pela autoridade externa\n'
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6. A EVIDENCIA, SELADA DEPOIS
 # ---------------------------------------------------------------------------
 #

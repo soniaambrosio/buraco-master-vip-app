@@ -148,7 +148,7 @@ agregador="$raiz/scripts/ci/portao_os_integracao.sh"
 # `PISOS_PROVAS` e sobre a SOMA das declaracoes das suites do gate — um gate com
 # uma suite so, que e o caso de todos menos `rankingfn`, se comporta como sempre.
 readonly CONTRATOS_MINIMOS="comunicacao chatdom portaoci contratosui rankingfn autverif"
-readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:88 rankingfn:57 autverif:35 \
+readonly PISOS_PROVAS="comunicacao:83 chatdom:60 portaoci:74 contratosui:92 rankingfn:57 autverif:35 \
 avatarcanon:38 avatarhml:42 perfilvis:25 rknavpub:38 compavrank:21 compnavpub:22 \
 socialestado:28 socialleitor:29 socialtela:18 audsocial:23 a11yamigos:30"
 readonly PISOS_CASOS="comunicacao:81 portaoci:248 contratosui:68 rankingfn:465 autverif:115 \

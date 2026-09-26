@@ -334,8 +334,8 @@ contratosui
     caso        T59
     exigenocaso sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
     suite      scripts/ci/testemunha_contratosui.sh
-    sha256     1ff4ba186bcae6549f9344de56400736e5f9b5318aecebfc22299367283405fc
-    provas     20
+    sha256     1f6990a9da65caafbff99f17d59b1b20ccafdc9e5a57ff5c7c310ffb34a28dbb
+    provas     24
     conta      ^[[:blank:]]*recusa[[:blank:]]
     exige      BMV_OBS_DIR="$TMPT/decl" BASH_ENV="$TMPT/observador.sh" \
     exige      recusa "o BASH carregou para
@@ -363,7 +363,7 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     a6d512c72ece4cf61f4a3e05afc2f64f79775da0851f2355a72f17d5cde35bc9
+    sha256     1881503d56105395c85aaa32487771257511e9acb25ac8c595a1a68fe8c354f3
     provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
     casos      115
