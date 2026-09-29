@@ -96,6 +96,7 @@ on:
     branches:
       - integracao/os-final-backend-flutter
       - correcao/ci-composicao-perfil-mesa-ranking-v2-v1
+      - correcao/bmv-pub-c1-d1-c4-w1-proveniencia-github-actions-v1
   workflow_dispatch:
 
 permissions:
@@ -168,6 +169,119 @@ jobs:
           rm -f t_autverif.log exit_autverif
           bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
           echo ${PIPESTATUS[0]} > exit_autverif
+
+      - name: "0p — PROVENIÊNCIA EXTERNA: materializa a autoridade fora do checkout"
+        env:
+          BMV_PROV_FONTE_REPO: ${{ vars.BMV_PROV_FONTE_REPO }}
+          BMV_PROV_FONTE_REF: ${{ vars.BMV_PROV_FONTE_REF }}
+          BMV_PROV_TOKEN: ${{ secrets.BMV_PROV_TOKEN }}
+        run: |
+          # [BMV-PUB-C1-D1-C4-W1] A C4 tornou o `contratosui` dependente de dois
+          # insumos que NAO moram nesta arvore: o pacote AUTH1-R2 extraido
+          # (BMV_PROV_AUTORIDADE) e o registro dos 39 pares (BMV_PROV_REGISTRO).
+          # Este passo so os ENTREGA ao runner. Quem decide continua sendo a
+          # proveniencia obrigatoria da C4, que reconfere tudo por pino.
+          #
+          # A origem e externa a candidata: o repositorio e o commit vem de
+          # `vars.*` e a credencial de `secrets.*`, configurados fora da arvore.
+          # Nada e copiado para dentro de $GITHUB_WORKSPACE, nada e gerado a
+          # partir da copia legivel que mora na arvore, e nenhuma falha vira
+          # aviso: qualquer divergencia derruba o job AQUI, antes dos gates.
+          set -euo pipefail
+          falha() { echo "PROVENIENCIA EXTERNA: VERMELHO — $*"; exit 1; }
+
+          # Os bytes congelados. Estes pinos so CONFEREM; o registro e o pacote
+          # continuam sendo os de fora, e a C4 os reconfere por conta propria.
+          PIN_ZIP=63902996df2fe6d975ae16fd5b66465236a614b5d06a98e9e6f8cbf090567bb1
+          PIN_REGISTRO=bf251db35fafa00cb49990e556e7f9e1f6d416f2714043d41a689358e5c58d2e
+          PIN_MANIFESTO=048f387e63f6630aaf6660a44eca89c1ed3e158ea346f13c036d2a33d16b8cc4
+          PIN_AUTORIDADE=078d1da13c3f16300cd528e93b368920786275641d22ab247897f257213f3bad
+          ZIP=BMV-PUB-C1-D1-C3-AUTH1-R2.zip
+          REG=proveniencia-esperada-e54ff4a.tsv
+
+          # 1. a fonte externa precisa estar provisionada — e por COMMIT, nunca por branch
+          [ -n "${BMV_PROV_FONTE_REPO:-}" ] || falha "vars.BMV_PROV_FONTE_REPO nao provisionada"
+          [ -n "${BMV_PROV_FONTE_REF:-}" ] || falha "vars.BMV_PROV_FONTE_REF nao provisionada"
+          [ -n "${BMV_PROV_TOKEN:-}" ] || falha "secrets.BMV_PROV_TOKEN nao provisionado"
+          printf '%s' "$BMV_PROV_FONTE_REPO" | grep -qxE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' \
+            || falha "vars.BMV_PROV_FONTE_REPO fora da forma dono/repositorio"
+          printf '%s' "$BMV_PROV_FONTE_REF" | grep -qxE '[0-9a-f]{40}' \
+            || falha "vars.BMV_PROV_FONTE_REF nao e um SHA de commit de 40 hex"
+
+          # 2. o destino mora FORA do checkout da candidata
+          [ -n "${RUNNER_TEMP:-}" ] && [ -d "$RUNNER_TEMP" ] || falha "RUNNER_TEMP ausente"
+          D="$RUNNER_TEMP/bmv-prov"
+          rm -rf "$D"; mkdir -p "$D"
+          D="$(cd "$D" && pwd -P)"; WS="$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          case "$D/" in "$WS"/*) falha "destino $D mora dentro do checkout $WS" ;; esac
+
+          # 3. o commit externo congelado, buscado pela identidade exata
+          git init -q "$D/fonte"
+          CAB="$(printf 'x-access-token:%s' "$BMV_PROV_TOKEN" | base64 -w0)"
+          echo "::add-mask::$CAB"
+          git -C "$D/fonte" -c "http.extraheader=AUTHORIZATION: basic $CAB" \
+            fetch -q --no-tags --depth 1 "https://github.com/$BMV_PROV_FONTE_REPO.git" "$BMV_PROV_FONTE_REF" \
+            || falha "nao foi possivel obter $BMV_PROV_FONTE_REPO@$BMV_PROV_FONTE_REF"
+          unset CAB BMV_PROV_TOKEN
+          OBTIDO="$(git -C "$D/fonte" rev-parse --verify 'FETCH_HEAD^{commit}')"
+          [ "$OBTIDO" = "$BMV_PROV_FONTE_REF" ] || falha "commit obtido $OBTIDO difere do congelado $BMV_PROV_FONTE_REF"
+
+          # 4. o commit contem EXATAMENTE os dois arquivos, como blobs comuns
+          git -C "$D/fonte" ls-tree FETCH_HEAD | awk '{ print $1, $2, $4 }' > "$D/arvore.txt"
+          printf '100644 blob %s\n100644 blob %s\n' "$ZIP" "$REG" > "$D/arvore.esperada"
+          cmp -s "$D/arvore.txt" "$D/arvore.esperada" \
+            || { cat "$D/arvore.txt"; falha "o commit externo nao contem exatamente $ZIP e $REG"; }
+
+          # 5. materializa os BYTES do objeto git, sem checkout e sem filtro de fim de linha
+          git -C "$D/fonte" cat-file blob "FETCH_HEAD:$ZIP" > "$D/$ZIP"
+          git -C "$D/fonte" cat-file blob "FETCH_HEAD:$REG" > "$D/$REG"
+          rm -rf "$D/fonte"
+          [ "$(sha256sum "$D/$ZIP" | cut -d' ' -f1)" = "$PIN_ZIP" ] || falha "$ZIP nao e o congelado"
+          [ "$(sha256sum "$D/$REG" | cut -d' ' -f1)" = "$PIN_REGISTRO" ] || falha "$REG nao e o congelado"
+
+          # 6. extrai o pacote. O ZIP congelado usa '\' como separador; o unzip
+          # do Linux converte e sai 1 (AVISO) com exatamente uma linha dizendo
+          # isso. Aceita-se exit 0 ou 1 SO quando toda a saida e esse aviso; e
+          # a extracao nunca e prova: o que prova e o passo 7.
+          command -v unzip > /dev/null || falha "unzip ausente no runner"
+          unzip -Z1 "$D/$ZIP" | tr '\\' '/' | LC_ALL=C sort > "$D/entradas.txt"
+          if grep -qE '(^/|(^|/)\.\.(/|$))' "$D/entradas.txt"; then falha "entrada do ZIP fora do destino"; fi
+          A="$D/auth1-r2"; mkdir -p "$A"
+          set +e
+          unzip -o "$D/$ZIP" -d "$A" > "$D/unzip.txt" 2>&1
+          UZ=$?
+          set -e
+          grep -vE '^Archive:|^ +(inflating|extracting|creating): |^warning: +.+ appears to use backslashes as path separators$' "$D/unzip.txt" \
+            > "$D/unzip.outros" || true
+          if [ "$UZ" -gt 1 ] || [ -s "$D/unzip.outros" ]; then
+            cat "$D/unzip.txt"; falha "extracao do pacote falhou (unzip exit $UZ)"
+          fi
+          echo "extracao: unzip exit $UZ; unica mensagem fora do inventario: aviso de separador '\\'"
+
+          # 7. prova da extracao: conjunto de arquivos == entradas do ZIP ==
+          # manifesto + ele mesmo, e cada byte conferido pelo manifesto pinado
+          ( cd "$A" && find . -type f | sed 's|^\./||' | LC_ALL=C sort ) > "$D/extraidos.txt"
+          cmp -s "$D/entradas.txt" "$D/extraidos.txt" || falha "arquivos extraidos diferem das entradas do ZIP"
+          [ "$(sha256sum "$A/MANIFEST-SHA256.txt" | cut -d' ' -f1)" = "$PIN_MANIFESTO" ] || falha "manifesto nao e o congelado"
+          { grep -E '^[0-9a-f]{64}  ' "$A/MANIFEST-SHA256.txt" | sed 's/^[0-9a-f]*  //'; echo MANIFEST-SHA256.txt; } \
+            | LC_ALL=C sort > "$D/manifestados.txt"
+          cmp -s "$D/manifestados.txt" "$D/extraidos.txt" || falha "arquivos extraidos diferem do manifesto"
+          ( cd "$A" && grep -E '^[0-9a-f]{64}  ' MANIFEST-SHA256.txt | sha256sum -c --strict --quiet ) \
+            || falha "algum arquivo extraido difere do manifesto congelado"
+          [ "$(sha256sum "$A/proveniencia/auth1_proveniencia.sh" | cut -d' ' -f1)" = "$PIN_AUTORIDADE" ] \
+            || falha "a autoridade de proveniencia nao e a congelada"
+
+          # 8. somente leitura daqui em diante, e entrega aos passos seguintes
+          chmod -R a-w "$A" "$D/$REG"
+          echo "BMV_PROV_AUTORIDADE=$A" >> "$GITHUB_ENV"
+          echo "BMV_PROV_REGISTRO=$D/$REG" >> "$GITHUB_ENV"
+          echo "PROVENIENCIA EXTERNA: origem   $BMV_PROV_FONTE_REPO@$OBTIDO"
+          echo "PROVENIENCIA EXTERNA: local    $D (fora de $WS)"
+          echo "PROVENIENCIA EXTERNA: sha256   $ZIP $PIN_ZIP"
+          echo "PROVENIENCIA EXTERNA: sha256   $REG $PIN_REGISTRO"
+          echo "PROVENIENCIA EXTERNA: sha256   MANIFEST-SHA256.txt $PIN_MANIFESTO"
+          echo "PROVENIENCIA EXTERNA: sha256   proveniencia/auth1_proveniencia.sh $PIN_AUTORIDADE"
+          echo "PROVENIENCIA EXTERNA: VERDE — $(wc -l < "$D/extraidos.txt") arquivo(s) da AUTH1-R2 e o registro dos pares materializados e conferidos"
 
       - name: "0b — teste do VERIFICADOR de contrato das suítes protegidas"
         run: |
