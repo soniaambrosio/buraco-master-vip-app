@@ -136,6 +136,44 @@ List<File> _fontesDoCliente() =>
         .toList()
       ..sort((a, b) => a.path.compareTo(b.path));
 
+/// As linhas de COMANDO de um passo do workflow, achado pelo nome.
+///
+/// POR QUE UM BLOCO, E NÃO O ARQUIVO INTEIRO. A OS 37-R1 mediu o preço de
+/// afirmar com `contains` sobre o YAML todo: trocar `flutter test test/casca`
+/// por `flutter test test/casca/casca_producao_test.dart` deixava a asserção
+/// VERDE — o alvo estreitado contém o texto do alvo largo como prefixo —, e a
+/// suíte protegida parava de rodar sem uma linha vermelha. Um `contains` acha
+/// o que procura e não vê o que mudou em volta.
+///
+/// Duas coisas mudam aqui. A primeira é o RECORTE: um comando que existe em
+/// outro passo não prova nada sobre este, então a busca começa no `- name:`
+/// pedido e termina no próximo. A segunda é que COMENTÁRIO NÃO É COMANDO —
+/// tanto o do YAML quanto o do shell dentro do `run: |` começam com `#`, e
+/// nenhum dos dois executa coisa nenhuma. Sem esse filtro, comentar o comando
+/// e deixar a frase escrita ao lado continuaria passando.
+///
+/// Devolve lista vazia quando o passo não existe — e aí a asserção de quem
+/// chamou reprova, que é o comportamento certo: passo apagado é regressão.
+List<String> _linhasDoPasso(String yaml, String nomeDoPasso) {
+  final linhas = yaml.split('\n').map((l) => l.replaceAll('\r', '')).toList();
+  final inicio = linhas.indexWhere(
+    (l) => l.trimLeft().startsWith('- name:') && l.contains(nomeDoPasso),
+  );
+  if (inicio < 0) return const <String>[];
+  final saida = <String>[];
+  for (var i = inicio + 1; i < linhas.length; i++) {
+    final linha = linhas[i];
+    if (linha.trimLeft().startsWith('- name:')) break;
+    if (linha.trimLeft().startsWith('#')) continue;
+    saida.add(linha);
+  }
+  return saida;
+}
+
+/// [padrao] casa com alguma linha de comando de [linhas]?
+bool _executa(List<String> linhas, RegExp padrao) =>
+    linhas.any(padrao.hasMatch);
+
 void main() {
   late Set<String> alcancaveis;
 
@@ -606,5 +644,309 @@ void main() {
     // reprovaria `cascaaud` sem dizer nada de verdadeiro sobre o produto.
     // A suíte continua na árvore e roda por `flutter test`; o caso acima
     // continua reprovando se ela sumir.
+  });
+
+  // =========================================================================
+  // A SUÍTE DOS ESTADOS ANUNCIADOS SOBREVIVE, OU O PORTÃO CAI
+  // =========================================================================
+  //
+  // POR QUE ESTA PROVA MORA AQUI. Pelo mesmo motivo do grupo acima, e a OS 37
+  // mediu o preço de não ter feito isso na primeira vez: com
+  // `a11y_estados_anunciados_test.dart` apagado, `flutter test test/casca`
+  // passou de 267 para 247 casos e imprimiu `All tests passed`, exit 0. Vinte
+  // provas de acessibilidade sumiram sem uma linha vermelha — porque o único
+  // passo que as executa aponta para o DIRETÓRIO, e um diretório com menos
+  // arquivos continua sendo um diretório válido.
+  //
+  // Uma prova escrita dentro da suíte morreria junto com ela. Escrita aqui,
+  // num gate que já é obrigatório em `casca` (o diretório, no `build.yml`) e em
+  // `cascaaud` (o caminho explícito, no `ci-os-integracao.yml`), ela sobrevive
+  // ao apagamento e o denuncia.
+  //
+  // O QUE ESTE GRUPO NÃO FAZ, e por quê: ele não cria chave de gate nova, não
+  // escreve `GATES=` e não acrescenta `for k in`. A OS 32 canonizou a família P
+  // — os gates saem de UMA fonte, lida por um produtor só — e o jeito antigo de
+  // registrar um gate aqui era digitar a mesma chave em duas listas do YAML,
+  // que é exatamente o defeito que a OS 32 fechou. Registrar por conta própria
+  // criaria a segunda autoridade de novo, nesta folha, para desfazer na
+  // composição. A ligação da suíte à fonte única é UMA LINHA no inventário de P,
+  // e é lá que ela será feita. Até lá, o contrato de conteúdo abaixo é o que
+  // impede a suíte de sumir em silêncio.
+  group('o portão dos estados anunciados', () {
+    const caminho = 'test/casca/a11y_estados_anunciados_test.dart';
+
+    // Os grupos que a OS 37 e a OS 37-C1 tornaram obrigatórios. A lista é de
+    // CENÁRIOS, não de casos: renomear um caso é manutenção, apagar um eixo
+    // inteiro é regressão, e só o segundo derruba isto aqui.
+    const cenarios = <String>[
+      "group('a vez'",
+      "group('a recusa de comando'",
+      "group('a recusa do lobby, tentativa a tentativa'",
+      "group('a conexão'",
+      "group('o login'",
+      "group('a entrada na mesa'",
+      "group('o monte e os mortos'",
+      "group('o protocolo e a partida não mudaram'",
+      "group('a recusa do lobby ao criar mesa'",
+    ];
+
+    // PISO, e não meta. Serve contra o arquivo esvaziado e contra o `main()`
+    // trivial — dois casos que passam verdes e não provam nada. Subir o piso
+    // quando a suíte crescer é opcional; baixá-lo exige explicar o que saiu.
+    const pisoDeCasos = 36;
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File(caminho).existsSync(),
+        isTrue,
+        reason:
+            'a suíte dos estados anunciados sumiu (apagada ou renomeada) — e '
+            'some em silêncio, porque o passo do CI roda o diretório inteiro',
+      );
+    });
+
+    test('a suíte ainda cobre os cenários obrigatórios', () {
+      final f = File(caminho);
+      if (!f.existsSync()) return; // o caso acima já reprovou por isso
+      // SEM COMENTÁRIOS: um cenário comentado não é um cenário. É a mesma
+      // razão de `_codigo` existir no resto deste arquivo.
+      final fonte = _codigo(f);
+      for (final cenario in cenarios) {
+        expect(
+          fonte,
+          contains(cenario),
+          reason: 'o cenário $cenario saiu da suíte dos estados anunciados',
+        );
+      }
+    });
+
+    test('a suíte não foi esvaziada', () {
+      final f = File(caminho);
+      if (!f.existsSync()) return;
+      final fonte = _codigo(f);
+      final casos = RegExp('testWidgets' r'\s*\(').allMatches(fonte).length;
+      expect(
+        casos,
+        greaterThanOrEqualTo(pisoDeCasos),
+        reason:
+            'a suíte caiu para $casos casos (piso $pisoDeCasos) — um arquivo '
+            'que existe e não afirma nada é pior do que um que não existe, '
+            'porque o portão fica verde',
+      );
+    });
+
+    // A ÂNCORA É ESTRUTURAL, e a fronteira de palavra é o que a OS 37-R1
+    // provou indispensável. `flutter test test/casca` é PREFIXO de
+    // `flutter test test/casca/casca_producao_test.dart` e de qualquer
+    // subdiretório mais estreito: exigir que o próximo caractere seja espaço
+    // ou fim de linha é o que separa "roda o diretório" de "roda um arquivo,
+    // e o resto do diretório some".
+    final rodaODiretorio = RegExp(r'(^|\s)flutter test test/casca(\s|$)');
+    final copiaODiretorio = RegExp(
+      r'(^|\s)cp -R app/test/casca/\. app_build/test/casca/(\s|$)',
+    );
+
+    test('o passo do build.yml copia e executa o DIRETÓRIO inteiro', () {
+      // O overlay do CI roda a partir de `app_build/`, e o workflow fica dois
+      // níveis acima. Fora do CI o arquivo pode não estar alcançável — e aí o
+      // caso não tem o que afirmar, em vez de afirmar errado.
+      final workflow = File('../.github/workflows/build.yml');
+      if (!workflow.existsSync()) return;
+      final passo = _linhasDoPasso(
+        workflow.readAsStringSync(),
+        'PORTÃO DE PRODUÇÃO — casca real',
+      );
+
+      expect(
+        passo,
+        isNotEmpty,
+        reason:
+            'o passo da casca sumiu do build.yml (apagado ou renomeado) — e '
+            'com ele param de rodar todas as suítes que não têm chave própria',
+      );
+      // O ALVO É O DIRETÓRIO, de propósito: é essa forma que faz a suíte
+      // rodar sem precisar de chave própria, e é ela que não pode encolher.
+      expect(
+        _executa(passo, rodaODiretorio),
+        isTrue,
+        reason:
+            'o passo da casca deixou de executar `flutter test test/casca` '
+            'como DIRETÓRIO — um alvo mais estreito (um arquivo, um '
+            'subdiretório) contém o mesmo texto e apagaria a suíte em silêncio',
+      );
+      expect(
+        _executa(passo, copiaODiretorio),
+        isTrue,
+        reason:
+            'o passo deixou de copiar `test/casca` INTEIRO para o overlay — '
+            'uma cópia seletiva roda e não encontra o que rodar',
+      );
+    });
+  });
+
+  // =========================================================================
+  // O PORTÃO `cascaaud` CONTINUA REGISTRADO NOS TRÊS PONTOS
+  // =========================================================================
+  //
+  // MESMA FORMA DO GRUPO `perfilvis`, e de propósito. Aquele grupo já existia
+  // neste arquivo quando a OS 37-C1 escreveu o de cima, e a OS 37-R1 mostrou o
+  // custo de não tê-lo copiado: tirar `cascaaud` do `for k in` que decide
+  // verde/vermelho deixava TODA a proteção acima verde — a auditoria continuava
+  // rodando, escrevia o exit code, e ninguém o lia.
+  //
+  // ISTO NÃO REGISTRA CHAVE NENHUMA. A chave `cascaaud` já existe no workflow
+  // desde a OS da Casca de Produção; este grupo só LÊ o YAML e exige que ela
+  // continue nos três lugares onde precisa estar. Não há `GATES=` escrito aqui,
+  // não há `for k in` escrito aqui, e `.github/` não é tocado — que é
+  // exatamente a distinção que a OS 32 canonizou: REGISTRAR uma chave nova
+  // exigiria digitá-la em duas listas do YAML, o defeito que a família P
+  // fechou; AFIRMAR que uma chave existente continua nas duas é leitura pura.
+  //
+  // O que a fonte única P vai absorver desta folha é o contrato de CONTEÚDO da
+  // suíte dos estados anunciados, não este grupo: este continua valendo
+  // enquanto o `ci-os-integracao.yml` desta linhagem tiver as duas listas
+  // literais.
+  group('o portão cascaaud', () {
+    final workflow = File('../.github/workflows/ci-os-integracao.yml');
+
+    // O caminho registrado tem de ser o DESTE arquivo: registro que aponta
+    // para outro lugar é registro morto, e um gate que executa outra coisa
+    // não prova o que o nome dele promete.
+    final rodaEstaAuditoria = RegExp(
+      r'(^|\s)roda\s+cascaaud\s+test/casca/auditoria_casca_test\.dart(\s|$)',
+    );
+    // [COMP1-E11] PORTE PARA A RAIZ P. Na folha de origem (df75ef9) o registro
+    // de `cascaaud` morava em DUAS listas literais do YAML (`GATES="…"` e
+    // `for k in …`). A raiz P aboliu as duas — a relação de gates vive em
+    // `scripts/ci/gates_os_integracao.txt`, lida pela evidência E pelo portão, e
+    // o cabeçalho do workflow PROÍBE reintroduzir lista ali. A conversão é a
+    // mesma que este arquivo já fez para `perfilvis`: o que se exige continua
+    // sendo execução viva + registro no portão, lido onde o portão o lê.
+    final fonte = File('../scripts/ci/gates_os_integracao.txt');
+    final naFonteUnica = RegExp(r'^cascaaud[ \t]*$', multiLine: true);
+
+    test('cascaaud executa ESTA auditoria', () {
+      if (!workflow.existsSync()) return;
+      final passo = _linhasDoPasso(
+        workflow.readAsStringSync(),
+        'analyze + suítes Flutter',
+      );
+      expect(
+        passo,
+        isNotEmpty,
+        reason: 'o passo que roda as suítes Flutter sumiu do ci-os-integracao',
+      );
+      expect(
+        _executa(passo, rodaEstaAuditoria),
+        isTrue,
+        reason:
+            'o gate cascaaud não executa mais '
+            'test/casca/auditoria_casca_test.dart — ou saiu, ou passou a '
+            'apontar para outro arquivo',
+      );
+      // Coerência entre registro e execução: o caminho registrado existe.
+      expect(
+        File('test/casca/auditoria_casca_test.dart').existsSync(),
+        isTrue,
+        reason: 'o caminho registrado em cascaaud não existe na árvore',
+      );
+    });
+
+    test('cascaaud está na fonte única que o portão percorre', () {
+      if (!fonte.existsSync()) return;
+      final relacao = fonte.readAsStringSync();
+      // Na fonte única: é dela que a evidência publicada E o portão
+      // verde/vermelho leem a relação. Fora dela, o gate roda sem reprovar.
+      expect(
+        naFonteUnica.allMatches(relacao).length,
+        1,
+        reason:
+            'cascaaud saiu da fonte única (ou foi registrado duas vezes) — a '
+            'auditoria passaria a rodar sem poder reprovar, e toda a proteção '
+            'deste arquivo ficaria decorativa',
+      );
+    });
+
+    test('cascaaud não está duplicado nem registrado morto', () {
+      if (!workflow.existsSync()) return;
+      final texto = workflow.readAsStringSync();
+      final passo = _linhasDoPasso(texto, 'analyze + suítes Flutter');
+
+      // DUPLICATA: dois `roda` para a mesma chave fazem o segundo sobrescrever
+      // o exit code do primeiro, e o portão passa a ler só metade.
+      expect(
+        passo.where(rodaEstaAuditoria.hasMatch).length,
+        1,
+        reason: 'cascaaud aparece mais de uma vez entre os passos `roda`',
+      );
+    });
+  });
+
+  // =========================================================================
+  // TRÊS EXPLICAÇÕES QUE FORAM MEDIDAS FALSAS NÃO VOLTAM
+  // =========================================================================
+  //
+  // Este arquivo despoja comentário antes de varrer, e por bom motivo. Aqui,
+  // uma vez, ele faz o contrário — e a diferença é o que está sendo afirmado.
+  //
+  // Nos outros grupos o comentário é RUÍDO: a proibição fala de código, e a
+  // prosa que a explica acusaria a si mesma. Aqui o comentário é o OBJETO. As
+  // três frases abaixo não são estilo nem opinião: são afirmações sobre o que o
+  // programa faz, e a OS 37 mediu as três e achou o contrário. Uma explicação
+  // falsa custa mais caro que nenhuma, porque manda a próxima pessoa proteger o
+  // caminho errado — e as três apontavam para o lugar errado ao mesmo tempo em
+  // que a proteção verdadeira estava a três linhas de distância.
+  //
+  // O que cada uma dizia, e o que foi medido:
+  //
+  //   1. "um anúncio preso ao build fala quando alguém gira o aparelho" —
+  //      NÃO fala. Com o anúncio movido para o `build`, girar o aparelho,
+  //      dobrar a escala de fonte e selecionar uma carta continuam dando zero
+  //      anúncio. Quem protege é a `SentinelaDeTransicao`.
+  //
+  //   2. "sem o `MergeSemantics` a propriedade fica num nó de contêiner e o
+  //      rótulo num nó filho" — NÃO fica. `Semantics` sobre um `Text` único já
+  //      funde: com e sem o envoltório o nó é o mesmo, mesmo id, região viva
+  //      verdadeira, zero filhos.
+  //
+  //   3. "soltar o ouvinte é o que cala a tela" — NÃO é. Quem cala é a guarda
+  //      de `mounted` no alto de `_atualizar`; sem o `removeListener` a tela
+  //      desmontada continua muda. O descarte é higiene, e continua
+  //      obrigatório por isso.
+  //
+  // A âncora de cada caso é um trecho curto e literal da frase refutada. Ela só
+  // reaparece por reversão — reescrever a explicação com outras palavras não
+  // dispara nada, que é o comportamento desejado.
+  group('as explicações refutadas pela OS 37 não voltam', () {
+    const refutadas = <String, (String, String)>{
+      'lib/casca/mesa_online/mesa_online_screen.dart': (
+        'um anúncio preso ao',
+        'o anúncio no `build` não fala ao girar o aparelho — a sentinela o '
+            'impede, e dar o crédito ao lugar da chamada manda a próxima '
+            'pessoa proteger o caminho errado',
+      ),
+      'lib/casca/login_de_producao.dart': (
+        'a propriedade fica num nó de contêiner',
+        'sem o MergeSemantics o nó é IDÊNTICO — medido na OS 37',
+      ),
+      'lib/casca/lobby_online.dart': (
+        'SOLTAR O OUVINTE É O QUE CALA A TELA',
+        'quem cala a tela é a guarda de mounted, não o removeListener',
+      ),
+    };
+
+    refutadas.forEach((caminho, par) {
+      final (trecho, porque) = par;
+      test('$caminho não afirma de novo o que foi medido falso', () {
+        final f = File(caminho);
+        expect(f.existsSync(), isTrue, reason: '$caminho sumiu');
+        // COM comentário, de propósito: aqui a frase é o objeto da prova.
+        expect(
+          f.readAsStringSync(),
+          isNot(contains(trecho)),
+          reason: porque,
+        );
+      });
+    });
   });
 }

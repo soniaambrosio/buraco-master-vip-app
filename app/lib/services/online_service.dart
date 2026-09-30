@@ -363,8 +363,19 @@ class OnlineService extends ChangeNotifier {
   /// decidir entre "aguarde" e "faça alguma coisa".
   bool get falhaTerminal => _estadoTerminal;
 
-  /// Geração da conexão atual. Exposta para diagnóstico e teste.
-  @visibleForTesting
+  /// Geração da conexão atual.
+  ///
+  /// SOBE a cada abertura de socket, a cada `desligar` e a cada falha terminal.
+  /// Duas leituras do transporte feitas em gerações diferentes falam de sessões
+  /// diferentes, e comparar uma com a outra é comparar coisas que não se
+  /// sucedem: o `desconectado` de quem saiu da conta não é a continuação do
+  /// `conectado` de quem estava jogando.
+  ///
+  /// NÃO É MAIS SÓ PARA TESTE, e a anotação saiu por isso. Quem lê é a tela do
+  /// lobby, para decidir se uma mudança de status é notícia a anunciar ou só a
+  /// virada de uma sessão para outra. É leitura, e só: nada do lado de fora
+  /// escreve neste número nem depende do seu valor absoluto — só de ele ter
+  /// mudado ou não.
   int get geracao => _geracaoTransporte;
 
   /// Abre a conexão com o servidor. Idempotente.
@@ -560,11 +571,41 @@ class OnlineService extends ChangeNotifier {
 
   // ---------- API pública (ações do jogador) ----------
 
+  /// UMA PERGUNTA NOVA APAGA A RESPOSTA VELHA.
+  ///
+  /// [erro] é a resposta do servidor à ÚLTIMA coisa que este cliente pediu. No
+  /// instante em que ele pede outra, a recusa pendurada deixa de ser a resposta
+  /// corrente: ela virou história de uma tentativa encerrada.
+  ///
+  /// Isto já acontecia, por um caminho só — `estado` limpa [erro] ao chegar.
+  /// Quem entra numa mesa que existe recebe `estado` e vê o recado sumir; quem
+  /// digita duas vezes o MESMO código inexistente nunca recebe `estado` nenhum,
+  /// e o recado ficava ali, letra por letra igual, do primeiro ao segundo
+  /// "Entrar". Para quem enxerga tanto faz. Para quem usa leitor de tela é a
+  /// diferença entre uma notícia e silêncio: região viva só fala quando o
+  /// conteúdo MUDA, e não mudou nada.
+  ///
+  /// A identidade que separa as duas recusas é a TENTATIVA, e quem a conhece é
+  /// este objeto: ele sabe quando perguntou. O protocolo não carimba evento, e
+  /// fabricar um identificador no cliente seria inventar autoridade onde não há
+  /// nenhuma. O que se faz aqui é o contrário de inventar — é esquecer, no
+  /// momento em que esquecer é a verdade.
+  ///
+  /// NADA VAI AO FIO e nenhum estado novo nasce. É a mesma limpeza que a
+  /// chegada de `estado` já fazia, no outro instante em que ela é verdadeira.
+  void _perguntaNova() {
+    if (erro == null && erroCodigo == null) return;
+    erro = null;
+    erroCodigo = null;
+    notifyListeners();
+  }
+
   void criarMesa({
     required String apelido,
     int metaPontos = 3000,
     String modalidade = 'aberto',
   }) {
+    _perguntaNova();
     _meuApelido = apelido;
     _enviar({
       'tipo': 'criarMesa',
@@ -575,6 +616,7 @@ class OnlineService extends ChangeNotifier {
   }
 
   void entrarMesa({required String codigo, required String apelido}) {
+    _perguntaNova();
     _meuApelido = apelido;
     _enviar({'tipo': 'entrarMesa', 'codigo': codigo, 'apelido': apelido});
   }
