@@ -569,4 +569,42 @@ void main() {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // O PORTÃO DA ATESTAÇÃO ANDROID
+  //
+  // Mesma ideia, e pelo mesmo motivo, do bloco acima: a guarda de um gate não
+  // pode morar dentro da suíte que ele executa. `app_check_android_test.dart`
+  // prova que `main.dart` ativa App Check na ordem certa e com o provedor
+  // certo; se ALGUÉM apagar aquele arquivo, aquelas provas somem sem um ruído.
+  //
+  // A prova de que ele existe e é obrigatório mora AQUI — num gate que já é
+  // obrigatório, que fala da casca, e cuja porta de entrada é justamente o
+  // arquivo em questão. Não é mistura de assunto: `main.dart` é o objeto desta
+  // auditoria desde a primeira linha dela.
+  // -------------------------------------------------------------------------
+  group('o portão da atestação Android', () {
+
+    test('a suíte existe na árvore', () {
+      expect(
+        File('test/casca/app_check_android_test.dart').existsSync(),
+        isTrue,
+        reason: 'a suíte que prova a ativação do App Check sumiu — e some em '
+            'silêncio, porque ausência vira NÃO EXECUTADO no portão',
+      );
+    });
+
+    // [COMP1-E2] PORTE SEMÂNTICO. Na entrega de origem (3bb3766) este grupo
+    // tinha mais dois casos: um exigia a linha viva `roda appcheckandroid` no
+    // workflow e a entrada na fonte única; o outro exigia `appcheckandroid` nas
+    // réguas de `verificar_contrato_suites.sh`. A candidata composta parte da
+    // W1, cujo registro EXTERNO de proveniência congela exatamente 39 pares
+    // (gate, suíte) observados executando no passo "1+2": um gate novo ali é
+    // EXTRA e derruba o `contratosui`. A fiação do gate `appcheckandroid`
+    // depende de uma autoridade externa nova, decisão da Central, e por isso
+    // NÃO entrou nesta composição — e uma guarda que cobrasse fiação ausente
+    // reprovaria `cascaaud` sem dizer nada de verdadeiro sobre o produto.
+    // A suíte continua na árvore e roda por `flutter test`; o caso acima
+    // continua reprovando se ela sumir.
+  });
 }

@@ -577,7 +577,7 @@ composloja
 avatarcanon
     suite      app/test/casca/avatar_publico_canonico_test.dart
     executor   roda avatarcanon test/casca/avatar_publico_canonico_test.dart
-    sha256     cea6eb4e8b0def0721be379bbe8d7207928ebeb18fa260238bdf523d98da6c86
+    sha256     f414810479fe84f01457b2e40216367654581023439f9489a38c82ce7b67b456
     provas     38
     casos      38
     exige      group('resolvedor canônico
@@ -588,7 +588,7 @@ avatarcanon
 avatarhml
     suite      app/test/casca/homologacao_avatar_publico_test.dart
     executor   roda avatarhml test/casca/homologacao_avatar_publico_test.dart
-    sha256     54ed51b7bcbda8f61ffaa66a28ac8fb77b930af92fa5296994f01c028c9f8280
+    sha256     f2d0cc97d81dbe9f5a3544419526ae84d73c895a04d9eba03dba755f1720fe95
     provas     42
     casos      42
     exige      group('H-A domínio puro
