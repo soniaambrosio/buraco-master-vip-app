@@ -55,6 +55,14 @@ class DetalhePontuacaoVM {
       );
 }
 
+// A tela de Resultado nao oferece mais o cartao de midia recompensada que
+// existia aqui: ele prometia credito em fichas pela continuidade e NENHUM
+// credito correspondente existia — a carteira canonica so e escrita pelo
+// servidor. Era maquete apresentada como produto, num modo (Treino) que por
+// decisao registrada nao movimenta economia. A promessa saiu inteira: rotulo,
+// estado, botao e callback. Reintroduzi-la exige tambem uma autoridade real de
+// credito, e essa autoridade e assunto de OS propria.
+
 class ResultadoPartidaScreen extends StatelessWidget {
   static const _gold = Color(0xFFE5B84F);
   static const _goldHi = Color(0xFFFFE7A0);
@@ -73,16 +81,11 @@ class ResultadoPartidaScreen extends StatelessWidget {
   final List<JogadorResultadoVM> jogadores;
   final Map<int, EstadoAmizade> amizades;
   final bool conviteRevancheEnviado;
-  final bool anuncioDisponivel;
-  final bool anuncioAssistido;
-  final bool assinanteSemAnuncios;
-  final String recompensaAnuncio;
   final VoidCallback onContinuar;
   final VoidCallback onConvidarRevanche;
   final VoidCallback onJogarNovamente;
   final VoidCallback onVoltarLobby;
   final ValueChanged<int> onAdicionarAmigo;
-  final VoidCallback onVerAnuncio;
 
   const ResultadoPartidaScreen({
     super.key,
@@ -97,16 +100,11 @@ class ResultadoPartidaScreen extends StatelessWidget {
     required this.jogadores,
     required this.amizades,
     required this.conviteRevancheEnviado,
-    required this.anuncioDisponivel,
-    required this.anuncioAssistido,
-    required this.assinanteSemAnuncios,
-    required this.recompensaAnuncio,
     required this.onContinuar,
     required this.onConvidarRevanche,
     required this.onJogarNovamente,
     required this.onVoltarLobby,
     required this.onAdicionarAmigo,
-    required this.onVerAnuncio,
   });
 
   Color get _accent => mesaVip ? _purpleHi : const Color(0xFF7ED6A7);
@@ -154,10 +152,6 @@ class ResultadoPartidaScreen extends StatelessWidget {
                         _jogadores(),
                         const SizedBox(height: 14),
                         _acoesFinais(),
-                        if (!assinanteSemAnuncios) ...[
-                          const SizedBox(height: 10),
-                          _anuncioRecompensado(),
-                        ],
                       ] else ...[
                         const SizedBox(height: 14),
                         _botaoPrincipal(
@@ -615,72 +609,6 @@ class ResultadoPartidaScreen extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _anuncioRecompensado() {
-    final habilitado = anuncioDisponivel && !anuncioAssistido;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
-      decoration: BoxDecoration(
-        color: const Color(0x33000000),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x556B5A40)),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            anuncioAssistido
-                ? Icons.check_circle_rounded
-                : Icons.ondemand_video_rounded,
-            color: anuncioAssistido ? const Color(0xFF7ED6A7) : _gold,
-            size: 23,
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  anuncioAssistido
-                      ? 'Recompensa recebida'
-                      : 'Ver anúncio',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  anuncioAssistido
-                      ? recompensaAnuncio
-                      : 'Opcional · $recompensaAnuncio',
-                  style: const TextStyle(
-                    color: Color(0xFFCABFD0),
-                    fontSize: 7.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: habilitado ? onVerAnuncio : null,
-            child: Text(
-              anuncioAssistido
-                  ? 'RECEBIDO'
-                  : (anuncioDisponivel ? 'ASSISTIR' : 'INDISPONÍVEL'),
-              style: TextStyle(
-                color: habilitado ? _goldHi : const Color(0xFF8A818D),
-                fontSize: 7.5,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
