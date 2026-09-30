@@ -856,7 +856,7 @@ fi
 
 if caso_ativo T04; then
   reset T04
-  ancora "$FONTE_W" '^[a-z]' 64
+  ancora "$FONTE_W" '^[a-z]' 91
   printf 'analyze\nanalyze\n' > "$W/$FONTE_W"
   efeito '^analyze$' 2
   esperar 1 "T04 — fonte com gate duplicado => VERMELHO (o leitor recusa)" 'recusou a fonte'
@@ -864,7 +864,7 @@ fi
 
 if caso_ativo T05; then
   reset T05
-  ancora "$FONTE_W" '^[a-z]' 64
+  ancora "$FONTE_W" '^[a-z]' 91
   : > "$W/$FONTE_W"
   efeito '.' 0
   esperar 1 "T05 — fonte esvaziada => VERMELHO (N20)" 'recusou a fonte'

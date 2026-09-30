@@ -178,7 +178,8 @@ jobs:
         run: |
           # [BMV-PUB-C1-D1-C4-W1] A C4 tornou o `contratosui` dependente de dois
           # insumos que NAO moram nesta arvore: o pacote AUTH1-R2 extraido
-          # (BMV_PROV_AUTORIDADE) e o registro dos 39 pares (BMV_PROV_REGISTRO).
+          # (BMV_PROV_AUTORIDADE) e o registro dos pares (BMV_PROV_REGISTRO) —
+          # 39 na W1; 66 desde a PROV2 da COMP1 (`proveniencia-esperada-e12.tsv`).
           # Este passo so os ENTREGA ao runner. Quem decide continua sendo a
           # proveniencia obrigatoria da C4, que reconfere tudo por pino.
           #
@@ -193,11 +194,11 @@ jobs:
           # Os bytes congelados. Estes pinos so CONFEREM; o registro e o pacote
           # continuam sendo os de fora, e a C4 os reconfere por conta propria.
           PIN_ZIP=63902996df2fe6d975ae16fd5b66465236a614b5d06a98e9e6f8cbf090567bb1
-          PIN_REGISTRO=bf251db35fafa00cb49990e556e7f9e1f6d416f2714043d41a689358e5c58d2e
+          PIN_REGISTRO=6dcd3419119ca0ebadbd9402c64575599db6f41b3fce69c5a2841729d8f4f687
           PIN_MANIFESTO=048f387e63f6630aaf6660a44eca89c1ed3e158ea346f13c036d2a33d16b8cc4
           PIN_AUTORIDADE=078d1da13c3f16300cd528e93b368920786275641d22ab247897f257213f3bad
           ZIP=BMV-PUB-C1-D1-C3-AUTH1-R2.zip
-          REG=proveniencia-esperada-e54ff4a.tsv
+          REG=proveniencia-esperada-e12.tsv
 
           # 1. a fonte externa precisa estar provisionada — e por COMMIT, nunca por branch
           [ -n "${BMV_PROV_FONTE_REPO:-}" ] || falha "vars.BMV_PROV_FONTE_REPO nao provisionada"
@@ -440,6 +441,53 @@ jobs:
           roda socialtela  test/amigos/descoberta_social_tela_test.dart
           roda audsocial  test/amigos/auditoria_descoberta_social_test.dart
           roda a11yamigos  test/amigos/a11y_alvos_amigos_test.dart
+          # [BMV-PUB-C1-COMP1 / PROV2] As suites novas da candidata Play V1,
+          # uma por gate, bloco a bloco (E1..E12). Ate o E12 elas rodavam so
+          # na bancada (`flutter test`), registradas como
+          # CI-FIACAO-DEFERIDA-PROV2: um `roda` novo seria EXTRA para a
+          # AUTH1-R2 enquanto o registro externo tinha 39 pares. A PROV2 as
+          # traz para ESTE passo, onde a autoridade externa as observa, e o
+          # registro externo passa a conter os 39 pares antigos e estes.
+          # Mesma forma de execucao dos demais: sem `continue-on-error`,
+          # sem `|| true`; o exit de cada uma vai para `exit_<gate>`.
+          # E1
+          roda torneiobase      test/torneios/fundacao_base_p_test.dart
+          roda admvip           test/torneios/admissao_vip_torneios_test.dart
+          # E2
+          roda appcheckandroid  test/casca/app_check_android_test.dart
+          # E3
+          roda temavip          test/casca/tema_real_vip_ajustes_test.dart
+          # E4
+          roda treinosan        test/mesa/saneamento_recompensa_treino_test.dart
+          # E5
+          roda lojaa11y         test/casca/loja_a11y_comercial_test.dart
+          # E6
+          roda descstbl         test/descoberta/apresentacao_stbl_test.dart
+          roda descadapt        test/descoberta/contrato_e_adaptador_test.dart
+          roda descestado       test/descoberta/estado_e_agente_test.dart
+          roda desclobby        test/descoberta/lobby_publico_test.dart
+          roda deschome         test/descoberta/presenca_na_home_test.dart
+          roda ingrcontrato     test/ingresso/contrato_e_estado_test.dart
+          roda ingrassento      test/ingresso/escolha_assento_test.dart
+          roda ingrnav          test/ingresso/navegacao_ingresso_test.dart
+          roda ingrtransp       test/ingresso/transporte_ingresso_test.dart
+          # E7
+          roda encui            test/casca/encerramento_na_ui_test.dart
+          roda encpend          test/casca/encerramento_pendente_test.dart
+          roda encpendack       test/casca/homologacao_encerramento_pendente_ack_test.dart
+          roda ordemvisao       test/casca/ordem_da_visao_test.dart
+          # E8
+          roda obscaptura       test/observabilidade/captura_test.dart
+          roda obsgatilho       test/observabilidade/gatilho_homologacao_test.dart
+          roda obsidentidade    test/observabilidade/identidade_manifesto_test.dart
+          roda obsredacao       test/observabilidade/redacao_test.dart
+          roda obsredurl        test/observabilidade/redacao_url_test.dart
+          # E10
+          roda mesaa11y         test/casca/mesa_treino_a11y_test.dart
+          # E11
+          roda a11yestados      test/casca/a11y_estados_anunciados_test.dart
+          # E12
+          roda a11yconf         test/casca/acessibilidade_configuracoes_test.dart
           # OS Chat Livre Seguro V1: a porta ÚNICA de envio de mensagem. Prova
           # que autoria não vem do payload, que o `messageId` é derivado e opaco,
           # que bloqueio é filtrado por PAR nas duas direções consumindo

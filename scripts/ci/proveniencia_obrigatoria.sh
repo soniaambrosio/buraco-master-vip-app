@@ -63,6 +63,12 @@
 # bytes deles deixam de casar com os pinos novos. Mudar o que significa 39/39
 # exige mudar coisa que esta FORA da candidata.
 #
+# [BMV-PUB-C1-COMP1 / PROV2] O registro externo evoluiu para os pares que a
+# mesma AUTH1-R2, INALTERADA, registra sobre a candidata Play V1 (E12 + PROV2):
+# os 39 de `e54ff4a`, todos mantidos, mais as 27 suites novas dos blocos E1..E12
+# (`proveniencia-esperada-e12.tsv`, 66 pares). So PIN_REGISTRO mudou;
+# PIN_MANIFESTO e PIN_AUTORIDADE continuam os congelados da AUTH1-R2.
+#
 # ---------------------------------------------------------------------------
 # A PROVA E DE IDENTIDADE, NAO DE CONTAGEM
 # ---------------------------------------------------------------------------
@@ -83,7 +89,7 @@ set -u
 
 readonly PIN_MANIFESTO='048f387e63f6630aaf6660a44eca89c1ed3e158ea346f13c036d2a33d16b8cc4'
 readonly PIN_AUTORIDADE='078d1da13c3f16300cd528e93b368920786275641d22ab247897f257213f3bad'
-readonly PIN_REGISTRO='bf251db35fafa00cb49990e556e7f9e1f6d416f2714043d41a689358e5c58d2e'
+readonly PIN_REGISTRO='6dcd3419119ca0ebadbd9402c64575599db6f41b3fce69c5a2841729d8f4f687'
 readonly AUTORIDADE_REL='proveniencia/auth1_proveniencia.sh'
 readonly COPIA_REL='scripts/ci/proveniencia_esperada.tsv'
 readonly TAB="$(printf '\t')"

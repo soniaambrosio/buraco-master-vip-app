@@ -207,8 +207,8 @@ readonly EXIGENCIAS
 # `[ "$motor_real" = "$MOTOR_ESPERADO" ]` por condicao sempre verdadeira muda a
 # testemunha e cai aqui, mesmo com o sha da fonte recarimbado.
 readonly DIGESTOS_MOTOR="$(cat <<'MOTOR_DIG'
-scripts/ci/teste_contrato_suites.sh 54cbdc45ad7067d831bb4088fd5e97ee74b3e593ffa2d2f74068f379bf4eafb4
-scripts/ci/testemunha_contratosui.sh 1f6990a9da65caafbff99f17d59b1b20ccafdc9e5a57ff5c7c310ffb34a28dbb
+scripts/ci/teste_contrato_suites.sh 2ce54ef9bd467c3f7578c00c50508f556ec22f3966ba9c2d8a7f34816203b579
+scripts/ci/testemunha_contratosui.sh acb55c8169f5911070e3ed651c6253bc21779d839ebedd95441d97b7b9ae5066
 MOTOR_DIG
 )"
 

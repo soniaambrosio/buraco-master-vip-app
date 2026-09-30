@@ -670,8 +670,8 @@ fi
 # o digesto DESTA testemunha ja mora nos dois, entao a corrente fecha sem mexer
 # nas ancoras que a matriz conta nem nas arvores-fixture que ela monta.
 readonly DIGESTOS_PROVENIENCIA="\
-proveniencia_obrigatoria.sh:2e4fd5cb05808ef296a969f7edeb563274b9c523195632c87922a00de7599f3c \
-proveniencia_esperada.tsv:bf251db35fafa00cb49990e556e7f9e1f6d416f2714043d41a689358e5c58d2e"
+proveniencia_obrigatoria.sh:e86c43ec0a6a75edc12973b2f7b55d07ae19d696003704fc6fc9dafcb0c9c0c4 \
+proveniencia_esperada.tsv:6dcd3419119ca0ebadbd9402c64575599db6f41b3fce69c5a2841729d8f4f687"
 PROVENIENCIA="$AQUI/proveniencia_obrigatoria.sh"
 RAIZ_ARVORE="$(cd "$AQUI/../.." && pwd)"
 prov_integra=1

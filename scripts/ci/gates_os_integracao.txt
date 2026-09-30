@@ -299,7 +299,7 @@ portaoci
 contratosui
     suite      scripts/ci/teste_contrato_suites.sh
     executor   bash scripts/ci/testemunha_contratosui.sh scripts/ci/teste_contrato_suites.sh 2>&1 | tee t_contratosui.log
-    sha256     54cbdc45ad7067d831bb4088fd5e97ee74b3e593ffa2d2f74068f379bf4eafb4
+    sha256     2ce54ef9bd467c3f7578c00c50508f556ec22f3966ba9c2d8a7f34816203b579
     provas     68
     conta      ^[[:blank:]]*(ok|nok|esperar)[[:blank:]]
     casos      68
@@ -334,7 +334,7 @@ contratosui
     caso        T59
     exigenocaso sed -i 's|scripts/ci/testemunha_contratosui.sh|scripts/ci/isca.sh|g' "$W/$YML_W"
     suite      scripts/ci/testemunha_contratosui.sh
-    sha256     1f6990a9da65caafbff99f17d59b1b20ccafdc9e5a57ff5c7c310ffb34a28dbb
+    sha256     acb55c8169f5911070e3ed651c6253bc21779d839ebedd95441d97b7b9ae5066
     provas     24
     conta      ^[[:blank:]]*recusa[[:blank:]]
     exige      BMV_OBS_DIR="$TMPT/decl" BASH_ENV="$TMPT/observador.sh" \
@@ -363,7 +363,7 @@ contratosui
 autverif
     suite      scripts/ci/autoridade_verificadores.sh
     executor   bash scripts/ci/autoridade_verificadores.sh . .github/workflows/ci-os-integracao.yml 2>&1 | tee t_autverif.log
-    sha256     1881503d56105395c85aaa32487771257511e9acb25ac8c595a1a68fe8c354f3
+    sha256     8b0be989cb44331ab2904fbc7e3ebbd303f550da48eaa2a5cbc14927d929f5d4
     provas     35
     conta      ^[[:blank:]]*(ok|recusa)[[:blank:]]
     casos      115
@@ -687,3 +687,46 @@ a11yamigos
     exige      group('1 — o piso de 48 pontos
     exige      group('3 — tocar na borda nova aciona o controle certo
     exige      group('5 — vazio, carregando, erro e conteúdo
+
+# --- COMP1 / PROV2: suites novas da candidata Play V1 ----------------------
+# Uma por gate, executadas no passo 1+2 (`roda <gate> <caminho>`) e observadas
+# pela autoridade externa. Sem contrato de conteudo nesta OS: a PROV2 so liga
+# a execucao e a proveniencia; nenhum contrato existente foi alterado.
+# E1
+torneiobase
+admvip
+# E2
+appcheckandroid
+# E3
+temavip
+# E4
+treinosan
+# E5
+lojaa11y
+# E6
+descstbl
+descadapt
+descestado
+desclobby
+deschome
+ingrcontrato
+ingrassento
+ingrnav
+ingrtransp
+# E7
+encui
+encpend
+encpendack
+ordemvisao
+# E8
+obscaptura
+obsgatilho
+obsidentidade
+obsredacao
+obsredurl
+# E10
+mesaa11y
+# E11
+a11yestados
+# E12
+a11yconf
