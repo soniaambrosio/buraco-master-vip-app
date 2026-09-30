@@ -35,7 +35,7 @@ copiar() {
 for d in splash sons baralho perfil ranking ranking/selos hall inicio \
          configurar_mesa mesa_vip loja torneios/capas \
          torneios/premiacao/coroas torneios/premiacao/selos \
-         colecoes/pioneiros_2026; do
+         colecoes/pioneiros_2026 ajustes/real; do
   copiar "$d"
 done
 
@@ -50,10 +50,32 @@ cp "$REPO/app/pubspec.yaml" "$DESTINO/pubspec.yaml"
 cp "$REPO/app/pubspec.lock" "$DESTINO/pubspec.lock"
 
 # Toda pasta declarada precisa EXISTIR, senao o build falha com uma mensagem que
-# nao diz qual e. Criar vazia aqui transforma isso num aviso do proprio Flutter.
+# nao diz qual e.
+#
+# E PRECISA CHEGAR CHEIA. Criar vazia e seguir era um buraco SILENCIOSO: uma
+# pasta declarada no pubspec e ausente da lista de copia acima virava diretorio
+# vazio, o `flutter build` passava, e a arte simplesmente nao entrava no bundle —
+# o defeito so aparecia no aparelho do jogador. Foi o que aconteceu com
+# `assets/loja/`, e o que quase aconteceu com `assets/ajustes/real/`: 28 icones
+# declarados, zero empacotados, e o Tema Real VIP caindo para o Padrao em
+# silencio, porque o fallback dele e POR CONJUNTO — um assinante em dia veria a
+# tela publica e ninguem saberia por que.
+#
+# Agora a divergencia entre as duas listas REPROVA a montagem, com o nome da
+# pasta na mensagem.
+faltando=""
 while read -r dir; do
-  [ -n "$dir" ] && mkdir -p "$DESTINO/$dir"
+  [ -z "$dir" ] && continue
+  mkdir -p "$DESTINO/$dir"
+  if [ -z "$(find "$DESTINO/$dir" -type f -print -quit 2>/dev/null)" ]; then
+    faltando="$faltando $dir"
+  fi
 done < <(sed -n 's|^\s*-\s*\(assets/.*\)/$|\1|p' "$DESTINO/pubspec.yaml")
+if [ -n "$faltando" ]; then
+  echo "ERRO: pasta declarada no pubspec e VAZIA apos a copia:$faltando" >&2
+  echo "      acrescente-a a lista \`for d in ...\` no topo deste script." >&2
+  exit 1
+fi
 
 cd "$DESTINO"
 flutter pub get > /dev/null

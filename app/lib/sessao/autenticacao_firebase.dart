@@ -127,6 +127,23 @@ class AutenticacaoFirebase implements ComandosDeAutenticacao {
     }
   }
 
+  /// O e-mail da conta corrente do Firebase.
+  ///
+  /// LEITURA, NÃO ASSINATURA: quem observa a troca de conta é a sessão
+  /// canônica, e esta classe continua sem `authStateChanges` e sem guardar
+  /// uid. Quem exibe o valor já reconstrói por conta da sessão, então a
+  /// fotografia lida aqui é sempre a da conta que a sessão acabou de anunciar.
+  @override
+  String? get emailDaConta {
+    try {
+      final email = FirebaseAuth.instance.currentUser?.email?.trim();
+      return (email == null || email.isEmpty) ? null : email;
+    } catch (_) {
+      // Sem Firebase configurado não há conta, e não há e-mail.
+      return null;
+    }
+  }
+
   @override
   /// Reautenticação para a exclusão de conta.
   ///

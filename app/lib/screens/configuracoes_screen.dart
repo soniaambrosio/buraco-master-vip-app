@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../tema/iconografia_ajustes.dart';
+
 import 'mesa_orientation_contract.dart';
 import 'mesa_orientation_widgets.dart';
 
@@ -9,28 +11,97 @@ enum Idioma { ptBR }
 
 enum QuemMeConvida { todos, somenteAmigos, ninguem }
 
+/// Em que ponto do ciclo a assinatura VIP está, segundo a autoridade.
+///
+/// Os nomes são os da §10 da OS. Nenhum deles é decidido por esta tela: quem
+/// os produz é o host, traduzindo `playerEntitlements/{uid}` — o mesmo
+/// documento de onde sai o direito ao Tema Real. NÃO existe estado 'Mensal'
+/// nem 'Renova em 24/08' escrito à mão: o plano e a data são campos.
+enum SituacaoAssinaturaVip {
+  /// A autoridade ainda não respondeu, ou respondeu com falha.
+  indisponivel,
+
+  /// Nunca houve compra.
+  semAssinatura,
+
+  ativa,
+
+  /// Renovação desligada, período pago em curso.
+  renovacaoCancelada,
+
+  /// Pagamento falhou e a Play mantém o acesso enquanto tenta cobrar.
+  emCarencia,
+
+  pausada,
+
+  /// Cobrança falhou e a carência acabou.
+  emEspera,
+
+  /// Compra existe e ainda não foi paga.
+  pendente,
+
+  /// Vencida, revogada ou reembolsada.
+  expirada,
+}
+
+/// A linha 'Assinatura VIP', montada a partir da autoridade.
+@immutable
+class AssinaturaVipNaTela {
+  const AssinaturaVipNaTela({
+    this.situacao = SituacaoAssinaturaVip.indisponivel,
+    this.plano,
+    this.validoAte,
+    this.renovacaoAutomatica = false,
+  });
+
+  final SituacaoAssinaturaVip situacao;
+
+  /// Nome do plano, como o catálogo o informa. `null` quando não há plano
+  /// conhecido — e aí a tela não inventa um.
+  final String? plano;
+
+  final DateTime? validoAte;
+
+  final bool renovacaoAutomatica;
+}
+
 @immutable
 class PerfilResumo {
   final String apelido;
-  final String email;
-  final bool vip;
-  final String? vipPlano;
-  final String? vipValidoAte;
 
-  /// Saldo, ou `null` quando não há autoridade de economia que o informe.
+  /// E-mail da conta autenticada. Visível AQUI, que é tela privada da própria
+  /// pessoa, e em lugar nenhum do Perfil público. Vazio quando o provedor de
+  /// autenticação não o informa.
+  final String email;
+
+  /// Avatar público canônico (`IdentidadePublica.avatarRef`). `null` quando a
+  /// identidade ainda não carregou ou o jogador não escolheu um.
+  final String? avatar;
+
+  /// O jogador tem BENEFÍCIO VIP COMPLETO agora?
+  ///
+  /// VEM DA AUTORIDADE, e a tela não o deriva de nada — nem do plano escrito ao
+  /// lado, nem do selo, nem de [assinatura]. Quem o produz é `PortaoVip`, que
+  /// reavalia a vigência contra o relógio a cada leitura.
+  final bool vip;
+
+  final AssinaturaVipNaTela assinatura;
+
+  /// Saldo de FICHAS, ou `null` quando não há autoridade de economia que o
+  /// informe.
   ///
   /// Era obrigatório, e quem montava a tela sem fonte passava `0` — que a
-  /// pessoa lê como "estou sem moedas", e não como "o aplicativo ainda não sabe
-  /// quantas". Nulo tira o número da tela em vez de afirmar um.
-  final int? moedas;
+  /// pessoa lê como 'estou sem fichas', e não como 'o aplicativo ainda não sabe
+  /// quantas'. Nulo tira o número da tela em vez de afirmar um.
+  final int? fichas;
 
   const PerfilResumo({
     required this.apelido,
     required this.email,
+    this.avatar,
     required this.vip,
-    this.vipPlano,
-    this.vipValidoAte,
-    required this.moedas,
+    this.assinatura = const AssinaturaVipNaTela(),
+    required this.fichas,
   });
 }
 
@@ -105,7 +176,7 @@ class ConfiguracoesCallbacks {
   final void Function(Configuracoes atualizado) onAlterar;
   final VoidCallback onEditarPerfil;
   final VoidCallback onAssinaturaVip;
-  final VoidCallback onMoedasCompras;
+  final VoidCallback onFichasECompras;
   final VoidCallback onBloqueados;
   final VoidCallback onRegras;
   final VoidCallback onSuporte;
@@ -125,7 +196,7 @@ class ConfiguracoesCallbacks {
     required this.onAlterar,
     required this.onEditarPerfil,
     required this.onAssinaturaVip,
-    required this.onMoedasCompras,
+    required this.onFichasECompras,
     required this.onBloqueados,
     required this.onRegras,
     required this.onSuporte,
@@ -160,7 +231,23 @@ class ConfiguracoesScreen extends StatelessWidget {
   final MesaOrientacaoPreferida orientacaoMesa;
   final ValueChanged<MesaOrientacaoPreferida>? onOrientacaoMesa;
 
-  const ConfiguracoesScreen({
+  /// O TEMA DE ICONOGRAFIA INTEIRO, resolvido antes desta tela nascer.
+  ///
+  /// A tela pede o icone pela chave e nunca sabe se atras dela ha um glifo ou
+  /// um arquivo. Ela tambem nao decide qual conjunto usar: recebe UM, e por
+  /// isso nao existe caminho de codigo em que ela misture os dois. Quem
+  /// resolve e `resolverTemaDeAjustes`, a partir da autoridade VIP canonica.
+  ///
+  /// O padrao e o conjunto publico: quem constroi esta tela sem dizer nada
+  /// recebe os icones de hoje, nunca os luxuosos.
+  final ConjuntoDeIcones icones;
+
+  // NAO e `const`, e a razao e o `icones`: o conjunto padrao e construido em
+  // tempo de execucao porque a completude dele e VERIFICADA na construcao
+  // (ver `ConjuntoDeIcones`). Trocar a verificacao por uma tabela `const`
+  // devolveria o construtor const e tiraria a unica trava que garante que
+  // nenhum conjunto meio pronto chegue a existir.
+  ConfiguracoesScreen({
     super.key,
     required this.perfil,
     required this.config,
@@ -168,7 +255,8 @@ class ConfiguracoesScreen extends StatelessWidget {
     required this.onVoltar,
     this.orientacaoMesa = MesaOrientacaoPreferida.vertical,
     this.onOrientacaoMesa,
-  });
+    ConjuntoDeIcones? icones,
+  }) : icones = icones ?? conjuntoPadraoDeAjustes;
 
   @override
   Widget build(BuildContext context) {
@@ -195,42 +283,40 @@ class ConfiguracoesScreen extends StatelessWidget {
                       child: ListView(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 22),
                         children: [
-                          _perfilCard(),
+                          _perfilCard(context),
                           _secao(
                             titulo: 'CONTA',
-                            icone: Icons.person_outline_rounded,
+                            chave: IconeAjustes.secaoConta,
                             children: [
                               _navTile(
-                                icone: Icons.edit_rounded,
+                                chave: IconeAjustes.editarPerfil,
                                 titulo: 'Editar perfil',
                                 subtitulo: 'Apelido, foto e informações públicas',
                                 onTap: callbacks.onEditarPerfil,
                               ),
                               _navTile(
-                                icone: Icons.workspace_premium_rounded,
+                                chave: IconeAjustes.assinaturaVip,
                                 titulo: 'Assinatura VIP',
-                                subtitulo: perfil.vip
-                                    ? '${perfil.vipPlano ?? 'Plano VIP'}${perfil.vipValidoAte == null ? '' : ' · até ${perfil.vipValidoAte}'}'
-                                    : 'Conheça os benefícios da assinatura',
+                                subtitulo: _resumoDaAssinatura(perfil.assinatura),
                                 destaque: perfil.vip,
                                 onTap: callbacks.onAssinaturaVip,
                               ),
                               _navTile(
-                                icone: Icons.monetization_on_outlined,
-                                titulo: 'Moedas e compras',
-                                subtitulo: perfil.moedas == null
-                                    ? 'Pacotes de moedas e histórico'
-                                    : '${perfil.moedas} moedas disponíveis',
-                                onTap: callbacks.onMoedasCompras,
+                                chave: IconeAjustes.fichasECompras,
+                                titulo: 'Fichas e compras',
+                                subtitulo: perfil.fichas == null
+                                    ? 'Pacotes de fichas e histórico'
+                                    : '${perfil.fichas} fichas disponíveis',
+                                onTap: callbacks.onFichasECompras,
                               ),
                             ],
                           ),
                           _secao(
                             titulo: 'SOM E NOTIFICAÇÕES',
-                            icone: Icons.volume_up_outlined,
+                            chave: IconeAjustes.secaoSomENotificacoes,
                             children: [
                               _toggleTile(
-                                icone: Icons.music_note_rounded,
+                                chave: IconeAjustes.musica,
                                 titulo: 'Música',
                                 subtitulo: 'Trilha musical do aplicativo',
                                 valor: config.musica,
@@ -239,7 +325,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.graphic_eq_rounded,
+                                chave: IconeAjustes.efeitosSonoros,
                                 titulo: 'Efeitos sonoros',
                                 subtitulo: 'Cartas, canastras e avisos da mesa',
                                 valor: config.efeitosSonoros,
@@ -248,7 +334,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.vibration_rounded,
+                                chave: IconeAjustes.vibracao,
                                 titulo: 'Vibração',
                                 subtitulo: 'Avisar quando chegar a sua vez',
                                 valor: config.vibracao,
@@ -257,7 +343,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.notifications_active_outlined,
+                                chave: IconeAjustes.notificacoes,
                                 titulo: 'Notificações',
                                 subtitulo: 'Convites, recompensas e novidades',
                                 valor: config.notificacoes,
@@ -269,10 +355,10 @@ class ConfiguracoesScreen extends StatelessWidget {
                           ),
                           _secao(
                             titulo: 'JOGO',
-                            icone: Icons.style_outlined,
+                            chave: IconeAjustes.secaoJogo,
                             children: [
                               _toggleTile(
-                                icone: Icons.auto_awesome_motion_rounded,
+                                chave: IconeAjustes.animacoes,
                                 titulo: 'Animações',
                                 subtitulo: 'Movimentos e celebrações visuais',
                                 valor: config.animacoes,
@@ -281,7 +367,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.sort_rounded,
+                                chave: IconeAjustes.ordenarCartas,
                                 titulo: 'Ordenar cartas automaticamente',
                                 subtitulo: 'Organiza a mão por naipe e valor',
                                 valor: config.ordenarCartasAuto,
@@ -290,7 +376,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.fact_check_outlined,
+                                chave: IconeAjustes.confirmarDescarte,
                                 titulo: 'Confirmar antes de descartar',
                                 subtitulo: 'Evita descarte por toque acidental',
                                 valor: config.confirmarDescarte,
@@ -300,7 +386,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                               ),
                               _choiceTile<MaoDominante>(
                                 context: context,
-                                icone: Icons.pan_tool_alt_outlined,
+                                chave: IconeAjustes.mao,
                                 titulo: 'Mão dominante',
                                 valor: config.maoDominante,
                                 label: _maoLabel,
@@ -315,11 +401,11 @@ class ConfiguracoesScreen extends StatelessWidget {
                           ),
                           _secao(
                             titulo: 'PRIVACIDADE',
-                            icone: Icons.shield_outlined,
+                            chave: IconeAjustes.secaoPrivacidade,
                             children: [
                               _choiceTile<QuemMeConvida>(
                                 context: context,
-                                icone: Icons.person_add_alt_1_rounded,
+                                chave: IconeAjustes.convites,
                                 titulo: 'Quem pode me convidar',
                                 valor: config.quemMeConvida,
                                 label: _conviteLabel,
@@ -329,7 +415,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.forum_outlined,
+                                chave: IconeAjustes.chatPublico,
                                 titulo: 'Chat público só para maiores',
                                 subtitulo: 'Restringe o acesso conforme a conta',
                                 valor: config.chatPublicoSoMaiores,
@@ -338,7 +424,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _toggleTile(
-                                icone: Icons.visibility_outlined,
+                                chave: IconeAjustes.presencaOnline,
                                 titulo: 'Mostrar quando estou online',
                                 subtitulo: 'Amigos poderão ver sua presença',
                                 valor: config.mostrarOnline,
@@ -347,7 +433,7 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _navTile(
-                                icone: Icons.block_rounded,
+                                chave: IconeAjustes.jogadoresBloqueados,
                                 titulo: 'Jogadores bloqueados',
                                 subtitulo: 'Rever ou desbloquear jogadores',
                                 onTap: callbacks.onBloqueados,
@@ -356,11 +442,11 @@ class ConfiguracoesScreen extends StatelessWidget {
                           ),
                           _secao(
                             titulo: 'GERAL',
-                            icone: Icons.tune_rounded,
+                            chave: IconeAjustes.secaoGeral,
                             children: [
                               _choiceTile<Idioma>(
                                 context: context,
-                                icone: Icons.language_rounded,
+                                chave: IconeAjustes.idioma,
                                 titulo: 'Idioma',
                                 valor: config.idioma,
                                 label: _idiomaLabel,
@@ -370,25 +456,25 @@ class ConfiguracoesScreen extends StatelessWidget {
                                 ),
                               ),
                               _navTile(
-                                icone: Icons.menu_book_outlined,
+                                chave: IconeAjustes.comoJogar,
                                 titulo: 'Regras e como jogar',
                                 subtitulo: 'Aberto, Fechado e STBL',
                                 onTap: callbacks.onRegras,
                               ),
                               _navTile(
-                                icone: Icons.support_agent_rounded,
+                                chave: IconeAjustes.suporte,
                                 titulo: 'Suporte',
                                 subtitulo: 'Fale com a equipe do aplicativo',
                                 onTap: callbacks.onSuporte,
                               ),
                               _navTile(
-                                icone: Icons.policy_outlined,
+                                chave: IconeAjustes.termosEPrivacidade,
                                 titulo: 'Termos e privacidade',
                                 subtitulo: 'Documentos e políticas do serviço',
                                 onTap: callbacks.onTermos,
                               ),
                               _navTile(
-                                icone: Icons.star_rate_rounded,
+                                chave: IconeAjustes.avaliarAplicativo,
                                 titulo: 'Avaliar o aplicativo',
                                 subtitulo: 'Conte sua experiência na loja',
                                 onTap: callbacks.onAvaliar,
@@ -432,25 +518,62 @@ class ConfiguracoesScreen extends StatelessWidget {
           IconButton(
             tooltip: 'Voltar',
             onPressed: onVoltar,
-            icon: const Icon(Icons.chevron_left_rounded, color: _ouro, size: 31),
+            // 48 dp EXPLICITOS. O padrao do IconButton e padding 8 em volta do
+            // icone, e com o icone de 31 isso da 47,0 x 47,0 — um decimo de
+            // milimetro abaixo do minimo, o bastante para reprovar a regua e
+            // pequeno demais para alguem notar a olho.
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            icon: IconeDeAjustes(
+              conjunto: icones,
+              chave: IconeAjustes.voltar,
+              cor: _ouro,
+              tamanho: 31,
+            ),
           ),
-          const Text(
-            'Configurações',
-            style: TextStyle(
-              color: _ouroClaro,
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
-              letterSpacing: .3,
+          // FLEXIVEL, e nao fixo: em 160% de escala de fonte este titulo
+          // empurrava a fileira 130 px para fora da tela. Sem `maxLines`, ele
+          // quebra em vez de ser cortado — texto ampliado nao pode perder letra.
+          const Flexible(
+            child: Text(
+              'Configurações',
+              style: TextStyle(
+                color: _ouroClaro,
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+                letterSpacing: .3,
+              ),
             ),
           ),
           const Spacer(),
-          const Icon(Icons.settings_rounded, color: _ouro, size: 23),
+          IconeDeAjustes(
+            conjunto: icones,
+            chave: IconeAjustes.tituloAjustes,
+            cor: _ouro,
+            tamanho: 23,
+          ),
         ],
       ),
     );
   }
 
-  Widget _perfilCard() {
+  /// O cartao de identidade do topo.
+  ///
+  /// TRES PECAS DISPUTAM A MESMA LINHA — avatar, bloco de identidade e pastilha
+  /// de saldo —, e em 320 dp com fonte a 200% elas nao cabem: o bloco de
+  /// identidade sobrava com 56 dp para uma pastilha `VIP` de 70,8 dp, e a
+  /// fileira estourava 22 px. Encolher fonte, esconder o saldo ou tirar o selo
+  /// resolveria o numero e pioraria a tela.
+  ///
+  /// O que se faz aqui e REFLUXO: quando a largura nao comporta os tres lado a
+  /// lado, a pastilha de saldo desce para uma linha propria. A decisao e
+  /// MEDIDA, nao estimada — [_larguraDaPastilhaDeSaldo] e [_pisoDoBlocoDeNome]
+  /// usam `TextPainter` com a mesma escala de texto que a tela vai usar. Por
+  /// isso a tela a 100% continua exatamente como era: o refluxo so acontece
+  /// quando ele e a unica saida.
+  Widget _perfilCard(BuildContext context) {
+    final escala = MediaQuery.textScalerOf(context);
+    final saldo = perfil.fichas;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
@@ -459,122 +582,199 @@ class ConfiguracoesScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _borda),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF2B1B0C),
-              border: Border.all(color: _ouro, width: 1.4),
-            ),
-            child: Text(
-              perfil.apelido.trim().isEmpty
-                  ? '👑'
-                  : perfil.apelido.trim().substring(0, 1).toUpperCase(),
-              style: const TextStyle(
-                color: _ouroClaro,
-                fontSize: 21,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, restricoes) {
+          final identidade = Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              _avatarDoPerfil(),
+              const SizedBox(width: 12),
+              Expanded(child: _blocoDeIdentidade()),
+            ],
+          );
+
+          if (saldo == null) return identidade;
+
+          final precisa = _kAvatar +
+              12 +
+              _pisoDoBlocoDeNome(escala) +
+              8 +
+              _larguraDaPastilhaDeSaldo(saldo, escala);
+
+          if (restricoes.maxWidth >= precisa) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        perfil.apelido,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: _texto,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                    if (perfil.vip) ...[
-                      const SizedBox(width: 7),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _roxo.withValues(alpha: .16),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: _roxo.withValues(alpha: .70),
-                          ),
-                        ),
-                        child: const Text(
-                          'VIP',
-                          style: TextStyle(
-                            color: Color(0xFFE2C9FF),
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  perfil.email,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: _textoSec, fontSize: 11),
-                ),
+                Expanded(child: identidade),
+                const SizedBox(width: 8),
+                _pastilhaDeSaldo(saldo),
               ],
-            ),
+            );
+          }
+
+          // Nao coube: o saldo desce inteiro, sem encolher e sem sumir.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              identidade,
+              const SizedBox(height: 10),
+              _pastilhaDeSaldo(saldo),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Lado do circulo do avatar.
+  static const double _kAvatar = 52;
+
+  Widget _avatarDoPerfil() {
+    return Container(
+      width: _kAvatar,
+      height: _kAvatar,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF2B1B0C),
+        border: Border.all(color: _ouro, width: 1.4),
+      ),
+      child: Text(
+        _marcaDoAvatar(perfil),
+        style: const TextStyle(
+          color: _ouroClaro,
+          fontSize: 21,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+
+  /// Estilo do apelido. Fora do `build` porque a medicao do piso precisa dele.
+  static const TextStyle _estiloApelido = TextStyle(
+    color: _texto,
+    fontSize: 16,
+    fontWeight: FontWeight.w900,
+  );
+
+  static const TextStyle _estiloSelo = TextStyle(
+    color: Color(0xFFE2C9FF),
+    fontSize: 9,
+    fontWeight: FontWeight.w900,
+  );
+
+  static const TextStyle _estiloSaldo = TextStyle(
+    color: _ouroClaro,
+    fontSize: 12,
+    fontWeight: FontWeight.w900,
+  );
+
+  /// Apelido, selo e e-mail.
+  ///
+  /// O apelido e o selo vivem num `Wrap`, e nao num `Row`: se os dois nao
+  /// couberem lado a lado, o selo DESCE — antes ele espremia o apelido ate zero
+  /// e estourava mesmo assim.
+  ///
+  /// Nem o apelido nem o e-mail tem `maxLines`. Os dois sao texto essencial —
+  /// o apelido identifica a pessoa e o e-mail identifica a CONTA —, e cortar
+  /// qualquer um deles com reticencias e perder informacao que a tela existe
+  /// para dar. Sem `maxLines` eles quebram em mais linhas, que e o que texto
+  /// ampliado precisa poder fazer.
+  Widget _blocoDeIdentidade() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 7,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(perfil.apelido, style: _estiloApelido),
+            if (perfil.vip) _seloVip(),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(
+          perfil.email,
+          style: const TextStyle(color: _textoSec, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  Widget _seloVip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: _roxo.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _roxo.withValues(alpha: .70)),
+      ),
+      child: const Text('VIP', style: _estiloSelo),
+    );
+  }
+
+  /// A pastilha de saldo. So existe quando ha saldo a mostrar — ver
+  /// [PerfilResumo.fichas].
+  Widget _pastilhaDeSaldo(int saldo) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: _cardSecundario,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _borda),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconeDeAjustes(
+            conjunto: icones,
+            chave: IconeAjustes.saldoDeFichas,
+            cor: _ouro,
+            tamanho: 17,
           ),
-          const SizedBox(width: 8),
-          // A pastilha de saldo só aparece quando há saldo a mostrar. Ver
-          // [PerfilResumo.moedas].
-          if (perfil.moedas case final int saldo)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-              decoration: BoxDecoration(
-                color: _cardSecundario,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _borda),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.monetization_on_rounded,
-                    color: _ouro,
-                    size: 17,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$saldo',
-                    style: const TextStyle(
-                      color: _ouroClaro,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          const SizedBox(width: 4),
+          Text('$saldo', style: _estiloSaldo),
         ],
       ),
     );
   }
 
+  /// Quanto a pastilha de saldo ocupa, NA ESCALA DE TEXTO DESTA TELA.
+  ///
+  /// 9 + 9 de padding, 17 de icone (que nao escala), 4 de respiro, mais o
+  /// numero medido, mais 1 + 1 de borda.
+  static double _larguraDaPastilhaDeSaldo(int saldo, TextScaler escala) =>
+      9 + 17 + 4 + _larguraDoTexto('$saldo', _estiloSaldo, escala) + 9 + 2;
+
+  /// O MINIMO que o bloco de identidade precisa para nao estourar.
+  ///
+  /// O selo inteiro, o respiro, e espaco para quatro caracteres do apelido —
+  /// abaixo disso a linha nao serve para nada, e e melhor o saldo descer.
+  static double _pisoDoBlocoDeNome(TextScaler escala) =>
+      7 + _larguraDoTexto('VIP', _estiloSelo, escala) + 7 + 2 +
+      7 +
+      _larguraDoTexto('MMMM', _estiloApelido, escala);
+
+  static double _larguraDoTexto(
+    String texto,
+    TextStyle estilo,
+    TextScaler escala,
+  ) {
+    final pintor = TextPainter(
+      text: TextSpan(text: texto, style: estilo),
+      textDirection: TextDirection.ltr,
+      textScaler: escala,
+      maxLines: 1,
+    )..layout();
+    final largura = pintor.width;
+    pintor.dispose();
+    return largura;
+  }
+
   Widget _secao({
     required String titulo,
-    required IconData icone,
+    required IconeAjustes chave,
     required List<Widget> children,
   }) {
     return Padding(
@@ -586,15 +786,22 @@ class ConfiguracoesScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(6, 0, 6, 7),
             child: Row(
               children: [
-                Icon(icone, color: _ouro, size: 17),
+                IconeDeAjustes(
+                  conjunto: icones,
+                  chave: chave,
+                  cor: _ouro,
+                  tamanho: 17,
+                ),
                 const SizedBox(width: 7),
-                Text(
-                  titulo,
-                  style: const TextStyle(
-                    color: _ouroClaro,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .7,
+                Flexible(
+                  child: Text(
+                    titulo,
+                    style: const TextStyle(
+                      color: _ouroClaro,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: .7,
+                    ),
                   ),
                 ),
               ],
@@ -638,7 +845,7 @@ class ConfiguracoesScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              _iconeTile(Icons.screen_rotation_outlined),
+              _iconeTile(IconeAjustes.orientacaoMesa),
               const SizedBox(width: 11),
               const Expanded(
                 child: Column(
@@ -677,7 +884,7 @@ class ConfiguracoesScreen extends StatelessWidget {
   }
 
   Widget _navTile({
-    required IconData icone,
+    required IconeAjustes chave,
     required String titulo,
     required String subtitulo,
     required VoidCallback onTap,
@@ -691,7 +898,7 @@ class ConfiguracoesScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
           child: Row(
             children: [
-              _iconeTile(icone, destaque: destaque),
+              _iconeTile(chave, destaque: destaque),
               const SizedBox(width: 11),
               Expanded(
                 child: Column(
@@ -706,10 +913,13 @@ class ConfiguracoesScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 2),
+                    // SEM `maxLines`, e a razao e acessibilidade: com o teto
+                    // de duas linhas, 160% de escala de fonte fazia o subtitulo
+                    // ser CORTADO em silencio — sem erro, sem aviso, comendo o
+                    // fim da frase. Em 100% os subtitulos desta tela cabem nas
+                    // mesmas duas linhas, entao nada muda para quem nao amplia.
                     Text(
                       subtitulo,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: _textoSec,
                         fontSize: 10.4,
@@ -719,7 +929,12 @@ class ConfiguracoesScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: _textoSec, size: 23),
+              IconeDeAjustes(
+                conjunto: icones,
+                chave: IconeAjustes.avancar,
+                cor: _textoSec,
+                tamanho: 23,
+              ),
             ],
           ),
         ),
@@ -728,7 +943,7 @@ class ConfiguracoesScreen extends StatelessWidget {
   }
 
   Widget _toggleTile({
-    required IconData icone,
+    required IconeAjustes chave,
     required String titulo,
     required String subtitulo,
     required bool valor,
@@ -738,7 +953,7 @@ class ConfiguracoesScreen extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
       child: Row(
         children: [
-          _iconeTile(icone),
+          _iconeTile(chave),
           const SizedBox(width: 11),
           Expanded(
             child: GestureDetector(
@@ -786,7 +1001,7 @@ class ConfiguracoesScreen extends StatelessWidget {
 
   Widget _choiceTile<T>({
     required BuildContext context,
-    required IconData icone,
+    required IconeAjustes chave,
     required String titulo,
     required T valor,
     required String Function(T) label,
@@ -808,7 +1023,7 @@ class ConfiguracoesScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
           child: Row(
             children: [
-              _iconeTile(icone),
+              _iconeTile(chave),
               const SizedBox(width: 11),
               Expanded(
                 child: Text(
@@ -828,10 +1043,9 @@ class ConfiguracoesScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: _borda),
                 ),
+                // Idem: o valor escolhido quebra em vez de sumir pela borda.
                 child: Text(
                   label(valor),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: _ouroClaro,
                     fontSize: 10.8,
@@ -840,7 +1054,12 @@ class ConfiguracoesScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 3),
-              const Icon(Icons.expand_more_rounded, color: _textoSec, size: 21),
+              IconeDeAjustes(
+                conjunto: icones,
+                chave: IconeAjustes.expandir,
+                cor: _textoSec,
+                tamanho: 21,
+              ),
             ],
           ),
         ),
@@ -919,7 +1138,12 @@ class ConfiguracoesScreen extends StatelessWidget {
                               ),
                             ),
                             if (opcao == valor)
-                              const Icon(Icons.check_rounded, color: _ouro, size: 21),
+                              IconeDeAjustes(
+                                conjunto: icones,
+                                chave: IconeAjustes.confirmar,
+                                cor: _ouro,
+                                tamanho: 21,
+                              ),
                           ],
                         ),
                       ),
@@ -934,7 +1158,7 @@ class ConfiguracoesScreen extends StatelessWidget {
     if (escolhido != null && escolhido != valor) onChanged(escolhido);
   }
 
-  Widget _iconeTile(IconData icone, {bool destaque = false}) {
+  Widget _iconeTile(IconeAjustes chave, {bool destaque = false}) {
     return Container(
       width: 32,
       height: 32,
@@ -950,10 +1174,11 @@ class ConfiguracoesScreen extends StatelessWidget {
               : _ouro.withValues(alpha: .24),
         ),
       ),
-      child: Icon(
-        icone,
-        color: destaque ? const Color(0xFFDDBBFF) : _ouro,
-        size: 18,
+      child: IconeDeAjustes(
+        conjunto: icones,
+        chave: chave,
+        cor: destaque ? const Color(0xFFDDBBFF) : _ouro,
+        tamanho: 18,
       ),
     );
   }
@@ -971,17 +1196,24 @@ class ConfiguracoesScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(15),
             border: Border.all(color: const Color(0xFF8C3535)),
           ),
-          child: const Row(
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.logout_rounded, color: Color(0xFFFFA2A2), size: 20),
-              SizedBox(width: 8),
-              Text(
-                'Sair da conta',
-                style: TextStyle(
-                  color: Color(0xFFFFC2C2),
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w900,
+              IconeDeAjustes(
+                conjunto: icones,
+                chave: IconeAjustes.sair,
+                cor: const Color(0xFFFFA2A2),
+                tamanho: 20,
+              ),
+              const SizedBox(width: 8),
+              const Flexible(
+                child: Text(
+                  'Sair da conta',
+                  style: TextStyle(
+                    color: Color(0xFFFFC2C2),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],
@@ -1008,11 +1240,17 @@ class ConfiguracoesScreen extends StatelessWidget {
         onPressed: callbacks.onExcluirConta,
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          // 48 dp de alvo, sem 48 dp de ENFASE: o piso de toque cresce, e o
+          // desenho continua o mais discreto da tela — texto pequeno,
+          // sublinhado, vermelho apagado. Alvo acessivel nao e destaque
+          // visual.
+          minimumSize: const Size(48, 48),
         ),
-        icon: const Icon(
-          Icons.person_remove_outlined,
-          color: Color(0xFF9C6A6A),
-          size: 17,
+        icon: IconeDeAjustes(
+          conjunto: icones,
+          chave: IconeAjustes.excluirConta,
+          cor: const Color(0xFF9C6A6A),
+          tamanho: 17,
         ),
         label: const Text(
           'Excluir minha conta',
@@ -1026,6 +1264,64 @@ class ConfiguracoesScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// A marca do avatar no cabecalho.
+  ///
+  /// Ordem: avatar publico canonico (`IdentidadePublica.avatarRef`), depois a
+  /// inicial do apelido, depois a coroa. A coroa e o fallback que ja existia
+  /// para quem nao tem apelido — ela NAO e um selo VIP e nao muda com o tema.
+  static String _marcaDoAvatar(PerfilResumo perfil) {
+    final avatar = perfil.avatar?.trim() ?? '';
+    if (avatar.isNotEmpty) return avatar;
+    final apelido = perfil.apelido.trim();
+    if (apelido.isEmpty) return '👑';
+    return apelido.substring(0, 1).toUpperCase();
+  }
+
+  /// A linha da assinatura, campo a campo.
+  ///
+  /// Nao ha literal de plano nem de data aqui: o que existe sao os NOMES DOS
+  /// ESTADOS da §10 e a formatacao de uma data que a autoridade forneceu. Sem
+  /// autoridade, a tela diz que nao sabe — nunca que a pessoa nao assina.
+  static String _resumoDaAssinatura(AssinaturaVipNaTela a) {
+    final plano = (a.plano == null || a.plano!.trim().isEmpty)
+        ? 'Plano VIP'
+        : a.plano!.trim();
+    final ate = a.validoAte;
+    final data = ate == null ? null : _dataCurta(ate);
+    switch (a.situacao) {
+      case SituacaoAssinaturaVip.indisponivel:
+        return 'Situacao da assinatura indisponivel agora';
+      case SituacaoAssinaturaVip.semAssinatura:
+        return 'Conheca os beneficios da assinatura';
+      case SituacaoAssinaturaVip.ativa:
+        if (data == null) return '$plano · Ativa';
+        return a.renovacaoAutomatica
+            ? '$plano · Renova em $data'
+            : '$plano · Ativa ate $data';
+      case SituacaoAssinaturaVip.renovacaoCancelada:
+        return data == null
+            ? '$plano · Renovacao cancelada'
+            : '$plano · Renovacao cancelada, vale ate $data';
+      case SituacaoAssinaturaVip.emCarencia:
+        return '$plano · Pagamento pendente, acesso mantido';
+      case SituacaoAssinaturaVip.pausada:
+        return '$plano · Pausada';
+      case SituacaoAssinaturaVip.emEspera:
+        return '$plano · Cobranca em espera';
+      case SituacaoAssinaturaVip.pendente:
+        return '$plano · Pagamento nao confirmado';
+      case SituacaoAssinaturaVip.expirada:
+        return data == null ? '$plano · Expirada' : '$plano · Expirou em $data';
+    }
+  }
+
+  static String _dataCurta(DateTime quando) {
+    final local = quando.toLocal();
+    final d = local.day.toString().padLeft(2, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    return '$d/$m/${local.year}';
   }
 
   String _maoLabel(MaoDominante valor) {

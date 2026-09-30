@@ -93,6 +93,9 @@ class _CredencialFalsa implements FonteDeCredencial {
 /// é assim que o provedor de verdade funciona, e é o que permite provar que a
 /// tela de login não precisa navegar e que a de Ajustes não precisa dar `pop`.
 class _AutenticacaoFalsa implements ComandosDeAutenticacao {
+  @override
+  String? get emailDaConta => null;
+
   _AutenticacaoFalsa(
     this._fluxo, {
     this.provedores = const [ProvedorDeLogin.google],

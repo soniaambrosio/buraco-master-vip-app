@@ -92,6 +92,9 @@ class CredencialFalsa implements FonteDeCredencial {
 }
 
 class AutenticacaoFalsa implements ComandosDeAutenticacao {
+  @override
+  String? get emailDaConta => null;
+
   AutenticacaoFalsa(this._fluxo);
 
   final StreamController<String?> _fluxo;

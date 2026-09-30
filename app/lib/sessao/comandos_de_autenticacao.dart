@@ -101,6 +101,19 @@ abstract class ComandosDeAutenticacao {
   /// Aciona [provedor]. Não lança: toda falha volta em [ResultadoDeLogin].
   Future<ResultadoDeLogin> entrar(ProvedorDeLogin provedor);
 
+  /// E-mail da conta autenticada, quando o provedor o informa.
+  ///
+  /// MORA AQUI porque e-mail e dado de CONTA, e não de identidade pública: a
+  /// `IdentidadePublica` carrega apelido, avatar e `publicId`, que são o que
+  /// terceiros podem ver. Uma tela que fosse buscar o e-mail em
+  /// `FirebaseAuth.instance` seria a segunda autoridade de sessão que a casca
+  /// de produção existe para não ter.
+  ///
+  /// Concreto, e não abstrato, de propósito: um ambiente que não sabe o e-mail
+  /// responde `null` sem precisar declarar nada, e quem exibe trata `null`
+  /// como 'não mostrar' — nunca como string vazia significativa.
+  String? get emailDaConta => null;
+
   /// Encerra a sessão no provedor.
   ///
   /// Não mexe em socket, em cache nem em tela: quem derruba o transporte é a
@@ -131,6 +144,9 @@ abstract class ComandosDeAutenticacao {
 class SemAutenticacao implements ComandosDeAutenticacao {
   const SemAutenticacao();
 
+  /// Sem provedor de autenticacao nao ha conta, e nao ha e-mail.
+  @override
+  String? get emailDaConta => null;
   @override
   List<ProvedorDeLogin> get provedoresDisponiveis => const [];
 

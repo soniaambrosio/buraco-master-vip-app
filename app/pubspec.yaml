@@ -137,6 +137,18 @@ flutter:
     - assets/hall/
     - assets/inicio/
     - assets/configurar_mesa/
+    # TEMA REAL VIP das Configuracoes (OS 39). Os 28 icones luxuosos que a
+    # `ConjuntoDeIcones` do Tema Real enderecca por `assets/ajustes/real/<chave>.webp`.
+    #
+    # ESTA LINHA E A FONTE UNICA da declaracao: `conjunto_real_vip.dart` deriva
+    # os nomes das CHAVES do contrato, e nenhum workflow, script ou manifesto
+    # auxiliar repete a lista. Duas listas descrevendo a mesma superficie
+    # divergem no primeiro dia em que alguem corrige so uma.
+    #
+    # Nao pode ser declarada antes de os arquivos existirem: o Flutter reprova
+    # o build quando um diretorio declarado esta ausente. Por isso ela entra no
+    # MESMO commit que traz a arte e que vira `kConjuntoRealVipRegistrado`.
+    - assets/ajustes/real/
     # Preservado da linha de trabalho desta branch: `mesa_vip_preview_screen.dart`
     # carrega `assets/mesa_vip/fundo_preto_vip.webp` e `dorso_vip.webp`. A lista
     # de origem nao trazia esta pasta — sem a linha, as duas artes sumiriam do
