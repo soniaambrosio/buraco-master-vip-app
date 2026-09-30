@@ -175,14 +175,17 @@ void main() {
   // 3 — nada é registrado
   // =========================================================================
   test('a mesa online não registra nada em log', () {
+    // `log(` é procurado COM BORDA, pela mesma razão que `_constroi` existe:
+    // `AlertDialog(` termina em `log(`, e a busca por substring crua acusava o
+    // diálogo de encerramento de ser um registro de diagnóstico. Alarme falso
+    // não é rigor — é o caminho mais curto para alguém desligar a auditoria.
+    //
+    // A borda não afrouxa nada: `log(`, ` log(`, `.log(` e `_log(` continuam
+    // sendo pegos, porque ponto e sublinhado não são início de identificador
+    // maior aqui — e `developer.log` segue conferido à parte.
     for (final f in _arquivosDaMesaOnline()) {
       final codigo = _codigo(f);
-      for (final proibido in const [
-        'print(',
-        'debugPrint(',
-        'log(',
-        'developer.log',
-      ]) {
+      for (final proibido in const ['print(', 'debugPrint(', 'developer.log']) {
         expect(
           codigo.contains(proibido),
           isFalse,
@@ -193,6 +196,11 @@ void main() {
               'mão inteira num arquivo.',
         );
       }
+      expect(
+        RegExp(r'(^|[^A-Za-z0-9])log\(', multiLine: true).hasMatch(codigo),
+        isFalse,
+        reason: '${_nome(f)} chama log()',
+      );
     }
   });
 

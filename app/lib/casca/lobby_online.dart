@@ -50,18 +50,74 @@
 // que se desenha, e voltar significa a mesma coisa que sempre significou: sair
 // da tela do online. É o mesmo raciocínio que `casca_de_producao.dart` usa para
 // escolher entre Login e Home, e pelo mesmo motivo.
+//
+// ---------------------------------------------------------------------------
+// ESTA TELA É A DONA DO EFEITO TERMINAL
+// ---------------------------------------------------------------------------
+//
+// `OnlineService.aoEncerrar` é UM slot, chamado uma vez por encerramento
+// autoritativo, e quem o ocupa é este objeto. A escolha não é de conveniência:
+// o dono do efeito tem de ser quem já é dono do ciclo de vida da mesa, e é
+// aqui que a mesa nasce (o corpo desta rota), aqui que ela troca de transporte
+// e aqui que ela morre.
+//
+// A `MesaOnlineScreen` não serviria — ela é apresentação pura, é reconstruída a
+// cada visão e some quando a partida volta ao lobby; uma assinatura ali nasceria
+// e morreria junto com o desenho. A raiz também não: ela não sabe quando a
+// pessoa está olhando a mesa, e um diálogo despachado de lá apareceria sobre a
+// tela que estivesse por cima.
+//
+// O vínculo nasce no `didChangeDependencies` — nunca no `build`, que roda
+// muitas vezes e criaria uma assinatura por quadro — e nasce ANTES de o
+// transporte começar a entregar mensagens: o `conectar()` logo abaixo é
+// disparado depois do quadro, e a assinatura já está de pé quando ele sai.
+//
+// ---------------------------------------------------------------------------
+// O SLOT CUTUCA; O LIVRO É QUE MANDA
+// ---------------------------------------------------------------------------
+//
+// Assinar `aoEncerrar` não basta, e a entrega anterior registrou por quê: entre
+// o `dispose` de um vínculo e o `didChangeDependencies` do seguinte o slot fica
+// vazio, e a pessoa pode simplesmente não estar na rota da mesa quando o
+// servidor declara o fim. Um efeito entregue SÓ pelo slot desapareceria nessas
+// janelas — sem erro, sem log e sem teste vermelho.
+//
+// Então o slot deixou de ser o caminho do efeito e virou um aviso de que talvez
+// haja o que fazer. O que fazer está no livro (`OnlineService.efeitosTerminais`),
+// que guarda cada encerramento como pendente até alguém APRESENTÁ-LO. Esta tela
+// drena o livro em dois momentos, e os dois são o mesmo método:
+//
+//   * quando o transporte cutuca (o fim chegou com a tela montada);
+//   * quando a tela assina (o fim já tinha chegado, e não havia quem o visse).
+//
+// O consumidor instalado no slot IGNORA o encerramento que recebe de parâmetro.
+// Apresentar o que veio pela cutucada, e não o que está pendente no livro, seria
+// voltar a ter duas fontes para o mesmo efeito — e a que chega pelo slot é
+// justamente a que não sobrevive às janelas acima.
+//
+// A apresentação tem três tempos, e nenhum deles pode ser encurtado:
+//
+//   REIVINDICAR   antes de esperar o quadro. É o que impede que uma segunda
+//                 cutucada, uma reconstrução ou uma reentrada abram um segundo
+//                 diálogo para o mesmo fim enquanto o primeiro está a caminho.
+//   APRESENTAR    depois do quadro, com tudo reconferido.
+//   CONFIRMAR     só depois de o apresentador dizer que o aviso ENTROU na
+//                 árvore. Se ele recusar, se ESTOURAR, ou se a rota morrer
+//                 antes, a reivindicação é devolvida e o efeito volta a ficar
+//                 pendente: adiado, não perdido.
 
 import 'package:flutter/material.dart';
 
 import '../ingresso/modelo_ingresso.dart';
 import '../services/online_service.dart';
 import 'escopo_transporte.dart';
+import 'mesa_online/encerramento_da_mesa.dart';
 import 'mesa_online/estado_mesa_online.dart';
 import 'mesa_online/mesa_online_screen.dart';
 import 'mesa_online/porta_de_comandos_online.dart';
 
 class LobbyOnline extends StatefulWidget {
-  const LobbyOnline({super.key, this.ingressoConfirmado});
+  const LobbyOnline({super.key, this.ingressoConfirmado, this.apresentador});
 
   /// [INGRESSO 38.3] O que o SERVIDOR confirmou, quando esta rota é o
   /// destino de um ingresso pela mesa pública.
@@ -75,6 +131,11 @@ class LobbyOnline extends StatefulWidget {
   /// mesa" e "entrar por código" a quem acabou de sentar numa mesa é
   /// oferecer o desfazer de uma coisa que acabou de dar certo.
   final IngressoConfirmado? ingressoConfirmado;
+
+  /// Quem apresenta o encerramento. Nulo em produção — e aí vale o diálogo da
+  /// mesa. O teste injeta um contador, para provar QUANTAS vezes o efeito
+  /// aconteceu sem depender de diálogo desenhado.
+  final ApresentadorDeEncerramento? apresentador;
 
   @override
   State<LobbyOnline> createState() => _LobbyOnlineState();
@@ -91,6 +152,29 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   /// um ouvinte pendurado num objeto que já não é o da árvore.
   PortaDeComandosOnline? _porta;
 
+  /// O consumidor do efeito terminal que ESTE objeto instalou, e a geração do
+  /// vínculo.
+  ///
+  /// Os dois existem para a mesma pergunta: um `aoEncerrar` que chega agora
+  /// ainda é meu? O slot é do transporte, que vive mais do que esta tela e
+  /// pode ser trocado por baixo dela; sem identidade, um callback preso numa
+  /// closure antiga continuaria abrindo diálogo depois de a mesa ter acabado —
+  /// ou sobre a mesa de outra sessão.
+  ///
+  /// A geração sobe a cada vínculo criado E a cada vínculo solto, então
+  /// desmontar já basta para tornar inerte tudo o que estava em voo.
+  void Function(EncerramentoAutoritativo)? _consumidorDeEncerramento;
+  int _geracaoDoConsumidor = 0;
+
+  /// Com que identidade este vínculo reivindica avisos no livro dos efeitos.
+  ///
+  /// A geração acima não serve para isso, e a diferença é o ponto: ela é um
+  /// número desta tela, e o livro vive no transporte, que sobrevive a ela. Uma
+  /// tela nova começaria a contar do zero e teria a mesma geração de uma morta
+  /// — passando a poder confirmar e liberar reivindicações que não são suas. A
+  /// posse é um objeto, e dois objetos nunca são o mesmo por coincidência.
+  PosseDoEfeito? _posse;
+
   final TextEditingController _codigo = TextEditingController();
   final TextEditingController _apelido = TextEditingController(text: 'Você');
 
@@ -104,6 +188,10 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     super.didChangeDependencies();
     final srv = EscopoTransporte.talvezDe(context);
     if (identical(srv, _srv)) return;
+    // O VÍNCULO ANTERIOR MORRE ANTES DE O NOVO NASCER. Trocar a ordem deixaria,
+    // por um instante, dois consumidores válidos — e o antigo é justamente o que
+    // aponta para uma mesa que já não é a desta tela.
+    _soltarOEncerramento(_srv);
     _srv?.removeListener(_atualizar);
     _porta?.removeListener(_atualizar);
     _porta?.dispose();
@@ -111,6 +199,7 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     _srv = srv;
     _srv?.addListener(_atualizar);
     if (srv != null) {
+      _ligarAoEncerramento(srv);
       // A porta também notifica: intenção pendente e recusa são estado dela, e
       // sem este ouvinte o botão travado nunca destravaria na tela.
       _porta = PortaDeComandosOnline(srv)..addListener(_atualizar);
@@ -138,8 +227,194 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     if (mounted) setState(() {});
   }
 
+  // -------------------------------------------------------------------------
+  // O efeito terminal
+  // -------------------------------------------------------------------------
+
+  ApresentadorDeEncerramento get _apresentador =>
+      widget.apresentador ?? const DialogoDeEncerramento();
+
+  /// Ocupa o ponto de saída de [srv]. UM vínculo, sempre — o slot é um só, e
+  /// esta tela nunca escreve nele sem antes soltar o que tinha.
+  void _ligarAoEncerramento(OnlineService srv) {
+    final geracao = ++_geracaoDoConsumidor;
+    final posse = PosseDoEfeito();
+    _posse = posse;
+    // O PARÂMETRO É IGNORADO DE PROPÓSITO. O que se apresenta é o que está
+    // pendente no livro, não o que veio pela cutucada — ver o cabeçalho. Manter
+    // o parâmetro na assinatura é do contrato do slot, e um apresentador de
+    // diagnóstico que o assine continua recebendo o aviso.
+    void consumidor(EncerramentoAutoritativo _) => _drenar(srv, geracao, posse);
+    _consumidorDeEncerramento = consumidor;
+    srv.aoEncerrar = consumidor;
+
+    // DRENA JÁ, sem esperar cutucada nenhuma. Este é o caminho de quem chegou
+    // depois do fim: o servidor pode ter declarado o encerramento enquanto não
+    // havia consumidor — a pessoa fora da rota da mesa, ou a janela entre este
+    // vínculo e o anterior —, e o aviso está esperando no livro desde então.
+    _drenar(srv, geracao, posse);
+  }
+
+  /// Devolve o ponto de saída, se ele ainda for nosso.
+  ///
+  /// A conferência de identidade não é zelo: o slot é público e o teste da
+  /// suíte irmã escreve nele de propósito para medir o transporte. Zerar sem
+  /// olhar apagaria a assinatura de quem chegou depois de nós.
+  void _soltarOEncerramento(OnlineService? srv) {
+    final meu = _consumidorDeEncerramento;
+    if (srv != null && meu != null && identical(srv.aoEncerrar, meu)) {
+      srv.aoEncerrar = null;
+    }
+
+    // A REIVINDICAÇÃO VOLTA AO LIVRO, e volta SEMPRE — inclusive quando o slot
+    // já era de outro dono, porque a reivindicação continua sendo nossa. Um
+    // aviso que esta tela assumiu e não chegou a apresentar ficaria travado em
+    // `reivindicado` por um dono que não existe mais: ninguém o apresentaria e
+    // ninguém o liberaria, que é o defeito original de volta pela porta nova.
+    //
+    // ANTES de a geração subir: quem lê isto na ordem inversa acha que a ordem
+    // não importa, e importa — a partir daqui a posse deixa de ser alcançável.
+    final posse = _posse;
+    if (srv != null && posse != null) srv.efeitosTerminais.liberarTudoDe(posse);
+    _posse = null;
+
+    _consumidorDeEncerramento = null;
+    // Sobe a geração: o que estiver em voo com o crachá antigo morre aqui.
+    _geracaoDoConsumidor++;
+  }
+
+  /// Há efeito terminal esperando? Então este vínculo o assume e o apresenta.
+  ///
+  /// Chamado de dois lugares — a cutucada do transporte e a assinatura do
+  /// vínculo —, e por isso não recebe encerramento nenhum: a fonte é o livro.
+  ///
+  /// A CUTUCADA CHEGA DENTRO do processamento da mensagem do servidor: a visão
+  /// terminal já foi guardada, mas a tela ainda não redesenhou com ela, e
+  /// ninguém foi notificado. Apresentar aqui poria o aviso sobre a mesa anterior
+  /// — e, pior, abriria rota durante a entrega de uma mensagem de socket.
+  ///
+  /// Por isso o efeito espera o quadro — e PEDE o quadro, em vez de contar com
+  /// o de outra pessoa. Hoje o `OnlineService` notifica os ouvintes logo depois
+  /// desta chamada, e essa notificação sujaria a tela de qualquer jeito; mas
+  /// `addPostFrameCallback` não agenda quadro nenhum, então um encerramento que
+  /// chegasse sem redesenho junto ficaria pendurado para sempre — sem diálogo,
+  /// sem erro e sem nada a investigar. O efeito não pode depender de um vizinho
+  /// para acontecer.
+  ///
+  /// A REIVINDICAÇÃO ACONTECE AGORA, e não depois do quadro. No intervalo entre
+  /// agendar e o quadro chegar cabe outra cutucada (o servidor reenvia), outra
+  /// reconstrução e uma reentrada — e cada uma delas agendaria a sua própria
+  /// apresentação do MESMO fim. Reivindicando antes, a segunda encontra o livro
+  /// sem pendente e vai embora.
+  void _drenar(OnlineService dono, int geracao, PosseDoEfeito posse) {
+    if (!_aindaSouEuOuvindo(dono, geracao)) return;
+    final encerramento = dono.efeitosTerminais.reivindicar(posse);
+    if (encerramento == null) return;
+    WidgetsBinding.instance.ensureVisualUpdate();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _apresentar(dono, geracao, posse, encerramento),
+    );
+  }
+
+  /// O quadro chegou: confere tudo de novo, apresenta, e SÓ ENTÃO confirma.
+  ///
+  /// Quem esperou pode ter sido desmontado, trocado de transporte ou saído da
+  /// mesa. Em qualquer desses casos a reivindicação é devolvida — o efeito volta
+  /// a pendente e espera a próxima entrada legítima. É a diferença entre um
+  /// aviso adiado e um aviso perdido.
+  ///
+  /// A CONFIRMAÇÃO É A ÚLTIMA COISA, e depende do que o apresentador respondeu.
+  /// Confirmar antes — no recebimento, na cutucada, no agendamento ou na
+  /// reivindicação — marcaria como visto um aviso que ninguém viu, que é o
+  /// defeito inteiro que esta tela existe para não ter.
+  Future<void> _apresentar(
+    OnlineService dono,
+    int geracao,
+    PosseDoEfeito posse,
+    EncerramentoAutoritativo encerramento,
+  ) async {
+    final livro = dono.efeitosTerminais;
+    if (!_aindaSouEuOuvindo(dono, geracao)) {
+      livro.liberar(posse, encerramento);
+      return;
+    }
+
+    final porta = _porta;
+    final ResultadoDaApresentacao resultado;
+    try {
+      resultado = await _apresentador.apresentar(
+        context,
+        encerramento,
+        aoSairDaMesa: () {
+          // A saída também confere: o aviso pode ficar aberto enquanto a
+          // sessão vira por baixo dele.
+          if (_aindaSouEuOuvindo(dono, geracao)) porta?.sairDaMesa();
+        },
+      );
+    } catch (erro, pilha) {
+      // UM APRESENTADOR QUE ESTOURA É UMA APRESENTAÇÃO QUE NÃO ACONTECEU, e o
+      // efeito não pode pagar por isso. Sem este `catch`, a exceção sobe por um
+      // `addPostFrameCallback` — para um futuro que ninguém aguarda — e leva
+      // junto a reivindicação: o aviso fica travado em `reivindicado` por um
+      // dono vivo que já desistiu dele. Ninguém apresenta e ninguém libera, que
+      // é a mesma perda silenciosa desta OS, só que por outra porta.
+      //
+      // As DUAS formas de estouro passam por aqui, e são caminhos diferentes de
+      // verdade: um `throw` antes de o futuro existir acontece na própria
+      // chamada, e um futuro que completa com erro acontece no `await`. O `try`
+      // envolve a chamada inteira justamente para não escolher entre os dois.
+      //
+      // A DEVOLUÇÃO VEM PRIMEIRO, e só depois o relato. Se o relato falhar — e
+      // `onError` é um gancho que a aplicação instala —, o efeito já está de
+      // volta no livro.
+      livro.liberar(posse, encerramento);
+      // RELATAR, E NÃO REGISTRAR EM LOG: por esta camada passam ids de carta, e
+      // a auditoria proíbe log aqui com razão. `reportError` é o canal do
+      // próprio framework, vai para onde a aplicação mandar os erros, e não
+      // escreve nada por conta própria. Engolir em silêncio seria esconder um
+      // defeito do apresentador — exatamente a classe de falha muda que esta
+      // entrega existe para acabar.
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: erro,
+          stack: pilha,
+          library: 'casca da mesa online',
+          context: ErrorDescription('ao apresentar o encerramento da partida'),
+        ),
+      );
+      return;
+    }
+
+    if (resultado != ResultadoDaApresentacao.apresentado) {
+      livro.liberar(posse, encerramento);
+      return;
+    }
+    // `confirmar` recusa quando a posse já não é a que reivindicou — um
+    // `dispose` no meio do caminho devolveu o efeito ao livro, e insistir aqui
+    // encerraria um aviso de que outro dono agora é responsável.
+    if (!livro.confirmar(posse, encerramento)) return;
+
+    // Duas emissões terminais distintas na mesma mesa são raras e possíveis. A
+    // segunda não pode ficar esperando por uma cutucada que não vem: o livro já
+    // a conhece, e reenvio de fim conhecido não cutuca ninguém.
+    if (livro.temPendente) _drenar(dono, geracao, posse);
+  }
+
+  /// O vínculo que trouxe este aviso ainda é o vínculo vivo desta tela?
+  ///
+  /// Três perguntas, e as três são necessárias: a tela pode ter sido desmontada
+  /// (`mounted`), o vínculo pode ter sido solto e refeito (`geracao`), e o
+  /// transporte pode ter sido trocado por outro (`dono`).
+  bool _aindaSouEuOuvindo(OnlineService dono, int geracao) =>
+      mounted && geracao == _geracaoDoConsumidor && identical(dono, _srv);
+
   @override
   void dispose() {
+    // O ponto de saída volta a ficar livre. Sem isto, o transporte — que é da
+    // raiz e continua vivo — guardaria uma closure desta tela morta, e o efeito
+    // terminal da partida seguinte tentaria abrir diálogo por um `context` que
+    // não está mais na árvore.
+    _soltarOEncerramento(_srv);
     // Só solta o ouvinte. O transporte continua vivo — ele é da raiz.
     _srv?.removeListener(_atualizar);
     // A porta, ao contrário, é DESTA tela: ela foi construída aqui e morre
@@ -542,10 +817,13 @@ class _LobbyOnlineState extends State<LobbyOnline> {
   /// permanente dizendo "conectado" é ruído sobre a mesa.
   String? _avisoDeConexao(OnlineService srv) => switch (srv.status) {
     OnlineStatus.conectado => null,
-    OnlineStatus.conectando => 'reconectando… as ações voltam quando a mesa voltar',
+    OnlineStatus.conectando =>
+      'reconectando… as ações voltam quando a mesa voltar',
     OnlineStatus.autenticando => 'identificando você…',
-    OnlineStatus.naoAutenticado => 'sua sessão terminou — entre de novo para jogar',
-    OnlineStatus.semConexao => 'sem conexão — a mesa está congelada como você a deixou',
+    OnlineStatus.naoAutenticado =>
+      'sua sessão terminou — entre de novo para jogar',
+    OnlineStatus.semConexao =>
+      'sem conexão — a mesa está congelada como você a deixou',
     _ => 'sem conexão com o servidor',
   };
 

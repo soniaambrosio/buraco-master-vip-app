@@ -263,7 +263,6 @@ class EstadoMesaOnline {
     required this.duplaQueBateu,
     required this.pontosRodada,
     required this.precisaUsarTopo,
-    required this.versaoEstado,
   });
 
   final int meuAssento;
@@ -322,16 +321,25 @@ class EstadoMesaOnline {
   /// segunda opinião sobre a regra, e a errada travaria a pessoa sem recurso.
   final String? precisaUsarTopo;
 
-  /// Ordem da visão, quando o servidor a declara.
-  ///
-  /// O servidor de `16a692b` NÃO manda este campo: a visão é um retrato
-  /// completo, transmitido por um socket que já entrega em ordem. O campo é
-  /// lido quando existe e vale nulo quando não existe — o que NÃO se faz aqui
-  /// é preencher a ausência com um número de fabricação própria, que passaria
-  /// a parecer autoridade do servidor.
-  ///
-  /// Quem usa isto é [EstadoMesaOnline.substitui].
-  final int? versaoEstado;
+  // ORDEM DA VISÃO NÃO MORA AQUI, e chegou a morar.
+  //
+  // Este arquivo tinha um campo `versaoEstado` lido de `visao['versaoEstado']`
+  // e um método `substitui(anterior)` decidindo se um estado podia trocar o
+  // outro. Os dois foram removidos, por dois motivos que se somam.
+  //
+  // O primeiro é factual: pelo contrato do servidor (SHA `7e7572b`), o carimbo
+  // é IRMÃO de `visao`, nunca filho. O campo lido lá dentro era null em toda
+  // execução real, e `substitui` respondia "pode" para tudo — uma autoridade
+  // que nunca chegou a existir, com aparência de estar funcionando.
+  //
+  // O segundo é de projeto: mesmo alimentado corretamente, isto seria uma
+  // SEGUNDA autoridade de ordem, na camada errada. Uma visão atrasada não pode
+  // chegar até aqui para ser recusada — ela já teria passado pelo estado
+  // canônico do transporte. Quem ordena é `services/ordem_da_visao.dart`, no
+  // ponto único em que o envelope entra, e é lá que a decisão é testada.
+  //
+  // Um `versaoEstado` que apareça DENTRO de uma visão crua não é o carimbo do
+  // servidor e não deve virar campo desta classe.
 
   Dupla get minhaDupla => Dupla.doAssento(meuAssento);
 
@@ -361,22 +369,6 @@ class EstadoMesaOnline {
     );
   }
 
-  /// Este estado pode substituir [anterior]?
-  ///
-  /// Com versão declarada dos dois lados, só avança: versão menor é retomada
-  /// atrasada e não pode desfazer o que já se mostrou. Versão IGUAL passa —
-  /// é o reenvio do mesmo retrato, e recusá-lo faria a tela ignorar uma
-  /// retransmissão legítima depois de reconectar.
-  ///
-  /// Sem versão declarada (o caso de hoje), a ordem é a do socket, e o retrato
-  /// mais novo é simplesmente o último que chegou.
-  bool substitui(EstadoMesaOnline? anterior) {
-    if (anterior == null) return true;
-    final minha = versaoEstado;
-    final dela = anterior.versaoEstado;
-    if (minha == null || dela == null) return true;
-    return minha >= dela;
-  }
 }
 
 // ===========================================================================
@@ -573,7 +565,6 @@ abstract final class AdaptadorVisaoOnline {
     }
 
     final meta = visao['metaPontos'];
-    final versao = visao['versaoEstado'];
     final topoObrigatorio = visao['precisaUsarTopo'];
     final pontos = visao['pontosRodada'];
 
@@ -604,7 +595,6 @@ abstract final class AdaptadorVisaoOnline {
         precisaUsarTopo: topoObrigatorio is String && topoObrigatorio.isNotEmpty
             ? topoObrigatorio
             : null,
-        versaoEstado: versao is int ? versao : null,
       ),
     );
   }
