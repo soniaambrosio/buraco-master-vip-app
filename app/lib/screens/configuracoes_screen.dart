@@ -890,58 +890,71 @@ class ConfiguracoesScreen extends StatelessWidget {
     required VoidCallback onTap,
     bool destaque = false,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
-          child: Row(
-            children: [
-              _iconeTile(chave, destaque: destaque),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        label: '$titulo. $subtitulo',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+                child: Row(
                   children: [
-                    Text(
-                      titulo,
-                      style: TextStyle(
-                        color: destaque ? const Color(0xFFE2C9FF) : _texto,
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w800,
+                    _iconeTile(chave, destaque: destaque),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            titulo,
+                            style: TextStyle(
+                              color: destaque ? const Color(0xFFE2C9FF) : _texto,
+                              fontSize: 13.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          // SEM `maxLines`, e a razao e acessibilidade: com o teto
+                          // de duas linhas, 160% de escala de fonte fazia o subtitulo
+                          // ser CORTADO em silencio — sem erro, sem aviso, comendo o
+                          // fim da frase. Em 100% os subtitulos desta tela cabem nas
+                          // mesmas duas linhas, entao nada muda para quem nao amplia.
+                          Text(
+                            subtitulo,
+                            style: const TextStyle(
+                              color: _textoSec,
+                              fontSize: 10.4,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    // SEM `maxLines`, e a razao e acessibilidade: com o teto
-                    // de duas linhas, 160% de escala de fonte fazia o subtitulo
-                    // ser CORTADO em silencio — sem erro, sem aviso, comendo o
-                    // fim da frase. Em 100% os subtitulos desta tela cabem nas
-                    // mesmas duas linhas, entao nada muda para quem nao amplia.
-                    Text(
-                      subtitulo,
-                      style: const TextStyle(
-                        color: _textoSec,
-                        fontSize: 10.4,
-                        height: 1.25,
-                      ),
+                    IconeDeAjustes(
+                      conjunto: icones,
+                      chave: IconeAjustes.avancar,
+                      cor: _textoSec,
+                      tamanho: 23,
                     ),
                   ],
                 ),
               ),
-              IconeDeAjustes(
-                conjunto: icones,
-                chave: IconeAjustes.avancar,
-                cor: _textoSec,
-                tamanho: 23,
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  // [COMP1-E12] PORTE PARCIAL de ec63d8a (29d8741, e18d37c, 55bb360): a linha
+  // vira UM nó com nome, estado e ação; o desenho atual (Tema Real VIP, sem
+  // `maxLines`) fica como está. A fiação CI de ec63d8a (suítes obrigatórias,
+  // mecanismo M) NÃO entrou — CI-FIACAO-DEFERIDA-PROV2.
   Widget _toggleTile({
     required IconeAjustes chave,
     required String titulo,
@@ -949,52 +962,65 @@ class ConfiguracoesScreen extends StatelessWidget {
     required bool valor,
     required ValueChanged<bool> onChanged,
   }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
-      child: Row(
-        children: [
-          _iconeTile(chave),
-          const SizedBox(width: 11),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onChanged(!valor),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      titulo,
-                      style: const TextStyle(
-                        color: _texto,
-                        fontSize: 13.2,
-                        fontWeight: FontWeight.w800,
+    // O toque no texto alterna igual ao toque no interruptor. Continua sendo
+    // gesto, não semântica: quem responde ao leitor de tela é o [Switch] —
+    // estado (`toggled`), `enabled`, ação e foco sobem dele pela fusão. Este
+    // método só declara o NOME, que o interruptor não sabe.
+    void alternar() => onChanged(!valor);
+
+    return MergeSemantics(
+      child: Semantics(
+        label: '$titulo. $subtitulo',
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 5, 8),
+          child: Row(
+            children: [
+              _iconeTile(chave),
+              const SizedBox(width: 11),
+              Expanded(
+                child: ExcludeSemantics(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: alternar,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            titulo,
+                            style: const TextStyle(
+                              color: _texto,
+                              fontSize: 13.2,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitulo,
+                            style: const TextStyle(
+                              color: _textoSec,
+                              fontSize: 10.4,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitulo,
-                      style: const TextStyle(
-                        color: _textoSec,
-                        fontSize: 10.4,
-                        height: 1.25,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+              Switch(
+                value: valor,
+                onChanged: onChanged,
+                activeThumbColor: const Color(0xFF2A1700),
+                activeTrackColor: _ouro,
+                inactiveThumbColor: const Color(0xFF8A806B),
+                inactiveTrackColor: const Color(0xFF3A3026),
+              ),
+            ],
           ),
-          Switch(
-            value: valor,
-            onChanged: onChanged,
-            activeThumbColor: const Color(0xFF2A1700),
-            activeTrackColor: _ouro,
-            inactiveThumbColor: const Color(0xFF8A806B),
-            inactiveTrackColor: const Color(0xFF3A3026),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1008,59 +1034,75 @@ class ConfiguracoesScreen extends StatelessWidget {
     required List<T> opcoes,
     required ValueChanged<T> onChanged,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => _abrirEscolha<T>(
-          context: context,
-          titulo: titulo,
-          valor: valor,
-          opcoes: opcoes,
-          label: label,
-          onChanged: onChanged,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
-          child: Row(
-            children: [
-              _iconeTile(chave),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Text(
-                  titulo,
-                  style: const TextStyle(
-                    color: _texto,
-                    fontSize: 13.2,
-                    fontWeight: FontWeight.w800,
-                  ),
+    // [COMP1-E12] Nó próprio com o nome da preferência e o valor que está
+    // valendo; `abrir` é o mesmo e único caminho de troca, saindo do [InkWell].
+    void abrir() => _abrirEscolha<T>(
+      context: context,
+      titulo: titulo,
+      valor: valor,
+      opcoes: opcoes,
+      label: label,
+      onChanged: onChanged,
+    );
+
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        label: '$titulo. ${label(valor)}',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: abrir,
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 11, 10, 11),
+                child: Row(
+                  children: [
+                    _iconeTile(chave),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Text(
+                        titulo,
+                        style: const TextStyle(
+                          color: _texto,
+                          fontSize: 13.2,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 150),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _cardSecundario,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _borda),
+                      ),
+                      // Idem: o valor escolhido quebra em vez de sumir pela borda.
+                      child: Text(
+                        label(valor),
+                        style: const TextStyle(
+                          color: _ouroClaro,
+                          fontSize: 10.8,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    IconeDeAjustes(
+                      conjunto: icones,
+                      chave: IconeAjustes.expandir,
+                      cor: _textoSec,
+                      tamanho: 21,
+                    ),
+                  ],
                 ),
               ),
-              Container(
-                constraints: const BoxConstraints(maxWidth: 150),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _cardSecundario,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _borda),
-                ),
-                // Idem: o valor escolhido quebra em vez de sumir pela borda.
-                child: Text(
-                  label(valor),
-                  style: const TextStyle(
-                    color: _ouroClaro,
-                    fontSize: 10.8,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 3),
-              IconeDeAjustes(
-                conjunto: icones,
-                chave: IconeAjustes.expandir,
-                cor: _textoSec,
-                tamanho: 21,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1105,49 +1147,11 @@ class ConfiguracoesScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 for (final opcao in opcoes)
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(13),
-                      onTap: () => Navigator.of(context).pop(opcao),
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 3),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: opcao == valor
-                              ? _ouro.withValues(alpha: .14)
-                              : _cardSecundario,
-                          borderRadius: BorderRadius.circular(13),
-                          border: Border.all(
-                            color: opcao == valor ? _ouro : _borda,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                label(opcao),
-                                style: TextStyle(
-                                  color: opcao == valor ? _ouroClaro : _texto,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            if (opcao == valor)
-                              IconeDeAjustes(
-                                conjunto: icones,
-                                chave: IconeAjustes.confirmar,
-                                cor: _ouro,
-                                tamanho: 21,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  _opcaoDaEscolha<T>(
+                    context: context,
+                    opcao: opcao,
+                    valor: valor,
+                    label: label,
                   ),
               ],
             ),
@@ -1156,6 +1160,71 @@ class ConfiguracoesScreen extends StatelessWidget {
       },
     );
     if (escolhido != null && escolhido != valor) onChanged(escolhido);
+  }
+
+  /// [COMP1-E12] Uma opção da folha de escolha — e a marca de "esta é a que
+  /// está valendo". Fundo, borda e ✓ são sinais visuais; `selected` repete, no
+  /// canal de acessibilidade, a MESMA comparação `opcao == valor` que os pinta.
+  /// A escolha continua saindo por [Navigator.pop], o mesmo `escolher` do toque.
+  Widget _opcaoDaEscolha<T>({
+    required BuildContext context,
+    required T opcao,
+    required T valor,
+    required String Function(T) label,
+  }) {
+    final atual = opcao == valor;
+    void escolher() => Navigator.of(context).pop(opcao);
+
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: true,
+        selected: atual,
+        label: label(opcao),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(13),
+            onTap: escolher,
+            child: ExcludeSemantics(
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 3),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: atual ? _ouro.withValues(alpha: .14) : _cardSecundario,
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: atual ? _ouro : _borda),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label(opcao),
+                        style: TextStyle(
+                          color: atual ? _ouroClaro : _texto,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (atual)
+                      IconeDeAjustes(
+                        conjunto: icones,
+                        chave: IconeAjustes.confirmar,
+                        cor: _ouro,
+                        tamanho: 21,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _iconeTile(IconeAjustes chave, {bool destaque = false}) {
@@ -1183,42 +1252,48 @@ class ConfiguracoesScreen extends StatelessWidget {
     );
   }
 
+  /// [COMP1-E12] O único caminho de saída ganha papel e habilitação. Sem
+  /// [MergeSemantics]: este botão é filho direto da lista e já é um nó só.
   Widget _sairButton() {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: callbacks.onSair,
-        borderRadius: BorderRadius.circular(15),
-        child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2A0E0E),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFF8C3535)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconeDeAjustes(
-                conjunto: icones,
-                chave: IconeAjustes.sair,
-                cor: const Color(0xFFFFA2A2),
-                tamanho: 20,
-              ),
-              const SizedBox(width: 8),
-              const Flexible(
-                child: Text(
-                  'Sair da conta',
-                  style: TextStyle(
-                    color: Color(0xFFFFC2C2),
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w900,
+    return Semantics(
+      button: true,
+      enabled: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: callbacks.onSair,
+          borderRadius: BorderRadius.circular(15),
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A0E0E),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: const Color(0xFF8C3535)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconeDeAjustes(
+                  conjunto: icones,
+                  chave: IconeAjustes.sair,
+                  cor: const Color(0xFFFFA2A2),
+                  tamanho: 20,
+                ),
+                const SizedBox(width: 8),
+                const Flexible(
+                  child: Text(
+                    'Sair da conta',
+                    style: TextStyle(
+                      color: Color(0xFFFFC2C2),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+      ),
       ),
     );
   }
