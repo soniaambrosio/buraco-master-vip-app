@@ -97,6 +97,7 @@ on:
       - integracao/os-final-backend-flutter
       - correcao/ci-composicao-perfil-mesa-ranking-v2-v1
       - correcao/bmv-pub-c1-d1-c4-w1-proveniencia-github-actions-v1
+      - composicao/bmv-pub-c1-comp1-candidata-play-v1
   workflow_dispatch:
 
 permissions:
