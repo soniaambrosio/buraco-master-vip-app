@@ -18,9 +18,10 @@
 // existir é o CAMINHO — nenhuma rota que nasça em `main()` chega a uma delas.
 //
 // O que ficou aqui é o mínimo que só pode acontecer no início do processo:
-// inicializar o binding, o Firebase e a atestação. Quem monta sessão,
-// autenticação e transporte é `casca/raiz_do_aplicativo.dart`; quem decide a
-// tela é `casca/casca_de_producao.dart`.
+// abrir a zona observada, inicializar o binding, o Firebase e a atestação.
+// Quem monta sessão, autenticação e transporte é `casca/raiz_do_aplicativo
+// .dart`; quem decide a tela é `casca/casca_de_producao.dart`. [COMP1-E8]
+// A ordem de subida da observabilidade é a de `observability/runtime.dart`.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,9 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'casca/raiz_do_aplicativo.dart';
+import 'observability/coletor_crashlytics.dart';
+import 'observability/gatilho_homologacao.dart';
+import 'observability/observability.dart';
 
 /// Configuração do projeto Firebase.
 ///
@@ -67,33 +71,36 @@ const AndroidAppCheckProvider kProvedorDeAtestacao = kReleaseMode
     ? AndroidPlayIntegrityProvider()
     : AndroidDebugProvider();
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+// Único ponto do app que conhece o fornecedor de crash reporting; em debug e em
+// teste o coletor real é ignorado (`Observabilidade.deveUsarColetorReal`).
+void main() => executarObservado(
+      coletor: ColetorCrashlytics(),
+      adiarColetor: true,
+      corpo: _subir,
+    );
 
-  // BLINDADO, e de propósito: no celular o Firebase sobe normalmente; no
-  // navegador de teste, se a configuração de Android não inicializar, o
-  // aplicativo abre mesmo assim. Sem Firebase não há como autenticar ninguém, e
-  // a casca mostra isso — tela pública sem provedor de entrada, dizendo o
-  // motivo. É a verdade daquele ambiente, e não um estado inventado.
+/// Tudo roda DENTRO da zona observada, inclusive `ensureInitialized()`.
+Future<void> _subir(Observabilidade obs) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  obs.marco(MarcoOperacional.appIniciado);
+
+  // BLINDADO: sem Firebase não há como autenticar ninguém, e a casca mostra
+  // isso. A falha deixou de ser muda: vira evento NÃO FATAL no buffer.
   try {
     await Firebase.initializeApp(options: _opcoesDoFirebase);
-  } catch (_) {
-    // Segue sem serviço de contas.
+  } catch (erro, pilha) {
+    obs.marco(MarcoOperacional.firebaseIndisponivel);
+    obs.registrarFalha(erro,
+        stack: pilha,
+        severidade: Severidade.naoFatal,
+        mensagem: 'Firebase indisponível; app segue sem ele');
   }
+  // Só agora o coletor real pode existir; o buffer sai por ele.
+  await obs.ligarColetorPendente();
 
-  // App Check entra AQUI, e este ponto é o único que serve. DEPOIS de
-  // `initializeApp`, porque `FirebaseAppCheck.instance` resolve `Firebase.app()`
-  // e sem app inicializado morre com `[core/no-app]`. ANTES de `runApp`, que é a
-  // última linha desta função — e como toda callable nasce no `initState` da
-  // raiz, que só roda depois do `runApp`, esta linha PRECEDE PROVADAMENTE a
-  // primeira chamada de rede do aplicativo.
-  //
-  // O `try/catch` é PRÓPRIO, e não o de cima, por duas razões opostas: dentro
-  // daquele bloco, uma falha do Firebase pularia a ativação em silêncio; fora de
-  // qualquer bloco, um ambiente sem configuração Android derrubaria o `main()`.
-  // Falhar aqui deixa o app subir SEM atestação — as callables recusam com
-  // `unauthenticated`, que Identidade e Ranking tratam como recusa neutra com
-  // "tentar de novo". NINGUÉM É DESLOGADO por não ter conseguido atestar.
+  // App Check DEPOIS de `initializeApp` (sem app, `[core/no-app]`) e ANTES de
+  // `runApp`, com `try/catch` PRÓPRIO: falhar aqui deixa o app subir sem
+  // atestação, e NINGUÉM É DESLOGADO por isso (recusa neutra, nova tentativa).
   try {
     await FirebaseAppCheck.instance.activate(
       providerAndroid: kProvedorDeAtestacao,
@@ -102,5 +109,7 @@ void main() async {
     // Segue sem atestação.
   }
 
+  // Sem `--dart-define=BMV_CRASH_HOMOLOGACAO=true` o corpo é removido pelo AOT.
+  GatilhoHomologacao.armarSePedido(obs);
   runApp(const RaizDoAplicativo());
 }

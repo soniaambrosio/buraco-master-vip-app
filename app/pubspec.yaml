@@ -43,6 +43,12 @@ dependencies:
   # publica, nao agora.
   firebase_app_check: ^0.4.6
 
+  # [COMP1-E8] Crashlytics — VERSAO EXATA, decisao da Central (entrega
+  # c51686b / OS 49.1). O coletor real so liga em build com identidade
+  # (`--dart-define` BMV_*), e o host Android de producao aplica o plugin
+  # Gradle `com.google.firebase.crashlytics` 3.0.7 (release-aab.yml).
+  firebase_crashlytics: 5.2.7
+
   google_sign_in: 6.2.1
   audioplayers: ^6.7.1
   web_socket_channel: ^3.0.3

@@ -926,10 +926,14 @@ void main() {
       // `appcheckandroid`); este caso continua guardando só que o arquivo não
       // muda SEM alguém decidir que ele mude.
       //
+      // RECARIMBADO PELA COMP1-E8 (BMV-PUB-C1-COMP1, decisão da Central): a
+      // observabilidade e o Crashlytics da entrega c51686b entraram na porta de
+      // entrada, com a ordem do App Check preservada. Digest anterior:
+      //   5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321
       // Digest anterior (base `d738f458`, antes do App Check):
       //   8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab
       const digestDaBase =
-          '5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321';
+          'f2c126133e8497a633092b35bd4bb5dddc0aca2c2afed50349f54816ab40e8db';
       final atual = sha256
           .convert(utf8.encode(_normalizado(File('lib/main.dart'))))
           .toString();
@@ -1363,6 +1367,29 @@ void main() {
               'alcançável a partir da raiz',
         );
       }
+      // [COMP1-E8] REANCORAGEM POR CONJUNTO (BMV-PUB-C1-COMP1). Medido
+      // sobre o commit do bloco: fecho(bloco) − fecho(bloco anterior) é
+      // EXATAMENTE a lista abaixo, e fecho(anterior) − fecho(bloco) é VAZIO.
+      // Cada arquivo novo tem dono — o bloco E8 —, e nenhum sumiu.
+      const doComp1E8 = [
+        'lib/observability/coletor.dart',
+        'lib/observability/coletor_crashlytics.dart',
+        'lib/observability/evento_falha.dart',
+        'lib/observability/gatilho_homologacao.dart',
+        'lib/observability/identidade_build.dart',
+        'lib/observability/observabilidade.dart',
+        'lib/observability/observability.dart',
+        'lib/observability/redacao.dart',
+        'lib/observability/trilha_operacional.dart',
+      ];
+      for (final caminho in doComp1E8) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — o bloco E8 deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
       // Os cinco de `doRankingReal` JA estao dentro do fecho da raiz P, entao a
       // constante abaixo e o fecho da raiz MENOS eles — e a soma continua
       // nomeando os quatro grupos, um por um, como C20 exige.
@@ -1377,7 +1404,8 @@ void main() {
               oResolvedorDeAvatar.length +
               doComp1E3Tema.length +
               doComp1E6.length +
-              doComp1E7.length,
+              doComp1E7.length +
+              doComp1E8.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.

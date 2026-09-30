@@ -500,8 +500,75 @@ jobs:
           print('OK: plugin google-services declarado e aplicado.')
           PY
 
+      - name: "Aplicar o plugin Crashlytics (build ID no artefato)"
+        # [COMP1-E8] Decisao da Central sobre a entrega c51686b (OS 49.1). O SDK
+        # Android do Crashlytics exige o build ID que SO o plugin Gradle
+        # `com.google.firebase.crashlytics` injeta; sem ele o app aborta no
+        # arranque ("The Crashlytics build ID is missing"). A fonte aplicava o
+        # plugin num workflow de homologacao, com um remendo proprio do host; aqui
+        # a MESMA configuracao e reexpressa no mecanismo atual deste pipeline, ao
+        # lado do google-services, e nao ha segundo remendo do host.
+        #
+        # Declarado uma vez e aplicado uma vez. Ancora ausente, plugin ja
+        # presente antes do passo ou contagem diferente de 1 REPROVAM.
+        run: |
+          python3 - <<'PY'
+          import re
+
+          VERSAO = '3.0.7'
+          ID = 'com.google.firebase.crashlytics'
+          DECLARA = f'    id("{ID}") version "{VERSAO}" apply false\n'
+          APLICA = f'    id("{ID}")\n'
+
+          # 1) settings.gradle.kts — declara logo depois do google-services
+          p = 'app_build/android/settings.gradle.kts'
+          s = open(p, encoding='utf-8').read().replace('\r\n', '\n')
+          if ID in s:
+              raise AssertionError(f'{ID} ja aparecia em settings.gradle.kts antes deste passo')
+          m = re.search(r'^    id\("com\.google\.gms\.google-services"\) version "[^"]+" apply false\n', s, flags=re.MULTILINE)
+          if not m:
+              raise AssertionError('ancora ausente: declaracao do google-services em settings.gradle.kts')
+          s = s[:m.end()] + DECLARA + s[m.end():]
+          open(p, 'w', encoding='utf-8').write(s)
+
+          # 2) app/build.gradle.kts — aplica logo depois do google-services
+          p = 'app_build/android/app/build.gradle.kts'
+          s = open(p, encoding='utf-8').read().replace('\r\n', '\n')
+          if ID in s:
+              raise AssertionError(f'{ID} ja aparecia em app/build.gradle.kts antes deste passo')
+          alvo = '    id("com.google.gms.google-services")\n'
+          if s.count(alvo) != 1:
+              raise AssertionError('ancora ausente: aplicacao do google-services em app/build.gradle.kts')
+          s = s.replace(alvo, alvo + APLICA, 1)
+          open(p, 'w', encoding='utf-8').write(s)
+
+          # 3) confere o PROPRIO resultado
+          st = open('app_build/android/settings.gradle.kts', encoding='utf-8').read()
+          ap = open('app_build/android/app/build.gradle.kts', encoding='utf-8').read()
+          if st.count(ID) != 1 or st.count(DECLARA) != 1:
+              raise AssertionError('Crashlytics nao ficou declarado exatamente uma vez')
+          if ap.count(ID) != 1 or ap.count(APLICA) != 1:
+              raise AssertionError('Crashlytics nao ficou aplicado exatamente uma vez')
+          print(f'OK: plugin {ID} {VERSAO} declarado e aplicado, uma vez cada.')
+          PY
+
       - name: Build release AAB
-        run: cd app_build && flutter build appbundle --release
+        # [COMP1-E8] A identidade da build entra NO BINARIO por `--dart-define`.
+        # Sem ela a camada de observabilidade nao liga o coletor real
+        # (`Observabilidade.deveUsarColetorReal` exige ambiente de producao e
+        # identidade provavel: SHA de 40 hex, versionName x.y.z, versionCode > 0
+        # e branch). Os valores vem das MESMAS entradas que este workflow ja usa
+        # para o versionCode/versionName do artefato — nao ha segunda autoridade.
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          cd app_build && flutter build appbundle --release \
+            --dart-define=BMV_AMBIENTE=producao \
+            --dart-define=BMV_GIT_SHA="${GITHUB_SHA}" \
+            --dart-define=BMV_GIT_BRANCH="${GITHUB_REF_NAME}" \
+            --dart-define=BMV_VERSION_CODE="${VERSION_CODE}" \
+            --dart-define=BMV_VERSION_NAME="${VERSION_NAME}"
 
       # ---------------------------------------------------------------------
       # VERIFICACOES DENTRO DO .aab — nada aqui e "confiar que o merge funcionou"

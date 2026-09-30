@@ -1388,8 +1388,12 @@ void main() {
       // entrada. O caso continua provando o mesmo: que a raiz do aplicativo
       // nao muda sem alguem decidir que ela mude. Digest anterior:
       //   8526fc0a1cb487b7ec37a27a6449b09f667c5d412968f69bb547c9f246d5a0ab
+      // RECARIMBADO PELA COMP1-E8 (BMV-PUB-C1-COMP1, decisão da Central): a
+      // observabilidade e o Crashlytics da entrega c51686b entraram na porta de
+      // entrada, com a ordem do App Check preservada. Digest anterior:
+      //   5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321
       const digestDaBase =
-          '5279d930dfb1146ad2823c970919836bec4ddc475f486fbba4ef2116ff96c321';
+          'f2c126133e8497a633092b35bd4bb5dddc0aca2c2afed50349f54816ab40e8db';
       final atual = sha256
           .convert(utf8.encode(_texto('lib/main.dart')))
           .toString();
