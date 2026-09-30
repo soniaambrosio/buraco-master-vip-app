@@ -213,16 +213,32 @@ jobs:
         # possivel, mas deixa a divida escrita aqui, visivel em toda execucao.
         run: dart run tools/android/bin/verificar_assets.dart --app=app
 
+      - name: Setup Node (gerador da marca nativa)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: "PORTAO — o icone versionado precisa sair da arte oficial"
-        # Regera os mipmaps a partir de `app/assets/splash/logo_splash_oficial.webp`
-        # e exige que o resultado seja identico ao que esta versionado. Impede
-        # que alguem edite um PNG de icone a mao e o artefato passe a carregar
-        # uma arte que nao corresponde a fonte aprovada.
+        # [COMP1-E9] A marca nativa oficial do Android e o MEDALHAO coroa+as
+        # (decisao da Central, opcao B): `branding/fonte/icone_oficial_bmv_512.png`,
+        # a arte que a Play ja publica. Dela saem, por UM gerador deterministico
+        # (`tools/branding/gerar_icones_android.mjs`), todos os recursos nativos:
+        # launcher adaptativo, camada monocromatica e o icone da janela de partida
+        # do Android 12+. O logo da UI (`logo_splash_oficial.webp`) deixou de ser
+        # fonte do icone; o gerador antigo saiu junto, para nao haver duas fontes.
+        #
+        # Duas provas, e as duas reprovam:
+        #   1. os bytes versionados batem com `branding/MANIFESTO.sha256`;
+        #   2. regenerar a partir da arte-fonte devolve EXATAMENTE a arvore
+        #      versionada — ninguem edita um PNG de icone a mao.
         run: |
-          dart pub get --directory tools/icone
-          dart run tools/icone/bin/gerar.dart
-          git diff --exit-code -- android/launcher-icon \
-            || { echo "ERRO: android/launcher-icon nao corresponde a arte-fonte. Rode 'dart run tools/icone/bin/gerar.dart' e versione o resultado."; exit 1; }
+          ( cd branding && sha256sum -c --strict --quiet MANIFESTO.sha256 ) \
+            || { echo "ERRO: branding/ nao confere com branding/MANIFESTO.sha256"; exit 1; }
+          node tools/branding/gerar_icones_android.mjs
+          git diff --exit-code -- branding \
+            || { echo "ERRO: branding/ nao corresponde a arte-fonte. Rode 'node tools/branding/gerar_icones_android.mjs' e versione o resultado."; exit 1; }
+          test -z "$(git status --porcelain -- branding)" \
+            || { echo "ERRO: o gerador produziu arquivo nao versionado em branding/"; git status --porcelain -- branding; exit 1; }
 
       - name: Overlay do codigo e dos assets REAIS
         run: |
@@ -461,7 +477,7 @@ jobs:
             --application-id="${BMV_APPLICATION_ID}" \
             --version-code="${VERSION_CODE}" \
             --version-name="${VERSION_NAME}" \
-            --icone=android/launcher-icon/res
+            --icone=branding/android/res
           echo "===== build.gradle.kts final ====="
           cat app_build/android/app/build.gradle.kts
 
@@ -617,7 +633,7 @@ jobs:
             --application-id="${BMV_APPLICATION_ID}" \
             --version-code="${VERSION_CODE}" \
             --version-name="${VERSION_NAME}" \
-            --icone=android/launcher-icon/res
+            --icone=branding/android/res
 
       - name: "VERIFICACAO FINAL — assinatura e impressao digital do AAB"
         # Imprime as impressoes digitais da chave que assinou, e o SHA-256 do

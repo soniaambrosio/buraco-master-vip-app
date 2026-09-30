@@ -204,7 +204,8 @@ void main(List<String> argumentos) {
   exigir('dex', 'dex/classes', minimo: 1);
 
   _secao('o launcher icon do artefato e a arte oficial');
-  final icones = Directory(args.opcional('icone') ?? 'android/launcher-icon/res');
+  // [COMP1-E9] referencia = a marca nativa oficial gerada do medalhao.
+  final icones = Directory(args.opcional('icone') ?? 'branding/android/res');
   if (!icones.existsSync()) {
     falhas.add('nao achei a arte de referencia em ${icones.path}');
   } else {
@@ -236,6 +237,19 @@ void main(List<String> argumentos) {
       '  ${adaptativo != null ? 'OK   ' : 'FALHA'} adaptive icon (mipmap-anydpi-v26)',
     );
     if (adaptativo == null) falhas.add('adaptive icon ausente do artefato');
+
+    // [COMP1-E9] As duas camadas que o medalhao trouxe e que o scaffold nao
+    // tem: o monocromatico do icone tematico e o icone da janela de partida
+    // do Android 12+. Ausentes, o sistema volta a INFERIR a janela do icone.
+    for (final nome in ['ic_launcher_monochrome', 'splash_icon']) {
+      final n = zip.files
+          .where((f) => RegExp('^base/res/drawable-[a-z]+dpi(-v4)?/$nome\\.png\$')
+              .hasMatch(f.name))
+          .length;
+      final ok = n >= 5;
+      stdout.writeln('  ${ok ? 'OK   ' : 'FALHA'} $nome: $n densidade(s)');
+      if (!ok) falhas.add('$nome ausente do artefato (esperava 5 densidades)');
+    }
   }
 
   _secao('classes compiladas no dex');

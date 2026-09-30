@@ -1,0 +1,6 @@
+# [COMP1-E9] Os recursos nativos de marca (branding/) sao conferidos por SHA-256
+# (`branding/MANIFESTO.sha256`) e regenerados pelo portao do release a partir da
+# arte-fonte. O `.xml` do icone adaptativo e os `styles` da SplashScreen API sao
+# TEXTO: com `core.autocrlf=true` o checkout reescreveria as quebras de linha e o
+# manifesto reprovaria um repositorio integro. `-text` vale para a pasta inteira.
+branding/** -text

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ícone adaptativo (API 26+). A camada de fundo é `@color/splash_background`, a
+  MESMA cor da tela nativa de abertura, de propósito: é ela que o Android 12+
+  compara com o fundo da starting window para decidir se pode descartar o fundo
+  do ícone. Duas cores diferentes aqui reintroduzem a emenda visual que esta
+  entrega existe para eliminar.
+
+  A camada de frente é a arte oficial em 78 dp num canvas de 108 dp: cobre a
+  janela de 72 dp da máscara (nenhum launcher vê o fundo) e ainda deixa o
+  assunto inteiro dentro da safe zone de 66 dp.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/splash_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>

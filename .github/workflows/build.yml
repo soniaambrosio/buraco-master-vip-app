@@ -701,6 +701,36 @@ jobs:
           print('Native launch screen configurada em fundo escuro.')
           PY
 
+      - name: "MARCA NATIVA — ícone oficial e starting window do Android 12+"
+        # [COMP1-E9] Porte da entrega 580c41c (decisão da Central, opção B): o
+        # medalhão coroa+ás é a marca nativa oficial do Android. O `flutter
+        # create` entrega cinco bitmaps `mipmap-*/ic_launcher.png` com o logotipo
+        # do Flutter e mais nada — sem ícone adaptativo, sem monocromático e sem
+        # `values-v31`; no Android 12+ a starting window carimba o ÍCONE DO
+        # APLICATIVO, e era o do Flutter. Os recursos vêm COMMITADOS de
+        # `branding/android/res` (gerados de `branding/fonte/` por
+        # `tools/branding/gerar_icones_android.mjs`) e são conferidos por SHA-256
+        # antes de copiar. O fundo do ícone adaptativo é `@color/splash_background`,
+        # a mesma cor da tela nativa de abertura escrita no passo anterior.
+        run: |
+          set -e
+          ( cd branding && sha256sum -c --strict MANIFESTO.sha256 > /tmp/marca.txt )
+          echo "recursos de marca conferidos: $(grep -c ': OK' /tmp/marca.txt) arquivos"
+          RES=app_build/android/app/src/main/res
+          grep -q 'name="splash_background"' "$RES/values/colors.xml" \
+            || { echo "ERRO: @color/splash_background não existe; rode antes 'Configure dark native launch screen'"; exit 1; }
+          ANTES=$(sha256sum "$RES/mipmap-xxxhdpi/ic_launcher.png" | cut -d' ' -f1)
+          cp -R branding/android/res/. "$RES"/
+          DEPOIS=$(sha256sum "$RES/mipmap-xxxhdpi/ic_launcher.png" | cut -d' ' -f1)
+          test "$ANTES" != "$DEPOIS" \
+            || { echo "ERRO: o ic_launcher do scaffold NÃO foi substituído"; exit 1; }
+          for f in "$RES"/mipmap-*dpi/ic_launcher.png; do
+            T=$(wc -c < "$f")
+            test "$T" -gt 3000 || { echo "ERRO: $f tem só $T bytes — não é a arte oficial"; exit 1; }
+          done
+          echo "--- tema da janela de partida (API 31+) ---"
+          cat "$RES/values-v31/styles.xml"
+
       - name: Conferir a declaração de assets do pubspec versionado
         # A injeção por script saiu daqui: as pastas agora são declaradas em
         # app/pubspec.yaml. O que resta é conferir que toda pasta DECLARADA
@@ -769,6 +799,38 @@ jobs:
           echo "APK arm64 completo              : $TOTAL bytes"
           python3 -c "print('coleção representa %.1f%% do APK' % (100*$COMPRIMIDO/$TOTAL))"
           echo "==================================================="
+
+      - name: "PORTÃO DA MARCA — nenhum branding do Flutter dentro do APK"
+        # [COMP1-E9] A pergunta é sobre o ARTEFATO: o ícone virou adaptativo com
+        # as três camadas, o monocromático e o splash_icon existem nas cinco
+        # densidades, o LaunchTheme tem variante v31, e a cor da janela é a da
+        # abertura desta candidata (#050201). Bytes de PNG no APK não servem de
+        # prova (o AGP recomprime); a trava de bytes é a do passo de instalação.
+        run: |
+          set -e
+          APK=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          AAPT2=$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt2 | sort | tail -1)
+          test -n "$AAPT2" || { echo "ERRO: aapt2 não encontrado"; exit 1; }
+          "$AAPT2" dump resources "$APK" > /tmp/recursos.txt
+          bloco() { awk -v alvo="$1" '$0 ~ alvo {p=1; next} /resource 0x/ {p=0} p' /tmp/recursos.txt; }
+          bloco "mipmap/ic_launcher$" | grep -q 'anydpi-v26' \
+            || { echo "ERRO: ic_launcher no APK não é adaptativo (sem anydpi-v26)"; exit 1; }
+          ADAPTATIVO=$(bloco "mipmap/ic_launcher$" | grep anydpi | sed 's/.*(file) //; s/ type=.*//')
+          "$AAPT2" dump xmltree "$APK" --file "$ADAPTATIVO" > /tmp/adaptativo.txt
+          for camada in background foreground monochrome; do
+            grep -q "E: $camada" /tmp/adaptativo.txt \
+              || { echo "ERRO: o ícone adaptativo no APK não tem a camada '$camada'"; exit 1; }
+          done
+          for recurso in "mipmap/ic_launcher_foreground$" "drawable/ic_launcher_monochrome$" "drawable/splash_icon$"; do
+            N=$(bloco "$recurso" | grep -c 'dpi)')
+            echo "$recurso -> $N densidades"
+            test "$N" -ge 5 || { echo "ERRO: $recurso tem $N densidades, esperava 5"; exit 1; }
+          done
+          bloco "style/LaunchTheme$" | grep -q 'v31' \
+            || { echo "ERRO: LaunchTheme sem variante v31 — a starting window voltaria ao ícone inferido"; exit 1; }
+          grep -A3 'color/splash_background' /tmp/recursos.txt | grep -qi '#ff050201' \
+            || { echo "ERRO: splash_background no APK não é #ff050201"; exit 1; }
+          echo "OK: o APK carrega a marca nativa oficial (medalhão), e nenhum recurso do Flutter sobrou."
 
       - name: Signing report (confirma a assinatura final)
         run: |

@@ -41,7 +41,9 @@ void main(List<String> argumentos) {
   final appId = args.obrigatorio('application-id');
   final versionCode = args.obrigatorio('version-code');
   final versionName = args.obrigatorio('version-name');
-  final icone = Directory(args.opcional('icone') ?? 'android/launcher-icon/res');
+  // [COMP1-E9] A marca nativa oficial e o medalhao (branding/fonte), gerado por
+  // tools/branding/gerar_icones_android.mjs em branding/android/res.
+  final icone = Directory(args.opcional('icone') ?? 'branding/android/res');
 
   if (!scaffold.existsSync()) {
     _abortar('scaffold nao encontrado: ${scaffold.path}');
@@ -279,7 +281,7 @@ void _instalarIcone(Directory scaffold, Directory icone) {
   if (!icone.existsSync()) {
     _abortar(
       'recursos de icone nao encontrados em ${icone.path}. '
-      'Gere com: dart run tools/icone/bin/gerar.dart',
+      'Gere com: node tools/branding/gerar_icones_android.mjs',
     );
   }
 
@@ -313,13 +315,21 @@ void _instalarIcone(Directory scaffold, Directory icone) {
     'mipmap-xxxhdpi/ic_launcher.png',
     'mipmap-anydpi-v26/ic_launcher.xml',
     'mipmap-xxxhdpi/ic_launcher_foreground.png',
-    'values/ic_launcher_background.xml',
+    // [COMP1-E9] O fundo do icone adaptativo e `@color/splash_background`, a
+    // MESMA cor da janela nativa de abertura (ver `_telaDeAberturaEscura`), e
+    // nao mais um `ic_launcher_background` proprio. Entram a camada
+    // monocromatica (icone tematico, Android 13+) e a janela de partida do
+    // Android 12+ (SplashScreen API), que sem `values-v31` inferiria o icone.
+    'drawable-xxxhdpi/ic_launcher_monochrome.png',
+    'drawable-xxxhdpi/splash_icon.png',
+    'values-v31/styles.xml',
+    'values-night-v31/styles.xml',
   ]) {
     if (!File('${res.path}/$exigido').existsSync()) {
       _abortar('faltou o recurso de icone $exigido');
     }
   }
-  stdout.writeln('  adaptive icon + 5 densidades confirmados');
+  stdout.writeln('  adaptive icon (3 camadas) + 5 densidades + janela v31 confirmados');
 }
 
 // ---------------------------------------------------------------------------
