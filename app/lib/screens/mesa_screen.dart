@@ -510,7 +510,10 @@ class _Cabecalho extends StatelessWidget {
       case Modalidade.fechado:
         return 'FECHADO';
       case Modalidade.sbtl:
-        return 'SBTL';
+        // STBL, e não SBTL. Ver a mesma nota em `como_jogar_screen.dart`: o
+        // resto do aplicativo já dizia STBL, e `mesa_flow_preview_host_test`
+        // até exige que SBTL não apareça — só que num host diferente deste.
+        return 'STBL';
     }
   }
 }

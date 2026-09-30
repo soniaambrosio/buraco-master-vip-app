@@ -229,7 +229,16 @@ void main() {
       await c.servidorAceita();
 
       expect(c.servico.status, OnlineStatus.conectado);
-      expect(c.canal.mensagens.map((m) => m['tipo']),
+      // [COMP1-E6] Desde a descoberta produtiva (8a2eede), o `autenticado`
+      // também abre o retrato das mesas públicas e a presença agregada —
+      // mensagens de LEITURA, que não são comando de jogador e não passam pela
+      // fila. A prova continua a mesma: a primeira coisa que sai é a
+      // credencial, nenhum comando de jogador sai antes de o servidor aceitá-la,
+      // e a fila sai inteira e na ordem em que foi pedida.
+      const deDescoberta = {'descobrirMesas', 'presenca_ping'};
+      final tipos = c.canal.mensagens.map((m) => m['tipo']).toList();
+      expect(tipos.first, 'auth');
+      expect(tipos.where((t) => !deDescoberta.contains(t)),
           ['auth', 'criarMesa', 'iniciarPartida']);
     });
 

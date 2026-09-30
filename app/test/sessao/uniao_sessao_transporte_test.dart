@@ -363,13 +363,18 @@ void main() {
   // =========================================================================
   group('§8.6 — logout durante conexão ou renovação', () {
     test('logout enquanto o token está NO AR não abre socket nenhum', () async {
+      // [COMP1-E6] Desde a OS 38.2 (8a2eede) a ponte conecta SOZINHA assim que
+      // existe sessão autenticada — a presença nasce na Home. A credencial
+      // presa tem de estar no ar ANTES do login, senão a conexão automática a
+      // consome primeiro e o caso deixa de encenar o que prova: um token que
+      // volta depois do logout não pode virar conexão.
+      final preso = Completer<String?>();
       amb.credenciais.token = kTokenA;
+      amb.credenciais.segurar = preso;
       amb.auth.add('uid-a');
       await _assentar();
 
       // A credencial fica presa no ar…
-      final preso = Completer<String?>();
-      amb.credenciais.segurar = preso;
       amb.online.conectar();
       await _assentar();
       expect(amb.credenciais.pedidos, 1);

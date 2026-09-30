@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import '../mesa.dart' show MesaScreen;
 import '../screens/onde_jogar_screen.dart';
 import 'lobby_online.dart';
+import 'lobby_publico_de_producao.dart';
 
 class OndeJogarDeProducao extends StatelessWidget {
   const OndeJogarDeProducao({super.key});
@@ -51,15 +52,25 @@ class OndeJogarDeProducao extends StatelessWidget {
             'Crie uma mesa e compartilhe o código, ou entre no código de alguém. '
             'É jogo online de verdade, no servidor.',
       ),
+      // [INGRESSO §12] A DESCRIÇÃO ANDOU JUNTO COM O QUE A OPÇÃO FAZ.
+      //
+      // Ela dizia "entrar numa delas chega na próxima atualização", e isso
+      // era verdade enquanto o toque no card não levava a lugar nenhum. Agora
+      // leva: a lista abre o seletor de assento, e o assento é pedido ao
+      // servidor.
+      //
+      // O que a descrição continua NÃO prometendo é pareamento automático:
+      // ninguém é encaixado numa mesa por um algoritmo. Quem escolhe a mesa e
+      // a cadeira é a pessoa, e quem decide se pode é o servidor.
       OpcaoMesa(
         id: 'publica',
         icone: '🌎',
         titulo: 'Mesa Pública',
+        badge: 'ONLINE',
+        corBadge: CorBadge.verde,
         descricao:
-            'Entrar sozinho e cair numa mesa com desconhecidos. O pareamento '
-            'automático ainda não existe nesta versão.',
-        nota: '🔒 Ainda não disponível',
-        bloqueado: true,
+            'Veja as mesas abertas agora, escolha uma e escolha seu lugar na '
+            'mesa. Quem confirma a cadeira é o servidor.',
       ),
       OpcaoMesa(
         id: 'vip',
@@ -88,6 +99,13 @@ class OndeJogarDeProducao extends StatelessWidget {
           case 'privada':
             Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const LobbyOnline()),
+            );
+          // [DESCOBERTA §10] O caminho real: Entrar em mesa → Lobby Público.
+          case 'publica':
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const LobbyPublicoDeProducao(),
+              ),
             );
           default:
             // Bloqueada. A tela desenha o cadeado mas REPASSA o toque — ela não

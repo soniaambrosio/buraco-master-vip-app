@@ -1,0 +1,161 @@
+{
+  "//": "CONTRATO CANONICO DA DESCOBERTA DE MESAS PUBLICAS E DA PRESENCA AGREGADA V1 (OS 38.1). Ele existe para que a OS 38.2 (Home / Onde Jogar / Lobby) e a OS 38.3 (ingresso) NAO tenham que ler o bundle para saber o que chega pelo fio. Editar o servidor sem editar este arquivo reprova em test/descoberta.test.js, e editar este arquivo sem editar o servidor reprova no mesmo lugar.",
+  "//digest": "O digest esperado NAO mora aqui (seria circular). Ele mora em test/descoberta.test.js, normalizado em LF — sem normalizar, a mesma arvore reprovaria no Windows por CRLF e passaria no CI.",
+  "//autoridade": "Esta e uma PROJECAO SOMENTE LEITURA. Ela nao cria mesa, nao senta ninguem, nao decide admissao e nao altera o controlador de assento. A autoridade de ingresso continua em `entrarMesa` e no gate de admissao, intocados por esta OS.",
+  "versao": 1,
+  "esquema": "descoberta-mesas-v1",
+
+  "protocoloWebSocket": {
+    "//": "Nenhum protocolo paralelo. As duas mensagens andam no MESMO WebSocket, atras da MESMA fronteira de autenticacao (protocolo 2), no mesmo despachante das demais.",
+    "pedidoDoCliente": "descobrirMesas",
+    "//pedidoDoCliente": "Sem campos. `msg` e ignorada por inteiro: nao ha filtro, paginacao nem modalidade vinda do cliente. A resposta e funcao do estado do servidor e de mais nada.",
+    "respostaDoServidor": "mesas",
+    "pulsoDoCliente": "presenca_ping",
+    "//pulsoDoCliente": "Sem campos. Renova o lease do uid DA PROPRIA CONEXAO. Nao existe campo de total, de contagem, de outro jogador nem de tempo.",
+    "reciboDoPulso": "presenca_ok",
+    "camposDoReciboDoPulso": ["ttlMs", "intervaloSugeridoMs"],
+    "recusas": {
+      "ritmoDeDescoberta": "DESCOBERTA_RITMO",
+      "ritmoDePresenca": "PRESENCA_RITMO"
+    },
+    "ritmoMinimoMs": {
+      "descobrirMesas": 1000,
+      "presenca_ping": 5000
+    }
+  },
+
+  "respostaMesas": {
+    "//": "Lista FECHADA de campos de primeiro nivel (alem de `tipo`). Um campo a mais reprova.",
+    "campos": ["esquema", "geracao", "revisao", "geradoEm", "mesas", "presenca"],
+    "//geracao": "UUID sorteado no nascimento do processo. `revisao` e da VIDA DO PROCESSO: reiniciar o servidor volta a zero. Geracao diferente e ordem de descartar tudo e ressincronizar, nunca de comparar revisoes.",
+    "//revisao": "Inteiro ESTRITAMENTE CRESCENTE, de uma sequencia unica compartilhada com as revisoes por mesa. Retrato com revisao MENOR OU IGUAL a que o cliente ja tem e velho e deve ser descartado."
+  },
+
+  "mesa": {
+    "//": "Lista FECHADA. O que nao esta aqui nao sai do servidor.",
+    "campos": [
+      "codigo",
+      "nome",
+      "modalidade",
+      "metaPontos",
+      "capacidade",
+      "jogadores",
+      "bots",
+      "ocupados",
+      "vagas",
+      "assentos",
+      "estadoIngresso",
+      "ingressavel",
+      "aguardandoHaMs",
+      "revisao"
+    ],
+    "//codigo": "Identificador opaco da mesa: 8 caracteres sorteados pelo servidor, sem estrutura interna. E o mesmo codigo que a OS 38.3 usara para ingressar. So aparece para mesa PUBLICA — mesa privada nunca entra na projecao, entao a listagem nao enumera codigo de mesa nao publica.",
+    "//nome": "Identificacao publica DERIVADA de quem esta sentado (\"Mesa de <apelido>\"), com queda para \"Mesa <codigo>\" quando nao ha humano. Nao existe campo de nome no dominio e esta OS nao criou um.",
+    "//jogadores": "Assentos ocupados por HUMANO nesta mesa. E uma medida da MESA (ocupacao), nao de presenca: um assento reservado durante a graca de ausencia continua ocupado aqui. As contagens de `presenca` sao outra coisa — ver `presenca.//jogadoresEmMesasPublicas`.",
+    "//vagas": "capacidade - ocupados. Nunca negativo. Ter vaga NAO implica ingressavel: mesa em andamento pode ter assento vazio e mesmo assim nao aceitar ninguem.",
+    "//aguardandoHaMs": "Tempo desde a criacao da sala, em ms, relativo. NAO entra na impressao que decide `revisao` — se entrasse, a revisao subiria a cada consulta e deixaria de significar \"algo mudou\"."
+  },
+
+  "assento": {
+    "//": "Ocupacao SANITIZADA. Lista FECHADA, quatro posicoes sempre, indice = numero do assento.",
+    "campos": ["assento", "ocupado", "tipo", "apelido", "avatarGaleria"],
+    "tipos": ["humano", "bot"],
+    "//avatarGaleria": "Indice do avatar de catalogo, ou null. Avatar de FOTO fica de fora de proposito: a foto e servida em /avatar/<jogadorId> e `jogadorId` E o uid — publicar a foto seria publicar o uid com outro nome."
+  },
+
+  "presenca": {
+    "//": "Lista FECHADA de contagens. Todas por PESSOA (uid unico), nunca por socket, aba, aparelho ou assento.",
+    "campos": [
+      "jogadoresOnlineTotal",
+      "espectadoresOnline",
+      "jogadoresEmMesasPublicas",
+      "jogadoresEmMesasPublicasAguardando",
+      "jogadoresEmMesasPublicasEmAndamento",
+      "mesasPublicas",
+      "mesasPublicasComVagas",
+      "porModalidade"
+    ],
+    "//jogadoresOnlineTotal": "PESSOAS no aplicativo, qualquer que seja o papel. Espectador entra AQUI (esta no app) e em nenhuma contagem de jogadores. Nao conta sockets, abas, aparelhos, reconexoes nem sessoes expiradas.",
+    "//espectadoresOnline": "Presentes que estao assistindo alguma mesa E nao ocupam assento em mesa publica projetada. DISJUNTO de `jogadoresEmMesasPublicas` de proposito, para que os numeros possam ser somados sem contar ninguem duas vezes.",
+    "//jogadoresEmMesasPublicas": "Pessoas sentadas em mesa publica projetada E com presenca valida. INCLUI mesas em andamento; os dois pedacos vem separados em `...Aguardando` e `...EmAndamento` e somam este numero. Exigir presenca valida e o que garante que este numero nunca passe de `jogadoresOnlineTotal`.",
+    "//mesasPublicasComVagas": "Numero sobre MESAS, deliberadamente longe dos de jogadores. Conta mesas INGRESSAVEIS (aguardando com vaga), nao mesas com assento vazio.",
+    "porModalidade": {
+      "//": "Uma entrada por modalidade do motor. As chaves sao DERIVADAS de MODALIDADES (motor/bot.js) — nunca redigitadas.",
+      "chaves": ["aberto", "fechado", "sbtl"],
+      "campos": ["mesas", "mesasComVagas", "jogadores", "jogadoresAguardando", "jogadoresEmAndamento"]
+    }
+  },
+
+  "estadoIngresso": {
+    "//": "Enumeracao FECHADA, decidida a partir do ciclo de vida real: `entrarMesa` numa sala iniciada recusa todo mundo, menos o titular de um assento voltando (que e reconexao, nao ingresso).",
+    "valores": ["aguardando", "cheia", "em_andamento"],
+    "aguardando": "Nao iniciada e com vaga. ingressavel = true.",
+    "cheia": "Nao iniciada e sem vaga. ingressavel = false.",
+    "em_andamento": "Iniciada. APARECE na lista (tem gente dentro e pode ser assistida) mas ingressavel = false."
+  },
+
+  "ordenacao": {
+    "//": "Ordem TOTAL e deterministica. Duas execucoes sobre o mesmo estado devolvem a mesma sequencia. Nenhum criterio e escolhivel pelo cliente.",
+    "criterios": [
+      "ingressavel primeiro (true antes de false)",
+      "mais jogadores humanos primeiro (3, depois 2, depois 1)",
+      "criadaEm crescente (esperando ha mais tempo primeiro)",
+      "codigo crescente (desempate final, para a ordem ser total)"
+    ],
+    "//criadaEm": "Carimbo do relogio do servidor, imutavel na sala, que nenhuma mensagem alcanca. NAO e publicado: o que sai e `aguardandoHaMs`, relativo."
+  },
+
+  "filtros": {
+    "//": "Tres filtros, todos fail-closed. Qualquer coisa que nao se saiba afirmar fica de fora.",
+    "topologia": "tipoPartida === \"publica\", e so isso. O campo e carimbado na sala a partir da CONFIGURACAO DO PROCESSO; `criarMesa` nao o recebe e o despachante nao o monta.",
+    "naturezaCompetitiva": "categoriaCompetitiva === \"casual\". `vip_ranqueada` e `desconhecida` ficam fora.",
+    "integridade": "meta em METAS_CANONICAS, modalidade em MODALIDADES (tabela do motor), assentos vetor de 4, codigo nao vazio, sala nao encerrada (`envelopeEncerramento`) e nao liquidada.",
+    "//modalidade": "A lista aceita e DERIVADA de MODALIDADES do motor, nunca redigitada aqui. `criarMesa` ainda aceita `msg.modalidade` cru; uma mesa com modalidade fora da tabela simplesmente nao e publicavel."
+  },
+
+  "proibidoNoFio": {
+    "//": "Nada disto pode aparecer em nenhum ponto da resposta. A prova e por varredura do payload, nao por leitura de codigo.",
+    "itens": [
+      "uid",
+      "jogadorId",
+      "admissaoId",
+      "tentativaEntradaId",
+      "token",
+      "credencial",
+      "endereco interno",
+      "estado do motor",
+      "cartas",
+      "mao",
+      "mesa privada",
+      "mesa vip_ranqueada",
+      "dados administrativos"
+    ]
+  },
+
+  "presencaModelo": {
+    "//": "Lease, nao contador. Contador so esta certo se toda saida for observada, e queda abrupta nao produz evento de saida nenhum.",
+    "chaveDeDeduplicacao": "uid autenticado (derivado do `sub` do token verificado, `writable:false` na conexao)",
+    "sessao": "id da conexao",
+    "ttlMs": 45000,
+    "//ttlMs": "Folga deliberada sobre o keepalive de 20 s do transporte: duas batidas perdidas nao derrubam a presenca, tres derrubam.",
+    "renovacao": [
+      "ao vincular identidade (autenticacao aceita)",
+      "em toda mensagem autenticada processada",
+      "no PONG do keepalive do WebSocket (cobre o jogador conectado e parado, sem exigir nada do cliente)",
+      "em `presenca_ping` (renovacao explicita do cliente)"
+    ],
+    "encerramento": [
+      "desconexao limpa: fecha SO aquela sessao; as outras abas do mesmo jogador continuam",
+      "credencial expirada: fecha a sessao no mesmo instante em que ela deixa de valer como comando",
+      "queda abrupta: nao produz evento; quem resolve e o vencimento do lease"
+    ],
+    "expiracao": "PREGUICOSA — avaliada em toda leitura, com o relogio injetado, nunca dependendo de temporizador ter rodado."
+  },
+
+  "topologia": {
+    "//": "Uma instancia. `salas` e `conexoes` sao objetos EM MEMORIA dentro de um unico processo Node, e nao existe cluster, sticky session nem estado compartilhado.",
+    "instancias": 1,
+    "//instancias": "Nao e limitacao introduzida por esta OS: o REGISTRO DE MESAS ja e por processo. Uma mesa criada na replica A e invisivel na replica B desde sempre, entao a presenca e exatamente tao global quanto a listagem que ela acompanha — as duas descrevem o mesmo processo, e nunca uma metade dele.",
+    "seHouverReplicas": "Presenca e listagem passariam a ser parciais JUNTAS, de forma coerente entre si. Tornar qualquer uma das duas global exige estado compartilhado (o mesmo que hoje falta para as MESAS), e isso e arbitragem de outra OS."
+  }
+}

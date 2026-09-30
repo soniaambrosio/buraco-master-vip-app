@@ -53,6 +53,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../ingresso/modelo_ingresso.dart';
 import '../services/online_service.dart';
 import 'escopo_transporte.dart';
 import 'mesa_online/estado_mesa_online.dart';
@@ -60,7 +61,20 @@ import 'mesa_online/mesa_online_screen.dart';
 import 'mesa_online/porta_de_comandos_online.dart';
 
 class LobbyOnline extends StatefulWidget {
-  const LobbyOnline({super.key});
+  const LobbyOnline({super.key, this.ingressoConfirmado});
+
+  /// [INGRESSO 38.3] O que o SERVIDOR confirmou, quando esta rota é o
+  /// destino de um ingresso pela mesa pública.
+  ///
+  /// Nulo pelo caminho antigo (a mesa por código), e aí nada muda: a tela
+  /// abre na entrada, com o campo de código e o botão de criar.
+  ///
+  /// NÃO ENTRA NA CONSTRUÇÃO: a mesa continua sendo desenhada a partir de
+  /// `srv.visao`, que é a autoridade. O que este campo muda é o que a tela
+  /// desenha ENQUANTO a primeira visão não chegou — porque oferecer "criar
+  /// mesa" e "entrar por código" a quem acabou de sentar numa mesa é
+  /// oferecer o desfazer de uma coisa que acabou de dar certo.
+  final IngressoConfirmado? ingressoConfirmado;
 
   @override
   State<LobbyOnline> createState() => _LobbyOnlineState();
@@ -183,8 +197,14 @@ class _LobbyOnlineState extends State<LobbyOnline> {
     }
 
     final v = srv.visao;
+    final confirmado = widget.ingressoConfirmado;
     final List<Widget> corpo;
-    if (v == null) {
+    if (v == null && confirmado != null) {
+      // [INGRESSO 38.3] Chegou por ingresso confirmado e a primeira visão
+      // ainda não veio. O destino RECEBEU mesa e assento, e é isso que ele
+      // diz — em vez de oferecer criar mesa a quem acabou de entrar numa.
+      corpo = _entrandoNaMesa(confirmado);
+    } else if (v == null) {
       corpo = _entrada(srv);
     } else if (leitura is VisaoDeLobby) {
       corpo = _lobby(srv, v);
@@ -324,6 +344,43 @@ class _LobbyOnlineState extends State<LobbyOnline> {
 
   String get _apelidoEscolhido =>
       _apelido.text.trim().isEmpty ? 'Você' : _apelido.text.trim();
+
+  /// [INGRESSO 38.3] O que se desenha entre o ACK e a primeira visão.
+  ///
+  /// O assento vem da CONFIRMAÇÃO do servidor, nunca de uma conta local. Se
+  /// esta tela somasse, adivinhasse ou lembrasse um assento, ela poderia
+  /// discordar da mesa que está prestes a desenhar.
+  List<Widget> _entrandoNaMesa(IngressoConfirmado confirmado) {
+    return [
+      Semantics(
+        container: true,
+        liveRegion: true,
+        label: '${confirmado.anuncio} Abrindo a mesa.',
+        excludeSemantics: true,
+        child: Column(
+          children: [
+            const Icon(Icons.event_seat_rounded, color: _ouro, size: 40),
+            const SizedBox(height: 12),
+            Text(
+              confirmado.anuncio,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _ouroClaro,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Abrindo a mesa…',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _mut, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
 
   // Ainda não entrou numa mesa: criar ou entrar por código.
   List<Widget> _entrada(OnlineService srv) {

@@ -116,6 +116,7 @@ void main() {
       expect(find.byType(HomeDeProducao), findsOneWidget);
 
       await irAOndeJogar(tester);
+      b.aquietar();
     });
 
     testWidgets('Treino abre a MesaScreen jogável de lib/mesa.dart', (
@@ -136,29 +137,50 @@ void main() {
       expect(find.byType(MesaScreen), findsOneWidget);
 
       await encerrarTreino(tester);
+      b.aquietar();
     });
 
-    testWidgets('Treino não abre socket e não pede credencial', (tester) async {
+    // ESTE CASO FOI REESCRITO PELA OS 38.2, E A MEDIDA FICOU MELHOR.
+    //
+    // Ele afirmava `aberturas == 0` — "o Treino não abre socket". Isso deixou
+    // de ser verdade, e não por causa do Treino: a Home autenticada já conecta
+    // antes, porque a presença online tem de existir para quem está no
+    // aplicativo (§3.1). O socket que existe durante o Treino não é do Treino.
+    //
+    // O invariante que este caso sempre quis guardar continua valendo por
+    // inteiro, e agora é medido DIRETAMENTE: a partida local não manda comando
+    // nenhum ao servidor. Contar sockets era um proxy; ler o fio é a coisa.
+    testWidgets('Treino não fala com o servidor', (tester) async {
       final b = Bancada(uidInicial: 'uid-A');
       addTearDown(b.fechar);
 
       await abrirAplicativo(tester, b);
+      b.canal.servidorEnvia({'tipo': 'autenticado'});
+      await tester.pumpAndSettle();
       final pedidosAntes = b.credenciais.pedidos;
+      final noFioAntes = b.canal.enviadas.length;
 
       await irAOndeJogar(tester);
       await tester.tap(find.text('Treino'));
       await tester.pumpAndSettle();
 
       expect(find.byType(MesaScreen), findsOneWidget);
-      expect(
-        b.aberturas,
-        0,
-        reason: 'a partida local não fala com o servidor',
-      );
+
+      // NADA de mesa atravessou o fio por causa do Treino. O que puder ter
+      // saído nesse intervalo é só o ritmo da descoberta, que roda desde a
+      // Home e não sabe que existe uma partida local acontecendo.
+      for (final m in b.canal.mensagens.skip(noFioAntes)) {
+        expect(
+          m['tipo'],
+          anyOf('descobrirMesas', 'presenca_ping'),
+          reason: 'o Treino mandou "${m['tipo']}" para o servidor',
+        );
+      }
+      // E nenhuma credencial nova foi pedida: a partida local não autentica.
       expect(b.credenciais.pedidos, pedidosAntes);
-      expect(b.online.querConectado, isFalse);
 
       await encerrarTreino(tester);
+      b.aquietar();
     });
   });
 
@@ -180,6 +202,7 @@ void main() {
 
       await servidorAutentica(tester, b);
       expect(b.online.status, OnlineStatus.conectado);
+      b.aquietar();
     });
 
     testWidgets('abrir e fechar o lobby não constrói um segundo transporte', (
@@ -208,6 +231,7 @@ void main() {
         reason: 'reabrir a tela não reabre o socket que já está de pé',
       );
       expect(b.canais, hasLength(1));
+      b.aquietar();
     });
 
     testWidgets('logout no lobby derruba a pilha e a capacidade de jogar', (
@@ -232,6 +256,7 @@ void main() {
       expect(b.online.visao, isNull);
       expect(find.byType(LobbyOnline), findsNothing);
       expect(find.byType(LoginDeProducao), findsOneWidget);
+      b.aquietar();
     });
   });
 
