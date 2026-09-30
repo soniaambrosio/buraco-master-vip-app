@@ -271,7 +271,11 @@ List<TarefaPendente> planejarTarefas({
       adicionar(TarefaAutomatica.concederPremios, venceuEm: momento);
       adicionar(TarefaAutomatica.registrarClassificadosAnuais, venceuEm: momento);
 
+    // `rascunho` e `em_revisao` sao editoriais: a automacao nao submete a
+    // revisao nem aprova. As duas transicoes exigem ator humano — e a de
+    // aprovacao exige DOIS humanos distintos.
     case EdicaoStatus.rascunho:
+    case EdicaoStatus.emRevisao:
     case EdicaoStatus.encerrado:
     case EdicaoStatus.cancelado:
     case EdicaoStatus.suspenso:

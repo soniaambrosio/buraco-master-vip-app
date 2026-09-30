@@ -192,7 +192,7 @@ String inscreverJson(String entrada) {
   }
 }
 
-/// `{de, para, ator}`
+/// `{de, para, ator, criadaPor?, operadorId?}`
 String avaliarTransicaoJson(String entrada) {
   try {
     final json = jsonDecode(entrada) as Map<String, dynamic>;
@@ -205,7 +205,17 @@ String avaliarTransicaoJson(String entrada) {
       (a) => a.wire == json['ator'],
       orElse: () => AtorTransicao.jogador,
     );
-    final r = avaliarTransicao(de: de, para: para, ator: ator);
+    // `criadaPor` e `operadorId` atravessam a ponte porque a separacao de
+    // funcoes e decisao do DOMINIO, e nao da Cloud Function que persiste. Se a
+    // checagem morasse do lado TypeScript, existiriam duas regras de aprovacao
+    // — e a do servidor divergiria da que o app executa.
+    final r = avaliarTransicao(
+      de: de,
+      para: para,
+      ator: ator,
+      criadaPor: json['criadaPor'] as String?,
+      operadorId: json['operadorId'] as String?,
+    );
     return jsonEncode({
       'permitida': r.permitida,
       'destino': r.destino?.wire,

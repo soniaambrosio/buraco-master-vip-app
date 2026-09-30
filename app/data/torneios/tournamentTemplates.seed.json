@@ -8,46 +8,21 @@
       "Prêmios referenciam assetId do assetsRegistry, nunca nome de arquivo.",
       "fuso: America/Sao_Paulo; região Functions: southamerica-east1."
     ],
-    "recusaNaoVip": "requisitoVipNaoAtendido"
+    "recusaNaoVip": "requisitoVipNaoAtendido",
+    "contratoV1": {
+      "esquema": 1,
+      "acesso": "Todo template ATIVO da V1 exige VIP integral vigente. Os unicos valores aceitos sao 'vip' e 'somente_convidados'; neste ultimo o convite e criterio CUMULATIVO ao VIP, nunca alternativo.",
+      "participacao": "individual. 'dupla' nao existe na V1: nao ha convite, aceite nem consentimento de parceiro, e um campo dormente que influenciasse capacidade, chaveamento ou cobranca seria pior do que a ausencia.",
+      "cicloEditorial": "rascunho -> em_revisao -> agendado. O salto direto nao existe no grafo, e a aprovacao exige aprovador distinto do criador.",
+      "premiacao": "REFERENCIA CONTRATUAL. Os valores em 'fichas' declaram o que a premiacao devera conceder quando existir autoridade que a conceda; nesta base nada movimenta carteira, e a divergencia entre 'wallets' e 'usuarios.fichas' segue BLOQUEADA e sem escolha silenciosa.",
+      "superseded": "Os templates com acesso 'publico' ou 'misto' sairam desta relacao e vivem em legado/tournamentTemplates.superseded.json, fora do carregamento produtivo. Eles NAO foram convertidos para 'vip': converter seria decidir, dentro de uma OS de fundacao, que a Quarta da Vulnerabilidade passa a ser paga e exclusiva — decisao de produto que ninguem tomou."
+    }
   },
   "templates": [
     {
-      "templateId": "quarta_vulnerabilidade",
-      "nome": "Quarta da Vulnerabilidade",
-      "coverAssetId": "capa_quarta_vulnerabilidade",
-      "acesso": "publico",
-      "participacao": "individual",
-      "modalidade": { "tipo": "alterna", "opcoes": ["aberto", "fechado"] },
-      "recorrencia": { "tipo": "semanal", "diaSemana": "quarta", "horario": "20:00" },
-      "vagas": { "max": 64, "min": 16 },
-      "checkin": { "abre": "19:30", "fecha": "19:50" },
-      "entrada": {
-        "tipo": "introducaoGratisDepoisPaga",
-        "gratisPrimeirasEdicoes": 6,
-        "contador": "edicoes_validas_realizadas",
-        "ignoraCanceladas": true,
-        "valorApos": 50,
-        "moeda": "fichas",
-        "configuravel": true,
-        "note": "Decisão #11: 6 primeiras EDIÇÕES realizadas (não semanas de calendário)."
-      },
-      "rankingPolicy": {
-        "publicoPontuaRanking": false,
-        "vipPontuaRanking": true,
-        "publicoRecebeOutrosPremios": true,
-        "note": "Decisão #10: público joga e ganha fichas/selos/coroas, mas não pontua no ranking."
-      },
-      "premiacao": [
-        { "colocacao": 1, "fichas": 500, "crownAssetId": "crown_champion", "sealAssetId": "seal_champion", "rankingPoints": { "valor": "configuravel", "sujeitoA": "rankingPolicy" } },
-        { "colocacao": 2, "fichas": 300, "sealAssetId": "seal_runner_up", "rankingPoints": { "valor": "configuravel", "sujeitoA": "rankingPolicy" } },
-        { "colocacao": 3, "fichas": 150, "sealAssetId": "seal_top3", "rankingPoints": { "valor": "configuravel", "sujeitoA": "rankingPolicy" } }
-      ],
-      "selosCondicionais": ["seal_performance", "seal_fair_play"],
-      "ativo": true,
-      "publicado": false
-    },
-    {
       "templateId": "sexta_master_vip",
+      "esquema": 1,
+      "versao": 1,
       "nome": "Sexta Master VIP",
       "coverAssetId": "capa_sexta_master_vip",
       "acesso": "vip",
@@ -69,6 +44,8 @@
     },
     {
       "templateId": "copa_buraco_master",
+      "esquema": 1,
+      "versao": 1,
       "nome": "Copa Buraco Master",
       "coverAssetId": "capa_copa_buraco_master",
       "acesso": "vip",
@@ -92,6 +69,8 @@
     },
     {
       "templateId": "domingo_pintando_7",
+      "esquema": 1,
+      "versao": 1,
       "nome": "Domingo Pintando o 7",
       "coverAssetId": "capa_domingo_pintando_7",
       "acesso": "vip",
@@ -114,32 +93,9 @@
       "publicado": false
     },
     {
-      "templateId": "campeonato_mensal",
-      "nome": "Campeonato Mensal Master VIP",
-      "coverAssetId": "capa_campeonato_mensal",
-      "acesso": { "tipo": "misto", "elegiveis": ["classificados", "convidados", "vagas_remanescentes"] },
-      "participacao": "individual",
-      "modalidade": { "tipo": "definidaMensalmente" },
-      "recorrencia": { "tipo": "mensal", "regra": "ultimo_domingo", "horario": "19:00", "note": "Decisão/Correções: último DOMINGO 19:00 (antes era sábado 19:30)." },
-      "vagas": { "max": 64, "min": 16 },
-      "checkin": { "abre": "18:00", "fecha": "18:40" },
-      "entrada": {
-        "classificados": { "tipo": "gratuito" },
-        "vagasRemanescentes": { "tipo": "ingresso", "valor": 300, "moeda": "fichas", "ativar": false, "configuravel": true }
-      },
-      "rankingPolicy": { "todosElegiveisPontuam": true },
-      "premiacao": [
-        { "colocacao": 1, "fichas": 3000, "crownAssetId": "crown_monthly_champion", "sealAssetId": "seal_monthly_champion", "extras": ["hall_dos_imortais"] },
-        { "colocacao": 2, "fichas": 1500, "sealAssetId": "seal_runner_up" },
-        { "colocacao": 3, "fichas": 750, "sealAssetId": "seal_top3" }
-      ],
-      "registroFinalistas": "historico_mensal_permanente",
-      "regraCritica": "Nunca retirar vaga de classificado confirmado para acomodar ingresso pago.",
-      "ativo": true,
-      "publicado": false
-    },
-    {
       "templateId": "campeonato_anual",
+      "esquema": 1,
+      "versao": 1,
       "nome": "Campeonato Anual Master VIP",
       "acesso": "vip",
       "participacao": "individual",
@@ -156,6 +112,8 @@
   ],
   "eventoEncerramento": {
     "templateId": "encerramento_campeoes_ano",
+    "esquema": 1,
+    "versao": 1,
     "nome": "Torneio de Encerramento dos Campeões do Ano",
     "status": "planejado",
     "dataFixa": "2026-12-18T20:30:00-03:00",

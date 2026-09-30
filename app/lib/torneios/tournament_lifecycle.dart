@@ -40,6 +40,15 @@ enum EdicaoStatus {
   /// Existe no banco, ainda nao publicada. Invisivel para jogadores.
   rascunho('rascunho'),
 
+  /// Submetida a revisao editorial, ainda nao aprovada. Invisivel para o
+  /// jogador, e o UNICO caminho entre [rascunho] e [agendado].
+  ///
+  /// A aresta direta `rascunho -> agendado` FOI REMOVIDA: publicar sem revisao
+  /// era um salto que nenhuma trilha registrava e nenhum segundo par de olhos
+  /// autorizava. Ver [transicoesEdicao] e a checagem de separacao de funcoes em
+  /// [avaliarTransicao].
+  emRevisao('em_revisao'),
+
   /// Publicada com data marcada, ainda sem anuncio.
   agendado('agendado'),
 
@@ -77,7 +86,11 @@ enum EdicaoStatus {
   bool get terminal => this == encerrado || this == cancelado;
 
   /// A edicao aparece nas listagens publicas.
-  bool get publico => this != rascunho;
+  ///
+  /// [emRevisao] fica de fora pelo mesmo motivo de [rascunho]: uma edicao em
+  /// revisao ainda pode ser rejeitada, e lista-la anunciaria ao jogador um
+  /// torneio que talvez nunca exista.
+  bool get publico => this != rascunho && this != emRevisao;
 
   /// Aceita novas inscricoes. Consultado por registrations.dart.
   bool get aceitaInscricao => this == inscricoesAbertas;
@@ -109,6 +122,17 @@ enum RecusaTransicao {
   /// Destino igual a origem. Nao e erro de dados, mas tambem nao e transicao —
   /// devolver "permitida" faria um reprocessamento parecer progresso.
   transicaoNula('transicao_nula'),
+
+  /// A edicao chegou a revisao sem identidade de criador registrada. Sem saber
+  /// QUEM criou, nao ha como afirmar que o aprovador e outra pessoa.
+  criadorAusente('criador_ausente'),
+
+  /// A aprovacao chegou sem identidade de aprovador.
+  aprovadorAusente('aprovador_ausente'),
+
+  /// Criador e aprovador sao a mesma identidade administrativa. Separacao de
+  /// funcoes: quem escreve o modelo nao e quem o autoriza a existir.
+  aprovadorIgualAoCriador('aprovador_igual_ao_criador'),
 
   /// Retomada de `suspenso` sem saber para onde voltar.
   retomadaSemOrigem('retomada_sem_origem'),
@@ -160,8 +184,19 @@ class ResultadoTransicao {
 /// proprias ([avaliarSuspensao] e [avaliarRetomada]) porque dependem de guardar
 /// o status de origem — colocar no mesmo mapa perderia essa informacao.
 const Map<EdicaoStatus, Set<EdicaoStatus>> transicoesEdicao = {
+  // `rascunho -> agendado` NAO existe. O unico caminho para `agendado` passa
+  // por `em_revisao`, e a aprovacao ainda exige aprovador distinto do criador
+  // (ver [avaliarTransicao]). Reabrir a aresta direta aqui reabriria o salto.
   EdicaoStatus.rascunho: {
+    EdicaoStatus.emRevisao,
+    EdicaoStatus.cancelado,
+  },
+  EdicaoStatus.emRevisao: {
+    // Aprovacao.
     EdicaoStatus.agendado,
+    // Rejeicao: volta ao rascunho para correcao. Nao e cancelamento — o modelo
+    // continua existindo, so nao foi autorizado ainda.
+    EdicaoStatus.rascunho,
     EdicaoStatus.cancelado,
   },
   EdicaoStatus.agendado: {
@@ -255,6 +290,8 @@ ResultadoTransicao avaliarTransicao({
   required EdicaoStatus de,
   required EdicaoStatus para,
   required AtorTransicao ator,
+  String? criadaPor,
+  String? operadorId,
 }) {
   // Jogador nao move status em hipotese alguma (OS 02 secao 21). Checado antes de
   // qualquer outra coisa para que a recusa seja sempre `atorNaoAutorizado`,
@@ -279,6 +316,31 @@ ResultadoTransicao avaliarTransicao({
     final automaticas = transicoesAutomaticas[de] ?? const <EdicaoStatus>{};
     if (!automaticas.contains(para)) {
       return const ResultadoTransicao.recusada(RecusaTransicao.atorNaoAutorizado);
+    }
+  }
+
+  // SEPARACAO DE FUNCOES. Aprovar uma edicao exige identidade administrativa
+  // DIFERENTE da que a criou.
+  //
+  // A checagem mora AQUI, e nao numa funcao propria de aprovacao, porque uma
+  // segunda porta seria uma segunda autoridade de transicao — e quem esquecesse
+  // de chama-la publicaria sem revisor nenhum. Aqui ela e inescapavel: nao ha
+  // caminho para `agendado` que nao passe por este `if`.
+  //
+  // Os dois nomes vem de FORA e nao sao lidos daqui de dentro: esta camada e
+  // pura. Quem persiste a edicao entrega `criadaPor` do documento e
+  // `operadorId` da sessao autenticada; inverter, adivinhar ou deixar o cliente
+  // mandar os dois transformaria a separacao em teatro.
+  if (de == EdicaoStatus.emRevisao && para == EdicaoStatus.agendado) {
+    if (criadaPor == null || criadaPor.isEmpty) {
+      return const ResultadoTransicao.recusada(RecusaTransicao.criadorAusente);
+    }
+    if (operadorId == null || operadorId.isEmpty) {
+      return const ResultadoTransicao.recusada(RecusaTransicao.aprovadorAusente);
+    }
+    if (criadaPor == operadorId) {
+      return const ResultadoTransicao.recusada(
+          RecusaTransicao.aprovadorIgualAoCriador);
     }
   }
 

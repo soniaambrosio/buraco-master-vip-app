@@ -38,6 +38,7 @@ import 'tournament_model.dart';
 /// "Rascunho" para o jogador.
 ui.TorneioStatus statusParaUi(EdicaoStatus status) => switch (status) {
       EdicaoStatus.rascunho => ui.TorneioStatus.rascunho,
+      EdicaoStatus.emRevisao => ui.TorneioStatus.emRevisao,
       EdicaoStatus.agendado => ui.TorneioStatus.agendado,
       EdicaoStatus.anunciado => ui.TorneioStatus.anunciado,
       EdicaoStatus.inscricoesAbertas => ui.TorneioStatus.inscricoesAbertas,
@@ -133,7 +134,14 @@ ui.SecaoCentral secaoParaUi({
     EdicaoStatus.aguardandoValidacao =>
       ui.SecaoCentral.emAndamento,
     EdicaoStatus.encerrado || EdicaoStatus.cancelado => ui.SecaoCentral.encerrados,
-    EdicaoStatus.rascunho || EdicaoStatus.suspenso => ui.SecaoCentral.proximos,
+    // `rascunho` e `em_revisao` nao chegam a esta funcao com jogador nenhum
+    // olhando (status.publico e falso para os dois), mas o `switch` e total: o
+    // valor existe no dominio e precisa de destino declarado, senao o codigo nao
+    // compila — que e exatamente a trava que se quer.
+    EdicaoStatus.rascunho ||
+    EdicaoStatus.emRevisao ||
+    EdicaoStatus.suspenso =>
+      ui.SecaoCentral.proximos,
   };
 }
 

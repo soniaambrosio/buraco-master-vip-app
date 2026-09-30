@@ -65,6 +65,11 @@ import 'entitlement.dart';
 /// vale? o VIP ainda vale?) e por isso e capturado UMA vez pelo chamador, como
 /// manda a mesma disciplina de `moderacao/sancao.dart`.
 ///
+/// `assinaturaAtiva` do retorno significa VIP INTEGRAL VIGENTE — assinatura
+/// de origem com produtor, dentro do prazo. Passe de cortesia, direito
+/// administrativo e qualquer origem nova sem decisao escrita NAO satisfazem.
+/// Ver [temVipEm] e `kOrigensVipIntegral`.
+///
 /// Os fatos de competicao ([convitesAtivos], [participacoes], [titulos],
 /// [temporadasAtivas]) entram por parametro porque quem os produz sao consultas
 /// a colecoes de torneio, e essa leitura e responsabilidade de quem chama.
@@ -130,14 +135,35 @@ bool estaSuspensoEm(
   return estado.suspensoEm(agora);
 }
 
-/// O jogador tem assinatura VIP vigente em [agora]?
+/// O jogador tem assinatura VIP INTEGRAL vigente em [agora]?
 ///
-/// A conta inteira mora em [EntitlementVip.vigenteEm]; esta funcao so junta o
-/// documento ao relogio. Nao existe segunda implementacao desta pergunta no
-/// projeto — ver o cabecalho de `entitlement.dart`.
+/// ESTA e a resposta que vira `PerfilElegibilidade.assinaturaAtiva`, e por
+/// isso ela e a origem unica da admissao em Torneios. A conta de vigencia
+/// continua morando inteira em [EntitlementVip.vigenteEm]; o que se acrescenta
+/// aqui e a exigencia de ORIGEM, via [EntitlementVip.integralVigenteEm].
+///
+/// POR QUE A ORIGEM ENTRA, E POR QUE ELA ENTRA AQUI
+///
+/// A pergunta "tem VIP agora?" tinha uma resposta so, e ela era boa para a
+/// loja, para o selo e para a comunicacao. Para TORNEIO ela era larga demais:
+/// bastava um documento com `vipAtivo`, estado que concede e prazo no futuro
+/// para conceder acesso — nao importava QUEM o tivesse escrito. Um direito
+/// gravado sob `origem: "administrativa"` (a origem sem produtor sob a qual um
+/// presente seria escrito) entrava em torneio pago e ranqueado como se fosse
+/// assinante. A politica congelada da V1 diz que nao.
+///
+/// A exigencia entra NESTA fronteira, e nao dentro de `vigenteEm`, porque so
+/// os consumidores de elegibilidade a querem. `temVipEm` tem exatamente um
+/// chamador — [comporPerfil] — e [comporPerfil] tem exatamente um consumidor
+/// de producao: a ponte de torneios. O alcance da regra e, por construcao, o
+/// alcance da politica que a pediu; Billing e Comunicacao continuam lendo
+/// `vigenteEm` e nao mudaram de resposta.
+///
+/// FALHA FECHADO nas tres formas de duvida: documento ausente, origem ausente
+/// e origem que este codigo nao conhece recusam, todas.
 bool temVipEm(
   String userId,
   Map<String, Object?>? documento,
   DateTime agora,
 ) =>
-    EntitlementVip.fromMap(userId, documento).vigenteEm(agora);
+    EntitlementVip.fromMap(userId, documento).integralVigenteEm(agora);
