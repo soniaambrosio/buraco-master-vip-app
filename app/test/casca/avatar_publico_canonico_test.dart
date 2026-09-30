@@ -1390,6 +1390,21 @@ void main() {
               'alcançável a partir da raiz',
         );
       }
+      // [COMP1-E10] REANCORAGEM POR CONJUNTO (BMV-PUB-C1-COMP1). Medido
+      // sobre o commit do bloco: fecho(bloco) − fecho(bloco anterior) é
+      // EXATAMENTE a lista abaixo, e fecho(anterior) − fecho(bloco) é VAZIO.
+      // Cada arquivo novo tem dono — o bloco E10 —, e nenhum sumiu.
+      const doComp1E10 = [
+        'lib/cartas/nome_falavel_da_carta.dart',
+      ];
+      for (final caminho in doComp1E10) {
+        expect(
+          alcancaveis,
+          contains(caminho),
+          reason: '$caminho saiu do fecho — o bloco E10 deixou de ser '
+              'alcançável a partir da raiz',
+        );
+      }
       // Os cinco de `doRankingReal` JA estao dentro do fecho da raiz P, entao a
       // constante abaixo e o fecho da raiz MENOS eles — e a soma continua
       // nomeando os quatro grupos, um por um, como C20 exige.
@@ -1405,7 +1420,8 @@ void main() {
               doComp1E3Tema.length +
               doComp1E6.length +
               doComp1E7.length +
-              doComp1E8.length,
+              doComp1E8.length +
+              doComp1E10.length,
         ),
       );
       // E ele não arrastou nada: importa só o estado canônico, que já estava lá.

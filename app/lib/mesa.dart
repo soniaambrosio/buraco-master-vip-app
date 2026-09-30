@@ -6,7 +6,11 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+// `OrdinalSortKey` — a ordem de leitura da mão é declarada, e não deduzida da
+// ordem de pintura (a carta selecionada é pintada por último). [COMP1-E10]
+import 'package:flutter/semantics.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'cartas/nome_falavel_da_carta.dart';
 import 'screens/configurar_mesa_screen.dart' show ChatMesa;
 import 'screens/mesa_launch_spec.dart';
 import 'screens/mesa_orientation_contract.dart';
@@ -55,6 +59,20 @@ const _naipeSimb = {'copas': '♥', 'ouros': '♦', 'paus': '♣', 'espadas': '�
 bool _cartaVermelha(Carta c) => c.naipe == 'copas' || c.naipe == 'ouros';
 String _cartaSimb(Carta c) => c.ehCoringa && c.valor == 'JOKER' ? '★' : (_naipeSimb[c.naipe] ?? '');
 String _cartaRotulo(Carta c) => c.valor == 'JOKER' ? '★' : c.valor;
+
+// [COMP1-E10] A carta em palavras, para quem joga de leitor de tela: "rei de
+// espadas". A convenção é UMA só — a mesma da Mesa Online — e mora em
+// `cartas/nome_falavel_da_carta.dart`.
+String _cartaEmPalavras(Carta c) =>
+    nomeFalavelDaCarta(valor: c.valor, naipe: c.naipe);
+
+// "1 carta", e não "1 cartas": o número é falado.
+String _emCartas(int n) => n == 1 ? '1 carta' : '$n cartas';
+
+/// [COMP1-E10] O piso de toque do Material Design (48 × 48). É o alvo mínimo que
+/// a acessibilidade da mesa persegue SEM mudar o desenho aprovado: onde o
+/// desenho é menor, cresce a região acionável transparente, nunca o desenho.
+const double kPisoDeToqueDaMesa = 48.0;
 
 // ===== AUDITORIA DE REGRAS (fase diagnóstica) — liga logs [AUD ...] no console.
 // Só instrumentação/observação; NÃO altera regras nem layout.
@@ -3333,9 +3351,12 @@ class _MesaScreenState extends State<MesaScreen> {
                   child: _sidePlayer(2, left: true),
                 ),
                 // Chat / expressões / som — coluna vertical discreta na lateral direita.
+                // [COMP1-E10] A âncora desconta o que a faixa de 48 do último
+                // disco desce abaixo do desenho dele: o disco de baixo termina na
+                // MESMA linha de antes (`playerDockHeight + 8`).
                 Positioned(
                   right: 4,
-                  bottom: playerDockHeight + 8,
+                  bottom: playerDockHeight + 8 - _recuoInferiorDoRail,
                   child: _actionRail(),
                 ),
                 Positioned(
@@ -3621,6 +3642,41 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // [COMP1-E10] O nome de um jogo baixado, para quem não vê a mesa: de quem é,
+  // quantas cartas tem, a tarja quando existe, e as cartas em ordem. Nada é
+  // inventado — é só o que a mesa já mostra.
+  String _rotuloDoJogoBaixado(
+    String dupla,
+    int index,
+    List<Carta> cartas,
+    Sash sash,
+  ) {
+    final dono = dupla == 'nos' ? 'nós' : 'eles';
+    final partes = <String>[
+      'jogo ${index + 1} de $dono',
+      _emCartas(cartas.length),
+      if (sash != Sash.nenhuma) _sashEmPalavras(sash),
+    ];
+    final composicao = cartas.map(_cartaEmPalavras).join(', ');
+    return '${partes.join(', ')}: $composicao';
+  }
+
+  // A mesma informação da tarja, em palavras ("LIMPA · 200" o leitor soletra mal).
+  String _sashEmPalavras(Sash sash) {
+    switch (sash) {
+      case Sash.limpa:
+        return 'canastra limpa, 200 pontos';
+      case Sash.suja:
+        return 'canastra suja, 100 pontos';
+      case Sash.n500:
+        return 'canastra de 500 pontos';
+      case Sash.n1000:
+        return 'canastra de 1000 pontos';
+      case Sash.nenhuma:
+        return '';
+    }
+  }
+
   Widget _meldWidget(String dupla, int index, List<Carta> cartas) {
     cartas = _j.ordenarMeld(cartas); // jogo baixado em ordem crescente
     final subs = _j.substitutosMeld(cartas); // #9: coringa mostra a carta que ocupa
@@ -3633,43 +3689,56 @@ class _MesaScreenState extends State<MesaScreen> {
     final totalWidth = cardWidth + (count - 1) * step;
     final sash = _sashDeMeld(cartas);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        if (dupla == 'nos' &&
-            _sel.isNotEmpty &&
-            _minhaVezAtiva &&
-            _j.jaComprou) {
-          _estender(index);
-        } else {
-          _showMeldZoom(dupla, index);
-        }
-      },
-      child: SizedBox(
-        width: totalWidth,
-        height: cardHeight,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            for (var i = 0; i < count; i++)
-              Positioned(
-                left: i * step,
-                top: 0,
-                child: _meldCardFace(
-                  cartas[i],
-                  subs[i],
-                  width: cardWidth,
-                  height: cardHeight,
-                ),
-              ),
-            if (sash != Sash.nenhuma)
-              Positioned(
-                left: 1,
-                right: 1,
-                bottom: 0,
-                child: _canastraRibbon(sash, false),
-              ),
-          ],
+    // A MESMA expressão decide a ação e o que é anunciado.
+    final estende = dupla == 'nos' &&
+        _sel.isNotEmpty &&
+        _minhaVezAtiva &&
+        _j.jaComprou;
+
+    return Semantics(
+      label: _rotuloDoJogoBaixado(dupla, index, cartas, sash),
+      hint: estende ? 'estender com as cartas escolhidas' : 'ampliar o jogo',
+      button: true,
+      enabled: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (estende) {
+            _estender(index);
+          } else {
+            _showMeldZoom(dupla, index);
+          }
+        },
+        // Cartas, curingas e tarja são o DESENHO do jogo: sem a exclusão o
+        // leitor leria o rótulo acima e, em seguida, os cacos da pintura.
+        child: ExcludeSemantics(
+          child: SizedBox(
+            width: totalWidth,
+            height: cardHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (var i = 0; i < count; i++)
+                  Positioned(
+                    left: i * step,
+                    top: 0,
+                    child: _meldCardFace(
+                      cartas[i],
+                      subs[i],
+                      width: cardWidth,
+                      height: cardHeight,
+                    ),
+                  ),
+                if (sash != Sash.nenhuma)
+                  Positioned(
+                    left: 1,
+                    right: 1,
+                    bottom: 0,
+                    child: _canastraRibbon(sash, false),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -3742,6 +3811,10 @@ class _MesaScreenState extends State<MesaScreen> {
               glowing: monteGlow,
             ),
             onTap: _tapMonte,
+            // O estado que decide se o toque compra é o MESMO que `_tapMonte`
+            // confere antes de comprar.
+            rotulo: 'monte, ${_emCartas(_j.monte.length)}',
+            habilitada: _minhaVezAtiva && !_j.jaComprou,
           ),
           const SizedBox(width: 5),
           Expanded(child: _discardPile(glowing: lixoGlow)),
@@ -3750,6 +3823,7 @@ class _MesaScreenState extends State<MesaScreen> {
             topLabel: 'MORTO',
             bottomLabel: '1',
             showCount: false,
+            rotulo: _j.mortos.isNotEmpty ? 'morto 1, disponível' : 'morto 1, já pego',
             child: _j.mortos.isNotEmpty
                 ? _backCard(width: cardWidth, height: cardHeight)
                 : _emptyCard(width: cardWidth, height: cardHeight),
@@ -3759,6 +3833,7 @@ class _MesaScreenState extends State<MesaScreen> {
             topLabel: 'MORTO',
             bottomLabel: '2',
             showCount: false,
+            rotulo: _j.mortos.length > 1 ? 'morto 2, disponível' : 'morto 2, já pego',
             child: _j.mortos.length > 1
                 ? _backCard(width: cardWidth, height: cardHeight)
                 : _emptyCard(width: cardWidth, height: cardHeight),
@@ -3775,6 +3850,8 @@ class _MesaScreenState extends State<MesaScreen> {
     bool showCount = true,
     required Widget child,
     VoidCallback? onTap,
+    required String rotulo,
+    bool habilitada = false,
   }) {
     final content = Stack(
       clipBehavior: Clip.none,
@@ -3803,12 +3880,21 @@ class _MesaScreenState extends State<MesaScreen> {
       ],
     );
 
+    // As tarjas "MONTE"/"MORTO"/"1" e o contador são texto de VISUAL: sem a
+    // exclusão o leitor diria "MONTE, 40" em pedaços soltos. Fala o rótulo
+    // único, que já traz a contagem.
+    final corpo = ExcludeSemantics(child: content);
     return onTap == null
-        ? content
-        : GestureDetector(
-            onTap: onTap,
-            behavior: HitTestBehavior.opaque,
-            child: content,
+        ? Semantics(container: true, label: rotulo, child: corpo)
+        : Semantics(
+            label: rotulo,
+            button: true,
+            enabled: habilitada,
+            child: GestureDetector(
+              onTap: onTap,
+              behavior: HitTestBehavior.opaque,
+              child: corpo,
+            ),
           );
   }
 
@@ -3852,62 +3938,76 @@ class _MesaScreenState extends State<MesaScreen> {
         ? cardWidth
         : cardWidth + (cards.length - 1) * step;
 
-    return GestureDetector(
-      onTap: _tapLixo,
-      behavior: HitTestBehavior.opaque,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            height: cardHeight,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              border: glowing
-                  ? Border.all(color: _mPurpleHi, width: 1.2)
-                  : null,
-            ),
-            child: cards.isEmpty
-                ? _emptyCard(width: cardWidth, height: cardHeight)
-                : SingleChildScrollView(
-                    controller: aberto ? _discardScroll : null,
-                    scrollDirection: Axis.horizontal,
-                    physics: aberto
-                        ? const BouncingScrollPhysics()
-                        : const NeverScrollableScrollPhysics(),
-                    child: SizedBox(
-                      width: totalWidth,
-                      height: cardHeight,
-                      child: Stack(
-                        children: [
-                          for (var i = 0; i < cards.length; i++)
-                            Positioned(
-                              left: i * step,
-                              child: _frontCard(
-                                cards[i],
-                                width: cardWidth,
-                                height: cardHeight,
-                              ),
-                            ),
-                        ],
+    // O lixo é UM alvo: nome, contagem e — no aberto, onde o topo é público —
+    // que carta está por cima, que é a informação com que se decide comprar.
+    final topo = _j.lixoTopo;
+    final rotuloDoLixo = StringBuffer(aberto ? 'lixo aberto' : 'lixo')
+      ..write(', ${_emCartas(_j.lixo.length)}');
+    if (topo != null) rotuloDoLixo.write(', topo ${_cartaEmPalavras(topo)}');
+
+    return Semantics(
+      label: rotuloDoLixo.toString(),
+      button: true,
+      enabled: _minhaVezAtiva,
+      child: GestureDetector(
+        onTap: _tapLixo,
+        behavior: HitTestBehavior.opaque,
+        child: ExcludeSemantics(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: cardHeight,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(7),
+                  border: glowing
+                      ? Border.all(color: _mPurpleHi, width: 1.2)
+                      : null,
+                ),
+                child: cards.isEmpty
+                    ? _emptyCard(width: cardWidth, height: cardHeight)
+                    : SingleChildScrollView(
+                        controller: aberto ? _discardScroll : null,
+                        scrollDirection: Axis.horizontal,
+                        physics: aberto
+                            ? const BouncingScrollPhysics()
+                            : const NeverScrollableScrollPhysics(),
+                        child: SizedBox(
+                          width: totalWidth,
+                          height: cardHeight,
+                          child: Stack(
+                            children: [
+                              for (var i = 0; i < cards.length; i++)
+                                Positioned(
+                                  left: i * step,
+                                  child: _frontCard(
+                                    cards[i],
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+              ),
+              Positioned(
+                left: 3,
+                right: 3,
+                bottom: 3,
+                child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
+              ),
+              // Contador do lixo — SOBRE a carta do topo (canto sup. dir. da carta),
+              // longe do monte e dos mortos pra não poluir aquele canto.
+              Positioned(
+                top: -6,
+                left: cardWidth - 22,
+                child: _countCircle(_j.lixo.length),
+              ),
+            ],
           ),
-          Positioned(
-            left: 3,
-            right: 3,
-            bottom: 3,
-            child: _centralOverlayLabel(aberto ? 'LIXO ABERTO' : 'LIXO'),
-          ),
-          // Contador do lixo — SOBRE a carta do topo (canto sup. dir. da carta),
-          // longe do monte e dos mortos pra não poluir aquele canto.
-          Positioned(
-            top: -6,
-            left: cardWidth - 22,
-            child: _countCircle(_j.lixo.length),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -4060,6 +4160,42 @@ class _MesaScreenState extends State<MesaScreen> {
     );
   }
 
+  // [COMP1-E10] Quem é quem na mesa, em palavras: apelido, lado da dupla, quantas
+  // cartas restam e se é a vez. Presença não entra — a mesa de treino não
+  // modela queda, e anunciar "presente" seria inventar.
+  String _rotuloDoAssento(int seat) {
+    final apelido = _j.apelidos[seat];
+    final minhaDupla = seat.isEven; // par é "nós", ímpar é "eles"
+    final papel = seat == 0
+        ? null
+        : minhaDupla
+            ? 'seu parceiro, robô'
+            : 'adversário, robô';
+    final partes = <String>[
+      apelido,
+      ?papel,
+      _emCartas(_j.maos[seat].length),
+      if (_j.vez == seat && !_j.rodadaEncerrada) 'jogando agora',
+    ];
+    return partes.join(', ');
+  }
+
+  // UM nó por jogador, e não um por pedaço: avatar, apelido, contador e marca da
+  // vez viram uma frase, e o avatar não vira um SEGUNDO nó do mesmo jogador.
+  Widget _assentoTocavel(int seat, {required Widget child}) {
+    return Semantics(
+      label: _rotuloDoAssento(seat),
+      hint: 'ver o jogador',
+      button: true,
+      enabled: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _expandedAvatarSeat = seat),
+        child: ExcludeSemantics(child: child),
+      ),
+    );
+  }
+
   Widget _sidePlayer(int seat, {required bool left}) {
     final active = _j.vez == seat && !_j.rodadaEncerrada;
     final count = _j.maos[seat].length;
@@ -4067,8 +4203,12 @@ class _MesaScreenState extends State<MesaScreen> {
     // Fora do turno o assento não reserva largura da mesa: somente uma pequena
     // aba fica visível na borda. O avatar abre apenas no turno ou por toque.
     if (!active) {
-      return GestureDetector(
-        onTap: () => setState(() => _expandedAvatarSeat = seat),
+      // [COMP1-E10] HOLD LOCALIZADO: a aba mede 12 × 46 e o alvo continua o
+      // desenho. Levar a região acionável a 48 de largura cobriria a borda da
+      // área de jogos, onde há jogos baixados tocáveis — sobreposição entre
+      // controles. A semântica entra; o piso de 48 fica para decisão.
+      return _assentoTocavel(
+        seat,
         child: SizedBox(
           width: 12,
           height: 46,
@@ -4121,8 +4261,8 @@ class _MesaScreenState extends State<MesaScreen> {
       );
     }
 
-    return GestureDetector(
-      onTap: () => setState(() => _expandedAvatarSeat = seat),
+    return _assentoTocavel(
+      seat,
       child: Container(
         width: 58,
         padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
@@ -4233,20 +4373,30 @@ class _MesaScreenState extends State<MesaScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // [COMP1-E10] As três faixas de 48 se encostam sem folga e sem se
+        // sobrepor; a folga de 7 entre os DESENHOS continua existindo, dada
+        // pelo recuo de cada disco dentro da sua faixa (ver `_railButton`).
         _railButton(
           _chatConfigurado == ChatMesa.desligado
               ? Icons.speaker_notes_off_rounded
               : Icons.chat_bubble_rounded,
           () => setState(() => _msg = _avisoDoChat()),
+          // O ícone já diz quando o chat está desligado; o nome diz o mesmo.
+          rotulo: _chatConfigurado == ChatMesa.desligado
+              ? 'chat, desligado nesta mesa'
+              : 'chat',
+          posicao: 0,
         ),
-        const SizedBox(height: 7),
         _railButton(Icons.sentiment_satisfied_alt_rounded, () {
           setState(() => _msg = 'Expressões — ligação final com o Claude.');
-        }),
-        const SizedBox(height: 7),
+        }, rotulo: 'expressões', posicao: 1),
         _railButton(
           _soundEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
           () => setState(() => _soundEnabled = !_soundEnabled),
+          rotulo: 'som',
+          posicao: 2,
+          // O ícone é a única indicação do estado, e ícone não se ouve.
+          ligado: _soundEnabled,
         ),
         // O menu da Mesa NAO entra aqui. Esta coluna e ancorada pela base, e um
         // quarto botao empurrava chat, expressoes e som 45 px para cima — os
@@ -4273,22 +4423,86 @@ class _MesaScreenState extends State<MesaScreen> {
     }
   }
 
-  Widget _railButton(IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 38,
-        height: 38,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xEE0A0A0A),
-          border: Border.all(color: _mGold, width: 1),
-          boxShadow: const [
-            BoxShadow(color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
-          ],
-        ),
-        child: Icon(icon, color: _mGoldHi, size: 20),
+  // [COMP1-E10] O disco desenhado do controle lateral. Ele NÃO é o alvo.
+  static const double _discoDoControleLateral = 38.0;
+
+  /// Quantos discos a lateral tem.
+  static const int _discosDoRail = 3;
+
+  /// A folga entre um disco e o seguinte no desenho APROVADO: `38 + 7 + 38 + 7 + 38`.
+  static const double _folgaEntreDiscosDoRail = 7.0;
+
+  /// O passo do DESENHO: do topo de um disco ao topo do próximo (45).
+  static const double _passoDoDiscoDoRail =
+      _discoDoControleLateral + _folgaEntreDiscosDoRail;
+
+  /// O que sobra da faixa de 48 para cada lado de um disco centrado nela (5).
+  static const double _sobraDoAlvoDoRail =
+      (kPisoDeToqueDaMesa - _discoDoControleLateral) / 2;
+
+  /// Passo do ALVO (48) menos passo do DESENHO (45): três pontos por posição.
+  static const double _escorregaDoAlvoDoRail =
+      kPisoDeToqueDaMesa - _passoDoDiscoDoRail;
+
+  /// Quanto a faixa do último disco desce abaixo do desenho dele (8). O
+  /// `Positioned` do rail desconta exatamente isto da própria âncora.
+  static const double _recuoInferiorDoRail =
+      _sobraDoAlvoDoRail + _escorregaDoAlvoDoRail * (_discosDoRail - 1) / 2;
+
+  /// Onde o disco de [posicao] começa dentro da própria faixa de 48 (8, 5, 2):
+  /// os desenhos voltam a andar de 45 em 45 enquanto as faixas andam de 48.
+  static double _recuoSuperiorDoDisco(int posicao) =>
+      _sobraDoAlvoDoRail +
+      _escorregaDoAlvoDoRail * ((_discosDoRail - 1) / 2 - posicao);
+
+  // O ALVO É MAIOR QUE O DISCO, E DE PROPÓSITO: cresce a REGIÃO ACIONÁVEL (48 ×
+  // 48, opaca ao toque), e o disco de 38 fica dentro dela, POSICIONADO onde a
+  // mesa aprovada o desenhava — rente à borda direita e no mesmo topo. É a
+  // mesma solução do `IconButton` do Material. Porte da entrega b1616669.
+  Widget _railButton(
+    IconData icon,
+    VoidCallback onTap, {
+    required String rotulo,
+    required int posicao,
+    bool? ligado,
+    bool habilitado = true,
+  }) {
+    final corpo = SizedBox(
+      width: kPisoDeToqueDaMesa,
+      height: kPisoDeToqueDaMesa,
+      child: Stack(
+        children: [
+          Positioned(
+            top: _recuoSuperiorDoDisco(posicao),
+            right: 0,
+            child: Container(
+              width: _discoDoControleLateral,
+              height: _discoDoControleLateral,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xEE0A0A0A),
+                border: Border.all(color: _mGold, width: 1),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x66000000), blurRadius: 6, offset: Offset(0, 2)),
+                ],
+              ),
+              child: Icon(icon, color: _mGoldHi, size: 20),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Semantics(
+      label: rotulo,
+      button: true,
+      enabled: habilitado,
+      toggled: ligado,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: habilitado ? onTap : null,
+        child: corpo,
       ),
     );
   }
@@ -4314,31 +4528,36 @@ class _MesaScreenState extends State<MesaScreen> {
     // Em retrato, a composicao aprovada fica como estava, linha por linha.
     return Column(
       children: [
+        // [COMP1-E10] O rodapé do jogador é UM nó (`_assentoTocavel`), e não
+        // dois (avatar + texto soltos). O HUD compacto aprovado (42) fica como
+        // está: a região acionável é a faixa inteira do HUD, e ela tem 42 de
+        // altura. HOLD LOCALIZADO: crescer para 48 sem mudar o desenho exigiria
+        // invadir a mão (abaixo) ou a área de jogos (acima) — sobreposição.
         SizedBox(
           height: 42, // HUD do jogador mais baixo (libera altura p/ jogos)
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              GestureDetector(
-                onTap: () => setState(() => _expandedAvatarSeat = 0),
-                child: _avatarCircle(0, size: 40, active: active),
-              ),
-              const SizedBox(width: 7),
-              Text(
-                'VOCÊ  •  ${_j.maos[0].length} cartas',
-                style: TextStyle(
-                  color: active ? _mPurpleHi : _mGoldHi,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
+          child: _assentoTocavel(
+            0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _avatarCircle(0, size: 40, active: active),
+                const SizedBox(width: 7),
+                Text(
+                  'VOCÊ  •  ${_j.maos[0].length} cartas',
+                  style: TextStyle(
+                    color: active ? _mPurpleHi : _mGoldHi,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
-              if (active) ...[
-                const SizedBox(width: 10),
-                _turnBadge(compact: true),
+                if (active) ...[
+                  const SizedBox(width: 10),
+                  _turnBadge(compact: true),
+                ],
+                // Chat/expressões/som agora ficam numa coluna vertical à direita
+                // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
               ],
-              // Chat/expressões/som agora ficam numa coluna vertical à direita
-              // da mesa (_actionRail no _board). Aqui no rodapé fica só o jogador.
-            ],
+            ),
           ),
         ),
         Expanded(
@@ -4356,13 +4575,16 @@ class _MesaScreenState extends State<MesaScreen> {
 
   /// Identidade do jogador empilhada, para o rodape deitado.
   Widget _identidadeEmColuna(bool active) {
+    // [COMP1-E10] Um nó só para o jogador, como nos outros assentos; o alvo é a
+    // coluna inteira (avatar de 50 + texto), acima do piso de 48.
+    return _assentoTocavel(0, child: _colunaDaIdentidade(active));
+  }
+
+  Widget _colunaDaIdentidade(bool active) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          onTap: () => setState(() => _expandedAvatarSeat = 0),
-          child: _avatarCircle(0, size: 50, active: active),
-        ),
+        _avatarCircle(0, size: 50, active: active),
         const SizedBox(height: 4),
         Text(
           'VOCÊ  •  ${_j.maos[0].length} cartas',
@@ -4426,7 +4648,24 @@ class _MesaScreenState extends State<MesaScreen> {
             Positioned(
               left: index * step,
               bottom: 0,
-              child: GestureDetector(
+              // [COMP1-E10] A carta FALA: nome, posição na mão (a mão tem dois
+              // baralhos — duas cartas iguais precisam ser distinguíveis),
+              // seleção e obrigação do topo do lixo. A geometria da mão NÃO muda
+              // (HOLD LOCALIZADO da Central: o alvo continua sendo a faixa
+              // descoberta de cada carta, abaixo de 48 na mão aprovada).
+              child: Semantics(
+                sortKey: OrdinalSortKey(index.toDouble()),
+                label: _rotuloDaCartaDaMao(
+                  hand[index],
+                  posicao: index + 1,
+                  total: count,
+                  obrigatoria: _j.lixoTopoObrigatorio != null &&
+                      hand[index].id == _j.lixoTopoObrigatorio,
+                ),
+                button: true,
+                enabled: active,
+                selected: _sel.contains(index),
+                child: GestureDetector(
                 onTap: active ? () => _tapCard(index) : null,
                 child: AnimatedSlide(
                   duration: const Duration(milliseconds: 180),
@@ -4446,11 +4685,14 @@ class _MesaScreenState extends State<MesaScreen> {
                   ),
                 ),
               ),
+              ),
             ),
           Positioned(
             top: -7,
             right: -8,
-            child: _countCircle(count),
+            // O contador é desenho: o total já vai em cada carta ("carta 3 de
+            // 11") e no rodapé. Um terceiro anúncio do mesmo número atrapalha.
+            child: ExcludeSemantics(child: _countCircle(count)),
           ),
         ],
       ),
@@ -4470,6 +4712,19 @@ class _MesaScreenState extends State<MesaScreen> {
         ),
       ),
     );
+  }
+
+  // [COMP1-E10] O nome falado de uma carta da mão. A obrigação do topo do lixo
+  // entra no NOME, e não num `hint` (que vários leitores só dizem depois de uma
+  // pausa, e alguns nem isso).
+  String _rotuloDaCartaDaMao(
+    Carta carta, {
+    required int posicao,
+    required int total,
+    required bool obrigatoria,
+  }) {
+    final base = '${_cartaEmPalavras(carta)}, carta $posicao de $total';
+    return obrigatoria ? '$base, obrigatória do lixo' : base;
   }
 
   Widget _handCard(

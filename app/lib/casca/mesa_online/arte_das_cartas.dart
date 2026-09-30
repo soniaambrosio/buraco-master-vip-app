@@ -25,6 +25,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../cartas/nome_falavel_da_carta.dart';
 import 'estado_mesa_online.dart';
 
 /// O dorso, para monte e mortos — as pilhas que ninguém pode ver.
@@ -130,24 +131,15 @@ class CartaOnlineWidget extends StatelessWidget {
   }
 }
 
-String _emPalavras(CartaOnline c) {
-  if (c.valor == 'JOKER') return 'curinga';
-  const nomes = {
-    'A': 'ás',
-    'J': 'valete',
-    'Q': 'dama',
-    'K': 'rei',
-  };
-  final valor = nomes[c.valor] ?? c.valor;
-  final naipe = switch (c.naipe) {
-    'copas' => 'de copas',
-    'ouros' => 'de ouros',
-    'paus' => 'de paus',
-    'espadas' => 'de espadas',
-    _ => '',
-  };
-  return '$valor $naipe'.trim();
-}
+/// O mesmo nome que a Mesa de Treino fala.
+///
+/// O mapa de valores e naipes morava aqui e saiu para
+/// `lib/cartas/nome_falavel_da_carta.dart` quando o treino precisou dele. Não é
+/// refatoração de passagem: dois mapas separados divergem no dia em que alguém
+/// acertar só um, e a divergência aparece na boca do leitor de tela — o lugar
+/// mais caro de descobrir um defeito.
+String _emPalavras(CartaOnline c) =>
+    nomeFalavelDaCarta(valor: c.valor, naipe: c.naipe);
 
 /// A carta sem arte: naipe e valor desenhados.
 class _CartaEmTexto extends StatelessWidget {
