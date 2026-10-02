@@ -355,6 +355,24 @@ jobs:
           cp -R app/test/. app_build/test/
           cp app/data/torneios/*.json app_build/test/torneios/data/
           cp app/data/colecoes/*.json app_build/test/colecoes/data/
+          # [BMV-PUB-C1-COMP1-CI2] Os dois insumos que as suítes LEEM e que a
+          # montagem não materializava: o seed legado dos torneios (lido por
+          # `lerSeedLegado` em `test/<dominio>/data/legado/`, usado por
+          # `mtorneios` e `torneiobase` — SEED-12/SEED-14/CTR-04) e a matriz de
+          # mutações do ingresso (lida como `tools/mutacoes_ingresso.js` a
+          # partir de `app_build`, usada por `ingrcontrato` — RG-04). FALHA
+          # FECHADA: fonte ausente reprova o passo, e cada cópia é conferida
+          # byte a byte contra a fonte.
+          for par in \
+            "app/data/torneios/legado/tournamentTemplates.superseded.json app_build/test/torneios/data/legado/tournamentTemplates.superseded.json" \
+            "app/tools/mutacoes_ingresso.js app_build/tools/mutacoes_ingresso.js"; do
+            set -- $par
+            [ -f "$1" ] || { echo "insumo de teste ausente: $1"; exit 1; }
+            mkdir -p "$(dirname "$2")"
+            cp "$1" "$2"
+            cmp "$1" "$2" || { echo "copia divergente: $1 -> $2"; exit 1; }
+            echo "insumo de teste: $1 -> $2 (identico)"
+          done
           # O widget_test.dart do scaffold tem erro pré-existente conhecido.
           rm -f app_build/test/widget_test.dart
 
