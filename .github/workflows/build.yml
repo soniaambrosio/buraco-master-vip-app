@@ -4,29 +4,78 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      enviar_artefato:
+        description: "Enviar o APK validado como artefato do run (só a proprietária pode autorizar)"
+        type: boolean
+        default: false
+      publicar_release:
+        description: "Publicar o APK validado em uma Release NOVA, com tag exclusiva, sem substituir a 'latest' (só a proprietária pode autorizar)"
+        type: boolean
+        default: false
 
+# Push e merge só compilam e validam. Envio de artefato e publicação de Release
+# exigem disparo manual (workflow_dispatch) pela proprietária, com a opção marcada.
+# O job `build` declara o environment `apk-teste`. Com as proteções externas
+# abaixo configuradas, TODA execução, inclusive a de push, aguarda a aprovação
+# de soniaambrosio antes de receber a chave.
 permissions:
-  contents: write
+  contents: read
 
 # ============================================================================
 # ASSINATURA FIXA DE TESTE (resolve INSTALL_FAILED_UPDATE_INCOMPATIBLE)
-# - Keystore permanente: keystore/buraco-master-vip-test.jks.b64  (alias: bmv-test)
-# - Mesma chave do debug fixo antigo -> MESMO SHA-1 -> login Google segue valendo.
-# - Senhas vêm por ENV (abaixo) e viram key.properties no CI. NUNCA ficam no gradle.
+# - Chave de TESTE (alias bmv-test) e senhas vêm de Secrets do environment
+#   `apk-teste`: BMV_TEST_KEYSTORE_B64, BMV_TEST_STORE_PASSWORD e
+#   BMV_TEST_KEY_PASSWORD. Material de assinatura não se versiona.
+# - PRÉ-CONDIÇÕES EXTERNAS (este YAML NÃO as configura; a proprietária configura
+#   e confere em Settings > Environments e Settings > Secrets antes de cadastrar
+#   qualquer chave):
+#     * environment `apk-teste` com aprovação obrigatória de soniaambrosio;
+#     * branches de deploy do environment restritas a `main`;
+#     * Secrets BMV_TEST_* SOMENTE no environment, sem Secret de mesmo nome no
+#       repositório ou na organização.
+#   Sem essas proteções, a linha `environment: apk-teste` não protege a chave.
+# - O certificado esperado é conferido contra vars.BMV_TEST_CERT_SHA256
+#   (SHA-256 público do certificado; não é segredo).
+# - Keystore e key.properties só existem durante o job e são apagados no fim,
+#   inclusive após falha. Nunca vão para artefato nem para Release.
 # - applicationId de teste fixo: com.buracomastervip.poc.buraco_master_vip
 # - versionCode = número do run (incrementa a cada build).
-# Produção fica numa config SEPARADA (ver bloco comentado no fim do patch do gradle).
+# Este workflow gera APK de TESTE. Não é pacote de publicação na Play.
 # ============================================================================
 env:
   BMV_KEY_ALIAS: bmv-test
-  BMV_STORE_PASSWORD: bmvtest2026
-  BMV_KEY_PASSWORD: bmvtest2026
   BMV_APPLICATION_ID: com.buracomastervip.poc.buraco_master_vip
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Único job que recebe a chave. A aprovação (soniaambrosio) e a restrição à
+    # branch main são configuradas no environment, fora deste arquivo.
+    environment: apk-teste
+    outputs:
+      apk_sha256: ${{ steps.assinatura.outputs.apk_sha256 }}
     steps:
+      - name: "AUTORIZAÇÃO — distribuição só por disparo manual da proprietária"
+        id: autorizacao
+        env:
+          EVENTO: ${{ github.event_name }}
+          ATOR: ${{ github.triggering_actor }}
+          PEDIU_ARTEFATO: ${{ inputs.enviar_artefato == true }}
+          PEDIU_RELEASE: ${{ inputs.publicar_release == true }}
+        run: |
+          if [ "$EVENTO" = "workflow_dispatch" ] && { [ "$PEDIU_ARTEFATO" = "true" ] || [ "$PEDIU_RELEASE" = "true" ]; }; then
+            if [ "$ATOR" != "soniaambrosio" ]; then
+              echo "ERRO: distribuição pedida por '$ATOR'. Só soniaambrosio pode autorizar."
+              exit 1
+            fi
+            echo "distribuir=true" >> "$GITHUB_OUTPUT"
+            echo "Distribuição autorizada por $ATOR."
+          else
+            echo "distribuir=false" >> "$GITHUB_OUTPUT"
+            echo "Modo validação: compila e confere; sem artefato e sem Release."
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -108,18 +157,39 @@ jobs:
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$f"
           grep -n "minSdk" "$f" || true
 
-      - name: Install fixed TEST keystore (assinatura estável / SHA-1 do login Google)
+      - name: "PORTÃO — secrets da chave de TESTE precisam existir"
+        env:
+          KS_B64: ${{ secrets.BMV_TEST_KEYSTORE_B64 }}
+          KS_STORE_PASS: ${{ secrets.BMV_TEST_STORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.BMV_TEST_KEY_PASSWORD }}
         run: |
-          base64 -d keystore/buraco-master-vip-test.jks.b64 > app_build/android/app/buraco-master-vip-test.jks
-          echo "keystore de teste instalado: $(ls -l app_build/android/app/buraco-master-vip-test.jks | awk '{print $5}') bytes"
+          faltou=0
+          [ -n "${KS_B64:-}" ] || { echo "FALTOU o secret BMV_TEST_KEYSTORE_B64 (environment apk-teste)"; faltou=1; }
+          [ -n "${KS_STORE_PASS:-}" ] || { echo "FALTOU o secret BMV_TEST_STORE_PASSWORD (environment apk-teste)"; faltou=1; }
+          [ -n "${KS_KEY_PASS:-}" ] || { echo "FALTOU o secret BMV_TEST_KEY_PASSWORD (environment apk-teste)"; faltou=1; }
+          [ "$faltou" = "0" ] || exit 1
+          echo "Todos os secrets da chave de teste estão presentes."
 
-      - name: Write key.properties (senhas por ENV, nunca no build.gradle)
+      - name: Install fixed TEST keystore (assinatura estável / SHA-1 do login Google)
+        env:
+          KS_B64: ${{ secrets.BMV_TEST_KEYSTORE_B64 }}
         run: |
+          umask 077
+          printf '%s' "$KS_B64" | tr -d '[:space:]' | base64 -d > app_build/android/app/buraco-master-vip-test.jks
+          test -s app_build/android/app/buraco-master-vip-test.jks
+          echo "keystore de teste instalado: $(stat -c%s app_build/android/app/buraco-master-vip-test.jks) bytes"
+
+      - name: Write key.properties (senhas por Secret, nunca no repositório)
+        env:
+          KS_STORE_PASS: ${{ secrets.BMV_TEST_STORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.BMV_TEST_KEY_PASSWORD }}
+        run: |
+          umask 077
           cat > app_build/android/key.properties <<EOF
           storeFile=${GITHUB_WORKSPACE}/app_build/android/app/buraco-master-vip-test.jks
-          storePassword=${BMV_STORE_PASSWORD}
+          storePassword=${KS_STORE_PASS}
           keyAlias=${BMV_KEY_ALIAS}
-          keyPassword=${BMV_KEY_PASSWORD}
+          keyPassword=${KS_KEY_PASS}
           EOF
           echo "key.properties criado (senhas ocultas):"
           sed 's/Password=.*/Password=***/' app_build/android/key.properties
@@ -304,17 +374,113 @@ jobs:
             "$APKSIGNER" verify --print-certs ../build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | grep -iE "SHA-1|SHA-256" || true
           fi
 
-      - name: Upload APK artifact
+      - name: "PORTÃO — assinatura com o certificado de TESTE esperado"
+        id: assinatura
+        env:
+          ESPERADO: ${{ vars.BMV_TEST_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          ESP=$(printf '%s' "${ESPERADO:-}" | tr -d ': \r\n' | tr 'A-F' 'a-f')
+          if ! printf '%s' "$ESP" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "ERRO: vars.BMV_TEST_CERT_SHA256 ausente ou fora do formato (64 hexadecimais)."
+            exit 1
+          fi
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort | tail -1)
+          [ -n "$APKSIGNER" ] || { echo "ERRO: apksigner não encontrado"; exit 1; }
+          shopt -s nullglob
+          APKS=(app_build/build/app/outputs/flutter-apk/*.apk)
+          [ "${#APKS[@]}" -gt 0 ] || { echo "ERRO: nenhum APK gerado"; exit 1; }
+          for APK in "${APKS[@]}"; do
+            set +e
+            SAIDA=$("$APKSIGNER" verify --print-certs "$APK")
+            RC=$?
+            set -e
+            if [ "$RC" -ne 0 ]; then echo "ERRO: apksigner falhou (rc=$RC) em $APK"; exit 1; fi
+            DIGESTS=$(printf '%s\n' "$SAIDA" | sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p' | tr -d ' \r' | tr 'A-F' 'a-f')
+            N=$(printf '%s\n' "$DIGESTS" | grep -c . || true)
+            if [ "$N" -ne 1 ]; then echo "ERRO: esperava exatamente 1 digest SHA-256 em $APK, veio $N"; exit 1; fi
+            if ! printf '%s' "$DIGESTS" | grep -Eq '^[0-9a-f]{64}$'; then echo "ERRO: digest fora do formato em $APK"; exit 1; fi
+            if [ "$DIGESTS" != "$ESP" ]; then echo "ERRO: $APK assinado com certificado diferente do esperado ($DIGESTS)"; exit 1; fi
+            echo "OK: $(basename "$APK") -> $DIGESTS"
+          done
+          ARQ=app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          [ -f "$ARQ" ] || { echo "ERRO: $ARQ não encontrado"; exit 1; }
+          echo "apk_sha256=$(sha256sum "$ARQ" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Limpeza do material de assinatura (sempre, inclusive após falha)
+        id: limpeza
+        if: always()
+        run: |
+          rm -f app_build/android/app/buraco-master-vip-test.jks app_build/android/key.properties
+          for f in app_build/android/app/buraco-master-vip-test.jks app_build/android/key.properties; do
+            if [ -e "$f" ]; then echo "ERRO: $f ainda existe"; exit 1; fi
+          done
+          echo "material de assinatura removido"
+
+      - name: Upload APK artifact (somente com autorização, validação e limpeza OK)
+        if: success() && steps.assinatura.outcome == 'success' && steps.limpeza.outcome == 'success' && steps.autorizacao.outputs.distribuir == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: bmv-teste-apk
           path: app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
           if-no-files-found: error
+          retention-days: 7
 
-      - name: Publish APK as Release (link direto pro celular)
+  publicar:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publicar_release == true && github.triggering_actor == 'soniaambrosio'
+    runs-on: ubuntu-latest
+    # Sem environment: este job não recebe a chave. Só roda depois do `build`
+    # aprovado e validado, em disparo manual da proprietária com publicar_release.
+    permissions:
+      contents: write
+    steps:
+      - name: Baixar o APK validado
+        uses: actions/download-artifact@v4
+        with:
+          name: bmv-teste-apk
+
+      - name: Conferir o APK recebido (mesmo arquivo validado no build)
+        env:
+          ESPERADO: ${{ needs.build.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${ESPERADO:-}" | grep -Eq '^[0-9a-f]{64}$' || { echo "ERRO: SHA-256 do build ausente"; exit 1; }
+          OBTIDO=$(sha256sum app-arm64-v8a-release.apk | cut -d' ' -f1)
+          [ "$OBTIDO" = "$ESPERADO" ] || { echo "ERRO: APK recebido difere do validado"; exit 1; }
+          echo "OK: APK recebido = validado ($OBTIDO)"
+
+      - name: Publicar APK em Release NOVA, com tag exclusiva do commit validado
+        # Não apaga nem altera Releases anteriores (inclusive a `latest` antiga).
+        # A nova Release não é marcada como "Latest"; a retirada da antiga e a
+        # troca do link são etapas separadas, depois de validar a nova.
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          cp app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk BMV-Teste.apk
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest BMV-Teste.apk --title "BMV Teste (mais recente)" --notes "APK mais recente do Buraco Master VIP (teste nativo, release). Abra este link no celular para instalar."
+          set -euo pipefail
+          TAG="apk-teste-${GITHUB_SHA}-run${GITHUB_RUN_ID}"
+          # Consulta da tag: existe (rc=0) = parar; HTTP 404 confirmado = prosseguir;
+          # qualquer outra falha (rede, permissão, limite, status ilegível) = parar.
+          SAIDA="${RUNNER_TEMP}/consulta-tag.out"
+          set +e
+          gh api --include "repos/${GH_REPO}/git/ref/tags/${TAG}" >"$SAIDA" 2>"${SAIDA}.err"
+          RC=$?
+          set -e
+          STATUS="$(head -n 1 "$SAIDA" | tr -d '\r' | awk '{print $2}')"
+          if [ "$RC" -eq 0 ]; then
+            echo "ERRO: a tag ${TAG} já existe; nada foi publicado."
+            exit 1
+          elif [ "$RC" -ne 0 ] && [ "$STATUS" = "404" ]; then
+            echo "Tag ${TAG} inexistente (HTTP 404 confirmado); prosseguindo."
+          else
+            echo "ERRO: a consulta da tag falhou (rc=${RC}, status=${STATUS:-desconhecido}); nada foi publicado."
+            exit 1
+          fi
+          cp app-arm64-v8a-release.apk BMV-Teste.apk
+          gh release create "$TAG" BMV-Teste.apk \
+            --target "$GITHUB_SHA" \
+            --latest=false \
+            --title "BMV Teste ${GITHUB_SHA:0:12} (run ${GITHUB_RUN_ID})" \
+            --notes "APK de TESTE do Buraco Master VIP, commit ${GITHUB_SHA}, run ${GITHUB_RUN_ID}. Assinado com o certificado de teste conferido no build."
+          echo "Release publicada: ${TAG}"
