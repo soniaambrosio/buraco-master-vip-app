@@ -18,6 +18,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:fake_async/fake_async.dart';
@@ -28,6 +29,29 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:buraco_master_vip/services/endpoint_servidor.dart';
 import 'package:buraco_master_vip/services/online_service.dart';
 import 'package:buraco_master_vip/services/redacao_segredos.dart';
+
+/// Lê um arquivo da raiz do repositório subindo até `.firebaserc`.
+///
+/// Local de propósito, e não importado de `conta/raiz_do_repositorio.dart`: o
+/// `build.yml` copia SÓ este arquivo para `app_build/test/`, e um import de
+/// apoio quebraria o portão de conexão lá. Não achar é falha, nunca "passa".
+String _lerDaRaiz(String relativo) {
+  var atual = Directory.current.absolute;
+  for (var i = 0; i < 8; i++) {
+    final arquivo = File('${atual.path}/$relativo');
+    if (File('${atual.path}/.firebaserc').existsSync()) {
+      if (!arquivo.existsSync()) {
+        throw StateError('arquivo esperado não existe: $relativo');
+      }
+      return arquivo.readAsStringSync();
+    }
+    if (atual.parent.path == atual.path) break;
+    atual = atual.parent;
+  }
+  throw StateError(
+    'raiz do repositório não encontrada a partir de ${Directory.current.path}',
+  );
+}
 
 /// Canal WebSocket de mentira: guarda o que o app escreveu e deixa o teste
 /// empurrar mensagens do "servidor" para dentro do app.
@@ -314,6 +338,99 @@ void main() {
         expect(servico.erro, isNotNull);
       },
     );
+
+    // [P-29] O teste acima prova o que acontece com um binário sem endereço.
+    // Este prova que o pipeline de PUBLICAÇÃO não produz esse binário: o AAB
+    // recebe o endereço, sem valor padrão escondido, e há portão antes do build.
+    test('o pipeline de publicação entrega o endereço ao AAB [P-29]', () {
+      final release = _lerDaRaiz('.github/workflows/release-aab.yml');
+
+      expect(
+        release,
+        contains(r'BMV_SERVIDOR_URL: ${{ vars.BMV_SERVIDOR_URL }}'),
+        reason: 'o endereço do AAB vem só da variável de repositório — sem '
+            'padrão, para não existir uma segunda autoridade no workflow',
+      );
+      expect(
+        release,
+        contains('PORTAO — endereco do servidor deste AAB'),
+        reason: 'sem o portão, variável ausente só aparece no aparelho',
+      );
+      expect(
+        release,
+        contains(
+          'python3 -I tools/ci/validar_endpoint_servidor.py --vetores '
+          'tools/ci/endpoint_servidor_vetores.json',
+        ),
+        reason: 'o portão se prova contra a tabela de vetores antes de julgar '
+            'o endereço — é a mesma tabela que o teste de paridade abaixo lê',
+      );
+
+      final comando = RegExp(
+        r'flutter build appbundle --release(?:[ \t]*\\\r?\n[ \t]*--dart-define=\S+)+',
+      ).firstMatch(release);
+      expect(comando, isNotNull, reason: 'comando de build do AAB não achado');
+      expect(
+        comando!.group(0),
+        contains(r'--dart-define=BMV_SERVIDOR_URL="${BMV_SERVIDOR_URL}"'),
+        reason: 'é ESTE comando que gera o pacote da Play; sem o define, '
+            'Mesa por código, Mesa Pública e Saguão nascem mortos',
+      );
+    });
+
+    // [P-29] PARIDADE com o portão do pipeline. A tabela é a mesma que
+    // `tools/ci/validar_endpoint_servidor.py --vetores` confere do lado Python.
+    // Aqui é o validador REAL do app que julga cada vetor:
+    //   * onde a tabela registra o veredito do app, ele tem de bater;
+    //   * onde o portão aceita, o app TEM de aceitar — senão o pipeline
+    //     aprovaria um AAB com o online morto;
+    //   * qualquer exceção que não seja EndpointInvalido é divergência: o
+    //     transporte só converte EndpointInvalido em estado seguro.
+    test('o portão do pipeline nunca aceita o que o app recusa [P-29]', () {
+      final dados = jsonDecode(
+        _lerDaRaiz('tools/ci/endpoint_servidor_vetores.json'),
+      ) as Map<String, dynamic>;
+      final vetores =
+          (dados['vetores'] as List<dynamic>).cast<Map<String, dynamic>>();
+      expect(vetores, isNotEmpty, reason: 'tabela de vetores vazia');
+
+      final divergencias = <String>[];
+      for (final v in vetores) {
+        final url = v['url'] as String;
+        final app = v['app'] as String;
+        final portao = v['portao'] as String;
+        final normalizado = v['normalizado'] as String?;
+        final rotulo = jsonEncode(url);
+
+        String obtido;
+        Uri? saida;
+        try {
+          saida = EndpointServidor.validar(url, perfil: PerfilDeBuild.release);
+          obtido = 'aceita';
+        } on EndpointInvalido {
+          obtido = 'recusa';
+        } catch (e) {
+          obtido = 'excecao';
+          divergencias.add('$rotulo: o app lança ${e.runtimeType}, '
+              'que o transporte não converte em estado seguro');
+        }
+
+        if (app != 'indeterminado' && obtido != app) {
+          divergencias.add('$rotulo: o app $obtido, a tabela diz $app');
+        }
+        if (portao == 'aceita' && obtido != 'aceita') {
+          divergencias.add('$rotulo: o portão aceita e o app não');
+        }
+        if (normalizado != null &&
+            saida != null &&
+            saida.toString() != normalizado) {
+          divergencias.add(
+            '$rotulo: o app normaliza para $saida, a tabela diz $normalizado',
+          );
+        }
+      }
+      expect(divergencias, isEmpty, reason: divergencias.join('\n'));
+    });
   });
 
   // =========================================================================
