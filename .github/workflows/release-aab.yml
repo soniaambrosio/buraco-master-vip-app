@@ -77,6 +77,15 @@ env:
   # NAO e alterado, para o APK .poc seguir intacto.
   BMV_FIREBASE_APP_ID_POC: '1:203886484007:android:734aaa61ca5ca68b29cc02'
 
+  # [P-29] Endereco do servidor online. Mesmo nome e mesmo mecanismo do
+  # build.yml (APK de teste): vem da variavel de repositorio, entra no binario
+  # por --dart-define e e conferido ANTES do build. Diferenca deliberada: aqui
+  # NAO ha valor padrao. Um AAB de publicacao so sai com o endereco que a
+  # titular configurou; variavel ausente reprova o portao logo abaixo, em vez de
+  # gerar um bundle em que Mesa por codigo, Mesa Publica e Saguao abrem com
+  # "este aplicativo esta mal configurado".
+  BMV_SERVIDOR_URL: ${{ vars.BMV_SERVIDOR_URL }}
+
 jobs:
   aab:
     runs-on: ubuntu-latest
@@ -103,6 +112,23 @@ jobs:
             exit 1
           fi
           echo "versionCode $VERSION_CODE aceito (maior que 2)."
+
+      - name: "PORTAO — endereco do servidor deste AAB"
+        # [P-29] O app recusa endereco vazio, local ou sem TLS em tempo de
+        # execucao (`app/lib/services/endpoint_servidor.dart`), mas descobrir
+        # isso no aparelho de quem instalou e tarde demais. O portao interpreta
+        # a URL (nao compara texto) com a mesma politica de release do app:
+        # recusa tudo que o app recusa, e so recusa a mais apelidos de maquina
+        # local e sintaxe malformada.
+        #
+        # Primeiro o portao prova a si mesmo contra a tabela de vetores
+        # versionada (a mesma que o teste Dart de paridade le); depois julga o
+        # endereco deste build, lido do ambiente e nunca de argumento.
+        run: |
+          python3 -I tools/ci/validar_endpoint_servidor.py --vetores tools/ci/endpoint_servidor_vetores.json > "$RUNNER_TEMP/vetores-endpoint.txt" \
+            || { cat "$RUNNER_TEMP/vetores-endpoint.txt"; echo "ERRO: o validador do endereco diverge da tabela de vetores."; exit 1; }
+          tail -1 "$RUNNER_TEMP/vetores-endpoint.txt"
+          python3 -I tools/ci/validar_endpoint_servidor.py
 
       - name: "PORTAO — secrets da chave de upload precisam existir"
         env:
@@ -580,6 +606,7 @@ jobs:
           VERSION_NAME: ${{ inputs.version_name }}
         run: |
           cd app_build && flutter build appbundle --release \
+            --dart-define=BMV_SERVIDOR_URL="${BMV_SERVIDOR_URL}" \
             --dart-define=BMV_AMBIENTE=producao \
             --dart-define=BMV_GIT_SHA="${GITHUB_SHA}" \
             --dart-define=BMV_GIT_BRANCH="${GITHUB_REF_NAME}" \
@@ -635,6 +662,25 @@ jobs:
             --version-name="${VERSION_NAME}" \
             --icone=branding/android/res
 
+      - name: "EVIDENCIA AUXILIAR — host do servidor presente no binario"
+        # [P-29] EVIDENCIA AUXILIAR, NAO PROVA. `String.fromEnvironment` vira
+        # literal no snapshot AOT; a AUSENCIA do host na libapp.so do arm64
+        # mostra que o --dart-define nao chegou ao binario, e reprova. A
+        # PRESENCA nao prova a configuracao efetiva: o mesmo texto pode estar
+        # no binario por outro motivo, e nada aqui mostra o app USANDO esse
+        # endereco. A prova da configuracao efetiva e de execucao: o AAB
+        # instalado conecta e autentica nesse servidor (laudo BMV-PREP-C2 §1.5).
+        run: |
+          AAB=app_build/build/app/outputs/bundle/release/app-release.aab
+          HOST=$(printf '%s' "$BMV_SERVIDOR_URL" | sed -E 's#^[A-Za-z]+://##; s#[/:].*$##')
+          test -n "$HOST" || { echo "ERRO: nao consegui extrair o host de BMV_SERVIDOR_URL"; exit 1; }
+          n=$(unzip -p "$AAB" base/lib/arm64-v8a/libapp.so | grep -a -c -F "$HOST" || true)
+          if [ "${n:-0}" -lt 1 ]; then
+            echo "ERRO: o host '$HOST' nao esta em base/lib/arm64-v8a/libapp.so — o endereco nao entrou no AAB."
+            exit 1
+          fi
+          echo "evidencia auxiliar: host presente no binario arm64 ($n ocorrencia(s)); nao substitui a prova de execucao."
+
       - name: "VERIFICACAO FINAL — assinatura e impressao digital do AAB"
         # Imprime as impressoes digitais da chave que assinou, e o SHA-256 do
         # proprio arquivo. Os dois vao para o relatorio da OS. Nada aqui expoe
@@ -674,6 +720,7 @@ jobs:
             echo "| applicationId | \`${BMV_APPLICATION_ID}\` |"
             echo "| versionCode | \`${VERSION_CODE}\` |"
             echo "| versionName | \`${VERSION_NAME}\` |"
+            echo "| servidor online | \`${BMV_SERVIDOR_URL}\` |"
             echo "| arquivo | \`app-release.aab\` |"
             echo "| tamanho | $(du -h "$AAB" | cut -f1) |"
             echo "| SHA-256 | \`$(sha256sum "$AAB" | cut -d' ' -f1)\` |"

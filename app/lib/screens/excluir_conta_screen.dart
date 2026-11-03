@@ -438,61 +438,71 @@ class _ExcluirContaScreenState extends State<ExcluirContaScreen> {
         border: Border.all(color: _borda),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          iconColor: _ouro,
-          collapsedIconColor: _textoSec,
-          leading: Icon(icone, color: _ouro, size: 20),
-          title: Text(
-            '$titulo (${linhas.length})',
-            style: const TextStyle(
-              color: _texto,
-              fontSize: 13.4,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 3),
-            child: Text(
-              subtitulo,
+      // O ListTile de dentro do ExpansionTile pinta fundo e tinta do toque no
+      // Material MAIS PRÓXIMO. Sem este, o mais próximo é o do Scaffold, que
+      // fica ABAIXO da cor do cartão: o toque não aparece, e o Flutter acusa
+      // isso em debug ("ListTile background color or ink splashes may be
+      // invisible"). Transparente de propósito: cor, borda, raio e recorte
+      // continuam os do cartão — é o mesmo arranjo que o próprio ExpansionTile
+      // usa quando recebe cor de fundo.
+      child: Material(
+        type: MaterialType.transparency,
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            iconColor: _ouro,
+            collapsedIconColor: _textoSec,
+            leading: Icon(icone, color: _ouro, size: 20),
+            title: Text(
+              '$titulo (${linhas.length})',
               style: const TextStyle(
-                color: _textoSec,
-                fontSize: 10.6,
-                height: 1.3,
+                color: _texto,
+                fontSize: 13.4,
+                fontWeight: FontWeight.w800,
               ),
             ),
-          ),
-          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-          children: [
-            for (final linha in linhas)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      linha.caminho,
-                      style: const TextStyle(
-                        color: _ouroClaro,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      linha.porque,
-                      style: const TextStyle(
-                        color: _textoSec,
-                        fontSize: 10.6,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                subtitulo,
+                style: const TextStyle(
+                  color: _textoSec,
+                  fontSize: 10.6,
+                  height: 1.3,
                 ),
               ),
-          ],
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            children: [
+              for (final linha in linhas)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        linha.caminho,
+                        style: const TextStyle(
+                          color: _ouroClaro,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        linha.porque,
+                        style: const TextStyle(
+                          color: _textoSec,
+                          fontSize: 10.6,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
