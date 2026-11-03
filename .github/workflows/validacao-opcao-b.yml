@@ -1,4 +1,4 @@
-# MINUTA rev. 3.1 — OS BMV-A2-D2, opção B. NÃO PUBLICADA E NÃO EXECUTADA.
+# MINUTA rev. 3.2 — OS BMV-A2-D2, opção B. NÃO PUBLICADA E NÃO EXECUTADA.
 # Publicar este arquivo ou dispará-lo exige autorização própria da proprietária.
 #
 # Finalidade: compilar e testar a proposta da opção B SEM material de assinatura.
@@ -15,6 +15,8 @@
 #   - Versões diretas fixas não fixam as transitivas; o pubspec.lock resultante não é
 #     versionado. O conteúdo integral dele e o inventário de `flutter pub deps` são
 #     impressos no log (sem upload) logo após a resolução.
+#   - rev. 3.2: diagnóstico após o scaffold; o pubspec.lock que o `flutter create` grava
+#     mesmo com --no-pub só é removido se for exatamente o esperado (senão, falha).
 name: "Validação experimental — opção B (sem chave)"
 
 on:
@@ -57,6 +59,41 @@ jobs:
         # --no-pub: o `flutter create` não roda `pub get`. A única resolução da montagem
         # acontece depois que o pubspec já tem as versões diretas e os overrides do JNI.
         run: flutter create --no-pub --org com.buracomastervip.poc --project-name buraco_master_vip app_build
+
+      - name: Diagnóstico do scaffold (lock, .dart_tool e SDK; sem resolver)
+        # Só leitura. No Flutter 3.44.8 (create.dart, commit 058e0af2c2b57e369d905a03ac9748b0ebf543c6),
+        # o `flutter create` grava pubspec.lock mesmo com --no-pub: `_generatePubspecLock` é chamada
+        # antes do `if (shouldCallPubGet)`. Registra o que o scaffold deixou; não altera nada.
+        run: |
+          echo "== SDK"
+          flutter --version --machine || echo "(flutter --version falhou)"
+          git -C "$FLUTTER_ROOT" rev-parse HEAD 2>/dev/null || echo "(revisão git do SDK indisponível)"
+          echo "== app_build/pubspec.lock"
+          f=app_build/pubspec.lock
+          if [ -L "$f" ]; then
+            echo "existe: sim, como symlink (não seguido)"
+          elif [ -f "$f" ]; then
+            echo "existe: sim; tamanho: $(stat -c %s "$f") bytes"
+            sha256sum "$f"
+            python3 - "$f" <<'PY' || true
+          import json, sys
+          try:
+              d = json.load(open(sys.argv[1], encoding='utf-8'))
+              pk = d.get('packages', {}) if isinstance(d, dict) else {}
+              print('formato: JSON; chaves de topo:', list(d) if isinstance(d, dict) else type(d).__name__)
+              for k, v in pk.items():
+                  v = v if isinstance(v, dict) else {}
+                  print(f'  {k} {v.get("version")} ({v.get("source")})')
+          except Exception:
+              print('formato: não é JSON (conteúdo não impresso)')
+          PY
+          elif [ -e "$f" ]; then
+            echo "existe: sim, mas não é arquivo regular"
+          else
+            echo "existe: não"
+          fi
+          echo "== app_build/.dart_tool"
+          if [ -e app_build/.dart_tool ]; then echo "existe: sim"; else echo "existe: não"; fi
 
       - name: Overlay custom UI files
         run: cp -R app/lib/. app_build/lib/
@@ -307,9 +344,41 @@ jobs:
         # candidata 62a6424) e o par jni 1.0.0 + jni_flutter 1.0.2 (JniVersionCheck(1, 0)).
         # Versões diretas fixas NÃO fixam as transitivas: sem pubspec.lock versionado, elas são
         # escolhidas na resolução do próximo passo. Resolução e lock seguem PENDENTES de validação.
+        # rev. 3.2: se existir pubspec.lock, ele só é removido se for EXATAMENTE o que o
+        # `flutter create` 3.44.8 gera (JSON com as 5 dependências hospedadas do pacote flutter
+        # nas versões do SDK) e se ainda não houve resolução (.dart_tool ausente). Symlink ou
+        # qualquer outro conteúdo: falha, sem remover.
         run: |
+          test -d app_build && test ! -L app_build
           cd app_build
-          test ! -e pubspec.lock || { echo "ERRO: já existe pubspec.lock antes da preparação"; exit 1; }
+          f=pubspec.lock
+          if [ -L "$f" ]; then echo "ERRO: pubspec.lock é symlink; recusado sem remover"; exit 1; fi
+          if [ -e "$f" ]; then
+            test -f "$f" || { echo "ERRO: pubspec.lock não é arquivo regular; recusado"; exit 1; }
+            test ! -e .dart_tool || { echo "ERRO: .dart_tool existe: houve resolução antes da preparação"; exit 1; }
+            echo "pubspec.lock encontrado antes da preparação: $(stat -c %s "$f") bytes"
+            sha256sum "$f"
+            python3 - "$f" <<'PY'
+          import json, sys
+          esperado = {'characters': '1.4.1', 'collection': '1.19.1', 'material_color_utilities': '0.13.0', 'meta': '1.18.0', 'vector_math': '2.2.0'}
+          try:
+              d = json.load(open(sys.argv[1], encoding='utf-8'))
+          except Exception:
+              raise SystemExit('ERRO: pubspec.lock não é o JSON gerado pelo flutter create; recusado sem remover')
+          if not isinstance(d, dict) or list(d) != ['packages'] or not isinstance(d['packages'], dict):
+              raise SystemExit('ERRO: estrutura inesperada no pubspec.lock; recusado sem remover')
+          pk = d['packages']
+          if not all(isinstance(v, dict) and v.get('source') == 'hosted' for v in pk.values()):
+              raise SystemExit('ERRO: entrada não hospedada no pubspec.lock; recusado sem remover')
+          achado = {k: v.get('version') for k, v in pk.items()}
+          if achado != esperado:
+              raise SystemExit(f'ERRO: pacotes/versões diferem do lock do scaffold 3.44.8: {sorted(achado.items())}; recusado sem remover')
+          print('confere com _generatePubspecLock (Flutter 3.44.8):', sorted(achado.items()))
+          PY
+            rm -- "$f"
+            test ! -e "$f"
+            echo "removido: app_build/pubspec.lock gerado pelo scaffold (nenhuma resolução tinha ocorrido)"
+          fi
           python3 - <<'PY'
           import re
           p = 'pubspec.yaml'
