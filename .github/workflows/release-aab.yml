@@ -353,7 +353,7 @@ jobs:
             exit 1
           fi
           mkdir -p app_build/test
-          cp app/test/teste_motor.dart app_build/test/
+          cp app/test/teste_motor.dart app/test/conformidade_fixture.dart app_build/test/
           echo "Commit testado: ${GITHUB_SHA}"
           cd app_build
           flutter test test/teste_motor.dart --reporter expanded
