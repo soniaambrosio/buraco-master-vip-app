@@ -198,8 +198,8 @@ export interface EntradaComandoSeguir {
   ultimaIntencaoChave: string | null;
   ultimaIntencaoImpressao: string | null;
   privacidadeAlvo: string | null;
-  criacoesDoAtor: string[];
-  criacoesNoPar: string[];
+  criacoesDoAtor: string[] | null;
+  criacoesNoPar: string[] | null;
   /// `null` = contador tecnico desconhecido (falha fechada no dominio).
   pendentesEnviadosDoAtor: number | null;
   agora: string;

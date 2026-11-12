@@ -688,6 +688,19 @@ describe('Functions sociais', comFunctions, () => {
       listarAmigos: chamar('listarAmigos'),
       listarRecebidas: chamar('listarSolicitacoesRecebidas'),
       listarEnviadas: chamar('listarSolicitacoesEnviadas'),
+      // SOCIAL-02 C3 — seguir.
+      seguir: chamar('seguirJogador'),
+      cancelarSeguir: chamar('cancelarPedidoSeguir'),
+      aprovarSeguir: chamar('aprovarPedidoSeguir'),
+      recusarSeguir: chamar('recusarPedidoSeguir'),
+      deixarSeguir: chamar('deixarDeSeguir'),
+      removerSeguidor: chamar('removerSeguidor'),
+      listarSeguidores: chamar('listarSeguidores'),
+      listarSeguindo: chamar('listarSeguindo'),
+      listarPedidosRecebidos: chamar('listarPedidosSeguirRecebidos'),
+      listarPedidosEnviados: chamar('listarPedidosSeguirEnviados'),
+      privacidade: chamar('definirPrivacidadeSocial'),
+      contadores: chamar('consultarContadoresSociais'),
     };
   }
 
@@ -1839,6 +1852,1030 @@ describe('Functions sociais', comFunctions, () => {
         () => httpsCallable(f, 'buscarJogadoresPorApelido')({ termo: RARO }),
         (e) => e.code === 'functions/unauthenticated',
       );
+    });
+  });
+
+  // =========================================================================
+  // SEGUIR — SOCIAL-02, etapa C3 (O01–O09, O12, O13)
+  // =========================================================================
+  //
+  // Callables REAIS via HTTP no emulador, contra dados no formato congelado da
+  // C2 r2. Cada caso cria jogadores anonimos novos, entao nenhum depende de
+  // outro. Plano, diario, corte e ritmo sao SEMEADOS com regras desligadas: e o
+  // estado que Billing, Conta e Moderacao gravariam, sem subir esses codebases.
+  // Nada aqui executa o executor real da Conta nem o bloqueio real (C4).
+
+  describe('seguir (SOCIAL-02 C3)', () => {
+    const FUTURO = '2099-01-01T00:00:00.000Z';
+    const PASSADO = '2000-01-01T00:00:00.000Z';
+    const MIN = 60 * 1000;
+    const HORA = 60 * MIN;
+    const SEGUIR_ACOES = new Set([
+      'seguir', 'solicitarSeguir', 'cancelarPedidoSeguir', 'deixarDeSeguir',
+      'aprovarPedidoSeguir', 'recusarPedidoSeguir', 'removerSeguidor',
+    ]);
+    const SAIDA = new Set(['seguir', 'cancelarSeguir', 'deixarSeguir']);
+    let seq = 0;
+
+    const semear = (caminho, dados) => ambiente.withSecurityRulesDisabled(
+      (ctx) => setDoc(doc(ctx.firestore(), caminho), dados));
+    const apagar = (caminho) => ambiente.withSecurityRulesDisabled(
+      (ctx) => deleteDoc(doc(ctx.firestore(), caminho)));
+    async function ler(caminho) {
+      let v;
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        const s = await getDoc(doc(ctx.firestore(), caminho));
+        v = s.exists() ? s.data() : undefined;
+      });
+      return v;
+    }
+
+    /// Entitlement canonico (o que `vigenteEm` le). `extra` sobrescreve.
+    const vip = (j, extra = {}) => semear(`playerEntitlements/${j.uid}`, {
+      vipAtivo: true, estado: 'ativo', origem: 'play', expiraEm: FUTURO, ...extra,
+    });
+    const diario = (j) => semear(`accountDeletions/${j.uid}`, { estado: 'iniciada', esquema: 1 });
+    const R = (j) => `playerSocialRitmo/${j.uid}`;
+    const ritmo = (j) => ler(R(j));
+    const canonico = (s, d) => ler(`follows/${s.uid}|${d.uid}`);
+    const semearCorte = (x, y, corteId) => semear(
+      `cortesDeRelacao/${[x.uid, y.uid].sort().join('|')}`,
+      { corteId, membros: [x.uid, y.uid].sort(), atualizadoEm: new Date().toISOString(), esquema: 1 },
+    );
+    const instantes = (...atras) => atras.map((ms) => new Date(Date.now() - ms).toISOString());
+    const intencao = () => `i${Date.now().toString(36)}x${(++seq).toString(36)}`;
+
+    async function jogador({ comVip = true } = {}) {
+      const c = await cliente(`seguir-${++seq}`);
+      c.pid = (await c.identidade({})).data.publicId;
+      if (comVip) await vip(c);
+      return c;
+    }
+    const privado = (j) => j.privacidade({ privacidade: 'privado' });
+    const bloco = async (obs, alvo) => (await obs.verPerfil({ publicId: alvo.pid })).data.seguir;
+
+    /// Um comando como o cliente faria: a referencia vem da releitura por O12.
+    async function cmd(ator, nome, alvo, opcoes = {}) {
+      let referencia = opcoes.referencia;
+      if (!('referencia' in opcoes)) {
+        const b = await bloco(ator, alvo);
+        referencia = b ? (SAIDA.has(nome) ? b.meu.referencia : b.dele.referencia) : null;
+      }
+      const r = await ator[nome]({
+        publicId: alvo.pid, referencia, intencaoId: opcoes.intencaoId ?? intencao(),
+      });
+      return r.data;
+    }
+
+    const recusa = (codigo, http) => (e) => {
+      assert.equal(e.details?.recusa, codigo, `esperava ${codigo}, veio ${e.details?.recusa} (${e.code})`);
+      if (http) assert.equal(e.code, `functions/${http}`);
+      return true;
+    };
+
+    /// Os espelhos fisicos da direcao s -> d (adendo A1).
+    function caminhosEspelho(s, d) {
+      return {
+        P1: `users/${s.uid}/seguindo/${d.uid}`,
+        P2: `users/${d.uid}/seguidores/${s.uid}`,
+        P3: `users/${s.uid}/pedidosSeguirEnviados/${d.uid}`,
+        P4: `users/${d.uid}/pedidosSeguirRecebidos/${s.uid}`,
+      };
+    }
+    async function espelhos(s, d) {
+      const presentes = [];
+      for (const [k, c] of Object.entries(caminhosEspelho(s, d))) {
+        if (await ler(c)) presentes.push(k);
+      }
+      return presentes.join('+') || 'nenhum';
+    }
+
+    // --------------------------------------------------- criacao e gestao
+
+    test('S03/O01 — VIP segue VIP publico: confirma na hora, so P1/P2, sem amizade e sem seguir de volta', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const r = await cmd(a, 'seguir', b, { referencia: null });
+      assert.equal(r.ok, true);
+      assert.equal(r.repeticao, false);
+      assert.equal(r.estado, 'seguindo');
+      assert.equal(typeof r.referencia, 'string');
+      assert.equal(await espelhos(a, b), 'P1+P2');
+      assert.equal(await espelhos(b, a), 'nenhum', 'nao segue de volta');
+      const c = await canonico(a, b);
+      assert.equal(c.estado, 'confirmado');
+      assert.equal(c.esquema, 1);
+      assert.equal(c.criacoesRecentes.length, 1);
+      assert.equal(typeof c.desde, 'string');
+      assert.equal((await ler(`users/${a.uid}/seguindo/${b.uid}`)).referencia, r.referencia);
+      assert.equal((await ler(`users/${a.uid}/seguindo/${b.uid}`)).publicId, b.pid);
+      assert.equal((await ler(`users/${b.uid}/seguidores/${a.uid}`)).publicId, a.pid);
+      assert.equal(await ler(`friendships/${[a.uid, b.uid].sort().join('|')}`), undefined,
+        'seguir nao cria amizade');
+      const rit = await ritmo(a);
+      assert.equal(rit.pedidosPendentesEnviados, 0);
+      assert.equal(rit.criacoes.length, 1);
+      assert.equal((await a.contadores({})).data.contadores.seguindo, 1);
+      assert.equal((await b.contadores({})).data.contadores.seguidores, 1);
+      assert.equal((await b.contadores({})).data.contadores.seguindo, 0);
+    });
+
+    test('S04/S12/O02 — perfil privado: vira pedido, so P3/P4, remetente +1, detalhes null e nao conta como seguidor', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      const r = await cmd(a, 'seguir', b, { referencia: null });
+      assert.equal(r.estado, 'pendente');
+      assert.equal(await espelhos(a, b), 'P3+P4');
+      const c = await canonico(a, b);
+      assert.equal(c.estado, 'pendente');
+      assert.equal(c.desde, null, 'pedido ainda nao e vinculo');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+      const v = (await a.verPerfil({ publicId: b.pid })).data;
+      assert.equal(v.detalhes, null);
+      assert.equal(v.seguir.meu.estado, 'pendente');
+      assert.ok(v.acoes.includes('cancelarPedidoSeguir'));
+      const cb = (await b.contadores({})).data.contadores;
+      assert.equal(cb.seguidores, 0, 'pendente nao conta como seguidor');
+      assert.equal(cb.pedidosSeguirRecebidos, 1);
+    });
+
+    test('S05/O04 — so o seguido aprova; aprovacoes paralelas dao UMA escrita e UM debito no remetente', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      const criacoesAntes = (await ritmo(a)).criacoes.length;
+      // O remetente nao aprova o proprio pedido: a direcao b -> a nao existe.
+      await assert.rejects(() => cmd(a, 'aprovarSeguir', b), recusa('referenciaObsoleta'));
+      const ref = (await bloco(b, a)).dele.referencia;
+      const rs = await Promise.all([0, 1, 2].map(
+        () => cmd(b, 'aprovarSeguir', a, { referencia: ref })));
+      assert.ok(rs.every((x) => x.ok && x.estado === 'seguidor'));
+      assert.equal(rs.filter((x) => !x.repeticao).length, 1, 'uma so escrita');
+      assert.equal(await espelhos(a, b), 'P1+P2');
+      const rit = await ritmo(a);
+      assert.equal(rit.pedidosPendentesEnviados, 0, 'debito unico no remetente, que nao e o ator');
+      assert.equal(rit.criacoes.length, criacoesAntes, 'aprovar nao consome ritmo');
+      assert.equal(await ritmo(b), undefined, 'o ritmo de quem aprova nao e tocado');
+    });
+
+    test('S06/O05 — recusar encerra sem vinculo e sem punir; repetir nao debita; novo pedido guarda o historico por alvo', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      const r = await cmd(b, 'recusarSeguir', a);
+      assert.equal(r.estado, 'nenhum');
+      assert.equal(r.repeticao, false);
+      assert.equal(await espelhos(a, b), 'nenhum');
+      assert.equal((await canonico(a, b)).estado, 'encerrado');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+      assert.equal(await ler(`users/${b.uid}/blocks/${a.uid}`), undefined, 'recusar nao bloqueia');
+      const deNovo = await cmd(b, 'recusarSeguir', a);
+      assert.equal(deNovo.repeticao, true);
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0, 'sem segundo debito');
+      const r2 = await cmd(a, 'seguir', b);
+      assert.equal(r2.estado, 'pendente');
+      assert.equal((await canonico(a, b)).criacoesRecentes.length, 2, 'a recriacao preserva o historico');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+      assert.equal((await ritmo(a)).criacoes.length, 2);
+    });
+
+    test('S06/S28d/O03 — so o remetente cancela; debito unico; o reenvio do pedido cancelado nao o recria', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      const X = intencao();
+      await cmd(a, 'seguir', b, { referencia: null, intencaoId: X });
+      // B "cancelar" age sobre b -> a, que nao existe: o desfecho ja vale.
+      const rb = await cmd(b, 'cancelarSeguir', a);
+      assert.equal(rb.repeticao, true);
+      assert.equal(await espelhos(a, b), 'P3+P4', 'o pedido de A continua');
+      const ref = (await bloco(a, b)).meu.referencia;
+      const Y = intencao();
+      const r = await cmd(a, 'cancelarSeguir', b, { referencia: ref, intencaoId: Y });
+      assert.equal(r.estado, 'nenhum');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+      const r2 = await cmd(a, 'cancelarSeguir', b, { referencia: ref, intencaoId: Y });
+      assert.equal(r2.repeticao, true, 'reenvio do cancelamento');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0, 'sem segundo debito');
+      await assert.rejects(
+        () => cmd(a, 'seguir', b, { referencia: null, intencaoId: X }),
+        recusa('referenciaObsoleta'));
+      assert.equal(await espelhos(a, b), 'nenhum', 'o pedido cancelado nao volta');
+      assert.equal((await ritmo(a)).criacoes.length, 1);
+    });
+
+    test('S07/S16/O06/O07 — deixar de seguir e remover seguidor encerram SO a sua direcao; amizade intocada', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await a.enviar({ publicId: b.pid });
+      await b.aceitar({ publicId: a.pid });
+      const par = `friendships/${[a.uid, b.uid].sort().join('|')}`;
+      const amizade = await ler(par);
+      assert.equal(amizade.estado, 'amigos');
+      await cmd(a, 'seguir', b, { referencia: null });
+      await cmd(b, 'seguir', a, { referencia: null });
+      assert.equal(await espelhos(a, b), 'P1+P2');
+      assert.equal(await espelhos(b, a), 'P1+P2', 'reciprocidade e outra direcao, independente');
+      const r = await cmd(a, 'deixarSeguir', b);
+      assert.equal(r.estado, 'nenhum');
+      assert.equal(await espelhos(a, b), 'nenhum');
+      assert.equal(await espelhos(b, a), 'P1+P2', 'a direcao inversa fica');
+      const r2 = await cmd(a, 'removerSeguidor', b);
+      assert.equal(r2.estado, 'nenhum');
+      assert.equal(await espelhos(b, a), 'nenhum');
+      assert.equal((await canonico(b, a)).estado, 'encerrado');
+      assert.equal((await canonico(b, a)).desde, null);
+      assert.deepEqual(await ler(par), amizade, 'friendships intocado');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+      assert.equal((await ritmo(b)).pedidosPendentesEnviados, 0);
+    });
+
+    test('S31 — pedidos reciprocos simultaneos: quatro projecoes; decidir um deixa o inverso intacto', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(a);
+      await privado(b);
+      const [ra, rb] = await Promise.all([
+        cmd(a, 'seguir', b, { referencia: null }),
+        cmd(b, 'seguir', a, { referencia: null }),
+      ]);
+      assert.equal(ra.estado, 'pendente');
+      assert.equal(rb.estado, 'pendente');
+      assert.equal(await espelhos(a, b), 'P3+P4');
+      assert.equal(await espelhos(b, a), 'P3+P4');
+      const ka = (await a.contadores({})).data.contadores;
+      assert.equal(ka.pedidosSeguirEnviados, 1);
+      assert.equal(ka.pedidosSeguirRecebidos, 1);
+      await cmd(b, 'aprovarSeguir', a);
+      assert.equal(await espelhos(a, b), 'P1+P2');
+      assert.equal(await espelhos(b, a), 'P3+P4', 'o pedido inverso continua');
+      assert.equal((await ritmo(b)).pedidosPendentesEnviados, 1);
+      await cmd(a, 'recusarSeguir', b);
+      assert.equal(await espelhos(b, a), 'nenhum');
+      assert.equal(await espelhos(a, b), 'P1+P2', 'o vinculo inverso continua');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+      assert.equal((await ritmo(b)).pedidosPendentesEnviados, 0);
+    });
+
+    // ---------------------------------------------------------- elegibilidade
+
+    test('S01/S02/S09/S27 — gratuito, vencido, ilegivel e so-passe nao entram; VIP manual entra; recusa nao grava', async () => {
+      const a = await jogador();
+      const gratis = await jogador({ comVip: false });
+      const vencido = await jogador();
+      await vip(vencido, { expiraEm: PASSADO });
+      const ilegivel = await jogador({ comVip: false });
+      await semear(`playerEntitlements/${ilegivel.uid}`, {
+        vipAtivo: true, estado: 'ativo', origem: 'play', expiraEm: 'nao-e-data',
+      });
+      const soPasse = await jogador({ comVip: false });
+      await semear(`passesVip/${soPasse.uid}`, { ativo: true, expiraEm: FUTURO });
+      await semear(`playerCourtesyPass/${soPasse.uid}`, { ativo: true, expiraEm: FUTURO });
+      for (const alvo of [gratis, vencido, ilegivel, soPasse]) {
+        await assert.rejects(() => cmd(a, 'seguir', alvo, { referencia: null }),
+          recusa('acaoIndisponivel', 'failed-precondition'));
+        assert.equal(await canonico(a, alvo), undefined);
+        assert.equal(await espelhos(a, alvo), 'nenhum');
+      }
+      for (const ator of [gratis, vencido, ilegivel, soPasse]) {
+        await assert.rejects(() => cmd(ator, 'seguir', a, { referencia: null }),
+          recusa('requerVip', 'failed-precondition'));
+        assert.equal(await canonico(ator, a), undefined);
+        assert.equal(await ritmo(ator), undefined);
+      }
+      assert.equal(await ritmo(a), undefined, 'recusa nao consome nem cria ritmo');
+      const manual = await jogador({ comVip: false });
+      await vip(manual, { origem: 'administrativa' });
+      assert.equal((await cmd(a, 'seguir', manual, { referencia: null })).estado, 'seguindo');
+    });
+
+    test('S13/S29 — o plano vence e volta sem escrita: lista e contagem iguais; acoes somem e voltam; encerrar nao exige VIP do outro', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await cmd(a, 'seguir', b, { referencia: null });
+      const foto = async () => {
+        const vb = (await b.verPerfil({ publicId: a.pid })).data;
+        return {
+          lista: (await a.listarSeguindo({})).data.itens.map((i) => i.publicId),
+          conta: (await a.contadores({})).data.contadores.seguindo,
+          acoesB: vb.acoes.filter((x) => SEGUIR_ACOES.has(x)).sort(),
+          blocoB: vb.seguir,
+        };
+      };
+      const canonAntes = await canonico(a, b);
+      const antes = await foto();
+      await vip(b, { expiraEm: PASSADO });
+      const durante = await foto();
+      await vip(b);
+      const volta = await foto();
+      assert.deepEqual(antes.lista, [b.pid]);
+      assert.deepEqual(durante.lista, antes.lista);
+      assert.deepEqual(volta.lista, antes.lista);
+      assert.equal(antes.conta, 1);
+      assert.equal(durante.conta, 1);
+      assert.equal(volta.conta, 1);
+      assert.deepEqual(antes.acoesB, ['removerSeguidor', 'seguir']);
+      assert.deepEqual(durante.acoesB, []);
+      assert.equal(durante.blocoB, null);
+      assert.deepEqual(volta.acoesB, antes.acoesB);
+      assert.deepEqual(await canonico(a, b), canonAntes, 'vencer e voltar nao escreve');
+      await vip(a, { expiraEm: PASSADO });
+      await assert.rejects(() => cmd(a, 'deixarSeguir', b), recusa('requerVip'));
+      assert.equal((await canonico(a, b)).estado, 'confirmado');
+      await vip(a);
+      await vip(b, { expiraEm: PASSADO });
+      assert.equal((await cmd(a, 'deixarSeguir', b)).estado, 'nenhum', 'encerrar nao exige VIP do outro');
+    });
+
+    test('S26 — aprovar revalida as duas pontas: remetente sem VIP fica pendente; recusar nao exige o VIP dele', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      await vip(a, { expiraEm: PASSADO });
+      await assert.rejects(() => cmd(b, 'aprovarSeguir', a), recusa('acaoIndisponivel'));
+      assert.equal((await canonico(a, b)).estado, 'pendente');
+      assert.equal(await espelhos(a, b), 'P3+P4');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+      const r = await cmd(b, 'recusarSeguir', a);
+      assert.equal(r.estado, 'nenhum');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+    });
+
+    test('S14/O09 — privacidade: publico ate escolher; repeticao sem escrita; fechar mantem; abrir nao aprova; a escolha persiste apos vencer', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      assert.equal((await b.contadores({})).data.contadores.privacidade, 'publico');
+      const r0 = (await b.privacidade({ privacidade: 'publico' })).data;
+      assert.equal(r0.repeticao, true);
+      assert.equal(await ler(`playerSocial/${b.uid}`), undefined, 'repeticao nao grava');
+      await cmd(a, 'seguir', b, { referencia: null });
+      const r1 = (await b.privacidade({ privacidade: 'privado' })).data;
+      assert.deepEqual(r1, { ok: true, repeticao: false, privacidade: 'privado' });
+      assert.deepEqual(await ler(`playerSocial/${b.uid}`), { privacidade: 'privado' },
+        'so o campo de privacidade');
+      assert.equal((await b.privacidade({ privacidade: 'privado' })).data.repeticao, true);
+      assert.equal(await espelhos(a, b), 'P1+P2', 'fechar mantem quem ja seguia');
+      assert.equal((await cmd(c, 'seguir', b, { referencia: null })).estado, 'pendente');
+      await b.privacidade({ privacidade: 'publico' });
+      assert.equal(await espelhos(c, b), 'P3+P4', 'abrir nao aprova pedidos');
+      assert.equal((await canonico(c, b)).estado, 'pendente');
+      await b.privacidade({ privacidade: 'privado' });
+      await vip(b, { expiraEm: PASSADO });
+      await assert.rejects(() => b.privacidade({ privacidade: 'publico' }), recusa('requerVip'));
+      assert.equal((await ler(`playerSocial/${b.uid}`)).privacidade, 'privado',
+        'a escolha privada persiste depois de vencer');
+      await assert.rejects(() => a.privacidade({ privacidade: 'aberto' }),
+        recusa('pedidoInvalido', 'invalid-argument'));
+      await assert.rejects(() => a.privacidade({}), recusa('pedidoInvalido', 'invalid-argument'));
+    });
+
+    test('S20 — gratuito: Ver Perfil funciona sem bloco; listas, contadores e privacidade pedem VIP', async () => {
+      const g = await jogador({ comVip: false });
+      const b = await jogador();
+      const v = (await g.verPerfil({ publicId: b.pid })).data;
+      assert.equal(v.seguir, null);
+      assert.equal(v.detalhes, null);
+      assert.ok(!v.acoes.some((x) => SEGUIR_ACOES.has(x)));
+      for (const nome of ['listarSeguidores', 'listarSeguindo', 'listarPedidosRecebidos',
+        'listarPedidosEnviados', 'contadores']) {
+        await assert.rejects(() => g[nome]({}), recusa('requerVip', 'failed-precondition'));
+      }
+      await assert.rejects(() => g.privacidade({ privacidade: 'privado' }), recusa('requerVip'));
+      assert.equal(await ler(`playerSocial/${g.uid}`), undefined);
+    });
+
+    test('S30b/S30c — diario em qualquer ponta: nada nasce; encerrar vira nenhum sem escrita; o dono com diario nao le nem grava', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      await cmd(a, 'seguir', b, { referencia: null });
+      const refAB = (await bloco(a, b)).meu.referencia;
+      const antes = await canonico(a, b);
+      await diario(b);
+      await assert.rejects(() => cmd(c, 'seguir', b, { referencia: null }),
+        recusa('perfilPublicoNaoDisponivel', 'not-found'));
+      assert.equal(await canonico(c, b), undefined);
+      const r = await cmd(a, 'deixarSeguir', b, { referencia: refAB });
+      assert.equal(r.repeticao, true);
+      assert.equal(r.estado, 'nenhum');
+      assert.deepEqual(await canonico(a, b), antes, 'nenhuma escrita depois do diario');
+      assert.equal(await espelhos(a, b), 'P1+P2', 'a limpeza e da exclusao (O14)');
+      assert.equal(await bloco(a, b), null);
+      await diario(c);
+      await assert.rejects(() => cmd(c, 'seguir', a, { referencia: null }), recusa('acaoIndisponivel'));
+      assert.equal(await canonico(c, a), undefined);
+      for (const nome of ['listarSeguidores', 'contadores']) {
+        await assert.rejects(() => c[nome]({}), recusa('acaoIndisponivel'));
+      }
+      await assert.rejects(() => c.privacidade({ privacidade: 'privado' }), recusa('acaoIndisponivel'));
+      assert.equal(await ritmo(c), undefined);
+      assert.equal(await ler(`playerSocial/${c.uid}`), undefined);
+    });
+
+    // ------------------------------------------- referencia, intencao, corte
+
+    test('S28a — aprovacao atrasada de pedido cancelado, com pedido novo: referenciaObsoleta e o novo fica', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      const refA = (await bloco(b, a)).dele.referencia;
+      await cmd(a, 'cancelarSeguir', b);
+      await cmd(a, 'seguir', b);
+      await assert.rejects(() => cmd(b, 'aprovarSeguir', a, { referencia: refA }),
+        recusa('referenciaObsoleta', 'failed-precondition'));
+      assert.equal((await canonico(a, b)).estado, 'pendente');
+      assert.equal(await espelhos(a, b), 'P3+P4');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+    });
+
+    test('S28b — deixar de seguir atrasado depois de seguir de novo: referenciaObsoleta e o vinculo novo continua', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await cmd(a, 'seguir', b, { referencia: null });
+      const s1 = (await bloco(a, b)).meu.referencia;
+      await cmd(a, 'deixarSeguir', b, { referencia: s1 });
+      await cmd(a, 'seguir', b);
+      await assert.rejects(() => cmd(a, 'deixarSeguir', b, { referencia: s1 }),
+        recusa('referenciaObsoleta'));
+      assert.equal(await espelhos(a, b), 'P1+P2');
+    });
+
+    test('S28c/S33 — reenvio da mesma intencao e repeticao sem consumo; a mesma intencao em outro comando e pedidoInvalido; depois de deixar, o reenvio nao recria', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const X = intencao();
+      await cmd(a, 'seguir', b, { referencia: null, intencaoId: X });
+      const rep = await cmd(a, 'seguir', b, { referencia: null, intencaoId: X });
+      assert.equal(rep.repeticao, true);
+      assert.equal(rep.estado, 'seguindo');
+      assert.equal((await ritmo(a)).criacoes.length, 1, 'repeticao nao consome');
+      await assert.rejects(() => cmd(a, 'deixarSeguir', b, { intencaoId: X }),
+        recusa('pedidoInvalido', 'invalid-argument'));
+      assert.equal(await espelhos(a, b), 'P1+P2');
+      await cmd(a, 'deixarSeguir', b);
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null, intencaoId: X }),
+        recusa('referenciaObsoleta'));
+      assert.equal(await espelhos(a, b), 'nenhum', 'nada e recriado');
+      assert.equal((await ritmo(a)).criacoes.length, 1);
+    });
+
+    test('S33b — o reenvio de um seguir aceito nao atravessa plano nem exclusao do alvo', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      const X = intencao();
+      await cmd(a, 'seguir', b, { referencia: null, intencaoId: X });
+      await vip(b, { expiraEm: PASSADO });
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null, intencaoId: X }),
+        recusa('acaoIndisponivel'));
+      const Y = intencao();
+      await cmd(a, 'seguir', c, { referencia: null, intencaoId: Y });
+      await diario(c);
+      await assert.rejects(() => cmd(a, 'seguir', c, { referencia: null, intencaoId: Y }),
+        recusa('perfilPublicoNaoDisponivel'));
+    });
+
+    test('S32e(i) — corte semeado: confirmado antigo vale encerrado; B privado; o pedido com a referencia atual deixa SO P3+P4 e soma 1', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await cmd(a, 'seguir', b, { referencia: null });
+      await cmd(b, 'seguir', a, { referencia: null });
+      const inversoAntes = await canonico(b, a);
+      await semearCorte(a, b, 'corte1');
+      const v = await bloco(a, b);
+      assert.equal(v.meu.estado, 'nenhum', 'a geracao antiga vale encerrada');
+      assert.match(v.meu.referencia, /\.corte1$/);
+      await privado(b);
+      const r = await cmd(a, 'seguir', b);
+      assert.equal(r.estado, 'pendente');
+      assert.equal(await espelhos(a, b), 'P3+P4');
+      const c = await canonico(a, b);
+      assert.equal(c.estado, 'pendente');
+      assert.equal(c.corteNaCriacao, 'corte1');
+      assert.equal(c.criacoesRecentes.length, 2);
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+      assert.deepEqual(await canonico(b, a), inversoAntes, 'a direcao inversa nao e tocada');
+      assert.equal(await espelhos(b, a), 'P1+P2');
+    });
+
+    test('S32e(ii)/S33d — pedido cortado: o reenvio exato e obsoleto; B publico; seguir com a referencia nova deixa SO P1+P2 e debita 1', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      const X = intencao();
+      await cmd(a, 'seguir', b, { referencia: null, intencaoId: X });
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+      await semearCorte(a, b, 'corte2');
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null, intencaoId: X }),
+        recusa('referenciaObsoleta'));
+      const v = await bloco(a, b);
+      assert.equal(v.meu.estado, 'nenhum');
+      const rc = await cmd(a, 'cancelarSeguir', b, { referencia: v.meu.referencia });
+      assert.equal(rc.repeticao, true);
+      assert.equal((await canonico(a, b)).estado, 'pendente', 'sem escrita: a faxina e da C4');
+      await assert.rejects(() => cmd(b, 'aprovarSeguir', a), recusa('referenciaObsoleta'));
+      await b.privacidade({ privacidade: 'publico' });
+      const r = await cmd(a, 'seguir', b, { referencia: v.meu.referencia });
+      assert.equal(r.estado, 'seguindo');
+      assert.equal(await espelhos(a, b), 'P1+P2');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0,
+        'o pedido fisico substituido sai do contador');
+      assert.equal((await canonico(a, b)).corteNaCriacao, 'corte2');
+    });
+
+    test('P1–P4 — cada transicao deixa exatamente os espelhos do estado novo, com a referencia da resposta', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      const passos = [
+        [() => cmd(a, 'seguir', b, { referencia: null }), 'P3+P4'],
+        [() => cmd(a, 'cancelarSeguir', b), 'nenhum'],
+        [() => cmd(a, 'seguir', b), 'P3+P4'],
+        [() => cmd(b, 'aprovarSeguir', a), 'P1+P2'],
+        [() => cmd(b, 'removerSeguidor', a), 'nenhum'],
+        [async () => {
+          await b.privacidade({ privacidade: 'publico' });
+          return cmd(a, 'seguir', b);
+        }, 'P1+P2'],
+        [() => cmd(a, 'deixarSeguir', b), 'nenhum'],
+      ];
+      for (const [passo, esperado] of passos) {
+        const r = await passo();
+        assert.equal(await espelhos(a, b), esperado);
+        for (const caminho of Object.values(caminhosEspelho(a, b))) {
+          const d = await ler(caminho);
+          if (d) assert.equal(d.referencia, r.referencia, caminho);
+        }
+        assert.equal(await espelhos(b, a), 'nenhum', 'a direcao inversa nunca e escrita');
+      }
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+    });
+
+    // ------------------------------------------------------------- limites
+
+    test('S39 — a quarta criacao contra o mesmo alvo em 24h e recusada sem consumo; outro alvo passa; a janela por alvo e movel', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      for (let i = 0; i < 3; i++) {
+        await cmd(a, 'seguir', b, i === 0 ? { referencia: null } : {});
+        await cmd(a, 'deixarSeguir', b);
+      }
+      await assert.rejects(() => cmd(a, 'seguir', b), recusa('ritmoExcedido', 'resource-exhausted'));
+      assert.equal((await canonico(a, b)).estado, 'encerrado');
+      assert.equal((await canonico(a, b)).criacoesRecentes.length, 3);
+      assert.equal((await ritmo(a)).criacoes.length, 3, 'recusa nao consome');
+      assert.equal((await cmd(a, 'seguir', c, { referencia: null })).estado, 'seguindo',
+        'outro alvo nao e afetado');
+      const canon = await canonico(a, b);
+      await semear(`follows/${a.uid}|${b.uid}`, {
+        ...canon, criacoesRecentes: instantes(24 * HORA + 2 * MIN, 2 * HORA, HORA),
+      });
+      assert.equal((await cmd(a, 'seguir', b)).estado, 'seguindo', 'a mais antiga saiu da janela');
+      assert.equal((await canonico(a, b)).criacoesRecentes.length, 3, 'e saiu do historico');
+      await cmd(a, 'deixarSeguir', b);
+      const canon2 = await canonico(a, b);
+      await semear(`follows/${a.uid}|${b.uid}`, {
+        ...canon2, criacoesRecentes: instantes(23 * HORA, 2 * HORA, HORA),
+      });
+      await assert.rejects(() => cmd(a, 'seguir', b), recusa('ritmoExcedido'));
+    });
+
+    test('S36 — 30 criacoes em 10 min: a 31a e ritmoExcedido; a janela movel libera; repeticao e referencia velha nao consomem', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      const recentes = (n) => Array.from({ length: n }, (_, i) => (i + 1) * 15 * 1000);
+      await semear(R(a), {
+        criacoes: instantes(...recentes(30)), pedidosPendentesEnviados: 0, esquema: 1,
+      });
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null }),
+        recusa('ritmoExcedido', 'resource-exhausted'));
+      assert.equal((await ritmo(a)).criacoes.length, 30);
+      assert.equal(await canonico(a, b), undefined);
+      await semear(R(a), {
+        criacoes: instantes(...recentes(29), 10 * MIN + 30 * 1000),
+        pedidosPendentesEnviados: 0, esquema: 1,
+      });
+      assert.equal((await cmd(a, 'seguir', b, { referencia: null })).estado, 'seguindo');
+      assert.equal((await ritmo(a)).criacoes.length, 31, 'a de 10 min ainda esta nas 24h');
+      const rep = await cmd(a, 'seguir', b);
+      assert.equal(rep.repeticao, true);
+      await assert.rejects(() => cmd(a, 'deixarSeguir', b, { referencia: 'velha.' }),
+        recusa('referenciaObsoleta'));
+      assert.equal((await ritmo(a)).criacoes.length, 31, 'repeticao e referencia velha nao consomem');
+      await assert.rejects(() => cmd(a, 'seguir', c, { referencia: null }), recusa('ritmoExcedido'));
+    });
+
+    test('S36 — 300 criacoes em 24h: a 301a e recusada; com a mais antiga fora da janela, passa e o historico e podado', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const espalhadas = (n) => Array.from({ length: n }, (_, i) => 20 * MIN + i * 4 * MIN);
+      await semear(R(a), {
+        criacoes: instantes(...espalhadas(300)), pedidosPendentesEnviados: 0, esquema: 1,
+      });
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null }), recusa('ritmoExcedido'));
+      assert.equal((await ritmo(a)).criacoes.length, 300);
+      await semear(R(a), {
+        criacoes: instantes(...espalhadas(299), 24 * HORA + 5 * MIN),
+        pedidosPendentesEnviados: 0, esquema: 1,
+      });
+      assert.equal((await cmd(a, 'seguir', b, { referencia: null })).estado, 'seguindo');
+      assert.equal((await ritmo(a)).criacoes.length, 300);
+    });
+
+    test('historico desconhecido: criacoes ilegivel no ritmo ou canonico sem historico = limiteIndisponivel, sem escrita', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await semear(R(a), { criacoes: 'nao-e-lista', pedidosPendentesEnviados: 0, esquema: 1 });
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null }),
+        recusa('limiteIndisponivel', 'failed-precondition'));
+      assert.equal(await canonico(a, b), undefined);
+      assert.equal((await ritmo(a)).criacoes, 'nao-e-lista', 'nada virou lista vazia');
+      await semear(R(a), { criacoes: [], pedidosPendentesEnviados: 0, esquema: 1 });
+      const agora = new Date().toISOString();
+      const canon = {
+        seguidorUid: a.uid, seguidoUid: b.uid, estado: 'encerrado', ref: 'refAntiga',
+        corteNaCriacao: null, ultimaIntencao: { chave: 'x', impressao: 'y' },
+        solicitadoEm: agora, confirmadoEm: agora, encerradoEm: agora, desde: null, esquema: 1,
+      };
+      await semear(`follows/${a.uid}|${b.uid}`, canon);
+      await assert.rejects(() => cmd(a, 'seguir', b, { referencia: 'refAntiga.' }),
+        recusa('limiteIndisponivel'));
+      assert.deepEqual(await canonico(a, b), canon);
+      assert.deepEqual((await ritmo(a)).criacoes, []);
+    });
+
+    test('ator novo x estado perdido: sem ritmo e sem canonico inicializa; sem ritmo com canonico guardado recusa; campo ausente nao vira zero', async () => {
+      const b = await jogador();
+      const c = await jogador();
+      await privado(b);
+      const novo = await jogador();
+      assert.equal(await ritmo(novo), undefined);
+      assert.equal((await cmd(novo, 'seguir', b, { referencia: null })).estado, 'pendente');
+      const rn = await ritmo(novo);
+      assert.equal(rn.pedidosPendentesEnviados, 1);
+      assert.equal(rn.criacoes.length, 1);
+      assert.equal(rn.esquema, 1);
+      const perdido = await jogador();
+      await cmd(perdido, 'seguir', c, { referencia: null });
+      await apagar(R(perdido));
+      await assert.rejects(() => cmd(perdido, 'seguir', b, { referencia: null }),
+        recusa('limiteIndisponivel'));
+      assert.equal(await ritmo(perdido), undefined, 'o ritmo perdido nao e recriado vazio');
+      assert.equal(await canonico(perdido, b), undefined);
+      const semCampo = await jogador();
+      await semear(R(semCampo), { criacoes: [], esquema: 1 });
+      await assert.rejects(() => cmd(semCampo, 'seguir', b, { referencia: null }),
+        recusa('limiteIndisponivel'));
+      assert.equal((await cmd(semCampo, 'seguir', c, { referencia: null })).estado, 'seguindo');
+      assert.equal('pedidosPendentesEnviados' in (await ritmo(semCampo)), false,
+        'o campo ausente nao recebe 0');
+    });
+
+    test('teto: contador negativo, fracionario, texto ou nulo recusa; 0 e 99 passam; 100 e limitePedidosPendentes; cancelar libera', async () => {
+      const a = await jogador();
+      const alvos = [];
+      for (let i = 0; i < 2; i++) {
+        const t = await jogador();
+        await privado(t);
+        alvos.push(t);
+      }
+      for (const ruim of [-1, 1.5, '3', null]) {
+        await semear(R(a), { criacoes: [], pedidosPendentesEnviados: ruim, esquema: 1 });
+        await assert.rejects(() => cmd(a, 'seguir', alvos[0], { referencia: null }),
+          recusa('limiteIndisponivel'));
+        assert.equal(await canonico(a, alvos[0]), undefined);
+        assert.deepEqual((await ritmo(a)).pedidosPendentesEnviados, ruim,
+          'nada e arredondado, truncado ou zerado');
+      }
+      await semear(R(a), { criacoes: [], pedidosPendentesEnviados: 100, esquema: 1 });
+      await assert.rejects(() => cmd(a, 'seguir', alvos[0], { referencia: null }),
+        recusa('limitePedidosPendentes', 'resource-exhausted'));
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 100);
+      await semear(R(a), { criacoes: [], pedidosPendentesEnviados: 99, esquema: 1 });
+      assert.equal((await cmd(a, 'seguir', alvos[0], { referencia: null })).estado, 'pendente');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 100);
+      await assert.rejects(() => cmd(a, 'seguir', alvos[1], { referencia: null }),
+        recusa('limitePedidosPendentes'));
+      await cmd(a, 'cancelarSeguir', alvos[0]);
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 99);
+      assert.equal((await cmd(a, 'seguir', alvos[1], { referencia: null })).estado, 'pendente');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 100);
+      const z = await jogador();
+      await semear(R(z), { criacoes: [], pedidosPendentesEnviados: 0, esquema: 1 });
+      assert.equal((await cmd(z, 'seguir', alvos[1], { referencia: null })).estado, 'pendente');
+      assert.equal((await ritmo(z)).pedidosPendentesEnviados, 1);
+    });
+
+    test('contador do REMETENTE quando quem chama e o destinatario: ilegivel, inconsistente ou ausente falha fechado, sem max(0)', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      const bom = await ritmo(a);
+      await semear(R(a), { ...bom, pedidosPendentesEnviados: 1.5 });
+      await assert.rejects(() => cmd(b, 'aprovarSeguir', a), recusa('limiteIndisponivel'));
+      assert.equal((await canonico(a, b)).estado, 'pendente');
+      assert.equal(await espelhos(a, b), 'P3+P4');
+      await semear(R(a), { ...bom, pedidosPendentesEnviados: 0 });
+      await assert.rejects(() => cmd(b, 'recusarSeguir', a), recusa('limiteIndisponivel'));
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0, 'sem max(0): nada gravado');
+      assert.equal((await canonico(a, b)).estado, 'pendente');
+      await apagar(R(a));
+      await assert.rejects(() => cmd(b, 'aprovarSeguir', a), recusa('limiteIndisponivel'));
+      assert.equal(await ritmo(a), undefined, 'o destinatario nao inicializa o ritmo do remetente');
+      await semear(R(a), bom);
+      assert.equal((await cmd(b, 'aprovarSeguir', a)).estado, 'seguidor');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+    });
+
+    // --------------------------------------------------------- concorrencia
+
+    test('S37 — teto RIGIDO sob concorrencia: com 98, tres pedidos simultaneos, exatamente dois passam e o contador fecha em 100', async () => {
+      const a = await jogador();
+      const alvos = await Promise.all([0, 1, 2].map(async () => {
+        const t = await jogador();
+        await privado(t);
+        return t;
+      }));
+      await semear(R(a), { criacoes: [], pedidosPendentesEnviados: 98, esquema: 1 });
+      const rs = await Promise.allSettled(
+        alvos.map((t) => cmd(a, 'seguir', t, { referencia: null })));
+      const falhas = rs.filter((r) => r.status === 'rejected');
+      assert.equal(rs.filter((r) => r.status === 'fulfilled').length, 2);
+      assert.equal(falhas.length, 1);
+      assert.equal(falhas[0].reason.details?.recusa, 'limitePedidosPendentes');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 100);
+      assert.equal((await ritmo(a)).criacoes.length, 2);
+      let pendentes = 0;
+      for (const t of alvos) if ((await espelhos(a, t)) === 'P3+P4') pendentes++;
+      assert.equal(pendentes, 2);
+    });
+
+    test('concorrencia: tres criacoes simultaneas do ator novo — o ritmo nasce uma vez e nenhum consumo se perde', async () => {
+      const a = await jogador();
+      const alvos = await Promise.all([0, 1, 2].map(() => jogador()));
+      const rs = await Promise.all(alvos.map((t) => cmd(a, 'seguir', t, { referencia: null })));
+      assert.ok(rs.every((r) => r.estado === 'seguindo'));
+      const rit = await ritmo(a);
+      assert.equal(rit.criacoes.length, 3);
+      assert.equal(rit.pedidosPendentesEnviados, 0);
+    });
+
+    test('corrida aprovar x cancelar: um so desfecho, um so debito e espelhos coerentes', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      const refMeu = (await bloco(a, b)).meu.referencia;
+      const refDele = (await bloco(b, a)).dele.referencia;
+      assert.equal(refMeu, refDele, 'a mesma direcao, a mesma referencia');
+      const rs = await Promise.allSettled([
+        cmd(b, 'aprovarSeguir', a, { referencia: refDele }),
+        cmd(a, 'cancelarSeguir', b, { referencia: refMeu }),
+      ]);
+      assert.equal(rs.filter((r) => r.status === 'fulfilled').length, 1, 'um so vence');
+      assert.equal(rs.find((r) => r.status === 'rejected').reason.details?.recusa,
+        'referenciaObsoleta');
+      const estado = (await canonico(a, b)).estado;
+      assert.ok(estado === 'confirmado' || estado === 'encerrado');
+      assert.equal(await espelhos(a, b), estado === 'confirmado' ? 'P1+P2' : 'nenhum');
+      assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0, 'debito unico');
+    });
+
+    // ------------------------------------------------------------- leituras
+
+    test('O12 — bloco seguir nas duas direcoes, com referencias e acoes; gratuito sem bloco; nenhuma chave proibida', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const g = await jogador({ comVip: false });
+      await cmd(b, 'seguir', a, { referencia: null });
+      const v = (await a.verPerfil({ publicId: b.pid })).data;
+      assert.deepEqual(Object.keys(v).sort(),
+        ['acoes', 'amigosDesde', 'detalhes', 'perfil', 'relacao', 'seguir']);
+      assert.deepEqual(v.seguir.meu, { estado: 'nenhum', referencia: null });
+      assert.equal(v.seguir.dele.estado, 'seguidor');
+      assert.equal(typeof v.seguir.dele.referencia, 'string');
+      assert.deepEqual(v.acoes.filter((x) => SEGUIR_ACOES.has(x)), ['seguir', 'removerSeguidor']);
+      assert.ok(v.acoes.includes('bloquear'), 'as acoes de amizade e seguranca continuam');
+      assert.equal(v.detalhes, null);
+      const vb = (await b.verPerfil({ publicId: a.pid })).data;
+      assert.equal(vb.seguir.meu.estado, 'seguindo');
+      assert.deepEqual(vb.acoes.filter((x) => SEGUIR_ACOES.has(x)), ['deixarDeSeguir']);
+      await privado(b);
+      const vp = (await a.verPerfil({ publicId: b.pid })).data;
+      assert.ok(vp.acoes.includes('solicitarSeguir'));
+      assert.ok(!vp.acoes.includes('seguir'));
+      const vg = (await g.verPerfil({ publicId: b.pid })).data;
+      assert.equal(vg.seguir, null);
+      assert.deepEqual([...vg.acoes].sort(), ['adicionarAmigo', 'bloquear']);
+      const vSelf = (await a.verPerfil({ publicId: a.pid })).data;
+      assert.equal(vSelf.relacao, 'euMesmo');
+      assert.deepEqual(vSelf.acoes, ['editarPerfil']);
+      assert.equal(vSelf.seguir, null);
+      assert.equal(vSelf.detalhes, null);
+      const vAlvoGratis = (await a.verPerfil({ publicId: g.pid })).data;
+      assert.ok(vAlvoGratis.seguir, 'o observador VIP ve o estado guardado');
+      assert.ok(!vAlvoGratis.acoes.some((x) => SEGUIR_ACOES.has(x)), 'mas nada de criar');
+      const texto = JSON.stringify([v, vb, vp, vg, vSelf, vAlvoGratis]);
+      for (const proibido of [a.uid, b.uid, g.uid, 'ultimaIntencao', 'corteNaCriacao',
+        'seguidorUid', 'seguidoUid', '"token"', 'criacoes', 'pedidosPendentesEnviados']) {
+        assert.ok(!texto.includes(proibido), `vazou ${proibido}`);
+      }
+    });
+
+    test('S35 — a leitura protegida acompanha privacidade, plano, contato e diario, mudanca a mudanca', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const ver = async () => (await a.verPerfil({ publicId: b.pid })).data;
+      assert.ok((await ver()).acoes.includes('seguir'));
+      await privado(b);
+      assert.ok((await ver()).acoes.includes('solicitarSeguir'));
+      await vip(a, { expiraEm: PASSADO });
+      assert.equal((await ver()).seguir, null);
+      await vip(a);
+      assert.ok((await ver()).seguir);
+      await vip(b, { expiraEm: PASSADO });
+      const semPlano = await ver();
+      assert.ok(semPlano.seguir);
+      assert.ok(!semPlano.acoes.includes('solicitarSeguir'));
+      await vip(b);
+      await semear(`playerModeration/${a.uid}`, { socialRestritoAte: FUTURO });
+      assert.equal((await ver()).seguir, null);
+      await apagar(`playerModeration/${a.uid}`);
+      assert.ok((await ver()).seguir);
+      await diario(b);
+      const emExclusao = await ver();
+      assert.equal(emExclusao.seguir, null);
+      assert.equal(emExclusao.detalhes, null);
+      assert.ok(!emExclusao.acoes.some((x) => SEGUIR_ACOES.has(x)));
+    });
+
+    test('S34a/S34b — lista propria: desde DESC; apelido FRESCO; travessia sem repetir com troca de apelido e item novo', async () => {
+      const b = await jogador();
+      const seguidores = [];
+      for (let i = 0; i < 3; i++) {
+        const f = await jogador();
+        await cmd(f, 'seguir', b, { referencia: null });
+        seguidores.push(f);
+      }
+      const p1 = (await b.listarSeguidores({ limite: 2 })).data;
+      assert.deepEqual(p1.itens.map((i) => i.publicId), [seguidores[2].pid, seguidores[1].pid]);
+      for (const i of p1.itens) {
+        assert.deepEqual(Object.keys(i).sort(), ['apelido', 'avatarRef', 'desde', 'publicId', 'referencia']);
+        assert.equal(typeof i.referencia, 'string');
+      }
+      assert.ok(p1.proximoCursor);
+      await seguidores[0].atualizar({ apelido: 'Nome Novo' });
+      const novo = await jogador();
+      await cmd(novo, 'seguir', b, { referencia: null });
+      const p2 = (await b.listarSeguidores({ limite: 2, cursor: p1.proximoCursor })).data;
+      assert.deepEqual(p2.itens.map((i) => i.publicId), [seguidores[0].pid]);
+      assert.equal(p2.itens[0].apelido, 'Nome Novo');
+      assert.equal(p2.proximoCursor, null);
+      const todos = (await b.listarSeguidores({ limite: 50 })).data.itens.map((i) => i.publicId);
+      assert.deepEqual(todos, [novo.pid, seguidores[2].pid, seguidores[1].pid, seguidores[0].pid]);
+      assert.equal((await b.contadores({})).data.contadores.seguidores, 4);
+      const forjado = (await b.listarSeguidores({ limite: 2, cursor: 'lixo' })).data;
+      assert.equal(forjado.itens.length, 2, 'cursor forjado = primeira pagina');
+    });
+
+    test('O08 — as quatro listas sao SO do dono; pedidos por solicitadoEm; o payload nao escolhe o dono', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      await privado(b);
+      await cmd(a, 'seguir', b, { referencia: null });
+      await cmd(a, 'seguir', c, { referencia: null });
+      const env = (await a.listarPedidosEnviados({})).data.itens;
+      assert.deepEqual(env.map((i) => i.publicId), [b.pid]);
+      assert.deepEqual(Object.keys(env[0]).sort(),
+        ['apelido', 'avatarRef', 'publicId', 'referencia', 'solicitadoEm']);
+      assert.deepEqual((await b.listarPedidosRecebidos({})).data.itens.map((i) => i.publicId), [a.pid]);
+      assert.deepEqual((await a.listarSeguindo({})).data.itens.map((i) => i.publicId), [c.pid]);
+      assert.deepEqual((await c.listarSeguidores({})).data.itens.map((i) => i.publicId), [a.pid]);
+      assert.deepEqual((await b.listarSeguidores({})).data.itens, [], 'pendente nao e seguidor');
+      assert.deepEqual((await b.listarSeguindo({ publicId: a.pid, uid: a.uid })).data.itens, [],
+        'o payload nao escolhe de quem e a lista');
+      const texto = JSON.stringify(env);
+      assert.ok(!texto.includes(a.uid) && !texto.includes(b.uid));
+    });
+
+    test('S19/S22/O13 — contadores proprios por fonte separada; indisponivel e null, nunca zero; sem contador tecnico', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      const d = await jogador();
+      await privado(c);
+      await cmd(a, 'seguir', b, { referencia: null });
+      await cmd(a, 'seguir', c, { referencia: null });
+      await cmd(d, 'seguir', a, { referencia: null });
+      const k = (await a.contadores({})).data;
+      assert.deepEqual(Object.keys(k), ['contadores']);
+      assert.deepEqual(k.contadores, {
+        amigos: null, pedidosAmizadeRecebidos: 0, pedidosSeguirRecebidos: 0,
+        pedidosSeguirEnviados: 1, seguidores: 1, seguindo: 1, privacidade: 'publico',
+      });
+      const agora = new Date().toISOString();
+      await semear(`playerSocial/${a.uid}`, { amigos: 2 });
+      await semear(`users/${a.uid}/friendRequests/${d.uid}`,
+        { direcao: 'recebida', publicId: d.pid, solicitadaEm: agora, esquema: 1 });
+      await semear(`users/${a.uid}/friendRequests/${b.uid}`,
+        { direcao: 'enviada', publicId: b.pid, solicitadaEm: agora, esquema: 1 });
+      const k2 = (await a.contadores({})).data.contadores;
+      assert.equal(k2.amigos, 2);
+      assert.equal(k2.pedidosAmizadeRecebidos, 1, 'so a direcao recebida');
+      await semear(`playerSocial/${a.uid}`, { amigos: 1.5, privacidade: 'privado' });
+      const k3 = (await a.contadores({})).data.contadores;
+      assert.equal(k3.amigos, null, 'ilegivel e null, nunca zero');
+      assert.equal(k3.privacidade, 'privado');
+    });
+
+    // ------------------------------------------------- erros e autenticacao
+
+    test('D07 — erros neutros: alvo gratuito, que eu bloqueei, que me bloqueou ou com contato restrito respondem IGUAL', async () => {
+      const a = await jogador();
+      const gratis = await jogador({ comVip: false });
+      const euBloqueei = await jogador();
+      const meBloqueou = await jogador();
+      const restrito = await jogador();
+      const agora = new Date().toISOString();
+      await semear(`users/${a.uid}/blocks/${euBloqueei.uid}`,
+        { bloqueadorUid: a.uid, bloqueadoUid: euBloqueei.uid, criadoEm: agora, esquema: 1 });
+      await semear(`users/${meBloqueou.uid}/blocks/${a.uid}`,
+        { bloqueadorUid: meBloqueou.uid, bloqueadoUid: a.uid, criadoEm: agora, esquema: 1 });
+      const respostas = [];
+      for (const alvo of [gratis, euBloqueei, meBloqueou]) {
+        const e = await cmd(a, 'seguir', alvo, { referencia: null }).then(() => null, (x) => x);
+        assert.ok(e, 'tinha que recusar');
+        respostas.push([e.code, e.message, JSON.stringify(e.details)].join('|'));
+      }
+      await semear(`playerModeration/${restrito.uid}`, { socialRestritoAte: FUTURO });
+      const e4 = await cmd(restrito, 'seguir', a, { referencia: null }).then(() => null, (x) => x);
+      respostas.push([e4.code, e4.message, JSON.stringify(e4.details)].join('|'));
+      assert.equal(new Set(respostas).size, 1, `respostas diferentes: ${respostas.join(' / ')}`);
+      assert.ok(respostas[0].startsWith('functions/failed-precondition|'));
+      const emExclusao = await jogador();
+      await diario(emExclusao);
+      const e5 = await a.seguir({ publicId: 'PZZZZZZZZZZZZ', referencia: null, intencaoId: intencao() })
+        .then(() => null, (x) => x);
+      const e6 = await cmd(a, 'seguir', emExclusao, { referencia: null }).then(() => null, (x) => x);
+      assert.equal(e5.code, 'functions/not-found');
+      assert.equal(e6.code, e5.code);
+      assert.equal(e6.message, e5.message);
+      assert.deepEqual(e6.details, e5.details, 'exclusao e inexistente respondem igual');
+    });
+
+    test('S08 — sobre si mesmo e entrada malformada: recusas estaveis; o payload nao escolhe UID nem estado', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      await assert.rejects(() => cmd(a, 'seguir', a, { referencia: null }),
+        recusa('acaoSobreSiMesmo', 'failed-precondition'));
+      await assert.rejects(() => a.seguir({ publicId: b.pid, referencia: null }),
+        recusa('pedidoInvalido', 'invalid-argument'));
+      await assert.rejects(
+        () => a.seguir({ publicId: b.pid, referencia: null, intencaoId: 'tem espaco' }),
+        recusa('pedidoInvalido'));
+      for (const ruim of [123, 'a.b.c', 'sem-ponto', { ref: 'x' }]) {
+        await assert.rejects(() => cmd(a, 'seguir', b, { referencia: ruim }), recusa('pedidoInvalido'));
+      }
+      await assert.rejects(() => a.seguir({ referencia: null, intencaoId: intencao() }),
+        (e) => e.code === 'functions/invalid-argument');
+      assert.equal(await canonico(a, b), undefined);
+      assert.equal(await ritmo(a), undefined);
+      await privado(b);
+      const r = await a.seguir({
+        publicId: b.pid, referencia: null, intencaoId: intencao(),
+        uid: b.uid, atorUid: b.uid, estado: 'confirmado', agora: PASSADO, corte: 'x',
+      });
+      assert.equal(r.data.estado, 'pendente', 'quem decide e a privacidade lida no servidor');
+      assert.equal((await canonico(a, b)).seguidorUid, a.uid, 'o ator vem da sessao');
+      assert.equal(await canonico(b, a), undefined);
+    });
+
+    test('sem autenticacao, toda callable de seguir e recusada', async () => {
+      const { initializeApp: init } = require('firebase/app');
+      const app = init({ projectId: PROJETO, apiKey: 'fake' }, 'seguir-anonimo');
+      const [host, porta] = (process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001').split(':');
+      const f = getFunctions(app, 'southamerica-east1');
+      connectFunctionsEmulator(f, host, Number(porta));
+      for (const nome of ['seguirJogador', 'cancelarPedidoSeguir', 'aprovarPedidoSeguir',
+        'recusarPedidoSeguir', 'deixarDeSeguir', 'removerSeguidor', 'listarSeguidores',
+        'listarSeguindo', 'listarPedidosSeguirRecebidos', 'listarPedidosSeguirEnviados',
+        'definirPrivacidadeSocial', 'consultarContadoresSociais']) {
+        await assert.rejects(
+          () => httpsCallable(f, nome)({ publicId: pidUm, privacidade: 'privado' }),
+          (e) => e.code === 'functions/unauthenticated',
+          `${nome} tinha que exigir autenticacao`,
+        );
+      }
     });
   });
 

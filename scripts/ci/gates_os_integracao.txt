@@ -461,7 +461,7 @@ rankingfn
     casos      465
     contador   pass [0-9]+
     suite      functions-ranking/test/passe.test.js
-    sha256     7c20bd7f7e763e7757dd06394656ea58d2dcadb4dbb10397704cf37b5a8eea7c
+    sha256     912001a1c8ee14f3cdfbb6a8fdc76efd3216b565b96f1a13471e27e4687254b8
     provas     54
     exige      test("PF-01:
     exige      SUPERFICIE_IMPLANTADA = {

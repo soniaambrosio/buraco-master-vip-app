@@ -736,12 +736,16 @@ describe("PASSE/FRONTEIRA — o que esta OS promete NÃO ter feito", () => {
       "processarResultado", "reprocessarBacklogDeRanking",
     ],
     "functions-social/src/index.ts": [
-      "aceitarSolicitacaoAmizade", "aoBloquearJogador", "atualizarPerfilPublico",
-      "buscarJogadoresPorApelido", "cancelarSolicitacaoAmizade",
-      "enviarSolicitacaoAmizade", "listarAmigos", "listarSolicitacoesEnviadas",
+      "aceitarSolicitacaoAmizade", "aoBloquearJogador", "aprovarPedidoSeguir",
+      "atualizarPerfilPublico", "buscarJogadoresPorApelido", "cancelarPedidoSeguir",
+      "cancelarSolicitacaoAmizade", "consultarContadoresSociais",
+      "definirPrivacidadeSocial", "deixarDeSeguir", "enviarSolicitacaoAmizade",
+      "listarAmigos", "listarPedidosSeguirEnviados", "listarPedidosSeguirRecebidos",
+      "listarSeguidores", "listarSeguindo", "listarSolicitacoesEnviadas",
       "listarSolicitacoesRecebidas", "localizarJogadorPorIdentidade",
-      "obterMinhaIdentidade", "reconciliarPerfilSocial", "recusarSolicitacaoAmizade",
-      "removerAmizade", "verPerfilPublico",
+      "obterMinhaIdentidade", "reconciliarPerfilSocial", "recusarPedidoSeguir",
+      "recusarSolicitacaoAmizade", "removerAmizade", "removerSeguidor",
+      "seguirJogador", "verPerfilPublico",
     ],
   };
 

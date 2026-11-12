@@ -54,7 +54,16 @@ import {
   lerContadores,
   lerRelacao,
 } from "./chaves";
-import { LIMITES, VereditoAmizade, agoraUtc, dominio } from "./domain";
+import {
+  EspelhoSeguir,
+  EstadoSeguir,
+  LIMITES,
+  OperacaoSeguir,
+  VereditoAmizade,
+  VereditoSeguir,
+  agoraUtc,
+  dominio,
+} from "./domain";
 
 export const SUB_AMIGOS = "friends";
 export const SUB_SOLICITACOES = "friendRequests";
@@ -1330,4 +1339,622 @@ export async function propagarApelidoParaAmigos(
   }
   if (tocados > 0) await lote.commit();
   return tocados;
+}
+
+// ===========================================================================
+// SEGUIR — SOCIAL-02, etapa C3
+// ===========================================================================
+//
+// Mutacoes O01–O07, listas proprias O08, privacidade O09, vista O12 e
+// contadores O13. Formato persistido CONGELADO na C2 r2 (o mesmo que a
+// exclusao de conta le):
+//
+//   follows/{seguidor|seguido}            canonico de UMA direcao
+//   users/{A}/seguindo/{B}                P1   publicId, desde, referencia
+//   users/{B}/seguidores/{A}              P2   publicId, desde, referencia
+//   users/{A}/pedidosSeguirEnviados/{B}   P3   publicId, solicitadoEm, referencia
+//   users/{B}/pedidosSeguirRecebidos/{A}  P4   publicId, solicitadoEm, referencia
+//   playerSocialRitmo/{uid}               criacoes, pedidosPendentesEnviados
+//   playerSocial/{uid}.privacidade        publico | privado (ausente = publico)
+//
+// QUEM DECIDE e o dominio Dart (`avaliarComandoSeguir`, `acoesDeSeguir`,
+// `estadoEfetivoSeguir`, `vigenciaVipDasPontas`). Aqui so ha leitura na
+// transacao, escrita do que o veredito mandou e integridade do dado gravado.
+//
+// INVARIANTE HERDADO DA C2 r2: todo escritor que muda o conjunto de pedidos
+// FISICAMENTE pendentes de um remetente R le E grava `playerSocialRitmo/R` na
+// MESMA transacao — inclusive quando quem chama e o destinatario (aprovar,
+// recusar). E o que serializa estas mutacoes com a reconciliacao da exclusao.
+
+export const C_SEGUIR = "follows";
+export const C_RITMO_SOCIAL = "playerSocialRitmo";
+const CAMPO_PENDENTES_ENVIADOS = "pedidosPendentesEnviados";
+const ESQUEMA_SEGUIR = 1;
+
+export type ListaDeSeguir =
+  | "seguidores"
+  | "seguindo"
+  | "pedidosSeguirRecebidos"
+  | "pedidosSeguirEnviados";
+
+/// O contador ou o historico do remetente nao e conhecido: nada foi gravado.
+export class SeguirSemContagem extends Error {}
+
+/// Falta a identidade publica de uma das pontas: projecao sem publicId nao nasce.
+export class SeguirSemIdentidade extends Error {}
+
+/// Chave do canonico de UMA direcao (formato congelado na C2).
+export function chaveDirigida(seguidor: string, seguido: string): string {
+  return `${seguidor}|${seguido}`;
+}
+
+/// A direcao afetada sai do ator (ator -> alvo)? Espelha `OperacaoSeguir.naSaida`
+/// do dominio; aqui so escolhe QUAL documento ler.
+export function ladoDaOperacao(op: OperacaoSeguir): "saida" | "entrada" {
+  return op === "seguir" || op === "cancelarPedido" || op === "deixarDeSeguir"
+    ? "saida"
+    : "entrada";
+}
+
+/// Estado efetivo -> palavra do fio, do ponto de vista de quem le.
+export function estadoPublicoDeSeguir(
+  efetivo: EstadoSeguir,
+  lado: "saida" | "entrada"
+): "nenhum" | "pendente" | "seguindo" | "seguidor" {
+  if (efetivo === "confirmado") return lado === "saida" ? "seguindo" : "seguidor";
+  if (efetivo === "pendente") return "pendente";
+  return "nenhum";
+}
+
+function contagemConhecida(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
+function textoOuNulo(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/// Privacidade como esta gravada, para o dominio decidir. Ausente = `null`
+/// (Q1: publico). Um valor que nao e texto vira um texto desconhecido, que o
+/// dominio le como PRIVADO — na duvida, nao se abre o que pode ter sido fechado.
+function privacidadeGravada(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  return typeof v === "string" ? v : "desconhecida";
+}
+
+/// Privacidade para EXIBIR ao proprio dono, com a mesma leitura do dominio.
+function privacidadeParaExibir(v: unknown): "publico" | "privado" {
+  return v === undefined || v === null || v === "publico" ? "publico" : "privado";
+}
+
+/// O estado fisico gravado. Valor fora do vocabulario segue para o dominio, que
+/// o recusa com erro: um canonico corrompido nunca vira "nenhum".
+function estadoGravado(d: Record<string, unknown> | undefined): EstadoSeguir | null {
+  if (!d) return null;
+  return d.estado as EstadoSeguir;
+}
+
+function espelhosDaDirecao(
+  seguidor: string,
+  seguido: string
+): Record<EspelhoSeguir, FirebaseFirestore.DocumentReference> {
+  const usuarios = db().collection(C_USUARIOS);
+  return {
+    seguindoDoSeguidor: usuarios.doc(seguidor).collection("seguindo").doc(seguido),
+    seguidoresDoSeguido: usuarios.doc(seguido).collection("seguidores").doc(seguidor),
+    pedidoEnviadoDoSeguidor: usuarios
+      .doc(seguidor)
+      .collection("pedidosSeguirEnviados")
+      .doc(seguido),
+    pedidoRecebidoDoSeguido: usuarios
+      .doc(seguido)
+      .collection("pedidosSeguirRecebidos")
+      .doc(seguidor),
+  };
+}
+
+export interface ResultadoDeSeguir {
+  veredito: VereditoSeguir;
+  /// A referencia (token opaco `ref.corte`) da direcao DEPOIS do veredito.
+  referencia: string | null;
+}
+
+/// O01–O07: um comando de seguir, numa transacao.
+///
+/// LEITURAS, todas antes de qualquer escrita: canonico da direcao, ritmo do
+/// SEGUIDOR da direcao, privacidade do seguido, identidades das duas pontas, a
+/// prova de ator novo (quando o ritmo do ator nao existe) e, por ultimo,
+/// `lerImpedimentosDoPar` (planos, diarios, corte e contato), que toma o
+/// `agora` UMA vez, depois de tudo. Uma nova tentativa da transacao relê tudo.
+export async function operarSeguir(
+  op: OperacaoSeguir,
+  atorUid: string,
+  alvoUid: string,
+  tokenVisto: unknown,
+  intencaoId: string
+): Promise<ResultadoDeSeguir> {
+  const naSaida = ladoDaOperacao(op) === "saida";
+  const seguidor = naSaida ? atorUid : alvoUid;
+  const seguido = naSaida ? alvoUid : atorUid;
+
+  const refCanonico = db().collection(C_SEGUIR).doc(chaveDirigida(seguidor, seguido));
+  const refRitmo = db().collection(C_RITMO_SOCIAL).doc(seguidor);
+  const refSocialSeguido = db().collection(C_SOCIAL_JOGADOR).doc(seguido);
+  const refIdSeguidor = db().collection(C_IDENTIDADES).doc(seguidor);
+  const refIdSeguido = db().collection(C_IDENTIDADES).doc(seguido);
+
+  return db().runTransaction<ResultadoDeSeguir>(async (tx) => {
+    const [canonico, ritmo, socialSeguido, idSeguidor, idSeguido] = await tx.getAll(
+      refCanonico,
+      refRitmo,
+      refSocialSeguido,
+      refIdSeguidor,
+      refIdSeguido
+    );
+    const c = dados(canonico);
+    const r = dados(ritmo);
+
+    // HISTORICO E CONTADOR DO ATOR — so contam para `seguir` (O01/O02).
+    //
+    // Documento ausente NAO e automaticamente ator novo. A prova de primeira
+    // criacao e: nao existe NENHUM canonico com `seguidorUid` do ator, lido
+    // nesta transacao. O ritmo nasce na primeira criacao e so sai na exclusao
+    // da conta; sem ritmo e sem canonico, nao ha estado anterior a perder.
+    // Com canonico e sem ritmo, o estado foi perdido: desconhecido, recusa.
+    let criacoesDoAtor: string[] | null = null;
+    let pendentesDoAtor: number | null = null;
+    let atorNovoProvado = false;
+    if (op === "seguir") {
+      if (ritmo.exists) {
+        criacoesDoAtor = Array.isArray(r?.criacoes) ? (r?.criacoes as string[]) : null;
+        const v = r?.[CAMPO_PENDENTES_ENVIADOS];
+        pendentesDoAtor = contagemConhecida(v) ? v : null;
+      } else {
+        const qualquer = await tx.get(
+          db().collection(C_SEGUIR).where("seguidorUid", "==", atorUid).limit(1)
+        );
+        if (qualquer.empty) {
+          atorNovoProvado = true;
+          criacoesDoAtor = [];
+          pendentesDoAtor = 0;
+        }
+      }
+    }
+
+    // Historico por alvo: par sem canonico e par novo (provado pela ausencia
+    // lida aqui); canonico sem lista legivel e desconhecido.
+    const criacoesNoPar: string[] | null = !canonico.exists
+      ? []
+      : Array.isArray(c?.criacoesRecentes)
+        ? (c?.criacoesRecentes as string[])
+        : null;
+
+    const imp = await lerImpedimentosDoPar(tx, atorUid, alvoUid);
+    const fisico = estadoGravado(c);
+    const refAtual = textoOuNulo(c?.ref);
+    const ultima = (c?.ultimaIntencao ?? {}) as Record<string, unknown>;
+
+    const veredito = dominio.avaliarComandoSeguir({
+      operacao: op,
+      atorUid,
+      alvoUid,
+      intencaoId,
+      tokenVisto,
+      atorVip: imp.atorVip,
+      alvoVip: imp.alvoVip,
+      contatoPermitido: imp.contato.permitido,
+      atorEmExclusao: imp.atorEmExclusao,
+      alvoEmExclusao: imp.alvoEmExclusao,
+      estadoFisico: fisico,
+      refAtual,
+      corteNaCriacao: textoOuNulo(c?.corteNaCriacao),
+      corteAtual: imp.corteAtual,
+      ultimaIntencaoChave: textoOuNulo(ultima.chave),
+      ultimaIntencaoImpressao: textoOuNulo(ultima.impressao),
+      privacidadeAlvo:
+        op === "seguir" ? privacidadeGravada(dados(socialSeguido)?.privacidade) : null,
+      criacoesDoAtor,
+      criacoesNoPar,
+      pendentesEnviadosDoAtor: pendentesDoAtor,
+      agora: imp.agora,
+    });
+
+    const novo = veredito.novoEstado;
+    if (!veredito.aceita || novo === null) {
+      return {
+        veredito,
+        referencia: dominio.tokenSeguir({ ref: refAtual, corte: imp.corteAtual }).referencia,
+      };
+    }
+
+    // ---- RITMO DO SEGUIDOR DA DIRECAO ----------------------------------
+    // Muda o conjunto de pedidos pendentes do seguidor? Entao o ritmo dele e
+    // lido (ja foi) E gravado nesta transacao, mesmo se o total final for igual.
+    const antes: EstadoSeguir = fisico ?? "nenhum";
+    const mudaPendentes = antes === "pendente" || novo === "pendente";
+    const ritmoGravado: Record<string, unknown> = {};
+    if (mudaPendentes) {
+      let atual: number | null = null;
+      if (ritmo.exists) {
+        const v = r?.[CAMPO_PENDENTES_ENVIADOS];
+        atual = contagemConhecida(v) ? v : null;
+      } else if (atorNovoProvado && seguidor === atorUid) {
+        atual = 0;
+      }
+      if (atual === null) throw new SeguirSemContagem();
+      const proximo = atual + veredito.deltaPendentes;
+      // Sem max(0, ...): um negativo aqui e inconsistencia, e nao vira zero.
+      if (!Number.isInteger(proximo) || proximo < 0) throw new SeguirSemContagem();
+      ritmoGravado[CAMPO_PENDENTES_ENVIADOS] = proximo;
+    }
+    if (veredito.consumirRitmo) {
+      if (!veredito.criacoesDoAtorApos) throw new SeguirSemContagem();
+      ritmoGravado.criacoes = veredito.criacoesDoAtorApos;
+      // Ator novo PROVADO: o documento nasce com contador explicito.
+      if (!ritmo.exists && atorNovoProvado && !(CAMPO_PENDENTES_ENVIADOS in ritmoGravado)) {
+        ritmoGravado[CAMPO_PENDENTES_ENVIADOS] = 0;
+      }
+    }
+
+    // ---- IDENTIDADES (para as projecoes do estado novo) ------------------
+    const manter = new Set<EspelhoSeguir>(veredito.espelhos ?? []);
+    const pidSeguidor = textoOuNulo(dados(idSeguidor)?.publicId);
+    const pidSeguido = textoOuNulo(dados(idSeguido)?.publicId);
+    if (manter.size > 0 && (!pidSeguidor || !pidSeguido)) throw new SeguirSemIdentidade();
+
+    // ---- ESCRITAS --------------------------------------------------------
+    const agora = imp.agora;
+    const refNovo = randomBytes(16).toString("base64url");
+    const referencia = dominio.tokenSeguir({ ref: refNovo, corte: imp.corteAtual }).referencia;
+
+    const criando = op === "seguir" || op === "aprovarPedido";
+    const canonicoNovo: Record<string, unknown> = {
+      seguidorUid: seguidor,
+      seguidoUid: seguido,
+      estado: novo,
+      ref: refNovo,
+      // Quem cria grava o corte ATUAL; encerramentos preservam o de origem.
+      corteNaCriacao: criando ? imp.corteAtual : textoOuNulo(c?.corteNaCriacao),
+      ultimaIntencao: { chave: veredito.chaveIntencao, impressao: veredito.impressao },
+      esquema: ESQUEMA_SEGUIR,
+    };
+    if (op === "seguir") {
+      canonicoNovo.solicitadoEm = agora;
+      canonicoNovo.confirmadoEm = novo === "confirmado" ? agora : null;
+      canonicoNovo.encerradoEm = null;
+      // `desde` e o inicio do VINCULO: pedido pendente ainda nao tem.
+      canonicoNovo.desde = novo === "confirmado" ? agora : null;
+      // O historico por alvo sobrevive a encerramento e corte: so a criacao o
+      // atualiza, a partir do que ja estava no canonico. Sem historico novo do
+      // dominio nao ha escrita — nunca uma lista vazia no lugar.
+      if (!veredito.criacoesNoParApos) throw new SeguirSemContagem();
+      canonicoNovo.criacoesRecentes = veredito.criacoesNoParApos;
+    } else if (novo === "confirmado") {
+      canonicoNovo.confirmadoEm = agora;
+      canonicoNovo.encerradoEm = null;
+      canonicoNovo.desde = agora;
+    } else if (novo === "encerrado") {
+      canonicoNovo.encerradoEm = agora;
+      canonicoNovo.desde = null;
+    }
+    tx.set(refCanonico, canonicoNovo, { merge: true });
+
+    // POS-CONDICAO P1–P4: exatamente os espelhos do estado novo; os outros da
+    // MESMA direcao sao apagados. A direcao inversa nao e lida nem escrita.
+    const solicitadoEm =
+      op === "seguir" ? agora : textoOuNulo(c?.solicitadoEm) ?? agora;
+    const desde = typeof canonicoNovo.desde === "string" ? canonicoNovo.desde : agora;
+    const conteudo: Record<EspelhoSeguir, Record<string, unknown>> = {
+      seguindoDoSeguidor: { publicId: pidSeguido, desde, referencia },
+      seguidoresDoSeguido: { publicId: pidSeguidor, desde, referencia },
+      pedidoEnviadoDoSeguidor: { publicId: pidSeguido, solicitadoEm, referencia },
+      pedidoRecebidoDoSeguido: { publicId: pidSeguidor, solicitadoEm, referencia },
+    };
+    const espelhos = espelhosDaDirecao(seguidor, seguido);
+    for (const chave of Object.keys(espelhos) as EspelhoSeguir[]) {
+      if (manter.has(chave)) tx.set(espelhos[chave], conteudo[chave]);
+      else tx.delete(espelhos[chave]);
+    }
+
+    if (Object.keys(ritmoGravado).length > 0) {
+      ritmoGravado.atualizadoEm = agora;
+      ritmoGravado.esquema = ESQUEMA_SEGUIR;
+      tx.set(refRitmo, ritmoGravado, { merge: true });
+    }
+
+    return { veredito, referencia };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// O12 — a vista de seguir, num SNAPSHOT so
+// ---------------------------------------------------------------------------
+
+export interface LadoDaVista {
+  estado: "nenhum" | "pendente" | "seguindo" | "seguidor";
+  referencia: string | null;
+}
+
+export interface VistaDeSeguir {
+  bloco: { meu: LadoDaVista; dele: LadoDaVista } | null;
+  acoes: string[];
+}
+
+/// O bloco `seguir` e as acoes de seguir para `observador` diante de `alvo`.
+///
+/// Tudo o que decide a permissao e lido NA MESMA transacao (so de leitura): as
+/// duas direcoes, o corte, a privacidade do alvo, contato e moderacao, os dois
+/// planos e os dois diarios. Nao ha fonte de detalhes contratada (D04): a
+/// resposta leva `detalhes: null`, sem ler nada para isso.
+///
+/// Sem bloco para observador sem VIP (R08), diante de contato impedido ou de
+/// conta em exclusao — nada aqui diz por que.
+export async function vistaDeSeguir(
+  observadorUid: string,
+  alvoUid: string
+): Promise<VistaDeSeguir> {
+  return db().runTransaction<VistaDeSeguir>(async (tx) => {
+    const [saida, entrada, socialAlvo] = await tx.getAll(
+      db().collection(C_SEGUIR).doc(chaveDirigida(observadorUid, alvoUid)),
+      db().collection(C_SEGUIR).doc(chaveDirigida(alvoUid, observadorUid)),
+      db().collection(C_SOCIAL_JOGADOR).doc(alvoUid)
+    );
+    const imp = await lerImpedimentosDoPar(tx, observadorUid, alvoUid);
+    if (
+      !imp.atorVip ||
+      imp.atorEmExclusao ||
+      imp.alvoEmExclusao ||
+      !imp.contato.permitido
+    ) {
+      return { bloco: null, acoes: [] };
+    }
+
+    const ds = dados(saida);
+    const de = dados(entrada);
+    const efetivoSaida = dominio.estadoEfetivoSeguir({
+      estadoFisico: estadoGravado(ds),
+      corteNaCriacao: textoOuNulo(ds?.corteNaCriacao),
+      corteAtual: imp.corteAtual,
+    }).estadoEfetivo;
+    const efetivoEntrada = dominio.estadoEfetivoSeguir({
+      estadoFisico: estadoGravado(de),
+      corteNaCriacao: textoOuNulo(de?.corteNaCriacao),
+      corteAtual: imp.corteAtual,
+    }).estadoEfetivo;
+
+    const { acoes } = dominio.acoesDeSeguir({
+      euMesmo: false,
+      observadorVip: imp.atorVip,
+      alvoVip: imp.alvoVip,
+      contatoPermitido: imp.contato.permitido,
+      observadorEmExclusao: imp.atorEmExclusao,
+      alvoEmExclusao: imp.alvoEmExclusao,
+      privacidadeAlvo: privacidadeGravada(dados(socialAlvo)?.privacidade),
+      efetivoSaida,
+      efetivoEntrada,
+    });
+
+    return {
+      bloco: {
+        meu: {
+          estado: estadoPublicoDeSeguir(efetivoSaida, "saida"),
+          referencia: dominio.tokenSeguir({
+            ref: textoOuNulo(ds?.ref),
+            corte: imp.corteAtual,
+          }).referencia,
+        },
+        dele: {
+          estado: estadoPublicoDeSeguir(efetivoEntrada, "entrada"),
+          referencia: dominio.tokenSeguir({
+            ref: textoOuNulo(de?.ref),
+            corte: imp.corteAtual,
+          }).referencia,
+        },
+      },
+      acoes,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// O08 — listas PROPRIAS, com a autoridade do dono no mesmo snapshot
+// ---------------------------------------------------------------------------
+
+export type AutorizacaoDoDono = "ok" | "requerVip" | "indisponivel";
+
+export interface PaginaDeSeguir {
+  autorizacao: AutorizacaoDoDono;
+  itens: { publicId: string; desde: string | null; referencia: string | null }[];
+  proximoCursor: string | null;
+}
+
+/// Uma pagina de uma lista propria de seguir.
+///
+/// PONTO DE AUTORIZACAO: a transacao so de leitura que le o plano e o diario do
+/// dono E a pagina. Uma revogacao (plano vencido, diario criado) confirmada
+/// antes desse ponto nega; nada da pagina sai sem a autoridade do mesmo
+/// instante. Nao examina a elegibilidade de cada terceiro: lista vinculos
+/// GUARDADOS (D01), inclusive suspensos por plano e residuos ainda nao limpos.
+///
+/// Ordem por chave IMUTAVEL: `desde` (ou `solicitadoEm`) DESC + `publicId` ASC.
+export async function paginaDeSeguir(
+  uid: string,
+  lista: ListaDeSeguir,
+  cursor: string | null,
+  limite: number
+): Promise<PaginaDeSeguir> {
+  const campo =
+    lista === "seguidores" || lista === "seguindo" ? "desde" : "solicitadoEm";
+  let consulta = db()
+    .collection(C_USUARIOS)
+    .doc(uid)
+    .collection(lista)
+    .orderBy(campo, "desc")
+    .orderBy("publicId", "asc")
+    .limit(limite + 1);
+  const partes = cursor ? decodificarCursor(cursor) : null;
+  if (partes) consulta = consulta.startAfter(partes[0], partes[1]);
+
+  return db().runTransaction<PaginaDeSeguir>(async (tx) => {
+    const [plano, diario] = await tx.getAll(
+      db().collection(C_ENTITLEMENTS).doc(uid),
+      db().collection(C_DIARIO_EXCLUSAO).doc(uid)
+    );
+    const snap = await tx.get(consulta);
+    const agora = agoraUtc();
+
+    if (diario.exists) return { autorizacao: "indisponivel", itens: [], proximoCursor: null };
+    const vip = dominio.vigenciaVipDasPontas({
+      uidA: uid,
+      documentoA: dados(plano) ?? null,
+      uidB: uid,
+      documentoB: null,
+      agora,
+    }).a;
+    if (!vip) return { autorizacao: "requerVip", itens: [], proximoCursor: null };
+
+    const docs = snap.docs.slice(0, limite);
+    const ultimo = docs[docs.length - 1];
+    return {
+      autorizacao: "ok",
+      itens: docs.map((d) => {
+        const v = d.data();
+        return {
+          publicId: typeof v.publicId === "string" ? v.publicId : "",
+          desde: typeof v[campo] === "string" ? (v[campo] as string) : null,
+          referencia: textoOuNulo(v.referencia),
+        };
+      }),
+      proximoCursor:
+        snap.docs.length > limite && ultimo
+          ? codificarCursor(`${ultimo.data()[campo] ?? ""}`, `${ultimo.data().publicId ?? ""}`)
+          : null,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// O09 — privacidade
+// ---------------------------------------------------------------------------
+
+export interface ResultadoDePrivacidade {
+  autorizacao: AutorizacaoDoDono;
+  repeticao: boolean;
+  privacidade: "publico" | "privado";
+}
+
+/// Grava SO o campo `privacidade` de `playerSocial/{uid}`. Dono VIP, sem diario.
+/// Nao toca vinculo nem pedido: fechar mantem seguidores, abrir nao aprova
+/// pedidos (D02). Ausente vale publico (Q1); o mesmo valor e repeticao.
+export async function gravarPrivacidadeSocial(
+  uid: string,
+  valor: "publico" | "privado"
+): Promise<ResultadoDePrivacidade> {
+  const refSocial = db().collection(C_SOCIAL_JOGADOR).doc(uid);
+  return db().runTransaction<ResultadoDePrivacidade>(async (tx) => {
+    const [plano, diario, social] = await tx.getAll(
+      db().collection(C_ENTITLEMENTS).doc(uid),
+      db().collection(C_DIARIO_EXCLUSAO).doc(uid),
+      refSocial
+    );
+    const agora = agoraUtc();
+    if (diario.exists) return { autorizacao: "indisponivel", repeticao: false, privacidade: valor };
+    const vip = dominio.vigenciaVipDasPontas({
+      uidA: uid,
+      documentoA: dados(plano) ?? null,
+      uidB: uid,
+      documentoB: null,
+      agora,
+    }).a;
+    if (!vip) return { autorizacao: "requerVip", repeticao: false, privacidade: valor };
+
+    const gravada = dados(social)?.privacidade;
+    const jaVale =
+      valor === "publico"
+        ? gravada === undefined || gravada === null || gravada === "publico"
+        : gravada === "privado";
+    if (jaVale) return { autorizacao: "ok", repeticao: true, privacidade: valor };
+
+    tx.set(refSocial, { privacidade: valor }, { merge: true });
+    return { autorizacao: "ok", repeticao: false, privacidade: valor };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// O13 — contadores proprios
+// ---------------------------------------------------------------------------
+
+export interface ContadoresProprios {
+  autorizacao: AutorizacaoDoDono;
+  valores: {
+    amigos: number | null;
+    pedidosAmizadeRecebidos: number | null;
+    pedidosSeguirRecebidos: number | null;
+    pedidosSeguirEnviados: number | null;
+    seguidores: number | null;
+    seguindo: number | null;
+    privacidade: "publico" | "privado";
+  } | null;
+}
+
+/// Os contadores do proprio dono.
+///
+/// PONTO DE AUTORIZACAO: a transacao que le plano, diario e `playerSocial`.
+/// As contagens vem DEPOIS, cada uma da sua fonte (as mesmas projecoes que as
+/// listas leem), por agregacao, em leituras independentes — sem promessa de
+/// mesmo instante entre elas. Uma contagem que falha e `null`, nunca zero.
+/// O contador tecnico do ritmo NAO e devolvido.
+export async function contadoresProprios(uid: string): Promise<ContadoresProprios> {
+  const autoridade = await db().runTransaction(async (tx) => {
+    const [plano, diario, social] = await tx.getAll(
+      db().collection(C_ENTITLEMENTS).doc(uid),
+      db().collection(C_DIARIO_EXCLUSAO).doc(uid),
+      db().collection(C_SOCIAL_JOGADOR).doc(uid)
+    );
+    const agora = agoraUtc();
+    return {
+      diario: diario.exists,
+      vip: dominio.vigenciaVipDasPontas({
+        uidA: uid,
+        documentoA: dados(plano) ?? null,
+        uidB: uid,
+        documentoB: null,
+        agora,
+      }).a,
+      social: dados(social),
+    };
+  });
+  if (autoridade.diario) return { autorizacao: "indisponivel", valores: null };
+  if (!autoridade.vip) return { autorizacao: "requerVip", valores: null };
+
+  const usuario = db().collection(C_USUARIOS).doc(uid);
+  const contar = async (consulta: FirebaseFirestore.Query): Promise<number | null> => {
+    try {
+      return (await consulta.count().get()).data().count;
+    } catch (erro) {
+      logger.warn("contagem social indisponivel", { erro: `${erro}` });
+      return null;
+    }
+  };
+  const [pedidosAmizadeRecebidos, pedidosSeguirRecebidos, pedidosSeguirEnviados, seguidores, seguindo] =
+    await Promise.all([
+      contar(usuario.collection(SUB_SOLICITACOES).where("direcao", "==", "recebida")),
+      contar(usuario.collection("pedidosSeguirRecebidos")),
+      contar(usuario.collection("pedidosSeguirEnviados")),
+      contar(usuario.collection("seguidores")),
+      contar(usuario.collection("seguindo")),
+    ]);
+  const amigos = autoridade.social?.amigos;
+  return {
+    autorizacao: "ok",
+    valores: {
+      amigos: contagemConhecida(amigos) ? amigos : null,
+      pedidosAmizadeRecebidos,
+      pedidosSeguirRecebidos,
+      pedidosSeguirEnviados,
+      seguidores,
+      seguindo,
+      privacidade: privacidadeParaExibir(autoridade.social?.privacidade),
+    },
+  };
 }

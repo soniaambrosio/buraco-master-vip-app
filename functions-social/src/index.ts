@@ -35,20 +35,32 @@ import {
 import {
   CandidatoDeBusca,
   LIMITES,
+  OperacaoSeguir,
   VereditoAmizade,
   agoraUtc,
   dominio,
 } from "./domain";
 import {
+  AutorizacaoDoDono,
+  ListaDeSeguir,
+  SeguirSemContagem,
+  SeguirSemIdentidade,
+  VistaDeSeguir,
+  contadoresProprios,
   desfazerPorBloqueio,
   db,
   estadoDeContato,
+  estadoPublicoDeSeguir,
   exigirDocumentoPublicoLimpo,
   garantirIdentidade,
+  gravarPrivacidadeSocial,
+  ladoDaOperacao,
   lerPerfilPublico,
   lerPerfisPublicos,
   operarRelacao,
+  operarSeguir,
   paginaDeAmigos,
+  paginaDeSeguir,
   paginaDeSolicitacoes,
   propagarApelidoParaAmigos,
   publicIdDe,
@@ -56,6 +68,7 @@ import {
   relacoesParaBusca,
   resolverUid,
   varrerVisiveis,
+  vistaDeSeguir,
 } from "./repositorio";
 
 initializeApp();
@@ -286,6 +299,9 @@ export const verPerfilPublico = onCall(opcoesCliente, async (req) => {
       perfil: entradaPublica(perfil, normalizado, null),
       relacao: "euMesmo",
       acoes: ["editarPerfil"],
+      // SOCIAL-02 C3: o proprio perfil nao tem relacao de seguir consigo.
+      seguir: null,
+      detalhes: null,
     });
   }
 
@@ -313,16 +329,33 @@ export const verPerfilPublico = onCall(opcoesCliente, async (req) => {
     contatoPermitido: contato.permitido,
   });
 
+  // SOCIAL-02 C3 (O12): o bloco de seguir, com permissao e conteudo lidos no
+  // MESMO snapshot transacional (ver `vistaDeSeguir`). A amizade acima fica
+  // como estava (B1/B2 sao outra OS). Falha aqui nao derruba o perfil publico:
+  // o bloco vira `null` e nenhuma acao de seguir e oferecida.
+  let seguir: VistaDeSeguir = { bloco: null, acoes: [] };
+  try {
+    seguir = await vistaDeSeguir(uid, alvoUid);
+  } catch (erro) {
+    logger.error("vista de seguir indisponivel", { erro: `${erro}` });
+  }
+
   return exigirRespostaSegura({
     perfil: entradaPublica(perfil, normalizado, null),
     relacao: vista.relacao,
-    acoes: vista.acoes,
+    acoes: [...vista.acoes, ...seguir.acoes],
     // `amigosDesde` so viaja quando a relacao e de amizade: numa relacao
     // bloqueada ou inexistente ele nao existe, e inventa-lo daria informacao.
     amigosDesde:
       vista.relacao === "amigos" && typeof dadosRel?.amigosDesde === "string"
         ? dadosRel.amigosDesde
         : null,
+    // Ausente (`null`) para observador sem VIP, conta em exclusao ou contato
+    // impedido — sem dizer qual.
+    seguir: seguir.bloco,
+    // Nao ha fonte de detalhes contratada (D04): `null`, sem leitura e sem
+    // demonstracao.
+    detalhes: null,
   });
 });
 
@@ -656,6 +689,142 @@ export const listarSolicitacoesEnviadas = onCall(opcoesCliente, async (req) => {
     limiteDoPedido(req.data)
   );
   return resolverPagina(pagina);
+});
+
+// ===========================================================================
+// SEGUIR (SOCIAL-02, etapa C3)
+// ===========================================================================
+//
+// O ator vem SEMPRE da sessao. O payload so traz o `publicId` do outro, a
+// `referencia` vista (opaca) e o `intencaoId`; nunca UID, plano, instante,
+// corte, contador ou estado. Quem decide e o dominio C1, dentro da transacao.
+
+/// Traduz uma recusa de seguir numa `HttpsError` NEUTRA: o codigo vai em
+/// `details.recusa`, e nada diz qual ponta, qual plano ou qual bloqueio.
+function recusarSeguir(recusa: string | null): never {
+  const codigo =
+    recusa === "perfilPublicoNaoDisponivel"
+      ? "not-found"
+      : recusa === "ritmoExcedido" || recusa === "limitePedidosPendentes"
+        ? "resource-exhausted"
+        : recusa === "pedidoInvalido"
+          ? "invalid-argument"
+          : "failed-precondition";
+  throw new HttpsError(codigo, recusa ?? "pedido recusado", { recusa });
+}
+
+/// Falha interna sem detalhe. O log guarda o motivo; a resposta, nao.
+function falhaDeSeguir(erro: unknown): never {
+  if (erro instanceof HttpsError) throw erro;
+  if (erro instanceof SeguirSemContagem) recusarSeguir("limiteIndisponivel");
+  if (erro instanceof SeguirSemIdentidade) recusarSeguir("acaoIndisponivel");
+  logger.error("falha em operacao de seguir", { erro: `${erro}` });
+  throw new HttpsError("internal", "falha interna");
+}
+
+/// O01–O07: uma callable por operacao, todas pelo mesmo caminho.
+function comandoDeSeguir(op: OperacaoSeguir) {
+  return onCall(opcoesCliente, async (req) => {
+    const uid = exigirAutenticacao(req);
+    const entrada = (req.data ?? {}) as Record<string, unknown>;
+    const alvoUid = await exigirUidDoPublicId(entrada.publicId);
+    if (alvoUid === uid) recusarSeguir("acaoSobreSiMesmo");
+
+    try {
+      const { veredito, referencia } = await operarSeguir(
+        op,
+        uid,
+        alvoUid,
+        entrada.referencia ?? null,
+        typeof entrada.intencaoId === "string" ? entrada.intencaoId : ""
+      );
+      if (!veredito.aceita) recusarSeguir(veredito.recusa);
+      return exigirRespostaSegura({
+        ok: true,
+        repeticao: veredito.repeticao,
+        estado: estadoPublicoDeSeguir(veredito.estadoEfetivo, ladoDaOperacao(op)),
+        referencia,
+      });
+    } catch (erro) {
+      falhaDeSeguir(erro);
+    }
+  });
+}
+
+/// O01/O02 — o servidor escolhe vinculo imediato ou pedido pela privacidade.
+export const seguirJogador = comandoDeSeguir("seguir");
+/// O03 — o remetente desiste do proprio pedido.
+export const cancelarPedidoSeguir = comandoDeSeguir("cancelarPedido");
+/// O04 — o seguido aprova. Revalida as duas pontas; nao consome ritmo.
+export const aprovarPedidoSeguir = comandoDeSeguir("aprovarPedido");
+/// O05 — o seguido recusa. Sem punicao e sem bloqueio.
+export const recusarPedidoSeguir = comandoDeSeguir("recusarPedido");
+/// O06 — o seguidor encerra o vinculo.
+export const deixarDeSeguir = comandoDeSeguir("deixarDeSeguir");
+/// O07 — o seguido encerra o vinculo do outro.
+export const removerSeguidor = comandoDeSeguir("removerSeguidor");
+
+function exigirDonoAutorizado(autorizacao: AutorizacaoDoDono): void {
+  if (autorizacao === "requerVip") recusarSeguir("requerVip");
+  if (autorizacao === "indisponivel") recusarSeguir("acaoIndisponivel");
+}
+
+/// O08 — as quatro listas proprias, com apelido e avatar FRESCOS.
+function listaDeSeguir(lista: ListaDeSeguir) {
+  const campoData =
+    lista === "seguidores" || lista === "seguindo" ? "desde" : "solicitadoEm";
+  return onCall(opcoesCliente, async (req) => {
+    const uid = exigirAutenticacao(req);
+    const pagina = await paginaDeSeguir(
+      uid,
+      lista,
+      cursorDoPedido(req.data),
+      limiteDoPedido(req.data)
+    );
+    exigirDonoAutorizado(pagina.autorizacao);
+    const perfis = await lerPerfisPublicos(pagina.itens.map((i) => i.publicId));
+    return exigirRespostaSegura({
+      itens: pagina.itens.map((i) => {
+        const p = entradaPublica(perfis.get(i.publicId), i.publicId, null);
+        return {
+          publicId: p.publicId,
+          apelido: p.apelido,
+          avatarRef: p.avatarRef,
+          [campoData]: i.desde,
+          referencia: i.referencia,
+        };
+      }),
+      proximoCursor: pagina.proximoCursor,
+    });
+  });
+}
+
+export const listarSeguidores = listaDeSeguir("seguidores");
+export const listarSeguindo = listaDeSeguir("seguindo");
+export const listarPedidosSeguirRecebidos = listaDeSeguir("pedidosSeguirRecebidos");
+export const listarPedidosSeguirEnviados = listaDeSeguir("pedidosSeguirEnviados");
+
+/// O09 — publico ou privado. Fechar mantem seguidores; abrir nao aprova.
+export const definirPrivacidadeSocial = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const bruto = (req.data as Record<string, unknown> | undefined)?.privacidade;
+  const valor = bruto === "publico" ? "publico" : bruto === "privado" ? "privado" : null;
+  if (valor === null) recusarSeguir("pedidoInvalido");
+  const r = await gravarPrivacidadeSocial(uid, valor);
+  exigirDonoAutorizado(r.autorizacao);
+  return exigirRespostaSegura({
+    ok: true,
+    repeticao: r.repeticao,
+    privacidade: r.privacidade,
+  });
+});
+
+/// O13 — os contadores do proprio dono. Indisponivel e `null`, nunca zero.
+export const consultarContadoresSociais = onCall(opcoesCliente, async (req) => {
+  const uid = exigirAutenticacao(req);
+  const r = await contadoresProprios(uid);
+  exigirDonoAutorizado(r.autorizacao);
+  return exigirRespostaSegura({ contadores: r.valores });
 });
 
 // ===========================================================================
