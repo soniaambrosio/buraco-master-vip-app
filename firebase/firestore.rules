@@ -1046,6 +1046,61 @@ service cloud.firestore {
         allow write: if false;
       }
     }
+
+    // ---------------------------------------------------------------------
+    // SEGUIR — modelo privado (SOCIAL-02, etapa C2)
+    // ---------------------------------------------------------------------
+    // SO BLOCOS DE NEGACAO. Nenhuma permissao existente foi aberta, e nenhum
+    // cliente le ou escreve estas colecoes — nem o proprio dono. Quem grava e
+    // le e o servidor, com o Admin SDK, que nao passa por regra. O admin le
+    // para suporte, como em `friendships`, e ninguem escreve.
+    //
+    // Por que negar ate ao dono: o canonico de seguir carrega os DOIS UIDs, e
+    // nas quatro projecoes o ID DO DOCUMENTO e o UID do outro jogador — o mesmo
+    // vazamento pela chave que fecha `friends` acima. O registro de corte tem
+    // os dois UIDs em `membros`. O ritmo guarda o contador tecnico do teto
+    // rigido de pedidos; liberar escrita ao dono seria liberar o teto.
+    //
+    // Formato e etapas: contrato SOCIAL-02 V2 §2.2 e adendo A1. A exclusao de
+    // conta apaga tudo isto (functions-conta, etapa `seguir`).
+    match /follows/{chaveDirigida} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /cortesDeRelacao/{chaveDoPar} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    match /playerSocialRitmo/{uid} {
+      allow get, list: if ehAdmin();
+      allow write: if false;
+    }
+
+    // QUARTO bloco `match /users/{uid}`, pelo mesmo motivo do terceiro: separar
+    // nao afrouxa nada, porque cada bloco aqui so NEGA.
+    match /users/{uid} {
+      match /seguindo/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+
+      match /seguidores/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+
+      match /pedidosSeguirEnviados/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+
+      match /pedidosSeguirRecebidos/{outroUid} {
+        allow get, list: if ehAdmin();
+        allow write: if false;
+      }
+    }
     // =====================================================================
     // BLOCO 7/7 — RANKING, LIGAS E TEMPORADAS
     // origem: claude/ranking-ligas-backend-auth (OS Backend Autoritativo de

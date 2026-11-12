@@ -222,6 +222,33 @@ export const ETAPAS: readonly Etapa[] = [
       "Amizades e solicitacoes, canonico e os DOIS espelhos. Le `friendships` primeiro: e de `membros` que saem os UIDs dos amigos, e sem eles os espelhos ficariam inalcancaveis.",
   },
   {
+    // SOCIAL-02, etapa C2. Logo depois de `social` e antes de `identidade`: a
+    // descoberta e por UID (canonicos, projecoes proprias, cortes e ritmo), e
+    // nada aqui depende de publicId — mas a conta precisa estar trancada e o
+    // diario ja precisa existir, o que vale desde o inicio da execucao.
+    id: "seguir",
+    itens: [
+      // U1 — canonico e P1–P4 de cada direcao, na mesma unidade atomica.
+      "seguir.followsComoSeguidor",
+      "seguir.followsComoSeguido",
+      "seguir.seguidoresDoOutro",
+      "seguir.seguindoDoOutro",
+      "seguir.pedidosRecebidosDoOutro",
+      "seguir.pedidosEnviadosDoOutro",
+      // U2 — residuos das quatro projecoes proprias, cada um com o espelho do outro dono.
+      "seguir.seguindoDoDono",
+      "seguir.seguidoresDoDono",
+      "seguir.pedidosEnviadosDoDono",
+      "seguir.pedidosRecebidosDoDono",
+      // U3 — registros de corte do par.
+      "seguir.cortesDeRelacao",
+      // U4 — o ritmo proprio, por ultimo.
+      "seguir.playerSocialRitmo",
+    ],
+    resumo:
+      "Seguir: cada direcao sai com os seus quatro espelhos possiveis na mesma transacao, debitando uma vez o contador de pedidos do sobrevivente quando o pedido estava pendente; depois os residuos das projecoes proprias, os cortes e o ritmo. So conclui quando todas as fontes estao vazias.",
+  },
+  {
     id: "moderacaoDoJogador",
     itens: [
       "moderacao.blocksDoDono",

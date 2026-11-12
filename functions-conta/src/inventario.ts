@@ -298,6 +298,122 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
   },
 
   // -------------------------------------------------------------------------
+  // SEGUIR (SOCIAL-02, etapa C2)
+  // -------------------------------------------------------------------------
+  // Relacao DIRIGIDA, um canonico por direcao, com quatro espelhos possiveis
+  // por direcao (P1–P4, adendo A1 do contrato). Tudo APAGAR: e vinculo entre
+  // duas contas vivas, e cada documento carrega UID do excluido no valor ou na
+  // chave. Executado pela etapa `seguir` (executor.ts, unidades U1–U4).
+  {
+    id: "seguir.followsComoSeguidor",
+    caminho: "follows/{seguidorUid|seguidoUid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "consultaPorCampo", colecao: "follows", campo: "seguidorUid" },
+    porque:
+      "O canonico das direcoes em que o excluido SEGUE (ou pediu para seguir) alguem. Carrega `seguidorUid` e `seguidoUid`. Cada um sai junto com os seus quatro espelhos possiveis, na mesma unidade atomica, para nunca sobrar metade da relacao.",
+  },
+  {
+    id: "seguir.followsComoSeguido",
+    caminho: "follows/{seguidorUid|seguidoUid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "consultaPorCampo", colecao: "follows", campo: "seguidoUid" },
+    porque:
+      "O canonico das direcoes em que o excluido e SEGUIDO (ou recebeu pedido). Se o pedido ainda estava pendente, o sobrevivente perde um pedido enviado, e o contador tecnico dele (`playerSocialRitmo.pedidosPendentesEnviados`, parte do teto rigido aprovado) e debitado UMA vez, na mesma transacao que apaga o canonico.",
+  },
+  {
+    id: "seguir.seguidoresDoOutro",
+    caminho: "users/{outroUid}/seguidores/{uid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "pelaRelacao", raiz: "users", sub: "seguidores" },
+    porque:
+      "Espelho P2 na conta de quem o excluido seguia. O UID do excluido e o ID DO DOCUMENTO, dentro da conta de outra pessoa. Alcancado pelo canonico (`seguidoUid`) ou, se ele ja nao existir, pela projecao propria `seguindo` do excluido.",
+  },
+  {
+    id: "seguir.seguindoDoOutro",
+    caminho: "users/{outroUid}/seguindo/{uid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "pelaRelacao", raiz: "users", sub: "seguindo" },
+    porque:
+      "Espelho P1 na conta de quem seguia o excluido. Sem isto, o outro jogador ficaria seguindo uma conta que nao existe, com o UID dela na chave do documento.",
+  },
+  {
+    id: "seguir.pedidosRecebidosDoOutro",
+    caminho: "users/{outroUid}/pedidosSeguirRecebidos/{uid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "pelaRelacao", raiz: "users", sub: "pedidosSeguirRecebidos" },
+    porque:
+      "Espelho P4 do pedido que o excluido fez a outra pessoa. Ficaria como um pedido eterno de quem nao existe, sem acao possivel para quem o recebeu.",
+  },
+  {
+    id: "seguir.pedidosEnviadosDoOutro",
+    caminho: "users/{outroUid}/pedidosSeguirEnviados/{uid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "pelaRelacao", raiz: "users", sub: "pedidosSeguirEnviados" },
+    porque:
+      "Espelho P3 do pedido que outra pessoa fez ao excluido. Sai junto com o canonico; o contador tecnico de pendentes dessa pessoa e debitado na mesma unidade.",
+  },
+  {
+    id: "seguir.seguindoDoDono",
+    caminho: "users/{uid}/seguindo/{outroUid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "subcolecaoDoDono", raiz: "users", sub: "seguindo" },
+    porque:
+      "Projecao propria de quem o excluido segue. Depois da varredura dos canonicos, o que restar aqui e residuo de geracao antiga, apagado junto com o espelho correspondente no outro dono.",
+  },
+  {
+    id: "seguir.seguidoresDoDono",
+    caminho: "users/{uid}/seguidores/{outroUid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "subcolecaoDoDono", raiz: "users", sub: "seguidores" },
+    porque:
+      "Projecao propria dos seguidores do excluido. O id de cada documento e o UID do outro jogador, e e por ele que se acha o espelho que precisa sair junto.",
+  },
+  {
+    id: "seguir.pedidosEnviadosDoDono",
+    caminho: "users/{uid}/pedidosSeguirEnviados/{outroUid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "subcolecaoDoDono", raiz: "users", sub: "pedidosSeguirEnviados" },
+    porque:
+      "Projecao propria dos pedidos que o excluido enviou. Residuo sem canonico e apagado junto com o pedido recebido correspondente na conta do outro jogador.",
+  },
+  {
+    id: "seguir.pedidosRecebidosDoDono",
+    caminho: "users/{uid}/pedidosSeguirRecebidos/{outroUid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "subcolecaoDoDono", raiz: "users", sub: "pedidosSeguirRecebidos" },
+    porque:
+      "Projecao propria dos pedidos que o excluido recebeu. Residuo sem canonico e apagado junto com o pedido enviado correspondente; o contador so muda pelo canonico, nunca por residuo, para nao debitar duas vezes.",
+  },
+  {
+    id: "seguir.cortesDeRelacao",
+    caminho: "cortesDeRelacao/{uidMenor|uidMaior}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "consultaPorArray", colecao: "cortesDeRelacao", campo: "membros" },
+    porque:
+      "O registro de corte de cada par em que o excluido esteve num bloqueio. Guarda os dois UIDs em `membros`; sem a conta, nao ha mais relacao a proteger nem geracao a comparar.",
+  },
+  {
+    id: "seguir.playerSocialRitmo",
+    caminho: "playerSocialRitmo/{uid}",
+    dominio: "social",
+    classe: CLASSE.APAGAR,
+    alcance: { modo: "docPorUid", colecao: "playerSocialRitmo" },
+    porque:
+      "O ritmo e o contador tecnico de pedidos pendentes do proprio excluido. Sem conta, nao ha criacao futura a limitar. Sai por ULTIMO na etapa, depois de os canonicos e os residuos terem saido.",
+  },
+
+  // -------------------------------------------------------------------------
   // MODERACAO
   // -------------------------------------------------------------------------
   {

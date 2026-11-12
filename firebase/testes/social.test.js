@@ -529,6 +529,115 @@ describe('nao-regressao: moderacao nao foi afrouxada nem duplicada', () => {
 });
 
 // ===========================================================================
+// SEGUIR — modelo privado (SOCIAL-02, etapa C2). SO REGRAS.
+// ===========================================================================
+// Tres raizes novas e quatro projecoes. Nenhum cliente le ou escreve — nem o
+// dono; o admin le, como em `friendships`. Os documentos sao semeados com as
+// regras desligadas, no formato persistido real (contrato V2 §2.2), para que
+// `get`, `update` e `delete` sejam negados sobre algo que EXISTE.
+//
+// Estes casos rodam nos dois alvos (so regras e com Functions) e nunca ficam
+// pulados: nao dependem de FUNCTIONS_EMULATOR_HOST.
+describe('seguir: modelo privado negado ao cliente (SOCIAL-02 C2)', () => {
+  const QUANDO_SEGUIR = '2026-11-12T10:00:00.000Z';
+  const FOLLOW_ANA_BIA = `${ANA}|${BIA}`;
+  const CORTE_ANA_BIA = [ANA, BIA].sort().join('|');
+
+  /// [descricao, caminho do documento, colecao para `list`, dono, terceiro]
+  const ALVOS = [
+    ['follows (canonico dirigido)', `follows/${FOLLOW_ANA_BIA}`, 'follows', ANA, CAIO],
+    ['cortesDeRelacao (corte do par)', `cortesDeRelacao/${CORTE_ANA_BIA}`, 'cortesDeRelacao', ANA, CAIO],
+    ['playerSocialRitmo (contador do teto)', `playerSocialRitmo/${ANA}`, 'playerSocialRitmo', ANA, CAIO],
+    ['seguindo (P1)', `users/${ANA}/seguindo/${BIA}`, `users/${ANA}/seguindo`, ANA, CAIO],
+    ['seguidores (P2)', `users/${BIA}/seguidores/${ANA}`, `users/${BIA}/seguidores`, BIA, CAIO],
+    ['pedidosSeguirEnviados (P3)', `users/${ANA}/pedidosSeguirEnviados/${CAIO}`, `users/${ANA}/pedidosSeguirEnviados`, ANA, BIA],
+    ['pedidosSeguirRecebidos (P4)', `users/${CAIO}/pedidosSeguirRecebidos/${ANA}`, `users/${CAIO}/pedidosSeguirRecebidos`, CAIO, BIA],
+  ];
+
+  before(async () => {
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, `follows/${FOLLOW_ANA_BIA}`), {
+        seguidorUid: ANA, seguidoUid: BIA, estado: 'confirmado', ref: 'rAnaBia',
+        corteNaCriacao: null,
+        ultimaIntencao: { chave: `${ANA}|i1`, impressao: 'seguir|saida|-' },
+        solicitadoEm: QUANDO_SEGUIR, confirmadoEm: QUANDO_SEGUIR, encerradoEm: null,
+        desde: QUANDO_SEGUIR, criacoesRecentes: [QUANDO_SEGUIR], esquema: 1,
+      });
+      await setDoc(doc(db, `cortesDeRelacao/${CORTE_ANA_BIA}`), {
+        corteId: 'corte1', membros: [ANA, BIA].sort(), atualizadoEm: QUANDO_SEGUIR, esquema: 1,
+      });
+      await setDoc(doc(db, `playerSocialRitmo/${ANA}`), {
+        criacoes: [QUANDO_SEGUIR], pedidosPendentesEnviados: 1, atualizadoEm: QUANDO_SEGUIR, esquema: 1,
+      });
+      await setDoc(doc(db, `users/${ANA}/seguindo/${BIA}`), {
+        publicId: PID_BIA, desde: QUANDO_SEGUIR, referencia: 'rAnaBia.',
+      });
+      await setDoc(doc(db, `users/${BIA}/seguidores/${ANA}`), {
+        publicId: PID_ANA, desde: QUANDO_SEGUIR, referencia: 'rAnaBia.',
+      });
+      await setDoc(doc(db, `users/${ANA}/pedidosSeguirEnviados/${CAIO}`), {
+        publicId: PID_CAIO, solicitadoEm: QUANDO_SEGUIR, referencia: 'rAnaCaio.',
+      });
+      await setDoc(doc(db, `users/${CAIO}/pedidosSeguirRecebidos/${ANA}`), {
+        publicId: PID_ANA, solicitadoEm: QUANDO_SEGUIR, referencia: 'rAnaCaio.',
+      });
+    });
+  });
+
+  /// As cinco operacoes de cliente, todas negadas.
+  async function negarTudo(db, caminho, colecaoDeLista) {
+    await assertFails(getDoc(doc(db, caminho)));
+    await assertFails(getDocs(collection(db, colecaoDeLista)));
+    await assertFails(setDoc(doc(db, `${colecaoDeLista}/documentoNovoDoCliente`), { x: 1 }));
+    await assertFails(updateDoc(doc(db, caminho), { estado: 'confirmado', pedidosPendentesEnviados: 0 }));
+    await assertFails(deleteDoc(doc(db, caminho)));
+  }
+
+  const contextoDe = (uid) => ambiente.authenticatedContext(uid).firestore();
+
+  for (const [descricao, caminho, colecaoDeLista, dono, terceiro] of ALVOS) {
+    test(`${descricao}: nao autenticado nao le, nao lista e nao escreve`, async () => {
+      await negarTudo(semLogin(), caminho, colecaoDeLista);
+    });
+
+    test(`${descricao}: o PROPRIO DONO nao le, nao lista e nao escreve`, async () => {
+      await negarTudo(contextoDe(dono), caminho, colecaoDeLista);
+    });
+
+    test(`${descricao}: terceiro nao le, nao lista e nao escreve`, async () => {
+      await negarTudo(contextoDe(terceiro), caminho, colecaoDeLista);
+    });
+
+    test(`${descricao}: o admin le para suporte, e tambem nao escreve`, async () => {
+      await assertSucceeds(getDoc(doc(comoAdmin(), caminho)));
+      await assertSucceeds(getDocs(collection(comoAdmin(), colecaoDeLista)));
+      await assertFails(setDoc(doc(comoAdmin(), caminho), { x: 1 }));
+      await assertFails(deleteDoc(doc(comoAdmin(), caminho)));
+    });
+  }
+
+  test('o documento semeado continua inteiro depois de todas as tentativas', async () => {
+    // A negacao tem que ter sido REAL: nada do que o cliente tentou chegou ao banco.
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      const s = await getDoc(doc(ctx.firestore(), `playerSocialRitmo/${ANA}`));
+      assert.equal(s.data().pedidosPendentesEnviados, 1);
+      const f = await getDoc(doc(ctx.firestore(), `follows/${FOLLOW_ANA_BIA}`));
+      assert.equal(f.data().estado, 'confirmado');
+      const novo = await getDoc(doc(ctx.firestore(), 'follows/documentoNovoDoCliente'));
+      assert.equal(novo.exists(), false);
+    });
+  });
+
+  test('as regras de amizade continuam como estavam (nao-regressao)', async () => {
+    await assertFails(getDocs(collection(comoAna(), `users/${ANA}/friends`)));
+    await assertSucceeds(getDocs(collection(comoAdmin(), `users/${ANA}/friends`)));
+    const s = await assertSucceeds(getDoc(doc(comoAna(), `playerSocial/${ANA}`)));
+    assert.equal(s.data().amigos, 1);
+  });
+});
+
+// ===========================================================================
 // A PARTIR DAQUI e preciso o emulador de FUNCTIONS, alem do de Firestore.
 // Cobre o que a REGRA nao alcanca: idempotencia, concorrencia, soberania do
 // bloqueio e a AUSENCIA de UID nas respostas.

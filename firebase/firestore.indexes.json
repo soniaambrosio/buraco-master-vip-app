@@ -507,6 +507,66 @@
       ]
     },
     {
+      "//": "SEGUIR (SOCIAL-02 C2, contrato V2 §5.3) — lista de seguidores de um jogador, mais recentes primeiro. A ordem e por CHAVE IMUTAVEL (`desde` + `publicId`), e nao por apelido: o apelido muda e faria um item pular para antes do cursor. `publicId` fecha o desempate para o cursor apontar um ponto unico. COLLECTION porque a consulta parte de um dono conhecido: `users/{uid}/seguidores`. O emulador nao prova que o indice esteja implantado; esta etapa nao faz deploy. [origem: social]",
+      "collectionGroup": "seguidores",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "desde",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SEGUIR (SOCIAL-02 C2, contrato V2 §5.3) — lista de quem um jogador segue, mesma ordem estavel de `seguidores`: `desde` decrescente + `publicId`. `users/{uid}/seguindo`. [origem: social]",
+      "collectionGroup": "seguindo",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "desde",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SEGUIR (SOCIAL-02 C2, contrato V2 §5.3 e C01) — pedidos para seguir ENVIADOS por um jogador, mais recentes primeiro. A direcao mora na COLECAO (enviados e recebidos sao projecoes separadas), por isso nao ha campo `direcao` no indice, ao contrario de `friendRequests`. `users/{uid}/pedidosSeguirEnviados`. [origem: social]",
+      "collectionGroup": "pedidosSeguirEnviados",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "solicitadoEm",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "//": "SEGUIR (SOCIAL-02 C2, contrato V2 §5.3 e C01) — pedidos para seguir RECEBIDOS por um jogador, mais recentes primeiro. `users/{uid}/pedidosSeguirRecebidos`. A descoberta da exclusao de conta (igualdade em `follows.seguidorUid`/`follows.seguidoUid` e `array-contains` em `cortesDeRelacao.membros`) e servida pelos indices automaticos de campo unico, de escopo COLLECTION, e por isso nao tem entrada aqui. [origem: social]",
+      "collectionGroup": "pedidosSeguirRecebidos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "solicitadoEm",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "publicId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "//": "A ORDEM OFICIAL DO RANKING DE UMA TEMPORADA. Serve as quatro consultas que produzem classificacao: a pagina (`abrirRanking`/`paginarRanking`), o podio, a varredura da apuracao e a da consolidacao. ATUALIZADO PELA POLITICA COMPETITIVA V1: ate ela, a ordem era `seasonId, pontos DESC, publicPlayerId ASC`, porque nao havia decisao de produto sobre desempate. A secao 17 decidiu CINCO criterios competitivos, e todos os cinco precisam estar aqui — um `orderBy` sem indice correspondente e recusado pelo Firestore em producao, e a lista simplesmente nao abre. Campo a campo: `seasonId` isola a temporada (sem ele, 2026-A misturaria com 2026-B); `pontos DESC` e o rating; `vitorias DESC`, `saldoPontos DESC`, `abandonos ASC` (o unico ascendente) e `ratingAtingidoEm ASC` (quem chegou ao rating primeiro) sao os criterios 2 a 5; `publicPlayerId ASC` e o desempate TECNICO que torna a ordem TOTAL — sem ele o `startAfter` do cursor nao aponta para um ponto unico da lista, e duas paginas consecutivas repetiriam ou pulariam linhas. Ver o cabecalho de functions-ranking/src/ordenacao.ts. [origem: ranking]",
       "collectionGroup": "rankingStandings",
       "queryScope": "COLLECTION",

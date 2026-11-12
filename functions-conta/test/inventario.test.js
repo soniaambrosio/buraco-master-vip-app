@@ -334,3 +334,112 @@ describe("o ritmo de fala do chat", () => {
     assert.equal(itemPorId("moderacao.ritmoDeChat").classe, CLASSE.APAGAR);
   });
 });
+
+// ===========================================================================
+// SEGUIR — SOCIAL-02, etapa C2
+// ===========================================================================
+//
+// O modelo privado de seguir: um canonico DIRIGIDO por direcao, quatro
+// projecoes por direcao, o registro de corte do par e o ritmo do ator. Tudo
+// APAGAR. Estas provas sao da MATRIZ; quem prova que o dado sai e a suite de
+// emulador.
+
+const ITENS_DE_SEGUIR = [
+  "seguir.followsComoSeguidor",
+  "seguir.followsComoSeguido",
+  "seguir.seguidoresDoOutro",
+  "seguir.seguindoDoOutro",
+  "seguir.pedidosRecebidosDoOutro",
+  "seguir.pedidosEnviadosDoOutro",
+  "seguir.seguindoDoDono",
+  "seguir.seguidoresDoDono",
+  "seguir.pedidosEnviadosDoDono",
+  "seguir.pedidosRecebidosDoDono",
+  "seguir.cortesDeRelacao",
+  "seguir.playerSocialRitmo",
+];
+
+describe("seguir (SOCIAL-02 C2)", () => {
+  test("as tres colecoes raiz novas estao na matriz", () => {
+    const raizes = new Set(INVENTARIO.map(colecaoRaizDe));
+    for (const colecao of ["follows", "cortesDeRelacao", "playerSocialRitmo"]) {
+      assert.ok(raizes.has(colecao), `'${colecao}' nao esta na matriz`);
+    }
+  });
+
+  test("os doze itens existem, sao do Social e mandam APAGAR", () => {
+    for (const id of ITENS_DE_SEGUIR) {
+      const item = itemPorId(id);
+      assert.ok(item, `${id} nao existe`);
+      assert.equal(item.dominio, "social", id);
+      assert.equal(item.classe, CLASSE.APAGAR, id);
+      assert.notEqual(item.alcance.modo, "semAcao", id);
+    }
+  });
+
+  test("o canonico e alcancado pelas DUAS pontas da direcao", () => {
+    const comoSeguidor = itemPorId("seguir.followsComoSeguidor").alcance;
+    const comoSeguido = itemPorId("seguir.followsComoSeguido").alcance;
+    assert.deepEqual(comoSeguidor, {
+      modo: "consultaPorCampo",
+      colecao: "follows",
+      campo: "seguidorUid",
+    });
+    assert.deepEqual(comoSeguido, {
+      modo: "consultaPorCampo",
+      colecao: "follows",
+      campo: "seguidoUid",
+    });
+  });
+
+  test("as quatro projecoes proprias e os quatro espelhos nos outros donos", () => {
+    const proprias = {
+      "seguir.seguindoDoDono": "seguindo",
+      "seguir.seguidoresDoDono": "seguidores",
+      "seguir.pedidosEnviadosDoDono": "pedidosSeguirEnviados",
+      "seguir.pedidosRecebidosDoDono": "pedidosSeguirRecebidos",
+    };
+    for (const [id, sub] of Object.entries(proprias)) {
+      assert.deepEqual(itemPorId(id).alcance, { modo: "subcolecaoDoDono", raiz: "users", sub }, id);
+      assert.equal(itemPorId(id).caminho, `users/{uid}/${sub}/{outroUid}`, id);
+    }
+    const espelhos = {
+      "seguir.seguidoresDoOutro": "seguidores",
+      "seguir.seguindoDoOutro": "seguindo",
+      "seguir.pedidosRecebidosDoOutro": "pedidosSeguirRecebidos",
+      "seguir.pedidosEnviadosDoOutro": "pedidosSeguirEnviados",
+    };
+    for (const [id, sub] of Object.entries(espelhos)) {
+      assert.deepEqual(itemPorId(id).alcance, { modo: "pelaRelacao", raiz: "users", sub }, id);
+      assert.equal(itemPorId(id).caminho, `users/{outroUid}/${sub}/{uid}`, id);
+    }
+  });
+
+  test("cortes por membros e ritmo pelo uid", () => {
+    assert.deepEqual(itemPorId("seguir.cortesDeRelacao").alcance, {
+      modo: "consultaPorArray",
+      colecao: "cortesDeRelacao",
+      campo: "membros",
+    });
+    assert.deepEqual(itemPorId("seguir.playerSocialRitmo").alcance, {
+      modo: "docPorUid",
+      colecao: "playerSocialRitmo",
+    });
+  });
+
+  test("a justificativa do canonico diz que o contador do sobrevivente muda uma vez", () => {
+    const porque = itemPorId("seguir.followsComoSeguido").porque;
+    assert.ok(porque.includes("pedidosPendentesEnviados"), "o contador tecnico precisa ser nomeado");
+    assert.ok(porque.toLowerCase().includes("uma vez"), "a justificativa precisa dizer UMA vez");
+  });
+
+  test("cada colecao de seguir tem decisao unica por caminho", () => {
+    const caminhos = ITENS_DE_SEGUIR.map((id) => itemPorId(id).caminho);
+    // O canonico aparece duas vezes (uma por campo de busca); o resto, uma.
+    const contagem = new Map();
+    for (const c of caminhos) contagem.set(c, (contagem.get(c) ?? 0) + 1);
+    for (const [caminho, n] of contagem) {
+      assert.equal(n, caminho.startsWith("follows/") ? 2 : 1, caminho);
+    }
+  });
+});

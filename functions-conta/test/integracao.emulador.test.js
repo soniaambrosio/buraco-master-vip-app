@@ -55,7 +55,7 @@ if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
 
 admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || "demo-bmv" });
 
-const { executar, lerPublicId, C_DIARIO } = require("../lib/executor");
+const { executar, lerPublicId, C_DIARIO, apagarSeguir } = require("../lib/executor");
 const { ETAPAS } = require("../lib/plano");
 const {
   APELIDO_ANONIMO,
@@ -118,6 +118,10 @@ const COLECOES = [
   "playerCourtesyPass",
   // CT1 da OS 40-I1: o contador de rajada do chat.
   "chatRitmo",
+  // SOCIAL-02 C2: o modelo privado de seguir (as projecoes vivem sob `users`).
+  "follows",
+  "cortesDeRelacao",
+  "playerSocialRitmo",
   C_DIARIO,
 ];
 
@@ -1197,5 +1201,418 @@ describe("ritmo de fala do chat", () => {
       await existe(`playerModeration/${ALVO}`),
       "e o estado disciplinar tambem: ele e RETIDO na matriz"
     );
+  });
+});
+
+// ===========================================================================
+// SEGUIR — SOCIAL-02, etapa C2
+// ===========================================================================
+//
+// O FORMATO GRAVADO AQUI E O PERSISTIDO REAL (contrato SOCIAL-02 V2 §2.2 e
+// adendo A1), o mesmo que a C3 vai gravar — nao um esquema so de teste:
+//
+//   follows/{seguidor|seguido}: seguidorUid, seguidoUid, estado, ref,
+//     corteNaCriacao, ultimaIntencao {chave, impressao}, solicitadoEm,
+//     confirmadoEm, encerradoEm, desde, criacoesRecentes, esquema
+//   users/{A}/seguindo/{B} e users/{B}/seguidores/{A}: publicId, desde, referencia
+//   users/{A}/pedidosSeguirEnviados/{B} e users/{B}/pedidosSeguirRecebidos/{A}:
+//     publicId, solicitadoEm, referencia
+//   cortesDeRelacao/{menor|maior}: corteId, membros, atualizadoEm, esquema
+//   playerSocialRitmo/{uid}: criacoes, pedidosPendentesEnviados, atualizadoEm, esquema
+//
+// `referencia` e o token opaco `ref.corte` da C1 (o nome `token` e proibido em
+// resposta). O contador persistido `pedidosPendentesEnviados` e o que o dominio
+// recebe como `pendentesEnviadosDoAtor`.
+//
+// O QUE ESTES CASOS NAO PROVAM, e fica declarado: nenhum escritor real de
+// seguir existe ainda (C3); a concorrencia entre Conta, Social e Moderacao nao
+// e exercitada; e o emulador nao exige indice.
+
+const SEG_B = AMIGO; // o excluido o segue, e ele tambem segue o excluido sob corte antigo
+const SEG_C = TERCEIRO; // segue o excluido
+const SEG_D = "uid-pedido-reciproco"; // pedidos nos DOIS sentidos com o excluido
+const SEG_E = "uid-que-pediu-ao-excluido"; // pedido ao excluido e outro a SEG_Y
+const SEG_F = "uid-pedido-cortado"; // pedido fisicamente pendente sob corte antigo
+const SEG_G = "uid-orfao-seguidor";
+const SEG_H = "uid-orfao-pedido";
+const SEG_I = "uid-orfao-sem-espelho";
+const SEG_X = "uid-terceiro-x"; // X e Y nao tem nada com o excluido
+const SEG_Y = "uid-terceiro-y";
+const QUANDO = "2026-11-12T10:00:00.000Z";
+
+const chaveDirigida = (seguidor, seguido) => `${seguidor}|${seguido}`;
+const chaveDoParDeCorte = (a, b) => [a, b].sort().join("|");
+const refOpaca = (seguidor, seguido) =>
+  `r_${seguidor}_${seguido}`.replace(/[^A-Za-z0-9_-]/g, "_");
+
+/// P1–P4 de uma direcao, na ordem do adendo A1.
+const espelhosDe = (seguidor, seguido) => [
+  `users/${seguidor}/seguindo/${seguido}`,
+  `users/${seguido}/seguidores/${seguidor}`,
+  `users/${seguidor}/pedidosSeguirEnviados/${seguido}`,
+  `users/${seguido}/pedidosSeguirRecebidos/${seguidor}`,
+];
+
+async function gravarDirecao(seguidor, seguido, estado, corteNaCriacao = null) {
+  const ref = refOpaca(seguidor, seguido);
+  await db.doc(`follows/${chaveDirigida(seguidor, seguido)}`).set({
+    seguidorUid: seguidor,
+    seguidoUid: seguido,
+    estado,
+    ref,
+    corteNaCriacao,
+    ultimaIntencao: { chave: `${seguidor}|intencao1`, impressao: "seguir|saida|-" },
+    solicitadoEm: QUANDO,
+    confirmadoEm: estado === "confirmado" ? QUANDO : null,
+    encerradoEm: estado === "encerrado" ? QUANDO : null,
+    desde: estado === "encerrado" ? null : QUANDO,
+    criacoesRecentes: [QUANDO],
+    esquema: 1,
+  });
+  const referencia = `${ref}.${corteNaCriacao ?? ""}`;
+  const [p1, p2, p3, p4] = espelhosDe(seguidor, seguido);
+  if (estado === "confirmado") {
+    await db.doc(p1).set({ publicId: `P-${seguido}`, desde: QUANDO, referencia });
+    await db.doc(p2).set({ publicId: `P-${seguidor}`, desde: QUANDO, referencia });
+  } else if (estado === "pendente") {
+    await db.doc(p3).set({ publicId: `P-${seguido}`, solicitadoEm: QUANDO, referencia });
+    await db.doc(p4).set({ publicId: `P-${seguidor}`, solicitadoEm: QUANDO, referencia });
+  }
+}
+
+async function gravarCorte(a, b, corteId) {
+  await db.doc(`cortesDeRelacao/${chaveDoParDeCorte(a, b)}`).set({
+    corteId,
+    membros: [a, b].sort(),
+    atualizadoEm: QUANDO,
+    esquema: 1,
+  });
+}
+
+async function gravarRitmo(uid, pendentes) {
+  await db.doc(`playerSocialRitmo/${uid}`).set({
+    criacoes: [QUANDO],
+    pedidosPendentesEnviados: pendentes,
+    atualizadoEm: QUANDO,
+    esquema: 1,
+  });
+}
+
+/// Os espelhos gravados de cada direcao que envolve o excluido. A unidade U1
+/// e atomica se, em qualquer instante, o canonico existe <=> TODOS estes existem.
+const DIRECOES_DO_EXCLUIDO = [
+  [ALVO, SEG_B, [0, 1]], // confirmado: P1, P2
+  [SEG_C, ALVO, [0, 1]], // confirmado
+  [ALVO, SEG_D, [2, 3]], // pendente: P3, P4
+  [SEG_D, ALVO, [2, 3]], // pendente (reciproco)
+  [SEG_E, ALVO, [2, 3]], // pendente
+  [SEG_B, ALVO, [0, 1]], // confirmado sob corte antigo
+  [SEG_F, ALVO, [2, 3]], // pendente sob corte antigo (continua contado)
+  [ALVO, SEG_E, [0, 1]], // ENCERRADO, com residuo de P1/P2 de geracao antiga
+];
+
+/// Residuos sem canonico: [proprio, contraparte | null].
+const ORFAOS = [
+  [`users/${ALVO}/seguidores/${SEG_G}`, `users/${SEG_G}/seguindo/${ALVO}`],
+  [`users/${ALVO}/pedidosSeguirEnviados/${SEG_H}`, `users/${SEG_H}/pedidosSeguirRecebidos/${ALVO}`],
+  [`users/${ALVO}/seguindo/${SEG_I}`, null],
+];
+
+/// O que NAO envolve o excluido e precisa ficar intacto, campo por campo.
+const INTACTOS = [
+  `follows/${chaveDirigida(SEG_E, SEG_Y)}`,
+  ...espelhosDe(SEG_E, SEG_Y).slice(2, 4),
+  `follows/${chaveDirigida(SEG_X, SEG_Y)}`,
+  ...espelhosDe(SEG_X, SEG_Y).slice(0, 2),
+  `cortesDeRelacao/${chaveDoParDeCorte(SEG_X, SEG_Y)}`,
+  `playerSocialRitmo/${SEG_X}`,
+  `playerSocialRitmo/${SEG_C}`,
+];
+
+/// O jogador que segue, e seguido, pede e recebe pedidos — mais os residuos.
+async function semearSeguir() {
+  await semearComum();
+
+  await gravarDirecao(ALVO, SEG_B, "confirmado");
+  await gravarDirecao(SEG_C, ALVO, "confirmado");
+  await gravarDirecao(ALVO, SEG_D, "pendente");
+  await gravarDirecao(SEG_D, ALVO, "pendente");
+  await gravarDirecao(SEG_E, ALVO, "pendente");
+  await gravarDirecao(SEG_E, SEG_Y, "pendente");
+
+  // Bloqueio desfeito: o corte do par mudou, e a faxina nao rodou.
+  await gravarCorte(ALVO, SEG_B, "corte_1");
+  await gravarDirecao(SEG_B, ALVO, "confirmado", "corte_0");
+  await gravarCorte(ALVO, SEG_F, "corte_9");
+  await gravarDirecao(SEG_F, ALVO, "pendente", "corte_8");
+
+  // Lapide `encerrado`, com residuo de uma geracao antiga nos espelhos.
+  await gravarDirecao(ALVO, SEG_E, "encerrado");
+  const [r1, r2] = espelhosDe(ALVO, SEG_E);
+  await db.doc(r1).set({ publicId: `P-${SEG_E}`, desde: "2026-01-01T00:00:00.000Z", referencia: "velha." });
+  await db.doc(r2).set({ publicId: `P-${ALVO}`, desde: "2026-01-01T00:00:00.000Z", referencia: "velha." });
+
+  // Orfaos das projecoes proprias: nenhum canonico os explica.
+  for (const [proprio, contraparte] of ORFAOS) {
+    await db.doc(proprio).set({ publicId: "P-orfao", desde: QUANDO, referencia: "orfa." });
+    if (contraparte) {
+      await db.doc(contraparte).set({ publicId: `P-${ALVO}`, desde: QUANDO, referencia: "orfa." });
+    }
+  }
+
+  // O contador tecnico de cada um: o que esta FISICAMENTE pendente.
+  await gravarRitmo(ALVO, 1); // ALVO -> D
+  await gravarRitmo(SEG_D, 1); // D -> ALVO
+  await gravarRitmo(SEG_E, 2); // E -> ALVO e E -> Y
+  await gravarRitmo(SEG_F, 1); // F -> ALVO (cortado, ainda contado)
+  await gravarRitmo(SEG_C, 0); // C so tem vinculo confirmado
+
+  // Nao envolvidos.
+  await gravarDirecao(SEG_X, SEG_Y, "confirmado");
+  await gravarCorte(SEG_X, SEG_Y, "corte_xy");
+  await gravarRitmo(SEG_X, 0);
+}
+
+const pendentesDe = async (uid) => (await dados(`playerSocialRitmo/${uid}`))?.pedidosPendentesEnviados;
+
+async function fotografarIntactos() {
+  const foto = {};
+  for (const caminho of INTACTOS) foto[caminho] = await dados(caminho);
+  return foto;
+}
+
+/// Nada do excluido sobrou em fonte nenhuma, nem nos espelhos dos outros.
+async function conferirSemResto() {
+  for (const campo of ["seguidorUid", "seguidoUid"]) {
+    const s = await db.collection("follows").where(campo, "==", ALVO).get();
+    assert.equal(s.size, 0, `sobrou canonico com ${campo} do excluido`);
+  }
+  for (const sub of ["seguindo", "seguidores", "pedidosSeguirEnviados", "pedidosSeguirRecebidos"]) {
+    const s = await db.collection("users").doc(ALVO).collection(sub).get();
+    assert.equal(s.size, 0, `sobrou projecao propria em ${sub}`);
+  }
+  for (const [seguidor, seguido, gravados] of DIRECOES_DO_EXCLUIDO) {
+    const espelhos = espelhosDe(seguidor, seguido);
+    for (const i of gravados) {
+      assert.equal(await existe(espelhos[i]), false, `sobrou ${espelhos[i]}`);
+    }
+  }
+  for (const [proprio, contraparte] of ORFAOS) {
+    assert.equal(await existe(proprio), false, `sobrou ${proprio}`);
+    if (contraparte) assert.equal(await existe(contraparte), false, `sobrou ${contraparte}`);
+  }
+  const cortes = await db.collection("cortesDeRelacao").where("membros", "array-contains", ALVO).get();
+  assert.equal(cortes.size, 0, "sobrou registro de corte do excluido");
+  assert.equal(await existe(`playerSocialRitmo/${ALVO}`), false, "sobrou o ritmo do excluido");
+}
+
+/// Uma unidade nunca fica pela metade, e o contador acompanha o canonico.
+async function conferirInvariantes() {
+  for (const [seguidor, seguido, gravados] of DIRECOES_DO_EXCLUIDO) {
+    const canonico = await existe(`follows/${chaveDirigida(seguidor, seguido)}`);
+    const espelhos = espelhosDe(seguidor, seguido);
+    for (const i of gravados) {
+      assert.equal(
+        await existe(espelhos[i]),
+        canonico,
+        `metade da unidade ${seguidor} -> ${seguido}: canonico=${canonico}, ${espelhos[i]}`
+      );
+    }
+  }
+  for (const [proprio, contraparte] of ORFAOS) {
+    if (!contraparte) continue;
+    assert.equal(await existe(contraparte), await existe(proprio), `orfao pela metade: ${proprio}`);
+  }
+  const ainda = async (seguidor) => existe(`follows/${chaveDirigida(seguidor, ALVO)}`);
+  assert.equal(await pendentesDe(SEG_E), (await ainda(SEG_E)) ? 2 : 1, "contador de E");
+  assert.equal(await pendentesDe(SEG_D), (await ainda(SEG_D)) ? 1 : 0, "contador de D");
+  assert.equal(await pendentesDe(SEG_F), (await ainda(SEG_F)) ? 1 : 0, "contador de F");
+}
+
+const contextoDoAlvo = () => ({ uid: ALVO, publicId: PUBLIC_ID, amigos: [], resumo: {} });
+
+class Interrupcao extends Error {}
+
+describe("seguir na exclusao de conta (SOCIAL-02 C2)", () => {
+  test("S23 — relacoes, pedidos, cortes, residuos e ritmo do excluido somem", async () => {
+    await semearSeguir();
+    assert.ok(await existe(`follows/${chaveDirigida(ALVO, SEG_B)}`), "a fixture precisa existir antes");
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "concluida");
+    assert.ok(r.etapasConcluidas.includes("seguir"), "a etapa seguir precisa ter rodado");
+    assert.ok(
+      r.etapasConcluidas.indexOf("seguir") < r.etapasConcluidas.indexOf("identidade"),
+      "seguir conclui antes de identidade"
+    );
+    await conferirSemResto();
+  });
+
+  test("contador do sobrevivente: debitado uma vez, so quando ele pediu ao excluido", async () => {
+    await semearSeguir();
+
+    await executar(ALVO);
+
+    assert.equal(await pendentesDe(SEG_E), 1, "E tinha 2 (ao excluido e a Y): fica 1");
+    assert.equal(await pendentesDe(SEG_D), 0, "D pediu ao excluido (reciproco): fica 0");
+    assert.equal(await pendentesDe(SEG_F), 0, "pedido cortado ainda contava: fica 0");
+    assert.equal(await pendentesDe(SEG_C), 0, "vinculo confirmado nao mexe no contador");
+    assert.equal(await existe(`playerSocialRitmo/${SEG_B}`), false, "nada foi criado para B");
+  });
+
+  test("pedidos reciprocos sao duas unidades independentes", async () => {
+    await semearSeguir();
+
+    await executar(ALVO);
+
+    assert.equal(await existe(`follows/${chaveDirigida(ALVO, SEG_D)}`), false);
+    assert.equal(await existe(`follows/${chaveDirigida(SEG_D, ALVO)}`), false);
+    for (const caminho of [...espelhosDe(ALVO, SEG_D), ...espelhosDe(SEG_D, ALVO)]) {
+      assert.equal(await existe(caminho), false, caminho);
+    }
+    assert.equal(await pendentesDe(SEG_D), 0, "so o pedido de D ao excluido sai do contador de D");
+  });
+
+  test("dados sociais entre terceiros nao envolvidos permanecem intactos", async () => {
+    await semearSeguir();
+    const antes = await fotografarIntactos();
+
+    await executar(ALVO);
+
+    const depois = await fotografarIntactos();
+    for (const caminho of INTACTOS) {
+      assert.ok(depois[caminho], `${caminho} sumiu`);
+      assert.deepEqual(depois[caminho], antes[caminho], `${caminho} foi tocado`);
+    }
+  });
+
+  test("varias paginas: com pagina de 2, tudo sai e nada ressuscita", async () => {
+    await semearSeguir();
+    const vistas = [];
+
+    await apagarSeguir(contextoDoAlvo(), {
+      pagina: 2,
+      depoisDaUnidade: (u) => vistas.push(u),
+    });
+
+    // 8 canonicos, 3 residuos, 2 cortes e o ritmo.
+    assert.deepEqual(
+      vistas.reduce((m, u) => ({ ...m, [u]: (m[u] ?? 0) + 1 }), {}),
+      { U1: 8, U2: 3, U3: 2, U4: 1 }
+    );
+    await conferirSemResto();
+    await conferirInvariantes();
+  });
+
+  test("S23b — interrupcao depois de CADA unidade, e retomada pelo executor real", async () => {
+    let total = null;
+    for (let k = 1; k <= 30 && total === null; k++) {
+      await limpar();
+      await semearSeguir();
+      const antes = await fotografarIntactos();
+
+      let interrompeu = false;
+      try {
+        await apagarSeguir(contextoDoAlvo(), {
+          pagina: 2,
+          depoisDaUnidade: (u, n) => {
+            if (n === k) {
+              interrompeu = true;
+              throw new Interrupcao(`interrompido depois de ${u} #${n}`);
+            }
+          },
+        });
+      } catch (e) {
+        if (!(e instanceof Interrupcao)) throw e;
+      }
+      if (!interrompeu) {
+        total = k - 1;
+        break;
+      }
+
+      // No ponto da interrupcao: nenhuma unidade pela metade, contadores coerentes.
+      await conferirInvariantes();
+
+      const r = await executar(ALVO);
+      assert.equal(r.estado, "concluida", `retomada depois da unidade ${k}`);
+      await conferirSemResto();
+      await conferirInvariantes();
+      assert.deepEqual(await fotografarIntactos(), antes, `terceiros tocados (k=${k})`);
+    }
+    assert.equal(total, 14, "8 U1 + 3 U2 + 2 U3 + 1 U4 fronteiras exercitadas");
+  });
+
+  test("contador invalido nao vira zero: a exclusao fica parcial e a unidade fica inteira", async () => {
+    const invalidos = [
+      ["documento ausente", null],
+      ["campo ausente", undefined],
+      ["negativo", -1],
+      ["fracionario", 1.5],
+      ["texto", "2"],
+      ["zero com pedido pendente", 0],
+    ];
+    for (const [nome, valor] of invalidos) {
+      await limpar();
+      await semearSeguir();
+      if (valor === null) {
+        await db.doc(`playerSocialRitmo/${SEG_E}`).delete();
+      } else if (valor === undefined) {
+        await db.doc(`playerSocialRitmo/${SEG_E}`).update({
+          pedidosPendentesEnviados: admin.firestore.FieldValue.delete(),
+        });
+      } else {
+        await db.doc(`playerSocialRitmo/${SEG_E}`).update({ pedidosPendentesEnviados: valor });
+      }
+      const ritmoCorrompido = await dados(`playerSocialRitmo/${SEG_E}`);
+
+      const parcial = await executar(ALVO);
+
+      assert.equal(parcial.estado, "parcial", nome);
+      assert.ok(!parcial.etapasConcluidas.includes("seguir"), `${nome}: seguir nao pode constar como concluida`);
+      const falha = parcial.falhas[parcial.falhas.length - 1];
+      assert.equal(falha.etapa, "seguir", nome);
+      assert.ok(!/uid-/.test(falha.erro), `${nome}: a mensagem do diario nao pode levar UID`);
+      // A unidade do sobrevivente ficou INTEIRA, e o contador nao foi "corrigido".
+      assert.ok(await existe(`follows/${chaveDirigida(SEG_E, ALVO)}`), `${nome}: canonico preservado`);
+      for (const caminho of espelhosDe(SEG_E, ALVO).slice(2, 4)) {
+        assert.ok(await existe(caminho), `${nome}: ${caminho} preservado`);
+      }
+      assert.deepEqual(await dados(`playerSocialRitmo/${SEG_E}`), ritmoCorrompido, `${nome}: contador intocado`);
+
+      // Corrigido o contador por fora, a retomada conclui e debita UMA vez.
+      await gravarRitmo(SEG_E, 2);
+      const retomada = await executar(ALVO);
+      assert.equal(retomada.estado, "concluida", nome);
+      assert.equal(await pendentesDe(SEG_E), 1, `${nome}: debito unico na retomada`);
+      assert.equal(await pendentesDe(SEG_D), 0, `${nome}: sem debito repetido em D`);
+      assert.equal(await pendentesDe(SEG_F), 0, `${nome}: sem debito repetido em F`);
+      await conferirSemResto();
+    }
+  });
+
+  test("repetir a exclusao converge, sem debito repetido e sem ressurreicao", async () => {
+    await semearSeguir();
+
+    await executar(ALVO);
+    const segunda = await executar(ALVO);
+
+    assert.equal(segunda.repeticao, true);
+    await conferirSemResto();
+    assert.equal(await pendentesDe(SEG_E), 1);
+    assert.equal(await pendentesDe(SEG_D), 0);
+    assert.equal(await pendentesDe(SEG_F), 0);
+  });
+
+  test("conta sem nada de seguir: a etapa roda e conclui sem efeito", async () => {
+    await semearComum();
+    await gravarDirecao(SEG_X, SEG_Y, "confirmado");
+    const antes = await dados(`follows/${chaveDirigida(SEG_X, SEG_Y)}`);
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "concluida");
+    assert.ok(r.etapasConcluidas.includes("seguir"));
+    assert.deepEqual(await dados(`follows/${chaveDirigida(SEG_X, SEG_Y)}`), antes);
   });
 });

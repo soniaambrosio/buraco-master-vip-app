@@ -109,6 +109,43 @@ describe("as dependencias de ordem", () => {
     assert.ok(antesDe("billing", "encerrar"));
   });
 
+  test("SOCIAL-02 C2: a etapa seguir vem logo depois de social e antes de identidade", () => {
+    assert.ok(posicao("seguir") > 0, "a etapa `seguir` nao existe");
+    assert.equal(posicao("seguir"), posicao("social") + 1, "seguir precisa vir logo depois de social");
+    assert.ok(antesDe("seguir", "identidade"));
+    assert.ok(antesDe("seguir", "perfil"), "as projecoes moram sob users/{uid}");
+    assert.ok(antesDe("seguir", "encerrar"));
+  });
+
+  test("SOCIAL-02 C2: a etapa seguir realiza U1, U2, U3 e U4 nessa ordem", () => {
+    const etapa = ETAPAS.find((e) => e.id === "seguir");
+    assert.deepEqual(etapa.itens, [
+      "seguir.followsComoSeguidor",
+      "seguir.followsComoSeguido",
+      "seguir.seguidoresDoOutro",
+      "seguir.seguindoDoOutro",
+      "seguir.pedidosRecebidosDoOutro",
+      "seguir.pedidosEnviadosDoOutro",
+      "seguir.seguindoDoDono",
+      "seguir.seguidoresDoDono",
+      "seguir.pedidosEnviadosDoDono",
+      "seguir.pedidosRecebidosDoDono",
+      "seguir.cortesDeRelacao",
+      "seguir.playerSocialRitmo",
+    ]);
+    assert.equal(etapa.itens[etapa.itens.length - 1], "seguir.playerSocialRitmo", "o ritmo sai por ultimo");
+  });
+
+  test("SOCIAL-02 C2: a execucao de producao da etapa seguir nao recebe ganchos", () => {
+    // As opcoes de pagina e interrupcao existem so para a suite de emulador.
+    // A linha de EXECUCOES chama a etapa SEM elas.
+    const executor = fs.readFileSync(path.join(__dirname, "..", "src", "executor.ts"), "utf8");
+    assert.ok(
+      /seguir:\s*\(ctx\)\s*=>\s*apagarSeguir\(ctx\),/.test(executor),
+      "EXECUCOES.seguir precisa chamar apagarSeguir(ctx) sem opcoes"
+    );
+  });
+
   test("todas as etapas de dado ficam entre trancar e encerrar", () => {
     const primeiro = 0;
     const ultimo = ETAPAS.length - 1;

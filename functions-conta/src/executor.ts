@@ -310,6 +310,256 @@ async function apagarSocial(ctx: Contexto): Promise<void> {
   await db().collection("playerSocial").doc(ctx.uid).delete();
 }
 
+// ===========================================================================
+// SEGUIR (SOCIAL-02, etapa C2)
+// ===========================================================================
+//
+// O FORMATO PERSISTIDO que esta etapa le — o mesmo que a C3 vai gravar
+// (contrato SOCIAL-02 V2 §2.2 e adendo A1):
+//
+//   follows/{seguidorUid|seguidoUid}   canonico de UMA direcao, com
+//                                      `seguidorUid`, `seguidoUid` e `estado`
+//                                      (`pendente` | `confirmado` | `encerrado`)
+//   users/{A}/seguindo/{B}             P1  (confirmado)
+//   users/{B}/seguidores/{A}           P2  (confirmado)
+//   users/{A}/pedidosSeguirEnviados/{B}    P3  (pendente)
+//   users/{B}/pedidosSeguirRecebidos/{A}   P4  (pendente)
+//   cortesDeRelacao/{uidMenor|uidMaior}    `membros` com os dois UIDs
+//   playerSocialRitmo/{uid}            `pedidosPendentesEnviados` = o contador
+//                                      tecnico do teto rigido (no dominio ele
+//                                      entra como `pendentesEnviadosDoAtor`)
+//
+// AS QUATRO UNIDADES, e por que cada uma e atomica:
+//
+//   U1  um canonico encontrado por `seguidorUid` ou `seguidoUid`: apaga o
+//       canonico e os QUATRO espelhos da direcao (exclusoes preventivas: nao
+//       depende do estado visivel) numa TRANSACAO. Se o excluido era o
+//       destinatario de um pedido fisicamente pendente, debita UMA vez o
+//       contador do sobrevivente na mesma transacao. Retomar depois do commit
+//       nao acha mais o canonico, entao nao ha debito duplo.
+//   U2  residuo nas quatro projecoes proprias, depois da varredura canonica:
+//       apaga o proprio e o espelho do outro dono no mesmo lote. Nunca mexe no
+//       contador — o contador acompanha o canonico, nao a projecao.
+//   U3  cada registro de corte com `membros` contendo o excluido.
+//   U4  o ritmo proprio, por ultimo.
+//
+// DESCOBERTA SEM MEMORIA: o que falta fazer e sempre lido do banco. Nenhuma
+// unidade depende de lista guardada em memoria depois de a fonte sumir, e uma
+// execucao interrompida em qualquer unidade e retomada pela mesma varredura.
+
+const C_SEGUIR = "follows";
+const C_CORTES_DE_RELACAO = "cortesDeRelacao";
+const C_RITMO_SOCIAL = "playerSocialRitmo";
+const CAMPO_PENDENTES_ENVIADOS = "pedidosPendentesEnviados";
+const SUB_SEGUINDO = "seguindo";
+const SUB_SEGUIDORES = "seguidores";
+const SUB_PEDIDOS_ENVIADOS = "pedidosSeguirEnviados";
+const SUB_PEDIDOS_RECEBIDOS = "pedidosSeguirRecebidos";
+
+/// Para cada projecao propria, onde mora o espelho no outro dono.
+const CONTRAPARTE_DE_SEGUIR: Readonly<Record<string, string>> = {
+  [SUB_SEGUINDO]: SUB_SEGUIDORES,
+  [SUB_SEGUIDORES]: SUB_SEGUINDO,
+  [SUB_PEDIDOS_ENVIADOS]: SUB_PEDIDOS_RECEBIDOS,
+  [SUB_PEDIDOS_RECEBIDOS]: SUB_PEDIDOS_ENVIADOS,
+};
+
+export type UnidadeDeSeguir = "U1" | "U2" | "U3" | "U4";
+
+/// Opcoes INTERNAS da etapa. A execucao de producao (`EXECUCOES.seguir`) nao
+/// passa nenhuma: elas existem para a suite de integracao reduzir a pagina e
+/// interromper a etapa depois de uma unidade, provando a retomada. Nenhuma
+/// rota, payload ou callable alcanca esta funcao.
+export interface OpcoesDaEtapaSeguir {
+  readonly pagina?: number;
+  readonly depoisDaUnidade?: (
+    unidade: UnidadeDeSeguir,
+    total: number
+  ) => void | Promise<void>;
+}
+
+/// Falha que deixa a etapa `parcial` e retomavel, sem dado pessoal na mensagem
+/// (a mensagem vai para o diario da exclusao).
+export class FalhaDaEtapaSeguir extends Error {}
+
+/// P1–P4 de uma direcao seguidor -> seguido.
+function espelhosDaDirecao(
+  seguidor: string,
+  seguido: string
+): FirebaseFirestore.DocumentReference[] {
+  const usuarios = db().collection("users");
+  return [
+    usuarios.doc(seguidor).collection(SUB_SEGUINDO).doc(seguido),
+    usuarios.doc(seguido).collection(SUB_SEGUIDORES).doc(seguidor),
+    usuarios.doc(seguidor).collection(SUB_PEDIDOS_ENVIADOS).doc(seguido),
+    usuarios.doc(seguido).collection(SUB_PEDIDOS_RECEBIDOS).doc(seguidor),
+  ];
+}
+
+/// So um inteiro nao negativo e contagem conhecida. Ausente, negativo,
+/// fracionario ou de outro tipo NAO vira zero.
+function contagemConhecida(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0;
+}
+
+/// U1: um canonico e os seus quatro espelhos, numa transacao.
+///
+/// Devolve `false` se o canonico ja nao existia (outra execucao o levou).
+async function apagarDirecaoDeSeguir(
+  ref: FirebaseFirestore.DocumentReference,
+  uid: string
+): Promise<boolean> {
+  return db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+
+    const d = snap.data() ?? {};
+    const seguidor = d.seguidorUid;
+    const seguido = d.seguidoUid;
+    if (
+      typeof seguidor !== "string" ||
+      typeof seguido !== "string" ||
+      seguidor.length === 0 ||
+      seguido.length === 0 ||
+      (seguidor !== uid && seguido !== uid)
+    ) {
+      throw new FalhaDaEtapaSeguir(
+        "canonico de seguir sem as duas pontas; unidade preservada para retomada"
+      );
+    }
+
+    // O contador conta o pedido FISICAMENTE pendente — inclusive o que um corte
+    // ja encerrou logicamente e a faxina ainda nao tocou.
+    const debitarSobrevivente =
+      d.estado === "pendente" && seguido === uid && seguidor !== uid;
+
+    let refRitmo: FirebaseFirestore.DocumentReference | null = null;
+    let novoContador = 0;
+    if (debitarSobrevivente) {
+      refRitmo = db().collection(C_RITMO_SOCIAL).doc(seguidor);
+      const ritmo = await tx.get(refRitmo);
+      const atual: unknown = ritmo.exists
+        ? ritmo.data()?.[CAMPO_PENDENTES_ENVIADOS]
+        : undefined;
+      if (!contagemConhecida(atual) || atual < 1) {
+        // Sem prova segura para corrigir o teto do sobrevivente, nada desta
+        // unidade e apagado: a falha fica registrada e a retomada a encontra.
+        throw new FalhaDaEtapaSeguir(
+          "contador de pedidos pendentes do outro jogador ausente ou invalido; unidade preservada para retomada"
+        );
+      }
+      novoContador = atual - 1;
+    }
+
+    tx.delete(ref);
+    for (const espelho of espelhosDaDirecao(seguidor, seguido)) tx.delete(espelho);
+    if (refRitmo) {
+      tx.update(refRitmo, {
+        [CAMPO_PENDENTES_ENVIADOS]: novoContador,
+        atualizadoEm: agoraIso(),
+      });
+    }
+    return true;
+  });
+}
+
+/// A etapa `seguir` inteira: U1, U2, U3, U4 e a conferencia de fontes vazias.
+export async function apagarSeguir(
+  ctx: Contexto,
+  opcoes: OpcoesDaEtapaSeguir = {}
+): Promise<void> {
+  const tamanho = opcoes.pagina ?? PAGINA;
+  let unidades = 0;
+  const concluirUnidade = async (u: UnidadeDeSeguir): Promise<void> => {
+    unidades++;
+    if (opcoes.depoisDaUnidade) await opcoes.depoisDaUnidade(u, unidades);
+  };
+
+  // U1 — canonicos nas DUAS direcoes.
+  for (const campo of ["seguidorUid", "seguidoUid"]) {
+    for (;;) {
+      const pagina = await db()
+        .collection(C_SEGUIR)
+        .where(campo, "==", ctx.uid)
+        .limit(tamanho)
+        .get();
+      if (pagina.empty) break;
+      for (const doc of pagina.docs) {
+        if (await apagarDirecaoDeSeguir(doc.ref, ctx.uid)) {
+          await concluirUnidade("U1");
+        }
+      }
+      if (pagina.size < tamanho) break;
+    }
+  }
+
+  // U2 — residuos das quatro projecoes proprias, cada um com o espelho do outro.
+  const usuarios = db().collection("users");
+  for (const sub of [
+    SUB_SEGUINDO,
+    SUB_SEGUIDORES,
+    SUB_PEDIDOS_ENVIADOS,
+    SUB_PEDIDOS_RECEBIDOS,
+  ]) {
+    const contraparte = CONTRAPARTE_DE_SEGUIR[sub];
+    for (;;) {
+      const pagina = await usuarios.doc(ctx.uid).collection(sub).limit(tamanho).get();
+      if (pagina.empty) break;
+      for (const doc of pagina.docs) {
+        const lote = db().batch();
+        lote.delete(doc.ref);
+        lote.delete(usuarios.doc(doc.id).collection(contraparte).doc(ctx.uid));
+        await lote.commit();
+        await concluirUnidade("U2");
+      }
+      if (pagina.size < tamanho) break;
+    }
+  }
+
+  // U3 — registros de corte do par.
+  for (;;) {
+    const pagina = await db()
+      .collection(C_CORTES_DE_RELACAO)
+      .where("membros", "array-contains", ctx.uid)
+      .limit(tamanho)
+      .get();
+    if (pagina.empty) break;
+    for (const doc of pagina.docs) {
+      await doc.ref.delete();
+      await concluirUnidade("U3");
+    }
+    if (pagina.size < tamanho) break;
+  }
+
+  // U4 — o ritmo proprio, por ultimo.
+  await db().collection(C_RITMO_SOCIAL).doc(ctx.uid).delete();
+  await concluirUnidade("U4");
+
+  // A etapa so termina com TODAS as fontes vazias. Um resto aqui (escrita
+  // concorrente, por exemplo) deixa a exclusao parcial, para ser retomada.
+  const restos = await Promise.all([
+    db().collection(C_SEGUIR).where("seguidorUid", "==", ctx.uid).limit(1).get(),
+    db().collection(C_SEGUIR).where("seguidoUid", "==", ctx.uid).limit(1).get(),
+    usuarios.doc(ctx.uid).collection(SUB_SEGUINDO).limit(1).get(),
+    usuarios.doc(ctx.uid).collection(SUB_SEGUIDORES).limit(1).get(),
+    usuarios.doc(ctx.uid).collection(SUB_PEDIDOS_ENVIADOS).limit(1).get(),
+    usuarios.doc(ctx.uid).collection(SUB_PEDIDOS_RECEBIDOS).limit(1).get(),
+    db()
+      .collection(C_CORTES_DE_RELACAO)
+      .where("membros", "array-contains", ctx.uid)
+      .limit(1)
+      .get(),
+  ]);
+  const ritmoRestante = await db().collection(C_RITMO_SOCIAL).doc(ctx.uid).get();
+  if (restos.some((s) => !s.empty) || ritmoRestante.exists) {
+    throw new FalhaDaEtapaSeguir(
+      "a etapa seguir terminou com fonte nao vazia; sera retomada"
+    );
+  }
+
+  logger.info("etapa seguir concluida", { unidades });
+}
+
 /// Bloqueios, silenciamentos e comprovantes — dos dois lados.
 async function apagarModeracao(ctx: Contexto): Promise<void> {
   await apagarSubcolecao(`users/${ctx.uid}`, "blocks");
@@ -654,6 +904,9 @@ async function apagarAutenticacao(ctx: Contexto): Promise<void> {
 const EXECUCOES: Record<string, Execucao> = {
   trancar,
   social: apagarSocial,
+  // Producao: sem opcoes. Pagina, gancho de interrupcao etc. so existem na
+  // chamada direta da suite de integracao.
+  seguir: (ctx) => apagarSeguir(ctx),
   moderacaoDoJogador: apagarModeracao,
   rastreabilidadeDoJogador: apagarRastreabilidade,
   colecoes: apagarColecoes,
