@@ -392,7 +392,7 @@ export const INVENTARIO: readonly ItemDoInventario[] = [
     classe: CLASSE.APAGAR,
     alcance: { modo: "subcolecaoDoDono", raiz: "users", sub: "pedidosSeguirRecebidos" },
     porque:
-      "Projecao propria dos pedidos que o excluido recebeu. Residuo sem canonico e apagado junto com o pedido enviado correspondente; o contador so muda pelo canonico, nunca por residuo, para nao debitar duas vezes.",
+      "Projecao propria dos pedidos que o excluido recebeu. Residuo sem canonico e apagado junto com o pedido enviado correspondente, numa transacao que RECONTA os pedidos fisicamente pendentes do remetente em `follows` e grava o contador com esse valor absoluto — nunca debita por projecao, entao nao desconta duas vezes. Contador invalido deixa a unidade inteira e a exclusao parcial.",
   },
   {
     id: "seguir.cortesDeRelacao",

@@ -1604,6 +1604,161 @@ describe("seguir na exclusao de conta (SOCIAL-02 C2)", () => {
     assert.equal(await pendentesDe(SEG_F), 0);
   });
 
+  // -------------------------------------------------------------------------
+  // PARECER C2 R1 — pedido RECEBIDO orfao com remetente sobrevivente
+  // -------------------------------------------------------------------------
+  // A e o excluido; R sobrevive. Nao existe `follows/R|A`, mas existem
+  // `users/A/pedidosSeguirRecebidos/R` e `users/R/pedidosSeguirEnviados/A`. R
+  // tem 99 pedidos canonicos pendentes a outras pessoas. O contador de R pode
+  // estar em 100 (ainda contando o residuo) ou em 99 (ja descontado). A
+  // unidade reconta na fonte duravel e grava o valor absoluto.
+
+  const REMETENTE = "uid-remetente-sobrevivente";
+  const RESIDUO_PROPRIO = `users/${ALVO}/pedidosSeguirRecebidos/${REMETENTE}`;
+  const RESIDUO_DO_REMETENTE = `users/${REMETENTE}/pedidosSeguirEnviados/${ALVO}`;
+  const PENDENTES_DO_REMETENTE = 99;
+  const destinoDoRemetente = (i) => `uid-destino-${String(i).padStart(3, "0")}`;
+
+  async function semearResiduoRecebido(contador) {
+    await semearComum();
+    // 99 pedidos canonicos pendentes de R, no formato real, com P3/P4.
+    for (let inicio = 0; inicio < PENDENTES_DO_REMETENTE; inicio += 30) {
+      const lote = db.batch();
+      for (let i = inicio; i < Math.min(inicio + 30, PENDENTES_DO_REMETENTE); i++) {
+        const destino = destinoDoRemetente(i);
+        const ref = refOpaca(REMETENTE, destino);
+        lote.set(db.doc(`follows/${chaveDirigida(REMETENTE, destino)}`), {
+          seguidorUid: REMETENTE,
+          seguidoUid: destino,
+          estado: "pendente",
+          ref,
+          corteNaCriacao: null,
+          ultimaIntencao: { chave: `${REMETENTE}|i${i}`, impressao: "seguir|saida|-" },
+          solicitadoEm: QUANDO,
+          confirmadoEm: null,
+          encerradoEm: null,
+          desde: QUANDO,
+          criacoesRecentes: [QUANDO],
+          esquema: 1,
+        });
+        const [, , p3, p4] = espelhosDe(REMETENTE, destino);
+        lote.set(db.doc(p3), { publicId: `P-${destino}`, solicitadoEm: QUANDO, referencia: `${ref}.` });
+        lote.set(db.doc(p4), { publicId: `P-${REMETENTE}`, solicitadoEm: QUANDO, referencia: `${ref}.` });
+      }
+      await lote.commit();
+    }
+    // O residuo: as duas projecoes do pedido R -> A, sem canonico.
+    await db.doc(RESIDUO_PROPRIO).set({ publicId: `P-${REMETENTE}`, solicitadoEm: QUANDO, referencia: "orfa." });
+    await db.doc(RESIDUO_DO_REMETENTE).set({ publicId: PUBLIC_ID, solicitadoEm: QUANDO, referencia: "orfa." });
+    if (contador !== null) await gravarRitmo(REMETENTE, contador);
+  }
+
+  async function pedidosCanonicosDoRemetente() {
+    const s = await db
+      .collection("follows")
+      .where("seguidorUid", "==", REMETENTE)
+      .where("estado", "==", "pendente")
+      .get();
+    return s.size;
+  }
+
+  test("R1: residuo recebido AINDA CONTADO — 100 vira 99 e a exclusao conclui", async () => {
+    await semearResiduoRecebido(100);
+    assert.equal(await existe(`follows/${chaveDirigida(REMETENTE, ALVO)}`), false, "nao ha canonico R|A");
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "concluida");
+    assert.equal(await pendentesDe(REMETENTE), 99, "o contador acompanha os pedidos fisicos que restam");
+    assert.equal(await existe(RESIDUO_PROPRIO), false);
+    assert.equal(await existe(RESIDUO_DO_REMETENTE), false);
+    assert.equal(await pedidosCanonicosDoRemetente(), 99, "os pedidos de R a terceiros ficam");
+    for (const i of [0, 50, 98]) {
+      const destino = destinoDoRemetente(i);
+      assert.ok(await existe(`follows/${chaveDirigida(REMETENTE, destino)}`), destino);
+      for (const p of espelhosDe(REMETENTE, destino).slice(2, 4)) {
+        assert.ok(await existe(p), p);
+      }
+    }
+    await conferirSemResto();
+  });
+
+  test("R1: residuo recebido JA DESCONTADO — 99 continua 99, sem debito duplo", async () => {
+    await semearResiduoRecebido(99);
+
+    const r = await executar(ALVO);
+
+    assert.equal(r.estado, "concluida");
+    assert.equal(await pendentesDe(REMETENTE), 99);
+    assert.equal(await existe(RESIDUO_PROPRIO), false);
+    assert.equal(await existe(RESIDUO_DO_REMETENTE), false);
+  });
+
+  test("R1: interrupcao logo depois da unidade e repeticao — continua 99", async () => {
+    await semearResiduoRecebido(100);
+
+    // A unica unidade U2 desta conta e o residuo recebido: interromper logo
+    // depois dela, com o commit ja feito.
+    await assert.rejects(
+      apagarSeguir(contextoDoAlvo(), {
+        depoisDaUnidade: (u) => {
+          if (u === "U2") throw new Interrupcao("interrompido depois do residuo recebido");
+        },
+      }),
+      Interrupcao
+    );
+    assert.equal(await existe(RESIDUO_PROPRIO), false, "a unidade foi confirmada antes da interrupcao");
+    assert.equal(await pendentesDe(REMETENTE), 99);
+
+    const primeira = await executar(ALVO);
+    assert.equal(primeira.estado, "concluida");
+    assert.equal(await pendentesDe(REMETENTE), 99, "a retomada nao desconta de novo");
+
+    const segunda = await executar(ALVO);
+    assert.equal(segunda.repeticao, true);
+    assert.equal(await pendentesDe(REMETENTE), 99, "a repeticao nao desconta de novo");
+  });
+
+  test("R1: contador invalido do remetente — exclusao parcial, residuo preservado, sem zero fabricado", async () => {
+    const invalidos = [
+      ["documento ausente", null],
+      ["campo ausente", undefined],
+      ["negativo", -1],
+      ["fracionario", 99.5],
+      ["texto", "100"],
+    ];
+    for (const [nome, valor] of invalidos) {
+      await limpar();
+      await semearResiduoRecebido(valor === null ? null : 100);
+      if (valor === undefined) {
+        await db.doc(`playerSocialRitmo/${REMETENTE}`).update({
+          pedidosPendentesEnviados: admin.firestore.FieldValue.delete(),
+        });
+      } else if (valor !== null) {
+        await db.doc(`playerSocialRitmo/${REMETENTE}`).update({ pedidosPendentesEnviados: valor });
+      }
+      const ritmoAntes = await dados(`playerSocialRitmo/${REMETENTE}`);
+
+      const parcial = await executar(ALVO);
+
+      assert.equal(parcial.estado, "parcial", nome);
+      assert.ok(!parcial.etapasConcluidas.includes("seguir"), `${nome}: seguir nao consta como concluida`);
+      const falha = parcial.falhas[parcial.falhas.length - 1];
+      assert.equal(falha.etapa, "seguir", nome);
+      assert.ok(!/uid-/.test(falha.erro), `${nome}: a mensagem do diario nao leva UID`);
+      assert.ok(await existe(RESIDUO_PROPRIO), `${nome}: a fonte duravel da unidade ficou`);
+      assert.ok(await existe(RESIDUO_DO_REMETENTE), `${nome}: o espelho ficou junto`);
+      assert.deepEqual(await dados(`playerSocialRitmo/${REMETENTE}`), ritmoAntes, `${nome}: contador intocado`);
+
+      // Corrigido o contador, a retomada reconcilia pela fonte duravel.
+      await gravarRitmo(REMETENTE, 100);
+      const retomada = await executar(ALVO);
+      assert.equal(retomada.estado, "concluida", nome);
+      assert.equal(await pendentesDe(REMETENTE), 99, `${nome}: reconciliado para os pedidos fisicos`);
+      assert.equal(await existe(RESIDUO_PROPRIO), false, nome);
+    }
+  });
+
   test("conta sem nada de seguir: a etapa roda e conclui sem efeito", async () => {
     await semearComum();
     await gravarDirecao(SEG_X, SEG_Y, "confirmado");

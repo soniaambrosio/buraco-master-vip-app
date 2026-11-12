@@ -338,8 +338,14 @@ async function apagarSocial(ctx: Contexto): Promise<void> {
 //       contador do sobrevivente na mesma transacao. Retomar depois do commit
 //       nao acha mais o canonico, entao nao ha debito duplo.
 //   U2  residuo nas quatro projecoes proprias, depois da varredura canonica:
-//       apaga o proprio e o espelho do outro dono no mesmo lote. Nunca mexe no
-//       contador — o contador acompanha o canonico, nao a projecao.
+//       apaga o proprio e o espelho do outro dono juntos. Nao DEBITA por
+//       projecao (o residuo pode ser de pedido ja descontado). No caso do PEDIDO
+//       RECEBIDO orfao — o remetente sobrevive e tem contador —, a unidade e uma
+//       TRANSACAO que RECONTA os pedidos fisicamente pendentes do remetente na
+//       fonte duravel (`follows` com `seguidorUid` dele e `estado == pendente`)
+//       e grava o contador com o valor RECONTADO, absoluto. Retomar ou repetir
+//       nao desconta duas vezes. Contador invalido: a unidade fica inteira e a
+//       etapa, parcial (parecer C2 R1).
 //   U3  cada registro de corte com `membros` contendo o excluido.
 //   U4  o ritmo proprio, por ultimo.
 //
@@ -463,6 +469,94 @@ async function apagarDirecaoDeSeguir(
   });
 }
 
+/// Teto de leitura da recontagem de pendentes de UM remetente. O teto rigido
+/// aprovado e 100; este limite so existe para nao varrer sem fim um dado
+/// corrompido. Atingi-lo e falha retomavel, e nao contagem aceita.
+const LIMITE_DE_RECONTAGEM = 1000;
+
+/// U2, caso do PEDIDO RECEBIDO orfao: `users/{excluido}/pedidosSeguirRecebidos/
+/// {remetente}` sem canonico. Uma transacao:
+///
+///   * le o proprio residuo (a fonte duravel desta unidade), o ritmo do
+///     remetente e RECONTA os pedidos fisicamente pendentes dele em `follows`
+///     (inclusive os cortados ainda nao limpos: o contador conta o fisico);
+///   * se o canonico do par ainda existir, ou o contador atual nao for um
+///     inteiro >= 0, ou a recontagem bater no limite: falha, sem apagar nada —
+///     a unidade fica inteira e a exclusao, parcial;
+///   * senao, apaga o residuo e o espelho do remetente e grava o contador com
+///     o valor RECONTADO (absoluto, nunca decremento).
+///
+/// PROTECAO CONTRA ESCRITOR CONCORRENTE: o ritmo do remetente e lido e escrito
+/// nesta transacao. Todo escritor que muda o conjunto de pedidos pendentes do
+/// remetente tambem le e escreve esse documento (formato que a C3 respeita), e
+/// por isso as duas transacoes serializam. Hoje nao ha escritor de seguir; a
+/// garantia contra eles e da C3.
+///
+/// Devolve `false` se o residuo ja nao existia.
+async function apagarPedidoRecebidoOrfao(
+  refProprio: FirebaseFirestore.DocumentReference,
+  remetente: string,
+  uid: string
+): Promise<boolean> {
+  return db().runTransaction(async (tx) => {
+    const proprio = await tx.get(refProprio);
+    if (!proprio.exists) return false;
+
+    const refRitmo = db().collection(C_RITMO_SOCIAL).doc(remetente);
+    const ritmo = await tx.get(refRitmo);
+    const canonicoDoPar = await tx.get(
+      db()
+        .collection(C_SEGUIR)
+        .where("seguidorUid", "==", remetente)
+        .where("seguidoUid", "==", uid)
+        .limit(1)
+    );
+    const pendentes = await tx.get(
+      db()
+        .collection(C_SEGUIR)
+        .where("seguidorUid", "==", remetente)
+        .where("estado", "==", "pendente")
+        .limit(LIMITE_DE_RECONTAGEM)
+    );
+
+    if (!canonicoDoPar.empty) {
+      throw new FalhaDaEtapaSeguir(
+        "pedido recebido com canonico ainda presente; unidade preservada para retomada"
+      );
+    }
+    if (pendentes.size >= LIMITE_DE_RECONTAGEM) {
+      throw new FalhaDaEtapaSeguir(
+        "recontagem de pedidos pendentes acima do limite verificavel; unidade preservada para retomada"
+      );
+    }
+    const atual: unknown = ritmo.exists
+      ? ritmo.data()?.[CAMPO_PENDENTES_ENVIADOS]
+      : undefined;
+    if (!contagemConhecida(atual)) {
+      throw new FalhaDaEtapaSeguir(
+        "contador de pedidos pendentes do remetente ausente ou invalido; unidade preservada para retomada"
+      );
+    }
+
+    const recontado = pendentes.size;
+    tx.delete(refProprio);
+    tx.delete(
+      db()
+        .collection("users")
+        .doc(remetente)
+        .collection(SUB_PEDIDOS_ENVIADOS)
+        .doc(uid)
+    );
+    if (recontado !== atual) {
+      tx.update(refRitmo, {
+        [CAMPO_PENDENTES_ENVIADOS]: recontado,
+        atualizadoEm: agoraIso(),
+      });
+    }
+    return true;
+  });
+}
+
 /// A etapa `seguir` inteira: U1, U2, U3, U4 e a conferencia de fontes vazias.
 export async function apagarSeguir(
   ctx: Contexto,
@@ -506,6 +600,14 @@ export async function apagarSeguir(
       const pagina = await usuarios.doc(ctx.uid).collection(sub).limit(tamanho).get();
       if (pagina.empty) break;
       for (const doc of pagina.docs) {
+        if (sub === SUB_PEDIDOS_RECEBIDOS && doc.id !== ctx.uid) {
+          // O remetente sobrevive e o contador dele pode ainda incluir este
+          // pedido: reconciliar pela fonte duravel, na mesma transacao.
+          if (await apagarPedidoRecebidoOrfao(doc.ref, doc.id, ctx.uid)) {
+            await concluirUnidade("U2");
+          }
+          continue;
+        }
         const lote = db().batch();
         lote.delete(doc.ref);
         lote.delete(usuarios.doc(doc.id).collection(contraparte).doc(ctx.uid));
