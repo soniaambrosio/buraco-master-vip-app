@@ -2249,7 +2249,11 @@ describe('Functions sociais', comFunctions, () => {
       assert.equal(await ler(`playerSocial/${g.uid}`), undefined);
     });
 
-    test('S30b/S30c — diario em qualquer ponta: nada nasce; encerrar vira nenhum sem escrita; o dono com diario nao le nem grava', async () => {
+    // Precisao do parecer C3 R1 §4: o dominio C1 distingue as pontas. Diario no
+    // ALVO: criar recusa e encerrar e repeticao com estado `nenhum`. Diario no
+    // ATOR: tudo recusa com `acaoIndisponivel` (caso seguinte). Em nenhum dos
+    // dois ha escrita, e a limpeza e da exclusao (O14).
+    test('S30b/S30c — diario no ALVO: nada nasce e encerrar e repeticao nenhum sem escrita; diario no dono: criar, listar, contar e privacidade recusam', async () => {
       const a = await jogador();
       const b = await jogador();
       const c = await jogador();
@@ -2275,6 +2279,38 @@ describe('Functions sociais', comFunctions, () => {
       await assert.rejects(() => c.privacidade({ privacidade: 'privado' }), recusa('acaoIndisponivel'));
       assert.equal(await ritmo(c), undefined);
       assert.equal(await ler(`playerSocial/${c.uid}`), undefined);
+    });
+
+    test('S30b/S30c — diario no ATOR: encerrar (deixar, remover, cancelar) recusa com acaoIndisponivel e nada e gravado', async () => {
+      const a = await jogador();
+      const b = await jogador();
+      const c = await jogador();
+      await privado(c);
+      await cmd(a, 'seguir', b, { referencia: null });
+      await cmd(b, 'seguir', a, { referencia: null });
+      await cmd(a, 'seguir', c, { referencia: null });
+      const refDeixar = (await bloco(a, b)).meu.referencia;
+      const refRemover = (await bloco(a, b)).dele.referencia;
+      const refCancelar = (await bloco(a, c)).meu.referencia;
+      const antes = {
+        ab: await canonico(a, b), ba: await canonico(b, a), ac: await canonico(a, c),
+        ritmoA: await ritmo(a), ritmoB: await ritmo(b),
+      };
+      await diario(a);
+      await assert.rejects(() => cmd(a, 'deixarSeguir', b, { referencia: refDeixar }),
+        recusa('acaoIndisponivel', 'failed-precondition'));
+      await assert.rejects(() => cmd(a, 'removerSeguidor', b, { referencia: refRemover }),
+        recusa('acaoIndisponivel', 'failed-precondition'));
+      await assert.rejects(() => cmd(a, 'cancelarSeguir', c, { referencia: refCancelar }),
+        recusa('acaoIndisponivel', 'failed-precondition'));
+      assert.deepEqual(await canonico(a, b), antes.ab);
+      assert.deepEqual(await canonico(b, a), antes.ba);
+      assert.deepEqual(await canonico(a, c), antes.ac);
+      assert.deepEqual(await ritmo(a), antes.ritmoA, 'cancelar recusado nao debita');
+      assert.deepEqual(await ritmo(b), antes.ritmoB);
+      assert.equal(await espelhos(a, b), 'P1+P2', 'a limpeza e da exclusao (O14)');
+      assert.equal(await espelhos(b, a), 'P1+P2');
+      assert.equal(await espelhos(a, c), 'P3+P4');
     });
 
     // ------------------------------------------- referencia, intencao, corte
@@ -2539,6 +2575,105 @@ describe('Functions sociais', comFunctions, () => {
         'o campo ausente nao recebe 0');
     });
 
+    // ---- Parecer C3 R1, item R1: a prova de primeira criacao olha tambem as
+    // projecoes de SAIDA do proprio ator. Residuo de saida sem canonico e estado
+    // anterior perdido; atividade so RECEBIDA nao conta.
+
+    /// Tudo o que uma recusa por residuo nao pode tocar: o ator, o alvo e o terceiro.
+    async function fotoDoResiduo(ator, alvo, terceiro) {
+      const caminhos = [
+        `playerSocialRitmo/${ator.uid}`, `playerSocialRitmo/${terceiro.uid}`,
+        `follows/${ator.uid}|${alvo.uid}`, `follows/${ator.uid}|${terceiro.uid}`,
+        ...Object.values(caminhosEspelho(ator, alvo)),
+        ...Object.values(caminhosEspelho(ator, terceiro)),
+      ];
+      const foto = {};
+      for (const c of caminhos) foto[c] = (await ler(c)) ?? null;
+      return foto;
+    }
+
+    test('R1 — sem ritmo e com pedido ENVIADO orfao (com e sem espelho recebido): nao e primeira criacao; recusa sem tocar residuo nem terceiro', async () => {
+      const x = await jogador();
+      const publico = await jogador();
+      const fechado = await jogador();
+      await privado(fechado);
+      const agora = new Date().toISOString();
+      for (const comEspelho of [false, true]) {
+        const a = await jogador();
+        await semear(`users/${a.uid}/pedidosSeguirEnviados/${x.uid}`,
+          { publicId: x.pid, solicitadoEm: agora, referencia: 'orfao.' });
+        if (comEspelho) {
+          await semear(`users/${x.uid}/pedidosSeguirRecebidos/${a.uid}`,
+            { publicId: a.pid, solicitadoEm: agora, referencia: 'orfao.' });
+        }
+        assert.equal(await ritmo(a), undefined);
+        assert.equal(await canonico(a, x), undefined, 'o residuo nao tem canonico');
+        for (const alvo of [publico, fechado]) {
+          const antes = await fotoDoResiduo(a, alvo, x);
+          await assert.rejects(() => cmd(a, 'seguir', alvo, { referencia: null }),
+            recusa('limiteIndisponivel', 'failed-precondition'));
+          assert.deepEqual(await fotoDoResiduo(a, alvo, x), antes,
+            `comEspelho=${comEspelho}: nenhum canonico, projecao, ritmo ou consumo novo`);
+        }
+      }
+    });
+
+    test('R1 — sem ritmo e com SEGUINDO orfao (com e sem espelho de seguidor) recusa; com ritmo, espelho orfao do MESMO par tambem e historico desconhecido', async () => {
+      const x = await jogador();
+      const b = await jogador();
+      const agora = new Date().toISOString();
+      for (const comEspelho of [false, true]) {
+        const a = await jogador();
+        await semear(`users/${a.uid}/seguindo/${x.uid}`,
+          { publicId: x.pid, desde: agora, referencia: 'orfao.' });
+        if (comEspelho) {
+          await semear(`users/${x.uid}/seguidores/${a.uid}`,
+            { publicId: a.pid, desde: agora, referencia: 'orfao.' });
+        }
+        const antes = await fotoDoResiduo(a, b, x);
+        await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null }),
+          recusa('limiteIndisponivel'));
+        assert.deepEqual(await fotoDoResiduo(a, b, x), antes, `comEspelho=${comEspelho}`);
+      }
+      // Ritmo conhecido, mas o par a -> b tem espelho sem canonico: o historico
+      // POR ALVO nao e "par novo".
+      const p = await jogador();
+      await semear(R(p), { criacoes: [], pedidosPendentesEnviados: 0, esquema: 1 });
+      await semear(`users/${p.uid}/seguindo/${b.uid}`,
+        { publicId: b.pid, desde: agora, referencia: 'orfao.' });
+      const antesPar = await fotoDoResiduo(p, b, x);
+      await assert.rejects(() => cmd(p, 'seguir', b, { referencia: null }),
+        recusa('limiteIndisponivel'));
+      assert.deepEqual(await fotoDoResiduo(p, b, x), antesPar);
+      assert.equal((await cmd(p, 'seguir', x, { referencia: null })).estado, 'seguindo',
+        'outro par, sem residuo, segue normal');
+    });
+
+    test('R1 — ator de saida novo com atividade so RECEBIDA (seguidores, pedidos e residuo recebidos) cria normalmente; ator inteiramente novo tambem', async () => {
+      const n = await jogador();
+      const c = await jogador();
+      const d = await jogador();
+      const z = await jogador();
+      const b = await jogador();
+      await cmd(c, 'seguir', n, { referencia: null });
+      await privado(n);
+      await cmd(d, 'seguir', n, { referencia: null });
+      await semear(`users/${n.uid}/seguidores/${z.uid}`,
+        { publicId: z.pid, desde: new Date().toISOString(), referencia: 'orfao.' });
+      const terceiros = { cn: await canonico(c, n), dn: await canonico(d, n),
+        rc: await ritmo(c), rd: await ritmo(d) };
+      assert.equal(await ritmo(n), undefined);
+      assert.equal((await cmd(n, 'seguir', b, { referencia: null })).estado, 'seguindo');
+      const rn = await ritmo(n);
+      assert.equal(rn.criacoes.length, 1);
+      assert.equal(rn.pedidosPendentesEnviados, 0);
+      assert.deepEqual({ cn: await canonico(c, n), dn: await canonico(d, n),
+        rc: await ritmo(c), rd: await ritmo(d) }, terceiros, 'os dados de terceiros ficam');
+      const m = await jogador();
+      assert.equal((await cmd(m, 'seguir', b, { referencia: null })).estado, 'seguindo');
+      assert.equal((await ritmo(m)).criacoes.length, 1);
+    });
+
     test('teto: contador negativo, fracionario, texto ou nulo recusa; 0 e 99 passam; 100 e limitePedidosPendentes; cancelar libera', async () => {
       const a = await jogador();
       const alvos = [];
@@ -2691,7 +2826,7 @@ describe('Functions sociais', comFunctions, () => {
       }
     });
 
-    test('S35 — a leitura protegida acompanha privacidade, plano, contato e diario, mudanca a mudanca', async () => {
+    test('S35 (sequencial) — a leitura protegida acompanha privacidade, plano, contato e diario, mudanca a mudanca', async () => {
       const a = await jogador();
       const b = await jogador();
       const ver = async () => (await a.verPerfil({ publicId: b.pid })).data;
@@ -2716,6 +2851,190 @@ describe('Functions sociais', comFunctions, () => {
       assert.equal(emExclusao.seguir, null);
       assert.equal(emExclusao.detalhes, null);
       assert.ok(!emExclusao.acoes.some((x) => SEGUIR_ACOES.has(x)));
+    });
+
+    // ---- Parecer C3 R1, item R2: S35 CONCORRENTE.
+    //
+    // Como a prova funciona:
+    //   - Dois estados COMPLETOS, X e Y, com respostas legais distintas de O12.
+    //     Cada um junta dois fatos que O12 le (por exemplo, privacidade do alvo
+    //     e o canonico alvo -> observador), escolhidos para que TODA mistura dos
+    //     fatos de X e de Y produza uma resposta diferente das duas legais.
+    //   - O preparo do teste troca X <-> Y com UM `writeBatch` administrativo
+    //     (atomico). E instrumentacao de teste, nao caminho de produto: nenhuma
+    //     flag de payload, endpoint ou modo novo.
+    //   - Quatro leitores chamam `verPerfilPublico` real sem parar enquanto as
+    //     trocas acontecem. Cada leitura e cada troca registram inicio e fim no
+    //     relogio do teste.
+    // O que cada assert demonstra:
+    //   (a) toda resposta e INTEIRAMENTE X ou Y: nenhuma permissao montada com
+    //       fatos de instantes diferentes;
+    //   (b) toda resposta e um estado vigente em algum ponto da janela da
+    //       leitura: o confirmado antes de ela comecar, ou o de uma troca que se
+    //       sobrepoe a ela. Uma leitura iniciada depois de uma troca confirmada
+    //       nunca devolve o estado anterior; uma leitura autorizada antes da
+    //       troca nao precisa ser negada retroativamente;
+    //   (c) houve sobreposicao real entre leituras e trocas (contada e exigida);
+    //   (d) a leitura feita depois de tudo reflete o ultimo estado.
+    // O intervalo entre trocas so espalha as trocas no tempo; ele nao e prova.
+
+    const { writeBatch } = require('firebase/firestore');
+
+    /// Aplica um estado inteiro de uma vez. `null` apaga o documento.
+    async function aplicarAtomico(estado) {
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        const fs = ctx.firestore();
+        const lote = writeBatch(fs);
+        for (const [caminho, dados] of Object.entries(estado)) {
+          if (dados === null) lote.delete(doc(fs, caminho));
+          else lote.set(doc(fs, caminho), dados);
+        }
+        await lote.commit();
+      });
+    }
+
+    /// A direcao s -> d semeada no formato congelado, com os espelhos do estado
+    /// (e os outros apagados). `estado` null = sem canonico e sem espelho.
+    function direcaoSemeada(s, d, estado, ref) {
+      const t = '2026-01-01T00:00:00.000Z';
+      const p = caminhosEspelho(s, d);
+      const saida = {
+        [`follows/${s.uid}|${d.uid}`]: estado === null ? null : {
+          seguidorUid: s.uid, seguidoUid: d.uid, estado, ref, corteNaCriacao: null,
+          ultimaIntencao: { chave: 'semeado', impressao: 'semeado' },
+          solicitadoEm: t, confirmadoEm: estado === 'confirmado' ? t : null,
+          encerradoEm: null, desde: estado === 'confirmado' ? t : null,
+          criacoesRecentes: [t], esquema: 1,
+        },
+        [p.P1]: null, [p.P2]: null, [p.P3]: null, [p.P4]: null,
+      };
+      if (estado === 'confirmado') {
+        saida[p.P1] = { publicId: d.pid, desde: t, referencia: `${ref}.` };
+        saida[p.P2] = { publicId: s.pid, desde: t, referencia: `${ref}.` };
+      } else if (estado === 'pendente') {
+        saida[p.P3] = { publicId: d.pid, solicitadoEm: t, referencia: `${ref}.` };
+        saida[p.P4] = { publicId: s.pid, solicitadoEm: t, referencia: `${ref}.` };
+      }
+      return saida;
+    }
+
+    /// A parte de O12 que as permissoes decidem, numa forma comparavel.
+    const assinatura = (dados) => (dados.seguir === null
+      ? 'sem-bloco'
+      : JSON.stringify({
+        meu: dados.seguir.meu,
+        dele: dados.seguir.dele,
+        acoes: dados.acoes.filter((x) => SEGUIR_ACOES.has(x)),
+      }));
+
+    async function corridaO12(t, { obs, alvo, X, Y, trocas = 8, leitores = 4 }) {
+      const ver = async () => assinatura((await obs.verPerfil({ publicId: alvo.pid })).data);
+      await aplicarAtomico(Y);
+      const assY = await ver();
+      await aplicarAtomico(X);
+      const assX = await ver();
+      assert.notEqual(assX, assY, 'os dois estados precisam ter respostas distintas');
+      const porEstado = { X: assX, Y: assY };
+
+      const leituras = [];
+      const registroTrocas = [];
+      let parar = false;
+      const leitor = async () => {
+        while (!parar) {
+          const ini = performance.now();
+          const ass = await ver();
+          leituras.push({ ini, fim: performance.now(), ass });
+        }
+      };
+      const trocador = async () => {
+        let atual = 'X';
+        for (let i = 0; i < trocas; i++) {
+          await new Promise((r) => setTimeout(r, 60));
+          const proximo = atual === 'X' ? 'Y' : 'X';
+          const ini = performance.now();
+          await aplicarAtomico(proximo === 'X' ? X : Y);
+          registroTrocas.push({ ini, fim: performance.now(), para: proximo });
+          atual = proximo;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+        parar = true;
+      };
+      await Promise.all([trocador(), ...Array.from({ length: leitores }, leitor)]);
+
+      let sobrepostas = 0;
+      const vistos = { X: 0, Y: 0 };
+      for (const l of leituras) {
+        // (a) inteira: X ou Y.
+        const nome = l.ass === assX ? 'X' : l.ass === assY ? 'Y' : null;
+        assert.ok(nome, `resposta misturada: ${l.ass}`);
+        vistos[nome]++;
+        // (b) vigente na janela da leitura.
+        const confirmadas = registroTrocas.filter((tr) => tr.fim <= l.ini);
+        const noInicio = confirmadas.length ? confirmadas[confirmadas.length - 1].para : 'X';
+        const emVoo = registroTrocas.filter((tr) => tr.ini < l.fim && tr.fim > l.ini);
+        if (emVoo.length) sobrepostas++;
+        const possiveis = new Set([noInicio, ...emVoo.map((tr) => tr.para)]);
+        assert.ok(possiveis.has(nome),
+          `leitura [${l.ini.toFixed(1)}, ${l.fim.toFixed(1)}] viu ${nome}; possiveis: ${[...possiveis]}`);
+      }
+      // (c) houve concorrencia de verdade.
+      assert.ok(sobrepostas >= 1, 'nenhuma leitura se sobrepos a uma troca');
+      // (d) o ultimo estado vale para quem le depois.
+      const ultimo = registroTrocas[registroTrocas.length - 1].para;
+      assert.equal(await ver(), porEstado[ultimo]);
+      t.diagnostic(`O12 concorrente: ${leituras.length} leituras, ${registroTrocas.length} trocas, `
+        + `${sobrepostas} leituras sobrepostas a troca, vistos X=${vistos.X} Y=${vistos.Y}`);
+    }
+
+    test('S35 (concorrente) — privacidade do alvo + direcao alvo->observador trocadas atomicamente durante O12: nunca mistura', async (t) => {
+      const obs = await jogador();
+      const alvo = await jogador();
+      // X: alvo publico, sem direcao de entrada  -> acoes [seguir]
+      // Y: alvo privado, alvo segue o observador -> [solicitarSeguir, removerSeguidor]
+      // Misturas: privado sem entrada -> [solicitarSeguir]; publico com entrada ->
+      // [seguir, removerSeguidor]. As quatro combinacoes sao distintas.
+      await corridaO12(t, {
+        obs, alvo,
+        X: { [`playerSocial/${alvo.uid}`]: { privacidade: 'publico' },
+          ...direcaoSemeada(alvo, obs, null) },
+        Y: { [`playerSocial/${alvo.uid}`]: { privacidade: 'privado' },
+          ...direcaoSemeada(alvo, obs, 'confirmado', 'refY') },
+      });
+    });
+
+    test('S35 (concorrente) — plano do alvo + direcao alvo->observador trocados atomicamente durante O12: nunca mistura', async (t) => {
+      const obs = await jogador();
+      const alvo = await jogador();
+      const plano = (expiraEm) => ({ vipAtivo: true, estado: 'ativo', origem: 'play', expiraEm });
+      // X: alvo VIP, pedido de entrada pendente -> [seguir, aprovarPedidoSeguir, recusarPedidoSeguir]
+      // Y: alvo vencido, entrada confirmada     -> [removerSeguidor]
+      // Misturas: VIP + confirmada -> [seguir, removerSeguidor]; vencido + pendente ->
+      // [recusarPedidoSeguir]. As quatro combinacoes sao distintas.
+      await corridaO12(t, {
+        obs, alvo,
+        X: { [`playerEntitlements/${alvo.uid}`]: plano(FUTURO),
+          ...direcaoSemeada(alvo, obs, 'pendente', 'refX') },
+        Y: { [`playerEntitlements/${alvo.uid}`]: plano(PASSADO),
+          ...direcaoSemeada(alvo, obs, 'confirmado', 'refY') },
+      });
+    });
+
+    test('S35 (concorrente) — diario do alvo + privacidade trocados atomicamente durante O12: o bloco e o de antes ou nenhum', async (t) => {
+      const obs = await jogador();
+      const alvo = await jogador();
+      // X: sem diario, alvo publico -> [seguir]
+      // Y: diario no alvo, privado  -> sem bloco
+      // Mistura detectavel: sem diario + privado -> [solicitarSeguir]. A outra
+      // (diario + publico) tambem da "sem bloco": o diario domina a resposta.
+      // Apagar o diario na volta Y -> X e so instrumentacao para repetir a troca;
+      // no produto o diario nao some antes de a exclusao terminar.
+      await corridaO12(t, {
+        obs, alvo,
+        X: { [`accountDeletions/${alvo.uid}`]: null,
+          [`playerSocial/${alvo.uid}`]: { privacidade: 'publico' } },
+        Y: { [`accountDeletions/${alvo.uid}`]: { estado: 'iniciada', esquema: 1 },
+          [`playerSocial/${alvo.uid}`]: { privacidade: 'privado' } },
+      });
     });
 
     test('S34a/S34b — lista propria: desde DESC; apelido FRESCO; travessia sem repetir com troca de apelido e item novo', async () => {

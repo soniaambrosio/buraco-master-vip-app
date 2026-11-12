@@ -1483,24 +1483,37 @@ export async function operarSeguir(
   const refIdSeguidor = db().collection(C_IDENTIDADES).doc(seguidor);
   const refIdSeguido = db().collection(C_IDENTIDADES).doc(seguido);
 
+  const espelhosDoPar = espelhosDaDirecao(seguidor, seguido);
+
   return db().runTransaction<ResultadoDeSeguir>(async (tx) => {
-    const [canonico, ritmo, socialSeguido, idSeguidor, idSeguido] = await tx.getAll(
-      refCanonico,
-      refRitmo,
-      refSocialSeguido,
-      refIdSeguidor,
-      refIdSeguido
-    );
+    const [canonico, ritmo, socialSeguido, idSeguidor, idSeguido, ...espelhosLidos] =
+      await tx.getAll(
+        refCanonico,
+        refRitmo,
+        refSocialSeguido,
+        refIdSeguidor,
+        refIdSeguido,
+        espelhosDoPar.seguindoDoSeguidor,
+        espelhosDoPar.seguidoresDoSeguido,
+        espelhosDoPar.pedidoEnviadoDoSeguidor,
+        espelhosDoPar.pedidoRecebidoDoSeguido
+      );
     const c = dados(canonico);
     const r = dados(ritmo);
 
     // HISTORICO E CONTADOR DO ATOR — so contam para `seguir` (O01/O02).
     //
     // Documento ausente NAO e automaticamente ator novo. A prova de primeira
-    // criacao e: nao existe NENHUM canonico com `seguidorUid` do ator, lido
-    // nesta transacao. O ritmo nasce na primeira criacao e so sai na exclusao
-    // da conta; sem ritmo e sem canonico, nao ha estado anterior a perder.
-    // Com canonico e sem ritmo, o estado foi perdido: desconhecido, recusa.
+    // criacao, lida nesta transacao antes de qualquer escrita, e a ausencia de
+    // TODA evidencia de saida do ator:
+    //   - nenhum canonico com `seguidorUid` do ator;
+    //   - nenhum item em `users/{ator}/seguindo` (P1 proprio);
+    //   - nenhum item em `users/{ator}/pedidosSeguirEnviados` (P3 proprio).
+    // Uma projecao de saida sem canonico (residuo) e estado anterior: o ritmo
+    // que o acompanhava sumiu, entao o historico e DESCONHECIDO e a criacao
+    // recusa com `limiteIndisponivel` — sem reconciliar nem limpar nada.
+    // Atividade so RECEBIDA (seguidores, pedidos recebidos) e de terceiros e
+    // nao prova que o ator ja criou relacao de saida: nao entra na prova.
     let criacoesDoAtor: string[] | null = null;
     let pendentesDoAtor: number | null = null;
     let atorNovoProvado = false;
@@ -1510,10 +1523,20 @@ export async function operarSeguir(
         const v = r?.[CAMPO_PENDENTES_ENVIADOS];
         pendentesDoAtor = contagemConhecida(v) ? v : null;
       } else {
-        const qualquer = await tx.get(
-          db().collection(C_SEGUIR).where("seguidorUid", "==", atorUid).limit(1)
-        );
-        if (qualquer.empty) {
+        const usuario = db().collection(C_USUARIOS).doc(atorUid);
+        const fontesDeSaida = [
+          db().collection(C_SEGUIR).where("seguidorUid", "==", atorUid).limit(1),
+          usuario.collection("seguindo").limit(1),
+          usuario.collection("pedidosSeguirEnviados").limit(1),
+        ];
+        let vestigio = false;
+        for (const fonte of fontesDeSaida) {
+          if (!(await tx.get(fonte)).empty) {
+            vestigio = true;
+            break;
+          }
+        }
+        if (!vestigio) {
           atorNovoProvado = true;
           criacoesDoAtor = [];
           pendentesDoAtor = 0;
@@ -1521,10 +1544,15 @@ export async function operarSeguir(
       }
     }
 
-    // Historico por alvo: par sem canonico e par novo (provado pela ausencia
-    // lida aqui); canonico sem lista legivel e desconhecido.
+    // Historico por alvo: par sem canonico E sem nenhum espelho da direcao e
+    // par novo (provado pelas ausencias lidas aqui). Espelho sem canonico e
+    // residuo de um par que ja existiu: desconhecido. Canonico sem lista
+    // legivel tambem e desconhecido.
+    const residuoDoPar = espelhosLidos.some((d) => d.exists);
     const criacoesNoPar: string[] | null = !canonico.exists
-      ? []
+      ? residuoDoPar
+        ? null
+        : []
       : Array.isArray(c?.criacoesRecentes)
         ? (c?.criacoesRecentes as string[])
         : null;
@@ -1650,7 +1678,7 @@ export async function operarSeguir(
       pedidoEnviadoDoSeguidor: { publicId: pidSeguido, solicitadoEm, referencia },
       pedidoRecebidoDoSeguido: { publicId: pidSeguidor, solicitadoEm, referencia },
     };
-    const espelhos = espelhosDaDirecao(seguidor, seguido);
+    const espelhos = espelhosDoPar;
     for (const chave of Object.keys(espelhos) as EspelhoSeguir[]) {
       if (manter.has(chave)) tx.set(espelhos[chave], conteudo[chave]);
       else tx.delete(espelhos[chave]);
