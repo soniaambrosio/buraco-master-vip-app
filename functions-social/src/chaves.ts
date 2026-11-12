@@ -56,6 +56,17 @@ export const C_USUARIOS = "users";
 export const SUB_BLOQUEIOS = "blocks";
 export const C_MODERACAO_JOGADOR = "playerModeration";
 
+/// SOCIAL-02 (fundacao C1): mais tres colecoes de OUTROS dominios que o Social
+/// passa a CONSUMIR, sem escrever.
+///
+/// `playerEntitlements/{uid}` e do Billing; a vigencia e decidida no dominio
+/// Dart (`vigenteEm`), nunca aqui. `accountDeletions/{uid}` e o diario da
+/// exclusao de conta: existir ja basta para negar vinculo novo. O nome da
+/// colecao de corte NAO mora aqui: vem do dominio (`chaveDoParDeCorte`), que e
+/// o mesmo arquivo que a Moderacao compila.
+export const C_ENTITLEMENTS = "playerEntitlements";
+export const C_DIARIO_EXCLUSAO = "accountDeletions";
+
 // ---------------------------------------------------------------------------
 // A TRAVA
 // ---------------------------------------------------------------------------
@@ -103,6 +114,13 @@ export const CHAVES_PROIBIDAS = new Set([
   "suspensaoPermanente",
   "endereco",
   "cpf",
+  // SOCIAL-02 (fundacao C1): os campos internos de seguir e do corte. Carregam
+  // UID ou a identidade da intencao e nunca vao para o fio.
+  "seguidorUid",
+  "seguidoUid",
+  "ultimaIntencao",
+  "corteNaCriacao",
+  "corteId",
 ]);
 
 /// Procura chave proibida em profundidade e devolve os CAMINHOS encontrados.

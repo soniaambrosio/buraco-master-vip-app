@@ -33,6 +33,11 @@ import 'busca_apelido.dart';
 import 'erros_sociais.dart';
 import 'identidade_publica.dart';
 import 'listagem_social.dart';
+// SOCIAL-02 (fundação C1): o domínio de seguir e o corte de relação. O corte
+// mora em moderação porque é gravado junto com o bloqueio; os dois bundles
+// compilam o MESMO arquivo.
+import '../moderacao/corte_relacao.dart';
+import 'seguir.dart';
 
 /// Objeto global que o Node enxerga como `globalThis.bmvSocial`.
 @JS('bmvSocial')
@@ -363,8 +368,217 @@ String constantesJson(String _) => jsonEncode({
           ErroSocial.values.map((e) => e.name).toList(growable: false),
     });
 
+// ------------------------------------------------------- seguir (SOCIAL-02)
+//
+// FUNDAÇÃO C1: estas exportações ainda não são chamadas por nenhuma callable.
+// Elas existem para que as etapas seguintes leiam fatos na transação e peçam a
+// decisão aqui, sem reescrever regra em TypeScript.
+
+/// Instante obrigatório. Sem instante válido não há decisão temporal: a ponte
+/// devolve erro, e o TypeScript falha a operação em vez de conceder.
+DateTime? _instanteObrigatorio(Object? v) {
+  if (v is! String) return null;
+  return DateTime.tryParse(v)?.toUtc();
+}
+
+/// Histórico de ritmo. Um instante ilegível CONTA como agora: um histórico que
+/// não dá para ler não pode afrouxar o limite.
+List<DateTime> _instantesDeRitmo(Object? bruto, DateTime agora) {
+  if (bruto is! List) return <DateTime>[];
+  return bruto.map((v) {
+    final t = v is String ? DateTime.tryParse(v) : null;
+    return (t ?? agora).toUtc();
+  }).toList();
+}
+
+Map<String, Object?>? _documento(Object? v) =>
+    v is Map ? v.cast<String, Object?>() : null;
+
+/// A vigência VIP das duas pontas, pela definição única (`vigenteEm`).
+///
+/// Entra o documento de `playerEntitlements` COMO ESTÁ; sai só um booleano por
+/// ponta. Nada do documento volta ao TypeScript.
+String vigenciaVipDasPontasJson(String json) {
+  final e = _entrada(json);
+  final agora = _instanteObrigatorio(e['agora']);
+  if (agora == null) return jsonEncode({'erro': 'agora invalido'});
+  return jsonEncode({
+    'a': vipSocialVigenteEm(
+        (e['uidA'] as String?) ?? '', _documento(e['documentoA']), agora),
+    'b': vipSocialVigenteEm(
+        (e['uidB'] as String?) ?? '', _documento(e['documentoB']), agora),
+  });
+}
+
+/// A chave do registro de corte, pela regra de `moderacao/corte_relacao.dart`.
+String chaveDoParDeCorteJson(String json) {
+  final e = _entrada(json);
+  try {
+    final a = (e['uidA'] as String?) ?? '';
+    final b = (e['uidB'] as String?) ?? '';
+    return jsonEncode({
+      'chave': chaveDoParDeCorte(a, b),
+      'membros': membrosDoParDeCorte(a, b),
+      'colecao': kColecaoCortesDeRelacao,
+    });
+  } on ArgumentError catch (erro) {
+    return jsonEncode({'erro': '${erro.message}'});
+  }
+}
+
+/// O estado que vale para decisão, a partir do físico e dos cortes.
+String estadoEfetivoSeguirJson(String json) {
+  final e = _entrada(json);
+  final fisico = e['estadoFisico'] == null
+      ? EstadoSeguir.nenhum
+      : EstadoSeguir.porNome(e['estadoFisico']);
+  if (fisico == null) return jsonEncode({'erro': 'estadoFisico desconhecido'});
+  return jsonEncode({
+    'estadoEfetivo': estadoEfetivoSeguir(
+      fisico: fisico,
+      corteNaCriacao: e['corteNaCriacao'] as String?,
+      corteAtual: e['corteAtual'] as String?,
+    ).name,
+  });
+}
+
+/// A referência opaca de uma direção: `ref` do canônico e corte do par.
+///
+/// Sai como `referencia`, e não `token`: `token` é chave proibida na resposta
+/// (`functions-social/src/chaves.ts`), e o valor vai acabar numa resposta.
+String tokenSeguirJson(String json) {
+  final e = _entrada(json);
+  return jsonEncode({
+    'referencia': TokenSeguir(
+      ref: e['ref'] as String?,
+      corte: e['corte'] as String?,
+    ).codificar(),
+  });
+}
+
+/// Os espelhos P1–P4 que existem num estado (adendo A1).
+String espelhosDoEstadoSeguirJson(String json) {
+  final e = _entrada(json);
+  final estado = e['estado'] == null
+      ? EstadoSeguir.nenhum
+      : EstadoSeguir.porNome(e['estado']);
+  if (estado == null) return jsonEncode({'erro': 'estado desconhecido'});
+  return jsonEncode({
+    'espelhos': espelhosDoEstadoSeguir(estado)
+        .map((p) => p.name)
+        .toList(growable: false),
+    'todos': EspelhoSeguir.values.map((p) => p.name).toList(growable: false),
+  });
+}
+
+/// O veredito de um comando de seguir, na ordem do adendo §2.
+String avaliarComandoSeguirJson(String json) {
+  final e = _entrada(json);
+  final operacao = OperacaoSeguir.porNome(e['operacao']);
+  if (operacao == null) return jsonEncode({'erro': 'operacao desconhecida'});
+  final agora = _instanteObrigatorio(e['agora']);
+  if (agora == null) return jsonEncode({'erro': 'agora invalido'});
+  final fisico = e['estadoFisico'] == null
+      ? EstadoSeguir.nenhum
+      : EstadoSeguir.porNome(e['estadoFisico']);
+  if (fisico == null) return jsonEncode({'erro': 'estadoFisico desconhecido'});
+  final pendentes = e['pendentesEnviadosDoAtor'];
+
+  return jsonEncode(avaliarComandoSeguir(EntradaComandoSeguir(
+    operacao: operacao,
+    atorUid: (e['atorUid'] as String?) ?? '',
+    alvoUid: (e['alvoUid'] as String?) ?? '',
+    intencaoId: (e['intencaoId'] as String?) ?? '',
+    tokenVisto: e['tokenVisto'],
+    atorVip: e['atorVip'] == true,
+    alvoVip: e['alvoVip'] == true,
+    contatoPermitido: e['contatoPermitido'] == true,
+    // Exclusão: na dúvida, EM exclusão. Só `false` explícito libera.
+    atorEmExclusao: e['atorEmExclusao'] != false,
+    alvoEmExclusao: e['alvoEmExclusao'] != false,
+    estadoFisico: fisico,
+    refAtual: e['refAtual'] as String?,
+    corteNaCriacao: e['corteNaCriacao'] as String?,
+    corteAtual: e['corteAtual'] as String?,
+    ultimaIntencaoChave: e['ultimaIntencaoChave'] as String?,
+    ultimaIntencaoImpressao: e['ultimaIntencaoImpressao'] as String?,
+    privacidadeAlvo: PrivacidadeSocial.porNome(e['privacidadeAlvo']),
+    criacoesDoAtor: _instantesDeRitmo(e['criacoesDoAtor'], agora),
+    criacoesNoPar: _instantesDeRitmo(e['criacoesNoPar'], agora),
+    pendentesEnviadosDoAtor: pendentes is num ? pendentes.toInt() : null,
+    agora: agora,
+  )).toJson());
+}
+
+/// O que a faxina por corte faz com o canônico de uma direção.
+String avaliarFaxinaSeguirJson(String json) {
+  final e = _entrada(json);
+  final fisico = e['estadoFisico'] == null
+      ? EstadoSeguir.nenhum
+      : EstadoSeguir.porNome(e['estadoFisico']);
+  if (fisico == null) return jsonEncode({'erro': 'estadoFisico desconhecido'});
+  return jsonEncode(avaliarFaxinaSeguir(
+    fisico: fisico,
+    corteNaCriacao: e['corteNaCriacao'] as String?,
+    corteAtual: e['corteAtual'] as String?,
+  ).toJson());
+}
+
+/// As ações de seguir da visita autorizada (D07, opção B).
+String acoesDeSeguirJson(String json) {
+  final e = _entrada(json);
+  final saida = e['efetivoSaida'] == null
+      ? EstadoSeguir.nenhum
+      : EstadoSeguir.porNome(e['efetivoSaida']);
+  final entrada = e['efetivoEntrada'] == null
+      ? EstadoSeguir.nenhum
+      : EstadoSeguir.porNome(e['efetivoEntrada']);
+  if (saida == null || entrada == null) {
+    return jsonEncode({'erro': 'estado desconhecido'});
+  }
+  return jsonEncode({
+    'acoes': acoesDeSeguir(
+      euMesmo: e['euMesmo'] == true,
+      observadorVip: e['observadorVip'] == true,
+      alvoVip: e['alvoVip'] == true,
+      contatoPermitido: e['contatoPermitido'] == true,
+      observadorEmExclusao: e['observadorEmExclusao'] != false,
+      alvoEmExclusao: e['alvoEmExclusao'] != false,
+      privacidadeAlvo: PrivacidadeSocial.porNome(e['privacidadeAlvo']),
+      efetivoSaida: saida,
+      efetivoEntrada: entrada,
+    ).map((a) => a.name).toList(growable: false),
+  });
+}
+
+/// Os limites aprovados de seguir (Q4). Vêm daqui, e não de uma cópia em TS.
+String constantesSeguirJson(String _) => jsonEncode({
+      'janelaRitmoCurtaMs': kJanelaRitmoCurta.inMilliseconds,
+      'maximoCriacoesJanelaCurta': kMaximoCriacoesJanelaCurta,
+      'janelaRitmoLongaMs': kJanelaRitmoLonga.inMilliseconds,
+      'maximoCriacoesJanelaLonga': kMaximoCriacoesJanelaLonga,
+      'janelaRitmoPorAlvoMs': kJanelaRitmoPorAlvo.inMilliseconds,
+      'maximoCriacoesPorAlvo': kMaximoCriacoesPorAlvo,
+      'tetoPedidosPendentesEnviados': kTetoPedidosPendentesEnviados,
+      'esquema': kEsquemaSeguir,
+      'colecaoCortes': kColecaoCortesDeRelacao,
+      'recusas': RecusaSeguir.values.map((r) => r.name).toList(growable: false),
+      'operacoes':
+          OperacaoSeguir.values.map((o) => o.name).toList(growable: false),
+      'acoes': AcaoSeguir.values.map((a) => a.name).toList(growable: false),
+    });
+
 void main() {
   final api = <String, _Ponte>{
+    'vigenciaVipDasPontas': vigenciaVipDasPontasJson,
+    'chaveDoParDeCorte': chaveDoParDeCorteJson,
+    'estadoEfetivoSeguir': estadoEfetivoSeguirJson,
+    'tokenSeguir': tokenSeguirJson,
+    'espelhosDoEstadoSeguir': espelhosDoEstadoSeguirJson,
+    'avaliarComandoSeguir': avaliarComandoSeguirJson,
+    'avaliarFaxinaSeguir': avaliarFaxinaSeguirJson,
+    'acoesDeSeguir': acoesDeSeguirJson,
+    'constantesSeguir': constantesSeguirJson,
     'idPublicoDeBytes': idPublicoDeBytesJson,
     'normalizarIdPublico': normalizarIdPublicoJson,
     'recusaDeConsultaPublica': recusaDeConsultaPublicaJson,

@@ -34,6 +34,16 @@ interface PonteSocial {
   projetarResultadosDeBusca: PonteJs;
   paginarAmigos: PonteJs;
   constantes: PonteJs;
+  // SOCIAL-02, fundacao C1 (seguir e corte). Ainda sem chamador nas callables.
+  vigenciaVipDasPontas: PonteJs;
+  chaveDoParDeCorte: PonteJs;
+  estadoEfetivoSeguir: PonteJs;
+  tokenSeguir: PonteJs;
+  espelhosDoEstadoSeguir: PonteJs;
+  avaliarComandoSeguir: PonteJs;
+  avaliarFaxinaSeguir: PonteJs;
+  acoesDeSeguir: PonteJs;
+  constantesSeguir: PonteJs;
 }
 
 const ponte = (globalThis as unknown as { bmvSocial?: PonteSocial }).bmvSocial;
@@ -145,6 +155,85 @@ export interface EntradaSocial {
   apelido: string;
   avatarRef: string | null;
   desde: string | null;
+}
+
+// ------------------------------------------------- seguir (SOCIAL-02, C1)
+//
+// Os nomes espelham `app/lib/social/seguir.dart`. A decisao mora la; aqui so ha
+// forma de dado.
+
+export type EstadoSeguir = "nenhum" | "pendente" | "confirmado" | "encerrado";
+
+export type OperacaoSeguir =
+  | "seguir"
+  | "cancelarPedido"
+  | "aprovarPedido"
+  | "recusarPedido"
+  | "deixarDeSeguir"
+  | "removerSeguidor";
+
+export type EspelhoSeguir =
+  | "seguindoDoSeguidor"
+  | "seguidoresDoSeguido"
+  | "pedidoEnviadoDoSeguidor"
+  | "pedidoRecebidoDoSeguido";
+
+/// Fatos lidos na transacao, sem interpretacao. `agora` e o instante unico da
+/// tentativa, tomado depois das leituras.
+export interface EntradaComandoSeguir {
+  operacao: OperacaoSeguir;
+  atorUid: string;
+  alvoUid: string;
+  intencaoId: string;
+  tokenVisto: unknown;
+  atorVip: boolean;
+  alvoVip: boolean;
+  contatoPermitido: boolean;
+  atorEmExclusao: boolean;
+  alvoEmExclusao: boolean;
+  estadoFisico: EstadoSeguir | null;
+  refAtual: string | null;
+  corteNaCriacao: string | null;
+  corteAtual: string | null;
+  ultimaIntencaoChave: string | null;
+  ultimaIntencaoImpressao: string | null;
+  privacidadeAlvo: string | null;
+  criacoesDoAtor: string[];
+  criacoesNoPar: string[];
+  /// `null` = contador tecnico desconhecido (falha fechada no dominio).
+  pendentesEnviadosDoAtor: number | null;
+  agora: string;
+}
+
+export interface VereditoSeguir {
+  aceita: boolean;
+  recusa: string | null;
+  repeticao: boolean;
+  estadoEfetivo: EstadoSeguir;
+  /// `null` = nenhuma escrita.
+  novoEstado: EstadoSeguir | null;
+  deltaPendentes: number;
+  consumirRitmo: boolean;
+  criacoesDoAtorApos: string[] | null;
+  criacoesNoParApos: string[] | null;
+  espelhos: EspelhoSeguir[] | null;
+  chaveIntencao: string | null;
+  impressao: string | null;
+}
+
+export interface ConstantesSeguir {
+  janelaRitmoCurtaMs: number;
+  maximoCriacoesJanelaCurta: number;
+  janelaRitmoLongaMs: number;
+  maximoCriacoesJanelaLonga: number;
+  janelaRitmoPorAlvoMs: number;
+  maximoCriacoesPorAlvo: number;
+  tetoPedidosPendentesEnviados: number;
+  esquema: number;
+  colecaoCortes: string;
+  recusas: string[];
+  operacoes: string[];
+  acoes: string[];
 }
 
 // ----------------------------------------------------------------- chamadas
@@ -291,6 +380,68 @@ export const dominio = {
   } => chamar(ponte.paginarAmigos, e),
 
   constantes: (): ConstantesSociais => chamar(ponte.constantes, {}),
+
+  // ----------------------------------------------- seguir (SOCIAL-02, C1)
+
+  /// Vigencia VIP das duas pontas pela definicao UNICA (`vigenteEm`). Os
+  /// documentos de `playerEntitlements` atravessam como estao; volta so um
+  /// booleano por ponta.
+  vigenciaVipDasPontas: (e: {
+    uidA: string;
+    documentoA: Record<string, unknown> | null;
+    uidB: string;
+    documentoB: Record<string, unknown> | null;
+    agora: string;
+  }): { a: boolean; b: boolean } => chamar(ponte.vigenciaVipDasPontas, e),
+
+  /// Chave do registro de corte do par (regra de `moderacao/corte_relacao.dart`).
+  chaveDoParDeCorte: (uidA: string, uidB: string): {
+    chave: string;
+    membros: string[];
+    colecao: string;
+  } => chamar(ponte.chaveDoParDeCorte, { uidA, uidB }),
+
+  estadoEfetivoSeguir: (e: {
+    estadoFisico: EstadoSeguir | null;
+    corteNaCriacao: string | null;
+    corteAtual: string | null;
+  }): { estadoEfetivo: EstadoSeguir } => chamar(ponte.estadoEfetivoSeguir, e),
+
+  /// A referencia opaca da direcao. O nome `token` e chave proibida em resposta
+  /// (`chaves.ts`), por isso o campo se chama `referencia`.
+  tokenSeguir: (e: {
+    ref: string | null;
+    corte: string | null;
+  }): { referencia: string | null } => chamar(ponte.tokenSeguir, e),
+
+  espelhosDoEstadoSeguir: (
+    estado: EstadoSeguir | null
+  ): { espelhos: EspelhoSeguir[]; todos: EspelhoSeguir[] } =>
+    chamar(ponte.espelhosDoEstadoSeguir, { estado }),
+
+  avaliarComandoSeguir: (e: EntradaComandoSeguir): VereditoSeguir =>
+    chamar(ponte.avaliarComandoSeguir, e),
+
+  avaliarFaxinaSeguir: (e: {
+    estadoFisico: EstadoSeguir | null;
+    corteNaCriacao: string | null;
+    corteAtual: string | null;
+  }): { encerrar: boolean; deltaPendentes: number; espelhos: EspelhoSeguir[] } =>
+    chamar(ponte.avaliarFaxinaSeguir, e),
+
+  acoesDeSeguir: (e: {
+    euMesmo: boolean;
+    observadorVip: boolean;
+    alvoVip: boolean;
+    contatoPermitido: boolean;
+    observadorEmExclusao: boolean;
+    alvoEmExclusao: boolean;
+    privacidadeAlvo: string | null;
+    efetivoSaida: EstadoSeguir | null;
+    efetivoEntrada: EstadoSeguir | null;
+  }): { acoes: string[] } => chamar(ponte.acoesDeSeguir, e),
+
+  constantesSeguir: (): ConstantesSeguir => chamar(ponte.constantesSeguir, {}),
 };
 
 /// Os limites vem do DOMINIO, nao de uma copia em TypeScript.

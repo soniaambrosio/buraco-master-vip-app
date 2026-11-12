@@ -31,6 +31,7 @@ import '../comunicacao/evento.dart';
 import '../comunicacao/limites.dart';
 import '../comunicacao/porta.dart';
 import '../social/identidade_publica.dart';
+import 'corte_relacao.dart';
 import 'denuncia.dart';
 import 'relacao_social.dart';
 import 'sancao.dart';
@@ -541,8 +542,43 @@ String catalogoJson(String json) => jsonEncode({
       ],
     });
 
+// ------------------------------------------------------------------ corte
+
+/// A chave do registro de corte de um par (SOCIAL-02, fundação C1).
+///
+/// Quem grava o bloqueio grava o corte, na mesma escrita (contrato SOCIAL-02 V2
+/// §5.5). A regra da chave mora em `corte_relacao.dart` e é a MESMA que o bundle
+/// social usa.
+String chaveDoParDeCorteJson(String json) {
+  final e = _entrada(json);
+  try {
+    final a = (e['uidA'] as String?) ?? '';
+    final b = (e['uidB'] as String?) ?? '';
+    return jsonEncode({
+      'chave': chaveDoParDeCorte(a, b),
+      'membros': membrosDoParDeCorte(a, b),
+      'colecao': kColecaoCortesDeRelacao,
+    });
+  } on ArgumentError catch (erro) {
+    return jsonEncode({'erro': '${erro.message}'});
+  }
+}
+
+/// O vínculo nasceu sob o corte atual do par?
+String nasceuSobOCorteAtualJson(String json) {
+  final e = _entrada(json);
+  return jsonEncode({
+    'valido': nasceuSobOCorteAtual(
+      corteNaCriacao: e['corteNaCriacao'] as String?,
+      corteAtual: e['corteAtual'] as String?,
+    ),
+  });
+}
+
 void main() {
   final api = <String, _Ponte>{
+    'chaveDoParDeCorte': chaveDoParDeCorteJson,
+    'nasceuSobOCorteAtual': nasceuSobOCorteAtualJson,
     'avaliarDenuncia': avaliarDenunciaJson,
     'statusPublico': statusPublicoJson,
     'avaliarBloqueio': avaliarBloqueioJson,

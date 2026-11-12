@@ -40,6 +40,8 @@ import { logger } from "firebase-functions";
 
 import {
   C_AMIZADES,
+  C_DIARIO_EXCLUSAO,
+  C_ENTITLEMENTS,
   C_IDENTIDADES,
   C_INDICE_PUBLICO,
   C_MODERACAO_JOGADOR,
@@ -276,6 +278,79 @@ export async function estadoDeContato(
     permitido: veredito.permitido,
     motivo: veredito.motivo,
     euBloqueeiOAlvo: ida.exists,
+  };
+}
+
+// ===========================================================================
+// IMPEDIMENTOS DO PAR — SOCIAL-02, fundacao C1
+// ===========================================================================
+
+export interface ImpedimentosDoPar {
+  atorVip: boolean;
+  alvoVip: boolean;
+  /// O veredito de contato da Moderacao, como ele e hoje, sem ampliacao.
+  contato: EstadoDeContato;
+  atorEmExclusao: boolean;
+  alvoEmExclusao: boolean;
+  /// `corteId` do registro do par; `null` quando o par nunca teve corte.
+  corteAtual: string | null;
+  /// O instante UNICO desta tentativa, tomado DEPOIS das leituras.
+  agora: string;
+}
+
+/// Le, dentro de uma tentativa de transacao, o que impede ou permite um vinculo
+/// de seguir entre dois jogadores.
+///
+/// FUNDACAO, AINDA SEM CHAMADOR. As callables de seguir chegam nas etapas
+/// seguintes; nenhuma rota atual muda de comportamento por esta funcao existir.
+///
+/// O QUE ELA GARANTE (contrato SOCIAL-02 V2 §4.0, adendo A3):
+///   * os planos das DUAS pontas, os diarios de exclusao das DUAS pontas, o
+///     corte do par e o bloqueio sao lidos NA MESMA transacao, antes de qualquer
+///     escrita — uma escrita concorrente em qualquer deles serializa com ela;
+///   * `agora` e tomado uma vez por tentativa, depois das leituras. Uma nova
+///     tentativa da transacao chama esta funcao de novo e toma OUTRO instante:
+///     a transacao nao congela o relogio;
+///   * a vigencia VIP e decidida no dominio Dart (`vigenteEm`), com o documento
+///     cru. Nenhum campo do entitlement e interpretado aqui.
+///
+/// Limite conhecido: `estadoDeContato` (existente) toma o proprio instante para
+/// as sancoes, e nao este. Fica como esta — mudar o veredito de contato e
+/// decisao da Moderacao (R-3).
+export async function lerImpedimentosDoPar(
+  tx: Transaction,
+  atorUid: string,
+  alvoUid: string
+): Promise<ImpedimentosDoPar> {
+  const corte = dominio.chaveDoParDeCorte(atorUid, alvoUid);
+
+  const [entAtor, entAlvo, diarioAtor, diarioAlvo, docCorte] = await tx.getAll(
+    db().collection(C_ENTITLEMENTS).doc(atorUid),
+    db().collection(C_ENTITLEMENTS).doc(alvoUid),
+    db().collection(C_DIARIO_EXCLUSAO).doc(atorUid),
+    db().collection(C_DIARIO_EXCLUSAO).doc(alvoUid),
+    db().collection(corte.colecao).doc(corte.chave)
+  );
+  const contato = await estadoDeContato(atorUid, alvoUid, tx);
+
+  const agora = agoraUtc();
+  const vigencia = dominio.vigenciaVipDasPontas({
+    uidA: atorUid,
+    documentoA: dados(entAtor) ?? null,
+    uidB: alvoUid,
+    documentoB: dados(entAlvo) ?? null,
+    agora,
+  });
+
+  const corteId = dados(docCorte)?.corteId;
+  return {
+    atorVip: vigencia.a,
+    alvoVip: vigencia.b,
+    contato,
+    atorEmExclusao: diarioAtor.exists,
+    alvoEmExclusao: diarioAlvo.exists,
+    corteAtual: typeof corteId === "string" && corteId.length > 0 ? corteId : null,
+    agora,
   };
 }
 
