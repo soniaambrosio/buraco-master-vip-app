@@ -493,6 +493,148 @@ describe('ritmo — janelas moveis e teto rigido (Q4)', () => {
   });
 });
 
+describe('R1 — historico de ritmo ilegivel nao vira historico vazio', () => {
+  /// Comando com um campo REMOVIDO (ausente no JSON, e nao `null`).
+  const semCampo = (campo, sobre = {}) => {
+    const c = comando(sobre);
+    delete c[campo];
+    return dominio.avaliarComandoSeguir(c);
+  };
+
+  /// Nenhuma criacao, nenhum consumo e nenhuma escrita sugerida.
+  const negadoSemEfeito = (v) => {
+    assert.equal(v.aceita, false);
+    assert.equal(v.recusa, 'limiteIndisponivel');
+    assert.equal(v.novoEstado, null);
+    assert.equal(v.consumirRitmo, false);
+    assert.equal(v.criacoesDoAtorApos, null);
+    assert.equal(v.criacoesNoParApos, null);
+    assert.equal(v.espelhos, null);
+  };
+
+  test('historico global em formato invalido: criacao nao autorizada', () => {
+    for (const invalido of [{}, 'texto', 42, true, { 0: AGORA }]) {
+      negadoSemEfeito(avaliar({ criacoesDoAtor: invalido }));
+    }
+  });
+
+  test('historico por alvo em formato invalido: criacao nao autorizada', () => {
+    for (const invalido of [{}, 'texto', 42, true]) {
+      negadoSemEfeito(avaliar({ criacoesNoPar: invalido }));
+    }
+  });
+
+  test('null ou campo ausente e historico DESCONHECIDO, nao zero', () => {
+    negadoSemEfeito(avaliar({ criacoesDoAtor: null }));
+    negadoSemEfeito(avaliar({ criacoesNoPar: null }));
+    negadoSemEfeito(semCampo('criacoesDoAtor'));
+    negadoSemEfeito(semCampo('criacoesNoPar'));
+  });
+
+  test('lista vazia explicita e historico conhecido e vazio (ator novo)', () => {
+    const v = avaliar({ criacoesDoAtor: [], criacoesNoPar: [] });
+    assert.equal(v.aceita, true);
+    assert.equal(v.novoEstado, 'confirmado');
+    assert.deepEqual(v.criacoesDoAtorApos, [AGORA]);
+  });
+
+  test('pedido a perfil privado com historico invalido tambem e negado', () => {
+    negadoSemEfeito(avaliar({ privacidadeAlvo: 'privado', criacoesDoAtor: 'x' }));
+  });
+
+  test('bordas validas continuam: 30/10 min, 300/24 h e 3/24 h', () => {
+    const lista = (n, passoMs) => Array.from({ length: n }, (_, i) => antes((i + 1) * passoMs));
+    assert.equal(avaliar({ criacoesDoAtor: lista(29, 10 * 1000) }).aceita, true);
+    assert.equal(avaliar({ criacoesDoAtor: lista(30, 10 * 1000) }).recusa, 'ritmoExcedido');
+    assert.equal(avaliar({ criacoesDoAtor: lista(299, 280 * 1000) }).aceita, true);
+    assert.equal(avaliar({ criacoesDoAtor: lista(300, 280 * 1000) }).recusa, 'ritmoExcedido');
+    assert.equal(avaliar({ criacoesNoPar: lista(2, HORA) }).aceita, true);
+    assert.equal(avaliar({ criacoesNoPar: lista(3, HORA) }).recusa, 'ritmoExcedido');
+  });
+
+  test('operacoes que nao consomem ritmo nao dependem do historico', () => {
+    const aprovar = semCampo('criacoesDoAtor', {
+      operacao: 'aprovarPedido',
+      estadoFisico: 'pendente',
+      refAtual: 'rP',
+      tokenVisto: 'rP.',
+    });
+    assert.equal(aprovar.novoEstado, 'confirmado');
+    const deixar = avaliar({
+      operacao: 'deixarDeSeguir',
+      estadoFisico: 'confirmado',
+      refAtual: 's1',
+      tokenVisto: 's1.',
+      criacoesNoPar: 'ilegivel',
+    });
+    assert.equal(deixar.novoEstado, 'encerrado');
+  });
+});
+
+describe('R2 — contador de pendentes invalido nao e truncado nem aceito', () => {
+  const pedir = (pendentes) =>
+    avaliar({ privacidadeAlvo: 'privado', pendentesEnviadosDoAtor: pendentes });
+
+  const negadoSemEfeito = (v) => {
+    assert.equal(v.aceita, false);
+    assert.equal(v.recusa, 'limiteIndisponivel');
+    assert.equal(v.novoEstado, null);
+    assert.equal(v.consumirRitmo, false);
+    assert.equal(v.deltaPendentes, 0);
+  };
+
+  test('negativo, fracionario, nao numerico ou desconhecido: falha fechada', () => {
+    for (const invalido of [-1, -0.5, 99.9, 0.5, 100.4, '5', '99', true, {}, [], null]) {
+      negadoSemEfeito(pedir(invalido));
+    }
+  });
+
+  test('campo ausente tambem e desconhecido', () => {
+    const c = comando({ privacidadeAlvo: 'privado' });
+    delete c.pendentesEnviadosDoAtor;
+    negadoSemEfeito(dominio.avaliarComandoSeguir(c));
+  });
+
+  test('inteiros validos: 0 e 99 passam; 100 recusa pelo teto', () => {
+    const zero = pedir(0);
+    assert.equal(zero.novoEstado, 'pendente');
+    assert.equal(zero.deltaPendentes, 1);
+    assert.equal(pedir(99).novoEstado, 'pendente');
+    assert.equal(pedir(100).recusa, 'limitePedidosPendentes');
+  });
+
+  test('recriacao sobre pedido cortado e delta por direcao continuam iguais', () => {
+    const recriar = avaliar({
+      privacidadeAlvo: 'privado',
+      estadoFisico: 'pendente',
+      refAtual: 'rP',
+      corteNaCriacao: null,
+      corteAtual: 'c1',
+      tokenVisto: 'rP.c1',
+      pendentesEnviadosDoAtor: 100,
+    });
+    assert.equal(recriar.novoEstado, 'pendente');
+    assert.equal(recriar.deltaPendentes, 0);
+    const aprovar = avaliar({
+      operacao: 'aprovarPedido',
+      estadoFisico: 'pendente',
+      refAtual: 'rP',
+      tokenVisto: 'rP.',
+      pendentesEnviadosDoAtor: -7,
+    });
+    // Aprovar nao passa pelo teto do ATOR; o -1 vai para o contador do seguidor.
+    assert.equal(aprovar.novoEstado, 'confirmado');
+    assert.equal(aprovar.deltaPendentes, -1);
+  });
+
+  test('seguir perfil publico nao depende do contador de pedidos', () => {
+    assert.equal(
+      avaliar({ pendentesEnviadosDoAtor: 'ilegivel' }).novoEstado,
+      'confirmado'
+    );
+  });
+});
+
 describe('faxina por corte (S32b no dominio)', () => {
   const faxina = (estadoFisico, corteNaCriacao, corteAtual) =>
     dominio.avaliarFaxinaSeguir({ estadoFisico, corteNaCriacao, corteAtual });

@@ -381,14 +381,32 @@ DateTime? _instanteObrigatorio(Object? v) {
   return DateTime.tryParse(v)?.toUtc();
 }
 
-/// Histórico de ritmo. Um instante ilegível CONTA como agora: um histórico que
-/// não dá para ler não pode afrouxar o limite.
-List<DateTime> _instantesDeRitmo(Object? bruto, DateTime agora) {
-  if (bruto is! List) return <DateTime>[];
+/// Histórico de ritmo.
+///
+/// CONTÊINER: só uma LISTA é histórico conhecido. Campo ausente, `null` ou
+/// qualquer outro tipo devolve `null` = histórico DESCONHECIDO, e o domínio não
+/// autoriza criação com ele. Lista vazia é histórico conhecido e vazio — é assim
+/// que o chamador apresenta um ator ou par novo, explicitamente.
+///
+/// ELEMENTO: um instante ilegível dentro de uma lista CONTA como agora: um item
+/// que não dá para ler não pode afrouxar o limite.
+List<DateTime>? _instantesDeRitmo(Object? bruto, DateTime agora) {
+  if (bruto is! List) return null;
   return bruto.map((v) {
     final t = v is String ? DateTime.tryParse(v) : null;
     return (t ?? agora).toUtc();
   }).toList();
+}
+
+/// Contador técnico de pendentes: só um INTEIRO não negativo é contagem
+/// conhecida. Negativo, fracionário, não numérico ou ausente devolve `null` =
+/// desconhecido, e o teto rígido falha fechado. Nada é arredondado nem truncado.
+int? _contagemConhecida(Object? bruto) {
+  if (bruto is! num) return null;
+  if (!bruto.isFinite) return null;
+  if (bruto != bruto.truncate()) return null;
+  if (bruto < 0) return null;
+  return bruto.toInt();
 }
 
 Map<String, Object?>? _documento(Object? v) =>
@@ -482,7 +500,6 @@ String avaliarComandoSeguirJson(String json) {
       ? EstadoSeguir.nenhum
       : EstadoSeguir.porNome(e['estadoFisico']);
   if (fisico == null) return jsonEncode({'erro': 'estadoFisico desconhecido'});
-  final pendentes = e['pendentesEnviadosDoAtor'];
 
   return jsonEncode(avaliarComandoSeguir(EntradaComandoSeguir(
     operacao: operacao,
@@ -505,7 +522,7 @@ String avaliarComandoSeguirJson(String json) {
     privacidadeAlvo: PrivacidadeSocial.porNome(e['privacidadeAlvo']),
     criacoesDoAtor: _instantesDeRitmo(e['criacoesDoAtor'], agora),
     criacoesNoPar: _instantesDeRitmo(e['criacoesNoPar'], agora),
-    pendentesEnviadosDoAtor: pendentes is num ? pendentes.toInt() : null,
+    pendentesEnviadosDoAtor: _contagemConhecida(e['pendentesEnviadosDoAtor']),
     agora: agora,
   )).toJson());
 }

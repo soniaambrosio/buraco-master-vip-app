@@ -395,10 +395,16 @@ class EntradaComandoSeguir {
   final PrivacidadeSocial privacidadeAlvo;
 
   /// Histórico de criações do ator (`playerSocialRitmo`) e do par (canônico).
-  final List<DateTime> criacoesDoAtor;
-  final List<DateTime> criacoesNoPar;
+  ///
+  /// `null` = histórico DESCONHECIDO (campo ausente ou formato que não é lista).
+  /// Lista vazia = histórico conhecido e vazio, que é como um ator ou par novo
+  /// se apresenta. Uma criação só é autorizada com os dois históricos
+  /// conhecidos: desconhecido não vira "zero criações".
+  final List<DateTime>? criacoesDoAtor;
+  final List<DateTime>? criacoesNoPar;
 
   /// Contador técnico de pendentes enviados do ator. `null` = desconhecido.
+  /// Um valor negativo também é tratado como desconhecido: não é contagem.
   final int? pendentesEnviadosDoAtor;
 
   final DateTime agora;
@@ -613,10 +619,19 @@ VereditoSeguir avaliarComandoSeguir(EntradaComandoSeguir e) {
 
   // 10. LIMITES — só a criação de saída (O01/O02) consome e é limitada.
   final consome = op == OperacaoSeguir.seguir;
+  List<DateTime>? historicoDoAtorApos;
+  List<DateTime>? historicoNoParApos;
   if (consome) {
+    // Sem os dois históricos conhecidos, o limite não é comprovável: falha
+    // fechada, sem estado novo e sem consumo.
+    final doAtor = e.criacoesDoAtor;
+    final noPar = e.criacoesNoPar;
+    if (doAtor == null || noPar == null) {
+      return VereditoSeguir.recusado(RecusaSeguir.limiteIndisponivel, efetivo);
+    }
     final recusaDeRitmo = avaliarRitmoDeCriacao(
-      criacoesDoAtor: e.criacoesDoAtor,
-      criacoesNoPar: e.criacoesNoPar,
+      criacoesDoAtor: doAtor,
+      criacoesNoPar: noPar,
       agora: e.agora,
     );
     if (recusaDeRitmo != null) {
@@ -624,7 +639,7 @@ VereditoSeguir avaliarComandoSeguir(EntradaComandoSeguir e) {
     }
     if (novo == EstadoSeguir.pendente) {
       final pendentes = e.pendentesEnviadosDoAtor;
-      if (pendentes == null) {
+      if (pendentes == null || pendentes < 0) {
         return VereditoSeguir.recusado(
             RecusaSeguir.limiteIndisponivel, efetivo);
       }
@@ -636,6 +651,10 @@ VereditoSeguir avaliarComandoSeguir(EntradaComandoSeguir e) {
             RecusaSeguir.limitePedidosPendentes, efetivo);
       }
     }
+    historicoDoAtorApos =
+        instantesNaJanela(doAtor, e.agora, kJanelaRitmoLonga)..add(e.agora);
+    historicoNoParApos =
+        instantesNaJanela(noPar, e.agora, kJanelaRitmoPorAlvo)..add(e.agora);
   }
 
   // 11. ESCRITA.
@@ -647,16 +666,10 @@ VereditoSeguir avaliarComandoSeguir(EntradaComandoSeguir e) {
     novoEstado: novo,
     deltaPendentes: deltaPendentesEnviados(antes: e.estadoFisico, depois: novo),
     consumirRitmo: consome,
-    criacoesDoAtorApos: consome
-        ? (instantesNaJanela(e.criacoesDoAtor, e.agora, kJanelaRitmoLonga)
-          ..add(e.agora))
-        : null,
+    criacoesDoAtorApos: historicoDoAtorApos,
     // O histórico por alvo sobrevive a encerramento, corte e recriação: só a
     // criação o atualiza, e os demais escritores o preservam no canônico.
-    criacoesNoParApos: consome
-        ? (instantesNaJanela(e.criacoesNoPar, e.agora, kJanelaRitmoPorAlvo)
-          ..add(e.agora))
-        : null,
+    criacoesNoParApos: historicoNoParApos,
     chaveIntencao: chave,
     impressao: impressao,
   );
