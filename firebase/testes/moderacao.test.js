@@ -1124,45 +1124,55 @@ describe('bloqueio, corte e lista (SOCIAL-02 C4)', { skip: !process.env.FUNCTION
     assert.equal(await ler(caminhoCorte(a.uid, b.uid)), undefined);
   });
 
+  // r3 (run 43342070243): com 24 alvos fixos o diario chegou depois de a
+  // ultima chamada terminar (0 recusadas) — a prova de nao-escrita passou, a de
+  // sobreposicao nao. Agora os trabalhadores SEGUEM chamando ate haver chamadas
+  // iniciadas depois do commit do diario, e a foto le um SUBCONJUNTO DECLARADO
+  // (os 3 primeiros alvos, ja gravados, e a cauda ainda nao alcancada), que nao
+  // disputa as chamadas em andamento.
   test('M16/S23c — diario criado EM VOO: cada bloqueio e (bloqueio + corte) antes do diario ou nenhuma escrita', async (t) => {
     const a = await jogador('m16');
-    const alvos = [];
-    for (let i = 0; i < 24; i++) alvos.push(await alvo());
+    const alvos = Array.from({ length: 120 }, (_, i) => ({
+      uid: `c4m16${a.uid.slice(0, 6)}t${String(i).padStart(3, '0')}`, pid: novoPid(),
+    }));
+    const preparo = {};
+    for (const x of alvos) Object.assign(preparo, identidade(x.uid, x.pid));
+    await semearLote(preparo);
+    const observados = alvos.filter((_, i) => i < 3 || i >= 60);
+    const caminhosDe = (x) => [`users/${a.uid}/blocks/${x.uid}`, caminhoCorte(a.uid, x.uid)];
+
     const chamadas = [];
-    let fila = 0;
+    let proximo = 0;
+    let diarioEm = null;
+    const posDiario = () => chamadas.filter((c) => diarioEm !== null && c.ini > diarioEm).length;
     const trabalhador = async () => {
-      while (fila < alvos.length) {
-        const x = alvos[fila++];
-        const via = fila % 2 === 0 ? 'pid' : 'uid';
+      while (proximo < alvos.length && !(diarioEm !== null && posDiario() >= 6)) {
+        const i = proximo++;
+        const x = alvos[i];
         const ini = performance.now();
         let desfecho;
         try {
-          await (via === 'pid' ? a.bloquearPid({ publicId: x.pid }) : a.bloquearUid({ bloqueadoUid: x.uid }));
+          await (i % 2 === 0 ? a.bloquearPid({ publicId: x.pid }) : a.bloquearUid({ bloqueadoUid: x.uid }));
           desfecho = 'ok';
         } catch (e) {
           assert.equal(e.details?.recusa, 'acaoIndisponivel');
           desfecho = 'recusado';
         }
-        chamadas.push({ ini, fim: performance.now(), desfecho });
+        chamadas.push({ i, ini, fim: performance.now(), desfecho });
       }
     };
-    // O diario nasce por uma TRANSACAO do teste que le TODO o conjunto
-    // observado (bloqueios e cortes, inclusive os ainda ausentes): o que ela
-    // le e o estado exato no instante do diario.
+    // O diario nasce por uma TRANSACAO do teste que le o conjunto observado
+    // (bloqueios e cortes, inclusive os ainda ausentes): o que ela le e o estado
+    // exato no instante do diario.
     let foto;
-    let diarioEm;
     const criarDiario = async () => {
-      while (chamadas.length < 3) await new Promise((r) => setTimeout(r, 10));
+      while (chamadas.length < 3) await new Promise((r) => setTimeout(r, 5));
       await ambiente.withSecurityRulesDisabled(async (ctx) => {
         const fs = ctx.firestore();
         await runTransaction(fs, async (tx) => {
           const lido = {};
-          await Promise.all(alvos.map(async (x) => {
-            const [bl, ct] = await Promise.all([
-              tx.get(doc(fs, `users/${a.uid}/blocks/${x.uid}`)),
-              tx.get(doc(fs, caminhoCorte(a.uid, x.uid))),
-            ]);
-            lido[x.uid] = { bloqueio: bl.exists(), corte: ct.exists() };
+          await Promise.all(observados.flatMap(caminhosDe).map(async (c) => {
+            lido[c] = (await tx.get(doc(fs, c))).exists();
           }));
           tx.set(doc(fs, `accountDeletions/${a.uid}`), { estado: 'iniciada', esquema: 1 });
           foto = lido;
@@ -1173,16 +1183,26 @@ describe('bloqueio, corte e lista (SOCIAL-02 C4)', { skip: !process.env.FUNCTION
     await Promise.all([criarDiario(), trabalhador(), trabalhador(), trabalhador(), trabalhador()]);
 
     for (const x of alvos) {
-      const bloqueio = !!(await ler(`users/${a.uid}/blocks/${x.uid}`));
-      const corte = !!(await ler(caminhoCorte(a.uid, x.uid)));
+      const [bloqueio, corte] = await Promise.all(caminhosDe(x).map(async (c) => !!(await ler(c))));
       assert.equal(bloqueio, corte, 'nunca bloqueio sem corte nem corte sem bloqueio');
-      assert.deepEqual({ bloqueio, corte }, foto[x.uid], 'nada foi escrito depois do diario');
     }
+    for (const x of observados) {
+      for (const c of caminhosDe(x)) {
+        assert.equal(!!(await ler(c)), foto[c], `nada foi escrito depois do diario: ${c}`);
+      }
+    }
+    const depois = chamadas.filter((c) => c.ini > diarioEm);
+    assert.ok(depois.length >= 1, 'houve chamadas iniciadas depois do diario');
+    for (const c of depois) {
+      assert.equal(c.desfecho, 'recusado', 'toda chamada iniciada depois do diario recusa');
+      assert.equal(await ler(`users/${a.uid}/blocks/${alvos[c.i].uid}`), undefined);
+      assert.equal(await ler(caminhoCorte(a.uid, alvos[c.i].uid)), undefined);
+    }
+    assert.ok(chamadas.some((c) => c.desfecho === 'ok' && c.fim < diarioEm), 'chamadas antes do diario gravaram');
     const sobrepostas = chamadas.filter((c) => c.ini < diarioEm && c.fim > diarioEm).length;
-    const recusadas = chamadas.filter((c) => c.desfecho === 'recusado').length;
-    assert.ok(recusadas >= 1, 'chamadas depois do diario recusam');
-    assert.ok(chamadas.some((c) => c.desfecho === 'ok'), 'chamadas antes do diario gravaram');
-    t.diagnostic(`M16: ${chamadas.length} chamadas, ${sobrepostas} em voo no commit do diario, ${recusadas} recusadas`);
+    t.diagnostic(`M16: ${chamadas.length} chamadas, ${sobrepostas} em voo no commit do diario, `
+      + `${depois.length} iniciadas depois (todas recusadas), `
+      + `${chamadas.filter((c) => c.desfecho === 'ok').length} gravadas antes`);
   });
 
   test('M17/S38 — ator no teto de ritmo de seguir: bloquear, desbloquear e denunciar passam (a Moderacao nao le ritmo)', async () => {
