@@ -720,9 +720,10 @@ describe("PASSE/FRONTEIRA — o que esta OS promete NÃO ter feito", () => {
     // `funcoes.catalogo`), em `docs/COMUNICACAO-CONTROLADA-V1.md` e na lista
     // congelada da composição. O piso de 9 é que era anterior a elas.
     "functions-moderacao/src/index.ts": [
-      "aplicarSancao", "bloquearJogador", "consultarCatalogoDeComunicacao",
-      "consultarContato", "definirCanalDeChat", "desbloquearJogador",
-      "emitirEventoDeSistema", "enviarMensagemChat", "enviarMensagemChatPeloMotor",
+      "aplicarSancao", "bloquearJogador", "bloquearJogadorPorPublicId",
+      "consultarCatalogoDeComunicacao", "consultarContato", "definirCanalDeChat",
+      "desbloquearJogador", "desbloquearJogadorPorPublicId", "emitirEventoDeSistema",
+      "enviarMensagemChat", "enviarMensagemChatPeloMotor", "listarMeusBloqueios",
       "registrarDenuncia", "revogarSancao",
     ],
     // A INTENÇÃO ORIGINAL DE PF-01 CONTINUA INTEIRA: a OS do Passe não exportou

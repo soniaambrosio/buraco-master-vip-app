@@ -3179,6 +3179,682 @@ describe('Functions sociais', comFunctions, () => {
       assert.equal(await canonico(b, a), undefined);
     });
 
+    // =====================================================================
+    // SOCIAL-02 C4 — bloqueio com corte, faxina de seguir e reconciliacao.
+    //
+    // PROVA DIVIDIDA (B-1): `socialemu` sobe so `functions:social`. O bloqueio
+    // entra aqui como o LOTE ATOMICO que `bloquearJogador*` grava — bloqueio no
+    // formato de hoje + corte novo do par —, no formato exato verificado pela
+    // callable real em moderacao.test.js (M01/M02). O gatilho `aoBloquearJogador`
+    // e REAL e reage a esse documento. A cadeia "callable da Moderacao ->
+    // gatilho do Social" no mesmo runner NAO e executada aqui.
+    //
+    // MONTAGENS DO TESTE (nenhuma flag, endpoint ou modo de produto):
+    //   * bloquear .... lote atomico {bloqueio + corte novo};
+    //   * desbloquear . delete do documento de bloqueio, como a callable faz;
+    //   * reentregar .. apagar e recriar o bloqueio SEM mudar o corte: o gatilho
+    //                   recebe so o par, entao isto e a nova tentativa ou o
+    //                   evento atrasado;
+    //   * diario em voo transacao do teste que LE todo o conjunto observado
+    //                   (inclusive o ainda ausente) e grava o diario: o que ela
+    //                   le e o estado exato no instante do diario.
+    // A faxina e assincrona: o que ela NAO escreve e observado numa janela
+    // declarada, sem promessa de ausencia eterna.
+    // =====================================================================
+    describe('bloqueio, faxina e reconciliacao (SOCIAL-02 C4)', () => {
+      const { randomBytes } = require('crypto');
+      const { signInWithCustomToken } = require('firebase/auth');
+      const { runTransaction } = require('firebase/firestore');
+
+      const JANELA = 5000;
+      const pausa = (ms) => new Promise((r) => setTimeout(r, ms));
+      const caminhoCorte = (x, y) => `cortesDeRelacao/${[x.uid, y.uid].sort().join('|')}`;
+      const caminhoPar = (x, y) => `friendships/${[x.uid, y.uid].sort().join('|')}`;
+      const novoCorte = () => randomBytes(16).toString('base64url');
+
+      /// O que `bloquearJogador*` grava (formato de M01/M02 em moderacao.test.js).
+      function bloqueioDaModeracao(quem, alvo, corteId) {
+        return {
+          [`users/${quem.uid}/blocks/${alvo.uid}`]: {
+            bloqueadorUid: quem.uid, bloqueadoUid: alvo.uid, criadoEm: new Date(), esquema: 1,
+          },
+          [caminhoCorte(quem, alvo)]: {
+            corteId, membros: [quem.uid, alvo.uid].sort(),
+            atualizadoEm: new Date().toISOString(), esquema: 1,
+          },
+        };
+      }
+      async function bloquear(quem, alvo) {
+        const corteId = novoCorte();
+        await aplicarAtomico(bloqueioDaModeracao(quem, alvo, corteId));
+        return corteId;
+      }
+      const desbloquear = (quem, alvo) => aplicarAtomico({ [`users/${quem.uid}/blocks/${alvo.uid}`]: null });
+      async function reentregar(quem, alvo) {
+        await desbloquear(quem, alvo);
+        await aplicarAtomico({
+          [`users/${quem.uid}/blocks/${alvo.uid}`]: {
+            bloqueadorUid: quem.uid, bloqueadoUid: alvo.uid, criadoEm: new Date(), esquema: 1,
+          },
+        });
+      }
+
+      /// Sondagem com prazo: a faxina e assincrona.
+      async function ate(condicao, rotulo, prazo = 20000) {
+        const fim = Date.now() + prazo;
+        while (Date.now() < fim) {
+          if (await condicao()) return;
+          await pausa(200);
+        }
+        assert.fail(`nao convergiu no prazo: ${rotulo}`);
+      }
+
+      async function foto(caminhos) {
+        const v = {};
+        for (const c of caminhos) {
+          const d = await ler(c);
+          v[c] = d === undefined ? null : JSON.stringify(d);
+        }
+        return v;
+      }
+
+      /// Nada muda durante a janela declarada.
+      async function estavel(caminhos, rotulo, janela = JANELA) {
+        const antes = await foto(caminhos);
+        const fim = Date.now() + janela;
+        while (Date.now() < fim) {
+          await pausa(500);
+          assert.deepEqual(await foto(caminhos), antes, `mudou na janela: ${rotulo}`);
+        }
+        return antes;
+      }
+
+      /// Cria o diario por transacao do teste que le TODO o conjunto observado.
+      async function diarioLendo(j, caminhos) {
+        let lido;
+        await ambiente.withSecurityRulesDisabled(async (ctx) => {
+          const fs = ctx.firestore();
+          await runTransaction(fs, async (tx) => {
+            const v = {};
+            await Promise.all(caminhos.map(async (c) => {
+              const s = await tx.get(doc(fs, c));
+              v[c] = s.exists() ? JSON.stringify(s.data()) : null;
+            }));
+            tx.set(doc(fs, `accountDeletions/${j.uid}`), { estado: 'iniciada', esquema: 1 });
+            lido = v;
+          }, { maxAttempts: 25 });
+        });
+        return lido;
+      }
+
+      /// O que uma direcao s -> d e a amizade do par tocam.
+      function caminhosDaDirecao(s, d) {
+        return [`follows/${s.uid}|${d.uid}`, ...Object.values(caminhosEspelho(s, d)), R(s)];
+      }
+      function caminhosDoPar(x, y) {
+        return [
+          ...caminhosDaDirecao(x, y), ...caminhosDaDirecao(y, x),
+          caminhoPar(x, y), `users/${x.uid}/friends/${y.uid}`, `users/${y.uid}/friends/${x.uid}`,
+          `users/${x.uid}/friendRequests/${y.uid}`, `users/${y.uid}/friendRequests/${x.uid}`,
+          `playerSocial/${x.uid}`, `playerSocial/${y.uid}`,
+        ];
+      }
+
+      async function amigos(x, y) {
+        await x.enviar({ publicId: y.pid });
+        await y.aceitar({ publicId: x.pid });
+        assert.equal((await ler(caminhoPar(x, y))).estado, 'amigos');
+      }
+
+      /// Cliente ADMIN. O emulador de Auth aceita token personalizado SEM
+      /// assinatura (comportamento documentado do emulador, para testes); o claim
+      /// `admin` chega ao `req.auth.token` da callable real. So existe no teste.
+      let admin;
+      async function clienteAdmin() {
+        if (admin) return admin;
+        const app = initializeApp({ projectId: PROJETO, apiKey: 'fake' }, 'c4-admin-social');
+        const auth = getAuth(app);
+        connectAuthEmulator(
+          auth,
+          `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}`,
+          { disableWarnings: true },
+        );
+        const agora = Math.floor(Date.now() / 1000);
+        const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+        const token = [
+          b64({ alg: 'none', typ: 'JWT' }),
+          b64({
+            iss: 'firebase-auth-emulator@example.com',
+            sub: 'firebase-auth-emulator@example.com',
+            aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+            iat: agora, exp: agora + 3600, uid: 'c4AdminSocial', claims: { admin: true },
+          }),
+          '',
+        ].join('.');
+        await signInWithCustomToken(auth, token);
+        const [host, porta] = (process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001').split(':');
+        const f = getFunctions(app, 'southamerica-east1');
+        connectFunctionsEmulator(f, host, Number(porta));
+        const chamar = httpsCallable(f, 'reconciliarPerfilSocial');
+        admin = { reconciliar: async (j) => (await chamar({ publicId: j.pid })).data };
+        return admin;
+      }
+
+      const PRIVADAS = new Set(['uid', 'token', 'membros', 'corteId', 'seguidorUid', 'seguidoUid',
+        'bloqueadorUid', 'bloqueadoUid', 'corteNaCriacao', 'ultimaIntencao']);
+      function semPrivado(resposta, jogadores) {
+        const achar = (v, p) => {
+          if (Array.isArray(v)) return v.flatMap((x, i) => achar(x, `${p}[${i}]`));
+          if (v === null || typeof v !== 'object') return [];
+          return Object.entries(v).flatMap(([k, x]) => [
+            ...(PRIVADAS.has(k) ? [`${p}.${k}`] : []), ...achar(x, `${p}.${k}`),
+          ]);
+        };
+        assert.deepEqual(achar(resposta, ''), []);
+        const texto = JSON.stringify(resposta);
+        for (const j of jogadores) assert.equal(texto.includes(j.uid), false, 'UID na resposta');
+      }
+
+      // ------------------------------------------------- R3: provas separadas
+
+      test('S02/S32a — bloqueio vigente + corte: O12 sem bloco e nenhuma criacao, antes E depois da faxina; desbloqueado, nada volta', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await cmd(a, 'seguir', b, { referencia: null });
+        const refAntiga = (await bloco(a, b)).meu.referencia;
+        await bloquear(a, b);
+        const conferir = async () => {
+          assert.equal(await bloco(a, b), null, 'sem bloco sob bloqueio');
+          assert.equal(await bloco(b, a), null);
+          await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null }), recusa('acaoIndisponivel'));
+          await assert.rejects(() => cmd(b, 'seguir', a, { referencia: null }), recusa('acaoIndisponivel'));
+          assert.equal(await canonico(b, a), undefined, 'nada nasce sob bloqueio');
+        };
+        await conferir(); // o gatilho pode ou nao ter rodado: os dois valem
+        await ate(async () => (await canonico(a, b))?.estado === 'encerrado', 'faxina a->b');
+        await conferir();
+        assert.equal(await espelhos(a, b), 'nenhum');
+
+        await desbloquear(a, b);
+        const v = await bloco(a, b);
+        assert.equal(v.meu.estado, 'nenhum', 'desbloquear nao restaura o vinculo');
+        await assert.rejects(() => cmd(a, 'deixarSeguir', b, { referencia: refAntiga }),
+          recusa('referenciaObsoleta'));
+        const r = await cmd(a, 'seguir', b, { referencia: v.meu.referencia });
+        assert.equal(r.estado, 'seguindo', 'acao nova com a referencia atual segue as regras vigentes');
+      });
+
+      test('S03 — gatilho real: as duas direcoes encerradas, P1–P4 apagados, remetente debitado UMA vez; a reentrega nao muda nada', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await privado(a);
+        await cmd(b, 'seguir', a, { referencia: null }); // pedido B -> A
+        await cmd(a, 'seguir', b, { referencia: null }); // A segue B
+        const ritmoBAntes = await ritmo(b);
+        const ritmoAAntes = await ritmo(a);
+        assert.equal(ritmoBAntes.pedidosPendentesEnviados, 1);
+        const pedidoAntes = await canonico(b, a);
+
+        await bloquear(a, b);
+        await ate(async () => (await canonico(a, b))?.estado === 'encerrado'
+          && (await canonico(b, a))?.estado === 'encerrado', 'as duas direcoes');
+        assert.equal(await espelhos(a, b), 'nenhum');
+        assert.equal(await espelhos(b, a), 'nenhum');
+        const rb = await ritmo(b);
+        assert.equal(rb.pedidosPendentesEnviados, 0, 'o REMETENTE (B, o bloqueado) e debitado');
+        assert.deepEqual(rb.criacoes, ritmoBAntes.criacoes, 'historico de criacao preservado');
+        assert.deepEqual(await ritmo(a), ritmoAAntes, 'A nao tinha pedido pendente: ritmo intocado');
+        const pedidoDepois = await canonico(b, a);
+        assert.deepEqual(pedidoDepois.criacoesRecentes, pedidoAntes.criacoesRecentes);
+        assert.equal(pedidoDepois.corteNaCriacao, pedidoAntes.corteNaCriacao);
+        assert.deepEqual(pedidoDepois.ultimaIntencao, pedidoAntes.ultimaIntencao);
+
+        await reentregar(a, b);
+        await estavel([...caminhosDaDirecao(a, b), ...caminhosDaDirecao(b, a)], 'reentrega');
+        assert.equal((await ritmo(b)).pedidosPendentesEnviados, 0, 'sem segundo debito');
+      });
+
+      test('S04/S32b — evento atrasado depois de relacao nova legitima nao toca a relacao nova', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await cmd(a, 'seguir', b, { referencia: null });
+        await bloquear(a, b);
+        await ate(async () => (await canonico(a, b))?.estado === 'encerrado', 'faxina');
+        await desbloquear(a, b);
+        const v = await bloco(a, b);
+        assert.equal((await cmd(a, 'seguir', b, { referencia: v.meu.referencia })).estado, 'seguindo');
+        const nova = await canonico(a, b);
+        const ritmoA = await ritmo(a);
+
+        await reentregar(a, b); // evento antigo, reentregue: so o par
+        await estavel(caminhosDaDirecao(a, b), 'evento atrasado');
+        await desbloquear(a, b);
+        assert.deepEqual(await canonico(a, b), nova, 'a relacao nova esta intacta');
+        assert.equal(await espelhos(a, b), 'P1+P2');
+        assert.deepEqual(await ritmo(a), ritmoA, 'nenhum debito');
+      });
+
+      test('S05/S32c — comando com referencia de ANTES do bloqueio, reenviado depois do desbloqueio: referenciaObsoleta', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const antes = (await bloco(a, b)).meu.referencia;
+        await bloquear(a, b);
+        await desbloquear(a, b);
+        await assert.rejects(() => cmd(a, 'seguir', b, { referencia: antes }), recusa('referenciaObsoleta'));
+        assert.equal(await canonico(a, b), undefined, 'nada criado');
+        assert.equal(await espelhos(a, b), 'nenhum');
+      });
+
+      test('S06/S24/S16 — seguir nos dois sentidos: as duas direcoes saem das listas e dos contadores, e nenhuma resposta diz quem bloqueou', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await cmd(a, 'seguir', b, { referencia: null });
+        await cmd(b, 'seguir', a, { referencia: null });
+        await bloquear(b, a); // B bloqueia A
+        await ate(async () => (await canonico(a, b))?.estado === 'encerrado'
+          && (await canonico(b, a))?.estado === 'encerrado', 'as duas direcoes');
+        for (const [x, y] of [[a, b], [b, a]]) {
+          assert.equal(await espelhos(x, y), 'nenhum');
+          assert.equal(await bloco(x, y), null, 'as duas pontas veem o mesmo: sem bloco');
+          assert.deepEqual((await x.listarSeguindo({})).data.itens, []);
+          assert.deepEqual((await x.listarSeguidores({})).data.itens, []);
+          const c = (await x.contadores({})).data.contadores;
+          assert.equal(c.seguidores, 0);
+          assert.equal(c.seguindo, 0);
+        }
+      });
+
+      test('S07 — contador do REMETENTE: faxina, reentregas e reconciliacao do remetente em paralelo debitam uma vez so', async (t) => {
+        const a = await jogador();
+        const b = await jogador();
+        const adm = await clienteAdmin();
+        await privado(a);
+        await cmd(b, 'seguir', a, { referencia: null });
+        assert.equal((await ritmo(b)).pedidosPendentesEnviados, 1);
+        await bloquear(a, b);
+        const ini = performance.now();
+        const [r] = await Promise.all([
+          adm.reconciliar(b),
+          reentregar(a, b).then(() => reentregar(a, b)),
+        ]);
+        const fim = performance.now();
+        assert.equal(r.reconciliado, true);
+        await ate(async () => (await canonico(b, a))?.estado === 'encerrado', 'encerrado');
+        await estavel([...caminhosDaDirecao(b, a)], 'depois das reentregas');
+        assert.equal((await ritmo(b)).pedidosPendentesEnviados, 0, 'um debito, nunca dois');
+        t.diagnostic(`S07: reconciliacao em ${(fim - ini).toFixed(0)} ms com duas reentregas em paralelo; `
+          + `encerrada pela reconciliacao=${r.seguir.encerradasPorCorte}`);
+      });
+
+      test('S08/S33d — com documento de bloqueio: o reenvio exato da intencao antiga e obsoleto; O12 nenhum; token novo cria', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await privado(b);
+        const X = intencao();
+        await cmd(a, 'seguir', b, { referencia: null, intencaoId: X });
+        await bloquear(a, b);
+        await ate(async () => (await canonico(a, b))?.estado === 'encerrado', 'faxina');
+        assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0);
+        await desbloquear(a, b);
+        await assert.rejects(() => cmd(a, 'seguir', b, { referencia: null, intencaoId: X }),
+          recusa('referenciaObsoleta'));
+        const v = await bloco(a, b);
+        assert.equal(v.meu.estado, 'nenhum');
+        assert.equal((await cmd(a, 'seguir', b, { referencia: v.meu.referencia })).estado, 'pendente');
+        assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+      });
+
+      test('S09/S32e — relacao criada sob corte novo + faxina tardia: nada muda', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await cmd(a, 'seguir', b, { referencia: null });
+        await semearCorte(a, b, 'corteS09');
+        const v = await bloco(a, b);
+        assert.equal(v.meu.estado, 'nenhum');
+        assert.equal((await cmd(a, 'seguir', b, { referencia: v.meu.referencia })).estado, 'seguindo');
+        const nova = await canonico(a, b);
+        assert.equal(nova.corteNaCriacao, 'corteS09');
+        // Faxina tardia: o gatilho recebe o par e rele o corte ATUAL (o mesmo).
+        await aplicarAtomico({ [`users/${a.uid}/blocks/${b.uid}`]: {
+          bloqueadorUid: a.uid, bloqueadoUid: b.uid, criadoEm: new Date(), esquema: 1 } });
+        await estavel(caminhosDaDirecao(a, b), 'faxina tardia');
+        await desbloquear(a, b);
+        assert.deepEqual(await canonico(a, b), nova);
+        assert.equal(await espelhos(a, b), 'P1+P2');
+      });
+
+      test('S10/S35 com bloqueio — O12 em voo contra {bloqueio + corte} x {sem bloqueio, mesmo corte}: nunca o vinculo antigo como efetivo', async (t) => {
+        const obs = await jogador();
+        const alvo = await jogador();
+        await cmd(obs, 'seguir', alvo, { referencia: null }); // vinculo sob corte nenhum
+        const corte = { corteId: novoCorte(), membros: [obs.uid, alvo.uid].sort(),
+          atualizadoEm: '2026-01-01T00:00:00.000Z', esquema: 1 };
+        const bloqueio = { bloqueadorUid: obs.uid, bloqueadoUid: alvo.uid,
+          criadoEm: new Date('2026-01-01T00:00:00.000Z'), esquema: 1 };
+        const X = { [`users/${obs.uid}/blocks/${alvo.uid}`]: bloqueio, [caminhoCorte(obs, alvo)]: corte };
+        const Y = { [`users/${obs.uid}/blocks/${alvo.uid}`]: null, [caminhoCorte(obs, alvo)]: corte };
+        // A faxina do primeiro X converge ANTES da corrida: o estado fisico
+        // estabiliza e as trocas seguintes so alternam bloqueio e contato.
+        await aplicarAtomico(X);
+        await ate(async () => (await canonico(obs, alvo))?.estado === 'encerrado', 'faxina inicial');
+        await aplicarAtomico(Y);
+        const emY = await bloco(obs, alvo);
+        assert.equal(emY.meu.estado, 'nenhum', 'o vinculo de antes do corte nao vale');
+        assert.match(emY.meu.referencia, new RegExp(`\\.${corte.corteId}$`));
+        await corridaO12(t, { obs, alvo, X, Y });
+      });
+
+      test('S11/S38 — no teto de ritmo e de pendentes: deixar, cancelar, recusar e remover passam; criar nao', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const c = await jogador();
+        const e = await jogador();
+        const g = await jogador();
+        const h = await jogador();
+        await cmd(g, 'seguir', a, { referencia: null }); // g segue a (confirmado)
+        await cmd(a, 'seguir', b, { referencia: null }); // a segue b
+        await privado(c);
+        await cmd(a, 'seguir', c, { referencia: null }); // pedido a -> c
+        await privado(a);
+        await cmd(e, 'seguir', a, { referencia: null }); // pedido e -> a
+        const agora = Date.now();
+        await semear(R(a), {
+          ...(await ritmo(a)),
+          criacoes: Array.from({ length: 30 }, (_, i) => new Date(agora - i * 1000).toISOString()),
+          pedidosPendentesEnviados: 100,
+        });
+        await assert.rejects(() => cmd(a, 'seguir', h, { referencia: null }),
+          (x) => ['ritmoExcedido', 'limitePedidosPendentes'].includes(x.details?.recusa));
+        assert.equal((await cmd(a, 'deixarSeguir', b)).ok, true);
+        assert.equal((await cmd(a, 'cancelarSeguir', c)).ok, true);
+        assert.equal((await cmd(a, 'recusarSeguir', e)).ok, true);
+        assert.equal((await cmd(a, 'removerSeguidor', g)).ok, true);
+        assert.equal((await ritmo(a)).pedidosPendentesEnviados, 99, 'cancelar debita o proprio pedido');
+      });
+
+      // ------------------------------------------------- R1: diarios
+
+      test('S12 — diario em QUALQUER ponta: a faxina de seguir nao escreve', async () => {
+        for (const emExclusao of ['seguidor', 'seguido']) {
+          const a = await jogador();
+          const b = await jogador();
+          await cmd(a, 'seguir', b, { referencia: null });
+          await diario(emExclusao === 'seguidor' ? a : b);
+          const antes = await foto(caminhosDaDirecao(a, b));
+          await bloquear(a, b);
+          assert.deepEqual(await estavel(caminhosDaDirecao(a, b), `diario no ${emExclusao}`), antes);
+        }
+      });
+
+      test('S13/R1 — faxina LEGADA de amizade com diario: amizade, projecoes e contadores de playerSocial intactos', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        await amigos(a, b);
+        await diario(b);
+        const caminhos = caminhosDoPar(a, b);
+        const antes = await foto(caminhos);
+        await bloquear(a, b);
+        assert.deepEqual(await estavel(caminhos, 'faxina legada com diario'), antes);
+        assert.equal((await ler(caminhoPar(a, b))).estado, 'amigos');
+        assert.equal((await ler(`playerSocial/${a.uid}`)).amigos, 1, 'o contador nao e ajustado');
+      });
+
+      test('S14/R1 — diario criado EM VOO durante a faxina (amizade + seguir): o estado final e o do instante do diario', async (t) => {
+        const a = await jogador();
+        const parceiros = [];
+        for (let i = 0; i < 8; i++) {
+          const b = await jogador();
+          await amigos(a, b);
+          await cmd(a, 'seguir', b, { referencia: null });
+          parceiros.push(b);
+        }
+        const caminhos = parceiros.flatMap((b) => caminhosDoPar(a, b));
+        const estado = {};
+        for (const b of parceiros) Object.assign(estado, bloqueioDaModeracao(a, b, novoCorte()));
+        await aplicarAtomico(estado); // oito bloqueios: 24 unidades de faxina
+        const unidadeFeita = async (b) => {
+          const [par, seg] = await Promise.all([ler(caminhoPar(a, b)), canonico(a, b)]);
+          return !par || seg?.estado === 'encerrado';
+        };
+        // Sondagem sem pausa: o diario precisa nascer no MEIO das 24 unidades.
+        const prazo = Date.now() + 20000;
+        while (!(await Promise.all(parceiros.map(unidadeFeita))).some(Boolean)) {
+          if (Date.now() > prazo) assert.fail('nenhuma unidade de faxina concluiu no prazo');
+        }
+        const instante = await diarioLendo(a, caminhos);
+        await pausa(JANELA);
+        assert.deepEqual(await foto(caminhos), instante, 'nada escrito depois do diario');
+        let feitas = 0;
+        let pendentes = 0;
+        for (const b of parceiros) {
+          for (const c of [caminhoPar(a, b), `follows/${a.uid}|${b.uid}`]) {
+            const v = instante[c];
+            const concluida = v === null || JSON.parse(v).estado === 'encerrado';
+            if (concluida) feitas++;
+            else pendentes++;
+          }
+        }
+        assert.ok(feitas >= 1, 'o diario veio depois de alguma unidade');
+        assert.ok(pendentes >= 1, 'e antes de outras: sobreposicao real');
+        t.diagnostic(`S14: no instante do diario, ${feitas} unidades concluidas e ${pendentes} ainda nao`);
+      });
+
+      test('S16 — reconciliacao com diario JA presente: contaEmExclusao e nenhuma escrita', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const adm = await clienteAdmin();
+        await amigos(a, b);
+        await cmd(a, 'seguir', b, { referencia: null });
+        await apagar(caminhosEspelho(a, b).P2); // algo que a reconciliacao reescreveria
+        await diario(a);
+        const caminhos = caminhosDoPar(a, b);
+        const antes = await foto(caminhos);
+        await assert.rejects(() => adm.reconciliar(a), (e) => {
+          assert.equal(e.code, 'functions/failed-precondition');
+          assert.equal(e.details?.recusa, 'contaEmExclusao');
+          assert.equal(e.details?.parcial, false);
+          return true;
+        });
+        assert.deepEqual(await foto(caminhos), antes);
+      });
+
+      test('S17/R1 — diario criado EM VOO durante a reconciliacao: nenhuma unidade escreve depois dele; o anterior fica', async (t) => {
+        const a = await jogador({ comVip: false });
+        const adm = await clienteAdmin();
+        // Trinta outras pontas SEMEADAS (identidade + direcao no formato
+        // congelado): a reconciliacao so precisa de canonico e identidade.
+        const outros = Array.from({ length: 30 }, (_, i) => ({
+          uid: `c4s17${a.uid.slice(0, 6)}o${String(i).padStart(2, '0')}`,
+          pid: `PS17${String(i).padStart(9, '0')}`,
+        }));
+        const estado = {};
+        for (let i = 0; i < outros.length; i++) {
+          estado[`playerIdentities/${outros[i].uid}`] = { publicId: outros[i].pid };
+          Object.assign(estado, direcaoSemeada(a, outros[i], 'confirmado', `refS17x${i}`));
+          // Cada direcao sem P2: toda unidade tera o que reescrever.
+          estado[caminhosEspelho(a, outros[i]).P2] = null;
+        }
+        await aplicarAtomico(estado);
+        const caminhos = outros.flatMap((o) => caminhosDaDirecao(a, o));
+
+        const restaurados = async () => (await Promise.all(
+          outros.map((o) => ler(caminhosEspelho(a, o).P2)),
+        )).filter(Boolean).length;
+        const chamada = adm.reconciliar(a).then((r) => ({ r }), (e) => ({ e }));
+        const prazo = Date.now() + 20000;
+        while ((await restaurados()) < 1) {
+          if (Date.now() > prazo) assert.fail('nenhuma unidade de reconciliacao concluiu no prazo');
+        }
+        const instante = await diarioLendo(a, caminhos);
+        const desfecho = await chamada;
+        await pausa(1000);
+        assert.deepEqual(await foto(caminhos), instante, 'nada escrito depois do diario');
+
+        const naFoto = outros.filter((o) => instante[caminhosEspelho(a, o).P2] !== null).length;
+        assert.ok(naFoto >= 1, 'unidades confirmadas antes do diario ficam');
+        assert.ok(naFoto < outros.length, 'e o diario chegou no meio');
+        assert.ok(desfecho.e, 'a rotina parou no diario');
+        assert.equal(desfecho.e.details?.recusa, 'contaEmExclusao');
+        assert.equal(desfecho.e.details?.parcial, true);
+        t.diagnostic(`S17: ${naFoto} de ${outros.length} direcoes confirmadas antes do diario; `
+          + `unidadesConfirmadas=${desfecho.e.details?.unidadesConfirmadas}`);
+      });
+
+      test('S18 — outra ponta em exclusao: amizade e seguir com ela pulados e relatados, sem recriar projecao', async () => {
+        const a = await jogador();
+        const c = await jogador();
+        const adm = await clienteAdmin();
+        await amigos(a, c);
+        await cmd(a, 'seguir', c, { referencia: null });
+        await apagar(`users/${a.uid}/friends/${c.uid}`);
+        await apagar(caminhosEspelho(a, c).P1);
+        await diario(c);
+        const r = await adm.reconciliar(a);
+        semPrivado(r, [a, c]);
+        assert.equal(r.amizade.puladasPorExclusao, 1);
+        assert.equal(r.seguir.puladasPorExclusao, 1);
+        assert.equal(await ler(`users/${a.uid}/friends/${c.uid}`), undefined);
+        assert.equal(await ler(caminhosEspelho(a, c).P1), undefined);
+      });
+
+      test('S15 — reconciliacao: espelho reescrito, pedido sob corte antigo encerrado com debito unico, residuo relatado e NAO apagado; repetir nao muda nada', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const c = await jogador();
+        const adm = await clienteAdmin();
+        await cmd(a, 'seguir', b, { referencia: null });
+        await apagar(caminhosEspelho(a, b).P2);
+        await privado(c);
+        await cmd(a, 'seguir', c, { referencia: null });
+        assert.equal((await ritmo(a)).pedidosPendentesEnviados, 1);
+        await semearCorte(a, c, 'corteS15');
+        const residuo = `users/${a.uid}/seguindo/c4ResiduoSemCanonico`;
+        await semear(residuo, { publicId: 'PRESIDU000000', desde: '2026-01-01T00:00:00.000Z', referencia: 'x.' });
+        const criacoes = (await ritmo(a)).criacoes;
+
+        const r = await adm.reconciliar(a);
+        semPrivado(r, [a, b, c]);
+        assert.equal(r.reconciliado, true);
+        assert.equal(r.seguir.ritmo, 'recontado');
+        assert.equal(r.seguir.encerradasPorCorte, 1);
+        assert.ok(r.seguir.espelhosReescritos >= 1);
+        assert.equal(r.seguir.residuos, 1);
+        assert.ok(await ler(caminhosEspelho(a, b).P2), 'P2 reescrito');
+        assert.equal((await canonico(a, c)).estado, 'encerrado');
+        assert.equal(await espelhos(a, c), 'nenhum');
+        assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0, 'recontado 1, encerrado -1');
+        assert.deepEqual((await ritmo(a)).criacoes, criacoes, 'criacoes intocado');
+        assert.ok(await ler(residuo), 'residuo relatado e nao apagado');
+
+        const r2 = await adm.reconciliar(a);
+        assert.equal(r2.seguir.encerradasPorCorte, 0);
+        assert.equal(r2.seguir.espelhosReescritos, 0);
+        assert.equal((await ritmo(a)).pedidosPendentesEnviados, 0, 'sem desconto duplo');
+      });
+
+      // ------------------------------------------------- R4: contador
+
+      test('S19/R4 — contador do remetente invalido (1,5 e -1): a faxina nao escreve a direcao, a outra direcao segue; a reconciliacao do remetente reconta e conclui, sem desconto duplo', async () => {
+        for (const invalido of [1.5, -1]) {
+          const a = await jogador();
+          const b = await jogador();
+          const adm = await clienteAdmin();
+          await privado(a);
+          await cmd(b, 'seguir', a, { referencia: null }); // pedido B -> A
+          await cmd(a, 'seguir', b, { referencia: null }); // A segue B
+          await semear(R(b), { ...(await ritmo(b)), pedidosPendentesEnviados: invalido });
+          const criacoes = (await ritmo(b)).criacoes;
+          await bloquear(a, b);
+          await ate(async () => (await canonico(a, b))?.estado === 'encerrado', 'a outra direcao');
+          await estavel(caminhosDaDirecao(b, a), `contador ${invalido}`);
+          assert.equal((await canonico(b, a)).estado, 'pendente', 'a direcao com erro nao foi escrita');
+          assert.equal((await ritmo(b)).pedidosPendentesEnviados, invalido, 'sem max(0), sem truncar');
+          assert.equal(await bloco(b, a), null, 'o acesso continua negado');
+
+          const r = await adm.reconciliar(b);
+          assert.equal(r.seguir.ritmo, 'recontado');
+          assert.equal(r.seguir.encerradasPorCorte, 1);
+          assert.equal((await canonico(b, a)).estado, 'encerrado');
+          assert.equal((await ritmo(b)).pedidosPendentesEnviados, 0);
+          assert.deepEqual((await ritmo(b)).criacoes, criacoes, 'historico de criacao preservado');
+          const r2 = await adm.reconciliar(b);
+          assert.equal(r2.seguir.encerradasPorCorte, 0);
+          await reentregar(a, b);
+          await estavel([...caminhosDaDirecao(b, a), R(b)], 'reentrega depois do reparo');
+          assert.equal((await ritmo(b)).pedidosPendentesEnviados, 0, 'sem desconto duplo');
+        }
+      });
+
+      test('S20/R4 — reconciliar a OUTRA ponta relata o contador invalido do remetente e nao escreve aquela direcao', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const adm = await clienteAdmin();
+        await privado(a);
+        await cmd(b, 'seguir', a, { referencia: null });
+        await semear(R(b), { ...(await ritmo(b)), pedidosPendentesEnviados: 1.5 });
+        await bloquear(a, b);
+        await estavel(caminhosDaDirecao(b, a), 'faxina recusada');
+        const r = await adm.reconciliar(a);
+        semPrivado(r, [a, b]);
+        assert.equal(r.seguir.contadorInvalidoDoRemetente, 1);
+        assert.equal(r.seguir.encerradasPorCorte, 0);
+        assert.equal((await canonico(b, a)).estado, 'pendente');
+        assert.equal((await ritmo(b)).pedidosPendentesEnviados, 1.5);
+      });
+
+      test('S21/R4 — ritmo AUSENTE com pedido pendente: faxina nao escreve; a reconciliacao relata ausente e nao cria ritmo', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const adm = await clienteAdmin();
+        await privado(a);
+        await cmd(b, 'seguir', a, { referencia: null });
+        await apagar(R(b));
+        await bloquear(a, b);
+        await estavel(caminhosDaDirecao(b, a), 'faxina sem ritmo');
+        assert.equal((await canonico(b, a)).estado, 'pendente');
+        const r = await adm.reconciliar(b);
+        assert.equal(r.seguir.ritmo, 'ausente');
+        assert.equal(r.seguir.pendentesSemRitmo, 1);
+        assert.equal(await ritmo(b), undefined, 'ritmo nao e criado');
+        assert.equal((await canonico(b, a)).estado, 'pendente');
+        assert.equal(await bloco(b, a), null, 'o acesso continua negado pelo bloqueio/corte');
+      });
+
+      test('S22 — reconciliarPerfilSocial: so admin; a resposta nao carrega UID nem campo interno', async () => {
+        const a = await jogador();
+        const b = await jogador();
+        const adm = await clienteAdmin();
+        await amigos(a, b);
+        await cmd(a, 'seguir', b, { referencia: null });
+        await assert.rejects(() => httpsCallableDoJogador(a)({ publicId: b.pid }),
+          (e) => e.code === 'functions/permission-denied');
+        const r = await adm.reconciliar(a);
+        semPrivado(r, [a, b]);
+        assert.deepEqual(Object.keys(r).sort(), ['amigos', 'amizade', 'reconciliado', 'seguir', 'solicitacoes']);
+        assert.equal(r.amigos, 1);
+        assert.equal(r.amizade.amigos, 1);
+        assert.equal(r.amizade.recontagem, 'ok');
+      });
+
+      /// A callable administrativa chamada por um JOGADOR comum.
+      function httpsCallableDoJogador(j) {
+        return async (d) => {
+          const app = initializeApp({ projectId: PROJETO, apiKey: 'fake' }, `c4-nao-admin-${j.uid}`);
+          const auth = getAuth(app);
+          connectAuthEmulator(
+            auth,
+            `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}`,
+            { disableWarnings: true },
+          );
+          await signInAnonymously(auth);
+          const [host, porta] = (process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001').split(':');
+          const f = getFunctions(app, 'southamerica-east1');
+          connectFunctionsEmulator(f, host, Number(porta));
+          return httpsCallable(f, 'reconciliarPerfilSocial')(d);
+        };
+      }
+    });
+
     test('sem autenticacao, toda callable de seguir e recusada', async () => {
       const { initializeApp: init } = require('firebase/app');
       const app = init({ projectId: PROJETO, apiKey: 'fake' }, 'seguir-anonimo');

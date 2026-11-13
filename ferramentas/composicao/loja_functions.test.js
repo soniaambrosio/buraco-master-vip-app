@@ -221,9 +221,10 @@ const EXPORTS = {
   // UI precisa para desenhar fala pronta sem inventar texto. O contrato
   // compartilhado ja as nomeia em `funcoes.eventoDeSistema` e `funcoes.catalogo`.
   'functions-moderacao': [
-    'aplicarSancao', 'bloquearJogador', 'consultarCatalogoDeComunicacao',
-    'consultarContato', 'definirCanalDeChat', 'desbloquearJogador',
-    'emitirEventoDeSistema', 'enviarMensagemChat', 'enviarMensagemChatPeloMotor',
+    'aplicarSancao', 'bloquearJogador', 'bloquearJogadorPorPublicId',
+    'consultarCatalogoDeComunicacao', 'consultarContato', 'definirCanalDeChat',
+    'desbloquearJogador', 'desbloquearJogadorPorPublicId', 'emitirEventoDeSistema',
+    'enviarMensagemChat', 'enviarMensagemChatPeloMotor', 'listarMeusBloqueios',
     'registrarDenuncia', 'revogarSancao',
   ],
   'functions-ranking': [

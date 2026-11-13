@@ -20,8 +20,9 @@
 // um desconhecido responde "permitido". Diferenciar as respostas transformaria
 // estes endpoints num mapa de contas validas.
 
+import { randomBytes } from "node:crypto";
 import { initializeApp } from "firebase-admin/app";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { HttpsError, CallableRequest, onCall } from "firebase-functions/v2/https";
 
@@ -439,8 +440,185 @@ export const registrarDenuncia = onCall(opcoesCliente, async (req) => {
 });
 
 // ============================================================== BLOQUEIO
+//
+// SOCIAL-02 C4 — BLOQUEIO, CORTE DURAVEL E LISTA PROPRIA.
+//
+// Quem grava o bloqueio grava, NA MESMA TRANSACAO, o corte do par
+// (`cortesDeRelacao/{menor|maior}`, formato congelado na C2). O corte invalida
+// imediatamente toda relacao de seguir nascida antes dele; a faxina do Social
+// so arruma o armazenamento depois. Os dois caminhos (por `publicId` e o legado
+// por UID) passam pelo MESMO auxiliar, `gravarBloqueioComCorte`, e por isso
+// gravam o mesmo formato.
+//
+// ORDEM (adendo R1 §6, ordem autorizada V2):
+//   1. alvo resolvido (so no caminho por publicId);
+//   2. FORMA e auto-bloqueio, sem teto: `avaliarBloqueio` com `jaBloqueados: 0`
+//      so pode recusar `identificadorInvalido` ou `autoBloqueio` — os codigos
+//      de hoje, preservados no caminho por UID;
+//   3. a chave do corte (inalcancavel com erro depois do passo 2);
+//   4. `count()` FORA da transacao: so o VALOR, nenhuma decisao. A janela de
+//      concorrencia do teto de 500 e a de hoje; nada depende de agregacao
+//      dentro de transacao;
+//   5. TRANSACAO: diarios das duas pontas, bloqueio existente, corte;
+//      diario do ator -> `acaoIndisponivel`; diario do alvo -> resposta neutra;
+//      bloqueio JA EXISTENTE -> nenhuma escrita, mesmo corte e mesmo
+//      `criadoEm` (DT-01), e isso vem ANTES do teto; so a inclusao NOVA passa
+//      pelo teto com o valor do passo 4; depois, bloqueio + corte novos.
+
+const C_DIARIO_EXCLUSAO = "accountDeletions";
+const C_PERFIS_PUBLICOS = "publicProfiles";
+
+/// Chaves que nenhuma resposta de bloqueio pode carregar. Guarda LOCAL e
+/// minima: a Moderacao nao tem a trava do Social, e estas sao as chaves que o
+/// codigo de bloqueio manipula (UIDs, o par do corte e o id do corte).
+const CHAVES_PRIVADAS_DE_BLOQUEIO = new Set([
+  "uid",
+  "bloqueadorUid",
+  "bloqueadoUid",
+  "token",
+  "membros",
+  "corteId",
+]);
+
+function caminhosPrivadosDeBloqueio(valor: unknown, prefixo = ""): string[] {
+  if (Array.isArray(valor)) {
+    return valor.flatMap((v, i) => caminhosPrivadosDeBloqueio(v, `${prefixo}[${i}]`));
+  }
+  if (valor === null || typeof valor !== "object") return [];
+  const achados: string[] = [];
+  for (const [chave, v] of Object.entries(valor as Record<string, unknown>)) {
+    const caminho = prefixo ? `${prefixo}.${chave}` : chave;
+    if (CHAVES_PRIVADAS_DE_BLOQUEIO.has(chave)) achados.push(caminho);
+    achados.push(...caminhosPrivadosDeBloqueio(v, caminho));
+  }
+  return achados;
+}
+
+/// Devolve a resposta se ela nao carregar chave privada; falha fechado se
+/// carregar. Falhar a chamada e melhor que entregar UID.
+function respostaDeBloqueioSegura<T>(resposta: T): T {
+  const caminhos = caminhosPrivadosDeBloqueio(resposta);
+  if (caminhos.length > 0) {
+    logger.error("resposta de bloqueio com chave privada", { caminhos });
+    throw new HttpsError("internal", "falha interna");
+  }
+  return resposta;
+}
+
+function acaoIndisponivel(): never {
+  throw new HttpsError("failed-precondition", "acaoIndisponivel", {
+    recusa: "acaoIndisponivel",
+  });
+}
+
+function alvoNaoResolvido(): never {
+  // RESPOSTA NEUTRA, a mesma da denuncia: nao diz se o publicId existe.
+  throw new HttpsError("invalid-argument", "alvoNaoResolvido", {
+    recusa: "alvoNaoResolvido",
+  });
+}
+
+/// `publicId` -> uid pelo indice reverso, com a normalizacao do bundle. `null`
+/// quando nao resolve (malformado, inexistente ou conta excluida).
+async function uidDoPublicId(bruto: unknown): Promise<string | null> {
+  if (typeof bruto !== "string") return null;
+  const normalizado = dominio.normalizarPublicId(bruto).publicId;
+  if (!normalizado) return null;
+  const indice = await db().collection(C_INDICE_PUBLICO).doc(normalizado).get();
+  const uid = indice.data()?.uid;
+  return typeof uid === "string" && uid.length > 0 ? uid : null;
+}
+
+type DesfechoDoBloqueio =
+  | { tipo: "gravado" }
+  | { tipo: "jaBloqueado" }
+  | { tipo: "atorEmExclusao" }
+  | { tipo: "alvoEmExclusao" }
+  | { tipo: "teto"; recusa: string | null; falhas: string[] };
+
+/// O auxiliar UNICO dos dois caminhos de bloqueio (E1 do adendo R1).
+async function gravarBloqueioComCorte(
+  bloqueadorUid: string,
+  bloqueadoUid: string,
+  caminho: "publicId" | "uid"
+): Promise<{ bloqueado: true }> {
+  // 2. Forma e auto-bloqueio, sem teto.
+  const forma = dominio.avaliarBloqueio({ bloqueadorUid, bloqueadoUid, jaBloqueados: 0 });
+  if (!forma.aceita) recusar(forma.recusa, forma.falhas);
+
+  // 3. Chave do corte. Depois do passo 2 o UID ja casou `[A-Za-z0-9_-]+` e o
+  //    par e distinto; uma excecao aqui e defeito, e nao pedido do jogador.
+  let par: { chave: string; membros: string[]; colecao: string };
+  try {
+    par = dominio.chaveDoParDeCorte(bloqueadorUid, bloqueadoUid);
+  } catch (erro) {
+    logger.error("chave do corte recusada depois da validacao", { erro: `${erro}` });
+    throw new HttpsError("internal", "falha interna");
+  }
+
+  // 4. O valor do teto, fora da transacao (janela de hoje).
+  const lista = db().collection("users").doc(bloqueadorUid).collection("blocks");
+  const quantos = (await lista.count().get()).data().count;
+
+  const refBloqueio = lista.doc(bloqueadoUid);
+  const refCorte = db().collection(par.colecao).doc(par.chave);
+  const refDiarioAtor = db().collection(C_DIARIO_EXCLUSAO).doc(bloqueadorUid);
+  const refDiarioAlvo = db().collection(C_DIARIO_EXCLUSAO).doc(bloqueadoUid);
+
+  // 5. A transacao. O commit e o PONTO DE AUTORIZACAO: uma tentativa que leu
+  //    "sem diario" e conflita com a criacao do diario e repetida e passa a ve-lo.
+  const desfecho = await db().runTransaction<DesfechoDoBloqueio>(async (tx) => {
+    // O corte e lido para pertencer ao conjunto lido (serializa com outro
+    // escritor do mesmo par); o valor antigo nao decide nada.
+    const [diarioAtor, diarioAlvo, bloqueio] = await tx.getAll(
+      refDiarioAtor,
+      refDiarioAlvo,
+      refBloqueio,
+      refCorte
+    );
+    if (diarioAtor.exists) return { tipo: "atorEmExclusao" };
+    if (diarioAlvo.exists) return { tipo: "alvoEmExclusao" };
+    if (bloqueio.exists) return { tipo: "jaBloqueado" };
+
+    const teto = dominio.avaliarBloqueio({
+      bloqueadorUid,
+      bloqueadoUid,
+      jaBloqueados: quantos,
+    });
+    if (!teto.aceita) return { tipo: "teto", recusa: teto.recusa, falhas: teto.falhas };
+
+    // Formato de HOJE do bloqueio: a exclusao de conta (C2) depende de
+    // `bloqueadoUid`, e o gatilho do Social reage a esta CRIACAO.
+    tx.set(refBloqueio, {
+      bloqueadorUid,
+      bloqueadoUid,
+      criadoEm: FieldValue.serverTimestamp(),
+      esquema: 1,
+    });
+    // Corte NOVO do par, documento inteiro (formato congelado na C2).
+    tx.set(refCorte, {
+      corteId: randomBytes(16).toString("base64url"),
+      membros: par.membros,
+      atualizadoEm: agoraUtc(),
+      esquema: 1,
+    });
+    return { tipo: "gravado" };
+  });
+
+  if (desfecho.tipo === "atorEmExclusao") acaoIndisponivel();
+  // Por publicId, a conta em exclusao e um alvo que nao resolve. Pelo UID
+  // legado, a resposta e a neutra de sempre, sem escrita (A3).
+  if (desfecho.tipo === "alvoEmExclusao" && caminho === "publicId") alvoNaoResolvido();
+  if (desfecho.tipo === "teto") recusar(desfecho.recusa, desfecho.falhas);
+  if (desfecho.tipo === "gravado") logger.info("bloqueio registrado", { bloqueadorUid });
+  return { bloqueado: true };
+}
 
 /// Bloqueia outro jogador. Unilateral: nao cria o bloqueio inverso.
+///
+/// Caminho LEGADO por UID. Desde a C4 grava bloqueio e corte na mesma transacao,
+/// le os diarios das duas pontas e converge sem escrita quando o bloqueio ja
+/// existe. Os codigos de recusa sao os de antes.
 export const bloquearJogador = onCall(opcoesCliente, async (req) => {
   const bloqueadorUid = exigirAutenticacao(req);
   const { bloqueadoUid } = req.data ?? {};
@@ -449,31 +627,7 @@ export const bloquearJogador = onCall(opcoesCliente, async (req) => {
     throw new HttpsError("invalid-argument", "bloqueadoUid e obrigatorio.");
   }
 
-  const lista = db().collection("users").doc(bloqueadorUid).collection("blocks");
-  const quantos = await lista.count().get();
-
-  const veredito = dominio.avaliarBloqueio({
-    bloqueadorUid,
-    bloqueadoUid,
-    jaBloqueados: quantos.data().count,
-  });
-  if (!veredito.aceita) recusar(veredito.recusa, veredito.falhas);
-
-  // `set` com merge, e nao `create`: bloquear duas vezes tem que convergir no
-  // mesmo estado, e nao falhar. O id do documento e o UID bloqueado, entao a
-  // duplicidade e impossivel por construcao.
-  await lista.doc(bloqueadoUid).set(
-    {
-      bloqueadorUid,
-      bloqueadoUid,
-      criadoEm: FieldValue.serverTimestamp(),
-      esquema: 1,
-    },
-    { merge: true }
-  );
-
-  logger.info("bloqueio registrado", { bloqueadorUid });
-  return { bloqueado: true };
+  return gravarBloqueioComCorte(bloqueadorUid, bloqueadoUid, "uid");
 });
 
 /// Desfaz o proprio bloqueio.
@@ -496,6 +650,238 @@ export const desbloquearJogador = onCall(opcoesCliente, async (req) => {
     .delete();
 
   return { desbloqueado: true };
+});
+
+/// SOCIAL-02 C4 (O10): bloqueia por IDENTIDADE PUBLICA.
+///
+/// E o caminho das telas, que nao conhecem UID. Mesmo auxiliar, mesmo formato
+/// e mesmo corte do caminho por UID. Qualquer plano. Alvo que nao resolve — ou
+/// que esta em exclusao — responde `alvoNaoResolvido`, como a denuncia.
+export const bloquearJogadorPorPublicId = onCall(opcoesCliente, async (req) => {
+  const bloqueadorUid = exigirAutenticacao(req);
+  const alvo = await uidDoPublicId((req.data as Record<string, unknown> | undefined)?.publicId);
+  if (!alvo) alvoNaoResolvido();
+  return respostaDeBloqueioSegura(await gravarBloqueioComCorte(bloqueadorUid, alvo, "publicId"));
+});
+
+/// SOCIAL-02 C4 (O15): desbloqueia por IDENTIDADE PUBLICA.
+///
+/// Apaga so o documento de bloqueio, sem ler antes. NUNCA toca o corte:
+/// desbloquear nao restaura relacao nenhuma (D05). `publicId` que nao resolve
+/// tambem converge (DT-05): nao ha o que apagar, e responder diferente diria se
+/// a identidade existe. Nao le diario: apagar nao cria residuo (A3).
+export const desbloquearJogadorPorPublicId = onCall(opcoesCliente, async (req) => {
+  const bloqueadorUid = exigirAutenticacao(req);
+  const alvo = await uidDoPublicId((req.data as Record<string, unknown> | undefined)?.publicId);
+  if (alvo && alvo !== bloqueadorUid) {
+    await db().collection("users").doc(bloqueadorUid).collection("blocks").doc(alvo).delete();
+  }
+  return respostaDeBloqueioSegura({ desbloqueado: true });
+});
+
+// ---------------------------------------------- lista dos proprios bloqueios
+//
+// CONTRATO DO CURSOR (adendo R1 §3 + C-01 da ordem autorizada V2):
+//
+//   ordem ........ `criadoEm` DESC e id do documento DESC — a mesma direcao,
+//                  servida pelo indice automatico de campo unico;
+//   cursor ....... base64url de ["b1", segundos, nanossegundos, publicId], com
+//                  o Timestamp EXATO gravado em `criadoEm` e o publicId do
+//                  ULTIMO ITEM ENTREGUE. Nenhum UID, nem codificado;
+//   retomada ..... o servidor resolve o publicId -> uid e continua com
+//                  `startAfter(Timestamp, uid)` POR VALORES: o bloqueio da
+//                  ancora pode ter sido apagado que a posicao continua valendo;
+//   ancora sem
+//   identidade ... retomada INCLUSIVA no Timestamp (`startAt`): pode repetir
+//                  itens do mesmo instante exato, nunca pula. O cliente
+//                  deduplica por publicId;
+//   sem identidade item cujo bloqueado nao tem publicId e OMITIDO, nao conta na
+//                  pagina e nunca vira ancora;
+//   orcamento .... ate 4 lotes de (limite + 1). Esgotado SEM item entregavel e
+//                  sem esgotar a consulta -> `unavailable`/`varreduraIncompleta`,
+//                  sem pagina vazia e sem cursor novo; com itens entregues, o
+//                  cursor so avanca ate o ultimo deles;
+//   fim .......... `proximoCursor: null` SO quando a consulta esgotou;
+//   invalido ..... `invalid-argument`/`cursorInvalido`. O formato com publicId
+//                  `null` nao existe (a API nao foi publicada).
+
+const PAGINA_PADRAO_DE_BLOQUEIOS = 25;
+const PAGINA_MAXIMA_DE_BLOQUEIOS = 50;
+const LOTES_MAXIMOS_DE_BLOQUEIOS = 4;
+const MARCA_DO_CURSOR_DE_BLOQUEIOS = "b1";
+
+interface CursorDeBloqueios {
+  segundos: number;
+  nanos: number;
+  publicId: string;
+}
+
+function codificarCursorDeBloqueios(c: CursorDeBloqueios): string {
+  return Buffer.from(
+    JSON.stringify([MARCA_DO_CURSOR_DE_BLOQUEIOS, c.segundos, c.nanos, c.publicId]),
+    "utf8"
+  ).toString("base64url");
+}
+
+/// `null` = primeira pagina. Qualquer outra coisa que nao seja um cursor
+/// emitido por esta funcao e `cursorInvalido`.
+function decodificarCursorDeBloqueios(bruto: unknown): CursorDeBloqueios | null {
+  if (bruto === undefined || bruto === null) return null;
+  const invalido = (): never => {
+    throw new HttpsError("invalid-argument", "cursorInvalido", { recusa: "cursorInvalido" });
+  };
+  if (typeof bruto !== "string" || bruto.length === 0 || bruto.length > 512) invalido();
+  let partes: unknown;
+  try {
+    partes = JSON.parse(Buffer.from(bruto as string, "base64url").toString("utf8"));
+  } catch {
+    return invalido();
+  }
+  if (!Array.isArray(partes) || partes.length !== 4) return invalido();
+  const [marca, segundos, nanos, publicId] = partes as unknown[];
+  if (marca !== MARCA_DO_CURSOR_DE_BLOQUEIOS) return invalido();
+  // Faixa do proprio `Timestamp` (anos 1 a 9999): fora dela o construtor lanca,
+  // e um cursor forjado nao pode virar erro interno.
+  if (
+    typeof segundos !== "number" ||
+    !Number.isSafeInteger(segundos) ||
+    segundos < -62_135_596_800 ||
+    segundos > 253_402_300_799
+  ) {
+    return invalido();
+  }
+  if (
+    typeof nanos !== "number" ||
+    !Number.isInteger(nanos) ||
+    nanos < 0 ||
+    nanos > 999_999_999
+  ) {
+    return invalido();
+  }
+  const normalizado = dominio.normalizarPublicId(publicId).publicId;
+  if (!normalizado) return invalido();
+  return { segundos: segundos as number, nanos: nanos as number, publicId: normalizado };
+}
+
+function limiteDeBloqueios(data: unknown): number {
+  const bruto = (data as Record<string, unknown> | undefined)?.limite;
+  const n = typeof bruto === "number" ? Math.floor(bruto) : 0;
+  if (n <= 0) return PAGINA_PADRAO_DE_BLOQUEIOS;
+  return Math.min(n, PAGINA_MAXIMA_DE_BLOQUEIOS);
+}
+
+interface BloqueioEntregavel {
+  publicId: string;
+  criadoEm: FirebaseFirestore.Timestamp;
+}
+
+/// SOCIAL-02 C4 (O15): a lista dos PROPRIOS bloqueios, por identidade publica.
+///
+/// Qualquer plano, so o dono. PONTO DE AUTORIZACAO: a transacao que le o diario
+/// do dono e o primeiro lote. Lotes seguintes e identidades sao leitura de
+/// apresentacao da propria lista, sem promessa de instante unico.
+export const listarMeusBloqueios = onCall(opcoesCliente, async (req) => {
+  const dono = exigirAutenticacao(req);
+  const cursor = decodificarCursorDeBloqueios(
+    (req.data as Record<string, unknown> | undefined)?.cursor
+  );
+  const limite = limiteDeBloqueios(req.data);
+  const lote = limite + 1;
+
+  const blocos = db().collection("users").doc(dono).collection("blocks");
+  const base = blocos
+    .orderBy("criadoEm", "desc")
+    .orderBy(FieldPath.documentId(), "desc");
+
+  let inicio: FirebaseFirestore.Query = base;
+  if (cursor) {
+    const instante = new Timestamp(cursor.segundos, cursor.nanos);
+    const indice = await db().collection(C_INDICE_PUBLICO).doc(cursor.publicId).get();
+    const uidAncora = indice.data()?.uid;
+    inicio =
+      typeof uidAncora === "string" && uidAncora.length > 0
+        ? base.startAfter(instante, uidAncora)
+        : base.startAt(instante);
+  }
+
+  const primeiro = await db().runTransaction(async (tx) => {
+    const diario = await tx.get(db().collection(C_DIARIO_EXCLUSAO).doc(dono));
+    if (diario.exists) return null;
+    return tx.get(inicio.limit(lote));
+  });
+  if (primeiro === null) acaoIndisponivel();
+
+  const entregaveis: BloqueioEntregavel[] = [];
+  let docs = primeiro.docs;
+  let lotesLidos = 1;
+  let esgotou = false;
+  for (;;) {
+    let ultimo: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+    if (docs.length > 0) {
+      const identidades = await db().getAll(
+        ...docs.map((d) => db().collection(C_IDENTIDADES).doc(d.id))
+      );
+      for (let i = 0; i < docs.length && entregaveis.length < lote; i++) {
+        ultimo = docs[i];
+        const publicId = identidades[i].data()?.publicId;
+        const criadoEm = docs[i].get("criadoEm");
+        if (
+          typeof publicId === "string" &&
+          publicId.length > 0 &&
+          criadoEm instanceof Timestamp
+        ) {
+          entregaveis.push({ publicId, criadoEm });
+        }
+      }
+    }
+    if (entregaveis.length >= lote) break;
+    if (docs.length < lote) {
+      esgotou = true;
+      break;
+    }
+    if (lotesLidos >= LOTES_MAXIMOS_DE_BLOQUEIOS || ultimo === null) break;
+    docs = (await base.startAfter(ultimo as FirebaseFirestore.QueryDocumentSnapshot).limit(lote).get()).docs;
+    lotesLidos++;
+  }
+
+  const entregues = entregaveis.slice(0, limite);
+  let proximoCursor: string | null = null;
+  if (entregaveis.length > limite || !esgotou) {
+    const ancora = entregues[entregues.length - 1];
+    if (!ancora) {
+      // Orcamento esgotado sem nenhum item que sirva de ancora: nao ha
+      // continuacao segura. Nada de pagina vazia como sucesso, nada de cursor
+      // que avance por instante. O chamador conserva o cursor anterior.
+      throw new HttpsError("unavailable", "lista temporariamente indisponivel", {
+        recusa: "varreduraIncompleta",
+      });
+    }
+    proximoCursor = codificarCursorDeBloqueios({
+      segundos: ancora.criadoEm.seconds,
+      nanos: ancora.criadoEm.nanoseconds,
+      publicId: ancora.publicId,
+    });
+  }
+
+  const perfis =
+    entregues.length > 0
+      ? await db().getAll(
+          ...entregues.map((e) => db().collection(C_PERFIS_PUBLICOS).doc(e.publicId))
+        )
+      : [];
+
+  return respostaDeBloqueioSegura({
+    itens: entregues.map((e, i) => {
+      const p: Record<string, unknown> = perfis[i]?.data() ?? {};
+      return {
+        publicId: e.publicId,
+        apelido: typeof p.apelido === "string" ? p.apelido : "",
+        avatarRef: typeof p.avatarRef === "string" ? p.avatarRef : null,
+        bloqueadoEm: e.criadoEm.toDate().toISOString(),
+      };
+    }),
+    proximoCursor,
+  });
 });
 
 /// Pode quem chama iniciar contato social com `alvoUid`?

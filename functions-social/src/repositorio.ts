@@ -751,6 +751,19 @@ export interface ContextoRelacao {
 export interface ResultadoOperacao {
   veredito: VereditoAmizade;
   estadoFinal: RelacaoLida["estado"];
+  /// SOCIAL-02 C4: so com `exigirSemDiario`. Uma das pontas tinha diario de
+  /// exclusao NESTA transacao, e nada foi escrito: a limpeza e da O14.
+  impedidaPorExclusao?: boolean;
+}
+
+/// Opcoes INTERNAS de `operarRelacao`. Nenhuma rota de jogador as passa.
+export interface OpcoesDaRelacao {
+  /// SOCIAL-02 C4 (adendo R1 §2.1): le `accountDeletions` das DUAS pontas no
+  /// MESMO `getAll` da relacao e, se qualquer um existir, nao escreve nada.
+  /// Usada SO pela faxina legada de amizade (`desfazerPorBloqueio`). Criacao,
+  /// aceite, recusa, cancelamento e remocao nao a passam: o conjunto lido e o
+  /// comportamento dessas rotas ficam identicos aos de antes da C4.
+  exigirSemDiario?: boolean;
 }
 
 /// Aplica uma acao sobre a relacao entre dois jogadores, sob transacao unica.
@@ -767,7 +780,8 @@ export interface ResultadoOperacao {
 export async function operarRelacao(
   uidChamador: string,
   uidOutro: string,
-  decidir: (ctx: ContextoRelacao) => VereditoAmizade
+  decidir: (ctx: ContextoRelacao) => VereditoAmizade,
+  opcoes: OpcoesDaRelacao = {}
 ): Promise<ResultadoOperacao> {
   const { pairKey, membros } = dominio.chaveDoPar(uidChamador, uidOutro);
   const refRelacao = db().collection(C_AMIZADES).doc(pairKey);
@@ -775,17 +789,19 @@ export async function operarRelacao(
   const refSocialOutro = db().collection(C_SOCIAL_JOGADOR).doc(uidOutro);
   const refIdChamador = db().collection(C_IDENTIDADES).doc(uidChamador);
   const refIdOutro = db().collection(C_IDENTIDADES).doc(uidOutro);
+  const lidas = [refRelacao, refSocialChamador, refSocialOutro, refIdChamador, refIdOutro];
+  if (opcoes.exigirSemDiario) {
+    lidas.push(
+      db().collection(C_DIARIO_EXCLUSAO).doc(uidChamador),
+      db().collection(C_DIARIO_EXCLUSAO).doc(uidOutro)
+    );
+  }
 
   return db().runTransaction(async (tx) => {
     // TODAS as leituras antes de qualquer escrita — exigencia do Firestore, e
     // tambem a razao de `estadoDeContato` receber a transacao.
-    const [relDoc, socChamador, socOutro, idChamador, idOutro] = await tx.getAll(
-      refRelacao,
-      refSocialChamador,
-      refSocialOutro,
-      refIdChamador,
-      refIdOutro
-    );
+    const [relDoc, socChamador, socOutro, idChamador, idOutro, ...diarios] =
+      await tx.getAll(...lidas);
     const contato = await estadoDeContato(uidChamador, uidOutro, tx);
 
     // `membros` vem do PAR, e nao do documento, quando o documento nao existe.
@@ -799,6 +815,23 @@ export async function operarRelacao(
     const lida = lerRelacao(dados(relDoc));
     const relacao =
       lida.membros.length === 2 ? lida : { ...lida, membros };
+
+    // SOCIAL-02 C4: com a opcao interna, diario em qualquer ponta impede TODA
+    // escrita desta transacao — inclusive os contadores de `playerSocial` que o
+    // caso `apagar` ajusta. Sem a opcao, `diarios` e vazio.
+    if (diarios.some((d) => d.exists)) {
+      return {
+        veredito: {
+          aceita: false,
+          recusa: null,
+          acao: "nenhuma",
+          repeticao: false,
+        } as VereditoAmizade,
+        estadoFinal: relacao.estado,
+        impedidaPorExclusao: true,
+      };
+    }
+
     const publicIdChamador = dados(idChamador)?.publicId;
     const publicIdOutro = dados(idOutro)?.publicId;
 
@@ -1202,10 +1235,15 @@ function decodificarCursor(cursor: string): [string, string] | null {
 /// faxina nao e explorável: durante ela, a amizade existe no banco mas nenhuma
 /// acao social passa. A faxina serve para que o estado do banco reflita a
 /// realidade, e nao para produzi-la.
+///
+/// SOCIAL-02 C4 (adendo R1 §2.1): passa `exigirSemDiario`. O caso `apagar`
+/// tambem grava contadores em `playerSocial`, entao a transacao le os diarios
+/// das DUAS pontas junto com a relacao e, com qualquer um presente, nao escreve
+/// nada (`impedidaPorExclusao`). A regra de amizade nao muda.
 export async function desfazerPorBloqueio(
   bloqueadorUid: string,
   bloqueadoUid: string
-): Promise<{ desfez: boolean }> {
+): Promise<{ desfez: boolean; impedidaPorExclusao: boolean }> {
   const resultado = await operarRelacao(bloqueadorUid, bloqueadoUid, (ctx) => {
     if (ctx.relacao.estado === "nenhuma") {
       return {
@@ -1225,88 +1263,179 @@ export async function desfazerPorBloqueio(
       acao: "apagar",
       repeticao: false,
     } as VereditoAmizade;
-  });
-  return { desfez: resultado.veredito.aceita };
+  }, { exigirSemDiario: true });
+  return {
+    desfez: resultado.veredito.aceita,
+    impedidaPorExclusao: resultado.impedidaPorExclusao === true,
+  };
 }
 
 // ===========================================================================
 // RECONCILIACAO (§20)
 // ===========================================================================
 
-/// Reconstroi as projecoes de UM jogador a partir da fonte de verdade.
+/// Reconstroi as projecoes de amizade de UM jogador a partir da fonte de verdade.
 ///
 /// Existe porque §20 pede o "mecanismo de reparo/reconciliacao" quando ha
-/// projecoes. O unico caminho que pode deixa-las velhas e o leque de troca de
-/// apelido (ver o cabecalho deste arquivo); esta funcao e a resposta a ele, e
-/// tambem a rede para qualquer defeito futuro.
+/// projecoes. Le o canonico e reescreve as projecoes; se discordarem, o
+/// canonico vence.
 ///
-/// Le SO o canonico e reescreve as projecoes. Se as duas discordarem, o canonico
-/// vence — e por isso ele e o canonico.
-export async function reconciliarProjecoes(
-  uid: string
-): Promise<{ amigos: number; solicitacoes: number }> {
+/// SOCIAL-02 C4 (adendo R1 §2.2): deixou de ser um `WriteBatch` sem diario. Cada
+/// UNIDADE que escreve e uma transacao que le, nela propria, o diario do dono e
+/// — quando a escrita envolve outra conta — o da outra ponta:
+///   * A-par (uma por relacao): diarios das duas pontas + canonico relido +
+///     as duas projecoes do dono; escreve so a projecao do dono;
+///   * A-contador: diario do dono + `playerSocial` + as duas contagens, por
+///     consulta NA transacao; escreve os contadores absolutos.
+/// Diario do dono numa unidade: a rotina para (`ContaEmExclusao`) e o que foi
+/// confirmado antes fica. Diario da outra ponta: a unidade e pulada.
+async function reconciliarAmizadeDe(
+  uid: string,
+  controle: { confirmadas: number }
+): Promise<RelatorioDeAmizade> {
+  // Descoberta FORA de transacao, como antes: ela so descobre; quem decide e a
+  // releitura do canonico dentro de cada unidade.
   const snap = await db()
     .collection(C_AMIZADES)
     .where("membros", "array-contains", uid)
     .get();
 
+  const outros: string[] = [];
   const perfisNecessarios: string[] = [];
   for (const d of snap.docs) {
     const r = lerRelacao(d.data() as Record<string, unknown>);
     const outro = r.membros.find((m) => m !== uid);
-    if (outro && r.publicIds[outro]) perfisNecessarios.push(r.publicIds[outro]);
+    if (!outro) continue;
+    outros.push(outro);
+    if (r.publicIds[outro]) perfisNecessarios.push(r.publicIds[outro]);
   }
+  // `apelidoOrdenacao` e so ordenacao: lido fora, como sempre foi.
   const perfis = await lerPerfisPublicos(perfisNecessarios);
 
-  const lote = db().batch();
-  let amigos = 0;
+  let amigosProjetados = 0;
   let solicitacoes = 0;
+  let puladasPorExclusao = 0;
+  for (const outro of outros) {
+    const desfecho = await reconciliarParDeAmizade(uid, outro, perfis);
+    if (desfecho === "contaEmExclusao") throw new ContaEmExclusao(controle.confirmadas);
+    if (desfecho === "outraPontaEmExclusao") puladasPorExclusao++;
+    if (desfecho === "amigos") {
+      amigosProjetados++;
+      controle.confirmadas++;
+    }
+    if (desfecho === "pendente") {
+      solicitacoes++;
+      controle.confirmadas++;
+    }
+  }
 
-  for (const d of snap.docs) {
-    const r = lerRelacao(d.data() as Record<string, unknown>);
-    const outro = r.membros.find((m) => m !== uid);
-    if (!outro) continue;
+  const contador = await recontarContadoresDeAmizade(uid);
+  if (contador.tipo === "contaEmExclusao") throw new ContaEmExclusao(controle.confirmadas);
+  if (contador.tipo === "recontado") controle.confirmadas++;
+
+  return {
+    amigos: contador.tipo === "recontado" ? contador.amigos : amigosProjetados,
+    solicitacoes,
+    puladasPorExclusao,
+    recontagem: contador.tipo === "recontado" ? "ok" : "acimaDoLimite",
+  };
+}
+
+type DesfechoParDeAmizade =
+  | "contaEmExclusao"
+  | "outraPontaEmExclusao"
+  | "semCanonico"
+  | "amigos"
+  | "pendente";
+
+/// Unidade A-par (E7): a projecao do dono para UMA relacao.
+async function reconciliarParDeAmizade(
+  uid: string,
+  outro: string,
+  perfis: Map<string, Record<string, unknown>>
+): Promise<DesfechoParDeAmizade> {
+  const { pairKey } = dominio.chaveDoPar(uid, outro);
+  return db().runTransaction<DesfechoParDeAmizade>(async (tx) => {
+    const [diarioDono, diarioOutro, relDoc] = await tx.getAll(
+      db().collection(C_DIARIO_EXCLUSAO).doc(uid),
+      db().collection(C_DIARIO_EXCLUSAO).doc(outro),
+      db().collection(C_AMIZADES).doc(pairKey),
+      refAmigo(uid, outro),
+      refSolicitacao(uid, outro)
+    );
+    if (diarioDono.exists) return "contaEmExclusao";
+    if (diarioOutro.exists) return "outraPontaEmExclusao";
+    const r = lerRelacao(dados(relDoc));
+    if (!relDoc.exists || r.estado === "nenhuma") return "semCanonico";
     const publicIdOutro = r.publicIds[outro] ?? "";
 
     if (r.estado === "amigos") {
-      amigos++;
-      lote.set(refAmigo(uid, outro), {
+      tx.set(refAmigo(uid, outro), {
         publicId: publicIdOutro,
         apelidoOrdenacao: ordenacaoDe(perfis, publicIdOutro),
         amigosDesde: r.amigosDesde,
         esquema: LIMITES.esquema,
       });
-      lote.delete(refSolicitacao(uid, outro));
-    } else if (r.estado === "pendente") {
-      solicitacoes++;
-      lote.set(refSolicitacao(uid, outro), {
-        direcao: r.solicitanteUid === uid ? "enviada" : "recebida",
-        publicId: publicIdOutro,
-        solicitadaEm: r.solicitadaEm,
-        esquema: LIMITES.esquema,
-      });
-      lote.delete(refAmigo(uid, outro));
+      tx.delete(refSolicitacao(uid, outro));
+      return "amigos";
     }
-  }
+    tx.set(refSolicitacao(uid, outro), {
+      direcao: r.solicitanteUid === uid ? "enviada" : "recebida",
+      publicId: publicIdOutro,
+      solicitadaEm: r.solicitadaEm,
+      esquema: LIMITES.esquema,
+    });
+    tx.delete(refAmigo(uid, outro));
+    return "pendente";
+  });
+}
 
-  // Os contadores tambem sao derivados: reconstrui-los aqui e o que impede que
-  // um teto fique travado por um contador que ficou alto sem relacao real.
-  lote.set(
-    db().collection(C_SOCIAL_JOGADOR).doc(uid),
-    {
-      uid,
-      amigos,
-      solicitacoesEnviadas: snap.docs.filter((d) => {
-        const r = lerRelacao(d.data() as Record<string, unknown>);
-        return r.estado === "pendente" && r.solicitanteUid === uid;
-      }).length,
-      atualizadoEm: agoraUtc(),
-    },
-    { merge: true }
-  );
+type DesfechoContadorDeAmizade =
+  | { tipo: "contaEmExclusao" }
+  | { tipo: "acimaDoLimite" }
+  | { tipo: "recontado"; amigos: number; solicitacoesEnviadas: number };
 
-  await lote.commit();
-  return { amigos, solicitacoes };
+/// Unidade A-contador (E8): `playerSocial/{uid}` com valores ABSOLUTOS.
+///
+/// As duas contagens sao consultas lidas NA transacao. Toda escrita de amizade
+/// grava a relacao e `playerSocial` na propria transacao, entao serializa com
+/// esta. Acima do teto verificavel nada e escrito.
+async function recontarContadoresDeAmizade(uid: string): Promise<DesfechoContadorDeAmizade> {
+  return db().runTransaction<DesfechoContadorDeAmizade>(async (tx) => {
+    const [diario] = await tx.getAll(
+      db().collection(C_DIARIO_EXCLUSAO).doc(uid),
+      db().collection(C_SOCIAL_JOGADOR).doc(uid)
+    );
+    if (diario.exists) return { tipo: "contaEmExclusao" };
+    const amigos = await tx.get(
+      db()
+        .collection(C_AMIZADES)
+        .where("membros", "array-contains", uid)
+        .where("estado", "==", "amigos")
+        .limit(LIMITE_DE_RECONTAGEM)
+    );
+    const enviadas = await tx.get(
+      db()
+        .collection(C_AMIZADES)
+        .where("solicitanteUid", "==", uid)
+        .where("estado", "==", "pendente")
+        .limit(LIMITE_DE_RECONTAGEM)
+    );
+    if (amigos.size >= LIMITE_DE_RECONTAGEM || enviadas.size >= LIMITE_DE_RECONTAGEM) {
+      return { tipo: "acimaDoLimite" };
+    }
+    tx.set(
+      db().collection(C_SOCIAL_JOGADOR).doc(uid),
+      {
+        uid,
+        amigos: amigos.size,
+        solicitacoesEnviadas: enviadas.size,
+        atualizadoEm: agoraUtc(),
+      },
+      { merge: true }
+    );
+    return { tipo: "recontado", amigos: amigos.size, solicitacoesEnviadas: enviadas.size };
+  });
 }
 
 /// Propaga a nova chave de ordenacao do apelido para as projecoes dos amigos.
@@ -1985,4 +2114,416 @@ export async function contadoresProprios(uid: string): Promise<ContadoresProprio
       privacidade: privacidadeParaExibir(autoridade.social?.privacidade),
     },
   };
+}
+
+// ===========================================================================
+// SOCIAL-02 C4 — FAXINA DE SEGUIR POR CORTE E RECONCILIACAO ADMINISTRATIVA
+// ===========================================================================
+//
+// O corte invalida o acesso IMEDIATAMENTE (toda leitura e todo comando da C3
+// comparam com o corte atual). O que segue aqui so ARRUMA o armazenamento:
+// encerra o canonico cortado, apaga P1–P4 da direcao e, quando o fisico era
+// `pendente`, debita o contador do REMETENTE (o seguidor da direcao) na MESMA
+// transacao. Nada do evento decide: o corte atual e sempre relido.
+//
+// Cada UNIDADE que escreve le, nela propria, os diarios que a protegem (adendo
+// R1 §2): uma unidade que confirmar depois da criacao de um diario o tera lido.
+
+/// Teto de leitura de uma recontagem ou descoberta (o mesmo da U2 da C2).
+const LIMITE_DE_RECONTAGEM = 1000;
+
+/// O dono da reconciliacao tem diario de exclusao, lido na transacao de uma
+/// unidade. `unidadesConfirmadas` conta o que foi confirmado ANTES dele, e que
+/// nao e desfeito.
+export class ContaEmExclusao extends Error {
+  readonly unidadesConfirmadas: number;
+  constructor(unidadesConfirmadas: number) {
+    super("conta em exclusao");
+    this.name = "ContaEmExclusao";
+    this.unidadesConfirmadas = unidadesConfirmadas;
+  }
+}
+
+export interface RelatorioDeAmizade {
+  amigos: number;
+  solicitacoes: number;
+  puladasPorExclusao: number;
+  recontagem: "ok" | "acimaDoLimite";
+}
+
+export type DesfechoDaDirecao =
+  | "semCanonico"
+  | "semMudanca"
+  | "encerrada"
+  | "espelhosReescritos"
+  | "emExclusao"
+  | "donoEmExclusao"
+  | "outraPontaEmExclusao"
+  | "contadorInvalidoDoRemetente"
+  | "pendenteSemRitmo"
+  | "canonicoIlegivel"
+  | "semIdentidade";
+
+/// Desfechos que nenhuma nova tentativa resolve: dado do remetente ou do
+/// canonico que precisa de reparo proprio. Sao RETORNADOS, nunca lancados — o
+/// gatilho os registra e nao relanca. Erro LANCADO nunca e tratado como um
+/// destes.
+export const DESFECHOS_PERMANENTES: ReadonlySet<DesfechoDaDirecao> = new Set<DesfechoDaDirecao>([
+  "contadorInvalidoDoRemetente",
+  "pendenteSemRitmo",
+  "canonicoIlegivel",
+  "semIdentidade",
+]);
+
+/// Codigos do SDK do Firestore (gRPC numerico e as formas em texto) que uma
+/// nova tentativa pode resolver.
+const CODIGOS_TRANSITORIOS = new Set<string | number>([
+  4,
+  8,
+  10,
+  13,
+  14,
+  "deadline-exceeded",
+  "resource-exhausted",
+  "aborted",
+  "internal",
+  "unavailable",
+  "DEADLINE_EXCEEDED",
+  "RESOURCE_EXHAUSTED",
+  "ABORTED",
+  "INTERNAL",
+  "UNAVAILABLE",
+]);
+
+/// Classifica uma falha LANCADA pela faxina. So para o registro: transitoria ou
+/// nao classificada, as duas sao relancadas pelo gatilho.
+export function classificarFalha(erro: unknown): "transitorio" | "naoClassificado" {
+  const codigo = (erro as { code?: unknown } | null | undefined)?.code;
+  return (typeof codigo === "number" || typeof codigo === "string") &&
+    CODIGOS_TRANSITORIOS.has(codigo)
+    ? "transitorio"
+    : "naoClassificado";
+}
+
+function mesmoConteudo(
+  atual: Record<string, unknown> | undefined,
+  esperado: Record<string, unknown>
+): boolean {
+  if (!atual) return false;
+  const chavesAtuais = Object.keys(atual);
+  const chavesEsperadas = Object.keys(esperado);
+  if (chavesAtuais.length !== chavesEsperadas.length) return false;
+  return chavesEsperadas.every((k) => atual[k] === esperado[k]);
+}
+
+/// UMA direcao s -> d, numa transacao (E4 na faxina, E6 na reconciliacao).
+///
+/// LEITURAS, todas antes de qualquer escrita: canonico, corte do par, diarios
+/// das duas pontas, ritmo do SEGUIDOR (o remetente), P1–P4 da direcao e, so na
+/// reconciliacao, as identidades das duas pontas.
+///
+/// [dono] `null` = faxina: diario em qualquer ponta -> sem escrita. Na
+/// reconciliacao, diario do dono -> `donoEmExclusao` (a rotina para) e diario
+/// da outra ponta -> `outraPontaEmExclusao` (pula).
+async function tratarDirecaoDeSeguir(
+  seguidor: string,
+  seguido: string,
+  dono: string | null
+): Promise<DesfechoDaDirecao> {
+  const reconciliando = dono !== null;
+  const par = dominio.chaveDoParDeCorte(seguidor, seguido);
+  const refCanonico = db().collection(C_SEGUIR).doc(chaveDirigida(seguidor, seguido));
+  const refCorte = db().collection(par.colecao).doc(par.chave);
+  const refRitmo = db().collection(C_RITMO_SOCIAL).doc(seguidor);
+  const espelhos = espelhosDaDirecao(seguidor, seguido);
+  const ordem = Object.keys(espelhos) as EspelhoSeguir[];
+  const lidas = [
+    refCanonico,
+    refCorte,
+    db().collection(C_DIARIO_EXCLUSAO).doc(seguidor),
+    db().collection(C_DIARIO_EXCLUSAO).doc(seguido),
+    refRitmo,
+    ...ordem.map((k) => espelhos[k]),
+  ];
+  if (reconciliando) {
+    lidas.push(
+      db().collection(C_IDENTIDADES).doc(seguidor),
+      db().collection(C_IDENTIDADES).doc(seguido)
+    );
+  }
+
+  return db().runTransaction<DesfechoDaDirecao>(async (tx) => {
+    const lidos = await tx.getAll(...lidas);
+    const [canonico, corte, diarioSeguidor, diarioSeguido, ritmo] = lidos;
+    const espelhosLidos = lidos.slice(5, 5 + ordem.length);
+    const identidades = lidos.slice(5 + ordem.length);
+
+    if (!canonico.exists) return "semCanonico";
+    if (reconciliando) {
+      const diarioDono = dono === seguidor ? diarioSeguidor : diarioSeguido;
+      const diarioOutro = dono === seguidor ? diarioSeguido : diarioSeguidor;
+      if (diarioDono.exists) return "donoEmExclusao";
+      if (diarioOutro.exists) return "outraPontaEmExclusao";
+    } else if (diarioSeguidor.exists || diarioSeguido.exists) {
+      return "emExclusao";
+    }
+
+    const c: Record<string, unknown> = dados(canonico) ?? {};
+    const bruto = c.estado;
+    if (bruto !== "pendente" && bruto !== "confirmado" && bruto !== "encerrado") {
+      return "canonicoIlegivel";
+    }
+    const fisico = bruto as EstadoSeguir;
+    const corteAtual = textoOuNulo(dados(corte)?.corteId);
+    const corteNaCriacao = textoOuNulo(c.corteNaCriacao);
+    const veredito = dominio.avaliarFaxinaSeguir({
+      estadoFisico: fisico,
+      corteNaCriacao,
+      corteAtual,
+    });
+    const agora = agoraUtc();
+
+    if (veredito.encerrar) {
+      // O REMETENTE e o seguidor da direcao, seja ele quem bloqueou ou quem foi
+      // bloqueado. Sem contador conhecido, nada e escrito — nem o canonico.
+      let proximo: number | null = null;
+      if (fisico === "pendente") {
+        if (!ritmo.exists) return "pendenteSemRitmo";
+        const atual = dados(ritmo)?.[CAMPO_PENDENTES_ENVIADOS];
+        if (!contagemConhecida(atual)) return "contadorInvalidoDoRemetente";
+        proximo = atual + veredito.deltaPendentes;
+        // Sem max(0): negativo e inconsistencia, e nao vira zero.
+        if (!Number.isInteger(proximo) || proximo < 0) return "contadorInvalidoDoRemetente";
+      }
+      // `corteNaCriacao`, `criacoesRecentes` e `ultimaIntencao` ficam: a faxina
+      // nao e intencao de ninguem e nao consome nem apaga ritmo de criacao.
+      tx.set(
+        refCanonico,
+        {
+          estado: "encerrado",
+          ref: randomBytes(16).toString("base64url"),
+          encerradoEm: agora,
+          desde: null,
+        },
+        { merge: true }
+      );
+      const manter = new Set<EspelhoSeguir>(dominio.espelhosDoEstadoSeguir("encerrado").espelhos);
+      for (const k of ordem) {
+        if (!manter.has(k)) tx.delete(espelhos[k]);
+      }
+      if (proximo !== null) {
+        tx.set(
+          refRitmo,
+          { [CAMPO_PENDENTES_ENVIADOS]: proximo, atualizadoEm: agora, esquema: ESQUEMA_SEGUIR },
+          { merge: true }
+        );
+      }
+      return "encerrada";
+    }
+
+    if (!reconciliando) return "semMudanca";
+
+    // RECONCILIACAO: exatamente os espelhos do estado EFETIVO; os outros da
+    // mesma direcao sao apagados (P1–P4).
+    const efetivo = dominio.estadoEfetivoSeguir({
+      estadoFisico: fisico,
+      corteNaCriacao,
+      corteAtual,
+    }).estadoEfetivo;
+    const manter = new Set<EspelhoSeguir>(dominio.espelhosDoEstadoSeguir(efetivo).espelhos);
+    const pidSeguidor = textoOuNulo(dados(identidades[0])?.publicId);
+    const pidSeguido = textoOuNulo(dados(identidades[1])?.publicId);
+    if (manter.size > 0 && (!pidSeguidor || !pidSeguido)) return "semIdentidade";
+    const desde = textoOuNulo(c.desde) ?? textoOuNulo(c.confirmadoEm);
+    const solicitadoEm = textoOuNulo(c.solicitadoEm);
+    const precisaDesde = manter.has("seguindoDoSeguidor") || manter.has("seguidoresDoSeguido");
+    const precisaSolicitado =
+      manter.has("pedidoEnviadoDoSeguidor") || manter.has("pedidoRecebidoDoSeguido");
+    if ((precisaDesde && !desde) || (precisaSolicitado && !solicitadoEm)) {
+      return "canonicoIlegivel";
+    }
+    const referencia = dominio.tokenSeguir({ ref: textoOuNulo(c.ref), corte: corteAtual })
+      .referencia;
+    const conteudo: Record<EspelhoSeguir, Record<string, unknown>> = {
+      seguindoDoSeguidor: { publicId: pidSeguido, desde, referencia },
+      seguidoresDoSeguido: { publicId: pidSeguidor, desde, referencia },
+      pedidoEnviadoDoSeguidor: { publicId: pidSeguido, solicitadoEm, referencia },
+      pedidoRecebidoDoSeguido: { publicId: pidSeguidor, solicitadoEm, referencia },
+    };
+    let mudou = false;
+    for (let i = 0; i < ordem.length; i++) {
+      const k = ordem[i];
+      const atual = dados(espelhosLidos[i]);
+      if (manter.has(k)) {
+        if (!mesmoConteudo(atual, conteudo[k])) {
+          tx.set(espelhos[k], conteudo[k]);
+          mudou = true;
+        }
+      } else if (atual !== undefined) {
+        tx.delete(espelhos[k]);
+        mudou = true;
+      }
+    }
+    return mudou ? "espelhosReescritos" : "semMudanca";
+  });
+}
+
+/// A faxina de UMA direcao, chamada pelo gatilho de bloqueio (E4).
+export function faxinaSeguirDaDirecao(
+  seguidor: string,
+  seguido: string
+): Promise<DesfechoDaDirecao> {
+  return tratarDirecaoDeSeguir(seguidor, seguido, null);
+}
+
+type DesfechoDaRecontagem = "recontado" | "ausente" | "acimaDoLimite" | "donoEmExclusao";
+
+/// E5: recontagem ABSOLUTA de `pedidosPendentesEnviados` do proprio uid.
+///
+/// Vem ANTES de encerrar pedidos cortados (adendo R1 §5): com o contador
+/// invalido (fracionario, negativo, ilegivel), a recontagem a partir da fonte
+/// duravel e o que torna o encerramento possivel depois. Ritmo ausente NAO e
+/// criado, e `criacoes` nunca e tocado. Toda escrita que muda os pendentes do
+/// uid grava este mesmo documento, entao serializa com esta transacao.
+async function recontarRitmoDeSeguir(uid: string): Promise<DesfechoDaRecontagem> {
+  const refRitmo = db().collection(C_RITMO_SOCIAL).doc(uid);
+  return db().runTransaction<DesfechoDaRecontagem>(async (tx) => {
+    const [diario, ritmo] = await tx.getAll(
+      db().collection(C_DIARIO_EXCLUSAO).doc(uid),
+      refRitmo
+    );
+    if (diario.exists) return "donoEmExclusao";
+    if (!ritmo.exists) return "ausente";
+    const pendentes = await tx.get(
+      db()
+        .collection(C_SEGUIR)
+        .where("seguidorUid", "==", uid)
+        .where("estado", "==", "pendente")
+        .limit(LIMITE_DE_RECONTAGEM)
+    );
+    if (pendentes.size >= LIMITE_DE_RECONTAGEM) return "acimaDoLimite";
+    tx.set(
+      refRitmo,
+      {
+        [CAMPO_PENDENTES_ENVIADOS]: pendentes.size,
+        atualizadoEm: agoraUtc(),
+        esquema: ESQUEMA_SEGUIR,
+      },
+      { merge: true }
+    );
+    return "recontado";
+  });
+}
+
+/// Projecoes PROPRIAS de seguir sem canonico. So contadas e relatadas (DT-08):
+/// apaga-las fabricaria um historico vazio para um ator sem ritmo.
+async function contarResiduosDeSeguir(
+  uid: string
+): Promise<{ residuos: number; parcial: boolean }> {
+  const usuario = db().collection(C_USUARIOS).doc(uid);
+  const fontes: [string, (outro: string) => FirebaseFirestore.DocumentReference][] = [
+    ["seguindo", (o) => db().collection(C_SEGUIR).doc(chaveDirigida(uid, o))],
+    ["pedidosSeguirEnviados", (o) => db().collection(C_SEGUIR).doc(chaveDirigida(uid, o))],
+    ["seguidores", (o) => db().collection(C_SEGUIR).doc(chaveDirigida(o, uid))],
+    ["pedidosSeguirRecebidos", (o) => db().collection(C_SEGUIR).doc(chaveDirigida(o, uid))],
+  ];
+  let residuos = 0;
+  let parcial = false;
+  for (const [sub, canonicoDe] of fontes) {
+    const snap = await usuario.collection(sub).limit(LIMITE_DE_RECONTAGEM).get();
+    if (snap.size >= LIMITE_DE_RECONTAGEM) parcial = true;
+    if (snap.empty) continue;
+    const canonicos = await db().getAll(...snap.docs.map((d) => canonicoDe(d.id)));
+    residuos += canonicos.filter((c) => !c.exists).length;
+  }
+  return { residuos, parcial };
+}
+
+export interface RelatorioDeSeguir {
+  ritmo: "recontado" | "ausente" | "acimaDoLimite";
+  direcoes: number;
+  encerradasPorCorte: number;
+  espelhosReescritos: number;
+  puladasPorExclusao: number;
+  contadorInvalidoDoRemetente: number;
+  pendentesSemRitmo: number;
+  naoTratadas: number;
+  residuos: number;
+  descobertaParcial: boolean;
+}
+
+export interface RelatorioDeReconciliacao {
+  amizade: RelatorioDeAmizade;
+  seguir: RelatorioDeSeguir;
+}
+
+/// `reconciliarPerfilSocial` (adendo R1 §5), na ordem:
+///   1. diario do uid ja presente -> `ContaEmExclusao(0)`, nenhuma escrita;
+///   2. recontagem absoluta do proprio ritmo (E5);
+///   3. cada direcao de seguir do uid, numa transacao propria (E6) — uma
+///      direcao com erro nao impede as outras;
+///   4. amizade por unidades (E7, E8);
+///   5. residuos de seguir, so relatados.
+/// Diario do uid em qualquer unidade: para, sem desfazer o ja confirmado.
+export async function reconciliarPerfil(uid: string): Promise<RelatorioDeReconciliacao> {
+  const diario = await db().collection(C_DIARIO_EXCLUSAO).doc(uid).get();
+  if (diario.exists) throw new ContaEmExclusao(0);
+  const controle = { confirmadas: 0 };
+
+  const ritmo = await recontarRitmoDeSeguir(uid);
+  if (ritmo === "donoEmExclusao") throw new ContaEmExclusao(controle.confirmadas);
+  if (ritmo === "recontado") controle.confirmadas++;
+
+  // Descoberta fora de transacao: so descobre. Cada unidade rele o canonico.
+  const [saida, entrada] = await Promise.all([
+    db().collection(C_SEGUIR).where("seguidorUid", "==", uid).limit(LIMITE_DE_RECONTAGEM).get(),
+    db().collection(C_SEGUIR).where("seguidoUid", "==", uid).limit(LIMITE_DE_RECONTAGEM).get(),
+  ]);
+  const seguir: RelatorioDeSeguir = {
+    ritmo,
+    direcoes: 0,
+    encerradasPorCorte: 0,
+    espelhosReescritos: 0,
+    puladasPorExclusao: 0,
+    contadorInvalidoDoRemetente: 0,
+    pendentesSemRitmo: 0,
+    naoTratadas: 0,
+    residuos: 0,
+    descobertaParcial:
+      saida.size >= LIMITE_DE_RECONTAGEM || entrada.size >= LIMITE_DE_RECONTAGEM,
+  };
+  for (const d of [...saida.docs, ...entrada.docs]) {
+    const s = d.get("seguidorUid");
+    const t = d.get("seguidoUid");
+    if (typeof s !== "string" || typeof t !== "string" || !s || !t || s === t) {
+      seguir.naoTratadas++;
+      continue;
+    }
+    seguir.direcoes++;
+    const desfecho = await tratarDirecaoDeSeguir(s, t, uid);
+    if (desfecho === "donoEmExclusao") throw new ContaEmExclusao(controle.confirmadas);
+    if (desfecho === "encerrada") {
+      seguir.encerradasPorCorte++;
+      controle.confirmadas++;
+    } else if (desfecho === "espelhosReescritos") {
+      seguir.espelhosReescritos++;
+      controle.confirmadas++;
+    } else if (desfecho === "outraPontaEmExclusao") {
+      seguir.puladasPorExclusao++;
+    } else if (desfecho === "contadorInvalidoDoRemetente") {
+      seguir.contadorInvalidoDoRemetente++;
+    } else if (desfecho === "pendenteSemRitmo") {
+      seguir.pendentesSemRitmo++;
+    } else if (desfecho === "canonicoIlegivel" || desfecho === "semIdentidade") {
+      seguir.naoTratadas++;
+    }
+  }
+
+  const amizade = await reconciliarAmizadeDe(uid, controle);
+
+  const residuos = await contarResiduosDeSeguir(uid);
+  seguir.residuos = residuos.residuos;
+  if (residuos.parcial) seguir.descobertaParcial = true;
+
+  return { amizade, seguir };
 }

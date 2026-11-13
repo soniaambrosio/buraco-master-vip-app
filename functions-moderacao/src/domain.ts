@@ -30,6 +30,8 @@ interface PonteModeracao {
   idDeMensagem: PonteJs;
   normalizarPublicId: PonteJs;
   catalogo: PonteJs;
+  /// SOCIAL-02 C4: ja exportada pelo bundle desde a C1 (`corte_relacao.dart`).
+  chaveDoParDeCorte: PonteJs;
 }
 
 const ponte = (globalThis as unknown as { bmvModeracao?: PonteModeracao })
@@ -337,6 +339,19 @@ export const dominio = {
   /// digitacao: ele importa a decisao pelo bundle.
   normalizarPublicId: (publicId: unknown): { publicId: string | null } =>
     chamar(ponte.normalizarPublicId, { publicId }),
+
+  /// A chave do registro de corte do par (SOCIAL-02 C4).
+  ///
+  /// A regra mora em app/lib/moderacao/corte_relacao.dart e e a MESMA que o
+  /// bundle social usa: quem grava o bloqueio grava o corte com esta chave, e
+  /// quem le o corte (o Social) a deriva pela mesma funcao. UID vazio, com
+  /// caractere reservado ou par de um jogador consigo mesmo LANCA aqui — o
+  /// bundle devolve `erro`, e `chamar` o transforma em excecao.
+  chaveDoParDeCorte: (uidA: string, uidB: string): {
+    chave: string;
+    membros: string[];
+    colecao: string;
+  } => chamar(ponte.chaveDoParDeCorte, { uidA, uidB }),
 
   /// O `messageId` derivado de autor + intencao, SEM decidir nada.
   ///

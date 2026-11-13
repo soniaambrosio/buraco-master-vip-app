@@ -634,6 +634,635 @@ describe('bloqueio pela Function', { skip: !process.env.FUNCTIONS_EMULATOR_HOST 
 });
 
 // ===========================================================================
+// SOCIAL-02 C4 — bloqueio com corte duravel, desbloqueio e lista por publicId.
+//
+// Callables REAIS da Moderacao (`moderacaoemu` sobe so esta codebase). O que o
+// teste semeia direto (identidades, bloqueios em massa com o mesmo instante,
+// diarios) e MONTAGEM declarada: nenhuma flag, endpoint ou modo de produto.
+// A faxina do Social (gatilho) NAO roda aqui — e a prova dividida B-1: este
+// arquivo prova a callable e o FORMATO gravado; social.test.js usa esse
+// formato e prova o gatilho.
+// ===========================================================================
+describe('bloqueio, corte e lista (SOCIAL-02 C4)', { skip: !process.env.FUNCTIONS_EMULATOR_HOST }, () => {
+  const { initializeApp } = require('firebase/app');
+  const { getAuth, connectAuthEmulator, signInAnonymously } = require('firebase/auth');
+  const {
+    getFunctions, connectFunctionsEmulator, httpsCallable,
+  } = require('firebase/functions');
+  const { writeBatch, runTransaction } = require('firebase/firestore');
+
+  const ALFABETO = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  const PRIVADAS = ['uid', 'bloqueadorUid', 'bloqueadoUid', 'token', 'membros', 'corteId'];
+  let seq = 0;
+
+  /// `P` + 12 simbolos do alfabeto do publicId: valido para `normalizarPublicId`.
+  function novoPid() {
+    let n = ++seq;
+    let corpo = '';
+    for (let i = 0; i < 10; i++) {
+      corpo = ALFABETO[n % 32] + corpo;
+      n = Math.floor(n / 32);
+    }
+    return `PC4${corpo}`;
+  }
+
+  async function jogador(nome) {
+    const app = initializeApp({ projectId: PROJETO, apiKey: 'fake' }, `c4-${nome}-${++seq}`);
+    const auth = getAuth(app);
+    connectAuthEmulator(
+      auth,
+      `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}`,
+      { disableWarnings: true },
+    );
+    const uid = (await signInAnonymously(auth)).user.uid;
+    const [host, porta] = (process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001').split(':');
+    const f = getFunctions(app, 'southamerica-east1');
+    connectFunctionsEmulator(f, host, Number(porta));
+    const c = (n) => async (d) => (await httpsCallable(f, n)(d)).data;
+    return {
+      uid,
+      bloquearPid: c('bloquearJogadorPorPublicId'),
+      bloquearUid: c('bloquearJogador'),
+      desbloquearPid: c('desbloquearJogadorPorPublicId'),
+      desbloquearUid: c('desbloquearJogador'),
+      listar: c('listarMeusBloqueios'),
+      denunciar: c('registrarDenuncia'),
+    };
+  }
+
+  /// Aplica um conjunto de escritas administrativas em lotes atomicos.
+  async function semearLote(estado) {
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      const fs = ctx.firestore();
+      let lote = writeBatch(fs);
+      let n = 0;
+      for (const [caminho, dados] of Object.entries(estado)) {
+        if (dados === null) lote.delete(doc(fs, caminho));
+        else lote.set(doc(fs, caminho), dados);
+        if (++n === 450) { await lote.commit(); lote = writeBatch(fs); n = 0; }
+      }
+      if (n > 0) await lote.commit();
+    });
+  }
+
+  async function ler(caminho) {
+    let v;
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      const s = await getDoc(doc(ctx.firestore(), caminho));
+      v = s.exists() ? s.data() : undefined;
+    });
+    return v;
+  }
+
+  async function contarBloqueios(dono) {
+    let n;
+    await ambiente.withSecurityRulesDisabled(async (ctx) => {
+      n = (await getDocs(collection(ctx.firestore(), `users/${dono}/blocks`))).size;
+    });
+    return n;
+  }
+
+  /// A identidade publica de um uid, como functions-social a escreve.
+  const identidade = (uid, pid) => ({
+    [`playerIdentities/${uid}`]: { publicId: pid },
+    [`publicIdIndex/${pid}`]: { publicId: pid, uid },
+    [`publicProfiles/${pid}`]: { publicId: pid, apelido: `Alvo ${pid}`, avatarRef: null },
+  });
+
+  /// Um alvo semeado (nao precisa autenticar: so e bloqueado).
+  async function alvo(rotulo, { comIdentidade = true } = {}) {
+    const uid = rotulo ?? `c4alvo${String(++seq).padStart(6, '0')}`;
+    const pid = novoPid();
+    if (comIdentidade) await semearLote(identidade(uid, pid));
+    return { uid, pid };
+  }
+
+  const caminhoCorte = (x, y) => `cortesDeRelacao/${[x, y].sort().join('|')}`;
+
+  /// Nenhuma chave privada, em profundidade, e nenhum UID no texto da resposta.
+  function semPrivado(resposta, uids) {
+    const achar = (v, p) => {
+      if (Array.isArray(v)) return v.flatMap((x, i) => achar(x, `${p}[${i}]`));
+      if (v === null || typeof v !== 'object') return [];
+      return Object.entries(v).flatMap(([k, x]) => [
+        ...(PRIVADAS.includes(k) ? [`${p}.${k}`] : []), ...achar(x, `${p}.${k}`),
+      ]);
+    };
+    assert.deepEqual(achar(resposta, ''), [], 'chave privada na resposta');
+    const texto = JSON.stringify(resposta);
+    for (const u of uids) assert.equal(texto.includes(u), false, 'UID no texto da resposta');
+  }
+
+  const recusa = (codigo, http) => (e) => {
+    assert.equal(e.details?.recusa, codigo, `esperava ${codigo}, veio ${e.details?.recusa} (${e.code})`);
+    if (http) assert.equal(e.code, `functions/${http}`);
+    return true;
+  };
+
+  /// Decodifica um cursor como qualquer cliente poderia.
+  const decodificar = (c) => JSON.parse(Buffer.from(c, 'base64url').toString('utf8'));
+  const cursorForjado = (partes) => Buffer.from(JSON.stringify(partes), 'utf8').toString('base64url');
+
+  // ------------------------------------------------- bloquear (O10)
+
+  test('M01 — bloquear por publicId grava o bloqueio no formato de hoje e o corte do par', async () => {
+    const a = await jogador('m01');
+    const b = await alvo();
+    const r = await a.bloquearPid({ publicId: b.pid });
+    assert.deepEqual(r, { bloqueado: true });
+    semPrivado(r, [a.uid, b.uid]);
+
+    const bl = await ler(`users/${a.uid}/blocks/${b.uid}`);
+    assert.deepEqual(Object.keys(bl).sort(), ['bloqueadoUid', 'bloqueadorUid', 'criadoEm', 'esquema']);
+    assert.equal(bl.bloqueadorUid, a.uid);
+    assert.equal(bl.bloqueadoUid, b.uid);
+    assert.equal(bl.esquema, 1);
+    assert.equal(typeof bl.criadoEm.toMillis, 'function', 'criadoEm e Timestamp do servidor');
+
+    const ct = await ler(caminhoCorte(a.uid, b.uid));
+    assert.deepEqual(Object.keys(ct).sort(), ['atualizadoEm', 'corteId', 'esquema', 'membros']);
+    assert.match(ct.corteId, /^[A-Za-z0-9_-]{22}$/);
+    assert.deepEqual(ct.membros, [a.uid, b.uid].sort());
+    assert.equal(ct.esquema, 1);
+    assert.ok(!Number.isNaN(Date.parse(ct.atualizadoEm)));
+  });
+
+  test('M02/S32d — bloquear pelo UID legado grava o MESMO par de documentos, no mesmo formato', async () => {
+    const a = await jogador('m02');
+    const b = await alvo();
+    assert.deepEqual(await a.bloquearUid({ bloqueadoUid: b.uid }), { bloqueado: true });
+    const bl = await ler(`users/${a.uid}/blocks/${b.uid}`);
+    assert.deepEqual(Object.keys(bl).sort(), ['bloqueadoUid', 'bloqueadorUid', 'criadoEm', 'esquema']);
+    assert.equal(bl.bloqueadoUid, b.uid);
+    const ct = await ler(caminhoCorte(a.uid, b.uid));
+    assert.deepEqual(Object.keys(ct).sort(), ['atualizadoEm', 'corteId', 'esquema', 'membros']);
+    assert.match(ct.corteId, /^[A-Za-z0-9_-]{22}$/);
+    assert.deepEqual(ct.membros, [a.uid, b.uid].sort());
+  });
+
+  test('M03/DT-01 — repetir o bloqueio vigente, pelos dois caminhos e em paralelo, nao escreve: mesmo corte e mesmo criadoEm', async () => {
+    const a = await jogador('m03');
+    const b = await alvo();
+    // Primeira inclusao com cinco chamadas simultaneas: UM bloqueio, UM corte.
+    const primeiras = await Promise.all([
+      a.bloquearPid({ publicId: b.pid }), a.bloquearUid({ bloqueadoUid: b.uid }),
+      a.bloquearPid({ publicId: b.pid }), a.bloquearUid({ bloqueadoUid: b.uid }),
+      a.bloquearPid({ publicId: b.pid }),
+    ]);
+    for (const r of primeiras) assert.deepEqual(r, { bloqueado: true });
+    assert.equal(await contarBloqueios(a.uid), 1);
+    const bl = await ler(`users/${a.uid}/blocks/${b.uid}`);
+    const ct = await ler(caminhoCorte(a.uid, b.uid));
+
+    const repeticoes = await Promise.all([
+      a.bloquearPid({ publicId: b.pid }), a.bloquearUid({ bloqueadoUid: b.uid }),
+      a.bloquearPid({ publicId: b.pid }), a.bloquearUid({ bloqueadoUid: b.uid }),
+      a.bloquearPid({ publicId: b.pid }),
+    ]);
+    for (const r of repeticoes) assert.deepEqual(r, { bloqueado: true });
+    const bl2 = await ler(`users/${a.uid}/blocks/${b.uid}`);
+    assert.equal(bl2.criadoEm.seconds, bl.criadoEm.seconds, 'criadoEm intocado');
+    assert.equal(bl2.criadoEm.nanoseconds, bl.criadoEm.nanoseconds, 'criadoEm intocado');
+    assert.deepEqual(await ler(caminhoCorte(a.uid, b.uid)), ct, 'o corte da repeticao e o mesmo');
+    assert.equal(await contarBloqueios(a.uid), 1);
+  });
+
+  test('M04 — bloqueio cruzado grava bloqueio e corte novos e mantem o primeiro bloqueio', async () => {
+    const a = await jogador('m04a');
+    const pidA = novoPid();
+    await semearLote(identidade(a.uid, pidA));
+    const b = await jogador('m04b');
+    const pidB = novoPid();
+    await semearLote(identidade(b.uid, pidB));
+    await a.bloquearPid({ publicId: pidB });
+    const corte1 = await ler(caminhoCorte(a.uid, b.uid));
+    assert.deepEqual(await b.bloquearPid({ publicId: pidA }), { bloqueado: true });
+    const corte2 = await ler(caminhoCorte(a.uid, b.uid));
+    assert.notEqual(corte2.corteId, corte1.corteId, 'o segundo bloqueio e documento novo: corte novo');
+    assert.ok(await ler(`users/${a.uid}/blocks/${b.uid}`), 'A -> B intacto');
+    assert.ok(await ler(`users/${b.uid}/blocks/${a.uid}`));
+  });
+
+  // ------------------------------------------------- desbloquear (O15)
+
+  test('M05 — desbloquear por publicId duas vezes apaga o bloqueio e NUNCA toca o corte', async () => {
+    const a = await jogador('m05');
+    const b = await alvo();
+    await a.bloquearPid({ publicId: b.pid });
+    const corte = await ler(caminhoCorte(a.uid, b.uid));
+    const r1 = await a.desbloquearPid({ publicId: b.pid });
+    const r2 = await a.desbloquearPid({ publicId: b.pid });
+    assert.deepEqual(r1, { desbloqueado: true });
+    assert.deepEqual(r2, { desbloqueado: true });
+    semPrivado(r1, [a.uid, b.uid]);
+    assert.equal(await ler(`users/${a.uid}/blocks/${b.uid}`), undefined);
+    assert.deepEqual(await ler(caminhoCorte(a.uid, b.uid)), corte, 'desbloquear nao apaga o corte');
+  });
+
+  test('M06/DT-05 — desbloquear publicId malformado ou inexistente responde neutro e nao escreve', async () => {
+    const a = await jogador('m06');
+    const b = await alvo();
+    await a.bloquearPid({ publicId: b.pid });
+    assert.deepEqual(await a.desbloquearPid({ publicId: 'nao e publicId' }), { desbloqueado: true });
+    assert.deepEqual(await a.desbloquearPid({ publicId: novoPid() }), { desbloqueado: true });
+    assert.deepEqual(await a.desbloquearPid({}), { desbloqueado: true });
+    assert.equal(await contarBloqueios(a.uid), 1, 'o bloqueio existente continua');
+  });
+
+  // ------------------------------------------------- lista (O15) e cursor
+
+  const cursoresVistos = [];
+  const uidsVistos = [];
+
+  test('M07 — lista propria: ordem criadoEm DESC, apelido fresco, item sem identidade omitido, so do dono', async () => {
+    const a = await jogador('m07');
+    const outro = await jogador('m07b');
+    const b1 = await alvo();
+    const b2 = await alvo();
+    const semId = await alvo(undefined, { comIdentidade: false });
+    const b3 = await alvo();
+    await a.bloquearPid({ publicId: b1.pid });
+    await a.bloquearPid({ publicId: b2.pid });
+    await a.bloquearUid({ bloqueadoUid: semId.uid });
+    await a.bloquearPid({ publicId: b3.pid });
+    await semearLote({ [`publicProfiles/${b2.pid}`]: { publicId: b2.pid, apelido: 'Apelido Novo', avatarRef: 'av1' } });
+
+    const r = await a.listar({});
+    semPrivado(r, [a.uid, b1.uid, b2.uid, b3.uid, semId.uid]);
+    assert.deepEqual(r.itens.map((i) => i.publicId), [b3.pid, b2.pid, b1.pid]);
+    assert.deepEqual(Object.keys(r.itens[0]).sort(), ['apelido', 'avatarRef', 'bloqueadoEm', 'publicId']);
+    assert.equal(r.itens[1].apelido, 'Apelido Novo');
+    assert.equal(r.itens[1].avatarRef, 'av1');
+    assert.ok(!Number.isNaN(Date.parse(r.itens[0].bloqueadoEm)));
+    assert.equal(r.proximoCursor, null, 'a consulta esgotou');
+    assert.deepEqual((await outro.listar({})).itens, [], 'a lista e so do dono');
+  });
+
+  /// Dono com bloqueios semeados no MESMO instante exato (montagem do teste).
+  const T = { s: 1767225600, ns: 123456000 };
+  async function empate(dono, rotulos, instante = T) {
+    const { Timestamp } = require('firebase/firestore');
+    const alvos = [];
+    const estado = {};
+    for (const rotulo of rotulos) {
+      const x = { uid: rotulo, pid: novoPid() };
+      alvos.push(x);
+      Object.assign(estado, identidade(x.uid, x.pid));
+      estado[`users/${dono}/blocks/${x.uid}`] = {
+        bloqueadorUid: dono, bloqueadoUid: x.uid,
+        criadoEm: new Timestamp(instante.s, instante.ns), esquema: 1,
+      };
+    }
+    await semearLote(estado);
+    uidsVistos.push(dono, ...alvos.map((x) => x.uid));
+    return alvos;
+  }
+  /// Ordem esperada: mesmo instante -> id do documento DESC.
+  const ordemDesc = (alvos) => [...alvos].sort((x, y) => (x.uid < y.uid ? 1 : -1));
+
+  test('M08/R2 — empate exato + remocao ANTES da ancora: nenhum item pulado nem repetido', async () => {
+    const a = await jogador('m08');
+    const alvos = ordemDesc(await empate(a.uid, ['c4m08x1', 'c4m08x2', 'c4m08x3', 'c4m08x4']));
+    const p1 = await a.listar({ limite: 2 });
+    assert.deepEqual(p1.itens.map((i) => i.publicId), [alvos[0].pid, alvos[1].pid]);
+    assert.ok(p1.proximoCursor);
+    cursoresVistos.push(p1.proximoCursor);
+    // Remove o PRIMEIRO entregue (antes da ancora). Com deslocamento, C sumiria.
+    await a.desbloquearPid({ publicId: alvos[0].pid });
+    const p2 = await a.listar({ limite: 2, cursor: p1.proximoCursor });
+    assert.deepEqual(p2.itens.map((i) => i.publicId), [alvos[2].pid, alvos[3].pid]);
+    if (p2.proximoCursor) cursoresVistos.push(p2.proximoCursor);
+    const p3 = p2.proximoCursor ? await a.listar({ limite: 2, cursor: p2.proximoCursor }) : { itens: [], proximoCursor: null };
+    assert.deepEqual(p3.itens, []);
+    assert.equal(p3.proximoCursor, null);
+  });
+
+  test('M09/R2 — inclusao no empate depois da ancora aparece uma vez; antes da ancora nao repete nada', async () => {
+    const a = await jogador('m09');
+    const alvos = ordemDesc(await empate(a.uid, ['c4m09x1', 'c4m09x2', 'c4m09x3', 'c4m09x4']));
+    const p1 = await a.listar({ limite: 2 });
+    cursoresVistos.push(p1.proximoCursor);
+    assert.deepEqual(p1.itens.map((i) => i.publicId), [alvos[0].pid, alvos[1].pid]);
+    // 'c4m09x25' cai entre a ancora (x3) e x2; 'c4m09x5' cai antes de x4.
+    const [depois, antes] = await empate(a.uid, ['c4m09x25', 'c4m09x5']);
+    const p2 = await a.listar({ limite: 10, cursor: p1.proximoCursor });
+    assert.deepEqual(p2.itens.map((i) => i.publicId), [depois.pid, alvos[2].pid, alvos[3].pid]);
+    assert.equal(p2.itens.some((i) => i.publicId === antes.pid), false);
+    assert.equal(p2.proximoCursor, null);
+  });
+
+  test('M10/R2 — ancora removida: a posicao continua valendo pelos valores', async () => {
+    const a = await jogador('m10');
+    const alvos = ordemDesc(await empate(a.uid, ['c4m10x1', 'c4m10x2', 'c4m10x3', 'c4m10x4']));
+    const p1 = await a.listar({ limite: 2 });
+    cursoresVistos.push(p1.proximoCursor);
+    await a.desbloquearPid({ publicId: alvos[1].pid }); // a propria ancora
+    const p2 = await a.listar({ limite: 2, cursor: p1.proximoCursor });
+    assert.deepEqual(p2.itens.map((i) => i.publicId), [alvos[2].pid, alvos[3].pid]);
+  });
+
+  test('M11/R2 — ancora sem identidade resolvivel: retomada inclusiva, nenhuma omissao, repeticao so do empate', async () => {
+    const a = await jogador('m11');
+    const alvos = ordemDesc(await empate(a.uid, ['c4m11x1', 'c4m11x2', 'c4m11x3', 'c4m11x4']));
+    const [anterior] = await empate(a.uid, ['c4m11y'], { s: T.s - 60, ns: 0 });
+    const p1 = await a.listar({ limite: 2 });
+    cursoresVistos.push(p1.proximoCursor);
+    // A identidade da ancora deixa de resolver (indice reverso apagado).
+    await semearLote({ [`publicIdIndex/${alvos[1].pid}`]: null });
+    const p2 = await a.listar({ limite: 10, cursor: p1.proximoCursor });
+    const vistos = p2.itens.map((i) => i.publicId);
+    for (const x of [alvos[2], alvos[3], anterior]) {
+      assert.ok(vistos.includes(x.pid), 'nenhum item depois da ancora e omitido');
+    }
+    const empatados = new Set(alvos.map((x) => x.pid));
+    for (const pid of vistos.filter((p) => p === alvos[0].pid || p === alvos[1].pid)) {
+      assert.ok(empatados.has(pid), 'so itens do mesmo instante podem repetir');
+    }
+    assert.equal(vistos[vistos.length - 1], anterior.pid, 'o item mais antigo vem por ultimo');
+  });
+
+  test('M12/R2 — cursor decodificado nao carrega UID; cursor invalido -> invalid-argument/cursorInvalido', async () => {
+    assert.ok(cursoresVistos.length >= 4);
+    for (const c of cursoresVistos) {
+      const partes = decodificar(c);
+      assert.equal(partes.length, 4);
+      assert.equal(partes[0], 'b1');
+      assert.equal(Number.isInteger(partes[1]) && Number.isInteger(partes[2]), true);
+      assert.match(partes[3], /^P[0-9A-Z]{12}$/);
+      const texto = Buffer.from(c, 'base64url').toString('utf8');
+      for (const u of uidsVistos) {
+        assert.equal(texto.includes(u), false, 'UID dentro do cursor');
+      }
+    }
+    const a = await jogador('m12');
+    const invalidos = [
+      'nao-e-cursor',
+      cursorForjado(['b1', T.s, T.ns, null]),
+      cursorForjado(['b0', T.s, T.ns, 'PC40000000000']),
+      cursorForjado(['b1', 1.5, 0, 'PC40000000000']),
+      cursorForjado(['b1', T.s, 1e9, 'PC40000000000']),
+      cursorForjado(['b1', T.s, T.ns, 'PC40000000000', 'extra']),
+      cursorForjado(['b1', 1e15, 0, 'PC40000000000']),
+      12345,
+    ];
+    for (const cursor of invalidos) {
+      await assert.rejects(() => a.listar({ cursor }), recusa('cursorInvalido', 'invalid-argument'));
+    }
+  });
+
+  // ------------------------------------------------- C-01: varredura incompleta
+
+  test('C-01 (pagina pequena) — orcamento esgotado em itens sem identidade no mesmo instante: erro explicito, nenhum cursor; depois da limpeza, o valido aparece', async () => {
+    const a = await jogador('c01a');
+    // 12 sem identidade (z..) vem antes do valido (a..) na ordem DESC; com
+    // limite 2 o orcamento e 4 x 3 = 12 documentos.
+    const semId = Array.from({ length: 12 }, (_, i) => `c4c01z${String(i).padStart(2, '0')}`);
+    const estado = {};
+    const { Timestamp } = require('firebase/firestore');
+    for (const u of semId) {
+      estado[`users/${a.uid}/blocks/${u}`] = {
+        bloqueadorUid: a.uid, bloqueadoUid: u, criadoEm: new Timestamp(T.s, T.ns), esquema: 1,
+      };
+    }
+    await semearLote(estado);
+    const [valido] = await empate(a.uid, ['c4c01a']);
+    await assert.rejects(() => a.listar({ limite: 2 }), recusa('varreduraIncompleta', 'unavailable'));
+    // Limpeza dos registros indisponiveis; o chamador tenta de novo.
+    await semearLote(Object.fromEntries(semId.map((u) => [`users/${a.uid}/blocks/${u}`, null])));
+    const r = await a.listar({ limite: 2 });
+    assert.deepEqual(r.itens.map((i) => i.publicId), [valido.pid]);
+    assert.equal(r.proximoCursor, null);
+  });
+
+  test('C-01 (com cursor, pagina pequena) — o cursor so avanca ate o ultimo entregue; sem ancora segura, erro; o cursor anterior alcanca o valido depois da limpeza', async () => {
+    const a = await jogador('c01b');
+    const [primeiro] = await empate(a.uid, ['c4c02zz']);
+    const semId = Array.from({ length: 12 }, (_, i) => `c4c02y${String(i).padStart(2, '0')}`);
+    const estado = {};
+    const { Timestamp } = require('firebase/firestore');
+    for (const u of semId) {
+      estado[`users/${a.uid}/blocks/${u}`] = {
+        bloqueadorUid: a.uid, bloqueadoUid: u, criadoEm: new Timestamp(T.s, T.ns), esquema: 1,
+      };
+    }
+    await semearLote(estado);
+    const [ultimo] = await empate(a.uid, ['c4c02a']);
+
+    const p1 = await a.listar({ limite: 2 });
+    assert.deepEqual(p1.itens.map((i) => i.publicId), [primeiro.pid]);
+    assert.ok(p1.proximoCursor, 'nao esgotou: ha cursor, ancorado no ultimo entregue');
+    assert.equal(decodificar(p1.proximoCursor)[3], primeiro.pid);
+    await assert.rejects(() => a.listar({ limite: 2, cursor: p1.proximoCursor }),
+      recusa('varreduraIncompleta', 'unavailable'));
+    await semearLote(Object.fromEntries(semId.map((u) => [`users/${a.uid}/blocks/${u}`, null])));
+    const p2 = await a.listar({ limite: 2, cursor: p1.proximoCursor });
+    assert.deepEqual(p2.itens.map((i) => i.publicId), [ultimo.pid], 'sem omissao silenciosa');
+    assert.equal(p2.proximoCursor, null);
+  });
+
+  test('C-01 (pagina padrao) — o mesmo com limite padrao: orcamento 4 x 26 sem identidade -> erro; limpeza -> valido', async () => {
+    const a = await jogador('c01c');
+    const semId = Array.from({ length: 104 }, (_, i) => `c4c03z${String(i).padStart(3, '0')}`);
+    const estado = {};
+    const { Timestamp } = require('firebase/firestore');
+    for (const u of semId) {
+      estado[`users/${a.uid}/blocks/${u}`] = {
+        bloqueadorUid: a.uid, bloqueadoUid: u, criadoEm: new Timestamp(T.s, T.ns), esquema: 1,
+      };
+    }
+    await semearLote(estado);
+    const [valido] = await empate(a.uid, ['c4c03a']);
+    await assert.rejects(() => a.listar({}), recusa('varreduraIncompleta', 'unavailable'));
+    await semearLote(Object.fromEntries(semId.map((u) => [`users/${a.uid}/blocks/${u}`, null])));
+    assert.deepEqual((await a.listar({})).itens.map((i) => i.publicId), [valido.pid]);
+  });
+
+  test('C-01 — a consulta realmente esgota sem item visivel: [] e proximoCursor null sao legitimos', async () => {
+    const a = await jogador('c01d');
+    const { Timestamp } = require('firebase/firestore');
+    await semearLote({
+      [`users/${a.uid}/blocks/c4c04z1`]: { bloqueadorUid: a.uid, bloqueadoUid: 'c4c04z1', criadoEm: new Timestamp(T.s, T.ns), esquema: 1 },
+      [`users/${a.uid}/blocks/c4c04z2`]: { bloqueadorUid: a.uid, bloqueadoUid: 'c4c04z2', criadoEm: new Timestamp(T.s, T.ns), esquema: 1 },
+    });
+    const r = await a.listar({ limite: 2 });
+    assert.deepEqual(r, { itens: [], proximoCursor: null });
+  });
+
+  // ------------------------------------------------- plano, diarios e teto
+
+  test('M13/S20 — jogador GRATUITO bloqueia, lista, desbloqueia e denuncia por publicId', async () => {
+    const a = await jogador('m13');
+    const b = await alvo();
+    assert.equal(await ler(`playerEntitlements/${a.uid}`), undefined, 'sem entitlement');
+    assert.deepEqual(await a.bloquearPid({ publicId: b.pid }), { bloqueado: true });
+    assert.deepEqual((await a.listar({})).itens.map((i) => i.publicId), [b.pid]);
+    assert.deepEqual(await a.desbloquearPid({ publicId: b.pid }), { desbloqueado: true });
+    const d = await a.denunciar({
+      denunciadoPublicId: b.pid, tipo: 'perfil', categoria: 'nomeOfensivo', reportIntentId: 'c4m13',
+    });
+    assert.equal(d.registrada, true);
+  });
+
+  test('M14/S23c/S30c — diario no BLOQUEADO: publicId -> alvoNaoResolvido; UID -> neutro; nenhum bloqueio nem corte', async () => {
+    const a = await jogador('m14');
+    const b = await alvo();
+    await semearLote({ [`accountDeletions/${b.uid}`]: { estado: 'iniciada', esquema: 1 } });
+    await assert.rejects(() => a.bloquearPid({ publicId: b.pid }), recusa('alvoNaoResolvido', 'invalid-argument'));
+    assert.deepEqual(await a.bloquearUid({ bloqueadoUid: b.uid }), { bloqueado: true });
+    assert.equal(await ler(`users/${a.uid}/blocks/${b.uid}`), undefined);
+    assert.equal(await ler(caminhoCorte(a.uid, b.uid)), undefined);
+  });
+
+  test('M15 — diario no BLOQUEADOR (dono): os dois caminhos e a lista recusam acaoIndisponivel, sem escrita', async () => {
+    const a = await jogador('m15');
+    const b = await alvo();
+    await semearLote({ [`accountDeletions/${a.uid}`]: { estado: 'iniciada', esquema: 1 } });
+    await assert.rejects(() => a.bloquearPid({ publicId: b.pid }), recusa('acaoIndisponivel', 'failed-precondition'));
+    await assert.rejects(() => a.bloquearUid({ bloqueadoUid: b.uid }), recusa('acaoIndisponivel', 'failed-precondition'));
+    await assert.rejects(() => a.listar({}), recusa('acaoIndisponivel', 'failed-precondition'));
+    assert.equal(await contarBloqueios(a.uid), 0);
+    assert.equal(await ler(caminhoCorte(a.uid, b.uid)), undefined);
+  });
+
+  test('M16/S23c — diario criado EM VOO: cada bloqueio e (bloqueio + corte) antes do diario ou nenhuma escrita', async (t) => {
+    const a = await jogador('m16');
+    const alvos = [];
+    for (let i = 0; i < 24; i++) alvos.push(await alvo());
+    const chamadas = [];
+    let fila = 0;
+    const trabalhador = async () => {
+      while (fila < alvos.length) {
+        const x = alvos[fila++];
+        const via = fila % 2 === 0 ? 'pid' : 'uid';
+        const ini = performance.now();
+        let desfecho;
+        try {
+          await (via === 'pid' ? a.bloquearPid({ publicId: x.pid }) : a.bloquearUid({ bloqueadoUid: x.uid }));
+          desfecho = 'ok';
+        } catch (e) {
+          assert.equal(e.details?.recusa, 'acaoIndisponivel');
+          desfecho = 'recusado';
+        }
+        chamadas.push({ ini, fim: performance.now(), desfecho });
+      }
+    };
+    // O diario nasce por uma TRANSACAO do teste que le TODO o conjunto
+    // observado (bloqueios e cortes, inclusive os ainda ausentes): o que ela
+    // le e o estado exato no instante do diario.
+    let foto;
+    let diarioEm;
+    const criarDiario = async () => {
+      while (chamadas.length < 3) await new Promise((r) => setTimeout(r, 10));
+      await ambiente.withSecurityRulesDisabled(async (ctx) => {
+        const fs = ctx.firestore();
+        await runTransaction(fs, async (tx) => {
+          const lido = {};
+          await Promise.all(alvos.map(async (x) => {
+            const [bl, ct] = await Promise.all([
+              tx.get(doc(fs, `users/${a.uid}/blocks/${x.uid}`)),
+              tx.get(doc(fs, caminhoCorte(a.uid, x.uid))),
+            ]);
+            lido[x.uid] = { bloqueio: bl.exists(), corte: ct.exists() };
+          }));
+          tx.set(doc(fs, `accountDeletions/${a.uid}`), { estado: 'iniciada', esquema: 1 });
+          foto = lido;
+        }, { maxAttempts: 25 });
+      });
+      diarioEm = performance.now();
+    };
+    await Promise.all([criarDiario(), trabalhador(), trabalhador(), trabalhador(), trabalhador()]);
+
+    for (const x of alvos) {
+      const bloqueio = !!(await ler(`users/${a.uid}/blocks/${x.uid}`));
+      const corte = !!(await ler(caminhoCorte(a.uid, x.uid)));
+      assert.equal(bloqueio, corte, 'nunca bloqueio sem corte nem corte sem bloqueio');
+      assert.deepEqual({ bloqueio, corte }, foto[x.uid], 'nada foi escrito depois do diario');
+    }
+    const sobrepostas = chamadas.filter((c) => c.ini < diarioEm && c.fim > diarioEm).length;
+    const recusadas = chamadas.filter((c) => c.desfecho === 'recusado').length;
+    assert.ok(recusadas >= 1, 'chamadas depois do diario recusam');
+    assert.ok(chamadas.some((c) => c.desfecho === 'ok'), 'chamadas antes do diario gravaram');
+    t.diagnostic(`M16: ${chamadas.length} chamadas, ${sobrepostas} em voo no commit do diario, ${recusadas} recusadas`);
+  });
+
+  test('M17/S38 — ator no teto de ritmo de seguir: bloquear, desbloquear e denunciar passam (a Moderacao nao le ritmo)', async () => {
+    const a = await jogador('m17');
+    const b = await alvo();
+    const agora = Date.now();
+    await semearLote({
+      [`playerSocialRitmo/${a.uid}`]: {
+        criacoes: Array.from({ length: 30 }, (_, i) => new Date(agora - i * 1000).toISOString()),
+        pedidosPendentesEnviados: 100, esquema: 1,
+      },
+    });
+    assert.deepEqual(await a.bloquearPid({ publicId: b.pid }), { bloqueado: true });
+    assert.deepEqual(await a.desbloquearPid({ publicId: b.pid }), { desbloqueado: true });
+    const d = await a.denunciar({
+      denunciadoPublicId: b.pid, tipo: 'perfil', categoria: 'nomeOfensivo', reportIntentId: 'c4m17',
+    });
+    assert.equal(d.registrada, true);
+  });
+
+  test('M18/DT-04 — identificador invalido: UID com | -> failed-precondition/identificadorInvalido (como antes); publicId malformado -> alvoNaoResolvido; sem escrita', async () => {
+    const a = await jogador('m18');
+    await assert.rejects(() => a.bloquearUid({ bloqueadoUid: 'abc|def' }),
+      recusa('identificadorInvalido', 'failed-precondition'));
+    await assert.rejects(() => a.bloquearUid({ bloqueadoUid: a.uid }),
+      recusa('autoBloqueio', 'failed-precondition'));
+    await assert.rejects(() => a.bloquearPid({ publicId: '!!' }),
+      recusa('alvoNaoResolvido', 'invalid-argument'));
+    await assert.rejects(() => a.bloquearPid({ publicId: novoPid() }),
+      recusa('alvoNaoResolvido', 'invalid-argument'));
+    assert.equal(await contarBloqueios(a.uid), 0);
+  });
+
+  test('M19/R5 — no teto de 500: repetir pelos dois caminhos converge sem escrita; inclusao NOVA recusa limiteAtingido', async () => {
+    const a = await jogador('m19');
+    const b = await alvo();
+    const c = await alvo();
+    const estado = {};
+    const instante = new Date('2026-03-01T00:00:00.000Z');
+    estado[`users/${a.uid}/blocks/${b.uid}`] = {
+      bloqueadorUid: a.uid, bloqueadoUid: b.uid, criadoEm: instante, esquema: 1,
+    };
+    for (let i = 0; i < 499; i++) {
+      const u = `c4m19t${String(i).padStart(3, '0')}`;
+      estado[`users/${a.uid}/blocks/${u}`] = {
+        bloqueadorUid: a.uid, bloqueadoUid: u, criadoEm: instante, esquema: 1,
+      };
+    }
+    await semearLote(estado);
+    assert.equal(await contarBloqueios(a.uid), 500);
+    const antes = await ler(`users/${a.uid}/blocks/${b.uid}`);
+
+    assert.deepEqual(await a.bloquearPid({ publicId: b.pid }), { bloqueado: true });
+    assert.deepEqual(await a.bloquearUid({ bloqueadoUid: b.uid }), { bloqueado: true });
+    const depois = await ler(`users/${a.uid}/blocks/${b.uid}`);
+    assert.equal(depois.criadoEm.seconds, antes.criadoEm.seconds);
+    assert.equal(depois.criadoEm.nanoseconds, antes.criadoEm.nanoseconds);
+    assert.equal(await ler(caminhoCorte(a.uid, b.uid)), undefined,
+      'a repeticao nao escreve: nem o corte que o bloqueio semeado nao tinha');
+
+    await assert.rejects(() => a.bloquearPid({ publicId: c.pid }), recusa('limiteAtingido', 'failed-precondition'));
+    await assert.rejects(() => a.bloquearUid({ bloqueadoUid: c.uid }), recusa('limiteAtingido', 'failed-precondition'));
+    assert.equal(await ler(`users/${a.uid}/blocks/${c.uid}`), undefined);
+    assert.equal(await ler(caminhoCorte(a.uid, c.uid)), undefined);
+    assert.equal(await contarBloqueios(a.uid), 500);
+  });
+
+  test('sem autenticacao, as tres callables novas sao recusadas', async () => {
+    const app = initializeApp({ projectId: PROJETO, apiKey: 'fake' }, 'c4-anonimo');
+    const [host, porta] = (process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001').split(':');
+    const f = getFunctions(app, 'southamerica-east1');
+    connectFunctionsEmulator(f, host, Number(porta));
+    for (const nome of ['bloquearJogadorPorPublicId', 'desbloquearJogadorPorPublicId', 'listarMeusBloqueios']) {
+      await assert.rejects(() => httpsCallable(f, nome)({ publicId: 'PC40000000000' }),
+        (e) => e.code === 'functions/unauthenticated', nome);
+    }
+  });
+});
+
+// ===========================================================================
 describe('nao-regressao: os tres blocos anteriores continuam de pe', () => {
   test('o fecho padrao ainda nega caminho nao declarado', async () => {
     await assertFails(getDoc(doc(comoDenunciante(), 'colecaoInventada/doc1')));

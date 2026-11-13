@@ -42,12 +42,16 @@ import {
 } from "./domain";
 import {
   AutorizacaoDoDono,
+  ContaEmExclusao,
+  DESFECHOS_PERMANENTES,
   ListaDeSeguir,
   SeguirSemContagem,
   SeguirSemIdentidade,
   VistaDeSeguir,
+  classificarFalha,
   contadoresProprios,
   desfazerPorBloqueio,
+  faxinaSeguirDaDirecao,
   db,
   estadoDeContato,
   estadoPublicoDeSeguir,
@@ -64,7 +68,7 @@ import {
   paginaDeSolicitacoes,
   propagarApelidoParaAmigos,
   publicIdDe,
-  reconciliarProjecoes,
+  reconciliarPerfil,
   relacoesParaBusca,
   resolverUid,
   varrerVisiveis,
@@ -844,24 +848,73 @@ export const consultarContadoresSociais = onCall(opcoesCliente, async (req) => {
 /// social le o bloqueio DENTRO da propria transacao, entao durante a janela a
 /// amizade existe no banco mas nenhuma acao passa. A faxina alinha o banco com a
 /// realidade; ela nao e o que produz a realidade.
+///
+/// SOCIAL-02 C4 — TRES UNIDADES INDEPENDENTES, COM NOVA TENTATIVA:
+///   1. amizade (faxina legada, agora protegida pelos diarios das duas pontas);
+///   2. seguir bloqueador -> bloqueado;
+///   3. seguir bloqueado -> bloqueador.
+/// Todas sao tentadas mesmo quando uma falha. Cada uma relê o estado e o corte
+/// atuais, entao rodar de novo e inofensivo: a segunda passagem nao encontra o
+/// que ja foi arrumado, e uma relacao nascida sob o corte atual nunca e tocada.
+///
+/// ERROS:
+///   * desfecho PERMANENTE conhecido (contador do remetente invalido, ritmo
+///     ausente com pedido pendente, canonico ilegivel): RETORNADO pela unidade,
+///     so registrado. A direcao continua negada pelo corte; o reparo e
+///     `reconciliarPerfilSocial` do remetente;
+///   * falha LANCADA (transitoria pelo codigo do SDK, ou nao classificada):
+///     registrada e RELANCADA ao final, para a plataforma tentar de novo
+///     (`retry: true`). Nada lancado e tratado como corrupcao conhecida.
+/// Configurar `retry: true` nao prova a entrega automatica da plataforma.
 export const aoBloquearJogador = onDocumentCreated(
   {
     document: "users/{bloqueadorUid}/blocks/{bloqueadoUid}",
     region: "southamerica-east1",
+    retry: true,
   },
   async (evento) => {
     const { bloqueadorUid, bloqueadoUid } = evento.params;
     if (!bloqueadorUid || !bloqueadoUid || bloqueadorUid === bloqueadoUid) return;
 
+    const falhas: unknown[] = [];
+
     try {
-      const { desfez } = await desfazerPorBloqueio(bloqueadorUid, bloqueadoUid);
-      logger.info("faxina social por bloqueio", { desfez });
+      const { desfez, impedidaPorExclusao } = await desfazerPorBloqueio(
+        bloqueadorUid,
+        bloqueadoUid
+      );
+      logger.info("faxina social por bloqueio", { desfez, impedidaPorExclusao });
     } catch (erro) {
-      // NAO relanca: falhar aqui reprocessaria o gatilho, e a segunda passagem
-      // encontraria a relacao ja apagada. O log e o que importa, porque a
-      // seguranca ja esta garantida pela checagem em cada operacao.
-      logger.error("falha na faxina social por bloqueio", { erro: `${erro}` });
+      falhas.push(erro);
+      logger.error("falha na faxina de amizade por bloqueio", {
+        classe: classificarFalha(erro),
+        erro: `${erro}`,
+      });
     }
+
+    for (const [seguidor, seguido] of [
+      [bloqueadorUid, bloqueadoUid],
+      [bloqueadoUid, bloqueadorUid],
+    ]) {
+      const sentido = seguidor === bloqueadorUid ? "doBloqueador" : "paraOBloqueador";
+      try {
+        const desfecho = await faxinaSeguirDaDirecao(seguidor, seguido);
+        if (DESFECHOS_PERMANENTES.has(desfecho)) {
+          logger.error("faxina de seguir: erro permanente", { sentido, desfecho });
+        } else {
+          logger.info("faxina de seguir por bloqueio", { sentido, desfecho });
+        }
+      } catch (erro) {
+        falhas.push(erro);
+        logger.error("falha na faxina de seguir por bloqueio", {
+          sentido,
+          classe: classificarFalha(erro),
+          erro: `${erro}`,
+        });
+      }
+    }
+
+    if (falhas.length > 0) throw falhas[0];
   }
 );
 
@@ -873,10 +926,34 @@ export const aoBloquearJogador = onDocumentCreated(
 ///
 /// SO ADMIN. E a ferramenta de reparo que §20 pede quando existem projecoes, e
 /// tambem a resposta honesta a "e se o leque de apelido falhar no meio?".
+///
+/// SOCIAL-02 C4 (adendo R1 §5): cobre tambem seguir, na ordem recontagem do
+/// proprio ritmo -> direcoes -> amizade -> residuos, cada unidade numa
+/// transacao que le os diarios que a protegem. Diario do jogador ja presente:
+/// erro administrativo `contaEmExclusao`, nenhuma escrita. Diario surgido no
+/// meio: para, sem desfazer o que foi confirmado antes. A resposta nao tem UID;
+/// `amigos` e `solicitacoes` continuam no topo, como antes.
 export const reconciliarPerfilSocial = onCall(opcoesCliente, async (req) => {
   exigirAdmin(req);
   const { publicId } = (req.data ?? {}) as Record<string, unknown>;
   const alvoUid = await exigirUidDoPublicId(publicId);
-  const resultado = await reconciliarProjecoes(alvoUid);
-  return { reconciliado: true, ...resultado };
+  try {
+    const r = await reconciliarPerfil(alvoUid);
+    return exigirRespostaSegura({
+      reconciliado: true,
+      amigos: r.amizade.amigos,
+      solicitacoes: r.amizade.solicitacoes,
+      amizade: r.amizade,
+      seguir: r.seguir,
+    });
+  } catch (erro) {
+    if (erro instanceof ContaEmExclusao) {
+      throw new HttpsError("failed-precondition", "contaEmExclusao", {
+        recusa: "contaEmExclusao",
+        parcial: erro.unidadesConfirmadas > 0,
+        unidadesConfirmadas: erro.unidadesConfirmadas,
+      });
+    }
+    throw erro;
+  }
 });
