@@ -3599,44 +3599,71 @@ describe('Functions sociais', comFunctions, () => {
         assert.equal((await ler(`playerSocial/${a.uid}`)).amigos, 1, 'o contador nao e ajustado');
       });
 
+      /// Escritas administrativas em varios lotes (writeBatch aceita 500).
+      async function aplicarEmLotes(estado) {
+        const entradas = Object.entries(estado);
+        for (let i = 0; i < entradas.length; i += 450) {
+          await aplicarAtomico(Object.fromEntries(entradas.slice(i, i + 450)));
+        }
+      }
+
+      // r2 (run 43338557716): com 8 pares a faxina inteira levou ~250 ms e a
+      // foto transacional de TODOS os pares chegou depois dela — a prova de
+      // nao-escrita passou, a de sobreposicao nao. Agora: 60 bloqueios na fila
+      // do gatilho e um SUBCONJUNTO DECLARADO de pares observados por inteiro
+      // (12), para que a foto seja curta e o diario caia no meio da fila.
       test('S14/R1 — diario criado EM VOO durante a faxina (amizade + seguir): o estado final e o do instante do diario', async (t) => {
         const a = await jogador();
-        const parceiros = [];
-        for (let i = 0; i < 8; i++) {
+        const reais = [];
+        for (let i = 0; i < 2; i++) {
           const b = await jogador();
           await amigos(a, b);
           await cmd(a, 'seguir', b, { referencia: null });
-          parceiros.push(b);
+          reais.push(b);
         }
-        const caminhos = parceiros.flatMap((b) => caminhosDoPar(a, b));
-        const estado = {};
-        for (const b of parceiros) Object.assign(estado, bloqueioDaModeracao(a, b, novoCorte()));
-        await aplicarAtomico(estado); // oito bloqueios: 24 unidades de faxina
-        const unidadeFeita = async (b) => {
+        // 58 pontas SEMEADAS (seguir no formato congelado; sem amizade).
+        const semeados = Array.from({ length: 58 }, (_, i) => ({
+          uid: `c4s14${a.uid.slice(0, 6)}p${String(i).padStart(2, '0')}`,
+          pid: `PS14${String(i).padStart(9, '0')}`,
+        }));
+        const preparo = {};
+        semeados.forEach((p, i) => Object.assign(preparo, direcaoSemeada(a, p, 'confirmado', `refS14x${i}`)));
+        await aplicarEmLotes(preparo);
+
+        const observados = [...reais, ...semeados.filter((_, i) => i % 6 === 0)];
+        const caminhos = observados.flatMap((b) => caminhosDoPar(a, b));
+        const bloqueios = {};
+        for (const b of [...reais, ...semeados]) Object.assign(bloqueios, bloqueioDaModeracao(a, b, novoCorte()));
+        await aplicarEmLotes(bloqueios);
+
+        const eReal = (b) => reais.includes(b);
+        const feita = async (b) => {
           const [par, seg] = await Promise.all([ler(caminhoPar(a, b)), canonico(a, b)]);
-          return !par || seg?.estado === 'encerrado';
+          return (eReal(b) && !par) || seg?.estado === 'encerrado';
         };
-        // Sondagem sem pausa: o diario precisa nascer no MEIO das 24 unidades.
         const prazo = Date.now() + 20000;
-        while (!(await Promise.all(parceiros.map(unidadeFeita))).some(Boolean)) {
-          if (Date.now() > prazo) assert.fail('nenhuma unidade de faxina concluiu no prazo');
+        while (!(await Promise.all(observados.map(feita))).some(Boolean)) {
+          if (Date.now() > prazo) assert.fail('nenhuma unidade observada concluiu no prazo');
         }
         const instante = await diarioLendo(a, caminhos);
         await pausa(JANELA);
         assert.deepEqual(await foto(caminhos), instante, 'nada escrito depois do diario');
+
         let feitas = 0;
         let pendentes = 0;
-        for (const b of parceiros) {
-          for (const c of [caminhoPar(a, b), `follows/${a.uid}|${b.uid}`]) {
-            const v = instante[c];
-            const concluida = v === null || JSON.parse(v).estado === 'encerrado';
-            if (concluida) feitas++;
+        for (const b of observados) {
+          const seg = instante[`follows/${a.uid}|${b.uid}`];
+          if (seg !== null && JSON.parse(seg).estado === 'encerrado') feitas++;
+          else pendentes++;
+          if (eReal(b)) {
+            if (instante[caminhoPar(a, b)] === null) feitas++;
             else pendentes++;
           }
         }
-        assert.ok(feitas >= 1, 'o diario veio depois de alguma unidade');
+        assert.ok(feitas >= 1, 'o diario veio depois de alguma unidade observada');
         assert.ok(pendentes >= 1, 'e antes de outras: sobreposicao real');
-        t.diagnostic(`S14: no instante do diario, ${feitas} unidades concluidas e ${pendentes} ainda nao`);
+        t.diagnostic(`S14: ${observados.length} pares observados de 60; no instante do diario, `
+          + `${feitas} unidades concluidas e ${pendentes} ainda nao`);
       });
 
       test('S16 — reconciliacao com diario JA presente: contaEmExclusao e nenhuma escrita', async () => {
@@ -3658,46 +3685,54 @@ describe('Functions sociais', comFunctions, () => {
         assert.deepEqual(await foto(caminhos), antes);
       });
 
+      // r2 (run 43338557716): 30 direcoes reconciliaram em ~360 ms, antes de a
+      // foto transacional terminar. Agora: 300 direcoes, processadas em ordem de
+      // chave (a descoberta ordena pelo id do documento), e um SUBCONJUNTO
+      // DECLARADO observado por inteiro: a primeira direcao e uma a cada 25 da
+      // segunda metade em diante. A foto nao disputa as direcoes em andamento.
       test('S17/R1 — diario criado EM VOO durante a reconciliacao: nenhuma unidade escreve depois dele; o anterior fica', async (t) => {
         const a = await jogador({ comVip: false });
         const adm = await clienteAdmin();
-        // Trinta outras pontas SEMEADAS (identidade + direcao no formato
-        // congelado): a reconciliacao so precisa de canonico e identidade.
-        const outros = Array.from({ length: 30 }, (_, i) => ({
-          uid: `c4s17${a.uid.slice(0, 6)}o${String(i).padStart(2, '0')}`,
+        const outros = Array.from({ length: 300 }, (_, i) => ({
+          uid: `c4s17${a.uid.slice(0, 6)}o${String(i).padStart(3, '0')}`,
           pid: `PS17${String(i).padStart(9, '0')}`,
         }));
         const estado = {};
-        for (let i = 0; i < outros.length; i++) {
-          estado[`playerIdentities/${outros[i].uid}`] = { publicId: outros[i].pid };
-          Object.assign(estado, direcaoSemeada(a, outros[i], 'confirmado', `refS17x${i}`));
+        outros.forEach((o, i) => {
+          estado[`playerIdentities/${o.uid}`] = { publicId: o.pid };
+          Object.assign(estado, direcaoSemeada(a, o, 'confirmado', `refS17x${i}`));
           // Cada direcao sem P2: toda unidade tera o que reescrever.
-          estado[caminhosEspelho(a, outros[i]).P2] = null;
-        }
-        await aplicarAtomico(estado);
-        const caminhos = outros.flatMap((o) => caminhosDaDirecao(a, o));
+          estado[caminhosEspelho(a, o).P2] = null;
+        });
+        await aplicarEmLotes(estado);
 
-        const restaurados = async () => (await Promise.all(
-          outros.map((o) => ler(caminhosEspelho(a, o).P2)),
-        )).filter(Boolean).length;
+        const observados = outros.filter((_, i) => i === 0 || (i >= 150 && i % 25 === 0) || i === 299);
+        const caminhos = observados.flatMap((o) => caminhosDaDirecao(a, o));
+        const primeira = caminhosEspelho(a, outros[0]).P2;
+
+        const ini = performance.now();
         const chamada = adm.reconciliar(a).then((r) => ({ r }), (e) => ({ e }));
         const prazo = Date.now() + 20000;
-        while ((await restaurados()) < 1) {
-          if (Date.now() > prazo) assert.fail('nenhuma unidade de reconciliacao concluiu no prazo');
+        while (!(await ler(primeira))) {
+          if (Date.now() > prazo) assert.fail('a primeira unidade nao concluiu no prazo');
         }
         const instante = await diarioLendo(a, caminhos);
+        const diarioEm = performance.now();
         const desfecho = await chamada;
+        const fim = performance.now();
         await pausa(1000);
         assert.deepEqual(await foto(caminhos), instante, 'nada escrito depois do diario');
 
-        const naFoto = outros.filter((o) => instante[caminhosEspelho(a, o).P2] !== null).length;
+        const naFoto = observados.filter((o) => instante[caminhosEspelho(a, o).P2] !== null).length;
         assert.ok(naFoto >= 1, 'unidades confirmadas antes do diario ficam');
-        assert.ok(naFoto < outros.length, 'e o diario chegou no meio');
+        assert.ok(naFoto < observados.length, 'e o diario chegou no meio');
         assert.ok(desfecho.e, 'a rotina parou no diario');
         assert.equal(desfecho.e.details?.recusa, 'contaEmExclusao');
         assert.equal(desfecho.e.details?.parcial, true);
-        t.diagnostic(`S17: ${naFoto} de ${outros.length} direcoes confirmadas antes do diario; `
-          + `unidadesConfirmadas=${desfecho.e.details?.unidadesConfirmadas}`);
+        assert.ok(diarioEm < fim, 'o diario foi confirmado com a reconciliacao em voo');
+        t.diagnostic(`S17: ${naFoto} de ${observados.length} direcoes observadas confirmadas antes do diario; `
+          + `unidadesConfirmadas=${desfecho.e.details?.unidadesConfirmadas}; `
+          + `diario em ${(diarioEm - ini).toFixed(0)} ms, reconciliacao parou em ${(fim - ini).toFixed(0)} ms`);
       });
 
       test('S18 — outra ponta em exclusao: amizade e seguir com ela pulados e relatados, sem recriar projecao', async () => {
